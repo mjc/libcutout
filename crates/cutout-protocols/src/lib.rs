@@ -9,6 +9,8 @@
 
 //! Protocol-family scaffolding for Cutout.
 
+use std::ops::RangeInclusive;
+
 use arrayvec::ArrayVec;
 use cutout_core::{
     Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, Measured, MonotonicMillis,
@@ -487,6 +489,55 @@ impl VeteranTelemetry {
             distance_mm: Some(Measured::reported(u64::from(self.total_distance_m) * 1_000)),
             pitch_mdeg: Some(Measured::reported(self.pitch_mdeg)),
             ..TelemetryDelta::empty(at_ms)
+        }
+    }
+}
+
+/// Capture-backed profile for a resolved NOSFET Aero.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AeroDeviceProfile {
+    /// Protocol family resolved from wire data.
+    pub family: DeviceFamily,
+
+    /// Resolved Veteran-family model.
+    pub model: VeteranModel,
+
+    /// Raw Veteran model id.
+    pub model_id: u16,
+
+    /// Series cell count.
+    pub cell_count: u8,
+
+    /// Raw centivolt voltage range used for battery estimation.
+    pub voltage_range_cv: RangeInclusive<u16>,
+
+    /// Read-only capabilities exposed for this resolved profile.
+    pub capabilities: Capabilities,
+}
+
+impl AeroDeviceProfile {
+    /// Resolves an Aero profile from decoded Veteran telemetry.
+    #[must_use]
+    pub fn from_telemetry(telemetry: VeteranTelemetry) -> Option<Self> {
+        telemetry.model.map(|_model| Self::nosfet_aero())
+    }
+
+    /// Returns the capture-backed NOSFET Aero profile.
+    #[must_use]
+    pub const fn nosfet_aero() -> Self {
+        Self {
+            family: DeviceFamily::NosfetAero,
+            model: VeteranModel::NosfetAero,
+            model_id: 43,
+            cell_count: 30,
+            voltage_range_cv: 9_918..=12_337,
+            capabilities: Capabilities::from_supported_commands([
+                CommandKind::RequestIdentity,
+                CommandKind::RequestTelemetry,
+                CommandKind::RequestFirmwareInfo,
+                CommandKind::RequestBatteryInfo,
+                CommandKind::RequestDiagnostics,
+            ]),
         }
     }
 }
@@ -1555,6 +1606,42 @@ mod tests {
         assert_eq!(telemetry.mosfet_temperature_mc, 33_270);
         assert_eq!(telemetry.speed_alert_deci_kmh, 550);
         assert_eq!(telemetry.speed_tiltback_deci_kmh, 540);
+    }
+
+    #[test]
+    fn aero_profile_resolves_from_live_fixture_telemetry_without_name() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        for chunk in notification_fixture_chunks() {
+            frames.extend(feed_chunk(&mut reassembler, &chunk));
+        }
+
+        let telemetry =
+            crate::VeteranTelemetry::decode(&frames[0]).expect("live fixture frame decodes");
+        let profile =
+            crate::AeroDeviceProfile::from_telemetry(telemetry).expect("model id resolves");
+
+        assert_eq!(profile.family, crate::DeviceFamily::NosfetAero);
+        assert_eq!(profile.model, crate::VeteranModel::NosfetAero);
+        assert_eq!(profile.model_id, 43);
+        assert_eq!(profile.cell_count, 30);
+        assert_eq!(profile.voltage_range_cv, 9_918..=12_337);
+        assert!(
+            profile
+                .capabilities
+                .supports_command_kind(CommandKind::RequestTelemetry)
+        );
+        assert!(
+            !profile
+                .capabilities
+                .supports_command_kind(CommandKind::SetRawMotorCurrent)
+        );
+        assert!(
+            !profile
+                .capabilities
+                .supports_command_kind(CommandKind::SetLights)
+        );
     }
 
     #[test]
