@@ -389,6 +389,143 @@ fn saturating_increment(counter: &mut u64) {
     *counter = counter.saturating_add(1);
 }
 
+/// Stable host-facing diagnostic counter snapshot.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DiagnosticSnapshot {
+    /// Bytes dropped while recovering from malformed or excessive input.
+    pub dropped_bytes: u64,
+
+    /// Parser resynchronization attempts.
+    pub resyncs: u64,
+
+    /// Frames rejected because their checksum did not match.
+    pub bad_checksums: u64,
+
+    /// Parser deadlines that elapsed before expected data arrived.
+    pub timeouts: u64,
+
+    /// Frames rejected because they exceeded parser limits.
+    pub oversized_frames: u64,
+
+    /// Frames rejected because their structure was invalid.
+    pub malformed_frames: u64,
+
+    /// Replies that could not be matched to an in-flight request.
+    pub unmatched_replies: u64,
+}
+
+impl DiagnosticSnapshot {
+    /// Creates a stable host-facing snapshot from parser diagnostics.
+    #[must_use]
+    pub const fn from_parser_diagnostics(diagnostics: ParserDiagnostics) -> Self {
+        Self {
+            dropped_bytes: diagnostics.dropped_bytes,
+            resyncs: diagnostics.resyncs,
+            bad_checksums: diagnostics.bad_checksums,
+            timeouts: diagnostics.timeouts,
+            oversized_frames: diagnostics.oversized_frames,
+            malformed_frames: diagnostics.malformed_frames,
+            unmatched_replies: diagnostics.unmatched_replies,
+        }
+    }
+
+    /// Creates a diagnostic snapshot when the event carries diagnostics.
+    #[must_use]
+    pub const fn from_device_event(event: DeviceEvent) -> Option<Self> {
+        match event {
+            DeviceEvent::Diagnostics(diagnostics) => {
+                Some(Self::from_parser_diagnostics(diagnostics))
+            }
+            DeviceEvent::LinkUp(_)
+            | DeviceEvent::LinkDown
+            | DeviceEvent::NotificationReceived { .. }
+            | DeviceEvent::Tick { .. }
+            | DeviceEvent::Telemetry(_) => None,
+        }
+    }
+}
+
+/// Stable host-facing parser error kind.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DiagnosticErrorKind {
+    /// A frame claimed or accumulated more bytes than allowed.
+    OversizedFrame,
+
+    /// A frame checksum did not match its payload.
+    BadChecksum,
+
+    /// Input bytes could not form a valid frame.
+    MalformedFrame,
+
+    /// A parser deadline elapsed before expected data arrived.
+    Timeout,
+
+    /// A reply could not be matched to an in-flight request.
+    UnmatchedReply,
+}
+
+/// Stable host-facing parser error details.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiagnosticError {
+    /// Stable diagnostic error discriminator.
+    pub kind: DiagnosticErrorKind,
+
+    /// Claimed or observed frame length for oversized-frame errors.
+    pub claimed_len: Option<usize>,
+
+    /// Configured maximum frame length for oversized-frame errors.
+    pub max_len: Option<usize>,
+
+    /// Elapsed monotonic milliseconds for timeout errors.
+    pub elapsed_ms: Option<MonotonicMillis>,
+
+    /// Timeout threshold in monotonic milliseconds for timeout errors.
+    pub timeout_ms: Option<MonotonicMillis>,
+}
+
+impl DiagnosticError {
+    /// Creates stable host-facing error details from a parser error.
+    #[must_use]
+    pub const fn from_parser_error(error: ParserError) -> Self {
+        match error {
+            ParserError::OversizedFrame { claimed, max } => Self {
+                kind: DiagnosticErrorKind::OversizedFrame,
+                claimed_len: Some(claimed),
+                max_len: Some(max),
+                elapsed_ms: None,
+                timeout_ms: None,
+            },
+            ParserError::BadChecksum => Self::without_details(DiagnosticErrorKind::BadChecksum),
+            ParserError::MalformedFrame => {
+                Self::without_details(DiagnosticErrorKind::MalformedFrame)
+            }
+            ParserError::Timeout {
+                elapsed_ms,
+                timeout_ms,
+            } => Self {
+                kind: DiagnosticErrorKind::Timeout,
+                claimed_len: None,
+                max_len: None,
+                elapsed_ms: Some(elapsed_ms),
+                timeout_ms: Some(timeout_ms),
+            },
+            ParserError::UnmatchedReply => {
+                Self::without_details(DiagnosticErrorKind::UnmatchedReply)
+            }
+        }
+    }
+
+    const fn without_details(kind: DiagnosticErrorKind) -> Self {
+        Self {
+            kind,
+            claimed_len: None,
+            max_len: None,
+            elapsed_ms: None,
+            timeout_ms: None,
+        }
+    }
+}
+
 /// Transport-independent key used to correlate a scheduled request.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RequestKey {
@@ -1487,6 +1624,90 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_snapshot_preserves_counter_fields() {
+        let diagnostics = crate::ParserDiagnostics {
+            dropped_bytes: 1,
+            resyncs: 2,
+            bad_checksums: 3,
+            timeouts: 4,
+            oversized_frames: 5,
+            malformed_frames: 6,
+            unmatched_replies: 7,
+        };
+
+        assert_eq!(
+            crate::DiagnosticSnapshot::from_parser_diagnostics(diagnostics),
+            crate::DiagnosticSnapshot {
+                dropped_bytes: 1,
+                resyncs: 2,
+                bad_checksums: 3,
+                timeouts: 4,
+                oversized_frames: 5,
+                malformed_frames: 6,
+                unmatched_replies: 7,
+            }
+        );
+    }
+
+    #[test]
+    fn diagnostic_error_preserves_oversized_frame_details() {
+        let error = crate::DiagnosticError::from_parser_error(crate::ParserError::OversizedFrame {
+            claimed: 4_097,
+            max: 4_096,
+        });
+
+        assert_eq!(
+            error,
+            crate::DiagnosticError {
+                kind: crate::DiagnosticErrorKind::OversizedFrame,
+                claimed_len: Some(4_097),
+                max_len: Some(4_096),
+                elapsed_ms: None,
+                timeout_ms: None,
+            }
+        );
+    }
+
+    #[test]
+    fn diagnostic_error_preserves_timeout_details() {
+        let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
+            elapsed_ms: 1_500,
+            timeout_ms: 1_000,
+        });
+
+        assert_eq!(
+            error,
+            crate::DiagnosticError {
+                kind: crate::DiagnosticErrorKind::Timeout,
+                claimed_len: None,
+                max_len: None,
+                elapsed_ms: Some(1_500),
+                timeout_ms: Some(1_000),
+            }
+        );
+    }
+
+    #[test]
+    fn diagnostic_snapshot_maps_from_device_event() {
+        let diagnostics = crate::ParserDiagnostics {
+            bad_checksums: 2,
+            ..crate::ParserDiagnostics::default()
+        };
+
+        assert_eq!(
+            crate::DiagnosticSnapshot::from_device_event(DeviceEvent::Diagnostics(diagnostics)),
+            Some(crate::DiagnosticSnapshot {
+                bad_checksums: 2,
+                ..crate::DiagnosticSnapshot::default()
+            })
+        );
+        assert_eq!(
+            crate::DiagnosticSnapshot::from_device_event(DeviceEvent::LinkDown),
+            None
+        );
+    }
+
+    #[test]
     fn request_tracker_enforces_write_pacing() {
         let policy = crate::RequestPolicy {
             min_interval_ms: 100,
@@ -1683,5 +1904,20 @@ mod tests {
         host.tick(3);
 
         assert_eq!(host.diagnostics().timeouts, 5);
+    }
+
+    #[test]
+    fn diagnostic_snapshot_maps_from_host_session_diagnostics() {
+        let mut host = crate::HostSession::new(StateSession);
+
+        host.tick(2);
+
+        assert_eq!(
+            crate::DiagnosticSnapshot::from_parser_diagnostics(host.diagnostics()),
+            crate::DiagnosticSnapshot {
+                timeouts: 2,
+                ..crate::DiagnosticSnapshot::default()
+            }
+        );
     }
 }
