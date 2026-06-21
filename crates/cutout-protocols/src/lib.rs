@@ -21,18 +21,25 @@ use cutout_core::{
 };
 use thiserror::Error;
 
-/// Placeholder write channel for NOSFET/Veteran-family sessions.
-pub const AERO_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([0xA1; 16]);
-
-/// Placeholder write channel for Begode-family sessions.
-pub const FALCON_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([0xB1; 16]);
-
 const FFE0_SERVICE: GattChannel = GattChannel::from_bytes([
     0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
 ]);
 const FFE1_CHARACTERISTIC: GattChannel = GattChannel::from_bytes([
     0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
 ]);
+
+/// Capture-backed FFE0 service UUID for NOSFET/Veteran-family sessions.
+pub const AERO_SERVICE_CHANNEL: GattChannel = FFE0_SERVICE;
+
+/// Capture-backed FFE1 write characteristic UUID for NOSFET/Veteran-family sessions.
+pub const AERO_WRITE_CHANNEL: GattChannel = FFE1_CHARACTERISTIC;
+
+/// Capture-backed FFE1 notify characteristic UUID for NOSFET/Veteran-family sessions.
+pub const AERO_NOTIFY_CHANNEL: GattChannel = FFE1_CHARACTERISTIC;
+
+/// Placeholder write channel for Begode-family sessions.
+pub const FALCON_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([0xB1; 16]);
+
 const AERO_GATT_FINGERPRINTS: [GattFingerprint; 1] = [GattFingerprint {
     service: FFE0_SERVICE,
     characteristic: FFE1_CHARACTERISTIC,
@@ -1011,6 +1018,9 @@ impl ProtocolSession for AeroReadOnlySession {
                 bytes,
                 monotonic_ms,
             } => {
+                if !self.connected || channel != AERO_NOTIFY_CHANNEL {
+                    return;
+                }
                 output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
                     channel,
                     monotonic_ms,
@@ -1193,6 +1203,7 @@ mod tests {
         Capabilities, CommandKind, DeviceEvent, LinkInfo, Measured, ProtocolSession, SessionInput,
         SessionOutput, TelemetryDelta, TransportAction, WriteMode,
     };
+    use proptest::prelude::*;
 
     #[test]
     fn exposes_the_expected_name() {
@@ -1404,7 +1415,7 @@ mod tests {
             WriteMode::WithResponse,
             b"\xdc\x5a\x5c",
             crate::FixtureChannels {
-                service: Some(crate::AERO_WRITE_CHANNEL),
+                service: Some(crate::AERO_SERVICE_CHANNEL),
                 characteristic: Some(crate::AERO_WRITE_CHANNEL),
             },
             crate::FixtureProvenance::BluetoothCapture,
@@ -1422,6 +1433,42 @@ mod tests {
         assert_eq!(
             fixture.hardware_verification,
             crate::HardwareVerification::VerifiedOnBluetooth
+        );
+    }
+
+    #[test]
+    fn aero_gatt_constants_preserve_live_nf2557_uuid_bytes() {
+        assert_eq!(
+            crate::AERO_SERVICE_CHANNEL.as_bytes(),
+            [
+                0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+                0x34, 0xfb,
+            ]
+        );
+        assert_eq!(
+            crate::AERO_WRITE_CHANNEL.as_bytes(),
+            [
+                0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+                0x34, 0xfb,
+            ]
+        );
+        assert_eq!(crate::AERO_NOTIFY_CHANNEL, crate::AERO_WRITE_CHANNEL);
+    }
+
+    #[test]
+    fn aero_registry_uses_session_gatt_constants() {
+        let entry = crate::nosfet_aero_registry_entry();
+        let fingerprint = entry.gatt.first().expect("Aero registry has GATT evidence");
+
+        assert_eq!(fingerprint.service, crate::AERO_SERVICE_CHANNEL);
+        assert_eq!(fingerprint.characteristic, crate::AERO_NOTIFY_CHANNEL);
+        assert!(fingerprint.roles.supports_read());
+        assert!(fingerprint.roles.supports_write());
+        assert!(fingerprint.roles.supports_write_without_response());
+        assert!(fingerprint.roles.supports_notify());
+        assert_eq!(
+            fingerprint.verification,
+            cutout_core::VerificationStatus::HardwareVerified
         );
     }
 
@@ -1549,13 +1596,16 @@ mod tests {
     }
 
     fn arbitrary_fixture_chunks() -> Vec<Vec<u8>> {
+        fixture_chunks_with_pattern([1_usize, 7, 13, 2, 31, 5])
+    }
+
+    fn fixture_chunks_with_pattern<const N: usize>(sizes: [usize; N]) -> Vec<Vec<u8>> {
         let bytes: Vec<_> = notification_fixture_chunks()
             .into_iter()
             .flatten()
             .collect();
         let mut chunks = Vec::new();
         let mut offset = 0;
-        let sizes = [1_usize, 7, 13, 2, 31, 5];
         let mut size_index = 0;
 
         while offset < bytes.len() {
@@ -1569,14 +1619,54 @@ mod tests {
         chunks
     }
 
+    fn session_events_from_notification(
+        channel: cutout_core::GattChannel,
+        bytes: &[u8],
+        connected: bool,
+    ) -> Vec<SessionOutput> {
+        let mut session = crate::AeroReadOnlySession::default();
+        let mut output = Vec::new();
+
+        if connected {
+            session.handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: 1,
+                    max_write_len: Some(185),
+                }),
+                &mut output,
+            );
+            output.clear();
+        }
+
+        session.handle(
+            SessionInput::Notification {
+                channel,
+                bytes,
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        output
+    }
+
     fn telemetry_from_chunks(chunks: impl IntoIterator<Item = Vec<u8>>) -> Vec<TelemetryDelta> {
         let mut session = crate::AeroReadOnlySession::default();
         let mut output = Vec::new();
 
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        output.clear();
+
         for chunk in chunks {
             session.handle(
                 SessionInput::Notification {
-                    channel: crate::AERO_WRITE_CHANNEL,
+                    channel: crate::AERO_NOTIFY_CHANNEL,
                     bytes: chunk.as_slice(),
                     monotonic_ms: 42,
                 },
@@ -1876,10 +1966,19 @@ mod tests {
         let mut session = crate::AeroReadOnlySession::default();
         let mut output = Vec::new();
 
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        output.clear();
+
         for chunk in notification_fixture_chunks() {
             session.handle(
                 SessionInput::Notification {
-                    channel: crate::AERO_WRITE_CHANNEL,
+                    channel: crate::AERO_NOTIFY_CHANNEL,
                     bytes: chunk.as_slice(),
                     monotonic_ms: 42,
                 },
@@ -1927,6 +2026,160 @@ mod tests {
     }
 
     #[test]
+    fn aero_session_replay_chunking_is_stable_across_multiple_patterns() {
+        let recorded = telemetry_from_chunks(notification_fixture_chunks());
+
+        for chunks in [
+            fixture_chunks_with_pattern([2, 3, 5, 8, 13]),
+            fixture_chunks_with_pattern([20]),
+            fixture_chunks_with_pattern([64, 1, 1, 7]),
+            fixture_chunks_with_pattern([255, 17]),
+        ] {
+            assert_eq!(telemetry_from_chunks(chunks), recorded);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn aero_session_replay_chunking_is_property_stable(chunk_sizes in proptest::collection::vec(1_usize..128, 1..16)) {
+            let recorded = telemetry_from_chunks(notification_fixture_chunks());
+            let bytes: Vec<_> = notification_fixture_chunks().into_iter().flatten().collect();
+            let mut chunks = Vec::new();
+            let mut offset = 0;
+            let mut index = 0;
+
+            while offset < bytes.len() {
+                let size = chunk_sizes[index % chunk_sizes.len()];
+                let end = offset.saturating_add(size).min(bytes.len());
+                chunks.push(bytes[offset..end].to_vec());
+                offset = end;
+                index += 1;
+            }
+
+            prop_assert_eq!(telemetry_from_chunks(chunks), recorded);
+        }
+    }
+
+    #[test]
+    fn aero_session_ignores_notifications_before_link_up() {
+        let bytes: Vec<_> = notification_fixture_chunks()
+            .into_iter()
+            .flatten()
+            .collect();
+        let output = session_events_from_notification(crate::AERO_NOTIFY_CHANNEL, &bytes, false);
+
+        assert!(telemetry_events(&output).is_empty());
+        assert!(diagnostic_events(&output).is_empty());
+        assert!(notification_events(&output).is_empty());
+    }
+
+    #[test]
+    fn aero_session_ignores_notifications_on_non_aero_channel() {
+        let bytes: Vec<_> = notification_fixture_chunks()
+            .into_iter()
+            .flatten()
+            .collect();
+        let output = session_events_from_notification(
+            cutout_core::GattChannel::from_bytes([0x42; 16]),
+            &bytes,
+            true,
+        );
+
+        assert!(telemetry_events(&output).is_empty());
+        assert!(diagnostic_events(&output).is_empty());
+        assert!(notification_events(&output).is_empty());
+    }
+
+    #[test]
+    fn aero_session_records_notifications_on_capture_backed_notify_channel() {
+        let first_chunk = notification_fixture_chunks()
+            .into_iter()
+            .next()
+            .expect("fixture has at least one chunk");
+        let output =
+            session_events_from_notification(crate::AERO_NOTIFY_CHANNEL, &first_chunk, true);
+
+        assert_eq!(
+            notification_events(&output),
+            vec![(crate::AERO_NOTIFY_CHANNEL, 42, first_chunk.len())]
+        );
+    }
+
+    #[test]
+    fn aero_session_link_down_discards_partial_frame_state() {
+        let frame = long_veteran_frame();
+        let (first, rest) = frame.split_at(12);
+        let mut session = crate::AeroReadOnlySession::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: crate::AERO_NOTIFY_CHANNEL,
+                bytes: first,
+                monotonic_ms: 2,
+            },
+            &mut output,
+        );
+        session.handle(SessionInput::LinkDown, &mut output);
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 3,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        output.clear();
+        session.handle(
+            SessionInput::Notification {
+                channel: crate::AERO_NOTIFY_CHANNEL,
+                bytes: rest,
+                monotonic_ms: 4,
+            },
+            &mut output,
+        );
+
+        assert!(telemetry_events(&output).is_empty());
+        assert!(diagnostic_events(&output).is_empty());
+    }
+
+    #[test]
+    fn aero_session_unsupported_commands_do_not_emit_transport_writes() {
+        let mut session = crate::AeroReadOnlySession::default();
+        let mut output = Vec::new();
+
+        for command in [
+            cutout_core::DeviceCommand::RequestSettings,
+            cutout_core::DeviceCommand::SetLights(cutout_core::LightState::On),
+            cutout_core::DeviceCommand::SoundHorn,
+            cutout_core::DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 },
+        ] {
+            session.handle(SessionInput::Command(command), &mut output);
+        }
+
+        assert!(transport_writes(&output).is_empty());
+    }
+
+    #[test]
+    fn veteran_reassembler_reports_crc_mismatch_at_max_declared_length() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frame = vec![0xdc, 0x5a, 0x5c, 0xff];
+        frame.extend(std::iter::repeat_n(0x80, 260));
+
+        let error = feed_chunk_result(&mut reassembler, &frame)
+            .expect_err("max-length frame without valid CRC should be rejected");
+
+        assert_eq!(error, crate::VeteranReassemblyError::CrcMismatch);
+    }
+
+    #[test]
     fn aero_session_reports_bad_checksum_diagnostics() {
         let mut session = crate::AeroReadOnlySession::default();
         let mut output = Vec::new();
@@ -1935,8 +2188,17 @@ mod tests {
         *last ^= 0xff;
 
         session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        output.clear();
+
+        session.handle(
             SessionInput::Notification {
-                channel: crate::AERO_WRITE_CHANNEL,
+                channel: crate::AERO_NOTIFY_CHANNEL,
                 bytes: frame.as_slice(),
                 monotonic_ms: 42,
             },
@@ -2048,6 +2310,46 @@ mod tests {
                 };
                 assert_eq!(*mode, WriteMode::WithResponse);
                 Some((*channel, bytes.as_slice().to_vec()))
+            })
+            .collect()
+    }
+
+    fn telemetry_events(output: &[SessionOutput]) -> Vec<TelemetryDelta> {
+        output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::Telemetry(delta)) => Some(*delta),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn diagnostic_events(output: &[SessionOutput]) -> Vec<cutout_core::ParserDiagnostics> {
+        output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => Some(*diagnostics),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn notification_events(
+        output: &[SessionOutput],
+    ) -> Vec<(
+        cutout_core::GattChannel,
+        cutout_core::MonotonicMillis,
+        usize,
+    )> {
+        output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::NotificationReceived {
+                    channel,
+                    monotonic_ms,
+                    len,
+                }) => Some((*channel, *monotonic_ms, *len)),
+                _ => None,
             })
             .collect()
     }
