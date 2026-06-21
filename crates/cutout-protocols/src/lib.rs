@@ -78,6 +78,100 @@ const FALCON_POLL_PLAN: PollingPlan<4> = PollingPlan::new([
     ),
 ]);
 
+/// NOSFET/Veteran-family read-only probe identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AeroProbe {
+    /// Request identity/model information.
+    Identity,
+
+    /// Request firmware or protocol version information.
+    FirmwareInfo,
+
+    /// Request live telemetry.
+    Telemetry,
+
+    /// Request battery or BMS information.
+    BatteryInfo,
+
+    /// Request diagnostic information.
+    Diagnostics,
+}
+
+impl AeroProbe {
+    /// Maps a generic command kind to an Aero/Veteran probe.
+    #[must_use]
+    pub const fn from_command_kind(kind: CommandKind) -> Option<Self> {
+        match kind {
+            CommandKind::RequestIdentity => Some(Self::Identity),
+            CommandKind::RequestFirmwareInfo => Some(Self::FirmwareInfo),
+            CommandKind::RequestTelemetry => Some(Self::Telemetry),
+            CommandKind::RequestBatteryInfo => Some(Self::BatteryInfo),
+            CommandKind::RequestDiagnostics => Some(Self::Diagnostics),
+            CommandKind::RequestSettings
+            | CommandKind::SetLights
+            | CommandKind::SoundHorn
+            | CommandKind::SetRawMotorCurrent => None,
+        }
+    }
+
+    /// Returns the temporary placeholder label for this probe.
+    #[must_use]
+    pub const fn placeholder_label(self) -> &'static [u8] {
+        match self {
+            Self::Identity => b"aero:identity",
+            Self::FirmwareInfo => b"aero:firmware",
+            Self::Telemetry => b"aero:telemetry",
+            Self::BatteryInfo => b"aero:battery",
+            Self::Diagnostics => b"aero:diagnostics",
+        }
+    }
+}
+
+/// Begode-family read-only probe identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FalconProbe {
+    /// Request identity/model information.
+    Identity,
+
+    /// Request firmware or protocol version information.
+    FirmwareInfo,
+
+    /// Request live telemetry.
+    Telemetry,
+
+    /// Request battery or BMS information.
+    BatteryInfo,
+}
+
+impl FalconProbe {
+    /// Maps a generic command kind to a Begode/Falcon probe.
+    #[must_use]
+    pub const fn from_command_kind(kind: CommandKind) -> Option<Self> {
+        match kind {
+            CommandKind::RequestIdentity => Some(Self::Identity),
+            CommandKind::RequestFirmwareInfo => Some(Self::FirmwareInfo),
+            CommandKind::RequestTelemetry => Some(Self::Telemetry),
+            CommandKind::RequestBatteryInfo => Some(Self::BatteryInfo),
+            CommandKind::RequestDiagnostics
+            | CommandKind::RequestSettings
+            | CommandKind::SetLights
+            | CommandKind::SoundHorn
+            | CommandKind::SetRawMotorCurrent => None,
+        }
+    }
+
+    /// Returns the temporary placeholder label for this probe.
+    #[must_use]
+    pub const fn placeholder_label(self) -> &'static [u8] {
+        match self {
+            Self::Identity => b"falcon:identity",
+            Self::FirmwareInfo => b"falcon:firmware",
+            Self::Telemetry => b"falcon:telemetry",
+            Self::BatteryInfo => b"falcon:battery",
+        }
+    }
+}
+
 /// Initial read-only session shell for NOSFET Aero/Veteran-family devices.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AeroReadOnlySession {
@@ -116,7 +210,12 @@ impl ProtocolSession for AeroReadOnlySession {
                 output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
                 if self.connected {
                     enqueue_aero_plan(&mut self.queue);
-                    drain_queue(AERO_WRITE_CHANNEL, "aero", &mut self.queue, output);
+                    drain_queue(
+                        AERO_WRITE_CHANNEL,
+                        aero_placeholder_payload,
+                        &mut self.queue,
+                        output,
+                    );
                 }
             }
             SessionInput::Notification {
@@ -180,7 +279,12 @@ impl ProtocolSession for FalconReadOnlySession {
                 output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
                 if self.connected {
                     enqueue_falcon_plan(&mut self.queue);
-                    drain_queue(FALCON_WRITE_CHANNEL, "falcon", &mut self.queue, output);
+                    drain_queue(
+                        FALCON_WRITE_CHANNEL,
+                        falcon_placeholder_payload,
+                        &mut self.queue,
+                        output,
+                    );
                 }
             }
             SessionInput::Notification {
@@ -217,43 +321,25 @@ fn enqueue_falcon_plan(queue: &mut RequestQueue<4>) {
 
 fn drain_queue<const N: usize>(
     channel: GattChannel,
-    family: &'static str,
+    placeholder_payload: fn(CommandKind) -> &'static [u8],
     queue: &mut RequestQueue<N>,
     output: &mut Vec<SessionOutput>,
 ) {
     while let Some(request) = queue.pop_next() {
         output.push(SessionOutput::Transport(TransportAction::Write {
             channel,
-            bytes: placeholder_payload(family, request.key.command).to_vec(),
+            bytes: placeholder_payload(request.key.command).to_vec(),
             mode: WriteMode::WithResponse,
         }));
     }
 }
 
-fn placeholder_payload(family: &'static str, command: CommandKind) -> &'static [u8] {
-    match (family, command) {
-        ("aero", CommandKind::RequestIdentity) => b"aero:identity",
-        ("aero", CommandKind::RequestFirmwareInfo) => b"aero:firmware",
-        ("aero", CommandKind::RequestTelemetry) => b"aero:telemetry",
-        ("aero", CommandKind::RequestBatteryInfo) => b"aero:battery",
-        ("aero", CommandKind::RequestDiagnostics) => b"aero:diagnostics",
-        ("falcon", CommandKind::RequestIdentity) => b"falcon:identity",
-        ("falcon", CommandKind::RequestFirmwareInfo) => b"falcon:firmware",
-        ("falcon", CommandKind::RequestTelemetry) => b"falcon:telemetry",
-        ("falcon", CommandKind::RequestBatteryInfo) => b"falcon:battery",
-        (
-            _,
-            CommandKind::RequestIdentity
-            | CommandKind::RequestTelemetry
-            | CommandKind::RequestFirmwareInfo
-            | CommandKind::RequestBatteryInfo
-            | CommandKind::RequestDiagnostics
-            | CommandKind::RequestSettings
-            | CommandKind::SetLights
-            | CommandKind::SoundHorn
-            | CommandKind::SetRawMotorCurrent,
-        ) => b"",
-    }
+fn aero_placeholder_payload(command: CommandKind) -> &'static [u8] {
+    AeroProbe::from_command_kind(command).map_or(b"", AeroProbe::placeholder_label)
+}
+
+fn falcon_placeholder_payload(command: CommandKind) -> &'static [u8] {
+    FalconProbe::from_command_kind(command).map_or(b"", FalconProbe::placeholder_label)
 }
 
 /// Returns the crate name used by setup smoke tests.
@@ -303,6 +389,62 @@ mod tests {
                 CommandKind::RequestTelemetry,
                 CommandKind::RequestBatteryInfo,
             ])
+        );
+    }
+
+    #[test]
+    fn aero_probe_mapping_accepts_supported_read_only_commands() {
+        assert_eq!(
+            crate::AeroProbe::from_command_kind(CommandKind::RequestIdentity),
+            Some(crate::AeroProbe::Identity)
+        );
+        assert_eq!(
+            crate::AeroProbe::from_command_kind(CommandKind::RequestFirmwareInfo),
+            Some(crate::AeroProbe::FirmwareInfo)
+        );
+        assert_eq!(
+            crate::AeroProbe::from_command_kind(CommandKind::RequestTelemetry),
+            Some(crate::AeroProbe::Telemetry)
+        );
+        assert_eq!(
+            crate::AeroProbe::from_command_kind(CommandKind::RequestBatteryInfo),
+            Some(crate::AeroProbe::BatteryInfo)
+        );
+        assert_eq!(
+            crate::AeroProbe::from_command_kind(CommandKind::RequestDiagnostics),
+            Some(crate::AeroProbe::Diagnostics)
+        );
+    }
+
+    #[test]
+    fn falcon_probe_mapping_rejects_unsupported_read_only_commands() {
+        assert_eq!(
+            crate::FalconProbe::from_command_kind(CommandKind::RequestDiagnostics),
+            None
+        );
+        assert_eq!(
+            crate::FalconProbe::from_command_kind(CommandKind::RequestSettings),
+            None
+        );
+    }
+
+    #[test]
+    fn probe_placeholder_labels_are_stable() {
+        assert_eq!(
+            crate::AeroProbe::Identity.placeholder_label(),
+            b"aero:identity"
+        );
+        assert_eq!(
+            crate::AeroProbe::Diagnostics.placeholder_label(),
+            b"aero:diagnostics"
+        );
+        assert_eq!(
+            crate::FalconProbe::FirmwareInfo.placeholder_label(),
+            b"falcon:firmware"
+        );
+        assert_eq!(
+            crate::FalconProbe::BatteryInfo.placeholder_label(),
+            b"falcon:battery"
         );
     }
 
