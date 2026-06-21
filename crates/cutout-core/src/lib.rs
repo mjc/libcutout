@@ -389,6 +389,247 @@ fn saturating_increment(counter: &mut u64) {
     *counter = counter.saturating_add(1);
 }
 
+/// Transport-independent key used to correlate a scheduled request.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RequestKey {
+    /// Command kind represented by this request.
+    pub command: CommandKind,
+}
+
+impl RequestKey {
+    /// Creates a request key from a command kind.
+    #[must_use]
+    pub const fn new(command: CommandKind) -> Self {
+        Self { command }
+    }
+}
+
+/// Retry, timeout, and pacing policy for one scheduled request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RequestPolicy {
+    /// Deadline for one attempt in monotonic milliseconds.
+    pub timeout_ms: MonotonicMillis,
+
+    /// Maximum retries after the first attempt.
+    pub max_retries: u8,
+
+    /// Minimum interval between starts for the same key.
+    pub min_interval_ms: MonotonicMillis,
+}
+
+impl Default for RequestPolicy {
+    fn default() -> Self {
+        Self {
+            timeout_ms: 1_000,
+            max_retries: 0,
+            min_interval_ms: 0,
+        }
+    }
+}
+
+/// Active scheduled request state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScheduledRequest {
+    /// Request correlation key.
+    pub key: RequestKey,
+
+    /// Request scheduling policy.
+    pub policy: RequestPolicy,
+
+    /// Monotonic start time for the current attempt.
+    pub started_at_ms: MonotonicMillis,
+
+    /// Zero-based retry count for the current attempt.
+    pub retries: u8,
+}
+
+impl ScheduledRequest {
+    const fn attempts(self) -> u8 {
+        self.retries.saturating_add(1)
+    }
+}
+
+/// Reason a request could not be started.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RequestStartError {
+    /// Another ambiguous request is already awaiting a reply.
+    Busy {
+        /// Key for the active request.
+        key: RequestKey,
+    },
+
+    /// The request key is still inside its pacing interval.
+    Pacing {
+        /// Earliest monotonic time when the request can be started.
+        ready_at_ms: MonotonicMillis,
+    },
+
+    /// No active request can be retried.
+    NoActiveRequest,
+}
+
+/// Decision returned when advancing request time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RequestTick {
+    /// No request is currently active.
+    Idle,
+
+    /// The active request has not reached its deadline.
+    Waiting,
+
+    /// The active request reached its deadline and may be retried.
+    Retry {
+        /// Request key eligible for retry.
+        key: RequestKey,
+
+        /// One-based retry attempt number.
+        attempt: u8,
+    },
+
+    /// The active request reached its deadline and has no retries remaining.
+    TimedOut {
+        /// Request key that timed out.
+        key: RequestKey,
+
+        /// Total attempts including the initial attempt.
+        attempts: u8,
+    },
+}
+
+/// Result of correlating a reply with the active request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CorrelationResult {
+    /// Reply matched the active request and cleared the slot.
+    Matched {
+        /// Matched request key.
+        key: RequestKey,
+
+        /// Total attempts including the initial attempt.
+        attempts: u8,
+    },
+
+    /// Reply did not match the active request, or no request was active.
+    Unmatched {
+        /// Reply key that could not be matched.
+        key: RequestKey,
+    },
+}
+
+/// One-slot request tracker for ambiguous protocol replies.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RequestTracker {
+    in_flight: Option<ScheduledRequest>,
+    last_started: Option<(RequestKey, MonotonicMillis)>,
+}
+
+impl RequestTracker {
+    /// Returns the active in-flight request, if any.
+    #[must_use]
+    pub const fn in_flight(self) -> Option<ScheduledRequest> {
+        self.in_flight
+    }
+
+    /// Starts a request if no ambiguous request is active and pacing allows it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestStartError::Busy`] when an earlier request is still
+    /// active, or [`RequestStartError::Pacing`] when the key is inside its
+    /// minimum start interval.
+    pub fn start(
+        &mut self,
+        key: RequestKey,
+        policy: RequestPolicy,
+        now_ms: MonotonicMillis,
+    ) -> Result<(), RequestStartError> {
+        if let Some(active) = self.in_flight {
+            return Err(RequestStartError::Busy { key: active.key });
+        }
+
+        if let Some((last_key, started_at_ms)) = self.last_started {
+            let ready_at_ms = started_at_ms.saturating_add(policy.min_interval_ms);
+            if last_key == key && now_ms < ready_at_ms {
+                return Err(RequestStartError::Pacing { ready_at_ms });
+            }
+        }
+
+        self.in_flight = Some(ScheduledRequest {
+            key,
+            policy,
+            started_at_ms: now_ms,
+            retries: 0,
+        });
+        self.last_started = Some((key, now_ms));
+        Ok(())
+    }
+
+    /// Advances scheduler time and reports timeout or retry eligibility.
+    #[must_use]
+    pub fn on_tick(self, now_ms: MonotonicMillis) -> RequestTick {
+        let Some(active) = self.in_flight else {
+            return RequestTick::Idle;
+        };
+        let deadline_ms = active
+            .started_at_ms
+            .saturating_add(active.policy.timeout_ms);
+        if now_ms < deadline_ms {
+            RequestTick::Waiting
+        } else if active.retries < active.policy.max_retries {
+            RequestTick::Retry {
+                key: active.key,
+                attempt: active.retries.saturating_add(1),
+            }
+        } else {
+            RequestTick::TimedOut {
+                key: active.key,
+                attempts: active.attempts(),
+            }
+        }
+    }
+
+    /// Marks the active request retry as started at `now_ms`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestStartError::NoActiveRequest`] when no request is
+    /// active, or [`RequestStartError::Busy`] when no retries remain.
+    pub fn retry_started(&mut self, now_ms: MonotonicMillis) -> Result<(), RequestStartError> {
+        let Some(mut active) = self.in_flight else {
+            return Err(RequestStartError::NoActiveRequest);
+        };
+        if active.retries >= active.policy.max_retries {
+            return Err(RequestStartError::Busy { key: active.key });
+        }
+        active.retries = active.retries.saturating_add(1);
+        active.started_at_ms = now_ms;
+        self.in_flight = Some(active);
+        Ok(())
+    }
+
+    /// Correlates a reply key with the active request and updates diagnostics.
+    pub fn correlate_reply(
+        &mut self,
+        key: RequestKey,
+        diagnostics: &mut ParserDiagnostics,
+    ) -> CorrelationResult {
+        let Some(active) = self.in_flight else {
+            diagnostics.record_error(ParserError::UnmatchedReply);
+            return CorrelationResult::Unmatched { key };
+        };
+
+        if active.key == key {
+            self.in_flight = None;
+            CorrelationResult::Matched {
+                key,
+                attempts: active.attempts(),
+            }
+        } else {
+            diagnostics.record_error(ParserError::UnmatchedReply);
+            CorrelationResult::Unmatched { key }
+        }
+    }
+}
+
 /// Transport write behavior requested by a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WriteMode {
@@ -1115,6 +1356,100 @@ mod tests {
                 resyncs: 1,
                 ..crate::ParserDiagnostics::default()
             })
+        );
+    }
+
+    #[test]
+    fn request_tracker_enforces_write_pacing() {
+        let policy = crate::RequestPolicy {
+            min_interval_ms: 100,
+            ..crate::RequestPolicy::default()
+        };
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+
+        assert_eq!(tracker.start(key, policy, 1_000), Ok(()));
+        assert_eq!(
+            tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
+            crate::CorrelationResult::Matched { key, attempts: 1 }
+        );
+        assert_eq!(
+            tracker.start(key, policy, 1_050),
+            Err(crate::RequestStartError::Pacing { ready_at_ms: 1_100 })
+        );
+        assert_eq!(tracker.start(key, policy, 1_100), Ok(()));
+    }
+
+    #[test]
+    fn request_tracker_reports_retry_after_timeout() {
+        let policy = crate::RequestPolicy {
+            timeout_ms: 250,
+            max_retries: 2,
+            ..crate::RequestPolicy::default()
+        };
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
+
+        tracker.start(key, policy, 10).unwrap();
+
+        assert_eq!(tracker.on_tick(259), crate::RequestTick::Waiting);
+        assert_eq!(
+            tracker.on_tick(260),
+            crate::RequestTick::Retry { key, attempt: 1 }
+        );
+        assert_eq!(tracker.retry_started(260), Ok(()));
+        assert_eq!(
+            tracker.on_tick(510),
+            crate::RequestTick::Retry { key, attempt: 2 }
+        );
+        assert_eq!(tracker.retry_started(510), Ok(()));
+        assert_eq!(
+            tracker.on_tick(760),
+            crate::RequestTick::TimedOut { key, attempts: 3 }
+        );
+    }
+
+    #[test]
+    fn request_tracker_correlates_reply_and_clears_slot() {
+        let policy = crate::RequestPolicy::default();
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+
+        tracker.start(key, policy, 20).unwrap();
+
+        assert_eq!(
+            tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
+            crate::CorrelationResult::Matched { key, attempts: 1 }
+        );
+        assert_eq!(tracker.in_flight(), None);
+        assert_eq!(tracker.start(key, policy, 21), Ok(()));
+    }
+
+    #[test]
+    fn request_tracker_counts_unmatched_replies() {
+        let mut diagnostics = crate::ParserDiagnostics::default();
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+
+        assert_eq!(
+            tracker.correlate_reply(key, &mut diagnostics),
+            crate::CorrelationResult::Unmatched { key }
+        );
+        assert_eq!(diagnostics.unmatched_replies, 1);
+    }
+
+    #[test]
+    fn request_tracker_serializes_ambiguous_overlaps() {
+        let policy = crate::RequestPolicy::default();
+        let mut tracker = crate::RequestTracker::default();
+        let telemetry = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+        let identity = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
+
+        tracker.start(telemetry, policy, 20).unwrap();
+
+        assert_eq!(
+            tracker.start(identity, policy, 21),
+            Err(crate::RequestStartError::Busy { key: telemetry })
         );
     }
 }
