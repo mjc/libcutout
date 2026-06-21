@@ -1157,6 +1157,40 @@ mod tests {
         frame
     }
 
+    fn notification_fixture_chunks() -> Vec<Vec<u8>> {
+        include_str!("../fixtures/nosfet-aero/nf2557-2026-06-21-notifications.hex")
+            .lines()
+            .filter_map(hex_fixture_line)
+            .collect()
+    }
+
+    fn hex_fixture_line(line: &str) -> Option<Vec<u8>> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        Some(hex_to_bytes(trimmed))
+    }
+
+    fn hex_to_bytes(hex: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut nibbles = hex.bytes();
+        while let Some(high) = nibbles.next() {
+            let low = nibbles.next().expect("fixture hex has even length");
+            bytes.push((hex_nibble(high) << 4) | hex_nibble(low));
+        }
+        bytes
+    }
+
+    fn hex_nibble(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => panic!("fixture contains non-hex byte"),
+        }
+    }
+
     #[test]
     fn veteran_reassembler_reassembles_fragmented_short_frame() {
         let mut reassembler = crate::VeteranFrameReassembler::default();
@@ -1223,6 +1257,21 @@ mod tests {
 
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].as_slice(), frame.as_slice());
+    }
+
+    #[test]
+    fn veteran_reassembler_consumes_live_aero_fixture_chunks() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        for chunk in notification_fixture_chunks() {
+            frames.extend(feed_chunk(&mut reassembler, &chunk));
+        }
+
+        assert_eq!(frames.len(), 4);
+        assert_eq!(frames[0].as_slice().get(..4), Some(&[0xdc, 0x5a, 0x5c, 0x53][..]));
+        assert_eq!(frames[1].as_slice().get(..4), Some(&[0xdc, 0x5a, 0x5c, 0x5f][..]));
+        assert_eq!(frames[2].as_slice().get(..4), Some(&[0xdc, 0x5a, 0x5c, 0x49][..]));
     }
 
     #[test]
