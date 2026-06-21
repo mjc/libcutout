@@ -12,9 +12,9 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, Measured, MonotonicMillis,
-    PollRequest, PollingPlan, ProtocolSession, RequestPolicy, RequestQueue, RequestUrgency,
-    SessionInput, SessionOutput, TelemetryDelta, TransportAction, WriteMode, WritePayload,
-    WritePayloadTooLong,
+    ParserDiagnostics, ParserError, PollRequest, PollingPlan, ProtocolSession, RequestPolicy,
+    RequestQueue, RequestUrgency, SessionInput, SessionOutput, TelemetryDelta, TransportAction,
+    WriteMode, WritePayload, WritePayloadTooLong,
 };
 use thiserror::Error;
 
@@ -842,6 +842,7 @@ pub enum RequestFixtureError {
 pub struct AeroReadOnlySession {
     connected: bool,
     queue: RequestQueue<5>,
+    reassembler: VeteranFrameReassembler,
 }
 
 impl AeroReadOnlySession {
@@ -864,6 +865,7 @@ impl ProtocolSession for AeroReadOnlySession {
             SessionInput::LinkUp(info) => {
                 self.connected = true;
                 self.queue = RequestQueue::new();
+                self.reassembler = VeteranFrameReassembler::default();
                 output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: AERO_WRITE_CHANNEL,
@@ -872,6 +874,7 @@ impl ProtocolSession for AeroReadOnlySession {
             SessionInput::LinkDown => {
                 self.connected = false;
                 self.queue = RequestQueue::new();
+                self.reassembler = VeteranFrameReassembler::default();
                 output.push(SessionOutput::Event(DeviceEvent::LinkDown));
             }
             SessionInput::Tick { monotonic_ms } => {
@@ -885,11 +888,14 @@ impl ProtocolSession for AeroReadOnlySession {
                 channel,
                 bytes,
                 monotonic_ms,
-            } => output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
-                channel,
-                monotonic_ms,
-                len: bytes.len(),
-            })),
+            } => {
+                output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
+                    channel,
+                    monotonic_ms,
+                    len: bytes.len(),
+                }));
+                handle_aero_notification(&mut self.reassembler, bytes, monotonic_ms, output);
+            }
             SessionInput::Command(
                 DeviceCommand::RequestIdentity
                 | DeviceCommand::RequestTelemetry
@@ -903,6 +909,53 @@ impl ProtocolSession for AeroReadOnlySession {
             ) => {}
         }
     }
+}
+
+fn handle_aero_notification(
+    reassembler: &mut VeteranFrameReassembler,
+    bytes: &[u8],
+    monotonic_ms: MonotonicMillis,
+    output: &mut Vec<SessionOutput>,
+) {
+    for byte in bytes {
+        match reassembler.feed_byte(*byte) {
+            Ok(Some(frame)) => push_aero_frame(&frame, monotonic_ms, output),
+            Ok(None) => {}
+            Err(VeteranReassemblyError::CrcMismatch) => {
+                output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                    diagnostics_for(ParserError::BadChecksum),
+                )));
+            }
+            Err(VeteranReassemblyError::InvalidFrame) => {
+                output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                    diagnostics_for(ParserError::MalformedFrame),
+                )));
+            }
+        }
+    }
+}
+
+fn push_aero_frame(
+    frame: &VeteranFrame,
+    monotonic_ms: MonotonicMillis,
+    output: &mut Vec<SessionOutput>,
+) {
+    match VeteranTelemetry::decode(frame) {
+        Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+            telemetry.to_delta(monotonic_ms),
+        ))),
+        Err(VeteranDecodeError::FrameTooShort) => {
+            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                diagnostics_for(ParserError::MalformedFrame),
+            )));
+        }
+    }
+}
+
+fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
+    let mut diagnostics = ParserDiagnostics::default();
+    diagnostics.record_error(error);
+    diagnostics
 }
 
 /// Initial read-only session shell for Begode Falcon devices.
@@ -1031,7 +1084,7 @@ pub const fn crate_name() -> &'static str {
 mod tests {
     use super::crate_name;
     use cutout_core::{
-        Capabilities, CommandKind, LinkInfo, Measured, ProtocolSession, SessionInput,
+        Capabilities, CommandKind, DeviceEvent, LinkInfo, Measured, ProtocolSession, SessionInput,
         SessionOutput, TransportAction, WriteMode,
     };
 
@@ -1522,6 +1575,74 @@ mod tests {
             Some(Measured::reported(33_270))
         );
         assert_eq!(delta.distance_mm, Some(Measured::reported(1_551_169_000)));
+    }
+
+    #[test]
+    fn aero_session_emits_telemetry_from_live_fixture_notifications() {
+        let mut session = crate::AeroReadOnlySession::default();
+        let mut output = Vec::new();
+
+        for chunk in notification_fixture_chunks() {
+            session.handle(
+                SessionInput::Notification {
+                    channel: crate::AERO_WRITE_CHANNEL,
+                    bytes: chunk.as_slice(),
+                    monotonic_ms: 42,
+                },
+                &mut output,
+            );
+        }
+
+        let telemetry: Vec<_> = output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::Telemetry(delta)) => Some(*delta),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(telemetry.len(), 4);
+        assert_eq!(telemetry[0].at_ms, 42);
+        assert_eq!(telemetry[0].voltage_mv, Some(Measured::reported(108_760)));
+        assert_eq!(telemetry[0].speed_mm_s, Some(Measured::reported(0)));
+        assert_eq!(telemetry[0].motor_current_ma, Some(Measured::reported(0)));
+        assert_eq!(
+            telemetry[0].controller_temperature_mc,
+            Some(Measured::reported(33_270))
+        );
+        assert_eq!(
+            telemetry[0].distance_mm,
+            Some(Measured::reported(1_551_169_000))
+        );
+    }
+
+    #[test]
+    fn aero_session_reports_bad_checksum_diagnostics() {
+        let mut session = crate::AeroReadOnlySession::default();
+        let mut output = Vec::new();
+        let mut frame = long_veteran_frame();
+        let last = frame.last_mut().expect("fixture has a CRC trailer");
+        *last ^= 0xff;
+
+        session.handle(
+            SessionInput::Notification {
+                channel: crate::AERO_WRITE_CHANNEL,
+                bytes: frame.as_slice(),
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        let diagnostics: Vec<_> = output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => Some(*diagnostics),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].bad_checksums, 1);
     }
 
     #[test]
