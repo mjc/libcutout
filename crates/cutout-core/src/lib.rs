@@ -48,6 +48,18 @@ pub enum DeviceCommand {
     /// Request a telemetry update.
     RequestTelemetry,
 
+    /// Request firmware or protocol version information.
+    RequestFirmwareInfo,
+
+    /// Request battery or BMS information.
+    RequestBatteryInfo,
+
+    /// Request device diagnostics.
+    RequestDiagnostics,
+
+    /// Request current settings without changing device state.
+    RequestSettings,
+
     /// Set the device lights.
     SetLights(LightState),
 
@@ -68,6 +80,10 @@ impl DeviceCommand {
         match self {
             Self::RequestIdentity => CommandKind::RequestIdentity,
             Self::RequestTelemetry => CommandKind::RequestTelemetry,
+            Self::RequestFirmwareInfo => CommandKind::RequestFirmwareInfo,
+            Self::RequestBatteryInfo => CommandKind::RequestBatteryInfo,
+            Self::RequestDiagnostics => CommandKind::RequestDiagnostics,
+            Self::RequestSettings => CommandKind::RequestSettings,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SoundHorn => CommandKind::SoundHorn,
             Self::SetRawMotorCurrent { .. } => CommandKind::SetRawMotorCurrent,
@@ -109,6 +125,18 @@ pub enum CommandKind {
     /// Request a telemetry update.
     RequestTelemetry,
 
+    /// Request firmware or protocol version information.
+    RequestFirmwareInfo,
+
+    /// Request battery or BMS information.
+    RequestBatteryInfo,
+
+    /// Request device diagnostics.
+    RequestDiagnostics,
+
+    /// Request current settings without changing device state.
+    RequestSettings,
+
     /// Set the device lights.
     SetLights,
 
@@ -124,7 +152,12 @@ impl CommandKind {
     #[must_use]
     pub const fn safety_class(self) -> SafetyClass {
         match self {
-            Self::RequestIdentity | Self::RequestTelemetry => SafetyClass::ReadOnly,
+            Self::RequestIdentity
+            | Self::RequestTelemetry
+            | Self::RequestFirmwareInfo
+            | Self::RequestBatteryInfo
+            | Self::RequestDiagnostics
+            | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
@@ -1732,7 +1765,11 @@ mod tests {
                     }));
                 }
                 SessionInput::Command(
-                    DeviceCommand::SetLights(_)
+                    DeviceCommand::RequestFirmwareInfo
+                    | DeviceCommand::RequestBatteryInfo
+                    | DeviceCommand::RequestDiagnostics
+                    | DeviceCommand::RequestSettings
+                    | DeviceCommand::SetLights(_)
                     | DeviceCommand::SoundHorn
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
@@ -1921,6 +1958,93 @@ mod tests {
         assert_eq!(metadata.safety_class, command.safety_class());
         assert_eq!(metadata.kind, crate::CommandKind::RequestTelemetry);
         assert_eq!(metadata.safety_class, crate::SafetyClass::ReadOnly);
+    }
+
+    #[test]
+    fn read_only_probe_commands_have_distinct_metadata() {
+        let probes = [
+            (
+                DeviceCommand::RequestFirmwareInfo,
+                crate::CommandKind::RequestFirmwareInfo,
+            ),
+            (
+                DeviceCommand::RequestBatteryInfo,
+                crate::CommandKind::RequestBatteryInfo,
+            ),
+            (
+                DeviceCommand::RequestDiagnostics,
+                crate::CommandKind::RequestDiagnostics,
+            ),
+            (
+                DeviceCommand::RequestSettings,
+                crate::CommandKind::RequestSettings,
+            ),
+        ];
+
+        for (command, kind) in probes {
+            assert_eq!(
+                command.metadata(),
+                crate::CommandMetadata {
+                    kind,
+                    safety_class: crate::SafetyClass::ReadOnly,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn capabilities_accept_new_read_only_probe_commands() {
+        let capabilities = crate::Capabilities::from_supported_commands([
+            crate::CommandKind::RequestFirmwareInfo,
+            crate::CommandKind::RequestBatteryInfo,
+            crate::CommandKind::RequestDiagnostics,
+            crate::CommandKind::RequestSettings,
+        ]);
+
+        assert_eq!(
+            capabilities.check_command(DeviceCommand::RequestFirmwareInfo),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::RequestFirmwareInfo,
+                safety_class: crate::SafetyClass::ReadOnly,
+            })
+        );
+        assert_eq!(
+            capabilities.check_command(DeviceCommand::RequestBatteryInfo),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::RequestBatteryInfo,
+                safety_class: crate::SafetyClass::ReadOnly,
+            })
+        );
+        assert_eq!(
+            capabilities.check_command(DeviceCommand::RequestDiagnostics),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::RequestDiagnostics,
+                safety_class: crate::SafetyClass::ReadOnly,
+            })
+        );
+        assert_eq!(
+            capabilities.check_command(DeviceCommand::RequestSettings),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::RequestSettings,
+                safety_class: crate::SafetyClass::ReadOnly,
+            })
+        );
+    }
+
+    #[test]
+    fn read_only_probe_request_keys_are_distinct() {
+        let keys = [
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestKey::new(crate::CommandKind::RequestFirmwareInfo),
+            crate::RequestKey::new(crate::CommandKind::RequestBatteryInfo),
+            crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestKey::new(crate::CommandKind::RequestSettings),
+        ];
+
+        for (index, key) in keys.into_iter().enumerate() {
+            assert!(!keys[index + 1..].contains(&key));
+        }
     }
 
     #[test]
@@ -2567,11 +2691,14 @@ mod tests {
 
     proptest! {
         #[test]
-        fn poll_request_accepts_read_only_commands(value in 0u8..2) {
-            let kind = if value == 0 {
-                crate::CommandKind::RequestIdentity
-            } else {
-                crate::CommandKind::RequestTelemetry
+        fn poll_request_accepts_read_only_commands(value in 0u8..6) {
+            let kind = match value {
+                0 => crate::CommandKind::RequestIdentity,
+                1 => crate::CommandKind::RequestTelemetry,
+                2 => crate::CommandKind::RequestFirmwareInfo,
+                3 => crate::CommandKind::RequestBatteryInfo,
+                4 => crate::CommandKind::RequestDiagnostics,
+                _ => crate::CommandKind::RequestSettings,
             };
             let request = crate::PollRequest::new(
                 kind,
