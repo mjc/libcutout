@@ -1,0 +1,20 @@
+[package]
+name = "cutout-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "cutout"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+cutout-btle = { path = "../cutout-btle" }
+cutout-core = { path = "../cutout-core", features = ["serde"] }
+cutout-protocols = { path = "../cutout-protocols" }

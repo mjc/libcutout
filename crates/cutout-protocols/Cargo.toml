@@ -1,0 +1,20 @@
+[package]
+name = "cutout-protocols"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+crc32fast.workspace = true
+cutout-core = { path = "../cutout-core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+hex-literal.workspace = true
+proptest.workspace = true
