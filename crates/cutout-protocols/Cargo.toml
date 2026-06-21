@@ -12,7 +12,7 @@ workspace = true
 [dependencies]
 bytes.workspace = true
 crc32fast.workspace = true
-cutout-core = { path = "../cutout-core" }
+cutout-core = { path = "../cutout-core", version = "0.1.0" }
 thiserror.workspace = true
 
 [dev-dependencies]

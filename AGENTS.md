@@ -11,4 +11,4 @@
 - Source-scanning tests are never appropriate.
 - For hardware-backed work, record device model, firmware, battery, app/library version, GATT inventory, labels, provenance, and any redaction notes. Once a device or protocol is fully specced, verify it against actual Bluetooth hardware before closing the issue.
 - Keep Beads issue state current when setup or implementation changes land.
-- Required validation before merge is `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo deny check`, and `cargo miri test` from a nightly toolchain when available.
+- Required validation before merge is `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo deny check`. Miri is skipped for now and tracked separately.

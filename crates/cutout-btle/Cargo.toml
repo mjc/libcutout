@@ -10,6 +10,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-cutout-core = { path = "../cutout-core" }
-cutout-protocols = { path = "../cutout-protocols" }
+cutout-core = { path = "../cutout-core", version = "0.1.0" }
+cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 thiserror.workspace = true

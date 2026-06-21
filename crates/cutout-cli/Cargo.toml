@@ -15,6 +15,6 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-cutout-btle = { path = "../cutout-btle" }
-cutout-core = { path = "../cutout-core", features = ["serde"] }
-cutout-protocols = { path = "../cutout-protocols" }
+cutout-btle = { path = "../cutout-btle", version = "0.1.0" }
+cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
+cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
