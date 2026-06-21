@@ -966,6 +966,108 @@ impl<const N: usize> RequestQueue<N> {
     }
 }
 
+/// One read-only request entry in a protocol polling plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PollRequest {
+    /// Command kind to request.
+    pub kind: CommandKind,
+
+    /// Request scheduling policy.
+    pub policy: RequestPolicy,
+
+    /// Relative scheduling urgency.
+    pub urgency: RequestUrgency,
+}
+
+impl PollRequest {
+    /// Creates a poll request entry.
+    #[must_use]
+    pub const fn new(kind: CommandKind, policy: RequestPolicy, urgency: RequestUrgency) -> Self {
+        Self {
+            kind,
+            policy,
+            urgency,
+        }
+    }
+
+    /// Converts this poll entry to a queued request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PollingPlanError::UnsupportedCommand`] when the command is not
+    /// read-only.
+    pub const fn to_queued_request(self) -> Result<QueuedRequest, PollingPlanError> {
+        let safety_class = self.kind.safety_class();
+        if matches!(safety_class, SafetyClass::ReadOnly) {
+            Ok(QueuedRequest::with_urgency(
+                RequestKey::new(self.kind),
+                self.policy,
+                self.urgency,
+            ))
+        } else {
+            Err(PollingPlanError::UnsupportedCommand {
+                kind: self.kind,
+                safety_class,
+            })
+        }
+    }
+}
+
+/// Reason a polling plan could not be enqueued.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PollingPlanError {
+    /// Polling plans may only contain read-only commands.
+    UnsupportedCommand {
+        /// Rejected command kind.
+        kind: CommandKind,
+
+        /// Safety class that made the command unsupported for polling.
+        safety_class: SafetyClass,
+    },
+
+    /// The destination queue refused a request.
+    Queue(RequestQueueError),
+}
+
+/// Fixed protocol polling plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PollingPlan<const N: usize> {
+    items: [PollRequest; N],
+}
+
+impl<const N: usize> PollingPlan<N> {
+    /// Creates a polling plan from fixed poll entries.
+    #[must_use]
+    pub const fn new(items: [PollRequest; N]) -> Self {
+        Self { items }
+    }
+
+    /// Returns the plan entries.
+    #[must_use]
+    pub const fn items(self) -> [PollRequest; N] {
+        self.items
+    }
+
+    /// Enqueues the plan into a bounded request queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PollingPlanError::UnsupportedCommand`] for non-read-only plan
+    /// entries, or [`PollingPlanError::Queue`] when the destination queue
+    /// refuses a converted request.
+    pub fn enqueue_into<const Q: usize>(
+        self,
+        queue: &mut RequestQueue<Q>,
+    ) -> Result<(), PollingPlanError> {
+        for item in self.items {
+            queue
+                .enqueue_by_urgency(item.to_queued_request()?)
+                .map_err(PollingPlanError::Queue)?;
+        }
+        Ok(())
+    }
+}
+
 /// Transport write behavior requested by a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WriteMode {
@@ -2284,6 +2386,131 @@ mod tests {
     }
 
     #[test]
+    fn poll_request_converts_read_only_command_to_queued_request() {
+        let policy = crate::RequestPolicy {
+            timeout_ms: 250,
+            max_retries: 2,
+            min_interval_ms: 50,
+        };
+        let request = crate::PollRequest::new(
+            crate::CommandKind::RequestIdentity,
+            policy,
+            crate::RequestUrgency::High,
+        );
+
+        assert_eq!(
+            request.to_queued_request(),
+            Ok(crate::QueuedRequest::with_urgency(
+                crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+                policy,
+                crate::RequestUrgency::High
+            ))
+        );
+    }
+
+    #[test]
+    fn poll_request_rejects_non_read_only_command() {
+        let request = crate::PollRequest::new(
+            crate::CommandKind::SetLights,
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+
+        assert_eq!(
+            request.to_queued_request(),
+            Err(crate::PollingPlanError::UnsupportedCommand {
+                kind: crate::CommandKind::SetLights,
+                safety_class: crate::SafetyClass::BenignControl,
+            })
+        );
+    }
+
+    #[test]
+    fn polling_plan_enqueues_requests_by_urgency() {
+        let plan = crate::PollingPlan::new([
+            crate::PollRequest::new(
+                crate::CommandKind::RequestTelemetry,
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::Routine,
+            ),
+            crate::PollRequest::new(
+                crate::CommandKind::RequestIdentity,
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::High,
+            ),
+        ]);
+        let mut queue = crate::RequestQueue::<2>::new();
+
+        assert_eq!(plan.enqueue_into(&mut queue), Ok(()));
+
+        assert_eq!(
+            queue.pop_next(),
+            Some(crate::QueuedRequest::with_urgency(
+                crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::High
+            ))
+        );
+        assert_eq!(
+            queue.pop_next(),
+            Some(crate::QueuedRequest::new(
+                crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+                crate::RequestPolicy::default()
+            ))
+        );
+    }
+
+    #[test]
+    fn polling_plan_propagates_duplicate_queue_errors() {
+        let plan = crate::PollingPlan::new([
+            crate::PollRequest::new(
+                crate::CommandKind::RequestTelemetry,
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::Routine,
+            ),
+            crate::PollRequest::new(
+                crate::CommandKind::RequestTelemetry,
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::High,
+            ),
+        ]);
+        let mut queue = crate::RequestQueue::<2>::new();
+
+        assert_eq!(
+            plan.enqueue_into(&mut queue),
+            Err(crate::PollingPlanError::Queue(
+                crate::RequestQueueError::DuplicateKey {
+                    key: crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn polling_plan_propagates_capacity_errors() {
+        let plan = crate::PollingPlan::new([
+            crate::PollRequest::new(
+                crate::CommandKind::RequestTelemetry,
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::Routine,
+            ),
+            crate::PollRequest::new(
+                crate::CommandKind::RequestIdentity,
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::High,
+            ),
+        ]);
+        let mut queue = crate::RequestQueue::<1>::new();
+
+        assert_eq!(
+            plan.enqueue_into(&mut queue),
+            Err(crate::PollingPlanError::Queue(
+                crate::RequestQueueError::Full { capacity: 1 }
+            ))
+        );
+    }
+
+    #[test]
     fn zero_capacity_request_queue_refuses_enqueue() {
         let mut queue = crate::RequestQueue::<0>::new();
         let request = crate::QueuedRequest::new(
@@ -2335,6 +2562,30 @@ mod tests {
                 observed.push(request);
             }
             prop_assert_eq!(observed, expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn poll_request_accepts_read_only_commands(value in 0u8..2) {
+            let kind = if value == 0 {
+                crate::CommandKind::RequestIdentity
+            } else {
+                crate::CommandKind::RequestTelemetry
+            };
+            let request = crate::PollRequest::new(
+                kind,
+                crate::RequestPolicy::default(),
+                crate::RequestUrgency::Routine,
+            );
+
+            prop_assert_eq!(
+                request.to_queued_request(),
+                Ok(crate::QueuedRequest::new(
+                    crate::RequestKey::new(kind),
+                    crate::RequestPolicy::default()
+                ))
+            );
         }
     }
 
