@@ -30,6 +30,8 @@ const DEFAULT_POLICY: RequestPolicy = RequestPolicy {
 };
 
 const MAX_PROVISIONAL_REQUEST_LEN: usize = 24;
+const MAX_VETERAN_FRAME_LEN: usize = 259;
+const VETERAN_SHORT_FRAME_MAX_LEN: u8 = 38;
 
 const AERO_POLL_PLAN: PollingPlan<5> = PollingPlan::new([
     PollRequest::new(
@@ -320,6 +322,149 @@ fn matches_prefix(bytes: &[u8], prefix: &[u8]) -> bool {
     } else {
         bytes.starts_with(prefix)
     }
+}
+
+/// Complete Veteran/LeaperKim/NOSFET frame reassembled from BLE notifications.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VeteranFrame {
+    bytes: ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+}
+
+impl VeteranFrame {
+    /// Builds a frame from already-reassembled bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranReassemblyError::InvalidFrame`] when the bytes do not
+    /// contain the Veteran magic, length byte, and declared frame length.
+    pub fn try_from_slice(bytes: &[u8]) -> Result<Self, VeteranReassemblyError> {
+        if !bytes.starts_with(&[0xdc, 0x5a, 0x5c]) {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        }
+        let Some(len) = bytes.get(3) else {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        };
+        if bytes.len() != usize::from(*len) + 4 {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        }
+        let Ok(bytes) = ArrayVec::try_from(bytes) else {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        };
+        Ok(Self { bytes })
+    }
+
+    /// Returns the complete frame bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
+}
+
+/// Error emitted while reassembling Veteran/LeaperKim/NOSFET frames.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum VeteranReassemblyError {
+    /// A complete long frame failed CRC32 validation.
+    #[error("Veteran frame CRC mismatch")]
+    CrcMismatch,
+
+    /// A complete frame was structurally invalid.
+    #[error("invalid Veteran frame")]
+    InvalidFrame,
+}
+
+/// Sync reassembler for Veteran/LeaperKim/NOSFET `dc5a5c` notification streams.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct VeteranFrameReassembler {
+    buffer: ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+}
+
+impl VeteranFrameReassembler {
+    /// Feeds one notification byte into the reassembler.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranReassemblyError::CrcMismatch`] when a long frame's
+    /// CRC32 trailer does not match the frame contents.
+    pub fn feed_byte(&mut self, byte: u8) -> Result<Option<VeteranFrame>, VeteranReassemblyError> {
+        self.push_resyncing(byte);
+        let Some(expected_len) = self.expected_len() else {
+            return Ok(None);
+        };
+        if self.buffer.len() < expected_len {
+            return Ok(None);
+        }
+
+        if self.uses_crc() && !self.crc_matches() {
+            self.buffer.clear();
+            return Err(VeteranReassemblyError::CrcMismatch);
+        }
+
+        let frame = VeteranFrame::try_from_slice(self.buffer.as_slice())?;
+        self.buffer.clear();
+        Ok(Some(frame))
+    }
+
+    fn push_resyncing(&mut self, byte: u8) {
+        match self.buffer.len() {
+            0 => {
+                if byte == 0xdc {
+                    self.buffer.push(byte);
+                }
+            }
+            1 => {
+                if byte == 0x5a {
+                    self.buffer.push(byte);
+                } else {
+                    self.buffer.clear();
+                    if byte == 0xdc {
+                        self.buffer.push(byte);
+                    }
+                }
+            }
+            2 => {
+                if byte == 0x5c {
+                    self.buffer.push(byte);
+                } else {
+                    self.buffer.clear();
+                    if byte == 0xdc {
+                        self.buffer.push(byte);
+                    }
+                }
+            }
+            _ => self.buffer.push(byte),
+        }
+    }
+
+    fn expected_len(&self) -> Option<usize> {
+        self.buffer.get(3).map(|len| usize::from(*len) + 4)
+    }
+
+    fn uses_crc(&self) -> bool {
+        self.buffer
+            .get(3)
+            .is_some_and(|len| *len > VETERAN_SHORT_FRAME_MAX_LEN)
+    }
+
+    fn crc_matches(&self) -> bool {
+        let Some(declared_len) = self.buffer.get(3).copied().map(usize::from) else {
+            return false;
+        };
+        let Some(expected_crc) = read_be_u32(self.buffer.as_slice(), declared_len) else {
+            return false;
+        };
+        let Some(crc_bytes) = self.buffer.as_slice().get(..declared_len) else {
+            return false;
+        };
+        crc32fast::hash(crc_bytes) == expected_crc
+    }
+}
+
+fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let b0 = *bytes.get(offset)?;
+    let b1 = *bytes.get(offset + 1)?;
+    let b2 = *bytes.get(offset + 2)?;
+    let b3 = *bytes.get(offset + 3)?;
+    Some(u32::from_be_bytes([b0, b1, b2, b3]))
 }
 
 /// Family-specific request probe used by fixture records.
@@ -982,6 +1127,102 @@ mod tests {
             crate::ProtocolFamilyClassifier::classify(b"\x00\x01\x02"),
             crate::ProtocolFamilyClassification::Unknown
         );
+    }
+
+    fn feed_chunk(
+        reassembler: &mut crate::VeteranFrameReassembler,
+        bytes: &[u8],
+    ) -> Vec<crate::VeteranFrame> {
+        feed_chunk_result(reassembler, bytes).expect("chunk reassembles without protocol error")
+    }
+
+    fn feed_chunk_result(
+        reassembler: &mut crate::VeteranFrameReassembler,
+        bytes: &[u8],
+    ) -> Result<Vec<crate::VeteranFrame>, crate::VeteranReassemblyError> {
+        let mut frames = Vec::new();
+        for byte in bytes {
+            if let Some(frame) = reassembler.feed_byte(*byte)? {
+                frames.push(frame);
+            }
+        }
+        Ok(frames)
+    }
+
+    fn long_veteran_frame() -> Vec<u8> {
+        let mut frame = vec![0xdc, 0x5a, 0x5c, 39];
+        frame.extend(0_u8..35);
+        let crc = crc32fast::hash(&frame);
+        frame.extend(crc.to_be_bytes());
+        frame
+    }
+
+    #[test]
+    fn veteran_reassembler_reassembles_fragmented_short_frame() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        frames.extend(feed_chunk(&mut reassembler, b"\xdc\x5a\x5c\x04\x01"));
+        frames.extend(feed_chunk(&mut reassembler, b"\x02\x03\x04"));
+
+        assert_eq!(
+            frames,
+            vec![
+                crate::VeteranFrame::try_from_slice(b"\xdc\x5a\x5c\x04\x01\x02\x03\x04")
+                    .expect("fixture frame fits")
+            ]
+        );
+    }
+
+    #[test]
+    fn veteran_reassembler_resyncs_before_magic() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+
+        let frames = feed_chunk(
+            &mut reassembler,
+            b"\x00\xff\xdc\x5a\x00\xdc\x5a\x5c\x04\x01\x02\x03\x04",
+        );
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].as_slice(), b"\xdc\x5a\x5c\x04\x01\x02\x03\x04");
+    }
+
+    #[test]
+    fn veteran_reassembler_returns_multiple_frames_from_one_stream() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+
+        let frames = feed_chunk(
+            &mut reassembler,
+            b"\xdc\x5a\x5c\x01\xaa\xdc\x5a\x5c\x02\xbb\xcc",
+        );
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].as_slice(), b"\xdc\x5a\x5c\x01\xaa");
+        assert_eq!(frames[1].as_slice(), b"\xdc\x5a\x5c\x02\xbb\xcc");
+    }
+
+    #[test]
+    fn veteran_reassembler_rejects_long_frame_with_bad_crc() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frame = long_veteran_frame();
+        let last = frame.last_mut().expect("fixture has a CRC trailer");
+        *last ^= 0xff;
+
+        let error = feed_chunk_result(&mut reassembler, &frame)
+            .expect_err("bad CRC should reject the long frame");
+
+        assert_eq!(error, crate::VeteranReassemblyError::CrcMismatch);
+    }
+
+    #[test]
+    fn veteran_reassembler_accepts_long_frame_with_valid_crc() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let frame = long_veteran_frame();
+
+        let frames = feed_chunk_result(&mut reassembler, &frame).expect("valid CRC is accepted");
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].as_slice(), frame.as_slice());
     }
 
     #[test]
