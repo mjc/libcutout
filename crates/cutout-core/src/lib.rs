@@ -1159,6 +1159,147 @@ impl<T> Measured<T> {
     }
 }
 
+/// Raw numeric field reported by a protocol-specific response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RawFieldValue {
+    /// Protocol-family field identifier.
+    pub id: u16,
+
+    /// Sign-extended raw field value.
+    pub value: i64,
+}
+
+impl RawFieldValue {
+    /// Creates a raw numeric field value.
+    #[must_use]
+    pub const fn new(id: u16, value: i64) -> Self {
+        Self { id, value }
+    }
+}
+
+/// Generic firmware or protocol version information.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FirmwareInfo {
+    /// Protocol version, when reported.
+    pub protocol_version: Option<Measured<u16>>,
+
+    /// Firmware major version, when reported.
+    pub firmware_major: Option<Measured<u16>>,
+
+    /// Firmware minor version, when reported.
+    pub firmware_minor: Option<Measured<u16>>,
+
+    /// Firmware patch version, when reported.
+    pub firmware_patch: Option<Measured<u16>>,
+
+    /// Raw build identifier, when a protocol exposes one.
+    pub build_id: Option<RawFieldValue>,
+}
+
+/// Generic battery or BMS information.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BatteryInfo {
+    /// Pack or input voltage in millivolts.
+    pub voltage_mv: Option<Measured<i32>>,
+
+    /// Pack or battery current in milliamps.
+    pub current_ma: Option<Measured<i32>>,
+
+    /// Battery percentage reported by the device.
+    pub percent_reported: Option<Measured<u8>>,
+
+    /// Battery percentage estimated by Cutout.
+    pub percent_estimated: Option<Measured<u8>>,
+
+    /// Battery or BMS temperature in millicelsius.
+    pub temperature_mc: Option<Measured<i32>>,
+
+    /// Raw battery/BMS state field, when present.
+    pub raw_state: Option<RawFieldValue>,
+}
+
+/// Severity for a diagnostic detail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticSeverity {
+    /// Informational diagnostic.
+    Info,
+
+    /// Warning diagnostic.
+    Warning,
+
+    /// Error diagnostic.
+    Error,
+}
+
+/// Generic diagnostic detail.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiagnosticDetail {
+    /// Raw diagnostic field.
+    pub field: RawFieldValue,
+
+    /// Diagnostic severity.
+    pub severity: DiagnosticSeverity,
+
+    /// Confidence in the diagnostic interpretation.
+    pub quality: ValueQuality,
+}
+
+/// Bounded diagnostic readback response.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DiagnosticReadback {
+    /// Diagnostic detail slots.
+    pub details: [Option<DiagnosticDetail>; 4],
+}
+
+/// Generic read-only settings entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SettingsEntry {
+    /// Raw settings field.
+    pub field: RawFieldValue,
+
+    /// Source of the settings value.
+    pub source: ValueSource,
+
+    /// Confidence in the settings value.
+    pub quality: ValueQuality,
+}
+
+/// Bounded settings readback response.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SettingsReadback {
+    /// Settings entries.
+    pub entries: [Option<SettingsEntry>; 4],
+}
+
+/// Generic read-only response payload.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadOnlyResponse {
+    /// Firmware or protocol version response.
+    Firmware(FirmwareInfo),
+
+    /// Battery or BMS response.
+    Battery(BatteryInfo),
+
+    /// Diagnostic response.
+    Diagnostics(DiagnosticReadback),
+
+    /// Settings readback response.
+    Settings(SettingsReadback),
+}
+
+impl ReadOnlyResponse {
+    /// Returns the command kind that requested this response.
+    #[must_use]
+    pub const fn command_kind(self) -> CommandKind {
+        match self {
+            Self::Firmware(_) => CommandKind::RequestFirmwareInfo,
+            Self::Battery(_) => CommandKind::RequestBatteryInfo,
+            Self::Diagnostics(_) => CommandKind::RequestDiagnostics,
+            Self::Settings(_) => CommandKind::RequestSettings,
+        }
+    }
+}
+
 /// Partial telemetry update from a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetryDelta {
@@ -1950,6 +2091,99 @@ mod tests {
     }
 
     #[test]
+    fn firmware_response_preserves_version_fields_and_evidence() {
+        let response = crate::FirmwareInfo {
+            protocol_version: Some(Measured::reported(3)),
+            firmware_major: Some(Measured::reported(1)),
+            firmware_minor: Some(Measured::reported(14)),
+            firmware_patch: None,
+            build_id: Some(crate::RawFieldValue::new(0x20, 0x0000_1234)),
+        };
+
+        assert_eq!(response.protocol_version, Some(Measured::reported(3)));
+        assert_eq!(response.firmware_patch, None);
+        assert_eq!(
+            response.build_id,
+            Some(crate::RawFieldValue::new(0x20, 0x0000_1234))
+        );
+    }
+
+    #[test]
+    fn battery_response_distinguishes_reported_estimated_and_unknown_percent() {
+        let response = crate::BatteryInfo {
+            voltage_mv: Some(Measured::reported(80_400)),
+            current_ma: Some(Measured::reported(0)),
+            percent_reported: Some(Measured::reported(0)),
+            percent_estimated: Some(Measured {
+                value: 42,
+                source: ValueSource::Estimated,
+                quality: ValueQuality::Inferred,
+            }),
+            temperature_mc: None,
+            raw_state: None,
+        };
+
+        assert_eq!(response.current_ma, Some(Measured::reported(0)));
+        assert_eq!(response.percent_reported, Some(Measured::reported(0)));
+        assert_eq!(response.temperature_mc, None);
+    }
+
+    #[test]
+    fn diagnostic_detail_preserves_raw_field_identifier_and_severity() {
+        let detail = crate::DiagnosticDetail {
+            field: crate::RawFieldValue::new(0x55, -7),
+            severity: crate::DiagnosticSeverity::Warning,
+            quality: ValueQuality::Inferred,
+        };
+
+        assert_eq!(detail.field.id, 0x55);
+        assert_eq!(detail.field.value, -7);
+        assert_eq!(detail.severity, crate::DiagnosticSeverity::Warning);
+        assert_eq!(detail.quality, ValueQuality::Inferred);
+    }
+
+    #[test]
+    fn settings_readback_entry_carries_numeric_values_without_writes() {
+        let entry = crate::SettingsEntry {
+            field: crate::RawFieldValue::new(0x10, 2),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+        };
+        let response = crate::SettingsReadback {
+            entries: [Some(entry), None, None, None],
+        };
+
+        assert_eq!(response.entries[0], Some(entry));
+        assert_eq!(response.entries[1], None);
+    }
+
+    #[test]
+    fn read_only_response_reports_matching_command_kind() {
+        let firmware = crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo::default());
+        let battery = crate::ReadOnlyResponse::Battery(crate::BatteryInfo::default());
+        let diagnostics = crate::ReadOnlyResponse::Diagnostics(crate::DiagnosticReadback {
+            details: [None, None, None, None],
+        });
+        let settings = crate::ReadOnlyResponse::Settings(crate::SettingsReadback {
+            entries: [None, None, None, None],
+        });
+
+        assert_eq!(
+            firmware.command_kind(),
+            crate::CommandKind::RequestFirmwareInfo
+        );
+        assert_eq!(
+            battery.command_kind(),
+            crate::CommandKind::RequestBatteryInfo
+        );
+        assert_eq!(
+            diagnostics.command_kind(),
+            crate::CommandKind::RequestDiagnostics
+        );
+        assert_eq!(settings.command_kind(), crate::CommandKind::RequestSettings);
+    }
+
+    #[test]
     fn read_only_commands_have_queryable_metadata() {
         let command = DeviceCommand::RequestTelemetry;
         let metadata = command.metadata();
@@ -2713,6 +2947,23 @@ mod tests {
                     crate::RequestPolicy::default()
                 ))
             );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn battery_response_keeps_unknown_distinct_from_zero(include_zero in any::<bool>()) {
+            let percent_reported = include_zero.then_some(Measured::reported(0));
+            let response = crate::BatteryInfo {
+                percent_reported,
+                ..crate::BatteryInfo::default()
+            };
+
+            if include_zero {
+                prop_assert_eq!(response.percent_reported, Some(Measured::reported(0)));
+            } else {
+                prop_assert_eq!(response.percent_reported, None);
+            }
         }
     }
 
