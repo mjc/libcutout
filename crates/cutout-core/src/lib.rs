@@ -1230,6 +1230,141 @@ where
     }
 }
 
+/// Owned host input captured for deterministic replay.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CaptureRecord {
+    /// Captured link-up input.
+    LinkUp(LinkInfo),
+
+    /// Captured link-down input.
+    LinkDown,
+
+    /// Captured notification input with owned bytes.
+    Notification {
+        /// Transport endpoint that produced the bytes.
+        channel: GattChannel,
+
+        /// Owned notification payload.
+        bytes: Vec<u8>,
+
+        /// Host monotonic receive timestamp.
+        monotonic_ms: MonotonicMillis,
+    },
+
+    /// Captured timer tick.
+    Tick {
+        /// Host monotonic tick timestamp.
+        monotonic_ms: MonotonicMillis,
+    },
+
+    /// Captured host command.
+    Command(DeviceCommand),
+}
+
+impl CaptureRecord {
+    /// Creates a notification capture record with owned bytes.
+    #[must_use]
+    pub const fn notification(
+        channel: GattChannel,
+        bytes: Vec<u8>,
+        monotonic_ms: MonotonicMillis,
+    ) -> Self {
+        Self::Notification {
+            channel,
+            bytes,
+            monotonic_ms,
+        }
+    }
+
+    /// Splits a notification record into chunks no larger than `chunk_len`.
+    ///
+    /// Non-notification records are returned unchanged. A zero `chunk_len`
+    /// leaves the record unchanged.
+    #[must_use]
+    pub fn split_notification_bytes(self, chunk_len: usize) -> Vec<Self> {
+        let Self::Notification {
+            channel,
+            bytes,
+            monotonic_ms,
+        } = self
+        else {
+            return vec![self];
+        };
+
+        if chunk_len == 0 {
+            return vec![Self::notification(channel, bytes, monotonic_ms)];
+        }
+
+        bytes
+            .chunks(chunk_len)
+            .map(|chunk| Self::notification(channel, chunk.to_vec(), monotonic_ms))
+            .collect()
+    }
+
+    /// Splits a notification record by requested chunk lengths.
+    ///
+    /// Extra bytes are appended as a final chunk. Non-notification records are
+    /// returned unchanged.
+    #[must_use]
+    pub fn split_notification_by_lengths(self, lengths: &[usize]) -> Vec<Self> {
+        let Self::Notification {
+            channel,
+            bytes,
+            monotonic_ms,
+        } = self
+        else {
+            return vec![self];
+        };
+
+        let mut records = Vec::new();
+        let mut offset = 0;
+        for length in lengths.iter().copied().filter(|length| *length > 0) {
+            if offset >= bytes.len() {
+                break;
+            }
+            let end = offset.saturating_add(length).min(bytes.len());
+            records.push(Self::notification(
+                channel,
+                bytes[offset..end].to_vec(),
+                monotonic_ms,
+            ));
+            offset = end;
+        }
+        if offset < bytes.len() {
+            records.push(Self::notification(
+                channel,
+                bytes[offset..].to_vec(),
+                monotonic_ms,
+            ));
+        }
+        records
+    }
+}
+
+/// Replays captured host inputs through a host session and returns outputs.
+#[must_use]
+pub fn replay_capture<S>(host: &mut HostSession<S>, records: &[CaptureRecord]) -> Vec<SessionOutput>
+where
+    S: ProtocolSession,
+{
+    let mut outputs = Vec::new();
+    for record in records {
+        match record {
+            CaptureRecord::LinkUp(link) => host.ingest_link_up(*link),
+            CaptureRecord::LinkDown => host.ingest_link_down(),
+            CaptureRecord::Notification {
+                channel,
+                bytes,
+                monotonic_ms,
+            } => host.ingest_notification_owned(*channel, bytes.clone(), *monotonic_ms),
+            CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
+            CaptureRecord::Command(command) => host.issue_command(*command),
+        }
+        outputs.extend(host.drain_outputs());
+    }
+    outputs
+}
+
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
 pub const fn crate_name() -> &'static str {
@@ -1918,6 +2053,164 @@ mod tests {
                 timeouts: 2,
                 ..crate::DiagnosticSnapshot::default()
             }
+        );
+    }
+
+    #[derive(Default)]
+    struct FramedCaptureSession {
+        sum: i32,
+    }
+
+    impl ProtocolSession for FramedCaptureSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::LinkUp(info) => {
+                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
+                }
+                SessionInput::LinkDown => {
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                }
+                SessionInput::Notification { bytes, .. } => {
+                    for byte in bytes {
+                        if *byte == 0xff {
+                            output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                                TelemetryDelta {
+                                    at_ms: 90,
+                                    speed_mm_s: Some(Measured::reported(self.sum)),
+                                    ..TelemetryDelta::empty(90)
+                                },
+                            )));
+                            self.sum = 0;
+                        } else {
+                            self.sum += i32::from(*byte);
+                        }
+                    }
+                }
+                SessionInput::Tick { monotonic_ms } => {
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+                }
+                SessionInput::Command(command) => {
+                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                        crate::ParserDiagnostics {
+                            unmatched_replies: command.kind() as u64,
+                            ..crate::ParserDiagnostics::default()
+                        },
+                    )));
+                }
+            }
+        }
+    }
+
+    fn replay_events(records: &[crate::CaptureRecord]) -> Vec<DeviceEvent> {
+        let mut host = crate::HostSession::new(FramedCaptureSession::default());
+        crate::replay_capture(&mut host, records)
+            .into_iter()
+            .filter_map(|output| match output {
+                SessionOutput::Event(event) => Some(event),
+                SessionOutput::Transport(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn capture_record_owns_notification_payloads() {
+        let channel = GattChannel::from_bytes([0x11; 16]);
+        let source = vec![1, 2, 0xff];
+        let record = crate::CaptureRecord::notification(channel, source.clone(), 10);
+
+        assert_eq!(
+            record,
+            crate::CaptureRecord::Notification {
+                channel,
+                bytes: source,
+                monotonic_ms: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn replay_capture_drives_link_tick_command_and_notification_records() {
+        let channel = GattChannel::from_bytes([0x22; 16]);
+        let link = LinkInfo {
+            monotonic_ms: 1,
+            max_write_len: Some(185),
+        };
+        let records = [
+            crate::CaptureRecord::LinkUp(link),
+            crate::CaptureRecord::Tick { monotonic_ms: 2 },
+            crate::CaptureRecord::Command(DeviceCommand::RequestIdentity),
+            crate::CaptureRecord::notification(channel, vec![4, 5, 0xff], 3),
+            crate::CaptureRecord::LinkDown,
+        ];
+
+        assert_eq!(
+            replay_events(&records),
+            vec![
+                DeviceEvent::LinkUp(link),
+                DeviceEvent::Tick { monotonic_ms: 2 },
+                DeviceEvent::Diagnostics(crate::ParserDiagnostics {
+                    unmatched_replies: crate::CommandKind::RequestIdentity as u64,
+                    ..crate::ParserDiagnostics::default()
+                }),
+                DeviceEvent::Telemetry(TelemetryDelta {
+                    at_ms: 90,
+                    speed_mm_s: Some(Measured::reported(9)),
+                    ..TelemetryDelta::empty(90)
+                }),
+                DeviceEvent::LinkDown,
+            ]
+        );
+    }
+
+    #[test]
+    fn one_byte_notification_replay_matches_whole_notification_replay() {
+        let channel = GattChannel::from_bytes([0x33; 16]);
+        let whole = [crate::CaptureRecord::notification(
+            channel,
+            vec![1, 2, 3, 0xff],
+            10,
+        )];
+        let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], 10)
+            .split_notification_bytes(1);
+
+        assert_eq!(replay_events(&one_byte), replay_events(&whole));
+    }
+
+    #[test]
+    fn arbitrary_chunk_notification_replay_matches_whole_notification_replay() {
+        let channel = GattChannel::from_bytes([0x44; 16]);
+        let whole = [crate::CaptureRecord::notification(
+            channel,
+            vec![5, 8, 13, 0xff],
+            20,
+        )];
+        let chunks = crate::CaptureRecord::notification(channel, vec![5, 8, 13, 0xff], 20)
+            .split_notification_by_lengths(&[2, 1, 8]);
+
+        assert_eq!(replay_events(&chunks), replay_events(&whole));
+    }
+
+    #[test]
+    fn replay_summary_preserves_output_order() {
+        let channel = GattChannel::from_bytes([0x55; 16]);
+        let records = [
+            crate::CaptureRecord::Tick { monotonic_ms: 1 },
+            crate::CaptureRecord::notification(channel, vec![9, 0xff], 2),
+            crate::CaptureRecord::Tick { monotonic_ms: 3 },
+        ];
+        let mut host = crate::HostSession::new(FramedCaptureSession::default());
+
+        assert_eq!(
+            crate::replay_capture(&mut host, &records),
+            vec![
+                SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 1 }),
+                SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
+                    at_ms: 90,
+                    speed_mm_s: Some(Measured::reported(9)),
+                    ..TelemetryDelta::empty(90)
+                })),
+                SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 3 }),
+            ]
         );
     }
 }
