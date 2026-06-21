@@ -47,6 +47,194 @@ pub enum DeviceCommand {
 
     /// Request a telemetry update.
     RequestTelemetry,
+
+    /// Set the device lights.
+    SetLights(LightState),
+
+    /// Sound a device horn or alert.
+    SoundHorn,
+
+    /// Set raw motor current in milliamps.
+    SetRawMotorCurrent {
+        /// Target motor/phase current in milliamps.
+        current_ma: i32,
+    },
+}
+
+impl DeviceCommand {
+    /// Returns the stable command kind, excluding command payload values.
+    #[must_use]
+    pub const fn kind(self) -> CommandKind {
+        match self {
+            Self::RequestIdentity => CommandKind::RequestIdentity,
+            Self::RequestTelemetry => CommandKind::RequestTelemetry,
+            Self::SetLights(_) => CommandKind::SetLights,
+            Self::SoundHorn => CommandKind::SoundHorn,
+            Self::SetRawMotorCurrent { .. } => CommandKind::SetRawMotorCurrent,
+        }
+    }
+
+    /// Returns the safety class for this command.
+    #[must_use]
+    pub const fn safety_class(self) -> SafetyClass {
+        self.kind().safety_class()
+    }
+
+    /// Returns command metadata.
+    #[must_use]
+    pub const fn metadata(self) -> CommandMetadata {
+        CommandMetadata {
+            kind: self.kind(),
+            safety_class: self.safety_class(),
+        }
+    }
+}
+
+/// Device light state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LightState {
+    /// Lights off.
+    Off,
+
+    /// Lights on.
+    On,
+}
+
+/// Stable command discriminator, excluding command payload values.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum CommandKind {
+    /// Request protocol or device identity.
+    RequestIdentity,
+
+    /// Request a telemetry update.
+    RequestTelemetry,
+
+    /// Set the device lights.
+    SetLights,
+
+    /// Sound a device horn or alert.
+    SoundHorn,
+
+    /// Set raw motor current.
+    SetRawMotorCurrent,
+}
+
+impl CommandKind {
+    /// Returns the safety class for this command kind.
+    #[must_use]
+    pub const fn safety_class(self) -> SafetyClass {
+        match self {
+            Self::RequestIdentity | Self::RequestTelemetry => SafetyClass::ReadOnly,
+            Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
+            Self::SetRawMotorCurrent => SafetyClass::Actuation,
+        }
+    }
+}
+
+/// Safety class for a device command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SafetyClass {
+    /// Read-only request with no state change expected.
+    ReadOnly,
+
+    /// Benign control such as lights or horn.
+    BenignControl,
+
+    /// Setting that should only be changed while stationary.
+    StationaryOnly,
+
+    /// Direct actuation or motion-affecting control.
+    Actuation,
+
+    /// Firmware update or firmware mutation operation.
+    Firmware,
+}
+
+/// Command metadata available before transport writes are generated.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommandMetadata {
+    /// Stable command kind.
+    pub kind: CommandKind,
+
+    /// Safety class for this command.
+    pub safety_class: SafetyClass,
+}
+
+/// Reason a command is unavailable in the current context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnsupportedReason {
+    /// The command kind is not reported as supported.
+    CommandNotSupported(CommandKind),
+}
+
+/// Current command capabilities for a resolved device/session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Capabilities {
+    supported_commands: CommandSet,
+}
+
+impl Capabilities {
+    /// Creates capabilities from supported command kinds.
+    #[must_use]
+    pub fn from_supported_commands<const N: usize>(commands: [CommandKind; N]) -> Self {
+        Self {
+            supported_commands: CommandSet::from_commands(commands),
+        }
+    }
+
+    /// Returns whether the command kind is supported.
+    #[must_use]
+    pub const fn supports_command_kind(self, kind: CommandKind) -> bool {
+        self.supported_commands.contains(kind)
+    }
+
+    /// Checks whether a command is supported and returns metadata for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnsupportedReason::CommandNotSupported`] when the command kind
+    /// is absent from this capability set.
+    pub const fn check_command(
+        self,
+        command: DeviceCommand,
+    ) -> Result<CommandMetadata, UnsupportedReason> {
+        let kind = command.kind();
+        if self.supports_command_kind(kind) {
+            Ok(command.metadata())
+        } else {
+            Err(UnsupportedReason::CommandNotSupported(kind))
+        }
+    }
+}
+
+/// Compact command-kind set.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct CommandSet(u16);
+
+impl CommandSet {
+    const fn from_commands<const N: usize>(commands: [CommandKind; N]) -> Self {
+        let mut set = Self(0);
+        let mut index = 0;
+        while index < N {
+            set = set.insert(commands[index]);
+            index += 1;
+        }
+        set
+    }
+
+    const fn insert(self, kind: CommandKind) -> Self {
+        Self(self.0 | kind.bit())
+    }
+
+    const fn contains(self, kind: CommandKind) -> bool {
+        self.0 & kind.bit() != 0
+    }
+}
+
+impl CommandKind {
+    const fn bit(self) -> u16 {
+        1 << (self as u16)
+    }
 }
 
 /// Transport write behavior requested by a protocol session.
@@ -393,8 +581,8 @@ mod tests {
     use super::crate_name;
     use crate::{
         DeviceCommand, DeviceEvent, GattChannel, LinkInfo, Measured, ProtocolSession, SessionInput,
-        SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, ValueQuality,
-        ValueSource, WriteMode,
+        SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, UnsupportedReason,
+        ValueQuality, ValueSource, WriteMode,
     };
 
     #[test]
@@ -446,6 +634,11 @@ mod tests {
                         channel: GattChannel::from_bytes([2; 16]),
                     }));
                 }
+                SessionInput::Command(
+                    DeviceCommand::SetLights(_)
+                    | DeviceCommand::SoundHorn
+                    | DeviceCommand::SetRawMotorCurrent { .. },
+                ) => {}
             }
         }
     }
@@ -619,6 +812,62 @@ mod tests {
                 distance_mm: Some(Measured::reported(12_345)),
                 ..TelemetryDelta::empty(400)
             })
+        );
+    }
+
+    #[test]
+    fn read_only_commands_have_queryable_metadata() {
+        let command = DeviceCommand::RequestTelemetry;
+        let metadata = command.metadata();
+
+        assert_eq!(metadata.kind, command.kind());
+        assert_eq!(metadata.safety_class, command.safety_class());
+        assert_eq!(metadata.kind, crate::CommandKind::RequestTelemetry);
+        assert_eq!(metadata.safety_class, crate::SafetyClass::ReadOnly);
+    }
+
+    #[test]
+    fn benign_controls_are_distinct_from_read_only_requests() {
+        let lights = DeviceCommand::SetLights(crate::LightState::On);
+        let horn = DeviceCommand::SoundHorn;
+
+        assert_eq!(lights.kind(), crate::CommandKind::SetLights);
+        assert_eq!(horn.kind(), crate::CommandKind::SoundHorn);
+        assert_eq!(lights.safety_class(), crate::SafetyClass::BenignControl);
+        assert_eq!(horn.safety_class(), crate::SafetyClass::BenignControl);
+    }
+
+    #[test]
+    fn actuation_commands_are_not_supported_without_capability() {
+        let capabilities = crate::Capabilities::default();
+        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+
+        assert_eq!(command.safety_class(), crate::SafetyClass::Actuation);
+        assert_eq!(
+            capabilities.check_command(command),
+            Err(UnsupportedReason::CommandNotSupported(command.kind()))
+        );
+    }
+
+    #[test]
+    fn hosts_can_query_support_before_writes() {
+        let capabilities = crate::Capabilities::from_supported_commands([
+            crate::CommandKind::RequestTelemetry,
+            crate::CommandKind::SetLights,
+        ]);
+
+        assert_eq!(
+            capabilities.check_command(DeviceCommand::RequestTelemetry),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::RequestTelemetry,
+                safety_class: crate::SafetyClass::ReadOnly,
+            })
+        );
+        assert_eq!(
+            capabilities.check_command(DeviceCommand::SoundHorn),
+            Err(UnsupportedReason::CommandNotSupported(
+                crate::CommandKind::SoundHorn
+            ))
         );
     }
 }
