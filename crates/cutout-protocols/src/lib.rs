@@ -32,6 +32,8 @@ const DEFAULT_POLICY: RequestPolicy = RequestPolicy {
 
 const MAX_PROVISIONAL_REQUEST_LEN: usize = 24;
 const MAX_VETERAN_FRAME_LEN: usize = 259;
+const MAX_VETERAN_TELEMETRY_TAIL_LEN: usize = MAX_VETERAN_FRAME_LEN - VETERAN_TELEMETRY_HEADER_LEN;
+const VETERAN_TELEMETRY_HEADER_LEN: usize = 36;
 const VETERAN_SHORT_FRAME_MAX_LEN: u8 = 38;
 
 const AERO_POLL_PLAN: PollingPlan<5> = PollingPlan::new([
@@ -517,6 +519,54 @@ impl VeteranTelemetry {
     }
 }
 
+/// Unknown extended bytes after the fixed Veteran telemetry header.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VeteranTelemetryTail {
+    bytes: ArrayVec<u8, MAX_VETERAN_TELEMETRY_TAIL_LEN>,
+}
+
+impl VeteranTelemetryTail {
+    /// Extracts the raw extended telemetry payload from a complete frame.
+    ///
+    /// For long CRC-protected frames, the returned bytes exclude the CRC32
+    /// trailer. Bytes are intentionally raw until the Aero tail layout is
+    /// backed by stronger capture/spec evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranDecodeError::FrameTooShort`] when the frame does not
+    /// contain the fixed telemetry header.
+    pub fn decode(frame: &VeteranFrame) -> Result<Self, VeteranDecodeError> {
+        let bytes = frame.as_slice();
+        let data_end = veteran_frame_data_end(bytes).ok_or(VeteranDecodeError::FrameTooShort)?;
+        let tail = bytes
+            .get(VETERAN_TELEMETRY_HEADER_LEN..data_end)
+            .ok_or(VeteranDecodeError::FrameTooShort)?;
+        let Ok(bytes) = ArrayVec::try_from(tail) else {
+            return Err(VeteranDecodeError::FrameTooShort);
+        };
+        Ok(Self { bytes })
+    }
+
+    /// Returns the raw tail bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
+
+    /// Returns the raw tail length.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Returns whether the raw tail is empty.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+}
+
 /// Error emitted while decoding a complete Veteran frame.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum VeteranDecodeError {
@@ -630,6 +680,15 @@ fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     let b2 = *bytes.get(offset + 2)?;
     let b3 = *bytes.get(offset + 3)?;
     Some(u32::from_be_bytes([b0, b1, b2, b3]))
+}
+
+fn veteran_frame_data_end(bytes: &[u8]) -> Option<usize> {
+    let declared_len = usize::from(*bytes.get(3)?);
+    if *bytes.get(3)? > VETERAN_SHORT_FRAME_MAX_LEN {
+        Some(declared_len)
+    } else {
+        Some(bytes.len())
+    }
 }
 
 fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
@@ -1575,6 +1634,40 @@ mod tests {
             Some(Measured::reported(33_270))
         );
         assert_eq!(delta.distance_mm, Some(Measured::reported(1_551_169_000)));
+    }
+
+    #[test]
+    fn veteran_telemetry_tail_preserves_unknown_live_aero_bytes() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        for chunk in notification_fixture_chunks() {
+            frames.extend(feed_chunk(&mut reassembler, &chunk));
+        }
+
+        let first =
+            crate::VeteranTelemetryTail::decode(&frames[0]).expect("first live frame has a tail");
+        let second =
+            crate::VeteranTelemetryTail::decode(&frames[1]).expect("second live frame has a tail");
+
+        assert_eq!(first.len(), 47);
+        assert_eq!(
+            first.as_slice().get(..8),
+            Some(&hex_to_bytes("80c8000080808080")[..])
+        );
+        assert_eq!(
+            first.as_slice().get(43..),
+            Some(&hex_to_bytes("0e310e2e")[..])
+        );
+        assert_eq!(second.len(), 59);
+        assert_eq!(
+            second.as_slice().get(..8),
+            Some(&hex_to_bytes("80c8000080808080")[..])
+        );
+        assert_eq!(
+            second.as_slice().get(55..),
+            Some(&hex_to_bytes("00bffff8")[..])
+        );
     }
 
     #[test]
