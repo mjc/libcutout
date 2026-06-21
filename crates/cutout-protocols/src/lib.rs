@@ -58,7 +58,7 @@ const DEFAULT_POLICY: RequestPolicy = RequestPolicy {
     min_interval_ms: 100,
 };
 
-const MAX_PROVISIONAL_REQUEST_LEN: usize = 24;
+const MAX_REQUEST_LEN: usize = 24;
 const MAX_VETERAN_FRAME_LEN: usize = 259;
 const MAX_VETERAN_TELEMETRY_TAIL_LEN: usize = MAX_VETERAN_FRAME_LEN - VETERAN_TELEMETRY_HEADER_LEN;
 const VETERAN_TELEMETRY_HEADER_LEN: usize = 36;
@@ -120,18 +120,6 @@ impl AeroProbe {
             | CommandKind::SetLights
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,
-        }
-    }
-
-    /// Returns the temporary placeholder label for this probe.
-    #[must_use]
-    pub const fn placeholder_label(self) -> &'static [u8] {
-        match self {
-            Self::Identity => b"aero:identity",
-            Self::FirmwareInfo => b"aero:firmware",
-            Self::Telemetry => b"aero:telemetry",
-            Self::BatteryInfo => b"aero:battery",
-            Self::Diagnostics => b"aero:diagnostics",
         }
     }
 
@@ -214,32 +202,28 @@ pub struct EncodedRequest<P> {
     pub command: CommandKind,
 
     /// Bounded request bytes.
-    pub payload: ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN>,
+    pub payload: ArrayVec<u8, MAX_REQUEST_LEN>,
 
     /// GATT write mode required by this request.
     pub mode: WriteMode,
 }
 
-/// Provisional request encoder for NOSFET Aero/Veteran-family probes.
+/// Request encoder for NOSFET Aero/Veteran-family probes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AeroRequestEncoder;
 
 impl AeroRequestEncoder {
     /// Encodes a supported Aero/Veteran-family probe.
     #[must_use]
-    pub fn encode(probe: AeroProbe) -> EncodedRequest<AeroProbe> {
-        EncodedRequest {
-            probe,
-            command: probe.command_kind(),
-            payload: provisional_payload(probe.placeholder_label()),
-            mode: WriteMode::WithResponse,
-        }
+    pub const fn encode(probe: AeroProbe) -> Option<EncodedRequest<AeroProbe>> {
+        let _ = probe;
+        None
     }
 
     /// Encodes a generic command if it belongs to the Aero/Veteran probe family.
     #[must_use]
     pub fn encode_command(kind: CommandKind) -> Option<EncodedRequest<AeroProbe>> {
-        AeroProbe::from_command_kind(kind).map(Self::encode)
+        Self::encode(AeroProbe::from_command_kind(kind)?)
     }
 }
 
@@ -1249,11 +1233,7 @@ fn drain_falcon_queue(queue: &mut RequestQueue<4>, output: &mut Vec<SessionOutpu
     }
 }
 
-fn provisional_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN> {
-    request_payload(bytes)
-}
-
-fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN> {
+fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_REQUEST_LEN> {
     let mut payload = ArrayVec::new();
     for byte in bytes {
         let pushed = payload.try_push(*byte);
@@ -1392,15 +1372,7 @@ mod tests {
     }
 
     #[test]
-    fn probe_placeholder_labels_are_stable() {
-        assert_eq!(
-            crate::AeroProbe::Identity.placeholder_label(),
-            b"aero:identity"
-        );
-        assert_eq!(
-            crate::AeroProbe::Diagnostics.placeholder_label(),
-            b"aero:diagnostics"
-        );
+    fn falcon_placeholder_labels_are_stable_until_source_backed() {
         assert_eq!(
             crate::FalconProbe::FirmwareInfo.placeholder_label(),
             b"falcon:firmware"
@@ -1412,13 +1384,29 @@ mod tests {
     }
 
     #[test]
-    fn aero_encoder_preserves_probe_command_write_mode_and_payload() {
-        let request = crate::AeroRequestEncoder::encode(crate::AeroProbe::FirmwareInfo);
+    fn aero_encoder_skips_all_passive_read_only_probes() {
+        for probe in [
+            crate::AeroProbe::Identity,
+            crate::AeroProbe::FirmwareInfo,
+            crate::AeroProbe::Telemetry,
+            crate::AeroProbe::BatteryInfo,
+            crate::AeroProbe::Diagnostics,
+        ] {
+            assert_eq!(crate::AeroRequestEncoder::encode(probe), None);
+        }
+    }
 
-        assert_eq!(request.probe, crate::AeroProbe::FirmwareInfo);
-        assert_eq!(request.command, CommandKind::RequestFirmwareInfo);
-        assert_eq!(request.mode, WriteMode::WithResponse);
-        assert_eq!(request.payload.as_slice(), b"aero:firmware");
+    #[test]
+    fn aero_encoder_skips_all_passive_read_only_commands() {
+        for command in [
+            CommandKind::RequestIdentity,
+            CommandKind::RequestFirmwareInfo,
+            CommandKind::RequestTelemetry,
+            CommandKind::RequestBatteryInfo,
+            CommandKind::RequestDiagnostics,
+        ] {
+            assert_eq!(crate::AeroRequestEncoder::encode_command(command), None);
+        }
     }
 
     #[test]
