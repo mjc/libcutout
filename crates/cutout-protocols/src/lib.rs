@@ -205,7 +205,7 @@ pub struct EncodedRequest<P> {
     /// Generic command kind used for scheduler and response correlation.
     pub command: CommandKind,
 
-    /// Bounded provisional request bytes.
+    /// Bounded request bytes.
     pub payload: ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN>,
 
     /// GATT write mode required by this request.
@@ -235,26 +235,32 @@ impl AeroRequestEncoder {
     }
 }
 
-/// Provisional request encoder for Begode/Falcon-family probes.
+/// Request encoder for source-backed Begode/Falcon-family probes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FalconRequestEncoder;
 
 impl FalconRequestEncoder {
     /// Encodes a supported Begode/Falcon-family probe.
     #[must_use]
-    pub fn encode(probe: FalconProbe) -> EncodedRequest<FalconProbe> {
-        EncodedRequest {
+    pub fn encode(probe: FalconProbe) -> Option<EncodedRequest<FalconProbe>> {
+        let payload = match probe {
+            FalconProbe::Identity => Some(b"N".as_slice()),
+            FalconProbe::FirmwareInfo => Some(b"V".as_slice()),
+            FalconProbe::Telemetry | FalconProbe::BatteryInfo => None,
+        }?;
+
+        Some(EncodedRequest {
             probe,
             command: probe.command_kind(),
-            payload: provisional_payload(probe.placeholder_label()),
-            mode: WriteMode::WithResponse,
-        }
+            payload: request_payload(payload),
+            mode: WriteMode::WithoutResponse,
+        })
     }
 
     /// Encodes a generic command if it belongs to the Begode/Falcon probe family.
     #[must_use]
     pub fn encode_command(kind: CommandKind) -> Option<EncodedRequest<FalconProbe>> {
-        FalconProbe::from_command_kind(kind).map(Self::encode)
+        FalconProbe::from_command_kind(kind).and_then(Self::encode)
     }
 }
 
@@ -1162,6 +1168,10 @@ fn drain_falcon_queue(queue: &mut RequestQueue<4>, output: &mut Vec<SessionOutpu
 }
 
 fn provisional_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN> {
+    request_payload(bytes)
+}
+
+fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN> {
     let mut payload = ArrayVec::new();
     for byte in bytes {
         let pushed = payload.try_push(*byte);
@@ -1329,13 +1339,45 @@ mod tests {
     }
 
     #[test]
-    fn falcon_encoder_preserves_probe_command_write_mode_and_payload() {
-        let request = crate::FalconRequestEncoder::encode(crate::FalconProbe::BatteryInfo);
+    fn falcon_encoder_uses_begode_identity_ascii_request() {
+        let request = crate::FalconRequestEncoder::encode(crate::FalconProbe::Identity)
+            .expect("identity request has source-backed Begode bytes");
 
-        assert_eq!(request.probe, crate::FalconProbe::BatteryInfo);
-        assert_eq!(request.command, CommandKind::RequestBatteryInfo);
-        assert_eq!(request.mode, WriteMode::WithResponse);
-        assert_eq!(request.payload.as_slice(), b"falcon:battery");
+        assert_eq!(request.probe, crate::FalconProbe::Identity);
+        assert_eq!(request.command, CommandKind::RequestIdentity);
+        assert_eq!(request.mode, WriteMode::WithoutResponse);
+        assert_eq!(request.payload.as_slice(), b"N");
+    }
+
+    #[test]
+    fn falcon_encoder_uses_begode_firmware_ascii_request() {
+        let request = crate::FalconRequestEncoder::encode(crate::FalconProbe::FirmwareInfo)
+            .expect("firmware request has source-backed Begode bytes");
+
+        assert_eq!(request.probe, crate::FalconProbe::FirmwareInfo);
+        assert_eq!(request.command, CommandKind::RequestFirmwareInfo);
+        assert_eq!(request.mode, WriteMode::WithoutResponse);
+        assert_eq!(request.payload.as_slice(), b"V");
+    }
+
+    #[test]
+    fn falcon_encoder_skips_unsourced_telemetry_and_battery_writes() {
+        assert_eq!(
+            crate::FalconRequestEncoder::encode(crate::FalconProbe::Telemetry),
+            None
+        );
+        assert_eq!(
+            crate::FalconRequestEncoder::encode(crate::FalconProbe::BatteryInfo),
+            None
+        );
+        assert_eq!(
+            crate::FalconRequestEncoder::encode_command(CommandKind::RequestTelemetry),
+            None
+        );
+        assert_eq!(
+            crate::FalconRequestEncoder::encode_command(CommandKind::RequestBatteryInfo),
+            None
+        );
     }
 
     #[test]
@@ -1957,12 +1999,18 @@ mod tests {
         session.handle(SessionInput::Tick { monotonic_ms: 2 }, &mut output);
 
         assert_eq!(
-            transport_writes(&output),
+            transport_writes_with_modes(&output),
             vec![
-                (crate::FALCON_WRITE_CHANNEL, b"falcon:identity".to_vec()),
-                (crate::FALCON_WRITE_CHANNEL, b"falcon:firmware".to_vec()),
-                (crate::FALCON_WRITE_CHANNEL, b"falcon:telemetry".to_vec()),
-                (crate::FALCON_WRITE_CHANNEL, b"falcon:battery".to_vec()),
+                (
+                    crate::FALCON_WRITE_CHANNEL,
+                    b"N".to_vec(),
+                    WriteMode::WithoutResponse,
+                ),
+                (
+                    crate::FALCON_WRITE_CHANNEL,
+                    b"V".to_vec(),
+                    WriteMode::WithoutResponse,
+                ),
             ]
         );
     }
@@ -2000,6 +2048,25 @@ mod tests {
                 };
                 assert_eq!(*mode, WriteMode::WithResponse);
                 Some((*channel, bytes.as_slice().to_vec()))
+            })
+            .collect()
+    }
+
+    fn transport_writes_with_modes(
+        output: &[SessionOutput],
+    ) -> Vec<(cutout_core::GattChannel, Vec<u8>, WriteMode)> {
+        output
+            .iter()
+            .filter_map(|item| {
+                let SessionOutput::Transport(TransportAction::Write {
+                    channel,
+                    bytes,
+                    mode,
+                }) = item
+                else {
+                    return None;
+                };
+                Some((*channel, bytes.as_slice().to_vec(), *mode))
             })
             .collect()
     }
