@@ -35,8 +35,11 @@ pub const fn crate_name() -> &'static str {
 /// A peripheral observation gathered from a scan or connection pass.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeripheralObservation {
-    /// Bluetooth address rendered in the platform default format.
-    pub address: String,
+    /// Platform-specific peripheral identifier.
+    pub identifier: String,
+
+    /// Bluetooth address when the platform exposes one.
+    pub address: Option<String>,
 
     /// Peripheral local name, if one was advertised.
     pub name: Option<String>,
@@ -49,9 +52,13 @@ pub struct PeripheralObservation {
 }
 
 impl PeripheralObservation {
-    fn from_properties(properties: &PeripheralProperties) -> Self {
+    fn from_peripheral(
+        peripheral: &btleplug::platform::Peripheral,
+        properties: &PeripheralProperties,
+    ) -> Self {
         Self {
-            address: properties.address.to_string(),
+            identifier: peripheral.id().to_string(),
+            address: normalize_address(properties.address.to_string()),
             name: properties.local_name.clone(),
             rssi: properties.rssi,
             advertised_services: properties.services.clone(),
@@ -61,12 +68,12 @@ impl PeripheralObservation {
 
 impl fmt::Display for PeripheralObservation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} name={}",
-            self.address,
-            self.name.as_deref().unwrap_or("<none>")
-        )?;
+        if let Some(address) = &self.address {
+            write!(f, "{address}")?;
+        } else {
+            write!(f, "id={}", self.identifier)?;
+        }
+        write!(f, " name={}", self.name.as_deref().unwrap_or("<none>"))?;
         if let Some(rssi) = self.rssi {
             write!(f, " rssi={rssi}")?;
         }
@@ -91,7 +98,7 @@ impl ConnectionTarget {
         let address_matches = self
             .address
             .as_ref()
-            .is_none_or(|address| observation.address == *address);
+            .is_none_or(|address| observation.address.as_deref() == Some(address.as_str()));
         let name_matches = self.name_contains.as_ref().is_none_or(|needle| {
             observation
                 .name
@@ -284,6 +291,115 @@ pub struct SessionBridgeReport {
     pub disconnects: usize,
 }
 
+/// Captured bridge records suitable for live BTLE evidence files.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionCaptureRecord {
+    /// Link-up metadata observed before protocol outputs were processed.
+    Link {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Negotiated maximum write length, when known.
+        max_write_len: Option<u16>,
+    },
+
+    /// Notification subscription issued by the session.
+    Subscribe {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Concrete characteristic subscribed through BTLE.
+        characteristic: Uuid,
+    },
+
+    /// Outbound write issued by the session.
+    Write {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Concrete characteristic written through BTLE.
+        characteristic: Uuid,
+
+        /// BTLE write mode used by the bridge.
+        mode: WriteType,
+
+        /// Exact bytes sent to the characteristic.
+        bytes: Vec<u8>,
+
+        /// Whether the bytes come from provisional protocol encoders.
+        provisional: bool,
+    },
+
+    /// Inbound notification observed from the device.
+    Notification {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Characteristic that emitted the notification.
+        characteristic: Uuid,
+
+        /// Service associated with the notification.
+        service: Uuid,
+
+        /// Exact bytes received from the device.
+        bytes: Vec<u8>,
+    },
+}
+
+impl fmt::Display for SessionCaptureRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Link {
+                monotonic_ms,
+                max_write_len,
+            } => write!(
+                f,
+                "link t_ms={monotonic_ms} max_write_len={}",
+                max_write_len.map_or_else(|| "<unknown>".to_owned(), |value| value.to_string())
+            ),
+            Self::Subscribe {
+                monotonic_ms,
+                characteristic,
+            } => write!(
+                f,
+                "subscribe t_ms={monotonic_ms} characteristic={characteristic}"
+            ),
+            Self::Write {
+                monotonic_ms,
+                characteristic,
+                mode,
+                bytes,
+                provisional,
+            } => write!(
+                f,
+                "write t_ms={monotonic_ms} characteristic={characteristic} mode={} bytes={} provisional={provisional}",
+                format_write_type(*mode),
+                encode_hex(bytes)
+            ),
+            Self::Notification {
+                monotonic_ms,
+                characteristic,
+                service,
+                bytes,
+            } => write!(
+                f,
+                "notification t_ms={monotonic_ms} characteristic={characteristic} service={service} bytes={}",
+                encode_hex(bytes)
+            ),
+        }
+    }
+}
+
+/// Captured records plus bridge counters from a session run.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SessionCapture {
+    /// Records emitted during the bridge run.
+    pub records: Vec<SessionCaptureRecord>,
+
+    /// Aggregate bridge counters.
+    pub report: SessionBridgeReport,
+}
+
 /// Errors surfaced while bridging protocol outputs to BTLE operations.
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum SessionBridgeError {
@@ -337,6 +453,14 @@ fn join_uuids(values: &[Uuid]) -> String {
         .map(Uuid::to_string)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn normalize_address(address: String) -> Option<String> {
+    if address == "00:00:00:00:00:00" {
+        None
+    } else {
+        Some(address)
+    }
 }
 
 /// Errors surfaced by the BTLE adapter.
@@ -429,19 +553,84 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
+    drive_session_inner(
+        peripheral,
+        session,
+        channel,
+        endpoints,
+        notification_window,
+        None,
+        false,
+    )
+    .await
+}
+
+/// Captures a protocol session against the selected BTLE endpoints.
+///
+/// # Errors
+///
+/// Returns [`BtleError::Bridge`] when a session output references a channel
+/// that does not match the selected binding, or when the session asks for
+/// subscription but no notify-capable endpoint was selected.
+pub async fn capture_session<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channel: GattChannel,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: Duration,
+    provisional_writes: bool,
+) -> Result<SessionCapture, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    let mut records = Vec::new();
+    let report = drive_session_inner(
+        peripheral,
+        session,
+        channel,
+        endpoints,
+        notification_window,
+        Some(&mut records),
+        provisional_writes,
+    )
+    .await?;
+    Ok(SessionCapture { records, report })
+}
+
+async fn drive_session_inner<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channel: GattChannel,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: Duration,
+    mut capture: Option<&mut Vec<SessionCaptureRecord>>,
+    provisional_writes: bool,
+) -> Result<SessionBridgeReport, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
     let mut report = SessionBridgeReport::default();
     let write_characteristic = characteristic_from_summary(endpoints.write);
     let notify_characteristic = endpoints.notify.map(characteristic_from_summary);
     let mut outputs = Vec::new();
     let mut monotonic_ms = 0;
+    let max_write_len = Some(peripheral.mtu());
 
     session.handle(
         SessionInput::LinkUp(LinkInfo {
             monotonic_ms,
-            max_write_len: Some(peripheral.mtu()),
+            max_write_len,
         }),
         &mut outputs,
     );
+    if let Some(records) = capture.as_deref_mut() {
+        records.push(SessionCaptureRecord::Link {
+            monotonic_ms,
+            max_write_len,
+        });
+    }
     process_session_outputs(
         peripheral,
         channel,
@@ -449,6 +638,9 @@ where
         notify_characteristic.as_ref(),
         &mut outputs,
         &mut report,
+        capture.as_deref_mut(),
+        monotonic_ms,
+        provisional_writes,
     )
     .await?;
 
@@ -461,6 +653,9 @@ where
         notify_characteristic.as_ref(),
         &mut outputs,
         &mut report,
+        capture.as_deref_mut(),
+        monotonic_ms,
+        provisional_writes,
     )
     .await?;
 
@@ -475,6 +670,14 @@ where
         match tokio::time::timeout(remaining, notifications.next()).await {
             Ok(Some(notification)) => {
                 monotonic_ms += 1;
+                if let Some(records) = capture.as_deref_mut() {
+                    records.push(SessionCaptureRecord::Notification {
+                        monotonic_ms,
+                        characteristic: notification.uuid,
+                        service: notification.service_uuid,
+                        bytes: notification.value.clone(),
+                    });
+                }
                 session.handle(
                     SessionInput::Notification {
                         channel: gatt_channel_from_uuid(notification.uuid),
@@ -490,6 +693,9 @@ where
                     notify_characteristic.as_ref(),
                     &mut outputs,
                     &mut report,
+                    capture.as_deref_mut(),
+                    monotonic_ms,
+                    provisional_writes,
                 )
                 .await?;
                 report.notifications += 1;
@@ -521,6 +727,9 @@ async fn process_session_outputs<P>(
     notify_characteristic: Option<&Characteristic>,
     outputs: &mut Vec<SessionOutput>,
     report: &mut SessionBridgeReport,
+    mut capture: Option<&mut Vec<SessionCaptureRecord>>,
+    monotonic_ms: u64,
+    provisional_writes: bool,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -539,6 +748,12 @@ where
                     return Err(SessionBridgeError::MissingNotifyEndpoint { channel }.into());
                 };
                 peripheral.subscribe(notify_characteristic).await?;
+                if let Some(records) = capture.as_deref_mut() {
+                    records.push(SessionCaptureRecord::Subscribe {
+                        monotonic_ms,
+                        characteristic: notify_characteristic.uuid,
+                    });
+                }
                 report.subscribes += 1;
             }
             SessionOutput::Transport(TransportAction::Write {
@@ -560,6 +775,15 @@ where
                 peripheral
                     .write(write_characteristic, bytes.as_slice(), write_type)
                     .await?;
+                if let Some(records) = capture.as_deref_mut() {
+                    records.push(SessionCaptureRecord::Write {
+                        monotonic_ms,
+                        characteristic: write_characteristic.uuid,
+                        mode: write_type,
+                        bytes: bytes.as_slice().to_vec(),
+                        provisional: provisional_writes,
+                    });
+                }
                 report.writes += 1;
             }
             SessionOutput::Transport(TransportAction::Disconnect) => {
@@ -577,6 +801,23 @@ where
         }
     }
     Ok(())
+}
+
+fn format_write_type(mode: WriteType) -> &'static str {
+    match mode {
+        WriteType::WithResponse => "with-response",
+        WriteType::WithoutResponse => "without-response",
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[usize::from(byte >> 4)] as char);
+        encoded.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    encoded
 }
 
 #[async_trait]
@@ -627,7 +868,10 @@ async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObserva
     let mut observations = Vec::new();
     for peripheral in adapter.peripherals().await? {
         if let Some(properties) = peripheral.properties().await? {
-            observations.push(PeripheralObservation::from_properties(&properties));
+            observations.push(PeripheralObservation::from_peripheral(
+                &peripheral,
+                &properties,
+            ));
         }
     }
     Ok(observations)
@@ -638,13 +882,17 @@ async fn observation_from_peripheral(
 ) -> Result<PeripheralObservation, BtleError> {
     let Some(properties) = peripheral.properties().await? else {
         return Ok(PeripheralObservation {
-            address: "<unknown>".to_owned(),
+            identifier: peripheral.id().to_string(),
+            address: None,
             name: None,
             rssi: None,
             advertised_services: Vec::new(),
         });
     };
-    Ok(PeripheralObservation::from_properties(&properties))
+    Ok(PeripheralObservation::from_peripheral(
+        peripheral,
+        &properties,
+    ))
 }
 
 async fn find_peripheral(
@@ -655,7 +903,7 @@ async fn find_peripheral(
         let Some(properties) = peripheral.properties().await? else {
             continue;
         };
-        let observation = PeripheralObservation::from_properties(&properties);
+        let observation = PeripheralObservation::from_peripheral(&peripheral, &properties);
         if target.matches(&observation) {
             return Ok(peripheral);
         }
@@ -696,7 +944,8 @@ mod tests {
             name_contains: Some("Aero".to_owned()),
         };
         let observation = crate::PeripheralObservation {
-            address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            identifier: "peripheral-id".to_owned(),
+            address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
             rssi: Some(-42),
             advertised_services: vec![],
@@ -709,7 +958,8 @@ mod tests {
     fn connection_summary_renders_services_and_characteristics() {
         let summary = crate::ConnectionSummary {
             observation: crate::PeripheralObservation {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
@@ -732,10 +982,59 @@ mod tests {
     }
 
     #[test]
+    fn connection_summary_uses_identifier_when_address_is_unavailable() {
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "cb-uuid-1234".to_owned(),
+                address: None,
+                name: Some("NOSFET Aero".to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![],
+            },
+            services: vec![],
+        };
+
+        assert!(summary.to_string().contains("id=cb-uuid-1234"));
+        assert!(summary.to_string().contains("name=NOSFET Aero"));
+    }
+
+    #[test]
+    fn capture_record_formats_write_bytes_with_provenance() {
+        let record = crate::SessionCaptureRecord::Write {
+            monotonic_ms: 7,
+            characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+            mode: WriteType::WithoutResponse,
+            bytes: vec![0x01, 0x23, 0xab, 0xcd],
+            provisional: true,
+        };
+
+        assert_eq!(
+            record.to_string(),
+            "write t_ms=7 characteristic=0000ffe1-0000-1000-8000-00805f9b34fb mode=without-response bytes=0123abcd provisional=true"
+        );
+    }
+
+    #[test]
+    fn capture_record_formats_notification_bytes_with_service() {
+        let record = crate::SessionCaptureRecord::Notification {
+            monotonic_ms: 11,
+            characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+            service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            bytes: vec![0xde, 0xad, 0xbe, 0xef],
+        };
+
+        assert_eq!(
+            record.to_string(),
+            "notification t_ms=11 characteristic=0000ffe1-0000-1000-8000-00805f9b34fb service=0000ffe0-0000-1000-8000-00805f9b34fb bytes=deadbeef"
+        );
+    }
+
+    #[test]
     fn connection_summary_finds_write_and_notify_candidates() {
         let summary = crate::ConnectionSummary {
             observation: crate::PeripheralObservation {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
@@ -766,7 +1065,8 @@ mod tests {
     fn connection_summary_selects_session_endpoints() {
         let summary = crate::ConnectionSummary {
             observation: crate::PeripheralObservation {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
@@ -811,7 +1111,8 @@ mod tests {
         let mut session = BridgeSession::default();
         let summary = crate::ConnectionSummary {
             observation: crate::PeripheralObservation {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
@@ -877,7 +1178,8 @@ mod tests {
         let mut session = BridgeSession::default();
         let summary = crate::ConnectionSummary {
             observation: crate::PeripheralObservation {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
@@ -914,6 +1216,82 @@ mod tests {
 
         assert_eq!(report.notifications, 1);
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
+    }
+
+    #[tokio::test]
+    async fn capture_session_records_subscribe_write_and_notification_bytes() {
+        let peripheral = RecordingPeripheral::with_notification(ValueNotification {
+            uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+            service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            value: vec![0x13, 0x37],
+        });
+        let mut session = BridgeSession::default();
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                name: Some("NOSFET Aero".to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::NOTIFY,
+                    },
+                ],
+            }],
+        };
+
+        let capture = crate::capture_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            std::time::Duration::from_millis(10),
+            true,
+        )
+        .await
+        .expect("capture consumes bridge outputs");
+
+        assert_eq!(capture.report.notifications, 1);
+        assert_eq!(
+            capture.records,
+            vec![
+                crate::SessionCaptureRecord::Link {
+                    monotonic_ms: 0,
+                    max_write_len: Some(185),
+                },
+                crate::SessionCaptureRecord::Subscribe {
+                    monotonic_ms: 0,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                },
+                crate::SessionCaptureRecord::Write {
+                    monotonic_ms: 1,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    mode: WriteType::WithResponse,
+                    bytes: b"bridge:write".to_vec(),
+                    provisional: true,
+                },
+                crate::SessionCaptureRecord::Notification {
+                    monotonic_ms: 2,
+                    characteristic: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                    service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    bytes: vec![0x13, 0x37],
+                },
+            ]
+        );
     }
 
     #[derive(Default)]

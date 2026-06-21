@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use cutout_btle::{ConnectionTarget, connect_and_discover, drive_session, scan_peripherals};
+use cutout_btle::{
+    ConnectionTarget, capture_session, connect_and_discover, drive_session, scan_peripherals,
+};
 use cutout_protocols::{AERO_WRITE_CHANNEL, AeroReadOnlySession};
 
 #[derive(Debug, Parser)]
@@ -31,6 +33,21 @@ enum Command {
         name_contains: Option<String>,
 
         /// Scan duration in seconds before attempting connect.
+        #[arg(long, default_value_t = 5)]
+        seconds: u64,
+    },
+
+    /// Connect to an Aero and print capture records for fixture work.
+    CaptureAero {
+        /// Match the peripheral by address.
+        #[arg(long)]
+        address: Option<String>,
+
+        /// Match the peripheral name by substring.
+        #[arg(long = "name-contains")]
+        name_contains: Option<String>,
+
+        /// Scan and capture duration in seconds.
         #[arg(long, default_value_t = 5)]
         seconds: u64,
     },
@@ -87,6 +104,48 @@ async fn run(cli: Cli) -> Result<(), cutout_btle::BtleError> {
             }
             Ok(())
         }
+        Command::CaptureAero {
+            address,
+            name_contains,
+            seconds,
+        } => {
+            let target = ConnectionTarget {
+                address,
+                name_contains,
+            };
+            let connection = connect_and_discover(&target, Duration::from_secs(seconds)).await?;
+            println!("{}", connection.summary);
+            if let Some(endpoints) = connection.summary.select_session_endpoints() {
+                println!(
+                    "session write={} notify={}",
+                    endpoints.write.uuid,
+                    endpoints
+                        .notify
+                        .map_or_else(|| "<none>".to_owned(), |notify| notify.uuid.to_string(),)
+                );
+                let mut session = AeroReadOnlySession::default();
+                let capture = capture_session(
+                    &connection.peripheral,
+                    &mut session,
+                    AERO_WRITE_CHANNEL,
+                    endpoints,
+                    Duration::from_secs(seconds),
+                    true,
+                )
+                .await?;
+                for record in capture.records {
+                    println!("{record}");
+                }
+                println!(
+                    "session writes={} subscribes={} notifications={} disconnects={}",
+                    capture.report.writes,
+                    capture.report.subscribes,
+                    capture.report.notifications,
+                    capture.report.disconnects
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -123,6 +182,28 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name_contains: Some("Aero".to_owned()),
                 seconds: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_capture_aero_command_with_name_target() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "NF2557",
+            "--seconds",
+            "3",
+        ])
+        .expect("parser accepts capture-aero");
+
+        assert_eq!(
+            cli.command,
+            Command::CaptureAero {
+                address: None,
+                name_contains: Some("NF2557".to_owned()),
+                seconds: 3,
             }
         );
     }
