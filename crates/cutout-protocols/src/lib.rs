@@ -13,10 +13,11 @@ use std::ops::RangeInclusive;
 
 use arrayvec::ArrayVec;
 use cutout_core::{
-    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, Measured, MonotonicMillis,
-    ParserDiagnostics, ParserError, PollRequest, PollingPlan, ProtocolSession, RequestPolicy,
-    RequestQueue, RequestUrgency, SessionInput, SessionOutput, TelemetryDelta, TransportAction,
-    WriteMode, WritePayload, WritePayloadTooLong,
+    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, GattFingerprint, GattRoles,
+    Measured, ModelRegistryEntry, MonotonicMillis, ParserDiagnostics, ParserError, PollRequest,
+    PollingPlan, ProtocolFamily, ProtocolSession, RequestPolicy, RequestQueue, RequestUrgency,
+    SessionInput, SessionOutput, TelemetryDelta, TransportAction, VerificationStatus,
+    VerifiedValue, WriteMode, WritePayload, WritePayloadTooLong,
 };
 use thiserror::Error;
 
@@ -25,6 +26,23 @@ pub const AERO_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([0xA1; 16]);
 
 /// Placeholder write channel for Begode-family sessions.
 pub const FALCON_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([0xB1; 16]);
+
+const FFE0_SERVICE: GattChannel = GattChannel::from_bytes([
+    0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
+]);
+const FFE1_CHARACTERISTIC: GattChannel = GattChannel::from_bytes([
+    0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
+]);
+const AERO_GATT_FINGERPRINTS: [GattFingerprint; 1] = [GattFingerprint {
+    service: FFE0_SERVICE,
+    characteristic: FFE1_CHARACTERISTIC,
+    roles: GattRoles::empty()
+        .with_read()
+        .with_write()
+        .with_write_without_response()
+        .with_notify(),
+    verification: VerificationStatus::HardwareVerified,
+}];
 
 const DEFAULT_POLICY: RequestPolicy = RequestPolicy {
     timeout_ms: 1_000,
@@ -539,6 +557,29 @@ impl AeroDeviceProfile {
                 CommandKind::RequestDiagnostics,
             ]),
         }
+    }
+}
+
+/// Returns the capture-backed NOSFET Aero registry entry.
+#[must_use]
+pub fn nosfet_aero_registry_entry() -> ModelRegistryEntry {
+    ModelRegistryEntry {
+        manufacturer: "NOSFET",
+        model: "Aero",
+        protocol_family: ProtocolFamily::VeteranLeaperkimNosfet,
+        advertised_name_hints: &["NF2557"],
+        wire_model_id: Some(VerifiedValue {
+            value: 43,
+            verification: VerificationStatus::HardwareVerified,
+        }),
+        battery: Some(cutout_core::BatterySpec {
+            series_cells: 30,
+            voltage_range_mv: 99_180..=123_370,
+            verification: VerificationStatus::SourceAndHardwareVerified,
+        }),
+        gatt: &AERO_GATT_FINGERPRINTS,
+        capabilities: AeroDeviceProfile::nosfet_aero().capabilities,
+        verification: VerificationStatus::HardwareVerified,
     }
 }
 
@@ -1687,6 +1728,47 @@ mod tests {
                 .capabilities
                 .supports_command_kind(CommandKind::SetLights)
         );
+    }
+
+    #[test]
+    fn aero_registry_entry_preserves_capture_backed_identity_evidence() {
+        let entry = crate::nosfet_aero_registry_entry();
+
+        assert_eq!(entry.manufacturer, "NOSFET");
+        assert_eq!(entry.model, "Aero");
+        assert_eq!(
+            entry.protocol_family,
+            cutout_core::ProtocolFamily::VeteranLeaperkimNosfet
+        );
+        assert_eq!(entry.wire_model_id.map(|model_id| model_id.value), Some(43));
+        assert_eq!(
+            entry.wire_model_id.map(|model_id| model_id.verification),
+            Some(cutout_core::VerificationStatus::HardwareVerified)
+        );
+        assert_eq!(
+            entry.battery.as_ref().map(|battery| battery.series_cells),
+            Some(30)
+        );
+        assert_eq!(
+            entry
+                .battery
+                .as_ref()
+                .map(|battery| battery.voltage_range_mv.clone()),
+            Some(99_180..=123_370)
+        );
+        assert!(
+            entry
+                .capabilities
+                .supports_command_kind(CommandKind::RequestTelemetry)
+        );
+        assert!(
+            !entry
+                .capabilities
+                .supports_command_kind(CommandKind::SetRawMotorCurrent)
+        );
+        assert_eq!(entry.advertised_name_hints, &["NF2557"]);
+        assert!(entry.gatt[0].roles.supports_notify());
+        assert!(entry.gatt[0].roles.supports_write_without_response());
     }
 
     #[test]
