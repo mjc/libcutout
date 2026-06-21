@@ -287,6 +287,12 @@ pub struct SessionBridgeReport {
     /// Notification payloads relayed into the session.
     pub notifications: usize,
 
+    /// Semantic telemetry events emitted by the session.
+    pub telemetry: usize,
+
+    /// Parser diagnostics events emitted by the session.
+    pub diagnostics: usize,
+
     /// Transport disconnect operations executed through the bridge.
     pub disconnects: usize,
 }
@@ -808,10 +814,14 @@ where
                 DeviceEvent::NotificationReceived { .. }
                 | DeviceEvent::LinkUp(_)
                 | DeviceEvent::LinkDown
-                | DeviceEvent::Tick { .. }
-                | DeviceEvent::Telemetry(_)
-                | DeviceEvent::Diagnostics(_),
+                | DeviceEvent::Tick { .. },
             ) => {}
+            SessionOutput::Event(DeviceEvent::Telemetry(_)) => {
+                context.report.telemetry += 1;
+            }
+            SessionOutput::Event(DeviceEvent::Diagnostics(_)) => {
+                context.report.diagnostics += 1;
+            }
         }
     }
     Ok(())
@@ -934,8 +944,8 @@ mod tests {
 
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
     use cutout_core::{
-        DeviceEvent, GattChannel, ProtocolSession, SessionInput, SessionOutput, TransportAction,
-        WriteMode,
+        DeviceEvent, GattChannel, Measured, ParserDiagnostics, ProtocolSession, SessionInput,
+        SessionOutput, TelemetryDelta, TransportAction, WriteMode,
     };
     use futures_util::stream;
     use uuid::Uuid;
@@ -1229,6 +1239,8 @@ mod tests {
         .expect("bridge consumes notifications");
 
         assert_eq!(report.notifications, 1);
+        assert_eq!(report.telemetry, 1);
+        assert_eq!(report.diagnostics, 1);
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
     }
 
@@ -1339,6 +1351,18 @@ mod tests {
                         monotonic_ms: 0,
                         len: 2,
                     }));
+                    output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                        TelemetryDelta {
+                            speed_mm_s: Some(Measured::reported(1_200)),
+                            ..TelemetryDelta::empty(0)
+                        },
+                    )));
+                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                        ParserDiagnostics {
+                            malformed_frames: 1,
+                            ..ParserDiagnostics::default()
+                        },
+                    )));
                 }
                 SessionInput::LinkDown | SessionInput::Command(_) => {}
             }

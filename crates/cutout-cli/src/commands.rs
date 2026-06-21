@@ -106,7 +106,12 @@ fn print_capture(capture: SessionCapture) {
 
 fn print_session_report(report: &SessionBridgeReport) {
     println!(
-        "session writes={} subscribes={} notifications={} disconnects={}",
-        report.writes, report.subscribes, report.notifications, report.disconnects
+        "session writes={} subscribes={} notifications={} telemetry={} diagnostics={} disconnects={}",
+        report.writes,
+        report.subscribes,
+        report.notifications,
+        report.telemetry,
+        report.diagnostics,
+        report.disconnects
     );
 }
