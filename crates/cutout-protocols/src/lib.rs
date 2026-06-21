@@ -13,8 +13,9 @@ use arrayvec::ArrayVec;
 use cutout_core::{
     Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, PollRequest, PollingPlan,
     ProtocolSession, RequestPolicy, RequestQueue, RequestUrgency, SessionInput, SessionOutput,
-    TransportAction, WriteMode, WritePayload,
+    TransportAction, WriteMode, WritePayload, WritePayloadTooLong,
 };
+use thiserror::Error;
 
 /// Placeholder write channel for NOSFET/Veteran-family sessions.
 pub const AERO_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([0xA1; 16]);
@@ -258,6 +259,193 @@ impl FalconRequestEncoder {
     pub fn encode_command(kind: CommandKind) -> Option<EncodedRequest<FalconProbe>> {
         FalconProbe::from_command_kind(kind).map(Self::encode)
     }
+}
+
+/// Protocol device family used by capture-backed fixtures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceFamily {
+    /// NOSFET Aero or Veteran-family protocol.
+    NosfetAero,
+
+    /// Begode Falcon or Begode-family protocol.
+    BegodeFalcon,
+}
+
+/// Family-specific request probe used by fixture records.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolProbe {
+    /// NOSFET/Veteran-family probe.
+    Aero(AeroProbe),
+
+    /// Begode/Falcon-family probe.
+    Falcon(FalconProbe),
+}
+
+impl ProtocolProbe {
+    /// Maps a device family and generic command kind into a protocol probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestFixtureError::UnsupportedCommand`] when the command is
+    /// unsupported by the selected family.
+    pub fn from_family_command(
+        family: DeviceFamily,
+        command: CommandKind,
+    ) -> Result<Self, RequestFixtureError> {
+        match family {
+            DeviceFamily::NosfetAero => AeroProbe::from_command_kind(command)
+                .map(Self::Aero)
+                .ok_or(RequestFixtureError::UnsupportedCommand { family, command }),
+            DeviceFamily::BegodeFalcon => FalconProbe::from_command_kind(command)
+                .map(Self::Falcon)
+                .ok_or(RequestFixtureError::UnsupportedCommand { family, command }),
+        }
+    }
+
+    /// Returns the family that owns this probe.
+    #[must_use]
+    pub const fn family(self) -> DeviceFamily {
+        match self {
+            Self::Aero(_) => DeviceFamily::NosfetAero,
+            Self::Falcon(_) => DeviceFamily::BegodeFalcon,
+        }
+    }
+
+    /// Returns the generic command kind correlated with this probe.
+    #[must_use]
+    pub const fn command_kind(self) -> CommandKind {
+        match self {
+            Self::Aero(probe) => probe.command_kind(),
+            Self::Falcon(probe) => probe.command_kind(),
+        }
+    }
+}
+
+/// Optional service/characteristic channels observed for a fixture.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixtureChannels {
+    /// Optional GATT service or endpoint group identifier.
+    pub service: Option<GattChannel>,
+
+    /// Optional GATT characteristic or write endpoint identifier.
+    pub characteristic: Option<GattChannel>,
+}
+
+/// Provenance category for capture-backed request fixtures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FixtureProvenance {
+    /// Observed from a Bluetooth capture.
+    BluetoothCapture,
+
+    /// Observed from an application trace.
+    AppTrace,
+
+    /// Taken from source-attributed vendor or protocol documentation.
+    VendorDocumentation,
+}
+
+/// Whether request fixture bytes have been verified against real hardware.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HardwareVerification {
+    /// Fixture bytes have not been verified against real Bluetooth hardware.
+    Unverified,
+
+    /// Fixture bytes have been verified against real Bluetooth hardware.
+    VerifiedOnBluetooth,
+}
+
+/// Capture/spec-backed request fixture record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RequestFixture {
+    /// Device family the fixture applies to.
+    pub family: DeviceFamily,
+
+    /// Family-specific probe encoded by this fixture.
+    pub probe: ProtocolProbe,
+
+    /// Generic command kind used for scheduler and response correlation.
+    pub command: CommandKind,
+
+    /// Transport write behavior observed for the request.
+    pub mode: WriteMode,
+
+    /// Bounded request bytes.
+    pub bytes: WritePayload,
+
+    /// Optional service/characteristic evidence.
+    pub channels: FixtureChannels,
+
+    /// Source category for the fixture evidence.
+    pub provenance: FixtureProvenance,
+
+    /// Hardware verification state for the fixture.
+    pub hardware_verification: HardwareVerification,
+}
+
+impl RequestFixture {
+    /// Creates a request fixture after validating family/probe and byte bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestFixtureError::FamilyMismatch`] when the probe belongs
+    /// to a different family, or [`RequestFixtureError::PayloadTooLong`] when
+    /// the request bytes exceed the core transport write bound.
+    pub fn new(
+        family: DeviceFamily,
+        probe: ProtocolProbe,
+        mode: WriteMode,
+        bytes: &[u8],
+        channels: FixtureChannels,
+        provenance: FixtureProvenance,
+        hardware_verification: HardwareVerification,
+    ) -> Result<Self, RequestFixtureError> {
+        let probe_family = probe.family();
+        if family != probe_family {
+            return Err(RequestFixtureError::FamilyMismatch {
+                family,
+                probe_family,
+            });
+        }
+        Ok(Self {
+            family,
+            probe,
+            command: probe.command_kind(),
+            mode,
+            bytes: WritePayload::try_from_slice(bytes)
+                .map_err(RequestFixtureError::PayloadTooLong)?,
+            channels,
+            provenance,
+            hardware_verification,
+        })
+    }
+}
+
+/// Request fixture validation error.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum RequestFixtureError {
+    /// Probe belongs to a different protocol family.
+    #[error("fixture family {family:?} does not match probe family {probe_family:?}")]
+    FamilyMismatch {
+        /// Fixture device family.
+        family: DeviceFamily,
+
+        /// Family implied by the probe.
+        probe_family: DeviceFamily,
+    },
+
+    /// Command is unsupported by a protocol family.
+    #[error("command {command:?} is unsupported by fixture family {family:?}")]
+    UnsupportedCommand {
+        /// Device family requested for mapping.
+        family: DeviceFamily,
+
+        /// Unsupported command.
+        command: CommandKind,
+    },
+
+    /// Request bytes exceed the transport payload bound.
+    #[error(transparent)]
+    PayloadTooLong(WritePayloadTooLong),
 }
 
 /// Initial read-only session shell for NOSFET Aero/Veteran-family devices.
@@ -577,6 +765,91 @@ mod tests {
         assert_eq!(
             crate::FalconRequestEncoder::encode_command(CommandKind::RequestDiagnostics),
             None
+        );
+    }
+
+    #[test]
+    fn request_fixture_preserves_metadata_and_bounded_payload() {
+        let fixture = crate::RequestFixture::new(
+            crate::DeviceFamily::NosfetAero,
+            crate::ProtocolProbe::Aero(crate::AeroProbe::Identity),
+            WriteMode::WithResponse,
+            b"\xdc\x5a\x5c",
+            crate::FixtureChannels {
+                service: Some(crate::AERO_WRITE_CHANNEL),
+                characteristic: Some(crate::AERO_WRITE_CHANNEL),
+            },
+            crate::FixtureProvenance::BluetoothCapture,
+            crate::HardwareVerification::VerifiedOnBluetooth,
+        )
+        .expect("fixture is valid");
+
+        assert_eq!(fixture.family, crate::DeviceFamily::NosfetAero);
+        assert_eq!(fixture.command, CommandKind::RequestIdentity);
+        assert_eq!(fixture.bytes.as_slice(), b"\xdc\x5a\x5c");
+        assert_eq!(
+            fixture.provenance,
+            crate::FixtureProvenance::BluetoothCapture
+        );
+        assert_eq!(
+            fixture.hardware_verification,
+            crate::HardwareVerification::VerifiedOnBluetooth
+        );
+    }
+
+    #[test]
+    fn request_fixture_rejects_oversized_request_bytes() {
+        let bytes = vec![0; cutout_core::MAX_TRANSPORT_WRITE_LEN + 1];
+
+        assert_eq!(
+            crate::RequestFixture::new(
+                crate::DeviceFamily::NosfetAero,
+                crate::ProtocolProbe::Aero(crate::AeroProbe::Telemetry),
+                WriteMode::WithResponse,
+                &bytes,
+                crate::FixtureChannels::default(),
+                crate::FixtureProvenance::VendorDocumentation,
+                crate::HardwareVerification::Unverified,
+            ),
+            Err(crate::RequestFixtureError::PayloadTooLong(
+                cutout_core::WritePayloadTooLong {
+                    len: cutout_core::MAX_TRANSPORT_WRITE_LEN + 1,
+                    max: cutout_core::MAX_TRANSPORT_WRITE_LEN,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn request_fixture_rejects_probe_from_wrong_family() {
+        assert_eq!(
+            crate::RequestFixture::new(
+                crate::DeviceFamily::BegodeFalcon,
+                crate::ProtocolProbe::Aero(crate::AeroProbe::Diagnostics),
+                WriteMode::WithResponse,
+                b"probe",
+                crate::FixtureChannels::default(),
+                crate::FixtureProvenance::AppTrace,
+                crate::HardwareVerification::Unverified,
+            ),
+            Err(crate::RequestFixtureError::FamilyMismatch {
+                family: crate::DeviceFamily::BegodeFalcon,
+                probe_family: crate::DeviceFamily::NosfetAero,
+            })
+        );
+    }
+
+    #[test]
+    fn protocol_probe_rejects_unsupported_family_command() {
+        assert_eq!(
+            crate::ProtocolProbe::from_family_command(
+                crate::DeviceFamily::BegodeFalcon,
+                CommandKind::RequestDiagnostics,
+            ),
+            Err(crate::RequestFixtureError::UnsupportedCommand {
+                family: crate::DeviceFamily::BegodeFalcon,
+                command: CommandKind::RequestDiagnostics,
+            })
         );
     }
 
