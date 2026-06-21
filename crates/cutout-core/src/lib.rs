@@ -237,6 +237,158 @@ impl CommandKind {
     }
 }
 
+/// Transport-independent parser resource limits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserLimits {
+    /// Maximum accepted logical frame length in bytes.
+    pub max_frame_len: usize,
+
+    /// Maximum buffered input length in bytes before a parser should shed data.
+    pub max_buffered_len: usize,
+
+    /// Maximum queued outputs a parser should retain before yielding to host code.
+    pub max_queued_outputs: usize,
+
+    /// Parser timeout threshold in host monotonic milliseconds.
+    pub timeout_ms: MonotonicMillis,
+}
+
+impl Default for ParserLimits {
+    fn default() -> Self {
+        Self {
+            max_frame_len: 4_096,
+            max_buffered_len: 8_192,
+            max_queued_outputs: 128,
+            timeout_ms: 1_000,
+        }
+    }
+}
+
+impl ParserLimits {
+    /// Validates that a claimed frame length is within the configured limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParserError::OversizedFrame`] when `claimed` exceeds
+    /// [`Self::max_frame_len`].
+    pub const fn validate_frame_len(self, claimed: usize) -> Result<(), ParserError> {
+        if claimed <= self.max_frame_len {
+            Ok(())
+        } else {
+            Err(ParserError::OversizedFrame {
+                claimed,
+                max: self.max_frame_len,
+            })
+        }
+    }
+}
+
+/// Parser failure reason that can be counted without tying core to a protocol.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParserError {
+    /// A frame claimed or accumulated more bytes than allowed.
+    OversizedFrame {
+        /// Claimed or observed frame length.
+        claimed: usize,
+
+        /// Configured maximum accepted frame length.
+        max: usize,
+    },
+
+    /// A frame checksum did not match its payload.
+    BadChecksum,
+
+    /// Input bytes could not form a valid frame.
+    MalformedFrame,
+
+    /// A parser deadline elapsed before the expected data arrived.
+    Timeout {
+        /// Elapsed monotonic milliseconds.
+        elapsed_ms: MonotonicMillis,
+
+        /// Timeout threshold in monotonic milliseconds.
+        timeout_ms: MonotonicMillis,
+    },
+
+    /// A reply could not be matched to an in-flight request.
+    UnmatchedReply,
+}
+
+/// Saturating parser diagnostics counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ParserDiagnostics {
+    /// Bytes dropped while recovering from malformed or excessive input.
+    pub dropped_bytes: u64,
+
+    /// Parser resynchronization attempts.
+    pub resyncs: u64,
+
+    /// Frames rejected because their checksum did not match.
+    pub bad_checksums: u64,
+
+    /// Parser deadlines that elapsed before expected data arrived.
+    pub timeouts: u64,
+
+    /// Frames rejected because they exceeded parser limits.
+    pub oversized_frames: u64,
+
+    /// Frames rejected because their structure was invalid.
+    pub malformed_frames: u64,
+
+    /// Replies that could not be matched to an in-flight request.
+    pub unmatched_replies: u64,
+}
+
+impl ParserDiagnostics {
+    /// Adds dropped bytes using saturating arithmetic.
+    pub fn add_dropped_bytes(&mut self, count: u64) {
+        self.dropped_bytes = self.dropped_bytes.saturating_add(count);
+    }
+
+    /// Records one parser resynchronization attempt.
+    pub fn record_resync(&mut self) {
+        saturating_increment(&mut self.resyncs);
+    }
+
+    /// Records one parser error in the corresponding diagnostics counter.
+    pub fn record_error(&mut self, error: ParserError) {
+        match error {
+            ParserError::OversizedFrame { .. } => {
+                saturating_increment(&mut self.oversized_frames);
+            }
+            ParserError::BadChecksum => {
+                saturating_increment(&mut self.bad_checksums);
+            }
+            ParserError::MalformedFrame => {
+                saturating_increment(&mut self.malformed_frames);
+            }
+            ParserError::Timeout { .. } => {
+                saturating_increment(&mut self.timeouts);
+            }
+            ParserError::UnmatchedReply => {
+                saturating_increment(&mut self.unmatched_replies);
+            }
+        }
+    }
+
+    /// Merges another diagnostics snapshot using saturating arithmetic.
+    pub fn merge(&mut self, other: Self) {
+        self.dropped_bytes = self.dropped_bytes.saturating_add(other.dropped_bytes);
+        self.resyncs = self.resyncs.saturating_add(other.resyncs);
+        self.bad_checksums = self.bad_checksums.saturating_add(other.bad_checksums);
+        self.timeouts = self.timeouts.saturating_add(other.timeouts);
+        self.oversized_frames = self.oversized_frames.saturating_add(other.oversized_frames);
+        self.malformed_frames = self.malformed_frames.saturating_add(other.malformed_frames);
+        self.unmatched_replies = self
+            .unmatched_replies
+            .saturating_add(other.unmatched_replies);
+    }
+}
+
+fn saturating_increment(counter: &mut u64) {
+    *counter = counter.saturating_add(1);
+}
+
 /// Transport write behavior requested by a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WriteMode {
@@ -552,6 +704,9 @@ pub enum DeviceEvent {
 
     /// Telemetry update emitted by a protocol session.
     Telemetry(TelemetryDelta),
+
+    /// Parser diagnostics emitted by a protocol session.
+    Diagnostics(ParserDiagnostics),
 }
 
 /// Output emitted by a protocol session for the host to drain.
@@ -868,6 +1023,98 @@ mod tests {
             Err(UnsupportedReason::CommandNotSupported(
                 crate::CommandKind::SoundHorn
             ))
+        );
+    }
+
+    #[test]
+    fn parser_limits_reject_oversized_frame_lengths() {
+        let limits = crate::ParserLimits {
+            max_frame_len: 24,
+            ..crate::ParserLimits::default()
+        };
+
+        assert_eq!(limits.validate_frame_len(24), Ok(()));
+        assert_eq!(
+            limits.validate_frame_len(25),
+            Err(crate::ParserError::OversizedFrame {
+                claimed: 25,
+                max: 24,
+            })
+        );
+    }
+
+    #[test]
+    fn parser_diagnostics_saturate_counters() {
+        let mut diagnostics = crate::ParserDiagnostics {
+            dropped_bytes: u64::MAX,
+            ..crate::ParserDiagnostics::default()
+        };
+
+        diagnostics.add_dropped_bytes(10);
+        diagnostics.record_resync();
+        diagnostics.record_error(crate::ParserError::BadChecksum);
+
+        assert_eq!(diagnostics.dropped_bytes, u64::MAX);
+        assert_eq!(diagnostics.resyncs, 1);
+        assert_eq!(diagnostics.bad_checksums, 1);
+    }
+
+    #[test]
+    fn parser_diagnostics_merge_with_saturating_counts() {
+        let mut left = crate::ParserDiagnostics {
+            timeouts: u64::MAX,
+            malformed_frames: 2,
+            ..crate::ParserDiagnostics::default()
+        };
+        let right = crate::ParserDiagnostics {
+            timeouts: 1,
+            unmatched_replies: 3,
+            ..crate::ParserDiagnostics::default()
+        };
+
+        left.merge(right);
+
+        assert_eq!(left.timeouts, u64::MAX);
+        assert_eq!(left.malformed_frames, 2);
+        assert_eq!(left.unmatched_replies, 3);
+    }
+
+    #[test]
+    fn parser_errors_map_to_expected_diagnostic_counters() {
+        let mut diagnostics = crate::ParserDiagnostics::default();
+
+        diagnostics.record_error(crate::ParserError::OversizedFrame {
+            claimed: 4_097,
+            max: 4_096,
+        });
+        diagnostics.record_error(crate::ParserError::MalformedFrame);
+        diagnostics.record_error(crate::ParserError::Timeout {
+            elapsed_ms: 1_500,
+            timeout_ms: 1_000,
+        });
+        diagnostics.record_error(crate::ParserError::UnmatchedReply);
+
+        assert_eq!(diagnostics.oversized_frames, 1);
+        assert_eq!(diagnostics.malformed_frames, 1);
+        assert_eq!(diagnostics.timeouts, 1);
+        assert_eq!(diagnostics.unmatched_replies, 1);
+    }
+
+    #[test]
+    fn parser_diagnostics_can_be_emitted_as_device_event() {
+        let diagnostics = crate::ParserDiagnostics {
+            bad_checksums: 2,
+            resyncs: 1,
+            ..crate::ParserDiagnostics::default()
+        };
+
+        assert_eq!(
+            DeviceEvent::Diagnostics(diagnostics),
+            DeviceEvent::Diagnostics(crate::ParserDiagnostics {
+                bad_checksums: 2,
+                resyncs: 1,
+                ..crate::ParserDiagnostics::default()
+            })
         );
     }
 }
