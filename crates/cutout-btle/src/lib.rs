@@ -632,30 +632,34 @@ where
         });
     }
     process_session_outputs(
-        peripheral,
-        channel,
-        &write_characteristic,
-        notify_characteristic.as_ref(),
+        SessionOutputContext {
+            peripheral,
+            channel,
+            write_characteristic: &write_characteristic,
+            notify_characteristic: notify_characteristic.as_ref(),
+            report: &mut report,
+            capture: capture.as_deref_mut(),
+            provisional_writes,
+        },
         &mut outputs,
-        &mut report,
-        capture.as_deref_mut(),
         monotonic_ms,
-        provisional_writes,
     )
     .await?;
 
     monotonic_ms += 1;
     session.handle(SessionInput::Tick { monotonic_ms }, &mut outputs);
     process_session_outputs(
-        peripheral,
-        channel,
-        &write_characteristic,
-        notify_characteristic.as_ref(),
+        SessionOutputContext {
+            peripheral,
+            channel,
+            write_characteristic: &write_characteristic,
+            notify_characteristic: notify_characteristic.as_ref(),
+            report: &mut report,
+            capture: capture.as_deref_mut(),
+            provisional_writes,
+        },
         &mut outputs,
-        &mut report,
-        capture.as_deref_mut(),
         monotonic_ms,
-        provisional_writes,
     )
     .await?;
 
@@ -687,15 +691,17 @@ where
                     &mut outputs,
                 );
                 process_session_outputs(
-                    peripheral,
-                    channel,
-                    &write_characteristic,
-                    notify_characteristic.as_ref(),
+                    SessionOutputContext {
+                        peripheral,
+                        channel,
+                        write_characteristic: &write_characteristic,
+                        notify_characteristic: notify_characteristic.as_ref(),
+                        report: &mut report,
+                        capture: capture.as_deref_mut(),
+                        provisional_writes,
+                    },
                     &mut outputs,
-                    &mut report,
-                    capture.as_deref_mut(),
                     monotonic_ms,
-                    provisional_writes,
                 )
                 .await?;
                 report.notifications += 1;
@@ -720,16 +726,20 @@ const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
     GattChannel::from_bytes(*uuid.as_bytes())
 }
 
-async fn process_session_outputs<P>(
-    peripheral: &P,
+struct SessionOutputContext<'a, P: ?Sized> {
+    peripheral: &'a P,
     channel: GattChannel,
-    write_characteristic: &Characteristic,
-    notify_characteristic: Option<&Characteristic>,
-    outputs: &mut Vec<SessionOutput>,
-    report: &mut SessionBridgeReport,
-    mut capture: Option<&mut Vec<SessionCaptureRecord>>,
-    monotonic_ms: u64,
+    write_characteristic: &'a Characteristic,
+    notify_characteristic: Option<&'a Characteristic>,
+    report: &'a mut SessionBridgeReport,
+    capture: Option<&'a mut Vec<SessionCaptureRecord>>,
     provisional_writes: bool,
+}
+
+async fn process_session_outputs<P>(
+    mut context: SessionOutputContext<'_, P>,
+    outputs: &mut Vec<SessionOutput>,
+    monotonic_ms: u64,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -737,33 +747,36 @@ where
     for output in outputs.drain(..) {
         match output {
             SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
-                if observed != channel {
+                if observed != context.channel {
                     return Err(SessionBridgeError::UnexpectedChannel {
-                        expected: channel,
+                        expected: context.channel,
                         observed,
                     }
                     .into());
                 }
-                let Some(notify_characteristic) = notify_characteristic else {
-                    return Err(SessionBridgeError::MissingNotifyEndpoint { channel }.into());
+                let Some(notify_characteristic) = context.notify_characteristic else {
+                    return Err(SessionBridgeError::MissingNotifyEndpoint {
+                        channel: context.channel,
+                    }
+                    .into());
                 };
-                peripheral.subscribe(notify_characteristic).await?;
-                if let Some(records) = capture.as_deref_mut() {
+                context.peripheral.subscribe(notify_characteristic).await?;
+                if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Subscribe {
                         monotonic_ms,
                         characteristic: notify_characteristic.uuid,
                     });
                 }
-                report.subscribes += 1;
+                context.report.subscribes += 1;
             }
             SessionOutput::Transport(TransportAction::Write {
                 channel: observed,
                 bytes,
                 mode,
             }) => {
-                if observed != channel {
+                if observed != context.channel {
                     return Err(SessionBridgeError::UnexpectedChannel {
-                        expected: channel,
+                        expected: context.channel,
                         observed,
                     }
                     .into());
@@ -772,23 +785,24 @@ where
                     WriteMode::WithResponse => WriteType::WithResponse,
                     WriteMode::WithoutResponse => WriteType::WithoutResponse,
                 };
-                peripheral
-                    .write(write_characteristic, bytes.as_slice(), write_type)
+                context
+                    .peripheral
+                    .write(context.write_characteristic, bytes.as_slice(), write_type)
                     .await?;
-                if let Some(records) = capture.as_deref_mut() {
+                if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Write {
                         monotonic_ms,
-                        characteristic: write_characteristic.uuid,
+                        characteristic: context.write_characteristic.uuid,
                         mode: write_type,
                         bytes: bytes.as_slice().to_vec(),
-                        provisional: provisional_writes,
+                        provisional: context.provisional_writes,
                     });
                 }
-                report.writes += 1;
+                context.report.writes += 1;
             }
             SessionOutput::Transport(TransportAction::Disconnect) => {
-                peripheral.disconnect().await?;
-                report.disconnects += 1;
+                context.peripheral.disconnect().await?;
+                context.report.disconnects += 1;
             }
             SessionOutput::Event(
                 DeviceEvent::NotificationReceived { .. }
