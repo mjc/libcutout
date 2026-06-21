@@ -11,9 +11,10 @@
 
 use arrayvec::ArrayVec;
 use cutout_core::{
-    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, PollRequest, PollingPlan,
-    ProtocolSession, RequestPolicy, RequestQueue, RequestUrgency, SessionInput, SessionOutput,
-    TransportAction, WriteMode, WritePayload, WritePayloadTooLong,
+    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, Measured, MonotonicMillis,
+    PollRequest, PollingPlan, ProtocolSession, RequestPolicy, RequestQueue, RequestUrgency,
+    SessionInput, SessionOutput, TelemetryDelta, TransportAction, WriteMode, WritePayload,
+    WritePayloadTooLong,
 };
 use thiserror::Error;
 
@@ -360,6 +361,170 @@ impl VeteranFrame {
     }
 }
 
+/// Known Veteran/LeaperKim/NOSFET model identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VeteranModel {
+    /// NOSFET Aero, reported as Veteran model id 43.
+    NosfetAero,
+}
+
+impl VeteranModel {
+    /// Resolves a raw Veteran model id.
+    #[must_use]
+    pub const fn from_model_id(model_id: u16) -> Option<Self> {
+        match model_id {
+            43 => Some(Self::NosfetAero),
+            _ => None,
+        }
+    }
+}
+
+/// Firmware version fields embedded in a Veteran telemetry frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VeteranFirmwareVersion {
+    /// Raw firmware version word.
+    pub raw_version: u16,
+
+    /// Veteran model id extracted from the version word.
+    pub model_id: u16,
+
+    /// Minor version digit extracted from the version word.
+    pub minor: u16,
+
+    /// Revision number extracted from the version word.
+    pub revision: u16,
+}
+
+impl VeteranFirmwareVersion {
+    #[must_use]
+    const fn from_raw(raw_version: u16) -> Self {
+        Self {
+            raw_version,
+            model_id: raw_version / 1_000,
+            minor: (raw_version % 1_000) / 100,
+            revision: raw_version % 100,
+        }
+    }
+}
+
+/// Read-only telemetry decoded from a Veteran/LeaperKim/NOSFET frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VeteranTelemetry {
+    /// Known model, when Cutout recognizes the reported model id.
+    pub model: Option<VeteranModel>,
+
+    /// Firmware/model version fields.
+    pub firmware: VeteranFirmwareVersion,
+
+    /// Pack voltage in millivolts.
+    pub voltage_mv: i32,
+
+    /// Speed in protocol-native deci-km/h.
+    pub speed_deci_kmh: i16,
+
+    /// Trip distance in meters.
+    pub trip_distance_m: u32,
+
+    /// Total distance in meters.
+    pub total_distance_m: u32,
+
+    /// Phase current in protocol-native deci-amps.
+    pub phase_current_deci_a: i16,
+
+    /// MOSFET/controller temperature in millicelsius.
+    pub mosfet_temperature_mc: i32,
+
+    /// Auto-off setting in seconds.
+    pub auto_off_seconds: u16,
+
+    /// Raw charge-mode field.
+    pub charge_mode: u16,
+
+    /// Speed alert threshold in protocol-native deci-km/h.
+    pub speed_alert_deci_kmh: u16,
+
+    /// Speed tiltback threshold in protocol-native deci-km/h.
+    pub speed_tiltback_deci_kmh: u16,
+
+    /// Raw pedals-mode field.
+    pub pedals_mode: u16,
+
+    /// Pitch in millidegrees.
+    pub pitch_mdeg: i32,
+
+    /// Raw hardware PWM field.
+    pub hardware_pwm_raw: u16,
+}
+
+impl VeteranTelemetry {
+    /// Decodes telemetry fields from a complete Veteran frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranDecodeError::FrameTooShort`] if the frame does not
+    /// contain the fixed telemetry header fields.
+    pub fn decode(frame: &VeteranFrame) -> Result<Self, VeteranDecodeError> {
+        let bytes = frame.as_slice();
+        let raw_version = read_be_u16(bytes, 28).ok_or(VeteranDecodeError::FrameTooShort)?;
+        let firmware = VeteranFirmwareVersion::from_raw(raw_version);
+
+        Ok(Self {
+            model: VeteranModel::from_model_id(firmware.model_id),
+            firmware,
+            voltage_mv: i32::from(read_be_u16(bytes, 4).ok_or(VeteranDecodeError::FrameTooShort)?)
+                * 10,
+            speed_deci_kmh: read_be_i16(bytes, 6).ok_or(VeteranDecodeError::FrameTooShort)?,
+            trip_distance_m: read_veteran_swapped_u32(bytes, 8)
+                .ok_or(VeteranDecodeError::FrameTooShort)?,
+            total_distance_m: read_veteran_swapped_u32(bytes, 12)
+                .ok_or(VeteranDecodeError::FrameTooShort)?,
+            phase_current_deci_a: read_be_i16(bytes, 16)
+                .ok_or(VeteranDecodeError::FrameTooShort)?,
+            mosfet_temperature_mc: i32::from(
+                read_be_i16(bytes, 18).ok_or(VeteranDecodeError::FrameTooShort)?,
+            ) * 10,
+            auto_off_seconds: read_be_u16(bytes, 20).ok_or(VeteranDecodeError::FrameTooShort)?,
+            charge_mode: read_be_u16(bytes, 22).ok_or(VeteranDecodeError::FrameTooShort)?,
+            speed_alert_deci_kmh: read_be_u16(bytes, 24)
+                .ok_or(VeteranDecodeError::FrameTooShort)?,
+            speed_tiltback_deci_kmh: read_be_u16(bytes, 26)
+                .ok_or(VeteranDecodeError::FrameTooShort)?,
+            pedals_mode: read_be_u16(bytes, 30).ok_or(VeteranDecodeError::FrameTooShort)?,
+            pitch_mdeg: i32::from(read_be_i16(bytes, 32).ok_or(VeteranDecodeError::FrameTooShort)?)
+                * 10,
+            hardware_pwm_raw: read_be_u16(bytes, 34).ok_or(VeteranDecodeError::FrameTooShort)?,
+        })
+    }
+
+    /// Converts decoded telemetry into the transport-independent telemetry delta.
+    #[must_use]
+    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+        TelemetryDelta {
+            at_ms,
+            speed_mm_s: Some(Measured::reported(deci_kmh_to_mm_s(self.speed_deci_kmh))),
+            voltage_mv: Some(Measured::reported(self.voltage_mv)),
+            motor_current_ma: Some(Measured::reported(
+                i32::from(self.phase_current_deci_a) * 100,
+            )),
+            controller_temperature_mc: Some(Measured::reported(self.mosfet_temperature_mc)),
+            pwm_permille: Some(Measured::reported(veteran_pwm_permille(
+                self.hardware_pwm_raw,
+            ))),
+            distance_mm: Some(Measured::reported(u64::from(self.total_distance_m) * 1_000)),
+            pitch_mdeg: Some(Measured::reported(self.pitch_mdeg)),
+            ..TelemetryDelta::empty(at_ms)
+        }
+    }
+}
+
+/// Error emitted while decoding a complete Veteran frame.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum VeteranDecodeError {
+    /// The frame is too short to contain fixed telemetry fields.
+    #[error("Veteran telemetry frame too short")]
+    FrameTooShort,
+}
+
 /// Error emitted while reassembling Veteran/LeaperKim/NOSFET frames.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum VeteranReassemblyError {
@@ -465,6 +630,34 @@ fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     let b2 = *bytes.get(offset + 2)?;
     let b3 = *bytes.get(offset + 3)?;
     Some(u32::from_be_bytes([b0, b1, b2, b3]))
+}
+
+fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let b0 = *bytes.get(offset)?;
+    let b1 = *bytes.get(offset + 1)?;
+    Some(u16::from_be_bytes([b0, b1]))
+}
+
+fn read_be_i16(bytes: &[u8], offset: usize) -> Option<i16> {
+    let b0 = *bytes.get(offset)?;
+    let b1 = *bytes.get(offset + 1)?;
+    Some(i16::from_be_bytes([b0, b1]))
+}
+
+fn read_veteran_swapped_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let b0 = u32::from(*bytes.get(offset)?);
+    let b1 = u32::from(*bytes.get(offset + 1)?);
+    let b2 = u32::from(*bytes.get(offset + 2)?);
+    let b3 = u32::from(*bytes.get(offset + 3)?);
+    Some((b2 << 24) | (b3 << 16) | (b0 << 8) | b1)
+}
+
+fn deci_kmh_to_mm_s(value: i16) -> i32 {
+    i32::from(value) * 250 / 9
+}
+
+fn veteran_pwm_permille(raw: u16) -> i16 {
+    i16::try_from(raw / 10).unwrap_or(i16::MAX)
 }
 
 /// Family-specific request probe used by fixture records.
@@ -838,8 +1031,8 @@ pub const fn crate_name() -> &'static str {
 mod tests {
     use super::crate_name;
     use cutout_core::{
-        Capabilities, CommandKind, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
-        TransportAction, WriteMode,
+        Capabilities, CommandKind, LinkInfo, Measured, ProtocolSession, SessionInput,
+        SessionOutput, TransportAction, WriteMode,
     };
 
     #[test]
@@ -1269,9 +1462,66 @@ mod tests {
         }
 
         assert_eq!(frames.len(), 4);
-        assert_eq!(frames[0].as_slice().get(..4), Some(&[0xdc, 0x5a, 0x5c, 0x53][..]));
-        assert_eq!(frames[1].as_slice().get(..4), Some(&[0xdc, 0x5a, 0x5c, 0x5f][..]));
-        assert_eq!(frames[2].as_slice().get(..4), Some(&[0xdc, 0x5a, 0x5c, 0x49][..]));
+        assert_eq!(
+            frames[0].as_slice().get(..4),
+            Some(&[0xdc, 0x5a, 0x5c, 0x53][..])
+        );
+        assert_eq!(
+            frames[1].as_slice().get(..4),
+            Some(&[0xdc, 0x5a, 0x5c, 0x5f][..])
+        );
+        assert_eq!(
+            frames[2].as_slice().get(..4),
+            Some(&[0xdc, 0x5a, 0x5c, 0x49][..])
+        );
+    }
+
+    #[test]
+    fn veteran_telemetry_decodes_first_live_aero_fixture_frame() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        for chunk in notification_fixture_chunks() {
+            frames.extend(feed_chunk(&mut reassembler, &chunk));
+        }
+
+        let telemetry =
+            crate::VeteranTelemetry::decode(&frames[0]).expect("live fixture frame decodes");
+
+        assert_eq!(telemetry.model, Some(crate::VeteranModel::NosfetAero));
+        assert_eq!(telemetry.firmware.model_id, 43);
+        assert_eq!(telemetry.firmware.raw_version, 43_254);
+        assert_eq!(telemetry.voltage_mv, 108_760);
+        assert_eq!(telemetry.speed_deci_kmh, 0);
+        assert_eq!(telemetry.total_distance_m, 1_551_169);
+        assert_eq!(telemetry.phase_current_deci_a, 0);
+        assert_eq!(telemetry.mosfet_temperature_mc, 33_270);
+        assert_eq!(telemetry.speed_alert_deci_kmh, 550);
+        assert_eq!(telemetry.speed_tiltback_deci_kmh, 540);
+    }
+
+    #[test]
+    fn veteran_telemetry_maps_live_aero_fixture_to_core_delta() {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        for chunk in notification_fixture_chunks() {
+            frames.extend(feed_chunk(&mut reassembler, &chunk));
+        }
+
+        let delta = crate::VeteranTelemetry::decode(&frames[0])
+            .expect("live fixture frame decodes")
+            .to_delta(42);
+
+        assert_eq!(delta.at_ms, 42);
+        assert_eq!(delta.speed_mm_s, Some(Measured::reported(0)));
+        assert_eq!(delta.voltage_mv, Some(Measured::reported(108_760)));
+        assert_eq!(delta.motor_current_ma, Some(Measured::reported(0)));
+        assert_eq!(
+            delta.controller_temperature_mc,
+            Some(Measured::reported(33_270))
+        );
+        assert_eq!(delta.distance_mm, Some(Measured::reported(1_551_169_000)));
     }
 
     #[test]
