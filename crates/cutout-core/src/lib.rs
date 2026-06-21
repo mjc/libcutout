@@ -767,6 +767,19 @@ impl RequestTracker {
     }
 }
 
+/// Relative scheduling urgency for queued read-only requests.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum RequestUrgency {
+    /// Routine polling work such as regular telemetry refreshes.
+    Routine,
+
+    /// Higher-value probes such as identity or capability refreshes.
+    High,
+
+    /// Critical read-only probes that should be sent before other queued work.
+    Critical,
+}
+
 /// Request staged in a bounded scheduler queue.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueuedRequest {
@@ -775,13 +788,30 @@ pub struct QueuedRequest {
 
     /// Request scheduling policy.
     pub policy: RequestPolicy,
+
+    /// Relative scheduling urgency.
+    pub urgency: RequestUrgency,
 }
 
 impl QueuedRequest {
-    /// Creates a queued request.
+    /// Creates a queued request with routine urgency.
     #[must_use]
     pub const fn new(key: RequestKey, policy: RequestPolicy) -> Self {
-        Self { key, policy }
+        Self::with_urgency(key, policy, RequestUrgency::Routine)
+    }
+
+    /// Creates a queued request with explicit urgency.
+    #[must_use]
+    pub const fn with_urgency(
+        key: RequestKey,
+        policy: RequestPolicy,
+        urgency: RequestUrgency,
+    ) -> Self {
+        Self {
+            key,
+            policy,
+            urgency,
+        }
     }
 }
 
@@ -874,6 +904,46 @@ impl<const N: usize> RequestQueue<N> {
         }
 
         self.entries[self.len] = Some(request);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Enqueues a request ahead of lower-urgency work.
+    ///
+    /// Requests with the same urgency retain FIFO order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestQueueError::DuplicateKey`] when the same key is already
+    /// queued, or [`RequestQueueError::Full`] when the fixed capacity is
+    /// exhausted.
+    pub fn enqueue_by_urgency(&mut self, request: QueuedRequest) -> Result<(), RequestQueueError> {
+        if self.contains_key(request.key) {
+            return Err(RequestQueueError::DuplicateKey { key: request.key });
+        }
+
+        if self.len == N {
+            return Err(RequestQueueError::Full { capacity: N });
+        }
+
+        let mut insert_at = self.len;
+        let mut index = 0;
+        while index < self.len {
+            if let Some(queued) = self.entries[index]
+                && request.urgency > queued.urgency
+            {
+                insert_at = index;
+                break;
+            }
+            index += 1;
+        }
+
+        let mut move_from = self.len;
+        while move_from > insert_at {
+            self.entries[move_from] = self.entries[move_from - 1];
+            move_from -= 1;
+        }
+        self.entries[insert_at] = Some(request);
         self.len += 1;
         Ok(())
     }
@@ -2133,6 +2203,87 @@ mod tests {
     }
 
     #[test]
+    fn request_queue_inserts_higher_urgency_before_routine_work() {
+        let mut queue = crate::RequestQueue::<3>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+
+        assert_eq!(queue.enqueue_by_urgency(telemetry), Ok(()));
+        assert_eq!(queue.enqueue_by_urgency(identity), Ok(()));
+
+        assert_eq!(queue.pop_next(), Some(identity));
+        assert_eq!(queue.pop_next(), Some(telemetry));
+    }
+
+    #[test]
+    fn request_queue_preserves_fifo_within_same_urgency() {
+        let mut queue = crate::RequestQueue::<3>::new();
+        let telemetry = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+
+        assert_eq!(queue.enqueue_by_urgency(telemetry), Ok(()));
+        assert_eq!(queue.enqueue_by_urgency(identity), Ok(()));
+
+        assert_eq!(queue.pop_next(), Some(telemetry));
+        assert_eq!(queue.pop_next(), Some(identity));
+    }
+
+    #[test]
+    fn request_queue_refuses_duplicate_before_priority_insertion() {
+        let mut queue = crate::RequestQueue::<2>::new();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+        let routine = crate::QueuedRequest::new(key, crate::RequestPolicy::default());
+        let urgent = crate::QueuedRequest::with_urgency(
+            key,
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+
+        assert_eq!(queue.enqueue_by_urgency(routine), Ok(()));
+        assert_eq!(
+            queue.enqueue_by_urgency(urgent),
+            Err(crate::RequestQueueError::DuplicateKey { key })
+        );
+        assert_eq!(queue.pop_next(), Some(routine));
+    }
+
+    #[test]
+    fn request_queue_refuses_full_before_priority_insertion() {
+        let mut queue = crate::RequestQueue::<1>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+
+        assert_eq!(queue.enqueue_by_urgency(telemetry), Ok(()));
+        assert_eq!(
+            queue.enqueue_by_urgency(identity),
+            Err(crate::RequestQueueError::Full { capacity: 1 })
+        );
+        assert_eq!(queue.pop_next(), Some(telemetry));
+    }
+
+    #[test]
     fn zero_capacity_request_queue_refuses_enqueue() {
         let mut queue = crate::RequestQueue::<0>::new();
         let request = crate::QueuedRequest::new(
@@ -2184,6 +2335,37 @@ mod tests {
                 observed.push(request);
             }
             prop_assert_eq!(observed, expected);
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn request_queue_priority_order_is_monotonic(urgencies in proptest::collection::vec(0u8..3, 0..3)) {
+            let commands = [
+                crate::CommandKind::RequestTelemetry,
+                crate::CommandKind::RequestIdentity,
+                crate::CommandKind::SetLights,
+            ];
+            let mut queue = crate::RequestQueue::<3>::new();
+
+            for (index, urgency) in urgencies.into_iter().enumerate() {
+                let request = crate::QueuedRequest::with_urgency(
+                    crate::RequestKey::new(commands[index]),
+                    crate::RequestPolicy::default(),
+                    match urgency {
+                        0 => crate::RequestUrgency::Routine,
+                        1 => crate::RequestUrgency::High,
+                        _ => crate::RequestUrgency::Critical,
+                    },
+                );
+                prop_assert_eq!(queue.enqueue_by_urgency(request), Ok(()));
+            }
+
+            let mut last = crate::RequestUrgency::Critical;
+            while let Some(request) = queue.pop_next() {
+                prop_assert!(request.urgency <= last);
+                last = request.urgency;
+            }
         }
     }
 
