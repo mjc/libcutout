@@ -271,6 +271,57 @@ pub enum DeviceFamily {
     BegodeFalcon,
 }
 
+/// Classification result for an observed notification byte prefix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolFamilyClassification {
+    /// Enough bytes were observed to identify a supported protocol family.
+    Known(DeviceFamily),
+
+    /// The observed prefix can still become a known family when more bytes arrive.
+    Pending,
+
+    /// The observed prefix cannot match a supported protocol family.
+    Unknown,
+}
+
+/// Classifies protocol families that share the generic FFE0/FFE1 GATT profile.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProtocolFamilyClassifier;
+
+impl ProtocolFamilyClassifier {
+    /// Returns the protocol family indicated by the first notification bytes.
+    #[must_use]
+    pub fn classify(bytes: &[u8]) -> ProtocolFamilyClassification {
+        if matches_prefix(bytes, &[0xdc, 0x5a, 0x5c]) {
+            return complete_or_pending(bytes, 3, DeviceFamily::NosfetAero);
+        }
+        if matches_prefix(bytes, &[0x55, 0xaa]) {
+            return complete_or_pending(bytes, 2, DeviceFamily::BegodeFalcon);
+        }
+        ProtocolFamilyClassification::Unknown
+    }
+}
+
+fn complete_or_pending(
+    bytes: &[u8],
+    required_len: usize,
+    family: DeviceFamily,
+) -> ProtocolFamilyClassification {
+    if bytes.len() >= required_len {
+        ProtocolFamilyClassification::Known(family)
+    } else {
+        ProtocolFamilyClassification::Pending
+    }
+}
+
+fn matches_prefix(bytes: &[u8], prefix: &[u8]) -> bool {
+    if bytes.len() <= prefix.len() {
+        prefix.starts_with(bytes)
+    } else {
+        bytes.starts_with(prefix)
+    }
+}
+
 /// Family-specific request probe used by fixture records.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProtocolProbe {
@@ -898,6 +949,38 @@ mod tests {
                 family: crate::DeviceFamily::BegodeFalcon,
                 command: CommandKind::RequestDiagnostics,
             })
+        );
+    }
+
+    #[test]
+    fn protocol_family_classifier_matches_known_notification_magic() {
+        assert_eq!(
+            crate::ProtocolFamilyClassifier::classify(b"\xdc\x5a\x5c\x20"),
+            crate::ProtocolFamilyClassification::Known(crate::DeviceFamily::NosfetAero)
+        );
+        assert_eq!(
+            crate::ProtocolFamilyClassifier::classify(b"\x55\xaa\x19\xc1"),
+            crate::ProtocolFamilyClassification::Known(crate::DeviceFamily::BegodeFalcon)
+        );
+    }
+
+    #[test]
+    fn protocol_family_classifier_distinguishes_pending_from_unknown() {
+        assert_eq!(
+            crate::ProtocolFamilyClassifier::classify(b""),
+            crate::ProtocolFamilyClassification::Pending
+        );
+        assert_eq!(
+            crate::ProtocolFamilyClassifier::classify(b"\xdc\x5a"),
+            crate::ProtocolFamilyClassification::Pending
+        );
+        assert_eq!(
+            crate::ProtocolFamilyClassifier::classify(b"\x55"),
+            crate::ProtocolFamilyClassification::Pending
+        );
+        assert_eq!(
+            crate::ProtocolFamilyClassifier::classify(b"\x00\x01\x02"),
+            crate::ProtocolFamilyClassification::Unknown
         );
     }
 
