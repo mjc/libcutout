@@ -11,7 +11,10 @@
 use std::{fmt, time::Duration};
 
 use btleplug::{
-    api::{Central, Manager as _, Peripheral as _, PeripheralProperties, ScanFilter},
+    api::{
+        Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _,
+        PeripheralProperties, ScanFilter, Service,
+    },
     platform::{Adapter, Manager},
 };
 use thiserror::Error;
@@ -96,23 +99,165 @@ impl ConnectionTarget {
 
 /// Summary of a successful connection/discovery pass.
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CharacteristicSummary {
+    /// Characteristic UUID.
+    pub uuid: Uuid,
+
+    /// Owning service UUID.
+    pub service_uuid: Uuid,
+
+    /// GATT characteristic properties.
+    pub properties: CharPropFlags,
+}
+
+impl CharacteristicSummary {
+    /// Returns whether this characteristic can accept a write.
+    #[must_use]
+    pub fn can_write(&self) -> bool {
+        self.properties
+            .intersects(CharPropFlags::WRITE | CharPropFlags::WRITE_WITHOUT_RESPONSE)
+    }
+
+    /// Returns whether this characteristic can notify or indicate.
+    #[must_use]
+    pub fn can_notify(&self) -> bool {
+        self.properties
+            .intersects(CharPropFlags::NOTIFY | CharPropFlags::INDICATE)
+    }
+}
+
+/// Service-level summary of a discovered peripheral.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceSummary {
+    /// Service UUID.
+    pub uuid: Uuid,
+
+    /// Whether this is a primary service.
+    pub primary: bool,
+
+    /// Discovered characteristics for the service.
+    pub characteristics: Vec<CharacteristicSummary>,
+}
+
+impl ServiceSummary {
+    fn from_service(service: &Service) -> Self {
+        Self {
+            uuid: service.uuid,
+            primary: service.primary,
+            characteristics: service
+                .characteristics
+                .iter()
+                .map(CharacteristicSummary::from_characteristic)
+                .collect(),
+        }
+    }
+}
+
+impl CharacteristicSummary {
+    fn from_characteristic(characteristic: &Characteristic) -> Self {
+        Self {
+            uuid: characteristic.uuid,
+            service_uuid: characteristic.service_uuid,
+            properties: characteristic.properties,
+        }
+    }
+}
+
+/// Summary of a successful connection/discovery pass.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectionSummary {
     /// Selected peripheral observation.
     pub observation: PeripheralObservation,
 
-    /// Discovered characteristic UUIDs.
-    pub characteristic_uuids: Vec<Uuid>,
+    /// Discovered GATT services and characteristics.
+    pub services: Vec<ServiceSummary>,
 }
 
 impl fmt::Display for ConnectionSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "connected {}", self.observation)?;
-        write!(
-            f,
-            "characteristics=[{}]",
-            join_uuids(&self.characteristic_uuids)
-        )
+        for service in &self.services {
+            writeln!(
+                f,
+                "service {} primary={} characteristics=[{}]",
+                service.uuid,
+                service.primary,
+                service
+                    .characteristics
+                    .iter()
+                    .map(|characteristic| {
+                        format!(
+                            "{} props={:?}",
+                            characteristic.uuid, characteristic.properties
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )?;
+        }
+        Ok(())
     }
+}
+
+impl ConnectionSummary {
+    /// Returns characteristics that can accept writes.
+    #[must_use]
+    pub fn write_candidates(&self) -> Vec<&CharacteristicSummary> {
+        self.services
+            .iter()
+            .flat_map(|service| service.characteristics.iter())
+            .filter(|characteristic| characteristic.can_write())
+            .collect()
+    }
+
+    /// Returns characteristics that can notify or indicate.
+    #[must_use]
+    pub fn notify_candidates(&self) -> Vec<&CharacteristicSummary> {
+        self.services
+            .iter()
+            .flat_map(|service| service.characteristics.iter())
+            .filter(|characteristic| characteristic.can_notify())
+            .collect()
+    }
+
+    /// Selects session endpoints from the discovered tree.
+    #[must_use]
+    pub fn select_session_endpoints(&self) -> Option<SessionEndpoints<'_>> {
+        let write = self.write_candidates().into_iter().next()?;
+        let notify = self
+            .services
+            .iter()
+            .flat_map(|service| service.characteristics.iter())
+            .find(|characteristic| {
+                characteristic.service_uuid == write.service_uuid && characteristic.can_notify()
+            })
+            .or_else(|| {
+                self.services
+                    .iter()
+                    .flat_map(|service| service.characteristics.iter())
+                    .find(|characteristic| characteristic.can_notify())
+            });
+
+        Some(SessionEndpoints { write, notify })
+    }
+}
+
+/// Selected endpoints for a protocol session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionEndpoints<'a> {
+    /// Writable characteristic selected for request writes.
+    pub write: &'a CharacteristicSummary,
+
+    /// Notification-capable characteristic, if one was selected.
+    pub notify: Option<&'a CharacteristicSummary>,
+}
+
+fn join_uuids(values: &[Uuid]) -> String {
+    values
+        .iter()
+        .map(Uuid::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Errors surfaced by the BTLE adapter.
@@ -168,15 +313,15 @@ pub async fn connect_and_discover(
     peripheral.discover_services().await?;
 
     let observation = observation_from_peripheral(&peripheral).await?;
-    let characteristic_uuids = peripheral
-        .characteristics()
+    let services = peripheral
+        .services()
         .into_iter()
-        .map(|characteristic| characteristic.uuid)
+        .map(|service| ServiceSummary::from_service(&service))
         .collect();
 
     Ok(ConnectionSummary {
         observation,
-        characteristic_uuids,
+        services,
     })
 }
 
@@ -226,17 +371,11 @@ async fn find_peripheral(
     Err(BtleError::NoPeripheralMatched)
 }
 
-fn join_uuids(values: &[Uuid]) -> String {
-    values
-        .iter()
-        .map(Uuid::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::crate_name;
+    use btleplug::api::CharPropFlags;
+    use uuid::Uuid;
 
     #[test]
     fn exposes_the_expected_name() {
@@ -268,10 +407,94 @@ mod tests {
                 rssi: Some(-42),
                 advertised_services: vec![],
             },
-            characteristic_uuids: vec![],
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+                }],
+            }],
         };
 
         assert!(summary.to_string().contains("AA:BB:CC:DD:EE:FF"));
         assert!(summary.to_string().contains("NOSFET Aero"));
+        assert!(summary.to_string().contains("ffe0"));
+        assert!(summary.to_string().contains("ffe1"));
+    }
+
+    #[test]
+    fn connection_summary_finds_write_and_notify_candidates() {
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                name: Some("NOSFET Aero".to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::READ,
+                    },
+                ],
+            }],
+        };
+
+        assert_eq!(summary.write_candidates().len(), 1);
+        assert_eq!(summary.notify_candidates().len(), 1);
+    }
+
+    #[test]
+    fn connection_summary_selects_session_endpoints() {
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                name: Some("NOSFET Aero".to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::INDICATE,
+                    },
+                ],
+            }],
+        };
+
+        let endpoints = summary
+            .select_session_endpoints()
+            .expect("summary has a writable characteristic");
+        assert_eq!(
+            endpoints.write.uuid,
+            Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb)
+        );
+        assert_eq!(
+            endpoints
+                .notify
+                .expect("summary has a notify-capable characteristic")
+                .uuid,
+            Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb)
+        );
     }
 }

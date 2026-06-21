@@ -62,6 +62,15 @@ async fn run(cli: Cli) -> Result<(), cutout_btle::BtleError> {
             };
             let summary = connect_and_discover(&target, Duration::from_secs(seconds)).await?;
             println!("{summary}");
+            if let Some(endpoints) = summary.select_session_endpoints() {
+                println!(
+                    "session write={} notify={}",
+                    endpoints.write.uuid,
+                    endpoints
+                        .notify
+                        .map_or_else(|| "<none>".to_owned(), |notify| notify.uuid.to_string(),)
+                );
+            }
             Ok(())
         }
     }
