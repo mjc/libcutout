@@ -8,8 +8,14 @@
 
 //! Core types and setup scaffolding for Cutout.
 
+use arrayvec::ArrayVec;
+use thiserror::Error;
+
 /// Monotonic timestamp in milliseconds, supplied by the host.
 pub type MonotonicMillis = u64;
+
+/// Maximum payload bytes accepted for a single GATT write value.
+pub const MAX_TRANSPORT_WRITE_LEN: usize = 512;
 
 /// Transport-independent identifier for a GATT characteristic or endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1503,8 +1509,62 @@ pub enum SessionInput<'a> {
     Command(DeviceCommand),
 }
 
+/// Bounded transport write payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WritePayload(ArrayVec<u8, MAX_TRANSPORT_WRITE_LEN>);
+
+impl WritePayload {
+    /// Creates a bounded write payload by copying bytes from a slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WritePayloadTooLong`] when `bytes` exceeds
+    /// [`MAX_TRANSPORT_WRITE_LEN`].
+    pub fn try_from_slice(bytes: &[u8]) -> Result<Self, WritePayloadTooLong> {
+        ArrayVec::try_from(bytes)
+            .map(Self)
+            .map_err(|_| WritePayloadTooLong {
+                len: bytes.len(),
+                max: MAX_TRANSPORT_WRITE_LEN,
+            })
+    }
+
+    /// Returns the write payload as bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+
+    /// Returns the payload length in bytes.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns whether the payload is empty.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Error returned when constructing an oversized write payload.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("write payload length {len} exceeds maximum {max}")]
+pub struct WritePayloadTooLong {
+    /// Attempted payload length.
+    pub len: usize,
+
+    /// Maximum accepted payload length.
+    pub max: usize,
+}
+
 /// Action a host transport must perform for a protocol session.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "write payloads stay inline to avoid per-write heap allocation"
+)]
 pub enum TransportAction {
     /// Subscribe to notifications from a transport endpoint.
     Subscribe {
@@ -1517,8 +1577,8 @@ pub enum TransportAction {
         /// Transport endpoint to write to.
         channel: GattChannel,
 
-        /// Owned bytes to write after this reactor step.
-        bytes: Vec<u8>,
+        /// Bounded bytes to write after this reactor step.
+        bytes: WritePayload,
 
         /// Transport write behavior.
         mode: WriteMode,
@@ -1564,6 +1624,10 @@ pub enum DeviceEvent {
 
 /// Output emitted by a protocol session for the host to drain.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "transport write payloads stay inline to avoid per-write heap allocation"
+)]
 pub enum SessionOutput {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportAction),
@@ -1852,13 +1916,34 @@ mod tests {
     use crate::{
         DeviceCommand, DeviceEvent, GattChannel, LinkInfo, Measured, ProtocolSession, SessionInput,
         SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, UnsupportedReason,
-        ValueQuality, ValueSource, WriteMode,
+        ValueQuality, ValueSource, WriteMode, WritePayload,
     };
     use proptest::prelude::*;
 
     #[test]
     fn exposes_the_expected_name() {
         assert_eq!(crate_name(), "cutout-core");
+    }
+
+    #[test]
+    fn write_payload_preserves_bytes_without_vec_storage() {
+        let payload = WritePayload::try_from_slice(b"telemetry").expect("payload fits");
+
+        assert_eq!(payload.as_slice(), b"telemetry");
+        assert_eq!(payload.len(), 9);
+    }
+
+    #[test]
+    fn write_payload_rejects_oversized_writes() {
+        let bytes = vec![0; crate::MAX_TRANSPORT_WRITE_LEN + 1];
+
+        assert_eq!(
+            WritePayload::try_from_slice(&bytes),
+            Err(crate::WritePayloadTooLong {
+                len: crate::MAX_TRANSPORT_WRITE_LEN + 1,
+                max: crate::MAX_TRANSPORT_WRITE_LEN,
+            })
+        );
     }
 
     #[derive(Default)]
@@ -1896,7 +1981,8 @@ mod tests {
                 SessionInput::Command(DeviceCommand::RequestTelemetry) => {
                     output.push(SessionOutput::Transport(TransportAction::Write {
                         channel: GattChannel::from_bytes([1; 16]),
-                        bytes: b"telemetry".to_vec(),
+                        bytes: WritePayload::try_from_slice(b"telemetry")
+                            .expect("test write payload fits"),
                         mode: WriteMode::WithResponse,
                     }));
                 }
@@ -1978,7 +2064,7 @@ mod tests {
             drained,
             vec![SessionOutput::Transport(TransportAction::Write {
                 channel: GattChannel::from_bytes([1; 16]),
-                bytes: b"telemetry".to_vec(),
+                bytes: WritePayload::try_from_slice(b"telemetry").expect("test write payload fits"),
                 mode: WriteMode::WithResponse,
             })]
         );
@@ -3043,7 +3129,7 @@ mod tests {
             host.drain_outputs(),
             vec![SessionOutput::Transport(TransportAction::Write {
                 channel: GattChannel::from_bytes([1; 16]),
-                bytes: b"telemetry".to_vec(),
+                bytes: WritePayload::try_from_slice(b"telemetry").expect("test write payload fits"),
                 mode: WriteMode::WithResponse,
             })]
         );

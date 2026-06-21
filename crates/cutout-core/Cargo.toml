@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+arrayvec.workspace = true
 serde = { workspace = true, optional = true }
 thiserror.workspace = true
 

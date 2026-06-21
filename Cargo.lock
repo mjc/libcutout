@@ -175,6 +175,7 @@ dependencies = [
 name = "cutout-core"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "proptest",
  "serde",
  "thiserror",

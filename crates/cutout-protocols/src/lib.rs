@@ -13,7 +13,7 @@ use arrayvec::ArrayVec;
 use cutout_core::{
     Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, PollRequest, PollingPlan,
     ProtocolSession, RequestPolicy, RequestQueue, RequestUrgency, SessionInput, SessionOutput,
-    TransportAction, WriteMode,
+    TransportAction, WriteMode, WritePayload,
 };
 
 /// Placeholder write channel for NOSFET/Veteran-family sessions.
@@ -402,9 +402,12 @@ fn drain_aero_queue(queue: &mut RequestQueue<5>, output: &mut Vec<SessionOutput>
         let Some(encoded) = AeroRequestEncoder::encode_command(request.key.command) else {
             continue;
         };
+        let Ok(bytes) = WritePayload::try_from_slice(encoded.payload.as_slice()) else {
+            continue;
+        };
         output.push(SessionOutput::Transport(TransportAction::Write {
             channel: AERO_WRITE_CHANNEL,
-            bytes: encoded.payload.to_vec(),
+            bytes,
             mode: encoded.mode,
         }));
     }
@@ -415,9 +418,12 @@ fn drain_falcon_queue(queue: &mut RequestQueue<4>, output: &mut Vec<SessionOutpu
         let Some(encoded) = FalconRequestEncoder::encode_command(request.key.command) else {
             continue;
         };
+        let Ok(bytes) = WritePayload::try_from_slice(encoded.payload.as_slice()) else {
+            continue;
+        };
         output.push(SessionOutput::Transport(TransportAction::Write {
             channel: FALCON_WRITE_CHANNEL,
-            bytes: encoded.payload.to_vec(),
+            bytes,
             mode: encoded.mode,
         }));
     }
@@ -669,7 +675,7 @@ mod tests {
                     return None;
                 };
                 assert_eq!(*mode, WriteMode::WithResponse);
-                Some((*channel, bytes.clone()))
+                Some((*channel, bytes.as_slice().to_vec()))
             })
             .collect()
     }
