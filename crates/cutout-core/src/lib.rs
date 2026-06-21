@@ -8,6 +8,8 @@
 
 //! Core types and setup scaffolding for Cutout.
 
+use std::ops::RangeInclusive;
+
 use arrayvec::ArrayVec;
 use thiserror::Error;
 
@@ -204,6 +206,186 @@ pub struct CommandMetadata {
 pub enum UnsupportedReason {
     /// The command kind is not reported as supported.
     CommandNotSupported(CommandKind),
+}
+
+/// Protocol family identifier used by registry data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolFamily {
+    /// Veteran/LeaperKim/NOSFET `dc5a5c` frame family.
+    VeteranLeaperkimNosfet,
+
+    /// Begode/Gotway `55aa` frame family.
+    BegodeGotway,
+
+    /// VESC UART/CAN-derived family used by Refloat-style controllers.
+    Vesc,
+}
+
+/// Verification state for registry fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VerificationStatus {
+    /// Not yet verified.
+    Unverified,
+
+    /// Inferred from partial evidence.
+    Inferred,
+
+    /// Verified against source-attributed protocol documentation.
+    SourceVerified,
+
+    /// Verified against actual Bluetooth hardware.
+    HardwareVerified,
+
+    /// Verified against both source-attributed documentation and hardware.
+    SourceAndHardwareVerified,
+}
+
+/// A registry value plus its verification state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifiedValue<T> {
+    /// Data value.
+    pub value: T,
+
+    /// Verification status for this value.
+    pub verification: VerificationStatus,
+}
+
+/// Battery metadata for a registry entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatterySpec {
+    /// Series cell count.
+    pub series_cells: u8,
+
+    /// Expected pack voltage range in millivolts.
+    pub voltage_range_mv: RangeInclusive<u32>,
+
+    /// Verification status for the battery metadata.
+    pub verification: VerificationStatus,
+}
+
+/// Observed roles for a GATT characteristic.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GattRoles(u8);
+
+impl GattRoles {
+    const READ: u8 = 1 << 0;
+    const WRITE: u8 = 1 << 1;
+    const WRITE_WITHOUT_RESPONSE: u8 = 1 << 2;
+    const NOTIFY: u8 = 1 << 3;
+    const INDICATE: u8 = 1 << 4;
+
+    /// Empty role set.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    /// Adds read support.
+    #[must_use]
+    pub const fn with_read(self) -> Self {
+        Self(self.0 | Self::READ)
+    }
+
+    /// Adds write-with-response support.
+    #[must_use]
+    pub const fn with_write(self) -> Self {
+        Self(self.0 | Self::WRITE)
+    }
+
+    /// Adds write-without-response support.
+    #[must_use]
+    pub const fn with_write_without_response(self) -> Self {
+        Self(self.0 | Self::WRITE_WITHOUT_RESPONSE)
+    }
+
+    /// Adds notification support.
+    #[must_use]
+    pub const fn with_notify(self) -> Self {
+        Self(self.0 | Self::NOTIFY)
+    }
+
+    /// Adds indication support.
+    #[must_use]
+    pub const fn with_indicate(self) -> Self {
+        Self(self.0 | Self::INDICATE)
+    }
+
+    /// Returns whether read is supported.
+    #[must_use]
+    pub const fn supports_read(self) -> bool {
+        self.0 & Self::READ != 0
+    }
+
+    /// Returns whether write with response is supported.
+    #[must_use]
+    pub const fn supports_write(self) -> bool {
+        self.0 & Self::WRITE != 0
+    }
+
+    /// Returns whether write without response is supported.
+    #[must_use]
+    pub const fn supports_write_without_response(self) -> bool {
+        self.0 & Self::WRITE_WITHOUT_RESPONSE != 0
+    }
+
+    /// Returns whether notify is supported.
+    #[must_use]
+    pub const fn supports_notify(self) -> bool {
+        self.0 & Self::NOTIFY != 0
+    }
+
+    /// Returns whether indicate is supported.
+    #[must_use]
+    pub const fn supports_indicate(self) -> bool {
+        self.0 & Self::INDICATE != 0
+    }
+}
+
+/// GATT service/characteristic fingerprint for a registry entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GattFingerprint {
+    /// Observed service UUID.
+    pub service: GattChannel,
+
+    /// Observed characteristic UUID.
+    pub characteristic: GattChannel,
+
+    /// Observed characteristic roles.
+    pub roles: GattRoles,
+
+    /// Verification status for this fingerprint.
+    pub verification: VerificationStatus,
+}
+
+/// Data-only model registry entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelRegistryEntry {
+    /// Manufacturer or brand.
+    pub manufacturer: &'static str,
+
+    /// Model name.
+    pub model: &'static str,
+
+    /// Protocol family.
+    pub protocol_family: ProtocolFamily,
+
+    /// Advertised-name hints. These are hints only, not identity truth.
+    pub advertised_name_hints: &'static [&'static str],
+
+    /// Passive wire model id when known.
+    pub wire_model_id: Option<VerifiedValue<u16>>,
+
+    /// Battery metadata when known.
+    pub battery: Option<BatterySpec>,
+
+    /// Observed GATT fingerprints.
+    pub gatt: &'static [GattFingerprint],
+
+    /// Supported command capabilities.
+    pub capabilities: Capabilities,
+
+    /// Overall entry verification status.
+    pub verification: VerificationStatus,
 }
 
 /// Current command capabilities for a resolved device/session.
@@ -2244,6 +2426,72 @@ mod tests {
 
         assert_eq!(response.entries[0], Some(entry));
         assert_eq!(response.entries[1], None);
+    }
+
+    #[test]
+    fn registry_entry_represents_capture_backed_aero_metadata() {
+        const AERO_GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
+            service: GattChannel::from_bytes([
+                0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+                0x34, 0xfb,
+            ]),
+            characteristic: GattChannel::from_bytes([
+                0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+                0x34, 0xfb,
+            ]),
+            roles: crate::GattRoles::empty()
+                .with_read()
+                .with_write()
+                .with_write_without_response()
+                .with_notify(),
+            verification: crate::VerificationStatus::HardwareVerified,
+        }];
+        let entry = crate::ModelRegistryEntry {
+            manufacturer: "NOSFET",
+            model: "Aero",
+            protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            advertised_name_hints: &["NF2557"],
+            wire_model_id: Some(crate::VerifiedValue {
+                value: 43_u16,
+                verification: crate::VerificationStatus::HardwareVerified,
+            }),
+            battery: Some(crate::BatterySpec {
+                series_cells: 30,
+                voltage_range_mv: 99_180..=123_370,
+                verification: crate::VerificationStatus::SourceAndHardwareVerified,
+            }),
+            gatt: &AERO_GATT,
+            capabilities: crate::Capabilities::from_supported_commands([
+                crate::CommandKind::RequestIdentity,
+                crate::CommandKind::RequestTelemetry,
+                crate::CommandKind::RequestFirmwareInfo,
+                crate::CommandKind::RequestBatteryInfo,
+                crate::CommandKind::RequestDiagnostics,
+            ]),
+            verification: crate::VerificationStatus::HardwareVerified,
+        };
+
+        assert_eq!(entry.manufacturer, "NOSFET");
+        assert_eq!(
+            entry.protocol_family,
+            crate::ProtocolFamily::VeteranLeaperkimNosfet
+        );
+        assert!(
+            entry
+                .capabilities
+                .supports_command_kind(crate::CommandKind::RequestTelemetry)
+        );
+        assert!(
+            !entry
+                .capabilities
+                .supports_command_kind(crate::CommandKind::SetRawMotorCurrent)
+        );
+        assert_eq!(entry.wire_model_id.map(|model_id| model_id.value), Some(43));
+        assert!(entry.gatt[0].roles.supports_read());
+        assert!(entry.gatt[0].roles.supports_write());
+        assert!(entry.gatt[0].roles.supports_write_without_response());
+        assert!(entry.gatt[0].roles.supports_notify());
+        assert!(!entry.gatt[0].roles.supports_indicate());
     }
 
     #[test]
