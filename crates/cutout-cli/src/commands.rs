@@ -1,12 +1,14 @@
 use std::time::Duration;
 
+use anyhow::Result;
 use cutout_btle::{
     BtleError, ConnectedPeripheral, SessionBridgeReport, SessionCapture, SessionEndpoints,
     capture_session, connect_and_discover, drive_session, scan_peripherals,
 };
-use cutout_protocols::{AERO_WRITE_CHANNEL, AeroReadOnlySession};
+use cutout_protocols::{AeroReadOnlySession, VETERAN_DATA_CHANNEL};
 
 use crate::cli::{Cli, Command, TargetedScanArgs};
+use crate::dashboard::run_dashboard;
 
 /// Executes a parsed CLI invocation.
 ///
@@ -14,12 +16,15 @@ use crate::cli::{Cli, Command, TargetedScanArgs};
 ///
 /// Returns the underlying Bluetooth transport error when scanning, connecting,
 /// discovery, or protocol session bridging fails.
-pub async fn run(cli: Cli) -> Result<(), BtleError> {
+pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Scan(args) => scan(args.seconds()).await,
-        Command::Connect(args) => connect(args, SessionMode::Drive).await,
-        Command::CaptureAero(args) => connect(args, SessionMode::Capture).await,
+        Command::Scan(args) => scan(args.seconds()).await?,
+        Command::Connect(args) => connect(args, SessionMode::Drive).await?,
+        Command::CaptureAero(args) => connect(args, SessionMode::Capture).await?,
+        Command::Dashboard => run_dashboard()?,
     }
+
+    Ok(())
 }
 
 async fn scan(seconds: u64) -> Result<(), BtleError> {
@@ -63,7 +68,7 @@ impl SessionMode {
                 let report = drive_session(
                     &connection.peripheral,
                     &mut session,
-                    AERO_WRITE_CHANNEL,
+                    VETERAN_DATA_CHANNEL,
                     endpoints,
                     window,
                 )
@@ -74,7 +79,7 @@ impl SessionMode {
                 let capture = capture_session(
                     &connection.peripheral,
                     &mut session,
-                    AERO_WRITE_CHANNEL,
+                    VETERAN_DATA_CHANNEL,
                     endpoints,
                     window,
                     true,

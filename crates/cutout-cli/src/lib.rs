@@ -5,6 +5,7 @@
 
 mod cli;
 mod commands;
+mod dashboard;
 
 pub use cli::Cli;
 pub use commands::run;

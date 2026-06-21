@@ -15,6 +15,7 @@ Examples:
   cutout connect --name-contains Aero
   cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
   cutout capture-aero --name-contains NF2557 --seconds 20
+  cutout dashboard
 
 Target selection:
   --address matches the Bluetooth address reported by the platform.
@@ -39,6 +40,13 @@ notifications, provisional write bytes, and bridge counters.
 
 Capture output may include device identifiers and raw notification payloads.
 Review it before sharing logs publicly.";
+const DASHBOARD_LONG_ABOUT: &str = "\
+Open a read-only Ratatui dashboard backed by the Termina terminal backend.
+The dashboard is intended as a live inspection surface for discovery, device
+selection, telemetry samples, and recent events while the profile model grows.
+
+This command does not modify the device. It is a visualization and monitoring
+surface for the data Cutout already knows how to collect.";
 
 /// Parsed command-line arguments for the `cutout` binary.
 #[derive(Debug, Parser)]
@@ -66,6 +74,10 @@ pub(crate) enum Command {
     /// Capture read-only Aero/Veteran protocol evidence.
     #[command(long_about = CAPTURE_AERO_LONG_ABOUT)]
     CaptureAero(TargetedScanArgs),
+
+    /// Open the interactive read-only dashboard.
+    #[command(long_about = DASHBOARD_LONG_ABOUT)]
+    Dashboard,
 }
 
 #[derive(Clone, Copy, Debug, Args, PartialEq, Eq)]
@@ -371,6 +383,13 @@ mod tests {
     }
 
     #[test]
+    fn parses_dashboard_command() {
+        let cli = Cli::try_parse_from(["cutout", "dashboard"]).expect("parser accepts dashboard");
+
+        assert_eq!(cli.command, Command::Dashboard);
+    }
+
+    #[test]
     fn converts_target_args_to_connection_target() {
         let target: cutout_btle::ConnectionTarget = TargetArgs {
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
@@ -526,6 +545,7 @@ mod tests {
                 "scan",
                 "connect",
                 "capture-aero",
+                "dashboard",
             ],
         );
     }
@@ -571,6 +591,7 @@ mod tests {
                 "cutout connect --name-contains Aero",
                 "cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8",
                 "cutout capture-aero --name-contains NF2557 --seconds 20",
+                "cutout dashboard",
             ],
         );
     }
@@ -583,7 +604,7 @@ mod tests {
             .map(clap::Command::get_name)
             .collect::<Vec<_>>();
 
-        assert_eq!(names, ["scan", "connect", "capture-aero"]);
+        assert_eq!(names, ["scan", "connect", "capture-aero", "dashboard"]);
     }
 
     #[test]
@@ -715,6 +736,34 @@ mod tests {
                 "Aero/Veteran-family",
                 "Capture output",
                 "device identifiers",
+            ],
+        );
+    }
+
+    #[test]
+    fn dashboard_short_help_names_the_terminal_surface() {
+        let help = short_help_for("dashboard");
+
+        assert_contains_all(
+            &help,
+            &[
+                "Open the interactive read-only dashboard",
+                "Usage: dashboard",
+            ],
+        );
+    }
+
+    #[test]
+    fn dashboard_long_help_describes_termina_scope() {
+        let help = long_help_for("dashboard");
+
+        assert_contains_all(
+            &help,
+            &[
+                "Ratatui dashboard",
+                "Termina terminal backend",
+                "visualization and monitoring",
+                "does not modify the device",
             ],
         );
     }
