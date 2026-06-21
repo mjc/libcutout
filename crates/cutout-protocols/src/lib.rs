@@ -36,34 +36,6 @@ const MAX_VETERAN_TELEMETRY_TAIL_LEN: usize = MAX_VETERAN_FRAME_LEN - VETERAN_TE
 const VETERAN_TELEMETRY_HEADER_LEN: usize = 36;
 const VETERAN_SHORT_FRAME_MAX_LEN: u8 = 38;
 
-const AERO_POLL_PLAN: PollingPlan<5> = PollingPlan::new([
-    PollRequest::new(
-        CommandKind::RequestTelemetry,
-        DEFAULT_POLICY,
-        RequestUrgency::Routine,
-    ),
-    PollRequest::new(
-        CommandKind::RequestBatteryInfo,
-        DEFAULT_POLICY,
-        RequestUrgency::Routine,
-    ),
-    PollRequest::new(
-        CommandKind::RequestIdentity,
-        DEFAULT_POLICY,
-        RequestUrgency::High,
-    ),
-    PollRequest::new(
-        CommandKind::RequestFirmwareInfo,
-        DEFAULT_POLICY,
-        RequestUrgency::High,
-    ),
-    PollRequest::new(
-        CommandKind::RequestDiagnostics,
-        DEFAULT_POLICY,
-        RequestUrgency::Routine,
-    ),
-]);
-
 const FALCON_POLL_PLAN: PollingPlan<4> = PollingPlan::new([
     PollRequest::new(
         CommandKind::RequestTelemetry,
@@ -900,7 +872,6 @@ pub enum RequestFixtureError {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AeroReadOnlySession {
     connected: bool,
-    queue: RequestQueue<5>,
     reassembler: VeteranFrameReassembler,
 }
 
@@ -923,7 +894,6 @@ impl ProtocolSession for AeroReadOnlySession {
         match input {
             SessionInput::LinkUp(info) => {
                 self.connected = true;
-                self.queue = RequestQueue::new();
                 self.reassembler = VeteranFrameReassembler::default();
                 output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
@@ -932,16 +902,11 @@ impl ProtocolSession for AeroReadOnlySession {
             }
             SessionInput::LinkDown => {
                 self.connected = false;
-                self.queue = RequestQueue::new();
                 self.reassembler = VeteranFrameReassembler::default();
                 output.push(SessionOutput::Event(DeviceEvent::LinkDown));
             }
             SessionInput::Tick { monotonic_ms } => {
                 output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
-                if self.connected {
-                    enqueue_aero_plan(&mut self.queue);
-                    drain_aero_queue(&mut self.queue, output);
-                }
             }
             SessionInput::Notification {
                 channel,
@@ -1084,28 +1049,8 @@ impl ProtocolSession for FalconReadOnlySession {
     }
 }
 
-fn enqueue_aero_plan(queue: &mut RequestQueue<5>) {
-    let _result = AERO_POLL_PLAN.enqueue_into(queue);
-}
-
 fn enqueue_falcon_plan(queue: &mut RequestQueue<4>) {
     let _result = FALCON_POLL_PLAN.enqueue_into(queue);
-}
-
-fn drain_aero_queue(queue: &mut RequestQueue<5>, output: &mut Vec<SessionOutput>) {
-    while let Some(request) = queue.pop_next() {
-        let Some(encoded) = AeroRequestEncoder::encode_command(request.key.command) else {
-            continue;
-        };
-        let Ok(bytes) = WritePayload::try_from_slice(encoded.payload.as_slice()) else {
-            continue;
-        };
-        output.push(SessionOutput::Transport(TransportAction::Write {
-            channel: AERO_WRITE_CHANNEL,
-            bytes,
-            mode: encoded.mode,
-        }));
-    }
 }
 
 fn drain_falcon_queue(queue: &mut RequestQueue<4>, output: &mut Vec<SessionOutput>) {
@@ -1749,7 +1694,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_session_emits_polls_in_scheduler_order_after_link_up() {
+    fn aero_session_does_not_send_provisional_writes_after_link_up() {
         let mut session = crate::AeroReadOnlySession::default();
         let mut output = Vec::new();
 
@@ -1763,16 +1708,7 @@ mod tests {
         output.clear();
         session.handle(SessionInput::Tick { monotonic_ms: 2 }, &mut output);
 
-        assert_eq!(
-            transport_writes(&output),
-            vec![
-                (crate::AERO_WRITE_CHANNEL, b"aero:identity".to_vec()),
-                (crate::AERO_WRITE_CHANNEL, b"aero:firmware".to_vec()),
-                (crate::AERO_WRITE_CHANNEL, b"aero:telemetry".to_vec()),
-                (crate::AERO_WRITE_CHANNEL, b"aero:battery".to_vec()),
-                (crate::AERO_WRITE_CHANNEL, b"aero:diagnostics".to_vec()),
-            ]
-        );
+        assert!(transport_writes(&output).is_empty());
     }
 
     #[test]
@@ -1802,7 +1738,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_session_clears_queued_polls_on_link_down() {
+    fn aero_session_does_not_resume_provisional_writes_after_link_down() {
         let mut session = crate::AeroReadOnlySession::default();
         let mut output = Vec::new();
 
