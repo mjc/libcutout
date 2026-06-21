@@ -87,6 +87,9 @@ pub struct ConnectionTarget {
     /// Match against the peripheral address, when provided.
     pub address: Option<String>,
 
+    /// Match against the platform-specific peripheral identifier.
+    pub identifier: Option<String>,
+
     /// Match against the peripheral local name, when provided.
     pub name_contains: Option<String>,
 }
@@ -99,6 +102,10 @@ impl ConnectionTarget {
             .address
             .as_ref()
             .is_none_or(|address| observation.address.as_deref() == Some(address.as_str()));
+        let identifier_matches = self
+            .identifier
+            .as_ref()
+            .is_none_or(|identifier| observation.identifier == *identifier);
         let name_matches = self.name_contains.as_ref().is_none_or(|needle| {
             observation
                 .name
@@ -106,7 +113,7 @@ impl ConnectionTarget {
                 .is_some_and(|name| name.contains(needle))
         });
 
-        address_matches && name_matches
+        address_matches && identifier_matches && name_matches
     }
 }
 
@@ -965,12 +972,31 @@ mod tests {
     fn connection_target_matches_on_address_and_name() {
         let target = crate::ConnectionTarget {
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+            identifier: None,
             name_contains: Some("Aero".to_owned()),
         };
         let observation = crate::PeripheralObservation {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
+            rssi: Some(-42),
+            advertised_services: vec![],
+        };
+
+        assert!(target.matches(&observation));
+    }
+
+    #[test]
+    fn connection_target_matches_on_platform_identifier() {
+        let target = crate::ConnectionTarget {
+            address: None,
+            identifier: Some("cb-uuid-1234".to_owned()),
+            name_contains: None,
+        };
+        let observation = crate::PeripheralObservation {
+            identifier: "cb-uuid-1234".to_owned(),
+            address: None,
+            name: Some("NF2557".to_owned()),
             rssi: Some(-42),
             advertised_services: vec![],
         };

@@ -106,6 +106,10 @@ pub(crate) struct TargetArgs {
     #[arg(long, value_name = "ADDR")]
     pub(crate) address: Option<String>,
 
+    /// Platform-specific peripheral identifier to select from scan results.
+    #[arg(long = "id", value_name = "ID")]
+    pub(crate) identifier: Option<String>,
+
     /// Case-sensitive substring that must appear in the advertised name.
     #[arg(long = "name-contains", value_name = "TEXT")]
     pub(crate) name_contains: Option<String>,
@@ -115,6 +119,7 @@ impl From<TargetArgs> for ConnectionTarget {
     fn from(target: TargetArgs) -> Self {
         Self {
             address: target.address,
+            identifier: target.identifier,
             name_contains: target.name_contains,
         }
     }
@@ -191,6 +196,7 @@ mod tests {
             Command::Connect(TargetedScanArgs {
                 target: TargetArgs {
                     address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                    identifier: None,
                     name_contains: None,
                 },
                 scan: ScanArgs {
@@ -219,6 +225,7 @@ mod tests {
             Command::Connect(TargetedScanArgs {
                 target: TargetArgs {
                     address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                    identifier: None,
                     name_contains: Some("Aero".to_owned()),
                 },
                 scan: ScanArgs { seconds: 8 },
@@ -243,6 +250,7 @@ mod tests {
             Command::Connect(TargetedScanArgs {
                 target: TargetArgs {
                     address: None,
+                    identifier: None,
                     name_contains: Some("Aero".to_owned()),
                 },
                 scan: ScanArgs { seconds: 11 },
@@ -260,6 +268,7 @@ mod tests {
             Command::Connect(TargetedScanArgs {
                 target: TargetArgs {
                     address: None,
+                    identifier: None,
                     name_contains: Some("Aero".to_owned()),
                 },
                 scan: ScanArgs {
@@ -279,6 +288,7 @@ mod tests {
             Command::Connect(TargetedScanArgs {
                 target: TargetArgs {
                     address: None,
+                    identifier: None,
                     name_contains: None,
                 },
                 scan: ScanArgs {
@@ -305,6 +315,7 @@ mod tests {
             Command::CaptureAero(TargetedScanArgs {
                 target: TargetArgs {
                     address: None,
+                    identifier: None,
                     name_contains: Some("NF2557".to_owned()),
                 },
                 scan: ScanArgs { seconds: 3 },
@@ -322,6 +333,7 @@ mod tests {
             Command::CaptureAero(TargetedScanArgs {
                 target: TargetArgs {
                     address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                    identifier: None,
                     name_contains: None,
                 },
                 scan: ScanArgs {
@@ -350,6 +362,7 @@ mod tests {
             Command::CaptureAero(TargetedScanArgs {
                 target: TargetArgs {
                     address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                    identifier: None,
                     name_contains: Some("NF2557".to_owned()),
                 },
                 scan: ScanArgs { seconds: 21 },
@@ -361,18 +374,53 @@ mod tests {
     fn converts_target_args_to_connection_target() {
         let target: cutout_btle::ConnectionTarget = TargetArgs {
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+            identifier: None,
             name_contains: Some("Aero".to_owned()),
         }
         .into();
 
         assert_eq!(target.address.as_deref(), Some("AA:BB:CC:DD:EE:FF"));
+        assert_eq!(target.identifier, None);
         assert_eq!(target.name_contains.as_deref(), Some("Aero"));
+    }
+
+    #[test]
+    fn converts_identifier_target_args_to_connection_target() {
+        let target: cutout_btle::ConnectionTarget = TargetArgs {
+            address: None,
+            identifier: Some("cb-uuid-1234".to_owned()),
+            name_contains: None,
+        }
+        .into();
+
+        assert_eq!(target.identifier.as_deref(), Some("cb-uuid-1234"));
+    }
+
+    #[test]
+    fn parses_connect_command_with_identifier_target() {
+        let cli = Cli::try_parse_from(["cutout", "connect", "--id", "cb-uuid-1234"])
+            .expect("parser accepts connect by platform id");
+
+        assert_eq!(
+            cli.command,
+            Command::Connect(TargetedScanArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: Some("cb-uuid-1234".to_owned()),
+                    name_contains: None,
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS
+                },
+            })
+        );
     }
 
     #[test]
     fn converts_empty_target_args_to_default_connection_target() {
         let target: cutout_btle::ConnectionTarget = TargetArgs {
             address: None,
+            identifier: None,
             name_contains: None,
         }
         .into();
@@ -385,6 +433,7 @@ mod tests {
         let args = TargetedScanArgs {
             target: TargetArgs {
                 address: None,
+                identifier: None,
                 name_contains: Some("NF2557".to_owned()),
             },
             scan: ScanArgs { seconds: 30 },

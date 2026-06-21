@@ -1140,7 +1140,7 @@ mod tests {
     use super::crate_name;
     use cutout_core::{
         Capabilities, CommandKind, DeviceEvent, LinkInfo, Measured, ProtocolSession, SessionInput,
-        SessionOutput, TransportAction, WriteMode,
+        SessionOutput, TelemetryDelta, TransportAction, WriteMode,
     };
 
     #[test]
@@ -1465,6 +1465,51 @@ mod tests {
             .collect()
     }
 
+    fn arbitrary_fixture_chunks() -> Vec<Vec<u8>> {
+        let bytes: Vec<_> = notification_fixture_chunks()
+            .into_iter()
+            .flatten()
+            .collect();
+        let mut chunks = Vec::new();
+        let mut offset = 0;
+        let sizes = [1_usize, 7, 13, 2, 31, 5];
+        let mut size_index = 0;
+
+        while offset < bytes.len() {
+            let size = sizes[size_index % sizes.len()];
+            let end = offset.saturating_add(size).min(bytes.len());
+            chunks.push(bytes[offset..end].to_vec());
+            offset = end;
+            size_index += 1;
+        }
+
+        chunks
+    }
+
+    fn telemetry_from_chunks(chunks: impl IntoIterator<Item = Vec<u8>>) -> Vec<TelemetryDelta> {
+        let mut session = crate::AeroReadOnlySession::default();
+        let mut output = Vec::new();
+
+        for chunk in chunks {
+            session.handle(
+                SessionInput::Notification {
+                    channel: crate::AERO_WRITE_CHANNEL,
+                    bytes: chunk.as_slice(),
+                    monotonic_ms: 42,
+                },
+                &mut output,
+            );
+        }
+
+        output
+            .into_iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::Telemetry(delta)) => Some(delta),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn hex_fixture_line(line: &str) -> Option<Vec<u8>> {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -1739,6 +1784,22 @@ mod tests {
             telemetry[0].distance_mm,
             Some(Measured::reported(1_551_169_000))
         );
+    }
+
+    #[test]
+    fn aero_session_replay_chunking_produces_equivalent_telemetry() {
+        let recorded = telemetry_from_chunks(notification_fixture_chunks());
+        let one_byte = telemetry_from_chunks(
+            notification_fixture_chunks()
+                .into_iter()
+                .flatten()
+                .map(|byte| vec![byte]),
+        );
+        let arbitrary = telemetry_from_chunks(arbitrary_fixture_chunks());
+
+        assert_eq!(recorded.len(), 4);
+        assert_eq!(recorded, one_byte);
+        assert_eq!(recorded, arbitrary);
     }
 
     #[test]
