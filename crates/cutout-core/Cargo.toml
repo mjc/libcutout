@@ -13,6 +13,9 @@ workspace = true
 serde = { workspace = true, optional = true }
 thiserror.workspace = true
 
+[dev-dependencies]
+proptest.workspace = true
+
 [features]
 default = []
 serde = ["dep:serde"]

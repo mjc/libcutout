@@ -767,6 +767,135 @@ impl RequestTracker {
     }
 }
 
+/// Request staged in a bounded scheduler queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueuedRequest {
+    /// Request correlation key.
+    pub key: RequestKey,
+
+    /// Request scheduling policy.
+    pub policy: RequestPolicy,
+}
+
+impl QueuedRequest {
+    /// Creates a queued request.
+    #[must_use]
+    pub const fn new(key: RequestKey, policy: RequestPolicy) -> Self {
+        Self { key, policy }
+    }
+}
+
+/// Reason a request could not be queued.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RequestQueueError {
+    /// The queue has no free slots.
+    Full {
+        /// Queue capacity in requests.
+        capacity: usize,
+    },
+
+    /// A request with the same key is already queued.
+    DuplicateKey {
+        /// Duplicate request key.
+        key: RequestKey,
+    },
+}
+
+/// Fixed-capacity FIFO request queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RequestQueue<const N: usize> {
+    entries: [Option<QueuedRequest>; N],
+    len: usize,
+}
+
+impl<const N: usize> Default for RequestQueue<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> RequestQueue<N> {
+    /// Creates an empty request queue.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            entries: [None; N],
+            len: 0,
+        }
+    }
+
+    /// Returns the queue capacity.
+    #[must_use]
+    pub const fn capacity(self) -> usize {
+        N
+    }
+
+    /// Returns the number of queued requests.
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the queue is empty.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns whether a request key is already queued.
+    #[must_use]
+    pub fn contains_key(self, key: RequestKey) -> bool {
+        let mut index = 0;
+        while index < self.len {
+            if let Some(request) = self.entries[index]
+                && request.key == key
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    /// Enqueues a request at the back of the queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RequestQueueError::DuplicateKey`] when the same key is already
+    /// queued, or [`RequestQueueError::Full`] when the fixed capacity is
+    /// exhausted.
+    pub fn enqueue(&mut self, request: QueuedRequest) -> Result<(), RequestQueueError> {
+        if self.contains_key(request.key) {
+            return Err(RequestQueueError::DuplicateKey { key: request.key });
+        }
+
+        if self.len == N {
+            return Err(RequestQueueError::Full { capacity: N });
+        }
+
+        self.entries[self.len] = Some(request);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Removes and returns the front request.
+    pub fn pop_next(&mut self) -> Option<QueuedRequest> {
+        if self.len == 0 {
+            return None;
+        }
+
+        let next = self.entries[0];
+        let mut index = 1;
+        while index < self.len {
+            self.entries[index - 1] = self.entries[index];
+            index += 1;
+        }
+        self.len -= 1;
+        self.entries[self.len] = None;
+        next
+    }
+}
+
 /// Transport write behavior requested by a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WriteMode {
@@ -1379,6 +1508,7 @@ mod tests {
         SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, UnsupportedReason,
         ValueQuality, ValueSource, WriteMode,
     };
+    use proptest::prelude::*;
 
     #[test]
     fn exposes_the_expected_name() {
@@ -1934,6 +2064,127 @@ mod tests {
             tracker.start(identity, policy, 21),
             Err(crate::RequestStartError::Busy { key: telemetry })
         );
+    }
+
+    #[test]
+    fn request_queue_pops_in_fifo_order() {
+        let mut queue = crate::RequestQueue::<3>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+        );
+
+        assert_eq!(queue.enqueue(telemetry), Ok(()));
+        assert_eq!(queue.enqueue(identity), Ok(()));
+
+        assert_eq!(queue.pop_next(), Some(telemetry));
+        assert_eq!(queue.pop_next(), Some(identity));
+        assert_eq!(queue.pop_next(), None);
+    }
+
+    #[test]
+    fn request_queue_rejects_overflow() {
+        let mut queue = crate::RequestQueue::<1>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+        );
+
+        assert_eq!(queue.enqueue(telemetry), Ok(()));
+        assert_eq!(
+            queue.enqueue(identity),
+            Err(crate::RequestQueueError::Full { capacity: 1 })
+        );
+    }
+
+    #[test]
+    fn request_queue_rejects_duplicate_keys() {
+        let mut queue = crate::RequestQueue::<2>::new();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+        let request = crate::QueuedRequest::new(key, crate::RequestPolicy::default());
+
+        assert_eq!(queue.enqueue(request), Ok(()));
+        assert_eq!(
+            queue.enqueue(request),
+            Err(crate::RequestQueueError::DuplicateKey { key })
+        );
+    }
+
+    #[test]
+    fn request_queue_allows_reenqueue_after_dequeue() {
+        let mut queue = crate::RequestQueue::<1>::new();
+        let request = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+
+        assert_eq!(queue.enqueue(request), Ok(()));
+        assert_eq!(queue.pop_next(), Some(request));
+        assert_eq!(queue.enqueue(request), Ok(()));
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn zero_capacity_request_queue_refuses_enqueue() {
+        let mut queue = crate::RequestQueue::<0>::new();
+        let request = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+
+        assert_eq!(
+            queue.enqueue(request),
+            Err(crate::RequestQueueError::Full { capacity: 0 })
+        );
+        assert!(queue.is_empty());
+    }
+
+    proptest! {
+        #[test]
+        fn request_queue_preserves_order_up_to_capacity(input in proptest::collection::vec(0u8..5, 0..8)) {
+            let mut queue = crate::RequestQueue::<3>::new();
+            let mut expected = Vec::new();
+
+            for value in input {
+                let command = if value % 2 == 0 {
+                    crate::CommandKind::RequestTelemetry
+                } else {
+                    crate::CommandKind::RequestIdentity
+                };
+                let request = crate::QueuedRequest::new(
+                    crate::RequestKey::new(command),
+                    crate::RequestPolicy::default(),
+                );
+                if expected.iter().any(|queued: &crate::QueuedRequest| queued.key == request.key) {
+                    prop_assert_eq!(
+                        queue.enqueue(request),
+                        Err(crate::RequestQueueError::DuplicateKey { key: request.key })
+                    );
+                } else if expected.len() == 3 {
+                    prop_assert_eq!(
+                        queue.enqueue(request),
+                        Err(crate::RequestQueueError::Full { capacity: 3 })
+                    );
+                } else {
+                    prop_assert_eq!(queue.enqueue(request), Ok(()));
+                    expected.push(request);
+                }
+            }
+
+            let mut observed = Vec::new();
+            while let Some(request) = queue.pop_next() {
+                observed.push(request);
+            }
+            prop_assert_eq!(observed, expected);
+        }
     }
 
     #[test]
