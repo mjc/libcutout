@@ -29,13 +29,14 @@ const FFE1_CHARACTERISTIC: GattChannel = GattChannel::from_bytes([
 ]);
 
 /// Capture-backed FFE0 service UUID for NOSFET/Veteran-family sessions.
-pub const AERO_SERVICE_CHANNEL: GattChannel = FFE0_SERVICE;
+pub const VETERAN_SERVICE_CHANNEL: GattChannel = FFE0_SERVICE;
 
-/// Capture-backed FFE1 write characteristic UUID for NOSFET/Veteran-family sessions.
-pub const AERO_WRITE_CHANNEL: GattChannel = FFE1_CHARACTERISTIC;
-
-/// Capture-backed FFE1 notify characteristic UUID for NOSFET/Veteran-family sessions.
-pub const AERO_NOTIFY_CHANNEL: GattChannel = FFE1_CHARACTERISTIC;
+/// Capture-backed FFE1 data characteristic UUID for NOSFET/Veteran-family sessions.
+///
+/// The NF2557 characteristic exposes read, write, write-without-response, and
+/// notify roles on the same UUID, so this is the family data pipe rather than
+/// a model-specific write or notify endpoint.
+pub const VETERAN_DATA_CHANNEL: GattChannel = FFE1_CHARACTERISTIC;
 
 /// Placeholder write channel for Begode-family sessions.
 pub const FALCON_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([0xB1; 16]);
@@ -1002,7 +1003,7 @@ impl ProtocolSession for AeroReadOnlySession {
                 self.reassembler = VeteranFrameReassembler::default();
                 output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
-                    channel: AERO_WRITE_CHANNEL,
+                    channel: VETERAN_DATA_CHANNEL,
                 }));
             }
             SessionInput::LinkDown => {
@@ -1018,7 +1019,7 @@ impl ProtocolSession for AeroReadOnlySession {
                 bytes,
                 monotonic_ms,
             } => {
-                if !self.connected || channel != AERO_NOTIFY_CHANNEL {
+                if !self.connected || channel != VETERAN_DATA_CHANNEL {
                     return;
                 }
                 output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
@@ -1257,7 +1258,7 @@ mod tests {
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Subscribe {
-                channel: crate::AERO_WRITE_CHANNEL
+                channel: crate::VETERAN_DATA_CHANNEL
             })
         )));
     }
@@ -1415,8 +1416,8 @@ mod tests {
             WriteMode::WithResponse,
             b"\xdc\x5a\x5c",
             crate::FixtureChannels {
-                service: Some(crate::AERO_SERVICE_CHANNEL),
-                characteristic: Some(crate::AERO_WRITE_CHANNEL),
+                service: Some(crate::VETERAN_SERVICE_CHANNEL),
+                characteristic: Some(crate::VETERAN_DATA_CHANNEL),
             },
             crate::FixtureProvenance::BluetoothCapture,
             crate::HardwareVerification::VerifiedOnBluetooth,
@@ -1437,22 +1438,21 @@ mod tests {
     }
 
     #[test]
-    fn aero_gatt_constants_preserve_live_nf2557_uuid_bytes() {
+    fn veteran_gatt_constants_preserve_live_nf2557_uuid_bytes() {
         assert_eq!(
-            crate::AERO_SERVICE_CHANNEL.as_bytes(),
+            crate::VETERAN_SERVICE_CHANNEL.as_bytes(),
             [
                 0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
                 0x34, 0xfb,
             ]
         );
         assert_eq!(
-            crate::AERO_WRITE_CHANNEL.as_bytes(),
+            crate::VETERAN_DATA_CHANNEL.as_bytes(),
             [
                 0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
                 0x34, 0xfb,
             ]
         );
-        assert_eq!(crate::AERO_NOTIFY_CHANNEL, crate::AERO_WRITE_CHANNEL);
     }
 
     #[test]
@@ -1460,8 +1460,8 @@ mod tests {
         let entry = crate::nosfet_aero_registry_entry();
         let fingerprint = entry.gatt.first().expect("Aero registry has GATT evidence");
 
-        assert_eq!(fingerprint.service, crate::AERO_SERVICE_CHANNEL);
-        assert_eq!(fingerprint.characteristic, crate::AERO_NOTIFY_CHANNEL);
+        assert_eq!(fingerprint.service, crate::VETERAN_SERVICE_CHANNEL);
+        assert_eq!(fingerprint.characteristic, crate::VETERAN_DATA_CHANNEL);
         assert!(fingerprint.roles.supports_read());
         assert!(fingerprint.roles.supports_write());
         assert!(fingerprint.roles.supports_write_without_response());
@@ -1666,7 +1666,7 @@ mod tests {
         for chunk in chunks {
             session.handle(
                 SessionInput::Notification {
-                    channel: crate::AERO_NOTIFY_CHANNEL,
+                    channel: crate::VETERAN_DATA_CHANNEL,
                     bytes: chunk.as_slice(),
                     monotonic_ms: 42,
                 },
@@ -1978,7 +1978,7 @@ mod tests {
         for chunk in notification_fixture_chunks() {
             session.handle(
                 SessionInput::Notification {
-                    channel: crate::AERO_NOTIFY_CHANNEL,
+                    channel: crate::VETERAN_DATA_CHANNEL,
                     bytes: chunk.as_slice(),
                     monotonic_ms: 42,
                 },
@@ -2066,7 +2066,7 @@ mod tests {
             .into_iter()
             .flatten()
             .collect();
-        let output = session_events_from_notification(crate::AERO_NOTIFY_CHANNEL, &bytes, false);
+        let output = session_events_from_notification(crate::VETERAN_DATA_CHANNEL, &bytes, false);
 
         assert!(telemetry_events(&output).is_empty());
         assert!(diagnostic_events(&output).is_empty());
@@ -2074,7 +2074,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_session_ignores_notifications_on_non_aero_channel() {
+    fn aero_session_ignores_notifications_on_non_veteran_channel() {
         let bytes: Vec<_> = notification_fixture_chunks()
             .into_iter()
             .flatten()
@@ -2091,17 +2091,17 @@ mod tests {
     }
 
     #[test]
-    fn aero_session_records_notifications_on_capture_backed_notify_channel() {
+    fn aero_session_records_notifications_on_capture_backed_veteran_data_channel() {
         let first_chunk = notification_fixture_chunks()
             .into_iter()
             .next()
             .expect("fixture has at least one chunk");
         let output =
-            session_events_from_notification(crate::AERO_NOTIFY_CHANNEL, &first_chunk, true);
+            session_events_from_notification(crate::VETERAN_DATA_CHANNEL, &first_chunk, true);
 
         assert_eq!(
             notification_events(&output),
-            vec![(crate::AERO_NOTIFY_CHANNEL, 42, first_chunk.len())]
+            vec![(crate::VETERAN_DATA_CHANNEL, 42, first_chunk.len())]
         );
     }
 
@@ -2122,7 +2122,7 @@ mod tests {
         output.clear();
         session.handle(
             SessionInput::Notification {
-                channel: crate::AERO_NOTIFY_CHANNEL,
+                channel: crate::VETERAN_DATA_CHANNEL,
                 bytes: first,
                 monotonic_ms: 2,
             },
@@ -2139,7 +2139,7 @@ mod tests {
         output.clear();
         session.handle(
             SessionInput::Notification {
-                channel: crate::AERO_NOTIFY_CHANNEL,
+                channel: crate::VETERAN_DATA_CHANNEL,
                 bytes: rest,
                 monotonic_ms: 4,
             },
@@ -2198,7 +2198,7 @@ mod tests {
 
         session.handle(
             SessionInput::Notification {
-                channel: crate::AERO_NOTIFY_CHANNEL,
+                channel: crate::VETERAN_DATA_CHANNEL,
                 bytes: frame.as_slice(),
                 monotonic_ms: 42,
             },
