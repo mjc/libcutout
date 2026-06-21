@@ -458,7 +458,7 @@ pub struct AeroReadOnlySession {
 impl AeroReadOnlySession {
     /// Returns the commands this session shell can schedule.
     #[must_use]
-    pub fn capabilities() -> Capabilities {
+    pub const fn capabilities() -> Capabilities {
         Capabilities::from_supported_commands([
             CommandKind::RequestIdentity,
             CommandKind::RequestFirmwareInfo,
@@ -476,6 +476,9 @@ impl ProtocolSession for AeroReadOnlySession {
                 self.connected = true;
                 self.queue = RequestQueue::new();
                 output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: AERO_WRITE_CHANNEL,
+                }));
             }
             SessionInput::LinkDown => {
                 self.connected = false;
@@ -523,7 +526,7 @@ pub struct FalconReadOnlySession {
 impl FalconReadOnlySession {
     /// Returns the commands this session shell can schedule.
     #[must_use]
-    pub fn capabilities() -> Capabilities {
+    pub const fn capabilities() -> Capabilities {
         Capabilities::from_supported_commands([
             CommandKind::RequestIdentity,
             CommandKind::RequestFirmwareInfo,
@@ -540,6 +543,9 @@ impl ProtocolSession for FalconReadOnlySession {
                 self.connected = true;
                 self.queue = RequestQueue::new();
                 output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: FALCON_WRITE_CHANNEL,
+                }));
             }
             SessionInput::LinkDown => {
                 self.connected = false;
@@ -674,6 +680,48 @@ mod tests {
                 CommandKind::RequestBatteryInfo,
             ])
         );
+    }
+
+    #[test]
+    fn aero_session_requests_subscription_on_link_up() {
+        let mut session = crate::AeroReadOnlySession::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Subscribe {
+                channel: crate::AERO_WRITE_CHANNEL
+            })
+        )));
+    }
+
+    #[test]
+    fn falcon_session_requests_subscription_on_link_up() {
+        let mut session = crate::FalconReadOnlySession::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Subscribe {
+                channel: crate::FALCON_WRITE_CHANNEL
+            })
+        )));
     }
 
     #[test]

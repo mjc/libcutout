@@ -5,14 +5,20 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Bluetooth transport adapter for Cutout"
+readme = "../../README.md"
+keywords = ["ble", "btle", "pev"]
+categories = ["hardware-support", "embedded"]
 
 [lints]
 workspace = true
 
 [dependencies]
+async-trait.workspace = true
 btleplug.workspace = true
 cutout-core = { path = "../cutout-core", version = "0.1.0" }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
+futures-util.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true

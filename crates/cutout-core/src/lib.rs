@@ -215,7 +215,7 @@ pub struct Capabilities {
 impl Capabilities {
     /// Creates capabilities from supported command kinds.
     #[must_use]
-    pub fn from_supported_commands<const N: usize>(commands: [CommandKind; N]) -> Self {
+    pub const fn from_supported_commands<const N: usize>(commands: [CommandKind; N]) -> Self {
         Self {
             supported_commands: CommandSet::from_commands(commands),
         }
@@ -380,17 +380,17 @@ pub struct ParserDiagnostics {
 
 impl ParserDiagnostics {
     /// Adds dropped bytes using saturating arithmetic.
-    pub fn add_dropped_bytes(&mut self, count: u64) {
+    pub const fn add_dropped_bytes(&mut self, count: u64) {
         self.dropped_bytes = self.dropped_bytes.saturating_add(count);
     }
 
     /// Records one parser resynchronization attempt.
-    pub fn record_resync(&mut self) {
+    pub const fn record_resync(&mut self) {
         saturating_increment(&mut self.resyncs);
     }
 
     /// Records one parser error in the corresponding diagnostics counter.
-    pub fn record_error(&mut self, error: ParserError) {
+    pub const fn record_error(&mut self, error: ParserError) {
         match error {
             ParserError::OversizedFrame { .. } => {
                 saturating_increment(&mut self.oversized_frames);
@@ -411,7 +411,7 @@ impl ParserDiagnostics {
     }
 
     /// Merges another diagnostics snapshot using saturating arithmetic.
-    pub fn merge(&mut self, other: Self) {
+    pub const fn merge(&mut self, other: Self) {
         self.dropped_bytes = self.dropped_bytes.saturating_add(other.dropped_bytes);
         self.resyncs = self.resyncs.saturating_add(other.resyncs);
         self.bad_checksums = self.bad_checksums.saturating_add(other.bad_checksums);
@@ -424,7 +424,7 @@ impl ParserDiagnostics {
     }
 }
 
-fn saturating_increment(counter: &mut u64) {
+const fn saturating_increment(counter: &mut u64) {
     *counter = counter.saturating_add(1);
 }
 
@@ -741,7 +741,7 @@ impl RequestTracker {
 
     /// Advances scheduler time and reports timeout or retry eligibility.
     #[must_use]
-    pub fn on_tick(self, now_ms: MonotonicMillis) -> RequestTick {
+    pub const fn on_tick(self, now_ms: MonotonicMillis) -> RequestTick {
         let Some(active) = self.in_flight else {
             return RequestTick::Idle;
         };
@@ -769,7 +769,10 @@ impl RequestTracker {
     ///
     /// Returns [`RequestStartError::NoActiveRequest`] when no request is
     /// active, or [`RequestStartError::Busy`] when no retries remain.
-    pub fn retry_started(&mut self, now_ms: MonotonicMillis) -> Result<(), RequestStartError> {
+    pub const fn retry_started(
+        &mut self,
+        now_ms: MonotonicMillis,
+    ) -> Result<(), RequestStartError> {
         let Some(mut active) = self.in_flight else {
             return Err(RequestStartError::NoActiveRequest);
         };
@@ -988,7 +991,7 @@ impl<const N: usize> RequestQueue<N> {
     }
 
     /// Removes and returns the front request.
-    pub fn pop_next(&mut self) -> Option<QueuedRequest> {
+    pub const fn pop_next(&mut self) -> Option<QueuedRequest> {
         if self.len == 0 {
             return None;
         }
@@ -1430,7 +1433,7 @@ pub struct TelemetrySnapshot {
 
 impl TelemetrySnapshot {
     /// Applies a partial telemetry update, preserving fields absent from it.
-    pub fn apply_delta(&mut self, delta: TelemetryDelta) {
+    pub const fn apply_delta(&mut self, delta: TelemetryDelta) {
         self.at_ms = Some(delta.at_ms);
 
         if delta.speed_mm_s.is_some() {

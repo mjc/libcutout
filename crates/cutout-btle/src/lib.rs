@@ -8,15 +8,21 @@
 
 //! Bluetooth transport adapter scaffolding for Cutout.
 
-use std::{fmt, time::Duration};
+use std::{collections::BTreeSet, fmt, pin::Pin, time::Duration};
 
+use async_trait::async_trait;
 use btleplug::{
     api::{
         Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _,
-        PeripheralProperties, ScanFilter, Service,
+        PeripheralProperties, ScanFilter, Service, ValueNotification, WriteType,
     },
     platform::{Adapter, Manager},
 };
+use cutout_core::{
+    DeviceEvent, GattChannel, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
+    TransportAction, WriteMode,
+};
+use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -154,7 +160,7 @@ impl ServiceSummary {
 }
 
 impl CharacteristicSummary {
-    fn from_characteristic(characteristic: &Characteristic) -> Self {
+    const fn from_characteristic(characteristic: &Characteristic) -> Self {
         Self {
             uuid: characteristic.uuid,
             service_uuid: characteristic.service_uuid,
@@ -242,6 +248,16 @@ impl ConnectionSummary {
     }
 }
 
+/// A connected peripheral paired with its discovered GATT tree.
+#[derive(Clone, Debug)]
+pub struct ConnectedPeripheral {
+    /// Connected peripheral handle that remains live for the bridge.
+    pub peripheral: btleplug::platform::Peripheral,
+
+    /// Discovered services and characteristics for the connected peripheral.
+    pub summary: ConnectionSummary,
+}
+
 /// Selected endpoints for a protocol session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionEndpoints<'a> {
@@ -250,6 +266,69 @@ pub struct SessionEndpoints<'a> {
 
     /// Notification-capable characteristic, if one was selected.
     pub notify: Option<&'a CharacteristicSummary>,
+}
+
+/// Report produced by a protocol bridge run.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SessionBridgeReport {
+    /// Transport writes executed through the bridge.
+    pub writes: usize,
+
+    /// Transport subscribe operations executed through the bridge.
+    pub subscribes: usize,
+
+    /// Notification payloads relayed into the session.
+    pub notifications: usize,
+
+    /// Transport disconnect operations executed through the bridge.
+    pub disconnects: usize,
+}
+
+/// Errors surfaced while bridging protocol outputs to BTLE operations.
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum SessionBridgeError {
+    /// Session output referenced a channel that does not match the selected binding.
+    #[error("bridge saw channel {observed:?} but expected {expected:?}")]
+    UnexpectedChannel {
+        /// Expected binding channel.
+        expected: GattChannel,
+
+        /// Observed channel from the session output.
+        observed: GattChannel,
+    },
+
+    /// The session requested notification subscription but no notify endpoint was selected.
+    #[error("bridge needs a notify-capable endpoint for channel {channel:?}")]
+    MissingNotifyEndpoint {
+        /// Abstract protocol channel requested for subscription.
+        channel: GattChannel,
+    },
+}
+
+/// Minimal BTLE operations required by the protocol bridge.
+#[async_trait]
+pub trait SessionPeripheral: Send + Sync {
+    /// Returns the negotiated MTU for the connected peripheral.
+    fn mtu(&self) -> u16;
+
+    /// Subscribes to notifications on the selected endpoint.
+    async fn subscribe(&self, characteristic: &Characteristic) -> Result<(), BtleError>;
+
+    /// Writes a payload to the selected endpoint.
+    async fn write(
+        &self,
+        characteristic: &Characteristic,
+        bytes: &[u8],
+        mode: WriteType,
+    ) -> Result<(), BtleError>;
+
+    /// Returns the notification stream for the connected peripheral.
+    async fn notifications(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = ValueNotification> + Send>>, BtleError>;
+
+    /// Disconnects the peripheral.
+    async fn disconnect(&self) -> Result<(), BtleError>;
 }
 
 fn join_uuids(values: &[Uuid]) -> String {
@@ -274,6 +353,10 @@ pub enum BtleError {
     /// Error reported by the underlying BTLE stack.
     #[error(transparent)]
     Backend(#[from] btleplug::Error),
+
+    /// Error reported by the session bridge.
+    #[error(transparent)]
+    Bridge(#[from] SessionBridgeError),
 }
 
 /// Scans for peripherals and returns what was observed.
@@ -301,7 +384,7 @@ pub async fn scan_peripherals(scan_for: Duration) -> Result<Vec<PeripheralObserv
 pub async fn connect_and_discover(
     target: &ConnectionTarget,
     scan_for: Duration,
-) -> Result<ConnectionSummary, BtleError> {
+) -> Result<ConnectedPeripheral, BtleError> {
     let adapter = first_adapter().await?;
     adapter.start_scan(ScanFilter::default()).await?;
     tokio::time::sleep(scan_for).await;
@@ -319,10 +402,219 @@ pub async fn connect_and_discover(
         .map(|service| ServiceSummary::from_service(&service))
         .collect();
 
-    Ok(ConnectionSummary {
-        observation,
-        services,
+    Ok(ConnectedPeripheral {
+        peripheral,
+        summary: ConnectionSummary {
+            observation,
+            services,
+        },
     })
+}
+
+/// Drives a protocol session against the selected BTLE endpoints.
+///
+/// # Errors
+///
+/// Returns [`BtleError::Bridge`] when a session output references a channel
+/// that does not match the selected binding, or when the session asks for
+/// subscription but no notify-capable endpoint was selected.
+pub async fn drive_session<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channel: GattChannel,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: Duration,
+) -> Result<SessionBridgeReport, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    let mut report = SessionBridgeReport::default();
+    let write_characteristic = characteristic_from_summary(endpoints.write);
+    let notify_characteristic = endpoints.notify.map(characteristic_from_summary);
+    let mut outputs = Vec::new();
+    let mut monotonic_ms = 0;
+
+    session.handle(
+        SessionInput::LinkUp(LinkInfo {
+            monotonic_ms,
+            max_write_len: Some(peripheral.mtu()),
+        }),
+        &mut outputs,
+    );
+    process_session_outputs(
+        peripheral,
+        channel,
+        &write_characteristic,
+        notify_characteristic.as_ref(),
+        &mut outputs,
+        &mut report,
+    )
+    .await?;
+
+    monotonic_ms += 1;
+    session.handle(SessionInput::Tick { monotonic_ms }, &mut outputs);
+    process_session_outputs(
+        peripheral,
+        channel,
+        &write_characteristic,
+        notify_characteristic.as_ref(),
+        &mut outputs,
+        &mut report,
+    )
+    .await?;
+
+    if notification_window.is_zero() || notify_characteristic.is_none() {
+        return Ok(report);
+    }
+
+    let mut notifications = peripheral.notifications().await?;
+    let deadline = tokio::time::Instant::now() + notification_window;
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, notifications.next()).await {
+            Ok(Some(notification)) => {
+                monotonic_ms += 1;
+                session.handle(
+                    SessionInput::Notification {
+                        channel: gatt_channel_from_uuid(notification.uuid),
+                        bytes: &notification.value,
+                        monotonic_ms,
+                    },
+                    &mut outputs,
+                );
+                process_session_outputs(
+                    peripheral,
+                    channel,
+                    &write_characteristic,
+                    notify_characteristic.as_ref(),
+                    &mut outputs,
+                    &mut report,
+                )
+                .await?;
+                report.notifications += 1;
+            }
+            Ok(None) | Err(_) => break,
+        }
+    }
+
+    Ok(report)
+}
+
+const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Characteristic {
+    Characteristic {
+        uuid: summary.uuid,
+        service_uuid: summary.service_uuid,
+        properties: summary.properties,
+        descriptors: BTreeSet::new(),
+    }
+}
+
+const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
+    GattChannel::from_bytes(*uuid.as_bytes())
+}
+
+async fn process_session_outputs<P>(
+    peripheral: &P,
+    channel: GattChannel,
+    write_characteristic: &Characteristic,
+    notify_characteristic: Option<&Characteristic>,
+    outputs: &mut Vec<SessionOutput>,
+    report: &mut SessionBridgeReport,
+) -> Result<(), BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+{
+    for output in outputs.drain(..) {
+        match output {
+            SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
+                if observed != channel {
+                    return Err(SessionBridgeError::UnexpectedChannel {
+                        expected: channel,
+                        observed,
+                    }
+                    .into());
+                }
+                let Some(notify_characteristic) = notify_characteristic else {
+                    return Err(SessionBridgeError::MissingNotifyEndpoint { channel }.into());
+                };
+                peripheral.subscribe(notify_characteristic).await?;
+                report.subscribes += 1;
+            }
+            SessionOutput::Transport(TransportAction::Write {
+                channel: observed,
+                bytes,
+                mode,
+            }) => {
+                if observed != channel {
+                    return Err(SessionBridgeError::UnexpectedChannel {
+                        expected: channel,
+                        observed,
+                    }
+                    .into());
+                }
+                let write_type = match mode {
+                    WriteMode::WithResponse => WriteType::WithResponse,
+                    WriteMode::WithoutResponse => WriteType::WithoutResponse,
+                };
+                peripheral
+                    .write(write_characteristic, bytes.as_slice(), write_type)
+                    .await?;
+                report.writes += 1;
+            }
+            SessionOutput::Transport(TransportAction::Disconnect) => {
+                peripheral.disconnect().await?;
+                report.disconnects += 1;
+            }
+            SessionOutput::Event(
+                DeviceEvent::NotificationReceived { .. }
+                | DeviceEvent::LinkUp(_)
+                | DeviceEvent::LinkDown
+                | DeviceEvent::Tick { .. }
+                | DeviceEvent::Telemetry(_)
+                | DeviceEvent::Diagnostics(_),
+            ) => {}
+        }
+    }
+    Ok(())
+}
+
+#[async_trait]
+impl SessionPeripheral for btleplug::platform::Peripheral {
+    fn mtu(&self) -> u16 {
+        btleplug::api::Peripheral::mtu(self)
+    }
+
+    async fn subscribe(&self, characteristic: &Characteristic) -> Result<(), BtleError> {
+        btleplug::api::Peripheral::subscribe(self, characteristic)
+            .await
+            .map_err(BtleError::from)
+    }
+
+    async fn write(
+        &self,
+        characteristic: &Characteristic,
+        bytes: &[u8],
+        mode: WriteType,
+    ) -> Result<(), BtleError> {
+        btleplug::api::Peripheral::write(self, characteristic, bytes, mode)
+            .await
+            .map_err(BtleError::from)
+    }
+
+    async fn notifications(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = ValueNotification> + Send>>, BtleError> {
+        btleplug::api::Peripheral::notifications(self)
+            .await
+            .map_err(BtleError::from)
+    }
+
+    async fn disconnect(&self) -> Result<(), BtleError> {
+        btleplug::api::Peripheral::disconnect(self)
+            .await
+            .map_err(BtleError::from)
+    }
 }
 
 async fn first_adapter() -> Result<Adapter, BtleError> {
@@ -373,9 +665,24 @@ async fn find_peripheral(
 
 #[cfg(test)]
 mod tests {
-    use super::crate_name;
-    use btleplug::api::CharPropFlags;
+    use std::{
+        pin::Pin,
+        sync::{Arc, Mutex},
+    };
+
+    use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
+    use cutout_core::{
+        DeviceEvent, GattChannel, ProtocolSession, SessionInput, SessionOutput, TransportAction,
+        WriteMode,
+    };
+    use futures_util::stream;
     use uuid::Uuid;
+
+    use super::crate_name;
+
+    type WriteRecord = (Uuid, Vec<u8>, WriteType);
+    type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
+    type NotificationLog = Arc<Mutex<Vec<ValueNotification>>>;
 
     #[test]
     fn exposes_the_expected_name() {
@@ -496,5 +803,220 @@ mod tests {
                 .uuid,
             Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb)
         );
+    }
+
+    #[tokio::test]
+    async fn drive_session_subscribes_and_writes_matching_transport_channels() {
+        let peripheral = RecordingPeripheral::default();
+        let mut session = BridgeSession::default();
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                name: Some("NOSFET Aero".to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::NOTIFY,
+                    },
+                ],
+            }],
+        };
+
+        let report = crate::drive_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .expect("bridge accepts matching transport outputs");
+
+        assert_eq!(report.writes, 1);
+        assert_eq!(report.subscribes, 1);
+        assert_eq!(report.notifications, 0);
+        assert_eq!(
+            peripheral
+                .subscribes
+                .lock()
+                .expect("subscribe log")
+                .as_slice(),
+            &[Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb)]
+        );
+        assert_eq!(
+            peripheral.writes.lock().expect("write log").as_slice(),
+            &[(
+                Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                b"bridge:write".to_vec(),
+                WriteType::WithResponse,
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn drive_session_relays_notifications_back_into_session() {
+        let peripheral = RecordingPeripheral::with_notification(ValueNotification {
+            uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+            service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            value: vec![0x13, 0x37],
+        });
+        let mut session = BridgeSession::default();
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                name: Some("NOSFET Aero".to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::NOTIFY,
+                    },
+                ],
+            }],
+        };
+
+        let report = crate::drive_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .expect("bridge consumes notifications");
+
+        assert_eq!(report.notifications, 1);
+        assert_eq!(*session.notification_count.lock().expect("count"), 1);
+    }
+
+    #[derive(Default)]
+    struct BridgeSession {
+        notification_count: Arc<Mutex<usize>>,
+    }
+
+    impl ProtocolSession for BridgeSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::LinkUp(_) => {
+                    output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                    }));
+                }
+                SessionInput::Tick { .. } => {
+                    output.push(SessionOutput::Transport(TransportAction::Write {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                        bytes: cutout_core::WritePayload::try_from_slice(b"bridge:write")
+                            .expect("fixture payload fits"),
+                        mode: WriteMode::WithResponse,
+                    }));
+                }
+                SessionInput::Notification { .. } => {
+                    *self
+                        .notification_count
+                        .lock()
+                        .expect("notification counter") += 1;
+                    output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                        monotonic_ms: 0,
+                        len: 2,
+                    }));
+                }
+                SessionInput::LinkDown | SessionInput::Command(_) => {}
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct RecordingPeripheral {
+        subscribes: Arc<Mutex<Vec<Uuid>>>,
+        writes: WriteLog,
+        notifications: NotificationLog,
+    }
+
+    impl Default for RecordingPeripheral {
+        fn default() -> Self {
+            Self {
+                subscribes: Arc::new(Mutex::new(Vec::new())),
+                writes: Arc::new(Mutex::new(Vec::new())),
+                notifications: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl RecordingPeripheral {
+        fn with_notification(notification: ValueNotification) -> Self {
+            Self {
+                notifications: Arc::new(Mutex::new(vec![notification])),
+                ..Self::default()
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::SessionPeripheral for RecordingPeripheral {
+        fn mtu(&self) -> u16 {
+            185
+        }
+
+        async fn subscribe(&self, characteristic: &Characteristic) -> Result<(), crate::BtleError> {
+            self.subscribes
+                .lock()
+                .expect("subscribe log")
+                .push(characteristic.uuid);
+            Ok(())
+        }
+
+        async fn write(
+            &self,
+            characteristic: &Characteristic,
+            bytes: &[u8],
+            mode: WriteType,
+        ) -> Result<(), crate::BtleError> {
+            self.writes.lock().expect("write log").push((
+                characteristic.uuid,
+                bytes.to_vec(),
+                mode,
+            ));
+            Ok(())
+        }
+
+        async fn notifications(
+            &self,
+        ) -> Result<Pin<Box<dyn stream::Stream<Item = ValueNotification> + Send>>, crate::BtleError>
+        {
+            let notifications = self.notifications.lock().expect("notification log").clone();
+            Ok(Box::pin(stream::iter(notifications)))
+        }
+
+        async fn disconnect(&self) -> Result<(), crate::BtleError> {
+            Ok(())
+        }
     }
 }

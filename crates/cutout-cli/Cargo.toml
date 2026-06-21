@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Command-line interface for Cutout"
+readme = "../../README.md"
+keywords = ["ble", "pev", "cli"]
+categories = ["command-line-utilities", "hardware-support"]
 
 [lints]
 workspace = true

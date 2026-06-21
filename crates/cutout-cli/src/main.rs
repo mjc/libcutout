@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use cutout_btle::{ConnectionTarget, connect_and_discover, scan_peripherals};
+use cutout_btle::{ConnectionTarget, connect_and_discover, drive_session, scan_peripherals};
+use cutout_protocols::{AERO_WRITE_CHANNEL, AeroReadOnlySession};
 
 #[derive(Debug, Parser)]
 #[command(name = "cutout", about = "Cutout Aero connection CLI")]
@@ -60,15 +61,28 @@ async fn run(cli: Cli) -> Result<(), cutout_btle::BtleError> {
                 address,
                 name_contains,
             };
-            let summary = connect_and_discover(&target, Duration::from_secs(seconds)).await?;
-            println!("{summary}");
-            if let Some(endpoints) = summary.select_session_endpoints() {
+            let connection = connect_and_discover(&target, Duration::from_secs(seconds)).await?;
+            println!("{}", connection.summary);
+            if let Some(endpoints) = connection.summary.select_session_endpoints() {
                 println!(
                     "session write={} notify={}",
                     endpoints.write.uuid,
                     endpoints
                         .notify
                         .map_or_else(|| "<none>".to_owned(), |notify| notify.uuid.to_string(),)
+                );
+                let mut session = AeroReadOnlySession::default();
+                let report = drive_session(
+                    &connection.peripheral,
+                    &mut session,
+                    AERO_WRITE_CHANNEL,
+                    endpoints,
+                    Duration::from_secs(seconds),
+                )
+                .await?;
+                println!(
+                    "session writes={} subscribes={} notifications={} disconnects={}",
+                    report.writes, report.subscribes, report.notifications, report.disconnects
                 );
             }
             Ok(())

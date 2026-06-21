@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Core protocol and transport types for Cutout"
+readme = "../../README.md"
+keywords = ["ble", "pev", "protocol"]
+categories = ["hardware-support", "command-line-utilities"]
 
 [lints]
 workspace = true

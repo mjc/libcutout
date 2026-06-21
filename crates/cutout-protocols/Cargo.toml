@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Protocol scaffolding for NOSFET Aero and Begode Falcon devices"
+readme = "../../README.md"
+keywords = ["ble", "pev", "aero", "falcon"]
+categories = ["hardware-support", "embedded"]
 
 [lints]
 workspace = true
