@@ -966,6 +966,133 @@ pub trait ProtocolSession {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>);
 }
 
+/// Host-facing synchronous session facade.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostSession<S> {
+    session: S,
+    output: Vec<SessionOutput>,
+    snapshot: TelemetrySnapshot,
+    diagnostics: ParserDiagnostics,
+}
+
+impl<S> HostSession<S>
+where
+    S: ProtocolSession,
+{
+    /// Creates a host session around a protocol session.
+    #[must_use]
+    pub const fn new(session: S) -> Self {
+        Self {
+            session,
+            output: Vec::new(),
+            snapshot: TelemetrySnapshot {
+                at_ms: None,
+                speed_mm_s: None,
+                voltage_mv: None,
+                battery_current_ma: None,
+                motor_current_ma: None,
+                power_mw: None,
+                controller_temperature_mc: None,
+                motor_temperature_mc: None,
+                battery_temperature_mc: None,
+                pwm_permille: None,
+                distance_mm: None,
+                pitch_mdeg: None,
+                roll_mdeg: None,
+                battery_percent_reported: None,
+                battery_percent_estimated: None,
+            },
+            diagnostics: ParserDiagnostics {
+                dropped_bytes: 0,
+                resyncs: 0,
+                bad_checksums: 0,
+                timeouts: 0,
+                oversized_frames: 0,
+                malformed_frames: 0,
+                unmatched_replies: 0,
+            },
+        }
+    }
+
+    /// Supplies a link-up event to the protocol session.
+    pub fn ingest_link_up(&mut self, link: LinkInfo) {
+        self.handle(SessionInput::LinkUp(link));
+    }
+
+    /// Supplies a link-down event to the protocol session.
+    pub fn ingest_link_down(&mut self) {
+        self.handle(SessionInput::LinkDown);
+    }
+
+    /// Supplies owned notification bytes to the protocol session.
+    pub fn ingest_notification_owned(
+        &mut self,
+        channel: GattChannel,
+        bytes: Vec<u8>,
+        monotonic_ms: MonotonicMillis,
+    ) {
+        let bytes = bytes.into_boxed_slice();
+        self.handle(SessionInput::Notification {
+            channel,
+            bytes: &bytes,
+            monotonic_ms,
+        });
+    }
+
+    /// Supplies a host timer tick to the protocol session.
+    pub fn tick(&mut self, monotonic_ms: MonotonicMillis) {
+        self.handle(SessionInput::Tick { monotonic_ms });
+    }
+
+    /// Supplies a host command to the protocol session.
+    pub fn issue_command(&mut self, command: DeviceCommand) {
+        self.handle(SessionInput::Command(command));
+    }
+
+    /// Drains owned session outputs accumulated so far.
+    #[must_use]
+    pub fn drain_outputs(&mut self) -> Vec<SessionOutput> {
+        core::mem::take(&mut self.output)
+    }
+
+    /// Returns the latest telemetry snapshot.
+    #[must_use]
+    pub const fn current_snapshot(&self) -> TelemetrySnapshot {
+        self.snapshot
+    }
+
+    /// Returns accumulated parser diagnostics.
+    #[must_use]
+    pub const fn diagnostics(&self) -> ParserDiagnostics {
+        self.diagnostics
+    }
+
+    fn handle(&mut self, input: SessionInput<'_>) {
+        let start = self.output.len();
+        self.session.handle(input, &mut self.output);
+        self.apply_state_from_outputs(start);
+    }
+
+    fn apply_state_from_outputs(&mut self, start: usize) {
+        for output in &self.output[start..] {
+            if let SessionOutput::Event(event) = output {
+                match event {
+                    DeviceEvent::Telemetry(delta) => {
+                        self.snapshot.apply_delta(*delta);
+                    }
+                    DeviceEvent::Diagnostics(diagnostics) => {
+                        self.diagnostics.merge(*diagnostics);
+                    }
+                    DeviceEvent::LinkUp(_)
+                    | DeviceEvent::LinkDown
+                    | DeviceEvent::NotificationReceived { .. }
+                    | DeviceEvent::Tick { .. } => {}
+                }
+            }
+        }
+    }
+}
+
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
 pub const fn crate_name() -> &'static str {
@@ -1451,5 +1578,110 @@ mod tests {
             tracker.start(identity, policy, 21),
             Err(crate::RequestStartError::Busy { key: telemetry })
         );
+    }
+
+    #[test]
+    fn host_session_drives_link_events_and_drains_outputs() {
+        let mut host = crate::HostSession::new(EchoSession::default());
+        let link = LinkInfo {
+            monotonic_ms: 10,
+            max_write_len: Some(185),
+        };
+
+        host.ingest_link_up(link);
+        let drained = host.drain_outputs();
+
+        assert_eq!(
+            drained,
+            vec![SessionOutput::Event(DeviceEvent::LinkUp(link))]
+        );
+        assert!(host.drain_outputs().is_empty());
+    }
+
+    #[test]
+    fn host_session_ingests_owned_notifications_without_retaining_bytes() {
+        let mut host = crate::HostSession::new(EchoSession::default());
+        let channel = GattChannel::from_bytes([0xfe; 16]);
+
+        host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], 20);
+
+        assert_eq!(
+            host.drain_outputs(),
+            vec![SessionOutput::Event(DeviceEvent::NotificationReceived {
+                channel,
+                monotonic_ms: 20,
+                len: 3,
+            })]
+        );
+    }
+
+    #[test]
+    fn host_session_issues_commands_through_facade() {
+        let mut host = crate::HostSession::new(EchoSession::default());
+
+        host.issue_command(DeviceCommand::RequestTelemetry);
+
+        assert_eq!(
+            host.drain_outputs(),
+            vec![SessionOutput::Transport(TransportAction::Write {
+                channel: GattChannel::from_bytes([1; 16]),
+                bytes: b"telemetry".to_vec(),
+                mode: WriteMode::WithResponse,
+            })]
+        );
+    }
+
+    #[derive(Default)]
+    struct StateSession;
+
+    impl ProtocolSession for StateSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::Command(DeviceCommand::RequestTelemetry) => {
+                    output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                        TelemetryDelta {
+                            at_ms: 40,
+                            speed_mm_s: Some(Measured::reported(1_200)),
+                            ..TelemetryDelta::empty(40)
+                        },
+                    )));
+                }
+                SessionInput::Tick { monotonic_ms } => {
+                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                        crate::ParserDiagnostics {
+                            timeouts: monotonic_ms,
+                            ..crate::ParserDiagnostics::default()
+                        },
+                    )));
+                }
+                SessionInput::LinkUp(_)
+                | SessionInput::LinkDown
+                | SessionInput::Notification { .. }
+                | SessionInput::Command(_) => {}
+            }
+        }
+    }
+
+    #[test]
+    fn host_session_updates_current_snapshot_from_events() {
+        let mut host = crate::HostSession::new(StateSession);
+
+        host.issue_command(DeviceCommand::RequestTelemetry);
+
+        assert_eq!(host.current_snapshot().at_ms, Some(40));
+        assert_eq!(
+            host.current_snapshot().speed_mm_s,
+            Some(Measured::reported(1_200))
+        );
+    }
+
+    #[test]
+    fn host_session_merges_diagnostics_from_events() {
+        let mut host = crate::HostSession::new(StateSession);
+
+        host.tick(2);
+        host.tick(3);
+
+        assert_eq!(host.diagnostics().timeouts, 5);
     }
 }
