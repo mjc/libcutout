@@ -645,6 +645,77 @@ impl VeteranTelemetryTail {
     }
 }
 
+/// Smart-BMS page class carried by a Veteran-family long frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VeteranBmsPageKind {
+    /// Header or pack-current page.
+    Header,
+
+    /// Cell-voltage page covering cells 0 through 14.
+    Cells0To14,
+
+    /// Cell-voltage page covering cells 15 through 29.
+    Cells15To29,
+
+    /// Cell-voltage page covering cells 30 through 41 plus temperatures.
+    Cells30To41AndTemperatures,
+
+    /// Reserved page seen in live captures but not yet decoded.
+    Reserved,
+
+    /// Unknown page selector outside the documented range.
+    Unknown(u8),
+}
+
+/// Smart-BMS page metadata carried by a Veteran-family long frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VeteranBmsPage {
+    /// Raw page selector from absolute frame offset 46.
+    pub selector: u8,
+
+    /// One-based pack index inferred from the selector.
+    pub pack_index: Option<u8>,
+
+    /// Typed page class.
+    pub kind: VeteranBmsPageKind,
+}
+
+impl VeteranBmsPage {
+    /// Extracts smart-BMS page metadata from a long Veteran frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranDecodeError::FrameTooShort`] when the frame is not long
+    /// enough to contain the page selector at offset 46.
+    pub fn decode(frame: &VeteranFrame) -> Result<Self, VeteranDecodeError> {
+        let selector = *frame
+            .as_slice()
+            .get(46)
+            .ok_or(VeteranDecodeError::FrameTooShort)?;
+        Ok(Self::from_selector(selector))
+    }
+
+    #[must_use]
+    const fn from_selector(selector: u8) -> Self {
+        Self {
+            selector,
+            pack_index: match selector {
+                0..=3 => Some(1),
+                4..=7 => Some(2),
+                _ => None,
+            },
+            kind: match selector {
+                0 | 4 => VeteranBmsPageKind::Header,
+                1 | 5 => VeteranBmsPageKind::Cells0To14,
+                2 | 6 => VeteranBmsPageKind::Cells15To29,
+                3 | 7 => VeteranBmsPageKind::Cells30To41AndTemperatures,
+                8 => VeteranBmsPageKind::Reserved,
+                other => VeteranBmsPageKind::Unknown(other),
+            },
+        }
+    }
+}
+
 /// Error emitted while decoding a complete Veteran frame.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum VeteranDecodeError {
@@ -1589,10 +1660,32 @@ mod tests {
     }
 
     fn notification_fixture_chunks() -> Vec<Vec<u8>> {
-        include_str!("../fixtures/nosfet-aero/nf2557-2026-06-21-notifications.hex")
-            .lines()
-            .filter_map(hex_fixture_line)
-            .collect()
+        hex_fixture_chunks(include_str!(
+            "../fixtures/nosfet-aero/nf2557-2026-06-21-notifications.hex"
+        ))
+    }
+
+    fn bms_page_fixture_chunks() -> Vec<Vec<u8>> {
+        hex_fixture_chunks(include_str!(
+            "../fixtures/nosfet-aero/nf2557-2026-06-21-bms-pages.hex"
+        ))
+    }
+
+    fn hex_fixture_chunks(fixture: &str) -> Vec<Vec<u8>> {
+        fixture.lines().filter_map(hex_fixture_line).collect()
+    }
+
+    fn veteran_frames_from_chunks(
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+    ) -> Vec<crate::VeteranFrame> {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        for chunk in chunks {
+            frames.extend(feed_chunk(&mut reassembler, &chunk));
+        }
+
+        frames
     }
 
     fn arbitrary_fixture_chunks() -> Vec<Vec<u8>> {
@@ -1780,12 +1873,7 @@ mod tests {
 
     #[test]
     fn veteran_reassembler_consumes_live_aero_fixture_chunks() {
-        let mut reassembler = crate::VeteranFrameReassembler::default();
-        let mut frames = Vec::new();
-
-        for chunk in notification_fixture_chunks() {
-            frames.extend(feed_chunk(&mut reassembler, &chunk));
-        }
+        let frames = veteran_frames_from_chunks(notification_fixture_chunks());
 
         assert_eq!(frames.len(), 4);
         assert_eq!(
@@ -1804,12 +1892,7 @@ mod tests {
 
     #[test]
     fn veteran_telemetry_decodes_first_live_aero_fixture_frame() {
-        let mut reassembler = crate::VeteranFrameReassembler::default();
-        let mut frames = Vec::new();
-
-        for chunk in notification_fixture_chunks() {
-            frames.extend(feed_chunk(&mut reassembler, &chunk));
-        }
+        let frames = veteran_frames_from_chunks(notification_fixture_chunks());
 
         let telemetry =
             crate::VeteranTelemetry::decode(&frames[0]).expect("live fixture frame decodes");
@@ -1828,12 +1911,7 @@ mod tests {
 
     #[test]
     fn aero_profile_resolves_from_live_fixture_telemetry_without_name() {
-        let mut reassembler = crate::VeteranFrameReassembler::default();
-        let mut frames = Vec::new();
-
-        for chunk in notification_fixture_chunks() {
-            frames.extend(feed_chunk(&mut reassembler, &chunk));
-        }
+        let frames = veteran_frames_from_chunks(notification_fixture_chunks());
 
         let telemetry =
             crate::VeteranTelemetry::decode(&frames[0]).expect("live fixture frame decodes");
@@ -1905,12 +1983,7 @@ mod tests {
 
     #[test]
     fn veteran_telemetry_maps_live_aero_fixture_to_core_delta() {
-        let mut reassembler = crate::VeteranFrameReassembler::default();
-        let mut frames = Vec::new();
-
-        for chunk in notification_fixture_chunks() {
-            frames.extend(feed_chunk(&mut reassembler, &chunk));
-        }
+        let frames = veteran_frames_from_chunks(notification_fixture_chunks());
 
         let delta = crate::VeteranTelemetry::decode(&frames[0])
             .expect("live fixture frame decodes")
@@ -1929,12 +2002,7 @@ mod tests {
 
     #[test]
     fn veteran_telemetry_tail_preserves_unknown_live_aero_bytes() {
-        let mut reassembler = crate::VeteranFrameReassembler::default();
-        let mut frames = Vec::new();
-
-        for chunk in notification_fixture_chunks() {
-            frames.extend(feed_chunk(&mut reassembler, &chunk));
-        }
+        let frames = veteran_frames_from_chunks(notification_fixture_chunks());
 
         let first =
             crate::VeteranTelemetryTail::decode(&frames[0]).expect("first live frame has a tail");
@@ -1958,6 +2026,80 @@ mod tests {
         assert_eq!(
             second.as_slice().get(55..),
             Some(&hex_to_bytes("00bffff8")[..])
+        );
+    }
+
+    #[test]
+    fn veteran_bms_page_metadata_decodes_live_aero_page_cycle() {
+        let pages: Vec<_> = veteran_frames_from_chunks(bms_page_fixture_chunks())
+            .iter()
+            .map(crate::VeteranBmsPage::decode)
+            .collect::<Result<_, _>>()
+            .expect("live BMS page fixture frames expose page metadata");
+
+        assert_eq!(pages.len(), 19);
+        assert_eq!(
+            pages.iter().map(|page| page.selector).collect::<Vec<_>>(),
+            vec![6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 8, 7]
+        );
+        assert!(
+            pages
+                .iter()
+                .any(|page| page.kind == crate::VeteranBmsPageKind::Reserved)
+        );
+    }
+
+    #[test]
+    fn veteran_bms_page_metadata_classifies_documented_selectors() {
+        let pages = [
+            crate::VeteranBmsPage::from_selector(0),
+            crate::VeteranBmsPage::from_selector(1),
+            crate::VeteranBmsPage::from_selector(2),
+            crate::VeteranBmsPage::from_selector(3),
+            crate::VeteranBmsPage::from_selector(4),
+            crate::VeteranBmsPage::from_selector(5),
+            crate::VeteranBmsPage::from_selector(6),
+            crate::VeteranBmsPage::from_selector(7),
+            crate::VeteranBmsPage::from_selector(8),
+            crate::VeteranBmsPage::from_selector(9),
+        ];
+
+        assert_eq!(
+            pages.map(|page| (page.pack_index, page.kind)),
+            [
+                (Some(1), crate::VeteranBmsPageKind::Header),
+                (Some(1), crate::VeteranBmsPageKind::Cells0To14),
+                (Some(1), crate::VeteranBmsPageKind::Cells15To29),
+                (
+                    Some(1),
+                    crate::VeteranBmsPageKind::Cells30To41AndTemperatures,
+                ),
+                (Some(2), crate::VeteranBmsPageKind::Header),
+                (Some(2), crate::VeteranBmsPageKind::Cells0To14),
+                (Some(2), crate::VeteranBmsPageKind::Cells15To29),
+                (
+                    Some(2),
+                    crate::VeteranBmsPageKind::Cells30To41AndTemperatures,
+                ),
+                (None, crate::VeteranBmsPageKind::Reserved),
+                (None, crate::VeteranBmsPageKind::Unknown(9)),
+            ]
+        );
+    }
+
+    #[test]
+    fn aero_bms_metadata_keeps_cell_layout_evidence_at_model_level() {
+        let profile = crate::AeroDeviceProfile::nosfet_aero();
+        let entry = crate::nosfet_aero_registry_entry();
+
+        assert_eq!(profile.cell_count, 30);
+        assert_eq!(
+            entry.battery.as_ref().map(|battery| battery.series_cells),
+            Some(30)
+        );
+        assert_eq!(
+            entry.battery.as_ref().map(|battery| battery.verification),
+            Some(cutout_core::VerificationStatus::SourceAndHardwareVerified)
         );
     }
 
