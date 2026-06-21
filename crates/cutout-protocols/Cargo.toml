@@ -10,6 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+arrayvec.workspace = true
 bytes.workspace = true
 crc32fast.workspace = true
 cutout-core = { path = "../cutout-core", version = "0.1.0" }

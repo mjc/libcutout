@@ -9,6 +9,7 @@
 
 //! Protocol-family scaffolding for Cutout.
 
+use arrayvec::ArrayVec;
 use cutout_core::{
     Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, PollRequest, PollingPlan,
     ProtocolSession, RequestPolicy, RequestQueue, RequestUrgency, SessionInput, SessionOutput,
@@ -26,6 +27,8 @@ const DEFAULT_POLICY: RequestPolicy = RequestPolicy {
     max_retries: 1,
     min_interval_ms: 100,
 };
+
+const MAX_PROVISIONAL_REQUEST_LEN: usize = 24;
 
 const AERO_POLL_PLAN: PollingPlan<5> = PollingPlan::new([
     PollRequest::new(
@@ -125,6 +128,18 @@ impl AeroProbe {
             Self::Diagnostics => b"aero:diagnostics",
         }
     }
+
+    /// Returns the generic command kind correlated with this probe.
+    #[must_use]
+    pub const fn command_kind(self) -> CommandKind {
+        match self {
+            Self::Identity => CommandKind::RequestIdentity,
+            Self::FirmwareInfo => CommandKind::RequestFirmwareInfo,
+            Self::Telemetry => CommandKind::RequestTelemetry,
+            Self::BatteryInfo => CommandKind::RequestBatteryInfo,
+            Self::Diagnostics => CommandKind::RequestDiagnostics,
+        }
+    }
 }
 
 /// Begode-family read-only probe identifier.
@@ -170,6 +185,79 @@ impl FalconProbe {
             Self::BatteryInfo => b"falcon:battery",
         }
     }
+
+    /// Returns the generic command kind correlated with this probe.
+    #[must_use]
+    pub const fn command_kind(self) -> CommandKind {
+        match self {
+            Self::Identity => CommandKind::RequestIdentity,
+            Self::FirmwareInfo => CommandKind::RequestFirmwareInfo,
+            Self::Telemetry => CommandKind::RequestTelemetry,
+            Self::BatteryInfo => CommandKind::RequestBatteryInfo,
+        }
+    }
+}
+
+/// Bounded encoded request payload plus correlation metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedRequest<P> {
+    /// Family-specific probe represented by this request.
+    pub probe: P,
+
+    /// Generic command kind used for scheduler and response correlation.
+    pub command: CommandKind,
+
+    /// Bounded provisional request bytes.
+    pub payload: ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN>,
+
+    /// GATT write mode required by this request.
+    pub mode: WriteMode,
+}
+
+/// Provisional request encoder for NOSFET Aero/Veteran-family probes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AeroRequestEncoder;
+
+impl AeroRequestEncoder {
+    /// Encodes a supported Aero/Veteran-family probe.
+    #[must_use]
+    pub fn encode(probe: AeroProbe) -> EncodedRequest<AeroProbe> {
+        EncodedRequest {
+            probe,
+            command: probe.command_kind(),
+            payload: provisional_payload(probe.placeholder_label()),
+            mode: WriteMode::WithResponse,
+        }
+    }
+
+    /// Encodes a generic command if it belongs to the Aero/Veteran probe family.
+    #[must_use]
+    pub fn encode_command(kind: CommandKind) -> Option<EncodedRequest<AeroProbe>> {
+        AeroProbe::from_command_kind(kind).map(Self::encode)
+    }
+}
+
+/// Provisional request encoder for Begode/Falcon-family probes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FalconRequestEncoder;
+
+impl FalconRequestEncoder {
+    /// Encodes a supported Begode/Falcon-family probe.
+    #[must_use]
+    pub fn encode(probe: FalconProbe) -> EncodedRequest<FalconProbe> {
+        EncodedRequest {
+            probe,
+            command: probe.command_kind(),
+            payload: provisional_payload(probe.placeholder_label()),
+            mode: WriteMode::WithResponse,
+        }
+    }
+
+    /// Encodes a generic command if it belongs to the Begode/Falcon probe family.
+    #[must_use]
+    pub fn encode_command(kind: CommandKind) -> Option<EncodedRequest<FalconProbe>> {
+        FalconProbe::from_command_kind(kind).map(Self::encode)
+    }
 }
 
 /// Initial read-only session shell for NOSFET Aero/Veteran-family devices.
@@ -210,12 +298,7 @@ impl ProtocolSession for AeroReadOnlySession {
                 output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
                 if self.connected {
                     enqueue_aero_plan(&mut self.queue);
-                    drain_queue(
-                        AERO_WRITE_CHANNEL,
-                        aero_placeholder_payload,
-                        &mut self.queue,
-                        output,
-                    );
+                    drain_aero_queue(&mut self.queue, output);
                 }
             }
             SessionInput::Notification {
@@ -279,12 +362,7 @@ impl ProtocolSession for FalconReadOnlySession {
                 output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
                 if self.connected {
                     enqueue_falcon_plan(&mut self.queue);
-                    drain_queue(
-                        FALCON_WRITE_CHANNEL,
-                        falcon_placeholder_payload,
-                        &mut self.queue,
-                        output,
-                    );
+                    drain_falcon_queue(&mut self.queue, output);
                 }
             }
             SessionInput::Notification {
@@ -319,27 +397,39 @@ fn enqueue_falcon_plan(queue: &mut RequestQueue<4>) {
     let _result = FALCON_POLL_PLAN.enqueue_into(queue);
 }
 
-fn drain_queue<const N: usize>(
-    channel: GattChannel,
-    placeholder_payload: fn(CommandKind) -> &'static [u8],
-    queue: &mut RequestQueue<N>,
-    output: &mut Vec<SessionOutput>,
-) {
+fn drain_aero_queue(queue: &mut RequestQueue<5>, output: &mut Vec<SessionOutput>) {
     while let Some(request) = queue.pop_next() {
+        let Some(encoded) = AeroRequestEncoder::encode_command(request.key.command) else {
+            continue;
+        };
         output.push(SessionOutput::Transport(TransportAction::Write {
-            channel,
-            bytes: placeholder_payload(request.key.command).to_vec(),
-            mode: WriteMode::WithResponse,
+            channel: AERO_WRITE_CHANNEL,
+            bytes: encoded.payload.to_vec(),
+            mode: encoded.mode,
         }));
     }
 }
 
-fn aero_placeholder_payload(command: CommandKind) -> &'static [u8] {
-    AeroProbe::from_command_kind(command).map_or(b"", AeroProbe::placeholder_label)
+fn drain_falcon_queue(queue: &mut RequestQueue<4>, output: &mut Vec<SessionOutput>) {
+    while let Some(request) = queue.pop_next() {
+        let Some(encoded) = FalconRequestEncoder::encode_command(request.key.command) else {
+            continue;
+        };
+        output.push(SessionOutput::Transport(TransportAction::Write {
+            channel: FALCON_WRITE_CHANNEL,
+            bytes: encoded.payload.to_vec(),
+            mode: encoded.mode,
+        }));
+    }
 }
 
-fn falcon_placeholder_payload(command: CommandKind) -> &'static [u8] {
-    FalconProbe::from_command_kind(command).map_or(b"", FalconProbe::placeholder_label)
+fn provisional_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_PROVISIONAL_REQUEST_LEN> {
+    let mut payload = ArrayVec::new();
+    for byte in bytes {
+        let pushed = payload.try_push(*byte);
+        debug_assert!(pushed.is_ok());
+    }
+    payload
 }
 
 /// Returns the crate name used by setup smoke tests.
@@ -445,6 +535,42 @@ mod tests {
         assert_eq!(
             crate::FalconProbe::BatteryInfo.placeholder_label(),
             b"falcon:battery"
+        );
+    }
+
+    #[test]
+    fn aero_encoder_preserves_probe_command_write_mode_and_payload() {
+        let request = crate::AeroRequestEncoder::encode(crate::AeroProbe::FirmwareInfo);
+
+        assert_eq!(request.probe, crate::AeroProbe::FirmwareInfo);
+        assert_eq!(request.command, CommandKind::RequestFirmwareInfo);
+        assert_eq!(request.mode, WriteMode::WithResponse);
+        assert_eq!(request.payload.as_slice(), b"aero:firmware");
+    }
+
+    #[test]
+    fn falcon_encoder_preserves_probe_command_write_mode_and_payload() {
+        let request = crate::FalconRequestEncoder::encode(crate::FalconProbe::BatteryInfo);
+
+        assert_eq!(request.probe, crate::FalconProbe::BatteryInfo);
+        assert_eq!(request.command, CommandKind::RequestBatteryInfo);
+        assert_eq!(request.mode, WriteMode::WithResponse);
+        assert_eq!(request.payload.as_slice(), b"falcon:battery");
+    }
+
+    #[test]
+    fn aero_encoder_rejects_unsupported_command_family() {
+        assert_eq!(
+            crate::AeroRequestEncoder::encode_command(CommandKind::RequestSettings),
+            None
+        );
+    }
+
+    #[test]
+    fn falcon_encoder_rejects_unsupported_diagnostics_probe() {
+        assert_eq!(
+            crate::FalconRequestEncoder::encode_command(CommandKind::RequestDiagnostics),
+            None
         );
     }
 
