@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeReport};
-use cutout_core::TelemetrySnapshot;
+use cutout_core::{ParserDiagnostics, TelemetrySnapshot};
 use ratatui::termina::{PlatformTerminal, Terminal as _};
 use ratatui::{
     Frame, Terminal,
@@ -181,7 +181,13 @@ pub(crate) struct TelemetryWindow {
     pub(crate) battery_pct: Option<u64>,
     pub(crate) battery_source: BatterySource,
     pub(crate) signal_pct: u64,
+    pub(crate) latest_speed_mph: Option<u64>,
     pub(crate) latest_voltage_v: Option<u64>,
+    pub(crate) latest_current_a: Option<i64>,
+    pub(crate) latest_temperature_c: Option<i64>,
+    pub(crate) latest_distance_m: Option<u64>,
+    pub(crate) latest_pitch_deg: Option<i64>,
+    pub(crate) latest_pwm_pct: Option<i64>,
     pub(crate) speed_mph: Vec<u64>,
     pub(crate) voltage_v: Vec<u64>,
     pub(crate) current_a: Vec<u64>,
@@ -549,18 +555,10 @@ impl DashboardState {
 
         if report.telemetry > 0 {
             let snapshot = report.telemetry_snapshot;
-            if let Some(voltage) = snapshot.voltage_mv {
-                let volts = millivolts_to_volts(voltage.value);
-                self.push_log("info", &format!("telemetry voltage {volts} V"));
-            }
-            if let Some(percent) = snapshot
-                .battery_percent_reported
-                .or(snapshot.battery_percent_estimated)
-            {
-                self.push_log("info", &format!("telemetry battery {}%", percent.value));
-            }
+            self.push_log("info", &format_mapped_telemetry_event(snapshot));
             self.telemetry.apply_snapshot(snapshot);
         }
+        self.push_log("trace", &format_unmapped_telemetry_event(report));
     }
 
     pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
@@ -711,7 +709,13 @@ impl TelemetryWindow {
             battery_pct: None,
             battery_source: BatterySource::Unknown,
             signal_pct: 0,
+            latest_speed_mph: None,
             latest_voltage_v: None,
+            latest_current_a: None,
+            latest_temperature_c: None,
+            latest_distance_m: None,
+            latest_pitch_deg: None,
+            latest_pwm_pct: None,
             speed_mph: Vec::with_capacity(HISTORY_LIMIT),
             voltage_v: Vec::with_capacity(HISTORY_LIMIT),
             current_a: Vec::with_capacity(HISTORY_LIMIT),
@@ -733,7 +737,10 @@ impl TelemetryWindow {
         self.battery_pct = Some(battery_pct);
         self.battery_source = BatterySource::TelemetryReported;
         self.signal_pct = signal_pct;
+        self.latest_speed_mph = speed_mph.last().copied();
         self.latest_voltage_v = voltage_v.last().copied();
+        self.latest_current_a = current_a.last().copied().and_then(u64_to_i64);
+        self.latest_temperature_c = temperature_c.last().copied().and_then(u64_to_i64);
         self.speed_mph.clear();
         self.voltage_v.clear();
         self.current_a.clear();
@@ -759,6 +766,10 @@ impl TelemetryWindow {
         push_sample(&mut self.voltage_v, next_voltage);
         push_sample(&mut self.current_a, next_current);
         push_sample(&mut self.temperature_c, next_temperature);
+        self.latest_speed_mph = Some(next_speed);
+        self.latest_voltage_v = Some(next_voltage);
+        self.latest_current_a = u64_to_i64(next_current);
+        self.latest_temperature_c = u64_to_i64(next_temperature);
         self.sync_points();
     }
 
@@ -788,7 +799,9 @@ impl TelemetryWindow {
             self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed_mm_s {
-            push_sample(&mut self.speed_mph, mm_s_to_mph(speed.value));
+            let speed_mph = mm_s_to_mph(speed.value);
+            self.latest_speed_mph = Some(speed_mph);
+            push_sample(&mut self.speed_mph, speed_mph);
         }
         if let Some(voltage) = snapshot.voltage_mv {
             let volts = millivolts_to_volts(voltage.value);
@@ -796,6 +809,7 @@ impl TelemetryWindow {
             push_sample(&mut self.voltage_v, volts);
         }
         if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
+            self.latest_current_a = Some(milliamps_to_amps(current.value));
             push_sample(&mut self.current_a, milliamps_to_amps_abs(current.value));
         }
         if let Some(temperature) = snapshot
@@ -803,10 +817,20 @@ impl TelemetryWindow {
             .or(snapshot.motor_temperature_mc)
             .or(snapshot.battery_temperature_mc)
         {
+            self.latest_temperature_c = Some(millicelsius_to_celsius_signed(temperature.value));
             push_sample(
                 &mut self.temperature_c,
                 millicelsius_to_celsius(temperature.value),
             );
+        }
+        if let Some(distance) = snapshot.distance_mm {
+            self.latest_distance_m = Some(distance.value / 1_000);
+        }
+        if let Some(pitch) = snapshot.pitch_mdeg {
+            self.latest_pitch_deg = Some(millidegrees_to_degrees(pitch.value));
+        }
+        if let Some(pwm) = snapshot.pwm_permille {
+            self.latest_pwm_pct = Some(permille_to_percent(pwm.value));
         }
         self.sync_points();
     }
@@ -835,12 +859,102 @@ fn millivolts_to_volts(value: i32) -> u64 {
     u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
 }
 
+fn milliamps_to_amps(value: i32) -> i64 {
+    i64::from(value) / 1_000
+}
+
 fn milliamps_to_amps_abs(value: i32) -> u64 {
     u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
 }
 
+fn millicelsius_to_celsius_signed(value: i32) -> i64 {
+    i64::from(value) / 1_000
+}
+
 fn millicelsius_to_celsius(value: i32) -> u64 {
     u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
+}
+
+fn millidegrees_to_degrees(value: i32) -> i64 {
+    i64::from(value) / 1_000
+}
+
+fn permille_to_percent(value: i16) -> i64 {
+    i64::from(value) / 10
+}
+
+fn u64_to_i64(value: u64) -> Option<i64> {
+    i64::try_from(value).ok()
+}
+
+fn format_mapped_telemetry_event(snapshot: TelemetrySnapshot) -> String {
+    let mut fields = Vec::new();
+    if let Some(speed) = snapshot.speed_mm_s {
+        fields.push(format!("speed={}mph", mm_s_to_mph(speed.value)));
+    }
+    if let Some(voltage) = snapshot.voltage_mv {
+        fields.push(format!("voltage={}V", millivolts_to_volts(voltage.value)));
+    }
+    if let Some(percent) = snapshot
+        .battery_percent_reported
+        .or(snapshot.battery_percent_estimated)
+    {
+        fields.push(format!("battery={}%", percent.value));
+    }
+    if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
+        fields.push(format!("current={}A", milliamps_to_amps(current.value)));
+    }
+    if let Some(temperature) = snapshot
+        .controller_temperature_mc
+        .or(snapshot.motor_temperature_mc)
+        .or(snapshot.battery_temperature_mc)
+    {
+        fields.push(format!(
+            "temperature={}C",
+            millicelsius_to_celsius_signed(temperature.value)
+        ));
+    }
+    if let Some(pwm) = snapshot.pwm_permille {
+        fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
+    }
+    if let Some(distance) = snapshot.distance_mm {
+        fields.push(format!("distance={}m", distance.value / 1_000));
+    }
+    if let Some(pitch) = snapshot.pitch_mdeg {
+        fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
+    }
+    if let Some(roll) = snapshot.roll_mdeg {
+        fields.push(format!("roll={}deg", millidegrees_to_degrees(roll.value)));
+    }
+    if fields.is_empty() {
+        "telemetry mapped none".to_owned()
+    } else {
+        format!("telemetry mapped {}", fields.join(" "))
+    }
+}
+
+fn format_unmapped_telemetry_event(report: &SessionBridgeReport) -> String {
+    let latest = report
+        .latest_notification_len
+        .map_or_else(|| "none".to_owned(), |len| len.to_string());
+    let diagnostics = format_parser_diagnostics(report.diagnostics_snapshot);
+    format!(
+        "telemetry unmapped notifications={} bytes={} latest_len={} diagnostics={} {}",
+        report.notifications, report.notification_bytes, latest, report.diagnostics, diagnostics
+    )
+}
+
+fn format_parser_diagnostics(diagnostics: ParserDiagnostics) -> String {
+    format!(
+        "dropped={} resyncs={} bad_checksums={} timeouts={} oversized={} malformed={} unmatched={}",
+        diagnostics.dropped_bytes,
+        diagnostics.resyncs,
+        diagnostics.bad_checksums,
+        diagnostics.timeouts,
+        diagnostics.oversized_frames,
+        diagnostics.malformed_frames,
+        diagnostics.unmatched_replies
+    )
 }
 
 fn services_summary(summary: &ConnectionSummary) -> String {
@@ -939,7 +1053,7 @@ pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(17),
+            Constraint::Length(22),
             Constraint::Fill(1),
         ])
         .split(frame.area());
@@ -1095,8 +1209,8 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(10),
-                Constraint::Length(4),
+                Constraint::Length(8),
+                Constraint::Length(7),
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Fill(1),
@@ -1204,7 +1318,7 @@ fn render_pending_telemetry_wait(frame: &mut Frame<'_>, area: Rect) {
 
 fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let counters = &state.counters;
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("devices ", Style::new().fg(Color::Gray)),
             Span::raw(counters.discovered.to_string()),
@@ -1219,8 +1333,52 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
         ]),
     ];
 
-    let panel = Paragraph::new(lines).block(panel_block("Session"));
+    if state.telemetry.has_decoded_samples() {
+        lines.extend([
+            Line::from(vec![
+                Span::styled("speed ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_u64(
+                    state.telemetry.latest_speed_mph,
+                    " mph",
+                )),
+                Span::styled(" voltage ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_u64(state.telemetry.latest_voltage_v, " V")),
+                Span::styled(" battery ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_u64(state.telemetry.battery_pct, "%")),
+            ]),
+            Line::from(vec![
+                Span::styled("current ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_i64(state.telemetry.latest_current_a, " A")),
+                Span::styled(" temp ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_i64(
+                    state.telemetry.latest_temperature_c,
+                    " C",
+                )),
+                Span::styled(" pwm ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_i64(state.telemetry.latest_pwm_pct, "%")),
+            ]),
+            Line::from(vec![
+                Span::styled("distance ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_u64(state.telemetry.latest_distance_m, " m")),
+                Span::styled(" pitch ", Style::new().fg(Color::Gray)),
+                Span::raw(format_optional_i64(
+                    state.telemetry.latest_pitch_deg,
+                    " deg",
+                )),
+            ]),
+        ]);
+    }
+
+    let panel = Paragraph::new(lines).block(panel_block("Session / telemetry"));
     frame.render_widget(panel, area);
+}
+
+fn format_optional_u64(value: Option<u64>, suffix: &str) -> String {
+    value.map_or_else(|| "unknown".to_owned(), |value| format!("{value}{suffix}"))
+}
+
+fn format_optional_i64(value: Option<i64>, suffix: &str) -> String {
+    value.map_or_else(|| "unknown".to_owned(), |value| format!("{value}{suffix}"))
 }
 
 fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1512,7 +1670,12 @@ mod tests {
             latest_notification_len: Some(100),
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
-            diagnostics: 0,
+            diagnostics: 1,
+            diagnostics_snapshot: ParserDiagnostics {
+                malformed_frames: 2,
+                unmatched_replies: 1,
+                ..ParserDiagnostics::default()
+            },
             disconnects: 0,
         };
 
@@ -1528,6 +1691,14 @@ mod tests {
                 .iter()
                 .any(|entry| entry.message.contains("notifications=184"))
         );
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "trace"
+                && entry
+                    .message
+                    .contains("telemetry unmapped notifications=184")
+                && entry.message.contains("malformed=2")
+                && entry.message.contains("unmatched=1")
+        }));
     }
 
     #[test]
@@ -1549,6 +1720,7 @@ mod tests {
                 ..TelemetrySnapshot::default()
             },
             diagnostics: 0,
+            diagnostics_snapshot: ParserDiagnostics::default(),
             disconnects: 0,
         };
 
@@ -1559,11 +1731,21 @@ mod tests {
             state.telemetry.battery_source,
             BatterySource::TelemetryReported
         );
+        assert_eq!(state.telemetry.latest_speed_mph, Some(10));
         assert_eq!(state.telemetry.latest_voltage_v, Some(84));
+        assert_eq!(state.telemetry.latest_current_a, Some(-12));
+        assert_eq!(state.telemetry.latest_temperature_c, Some(36));
         assert_eq!(state.telemetry.speed_mph, vec![10]);
         assert_eq!(state.telemetry.voltage_v, vec![84]);
         assert_eq!(state.telemetry.current_a, vec![12]);
         assert_eq!(state.telemetry.temperature_c, vec![37]);
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info"
+                && entry.message.contains("telemetry mapped")
+                && entry.message.contains("speed=10mph")
+                && entry.message.contains("battery=77%")
+                && entry.message.contains("current=-12A")
+        }));
     }
 
     #[test]
@@ -1605,6 +1787,7 @@ mod tests {
             telemetry: 1,
             telemetry_snapshot: live_aero_telemetry_snapshot(),
             diagnostics: 0,
+            diagnostics_snapshot: ParserDiagnostics::default(),
             disconnects: 0,
         };
 
@@ -1615,13 +1798,31 @@ mod tests {
             state.telemetry.battery_source,
             BatterySource::TelemetryEstimated
         );
+        assert_eq!(state.telemetry.latest_speed_mph, Some(0));
         assert_eq!(state.telemetry.latest_voltage_v, Some(109));
+        assert_eq!(state.telemetry.latest_current_a, Some(0));
+        assert_eq!(state.telemetry.latest_temperature_c, Some(33));
+        assert_eq!(state.telemetry.latest_distance_m, Some(1_551_169));
+        assert_eq!(state.telemetry.latest_pitch_deg, Some(69));
+        assert_eq!(state.telemetry.latest_pwm_pct, Some(-100));
         assert_eq!(state.telemetry.voltage_v, vec![109]);
 
+        let overview_text = buffer_text(&render_buffer(&state, 120, 36));
+        assert!(overview_text.contains("Battery estimated"));
+        assert!(overview_text.contains("47%"));
+        assert!(overview_text.contains("Voltage"));
+
+        state.active_tab = 1;
         let text = buffer_text(&render_buffer(&state, 120, 36));
-        assert!(text.contains("Battery estimated"));
-        assert!(text.contains("47%"));
-        assert!(text.contains("Voltage"));
+        assert!(text.contains("109 V"));
+        assert!(text.contains("0 A"));
+        assert!(text.contains("33 C"));
+        assert!(text.contains("-100%"));
+        assert!(text.contains("1551169 m"));
+        assert!(text.contains("69 deg"));
+        assert!(text.contains("telemetry mapped"));
+        assert!(text.contains("current=0A"));
+        assert!(text.contains("telemetry unmapped notifications=1"));
     }
 
     #[test]

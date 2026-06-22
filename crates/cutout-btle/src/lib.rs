@@ -19,8 +19,9 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceEvent, FirmwareInfo, GattChannel, LinkInfo, ProtocolSession, ReadOnlyResponse,
-    SessionInput, SessionOutput, SettingsReadback, TelemetrySnapshot, TransportAction, WriteMode,
+    DeviceEvent, FirmwareInfo, GattChannel, LinkInfo, ParserDiagnostics, ProtocolSession,
+    ReadOnlyResponse, SessionInput, SessionOutput, SettingsReadback, TelemetrySnapshot,
+    TransportAction, WriteMode,
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
@@ -341,6 +342,9 @@ pub struct SessionBridgeReport {
 
     /// Parser diagnostics events emitted by the session.
     pub diagnostics: usize,
+
+    /// Aggregated parser diagnostic counters emitted by the session.
+    pub diagnostics_snapshot: ParserDiagnostics,
 
     /// Transport disconnect operations executed through the bridge.
     pub disconnects: usize,
@@ -920,8 +924,9 @@ where
                     ReadOnlyResponse::Battery(_) | ReadOnlyResponse::Diagnostics(_) => {}
                 }
             }
-            SessionOutput::Event(DeviceEvent::Diagnostics(_)) => {
+            SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => {
                 context.report.diagnostics += 1;
+                context.report.diagnostics_snapshot.merge(diagnostics);
             }
         }
     }
@@ -1550,6 +1555,7 @@ mod tests {
             RawFieldValue::new(0x0014, 30)
         );
         assert_eq!(report.diagnostics, 1);
+        assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
     }
 
