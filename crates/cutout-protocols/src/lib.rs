@@ -787,9 +787,19 @@ pub enum VeteranReassemblyError {
 }
 
 /// Sync reassembler for Veteran/LeaperKim/NOSFET `dc5a5c` notification streams.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranFrameReassembler {
     buffer: ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+    state: VeteranFrameParseState,
+}
+
+impl Default for VeteranFrameReassembler {
+    fn default() -> Self {
+        Self {
+            buffer: ArrayVec::new(),
+            state: VeteranFrameParseState::default(),
+        }
+    }
 }
 
 impl VeteranFrameReassembler {
@@ -800,76 +810,108 @@ impl VeteranFrameReassembler {
     /// Returns [`VeteranReassemblyError::CrcMismatch`] when a long frame's
     /// CRC32 trailer does not match the frame contents.
     pub fn feed_byte(&mut self, byte: u8) -> Result<Option<VeteranFrame>, VeteranReassemblyError> {
-        self.push_resyncing(byte);
-        let Some(expected_len) = self.expected_len() else {
-            return Ok(None);
-        };
-        if self.buffer.len() < expected_len {
+        let (state, frame) = self.state.feed_byte(byte, &mut self.buffer)?;
+        self.state = state;
+        Ok(frame)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum VeteranFrameParseState {
+    #[default]
+    SeekingMagic0,
+    SeekingMagic1,
+    SeekingMagic2,
+    Collecting,
+}
+
+impl VeteranFrameParseState {
+    fn feed_byte(
+        self,
+        byte: u8,
+        buffer: &mut ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+    ) -> Result<(Self, Option<VeteranFrame>), VeteranReassemblyError> {
+        match self {
+            Self::SeekingMagic0 => Ok(if byte == 0xdc {
+                buffer.clear();
+                debug_assert!(buffer.try_push(byte).is_ok());
+                (Self::SeekingMagic1, None)
+            } else {
+                (Self::SeekingMagic0, None)
+            }),
+            Self::SeekingMagic1 => Ok(match byte {
+                0x5a => {
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    (Self::SeekingMagic2, None)
+                }
+                0xdc => {
+                    buffer.clear();
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    (Self::SeekingMagic1, None)
+                }
+                _ => {
+                    buffer.clear();
+                    (Self::SeekingMagic0, None)
+                }
+            }),
+            Self::SeekingMagic2 => {
+                if byte == 0x5c {
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    let frame = Self::try_finish(buffer)?;
+                    Ok((
+                        if frame.is_some() {
+                            Self::SeekingMagic0
+                        } else {
+                            Self::Collecting
+                        },
+                        frame,
+                    ))
+                } else if byte == 0xdc {
+                    buffer.clear();
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    Ok((Self::SeekingMagic1, None))
+                } else {
+                    buffer.clear();
+                    Ok((Self::SeekingMagic0, None))
+                }
+            }
+            Self::Collecting => {
+                debug_assert!(buffer.try_push(byte).is_ok());
+                let frame = Self::try_finish(buffer)?;
+                Ok((
+                    if frame.is_some() {
+                        Self::SeekingMagic0
+                    } else {
+                        Self::Collecting
+                    },
+                    frame,
+                ))
+            }
+        }
+    }
+
+    fn try_finish(
+        buffer: &mut ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+    ) -> Result<Option<VeteranFrame>, VeteranReassemblyError> {
+        if buffer.len() < 4 {
             return Ok(None);
         }
 
-        if self.uses_crc() && !self.crc_matches() {
-            self.buffer.clear();
+        let Some(expected_len) = veteran_expected_len(buffer.as_slice()) else {
+            return Ok(None);
+        };
+        if buffer.len() < expected_len {
+            return Ok(None);
+        }
+
+        if veteran_uses_crc(buffer.as_slice()) && !veteran_crc_matches(buffer.as_slice()) {
+            buffer.clear();
             return Err(VeteranReassemblyError::CrcMismatch);
         }
 
-        let frame = VeteranFrame::try_from_slice(self.buffer.as_slice())?;
-        self.buffer.clear();
+        let frame = VeteranFrame::try_from_slice(buffer.as_slice())?;
+        buffer.clear();
         Ok(Some(frame))
-    }
-
-    fn push_resyncing(&mut self, byte: u8) {
-        match self.buffer.len() {
-            0 => {
-                if byte == 0xdc {
-                    self.buffer.push(byte);
-                }
-            }
-            1 => {
-                if byte == 0x5a {
-                    self.buffer.push(byte);
-                } else {
-                    self.buffer.clear();
-                    if byte == 0xdc {
-                        self.buffer.push(byte);
-                    }
-                }
-            }
-            2 => {
-                if byte == 0x5c {
-                    self.buffer.push(byte);
-                } else {
-                    self.buffer.clear();
-                    if byte == 0xdc {
-                        self.buffer.push(byte);
-                    }
-                }
-            }
-            _ => self.buffer.push(byte),
-        }
-    }
-
-    fn expected_len(&self) -> Option<usize> {
-        self.buffer.get(3).map(|len| usize::from(*len) + 4)
-    }
-
-    fn uses_crc(&self) -> bool {
-        self.buffer
-            .get(3)
-            .is_some_and(|len| *len > VETERAN_SHORT_FRAME_MAX_LEN)
-    }
-
-    fn crc_matches(&self) -> bool {
-        let Some(declared_len) = self.buffer.get(3).copied().map(usize::from) else {
-            return false;
-        };
-        let Some(expected_crc) = read_be_u32(self.buffer.as_slice(), declared_len) else {
-            return false;
-        };
-        let Some(crc_bytes) = self.buffer.as_slice().get(..declared_len) else {
-            return false;
-        };
-        crc32fast::hash(crc_bytes) == expected_crc
     }
 }
 
@@ -888,6 +930,27 @@ fn veteran_frame_data_end(bytes: &[u8]) -> Option<usize> {
     } else {
         Some(bytes.len())
     }
+}
+
+fn veteran_expected_len(bytes: &[u8]) -> Option<usize> {
+    bytes.get(3).map(|len| usize::from(*len) + 4)
+}
+
+fn veteran_uses_crc(bytes: &[u8]) -> bool {
+    bytes.get(3).is_some_and(|len| *len > VETERAN_SHORT_FRAME_MAX_LEN)
+}
+
+fn veteran_crc_matches(bytes: &[u8]) -> bool {
+    let Some(declared_len) = bytes.get(3).copied().map(usize::from) else {
+        return false;
+    };
+    let Some(expected_crc) = read_be_u32(bytes, declared_len) else {
+        return false;
+    };
+    let Some(crc_bytes) = bytes.get(..declared_len) else {
+        return false;
+    };
+    crc32fast::hash(crc_bytes) == expected_crc
 }
 
 fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
