@@ -1,5 +1,6 @@
 use std::{
     fs,
+    future::Future,
     sync::mpsc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -588,7 +589,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    run_live_dashboard(state, connection).await
+    run_live_dashboard(state, connection)
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -603,22 +604,101 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
     })
 }
 
-async fn run_live_dashboard(state: DashboardState, connection: ConnectedPeripheral) -> Result<()> {
-    let (tx, rx) = mpsc::channel();
+fn run_live_dashboard(state: DashboardState, connection: ConnectedPeripheral) -> Result<()> {
     info!(
         observation = %connection.summary.observation,
-        "spawning dashboard terminal thread"
+        "starting dashboard live runner"
     );
-    let dashboard_thread = thread::spawn(move || run_dashboard_with_updates(state, &rx));
-    info!("dashboard terminal thread spawned; entering live update loop");
-    let live_updates = run_dashboard_live_updates(connection, tx);
-    info!("dashboard live update future created");
-    live_updates.await;
-    info!("dashboard live update future completed");
-    match dashboard_thread.join() {
-        Ok(result) => result,
-        Err(_) => bail!("dashboard terminal thread panicked"),
+    run_live_dashboard_with(
+        state,
+        move |tx| run_dashboard_live_updates(connection, tx),
+        |state, rx| run_dashboard_with_updates(state, &rx),
+    )
+}
+
+fn run_live_dashboard_with<Start, Fut, Run>(
+    state: DashboardState,
+    start_live_updates: Start,
+    run_terminal: Run,
+) -> Result<()>
+where
+    Start: FnOnce(mpsc::Sender<DashboardUpdate>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+    Run: FnOnce(DashboardState, mpsc::Receiver<DashboardUpdate>) -> Result<()> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    let live_thread = start_dashboard_live_thread(start_live_updates, tx)?;
+
+    info!("running dashboard terminal while live update thread is active");
+    let dashboard_result = run_terminal(state, rx);
+    live_thread.shutdown();
+    dashboard_result
+}
+
+struct LiveDashboardThread {
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    thread: thread::JoinHandle<()>,
+}
+
+impl LiveDashboardThread {
+    fn shutdown(self) {
+        info!("dashboard live update thread shutdown requested");
+        let _ = self.shutdown_tx.send(());
+        match self.thread.join() {
+            Ok(()) => info!("dashboard live update thread joined"),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
+}
+
+fn start_dashboard_live_thread<Start, Fut>(
+    start_live_updates: Start,
+    tx: mpsc::Sender<DashboardUpdate>,
+) -> Result<LiveDashboardThread>
+where
+    Start: FnOnce(mpsc::Sender<DashboardUpdate>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let (started_tx, started_rx) = mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+    info!("dashboard live update thread spawning");
+    let thread = thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+            .enable_time()
+            .worker_threads(2)
+            .thread_name("cutout-dashboard-live")
+            .build()
+        else {
+            let _ = started_tx.send(Err(anyhow::anyhow!(
+                "dashboard live update runtime failed to build"
+            )));
+            return;
+        };
+
+        runtime.block_on(async move {
+            let mut live_updates = tokio::spawn(start_live_updates(tx));
+            let _ = started_tx.send(Ok(()));
+            info!("dashboard live update task spawned in dedicated runtime");
+            tokio::select! {
+                _ = &mut live_updates => {
+                    info!("dashboard live update task finished");
+                }
+                _ = shutdown_rx => {
+                    info!("dashboard live update task aborting after shutdown");
+                    live_updates.abort();
+                    let _ = live_updates.await;
+                }
+            }
+        });
+    });
+    started_rx.recv()??;
+    info!("dashboard live update thread started before terminal");
+
+    Ok(LiveDashboardThread {
+        shutdown_tx,
+        thread,
+    })
 }
 
 async fn run_dashboard_live_updates(
@@ -626,7 +706,7 @@ async fn run_dashboard_live_updates(
     tx: mpsc::Sender<DashboardUpdate>,
 ) {
     info!("dashboard live update task entered");
-    info!("dashboard live update checking session endpoints");
+    info!("dashboard live update selecting session endpoints");
     if connection.summary.select_session_endpoints().is_none() {
         debug!("dashboard live update aborted: no session endpoints");
         let _ = tx.send(DashboardUpdate::Log {
@@ -635,12 +715,13 @@ async fn run_dashboard_live_updates(
         });
         return;
     }
-    info!("dashboard live update session endpoints available");
+    info!("dashboard live update selected session endpoints");
 
     info!("dashboard live update constructing Aero read-only session");
     let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
     info!("dashboard live update constructed Aero read-only session");
     let mut iteration = 0_u64;
+    debug!("dashboard live update checking battery refresh capability");
     let refresh_battery = connection.summary.battery_level_characteristic().is_some();
     info!(
         refresh_battery,
@@ -648,78 +729,114 @@ async fn run_dashboard_live_updates(
     );
 
     loop {
-        info!(iteration, "dashboard live update loop tick");
-        if refresh_battery && iteration % DASHBOARD_BATTERY_REFRESH_EVERY == 0 {
-            if !refresh_dashboard_battery(&connection, &tx, iteration).await {
-                return;
-            }
-        } else if !refresh_battery && iteration == 0 {
-            debug!("dashboard battery refresh skipped: no standard battery characteristic");
-        }
-
-        let Some(endpoints) = connection.summary.select_session_endpoints() else {
-            debug!(
-                iteration,
-                "dashboard live update stopped: session endpoints disappeared"
-            );
-            return;
-        };
-        debug!(
-            iteration,
-            write = %endpoints.write.uuid,
-            notify = ?endpoints
-                .notify
-                .map(|characteristic| characteristic.uuid.to_string()),
-            window_ms = DASHBOARD_LIVE_WINDOW.as_millis(),
-            "dashboard drive_session starting"
-        );
-        match drive_session(
-            &connection.peripheral,
-            &mut session,
-            VETERAN_DATA_CHANNEL,
-            &connection.summary,
-            endpoints,
-            DASHBOARD_LIVE_WINDOW,
-        )
-        .await
+        if !run_dashboard_live_iteration(&connection, &tx, &mut session, iteration, refresh_battery)
+            .await
         {
-            Ok(report) => {
-                debug!(
-                    iteration,
-                    subscribes = report.subscribes,
-                    notifications = report.notifications,
-                    notification_bytes = report.notification_bytes,
-                    telemetry = report.telemetry,
-                    read_only_responses = report.read_only_responses,
-                    diagnostics = report.diagnostics,
-                    latest_notification_len = ?report.latest_notification_len,
-                    "dashboard drive_session completed"
-                );
-                if tx
-                    .send(DashboardUpdate::SessionReport(Box::new(report)))
-                    .is_err()
-                {
-                    debug!(iteration, "dashboard receiver closed after session report");
-                    return;
-                }
-            }
-            Err(error) => {
-                debug!(iteration, %error, "dashboard drive_session failed");
-                if tx
-                    .send(DashboardUpdate::Log {
-                        level: "warn".to_owned(),
-                        message: format!("dashboard session update failed, retrying: {error}"),
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-                tokio::time::sleep(DASHBOARD_LIVE_WINDOW).await;
-            }
+            return;
         }
 
         iteration = iteration.wrapping_add(1);
     }
+}
+
+async fn run_dashboard_live_iteration(
+    connection: &ConnectedPeripheral,
+    tx: &mpsc::Sender<DashboardUpdate>,
+    session: &mut ReadOnlySession<NosfetAeroModel, false>,
+    iteration: u64,
+    refresh_battery: bool,
+) -> bool {
+    info!(iteration, "dashboard live update loop tick");
+    if refresh_battery && iteration % DASHBOARD_BATTERY_REFRESH_EVERY == 0 {
+        if !refresh_dashboard_battery(connection, tx, iteration).await {
+            return false;
+        }
+    } else if !refresh_battery && iteration == 0 {
+        debug!("dashboard battery refresh skipped: no standard battery characteristic");
+    }
+
+    let Some(endpoints) = connection.summary.select_session_endpoints() else {
+        debug!(
+            iteration,
+            "dashboard live update stopped: session endpoints disappeared"
+        );
+        return false;
+    };
+    debug!(
+        iteration,
+        write = %endpoints.write.uuid,
+        notify = ?endpoints
+            .notify
+            .map(|characteristic| characteristic.uuid.to_string()),
+        window_ms = DASHBOARD_LIVE_WINDOW.as_millis(),
+        "dashboard drive_session starting"
+    );
+    info!(iteration, "dashboard awaiting drive_session");
+    match drive_session(
+        &connection.peripheral,
+        session,
+        VETERAN_DATA_CHANNEL,
+        &connection.summary,
+        endpoints,
+        DASHBOARD_LIVE_WINDOW,
+    )
+    .await
+    {
+        Ok(report) => send_dashboard_session_report(tx, iteration, report),
+        Err(error) => retry_after_dashboard_session_error(tx, iteration, error).await,
+    }
+}
+
+fn send_dashboard_session_report(
+    tx: &mpsc::Sender<DashboardUpdate>,
+    iteration: u64,
+    report: SessionBridgeReport,
+) -> bool {
+    info!(
+        iteration,
+        notifications = report.notifications,
+        read_only_responses = report.read_only_responses,
+        telemetry = report.telemetry,
+        "dashboard drive_session returned"
+    );
+    debug!(
+        iteration,
+        subscribes = report.subscribes,
+        notifications = report.notifications,
+        notification_bytes = report.notification_bytes,
+        telemetry = report.telemetry,
+        read_only_responses = report.read_only_responses,
+        diagnostics = report.diagnostics,
+        latest_notification_len = ?report.latest_notification_len,
+        "dashboard drive_session completed"
+    );
+    if tx
+        .send(DashboardUpdate::SessionReport(Box::new(report)))
+        .is_err()
+    {
+        debug!(iteration, "dashboard receiver closed after session report");
+        return false;
+    }
+    true
+}
+
+async fn retry_after_dashboard_session_error(
+    tx: &mpsc::Sender<DashboardUpdate>,
+    iteration: u64,
+    error: BtleError,
+) -> bool {
+    debug!(iteration, %error, "dashboard drive_session failed");
+    if tx
+        .send(DashboardUpdate::Log {
+            level: "warn".to_owned(),
+            message: format!("dashboard session update failed, retrying: {error}"),
+        })
+        .is_err()
+    {
+        return false;
+    }
+    tokio::time::sleep(DASHBOARD_LIVE_WINDOW).await;
+    true
 }
 
 async fn refresh_dashboard_battery(
@@ -727,14 +844,14 @@ async fn refresh_dashboard_battery(
     tx: &mpsc::Sender<DashboardUpdate>,
     iteration: u64,
 ) -> bool {
-    debug!(iteration, "dashboard battery refresh starting");
+    info!(iteration, "dashboard battery refresh starting");
     match read_battery_level(&connection.peripheral, &connection.summary).await {
         Ok(Some(percent)) => {
-            debug!(iteration, percent, "dashboard battery refresh succeeded");
+            info!(iteration, percent, "dashboard battery refresh succeeded");
             tx.send(DashboardUpdate::BatteryPercent(percent)).is_ok()
         }
         Ok(None) => {
-            debug!(iteration, "dashboard battery refresh unavailable");
+            info!(iteration, "dashboard battery refresh unavailable");
             true
         }
         Err(error) => {
@@ -1810,6 +1927,8 @@ fn push_measured_u16(
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use btleplug::api::{CharPropFlags, WriteType};
     use clap::Parser;
     use cutout_btle::{
@@ -1828,6 +1947,14 @@ mod tests {
 
     use super::*;
     use crate::cli::ScanArgs;
+
+    struct DropSignal(mpsc::Sender<()>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
 
     fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
         DashboardArgs {
@@ -3109,5 +3236,198 @@ mod tests {
                 name_contains: Some("NF2557".to_owned()),
             }
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_dashboard_runner_starts_live_updates_before_terminal() {
+        let (order_tx, order_rx) = mpsc::channel();
+
+        let result = run_live_dashboard_with(
+            DashboardState::empty(),
+            {
+                let order_tx = order_tx.clone();
+                move |tx| async move {
+                    tx.send(DashboardUpdate::Log {
+                        level: "debug".to_owned(),
+                        message: "live entered".to_owned(),
+                    })
+                    .expect("terminal receiver stays open");
+                    order_tx
+                        .send("live")
+                        .expect("terminal should not close ordering receiver");
+                }
+            },
+            move |_state, rx| {
+                let _update = rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("terminal should receive first live update before reporting ready");
+                order_tx
+                    .send("terminal")
+                    .expect("test waits for terminal ordering event");
+                Ok(())
+            },
+        );
+
+        result.expect("dashboard runner exits after terminal exits");
+        let observed = [
+            order_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("live ordering event should be sent"),
+            order_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("terminal ordering event should be sent"),
+        ];
+        assert_eq!(observed, ["live", "terminal"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_dashboard_runner_polls_updates_while_terminal_waits() {
+        let result = run_live_dashboard_with(
+            DashboardState::empty(),
+            |tx| async move {
+                tx.send(DashboardUpdate::Log {
+                    level: "debug".to_owned(),
+                    message: "live update polled".to_owned(),
+                })
+                .expect("terminal receiver stays open");
+            },
+            |_state, rx| {
+                let update = rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("live update future should be polled while terminal waits");
+                assert_eq!(
+                    update,
+                    DashboardUpdate::Log {
+                        level: "debug".to_owned(),
+                        message: "live update polled".to_owned(),
+                    }
+                );
+                Ok(())
+            },
+        );
+
+        result.expect("dashboard runner exits after terminal exits");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_dashboard_runner_delivers_multiple_updates_while_terminal_waits() {
+        let result = run_live_dashboard_with(
+            DashboardState::empty(),
+            |tx| async move {
+                for index in 0..3 {
+                    tx.send(DashboardUpdate::Log {
+                        level: "debug".to_owned(),
+                        message: format!("live update {index}"),
+                    })
+                    .expect("terminal receiver stays open");
+                    tokio::task::yield_now().await;
+                }
+            },
+            |_state, rx| {
+                let messages = (0..3)
+                    .map(|_| {
+                        rx.recv_timeout(Duration::from_secs(1))
+                            .expect("live update should be delivered while terminal waits")
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    messages,
+                    vec![
+                        DashboardUpdate::Log {
+                            level: "debug".to_owned(),
+                            message: "live update 0".to_owned(),
+                        },
+                        DashboardUpdate::Log {
+                            level: "debug".to_owned(),
+                            message: "live update 1".to_owned(),
+                        },
+                        DashboardUpdate::Log {
+                            level: "debug".to_owned(),
+                            message: "live update 2".to_owned(),
+                        },
+                    ]
+                );
+                Ok(())
+            },
+        );
+
+        result.expect("dashboard runner exits after terminal exits");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_dashboard_runner_constructs_aero_session_before_terminal_exits() {
+        let (constructed_tx, constructed_rx) = mpsc::channel();
+
+        let result = run_live_dashboard_with(
+            DashboardState::empty(),
+            move |_tx| async move {
+                let _session = ReadOnlySession::<NosfetAeroModel, false>::default();
+                constructed_tx
+                    .send(())
+                    .expect("test receiver waits for Aero session construction");
+            },
+            |_state, _rx| Ok(()),
+        );
+
+        result.expect("dashboard runner exits after terminal exits");
+        constructed_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Aero session construction should not block the live update runner");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_dashboard_runner_returns_terminal_errors() {
+        let result = run_live_dashboard_with(
+            DashboardState::empty(),
+            |_tx| async {},
+            |_state, _rx| anyhow::bail!("terminal failed"),
+        );
+
+        assert_eq!(
+            result.expect_err("terminal errors propagate").to_string(),
+            "terminal failed"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_dashboard_runner_aborts_live_updates_after_terminal_exit() {
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+
+        let result = run_live_dashboard_with(
+            DashboardState::empty(),
+            move |_tx| async move {
+                let _signal = DropSignal(dropped_tx);
+                std::future::pending::<()>().await;
+            },
+            |_state, _rx| Ok(()),
+        );
+
+        result.expect("dashboard runner exits after terminal exits");
+        dropped_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("live update future should be aborted after terminal exit");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_dashboard_runner_polls_updates_while_terminal_blocks_independently() {
+        let (polled_tx, polled_rx) = mpsc::channel();
+
+        let result = run_live_dashboard_with(
+            DashboardState::empty(),
+            move |_tx| async move {
+                polled_tx
+                    .send(())
+                    .expect("test receiver waits for live update poll");
+            },
+            |_state, _rx| {
+                thread::sleep(Duration::from_millis(100));
+                Ok(())
+            },
+        );
+
+        result.expect("dashboard runner exits after terminal exits");
+        polled_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("live update future should be polled while terminal blocks");
     }
 }

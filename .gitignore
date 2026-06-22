@@ -3,6 +3,7 @@
 /fuzz/corpus/
 /fuzz/target/
 /captures/
+debug.log
 .direnv/
 .tmp/
 .DS_Store

@@ -41,8 +41,9 @@ serde_json = "1"
 smallvec = "1"
 smol = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
+tracing-appender = "0.2"
 tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uniffi = "0.31.2"

@@ -37,7 +37,7 @@ use cutout_protocols::{
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
@@ -1381,6 +1381,11 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
+    info!(
+        window_ms = config.notification_window.as_millis(),
+        channel = ?config.channel,
+        "session bridge drive inner entered"
+    );
     let mut report = SessionBridgeReport::default();
     let identity_context = IdentityContext::new(config.summary);
     let mut identity_state = IdentityState::default();
@@ -1391,27 +1396,12 @@ where
     };
     let mut outputs = Vec::new();
     let mut monotonic_ms = config.monotonic_start;
-    let max_write_len = Some(peripheral.mtu());
 
-    session.handle(
-        SessionInput::LinkUp(LinkInfo {
-            monotonic_ms,
-            max_write_len,
-        }),
-        &mut outputs,
-    );
-    if let Some(records) = capture.as_deref_mut() {
-        records.push(SessionCaptureRecord::Link {
-            monotonic_ms,
-            max_write_len,
-        });
-    }
-    process_session_outputs(
-        SessionOutputContext {
+    process_link_up_outputs(
+        LinkUpContext {
             peripheral,
             channel: config.channel,
-            write_characteristic: &bindings.write_characteristic,
-            notify_characteristic: bindings.notify_characteristic.as_ref(),
+            bindings: &bindings,
             report: &mut report,
             capture: capture.as_deref_mut(),
             provisional_writes: config.provisional_writes,
@@ -1490,6 +1480,69 @@ struct BridgeBindings {
     notify_characteristic: Option<Characteristic>,
 }
 
+struct LinkUpContext<'a, P: ?Sized> {
+    peripheral: &'a P,
+    channel: GattChannel,
+    bindings: &'a BridgeBindings,
+    report: &'a mut SessionBridgeReport,
+    capture: Option<&'a mut Vec<SessionCaptureRecord>>,
+    provisional_writes: bool,
+}
+
+async fn process_link_up_outputs<P, S>(
+    mut context: LinkUpContext<'_, P>,
+    session: &mut S,
+    outputs: &mut Vec<SessionOutput>,
+    monotonic_ms: u64,
+) -> Result<(), BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    let max_write_len = Some(context.peripheral.mtu());
+
+    info!("session bridge link-up handling starting");
+    session.handle(
+        SessionInput::LinkUp(LinkInfo {
+            monotonic_ms,
+            max_write_len,
+        }),
+        outputs,
+    );
+    info!(
+        outputs = outputs.len(),
+        "session bridge link-up handling completed"
+    );
+    if let Some(records) = context.capture.as_deref_mut() {
+        records.push(SessionCaptureRecord::Link {
+            monotonic_ms,
+            max_write_len,
+        });
+    }
+    info!(
+        outputs = outputs.len(),
+        "session bridge initial output processing starting"
+    );
+    process_session_outputs(
+        SessionOutputContext {
+            peripheral: context.peripheral,
+            channel: context.channel,
+            write_characteristic: &context.bindings.write_characteristic,
+            notify_characteristic: context.bindings.notify_characteristic.as_ref(),
+            report: context.report,
+            capture: context.capture.as_deref_mut(),
+            provisional_writes: context.provisional_writes,
+        },
+        session,
+        outputs,
+        monotonic_ms,
+    )
+    .await?;
+    info!("session bridge initial output processing completed");
+
+    Ok(())
+}
+
 struct NotificationLoopContext<'a, P: ?Sized> {
     peripheral: &'a P,
     channel: GattChannel,
@@ -1512,22 +1565,27 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
-    debug!(
+    info!(
         window_ms = notification_window.as_millis(),
         "session notification window starting"
     );
+    info!("session notifications stream await starting");
     let mut notifications = context.peripheral.notifications().await?;
-    debug!("session notification stream acquired");
+    info!("session notifications stream await completed");
     let deadline = tokio::time::Instant::now() + notification_window;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        debug!(
+            remaining_ms = remaining.as_millis(),
+            "session notification next await starting"
+        );
         match tokio::time::timeout(remaining, notifications.next()).await {
             Ok(Some(notification)) => {
-                debug!(
+                info!(
                     uuid = %notification.uuid,
                     service = %notification.service_uuid,
                     len = notification.value.len(),
-                    "session notification received"
+                    "session notification next await completed"
                 );
                 *monotonic_ms += 1;
                 if let Some(records) = context.capture.as_deref_mut() {
@@ -1827,6 +1885,12 @@ where
     while let Some(output) = pending.pop_front() {
         match output {
             SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
+                info!(
+                    expected = ?context.channel,
+                    observed = ?observed,
+                    monotonic_ms,
+                    "session bridge processing subscribe output"
+                );
                 if observed != context.channel {
                     return Err(SessionBridgeError::UnexpectedChannel {
                         expected: context.channel,
@@ -1840,18 +1904,18 @@ where
                     }
                     .into());
                 };
-                debug!(
+                info!(
                     characteristic = %notify_characteristic.uuid,
                     service = %notify_characteristic.service_uuid,
                     monotonic_ms,
-                    "session subscribing to notifications"
+                    "session subscribe await starting"
                 );
                 context.peripheral.subscribe(notify_characteristic).await?;
-                debug!(
+                info!(
                     characteristic = %notify_characteristic.uuid,
                     service = %notify_characteristic.service_uuid,
                     monotonic_ms,
-                    "session subscribed to notifications"
+                    "session subscribe await completed"
                 );
                 if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Subscribe {
