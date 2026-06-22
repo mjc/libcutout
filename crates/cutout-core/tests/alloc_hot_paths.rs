@@ -16,6 +16,8 @@ static REALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
+// SAFETY: this wrapper only increments atomic counters and delegates all
+// allocation operations to `System` with the original pointers and layouts.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::SeqCst);

@@ -1060,6 +1060,48 @@ pub enum RequestQueueError {
     },
 }
 
+/// Per-urgency scheduler counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RequestUrgencyCounters {
+    /// Routine request count.
+    pub routine: u64,
+
+    /// High-priority request count.
+    pub high: u64,
+
+    /// Critical request count.
+    pub critical: u64,
+}
+
+impl RequestUrgencyCounters {
+    fn increment(&mut self, urgency: RequestUrgency) {
+        match urgency {
+            RequestUrgency::Routine => self.routine = self.routine.saturating_add(1),
+            RequestUrgency::High => self.high = self.high.saturating_add(1),
+            RequestUrgency::Critical => self.critical = self.critical.saturating_add(1),
+        }
+    }
+}
+
+/// Structured scheduler diagnostics for bounded request queues.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RequestSchedulerDiagnostics {
+    /// Requests refused because a matching key was already queued.
+    pub duplicate_refusals: u64,
+
+    /// Requests refused because the queue was full.
+    pub overflow_refusals: u64,
+
+    /// Requests accepted by urgency.
+    pub enqueued: RequestUrgencyCounters,
+
+    /// Requests popped by urgency.
+    pub dequeued: RequestUrgencyCounters,
+
+    /// Starvation-aging promotions or interventions.
+    pub starvation_aging_events: u64,
+}
+
 /// Fixed-capacity FIFO request queue.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestQueue<const N: usize> {
@@ -1192,6 +1234,112 @@ impl<const N: usize> RequestQueue<N> {
         self.len -= 1;
         self.entries[self.len] = None;
         next
+    }
+}
+
+/// Fixed-capacity request scheduler with observable diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RequestScheduler<const N: usize> {
+    queue: RequestQueue<N>,
+    diagnostics: RequestSchedulerDiagnostics,
+}
+
+impl<const N: usize> Default for RequestScheduler<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> RequestScheduler<N> {
+    /// Creates an empty request scheduler.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            queue: RequestQueue::new(),
+            diagnostics: RequestSchedulerDiagnostics {
+                duplicate_refusals: 0,
+                overflow_refusals: 0,
+                enqueued: RequestUrgencyCounters {
+                    routine: 0,
+                    high: 0,
+                    critical: 0,
+                },
+                dequeued: RequestUrgencyCounters {
+                    routine: 0,
+                    high: 0,
+                    critical: 0,
+                },
+                starvation_aging_events: 0,
+            },
+        }
+    }
+
+    /// Returns scheduler diagnostics accumulated so far.
+    #[must_use]
+    pub const fn diagnostics(self) -> RequestSchedulerDiagnostics {
+        self.diagnostics
+    }
+
+    /// Returns the number of queued requests.
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.queue.len()
+    }
+
+    /// Returns whether the scheduler queue is empty.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.queue.is_empty()
+    }
+
+    /// Enqueues a request at FIFO priority while updating diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same refusal reason as [`RequestQueue::enqueue`].
+    pub fn enqueue(&mut self, request: QueuedRequest) -> Result<(), RequestQueueError> {
+        let result = self.queue.enqueue(request);
+        self.record_enqueue_result(request, result)
+    }
+
+    /// Enqueues by urgency while updating diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same refusal reason as [`RequestQueue::enqueue_by_urgency`].
+    pub fn enqueue_by_urgency(&mut self, request: QueuedRequest) -> Result<(), RequestQueueError> {
+        let result = self.queue.enqueue_by_urgency(request);
+        self.record_enqueue_result(request, result)
+    }
+
+    /// Removes and returns the next request while updating diagnostics.
+    pub fn pop_next(&mut self) -> Option<QueuedRequest> {
+        let request = self.queue.pop_next()?;
+        self.diagnostics.dequeued.increment(request.urgency);
+        Some(request)
+    }
+
+    fn record_enqueue_result(
+        &mut self,
+        request: QueuedRequest,
+        result: Result<(), RequestQueueError>,
+    ) -> Result<(), RequestQueueError> {
+        match result {
+            Ok(()) => {
+                self.diagnostics.enqueued.increment(request.urgency);
+                Ok(())
+            }
+            Err(RequestQueueError::DuplicateKey { key }) => {
+                self.diagnostics.duplicate_refusals =
+                    self.diagnostics.duplicate_refusals.saturating_add(1);
+                Err(RequestQueueError::DuplicateKey { key })
+            }
+            Err(RequestQueueError::Full { capacity }) => {
+                self.diagnostics.overflow_refusals =
+                    self.diagnostics.overflow_refusals.saturating_add(1);
+                Err(RequestQueueError::Full { capacity })
+            }
+        }
     }
 }
 
@@ -3205,6 +3353,108 @@ mod tests {
             Err(crate::RequestQueueError::Full { capacity: 1 })
         );
         assert_eq!(queue.pop_next(), Some(telemetry));
+    }
+
+    #[test]
+    fn request_scheduler_counts_enqueue_and_dequeue_by_urgency() {
+        let mut scheduler = crate::RequestScheduler::<3>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+        let diagnostics = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+
+        assert_eq!(scheduler.enqueue_by_urgency(telemetry), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(identity), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(diagnostics), Ok(()));
+
+        assert_eq!(
+            scheduler.diagnostics().enqueued,
+            crate::RequestUrgencyCounters {
+                routine: 1,
+                high: 1,
+                critical: 1,
+            }
+        );
+        assert_eq!(scheduler.pop_next(), Some(diagnostics));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+        assert_eq!(scheduler.pop_next(), Some(telemetry));
+        assert_eq!(
+            scheduler.diagnostics().dequeued,
+            crate::RequestUrgencyCounters {
+                routine: 1,
+                high: 1,
+                critical: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn request_scheduler_counts_duplicate_and_overflow_refusals() {
+        let mut scheduler = crate::RequestScheduler::<1>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+        );
+
+        assert_eq!(scheduler.enqueue(telemetry), Ok(()));
+        assert_eq!(
+            scheduler.enqueue(telemetry),
+            Err(crate::RequestQueueError::DuplicateKey { key: telemetry.key })
+        );
+        assert_eq!(
+            scheduler.enqueue(identity),
+            Err(crate::RequestQueueError::Full { capacity: 1 })
+        );
+
+        assert_eq!(scheduler.diagnostics().duplicate_refusals, 1);
+        assert_eq!(scheduler.diagnostics().overflow_refusals, 1);
+        assert_eq!(
+            scheduler.diagnostics().enqueued,
+            crate::RequestUrgencyCounters {
+                routine: 1,
+                high: 0,
+                critical: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn request_scheduler_exposes_queue_len_and_empty_state() {
+        let mut scheduler = crate::RequestScheduler::<1>::new();
+        let request = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+
+        assert!(scheduler.is_empty());
+        assert_eq!(scheduler.len(), 0);
+        assert_eq!(scheduler.enqueue(request), Ok(()));
+        assert!(!scheduler.is_empty());
+        assert_eq!(scheduler.len(), 1);
+        assert_eq!(scheduler.pop_next(), Some(request));
+        assert!(scheduler.is_empty());
+        assert_eq!(scheduler.len(), 0);
+    }
+
+    #[test]
+    fn request_scheduler_exposes_starvation_counter_for_future_aging_policy() {
+        let scheduler = crate::RequestScheduler::<1>::new();
+
+        assert_eq!(scheduler.diagnostics().starvation_aging_events, 0);
     }
 
     #[test]
