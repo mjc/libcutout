@@ -17,6 +17,8 @@ mod pevcap;
 pub use pevcap::*;
 mod battery_page;
 pub use battery_page::*;
+mod ffi;
+pub use ffi::*;
 
 /// Monotonic timestamp in milliseconds, supplied by the host.
 pub type MonotonicMillis = u64;
