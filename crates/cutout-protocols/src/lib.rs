@@ -12,7 +12,9 @@
 mod gatt;
 pub use gatt::*;
 mod battery_profile;
-pub use battery_profile::{BatteryVoltagePoint, BatteryVoltageProfile, SAMSUNG_50S_30S2P_PROFILE};
+pub use battery_profile::{
+    BatteryVoltagePoint, BatteryVoltageProfile, SAMSUNG_50S_30S_POINTS, SAMSUNG_50S_30S2P_PROFILE,
+};
 mod family;
 pub use family::*;
 mod fixture;
@@ -42,9 +44,8 @@ pub use veteran_frame::{
     MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
 };
 pub use veteran_telemetry::{
-    NOSFET_AERO_CALIBRATED_45_PERCENT_MV, NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV,
-    VeteranFirmwareVersion, VeteranTelemetry, VeteranTelemetryError,
-    estimate_nosfet_aero_battery_percent,
+    NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV, VeteranFirmwareVersion,
+    VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_percent,
 };
 
 /// Returns the crate name used by setup smoke tests.

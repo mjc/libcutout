@@ -4,13 +4,10 @@ use thiserror::Error;
 use crate::{SAMSUNG_50S_30S2P_PROFILE, VeteranFrame};
 
 /// Minimum pack voltage for the Samsung 50S 30s2p profile used by NOSFET Aero.
-pub const NOSFET_AERO_MIN_VOLTAGE_MV: i32 = SAMSUNG_50S_30S2P_PROFILE.empty.voltage_mv;
+pub const NOSFET_AERO_MIN_VOLTAGE_MV: i32 = 91_000;
 
 /// Maximum pack voltage for the Samsung 50S 30s2p profile used by NOSFET Aero.
-pub const NOSFET_AERO_MAX_VOLTAGE_MV: i32 = SAMSUNG_50S_30S2P_PROFILE.full.voltage_mv;
-
-/// Hardware-observed Samsung 50S 30s2p calibration point from the NOSFET app.
-pub const NOSFET_AERO_CALIBRATED_45_PERCENT_MV: i32 = SAMSUNG_50S_30S2P_PROFILE.midpoint.voltage_mv;
+pub const NOSFET_AERO_MAX_VOLTAGE_MV: i32 = 126_000;
 
 /// Minimal read-only telemetry decoded from a Veteran/LeaperKim/NOSFET frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -272,11 +269,8 @@ mod tests {
     }
 
     #[test]
-    fn aero_battery_percent_estimate_uses_hardware_observed_midpoint() {
-        assert_eq!(
-            estimate_nosfet_aero_battery_percent(NOSFET_AERO_CALIBRATED_45_PERCENT_MV),
-            45
-        );
+    fn aero_battery_percent_estimate_uses_samsung_50s_curve() {
+        assert_eq!(estimate_nosfet_aero_battery_percent(107_950), 44);
     }
 
     #[test]
