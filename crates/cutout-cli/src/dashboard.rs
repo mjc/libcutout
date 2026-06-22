@@ -29,7 +29,7 @@ use ratatui::{
     },
 };
 
-const LOG_LIMIT: usize = 64;
+const LOG_LIMIT: usize = 1_024;
 const HISTORY_LIMIT: usize = 32;
 const READ_ONLY_SUMMARY_LIMIT: usize = 16;
 const TAB_COUNT: usize = 4;
@@ -1940,10 +1940,12 @@ fn render_sparkline(frame: &mut Frame<'_>, area: Rect, title: &str, samples: &[u
 }
 
 fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let visible_lines = usize::from(area.height.saturating_sub(2));
     let lines = state
         .logs
         .iter()
         .rev()
+        .take(visible_lines)
         .map(|entry| {
             Line::from(vec![
                 Span::styled("[", Style::new().fg(Color::Gray)),
@@ -3198,7 +3200,7 @@ mod tests {
     fn taller_logs_tab_reveals_more_retained_events() {
         let mut state = DashboardState::empty();
         state.active_tab = 3;
-        for index in 0..20 {
+        for index in 0..80 {
             state.push_log("info", &format!("event-{index:02}"));
         }
 
@@ -3207,10 +3209,29 @@ mod tests {
 
         assert!(short_text.contains("Recent events"));
         assert!(tall_text.contains("Recent events"));
-        assert!(short_text.contains("event-19"));
-        assert!(tall_text.contains("event-19"));
-        assert!(!short_text.contains("event-08"));
-        assert!(tall_text.contains("event-08"));
+        assert!(short_text.contains("event-79"));
+        assert!(tall_text.contains("event-79"));
+        assert!(!short_text.contains("event-60"));
+        assert!(tall_text.contains("event-60"));
+        assert!(!tall_text.contains("event-50"));
+    }
+
+    #[test]
+    fn log_history_keeps_a_large_recent_tail_for_big_screens() {
+        let mut state = DashboardState::empty();
+        for index in 0..1_100 {
+            state.push_log("info", &format!("event-{index:04}"));
+        }
+
+        assert_eq!(state.logs.len(), LOG_LIMIT);
+        assert_eq!(
+            state.logs.front().map(|entry| entry.message.as_str()),
+            Some("event-0076")
+        );
+        assert_eq!(
+            state.logs.back().map(|entry| entry.message.as_str()),
+            Some("event-1099")
+        );
     }
 
     #[test]
