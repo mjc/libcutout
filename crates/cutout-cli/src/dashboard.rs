@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    io::{self, Read},
+    io::{self, Read, Write},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -14,8 +14,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Axis, Block, Cell, Chart, Dataset, Gauge, Paragraph, Row, Sparkline, Table, Tabs},
+    widgets::{Axis, Block, Cell, Chart, Clear, Dataset, Gauge, Paragraph, Row, Sparkline, Table, Tabs},
 };
+
+use crate::cli::DashboardArgs;
 
 const LOG_LIMIT: usize = 10;
 const HISTORY_LIMIT: usize = 32;
@@ -70,6 +72,7 @@ pub(crate) struct ScanObservation {
     pub(crate) identifier: String,
     pub(crate) rssi: String,
     pub(crate) services: String,
+    pub(crate) real_device: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +204,7 @@ pub(crate) enum FixtureEvent {
         identifier: &'static str,
         rssi: &'static str,
         services: &'static str,
+        real_device: bool,
         selected: bool,
     },
     Counters {
@@ -269,6 +273,7 @@ const FIXTURE_DEMO_STEPS: &[FixtureEvent] = &[
         identifier: "platform-0001",
         rssi: "-61 dBm",
         services: "battery, throttle, telemetry",
+        real_device: true,
         selected: true,
     },
     FixtureEvent::ScanObservation {
@@ -277,6 +282,7 @@ const FIXTURE_DEMO_STEPS: &[FixtureEvent] = &[
         identifier: "platform-0202",
         rssi: "-77 dBm",
         services: "diagnostics, state",
+        real_device: true,
         selected: false,
     },
     FixtureEvent::ScanObservation {
@@ -285,6 +291,7 @@ const FIXTURE_DEMO_STEPS: &[FixtureEvent] = &[
         identifier: "platform-0303",
         rssi: "-84 dBm",
         services: "battery, control",
+        real_device: true,
         selected: false,
     },
     FixtureEvent::Counters {
@@ -390,9 +397,32 @@ impl DashboardState {
 
     #[cfg(test)]
     pub(crate) fn sample() -> Self {
-        let mut state = Self::empty();
-        let mut replay = FixtureReplay::demo();
-        replay.apply_all(&mut state);
+        Self::sample_for(DashboardArgs {
+            demo: true,
+            device: None,
+        })
+    }
+
+    pub(crate) fn sample_for(args: DashboardArgs) -> Self {
+        let mut state = if args.demo {
+            let mut state = Self::empty();
+            let mut replay = FixtureReplay::demo();
+            replay.apply_all(&mut state);
+            state
+        } else {
+            Self::empty()
+        };
+
+        if args.demo {
+            if let Some(device) = args.device {
+                if state.device.name != device {
+                    state.scan_browser.observations.retain(|observation| {
+                        observation.real_device && observation.name == device
+                    });
+                    state.scan_browser.selected = 0;
+                }
+            }
+        }
         state
     }
 
@@ -433,6 +463,7 @@ impl DashboardState {
                 identifier,
                 rssi,
                 services,
+                real_device,
                 selected,
             } => {
                 let observation = ScanObservation {
@@ -441,6 +472,7 @@ impl DashboardState {
                     identifier: identifier.to_owned(),
                     rssi: rssi.to_owned(),
                     services: services.to_owned(),
+                    real_device,
                 };
                 self.scan_browser.push_observation(observation, selected);
             }
@@ -587,12 +619,20 @@ fn push_sample(series: &mut Vec<u64>, value: u64) {
     series.push(value);
 }
 
-pub(crate) fn run_dashboard() -> Result<()> {
-    let mut state = DashboardState::empty();
-    let mut replay = FixtureReplay::demo();
-    replay.apply_all(&mut state);
+pub(crate) fn run_dashboard(args: DashboardArgs) -> Result<()> {
+    if !args.demo && args.device.is_none() {
+        return Err(anyhow::anyhow!(
+            "dashboard requires --demo or --device to start"
+        ));
+    }
+
+    let mut state = DashboardState::sample_for(args);
     let (tx, rx) = mpsc::channel::<DashboardInput>();
     let input_thread = spawn_input_thread(tx);
+
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(b"\x1b[2J\x1b[H")?;
+    stdout.flush()?;
 
     let mut output = PlatformTerminal::new()?;
     output.enter_raw_mode()?;
@@ -601,7 +641,10 @@ pub(crate) fn run_dashboard() -> Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
-        terminal.draw(|frame| render_dashboard(frame, &state))?;
+        terminal.draw(|frame| {
+            frame.render_widget(Clear, frame.area());
+            render_dashboard(frame, &state)
+        })?;
 
         if matches!(rx.try_recv(), Ok(DashboardInput::Quit)) {
             break;
@@ -851,10 +894,15 @@ fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardSta
         Style::new().fg(Color::Gray),
     )]));
 
-    if browser.observations.is_empty() {
+    let real_observations = browser
+        .observations
+        .iter()
+        .filter(|observation| observation.real_device);
+
+    if real_observations.clone().next().is_none() {
         lines.push(Line::from(vec![Span::raw("no scan observations")]));
     } else {
-        for observation in browser.observations.iter().take(3) {
+        for observation in real_observations {
             lines.push(Line::from(vec![
                 Span::raw(observation.name.as_str()),
                 Span::raw(" | "),

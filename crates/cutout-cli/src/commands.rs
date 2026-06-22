@@ -24,7 +24,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
         Command::CaptureAero(args) => connect(args, SessionMode::Capture).await?,
         Command::Validation => print!("{}", render_validation_report()),
-        Command::Dashboard => run_dashboard()?,
+        Command::Dashboard(args) => run_dashboard(args)?,
     }
 
     Ok(())
