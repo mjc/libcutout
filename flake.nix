@@ -125,6 +125,8 @@
               pkgs.cargo-deny
               pkgs.cargo-fuzz
               pkgs.cargo-mutants
+              pkgs.jna
+              pkgs.kotlin
               pkgs.nixfmt
             ];
 

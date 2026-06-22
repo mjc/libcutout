@@ -40,10 +40,16 @@ cargo run -p cutout-uniffi-bindgen -- generate \
 
 On Linux the library extension is `.so`; on Windows it is `.dll`.
 
-## Smoke Matrix
+## Smoke Checks
 
-Generated-language compile smoke checks still need to prove the same behavior in
-Swift and Kotlin:
+The repository smoke script generates Swift and Kotlin bindings from the
+checked-in FFI surface, compiles tiny generated-language clients, and runs them:
+
+```console
+./scripts/smoke-mobile-bindings.sh
+```
+
+The smoke clients prove the same behavior in Swift and Kotlin:
 
 - construct Aero and Falcon read-only sessions;
 - feed `LinkUp` and command DTO inputs;
