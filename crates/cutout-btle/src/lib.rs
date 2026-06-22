@@ -769,6 +769,10 @@ pub enum SessionBridgeError {
         /// Abstract protocol channel requested for subscription.
         channel: GattChannel,
     },
+
+    /// The discovered GATT tree did not contain a writable session endpoint.
+    #[error("bridge needs a writable session endpoint")]
+    MissingSessionEndpoint,
 }
 
 /// Minimal BTLE operations required by the protocol bridge.
@@ -795,6 +799,16 @@ pub trait SessionPeripheral: Send + Sync {
 
     /// Disconnects the peripheral.
     async fn disconnect(&self) -> Result<(), BtleError>;
+}
+
+/// Host boundary that can create fresh connected peripherals for reconnecting sessions.
+#[async_trait]
+pub trait ReconnectingSessionHost: Send {
+    /// Connected peripheral type returned for each link attempt.
+    type Peripheral: SessionPeripheral + Sync;
+
+    /// Connects and discovers the next link attempt.
+    async fn connect(&mut self) -> Result<(Self::Peripheral, ConnectionSummary), BtleError>;
 }
 
 fn join_uuids(values: &[Uuid]) -> String {
@@ -986,6 +1000,7 @@ where
             notification_window,
             commands,
             provisional_writes: false,
+            monotonic_start: 0,
         },
         None,
     )
@@ -1023,6 +1038,7 @@ where
             notification_window,
             commands: &[],
             provisional_writes,
+            monotonic_start: 0,
         },
         Some(&mut records),
     )
@@ -1061,11 +1077,79 @@ where
             notification_window,
             commands,
             provisional_writes: false,
+            monotonic_start: 0,
         },
         Some(&mut records),
     )
     .await?;
     Ok(SessionCapture { records, report })
+}
+
+/// Captures a session across reconnect attempts supplied by a host boundary.
+///
+/// The host owns platform-specific connect/discover work. This bridge repeats
+/// one bounded session run only when the previous link intentionally
+/// disconnected, and keeps commands out of the reconnect path until a replay
+/// policy is explicit.
+///
+/// # Errors
+///
+/// Returns the underlying host, transport, or bridge error from any link
+/// attempt.
+pub async fn capture_reconnecting_session<H, S>(
+    host: &mut H,
+    session: &mut S,
+    channel: GattChannel,
+    notification_window: Duration,
+    max_links: usize,
+    provisional_writes: bool,
+) -> Result<SessionCapture, BtleError>
+where
+    H: ReconnectingSessionHost,
+    S: ProtocolSession + Send,
+{
+    let mut capture = SessionCapture::default();
+    let mut monotonic_start = 0;
+
+    for _ in 0..max_links {
+        let (peripheral, summary) = host.connect().await?;
+        let endpoints = summary
+            .select_session_endpoints()
+            .ok_or(SessionBridgeError::MissingSessionEndpoint)?;
+        let mut records = Vec::new();
+        let report = drive_session_inner(
+            &peripheral,
+            session,
+            DriveSessionConfig {
+                channel,
+                summary: &summary,
+                endpoints,
+                notification_window,
+                commands: &[],
+                provisional_writes,
+                monotonic_start,
+            },
+            Some(&mut records),
+        )
+        .await?;
+        monotonic_start = records
+            .iter()
+            .map(session_record_monotonic_ms)
+            .max()
+            .unwrap_or(monotonic_start)
+            .saturating_add(1);
+        merge_session_report(&mut capture.report, report);
+        let should_reconnect = capture.report.disconnects > 0
+            && records
+                .iter()
+                .any(|record| matches!(record, SessionCaptureRecord::LinkDown { .. }));
+        capture.records.extend(records);
+        if !should_reconnect {
+            break;
+        }
+    }
+
+    Ok(capture)
 }
 
 /// Subscribes to a notify/indicate characteristic and records raw notification chunks.
@@ -1119,6 +1203,7 @@ struct DriveSessionConfig<'a> {
     notification_window: Duration,
     commands: &'a [DeviceCommand],
     provisional_writes: bool,
+    monotonic_start: u64,
 }
 
 async fn drive_session_inner<P, S>(
@@ -1140,7 +1225,7 @@ where
         notify_characteristic: config.endpoints.notify.map(characteristic_from_summary),
     };
     let mut outputs = Vec::new();
-    let mut monotonic_ms = 0;
+    let mut monotonic_ms = config.monotonic_start;
     let max_write_len = Some(peripheral.mtu());
 
     session.handle(
@@ -1365,6 +1450,43 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
         )),
         SessionCaptureRecord::Subscribe { .. } => None,
     }
+}
+
+const fn session_record_monotonic_ms(record: &SessionCaptureRecord) -> u64 {
+    match record {
+        SessionCaptureRecord::Link { monotonic_ms, .. }
+        | SessionCaptureRecord::LinkDown { monotonic_ms }
+        | SessionCaptureRecord::Subscribe { monotonic_ms, .. }
+        | SessionCaptureRecord::Write { monotonic_ms, .. }
+        | SessionCaptureRecord::Notification { monotonic_ms, .. } => *monotonic_ms,
+    }
+}
+
+fn merge_session_report(into: &mut SessionBridgeReport, report: SessionBridgeReport) {
+    into.writes += report.writes;
+    into.subscribes += report.subscribes;
+    into.notifications += report.notifications;
+    into.notification_bytes += report.notification_bytes;
+    if report.latest_notification_len.is_some() {
+        into.latest_notification_len = report.latest_notification_len;
+    }
+    into.telemetry += report.telemetry;
+    into.telemetry_snapshot = report.telemetry_snapshot;
+    into.read_only_responses += report.read_only_responses;
+    into.read_only_response_events
+        .extend(report.read_only_response_events);
+    if report.firmware.is_some() {
+        into.firmware = report.firmware;
+    }
+    into.settings.extend(report.settings);
+    into.diagnostics += report.diagnostics;
+    into.diagnostics_snapshot.merge(report.diagnostics_snapshot);
+    into.diagnostic_errors.extend(report.diagnostic_errors);
+    if report.identity.is_some() {
+        into.identity = report.identity;
+    }
+    into.events.extend(report.events);
+    into.disconnects += report.disconnects;
 }
 
 const fn write_mode_from_btle(mode: WriteType) -> WriteMode {
@@ -2934,6 +3056,60 @@ mod tests {
         assert_eq!(capture.report.disconnects, 1);
     }
 
+    #[tokio::test]
+    async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
+        let first = RecordingPeripheral::default();
+        let second = RecordingPeripheral::default();
+        let mut host = FakeReconnectHost::new(vec![first.clone(), second.clone()]);
+        let mut session = ReconnectOnceSession::default();
+
+        let capture = crate::capture_reconnecting_session(
+            &mut host,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            Duration::ZERO,
+            2,
+            false,
+        )
+        .await
+        .expect("fake host reconnects once");
+
+        assert_eq!(host.connects, 2);
+        assert_eq!(capture.report.subscribes, 2);
+        assert_eq!(capture.report.disconnects, 1);
+        assert_eq!(*session.link_ups.lock().expect("link ups"), 2);
+        assert_eq!(*session.link_downs.lock().expect("link downs"), 1);
+        assert_eq!(first.subscribes.lock().expect("first subscribes").len(), 1);
+        assert_eq!(
+            second.subscribes.lock().expect("second subscribes").len(),
+            1
+        );
+        assert_eq!(*first.disconnects.lock().expect("first disconnects"), 1);
+        assert_eq!(*second.disconnects.lock().expect("second disconnects"), 0);
+        assert_eq!(
+            capture.records,
+            vec![
+                crate::SessionCaptureRecord::Link {
+                    monotonic_ms: 0,
+                    max_write_len: Some(185),
+                },
+                crate::SessionCaptureRecord::Subscribe {
+                    monotonic_ms: 0,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                },
+                crate::SessionCaptureRecord::LinkDown { monotonic_ms: 1 },
+                crate::SessionCaptureRecord::Link {
+                    monotonic_ms: 2,
+                    max_write_len: Some(185),
+                },
+                crate::SessionCaptureRecord::Subscribe {
+                    monotonic_ms: 2,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                },
+            ]
+        );
+    }
+
     #[derive(Default)]
     struct BridgeSession {
         notification_count: Arc<Mutex<usize>>,
@@ -2960,6 +3136,41 @@ mod tests {
     #[derive(Default)]
     struct DisconnectOnTickSession {
         link_down_count: Arc<Mutex<usize>>,
+    }
+
+    #[derive(Default)]
+    struct ReconnectOnceSession {
+        link_ups: Arc<Mutex<usize>>,
+        link_downs: Arc<Mutex<usize>>,
+    }
+
+    struct FakeReconnectHost {
+        peripherals: std::collections::VecDeque<RecordingPeripheral>,
+        connects: usize,
+    }
+
+    impl FakeReconnectHost {
+        fn new(peripherals: Vec<RecordingPeripheral>) -> Self {
+            Self {
+                peripherals: peripherals.into(),
+                connects: 0,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::ReconnectingSessionHost for FakeReconnectHost {
+        type Peripheral = RecordingPeripheral;
+
+        async fn connect(
+            &mut self,
+        ) -> Result<(Self::Peripheral, crate::ConnectionSummary), crate::BtleError> {
+            self.connects += 1;
+            self.peripherals
+                .pop_front()
+                .map(|peripheral| (peripheral, shared_write_notify_summary("NOSFET Aero")))
+                .ok_or(crate::BtleError::NoPeripheralMatched)
+        }
     }
 
     impl ProtocolSession for CommandWriteSession {
@@ -3020,6 +3231,30 @@ mod tests {
                 SessionInput::LinkUp(_)
                 | SessionInput::Command(_)
                 | SessionInput::Notification { .. } => {}
+            }
+        }
+    }
+
+    impl ProtocolSession for ReconnectOnceSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::LinkUp(_) => {
+                    let mut link_ups = self.link_ups.lock().expect("link ups");
+                    *link_ups += 1;
+                    output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                    }));
+                }
+                SessionInput::Tick { .. } => {
+                    if *self.link_ups.lock().expect("link ups") == 1 {
+                        output.push(SessionOutput::Transport(TransportAction::Disconnect));
+                    }
+                }
+                SessionInput::LinkDown => {
+                    *self.link_downs.lock().expect("link downs") += 1;
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                }
+                SessionInput::Command(_) | SessionInput::Notification { .. } => {}
             }
         }
     }
