@@ -9,7 +9,11 @@ use std::{
 use anyhow::Result;
 use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeEvent, SessionBridgeReport};
 use cutout_core::{ParserDiagnostics, ReadOnlyResponse, TelemetryDelta, TelemetrySnapshot};
-use ratatui::termina::{PlatformTerminal, Terminal as _};
+use cutout_protocols::VeteranModelProfile;
+use ratatui::termina::{
+    PlatformTerminal, Terminal as _,
+    escape::csi::{self, Csi},
+};
 use ratatui::{
     Frame, Terminal,
     backend::TerminaBackend,
@@ -468,6 +472,7 @@ impl DashboardState {
         };
         state.counters.discovered = 1;
         state.counters.connected = 1;
+        state.telemetry.signal_pct = observation.rssi.map_or(0, rssi_to_signal_percent);
         state.scan_browser.push_observation(
             ScanObservation {
                 name: state.device.name.clone(),
@@ -1083,27 +1088,22 @@ fn run_dashboard_loop(
     let (tx, rx) = mpsc::channel::<DashboardInput>();
     let _input_thread = spawn_input_thread(tx);
 
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(b"\x1b[2J\x1b[H")?;
-    stdout.flush()?;
-
-    let mut output = PlatformTerminal::new()?;
-    output.enter_raw_mode()?;
-    let backend = TerminaBackend::new(output);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = init_dashboard_terminal()?;
     let mut last_tick = Instant::now();
 
-    'dashboard: loop {
+    let result = 'dashboard: loop {
         drain_dashboard_updates(&mut state, updates);
 
-        terminal.draw(|frame| {
+        if let Err(error) = terminal.draw(|frame| {
             frame.render_widget(Clear, frame.area());
             render_dashboard(frame, &state);
-        })?;
+        }) {
+            break 'dashboard Err(error.into());
+        }
 
         while let Ok(input) = rx.try_recv() {
             match input {
-                DashboardInput::Quit => break 'dashboard,
+                DashboardInput::Quit => break 'dashboard Ok(()),
                 DashboardInput::NextTab => state.next_tab(),
                 DashboardInput::PreviousTab => state.previous_tab(),
             }
@@ -1115,9 +1115,51 @@ fn run_dashboard_loop(
         } else {
             thread::sleep(Duration::from_millis(25));
         }
-    }
+    };
 
+    restore_dashboard_terminal(&mut terminal)?;
+    result
+}
+
+type DashboardTerminal = Terminal<TerminaBackend<PlatformTerminal>>;
+
+fn init_dashboard_terminal() -> Result<DashboardTerminal> {
+    let mut output = PlatformTerminal::new()?;
+    output.enter_raw_mode()?;
+    write!(
+        output,
+        "{}{}",
+        decset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
+        decset(csi::DecPrivateModeCode::ShowCursor)
+    )?;
+    output.flush()?;
+
+    let backend = TerminaBackend::new(output);
+    Ok(Terminal::new(backend)?)
+}
+
+fn restore_dashboard_terminal(terminal: &mut DashboardTerminal) -> Result<()> {
+    let backend = terminal.backend_mut();
+    write!(
+        backend,
+        "{}{}",
+        decreset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
+        decset(csi::DecPrivateModeCode::ShowCursor)
+    )?;
+    backend.flush()?;
     Ok(())
+}
+
+fn decset(code: csi::DecPrivateModeCode) -> Csi {
+    Csi::Mode(csi::Mode::SetDecPrivateMode(csi::DecPrivateMode::Code(
+        code,
+    )))
+}
+
+fn decreset(code: csi::DecPrivateModeCode) -> Csi {
+    Csi::Mode(csi::Mode::ResetDecPrivateMode(csi::DecPrivateMode::Code(
+        code,
+    )))
 }
 
 fn drain_dashboard_updates(
@@ -1276,11 +1318,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         state.telemetry.latest_voltage_v,
     );
 
-    let signal = Gauge::default()
-        .block(Block::bordered().title("Signal"))
-        .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
-        .ratio(percent_ratio(state.telemetry.signal_pct));
-    frame.render_widget(signal, gauges[1]);
+    render_signal_gauge(frame, gauges[1], state);
     render_profiles(frame, chunks[2], state);
 }
 
@@ -1346,6 +1384,69 @@ fn render_battery_gauge(
     }
 }
 
+fn render_signal_gauge(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let rssi = state
+        .scan_browser
+        .selected()
+        .map_or("unknown", |observation| observation.rssi.as_str());
+    let signal = Gauge::default()
+        .block(Block::bordered().title("Signal"))
+        .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
+        .label(format!("{}% / {rssi}", state.telemetry.signal_pct))
+        .ratio(percent_ratio(state.telemetry.signal_pct));
+    frame.render_widget(signal, area);
+}
+
+fn rssi_to_signal_percent(rssi_dbm: i16) -> u64 {
+    let clamped = rssi_dbm.clamp(-100, -40);
+    u64::try_from(i32::from(clamped) + 100)
+        .unwrap_or(0)
+        .saturating_mul(100)
+        / 60
+}
+
+fn render_voltage_sparkline(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let title = voltage_sparkline_title(state);
+    let spark = Sparkline::default()
+        .block(panel_block(&title))
+        .style(Style::new().fg(Color::Magenta))
+        .data(&state.telemetry.voltage_v)
+        .max(voltage_sparkline_max_v(state));
+    frame.render_widget(spark, area);
+}
+
+fn voltage_sparkline_title(state: &DashboardState) -> String {
+    let voltage = state
+        .telemetry
+        .latest_voltage_v
+        .map_or_else(|| "unknown".to_owned(), |voltage| format!("{voltage} V"));
+    state.telemetry.battery_pct.map_or_else(
+        || format!("Voltage {voltage}"),
+        |percent| format!("Voltage {voltage} / {percent}%"),
+    )
+}
+
+fn voltage_sparkline_max_v(state: &DashboardState) -> u64 {
+    dashboard_voltage_range_mv(state)
+        .map_or(100, |(_min_mv, max_mv)| millivolts_to_volts(max_mv))
+        .max(state.telemetry.latest_voltage_v.unwrap_or(0))
+        .max(1)
+}
+
+fn dashboard_voltage_range_mv(state: &DashboardState) -> Option<(i32, i32)> {
+    if state.device.make == "NOSFET"
+        && state.device.model == "Aero"
+        && let Some(profile) = VeteranModelProfile::from_model_id(43)
+    {
+        return Some((
+            *profile.voltage_range_mv.start(),
+            *profile.voltage_range_mv.end(),
+        ));
+    }
+
+    None
+}
+
 fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     if state.telemetry.has_decoded_samples() {
         let chunks = Layout::default()
@@ -1368,13 +1469,7 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             &state.telemetry.speed_mph,
             Color::Yellow,
         );
-        render_sparkline(
-            frame,
-            chunks[3],
-            "Voltage",
-            &state.telemetry.voltage_v,
-            Color::Magenta,
-        );
+        render_voltage_sparkline(frame, chunks[3], state);
         render_telemetry_trend(frame, chunks[4], state);
     } else {
         let chunks = Layout::default()
@@ -1855,10 +1950,49 @@ mod tests {
         assert_eq!(state.counters.connected, 1);
         assert_eq!(state.telemetry.battery_pct, None);
         assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
+        assert_eq!(state.telemetry.signal_pct, 65);
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
         assert_eq!(state.profiles[0].source, "gatt");
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+        assert!(text.contains("65% / -61 dBm"));
+        assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
+    }
+
+    #[test]
+    fn rssi_signal_percent_clamps_to_reasonable_ble_range() {
+        assert_eq!(rssi_to_signal_percent(-40), 100);
+        assert_eq!(rssi_to_signal_percent(-61), 65);
+        assert_eq!(rssi_to_signal_percent(-74), 43);
+        assert_eq!(rssi_to_signal_percent(-100), 0);
+        assert_eq!(rssi_to_signal_percent(-120), 0);
+        assert_eq!(rssi_to_signal_percent(-20), 100);
+    }
+
+    #[test]
+    fn voltage_sparkline_uses_connected_device_voltage_range() {
+        let mut state = DashboardState::empty();
+        state.device.make = "NOSFET".to_owned();
+        state.device.model = "Aero".to_owned();
+        state.telemetry.latest_voltage_v = Some(120);
+        state.telemetry.battery_pct = Some(85);
+
+        assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
+        assert_eq!(voltage_sparkline_max_v(&state), 126);
+        assert_eq!(voltage_sparkline_title(&state), "Voltage 120 V / 85%");
+    }
+
+    #[test]
+    fn voltage_sparkline_falls_back_to_observed_voltage_for_unknown_device() {
+        let mut state = DashboardState::empty();
+        state.telemetry.latest_voltage_v = Some(151);
+        state.telemetry.voltage_v = vec![151];
+
+        assert_eq!(dashboard_voltage_range_mv(&state), None);
+        assert_eq!(voltage_sparkline_max_v(&state), 151);
+        assert_eq!(voltage_sparkline_title(&state), "Voltage 151 V");
     }
 
     #[test]
@@ -2505,6 +2639,7 @@ mod tests {
 
         state.active_tab = 1;
         let text = buffer_text(&render_buffer(&state, 120, 36));
+        assert!(text.contains("Voltage 109 V / 47%"));
         assert!(text.contains("109 V"));
         assert!(text.contains("0 A"));
         assert!(text.contains("33 C"));
