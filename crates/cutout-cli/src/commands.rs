@@ -3,7 +3,8 @@ use std::time::Duration;
 use anyhow::Result;
 use cutout_btle::{
     BtleError, ConnectedPeripheral, ConnectionTarget, SessionBridgeReport, SessionCapture,
-    SessionEndpoints, capture_session, connect_and_discover, drive_session, scan_peripherals,
+    SessionEndpoints, capture_session, connect_and_discover, drive_session, read_battery_level,
+    scan_peripherals,
 };
 use cutout_core::{Measured, TelemetrySnapshot};
 use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
@@ -50,6 +51,10 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
         "connected dashboard device"
     );
     let mut state = DashboardState::live_connected(&target, &connection.summary);
+    if let Some(percent) = read_battery_level(&connection.peripheral, &connection.summary).await? {
+        info!(percent, "read dashboard battery level");
+        state.apply_battery_percent(percent);
+    }
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
         info!(
             seconds = DASHBOARD_PROBE_WINDOW.as_secs(),

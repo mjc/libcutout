@@ -530,6 +530,12 @@ impl DashboardState {
         }
     }
 
+    pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
+        let percent = percent.min(100);
+        self.telemetry.battery_pct = u64::from(percent);
+        self.push_log("info", &format!("battery level {percent}%"));
+    }
+
     pub(crate) fn apply_fixture_event(&mut self, event: FixtureEvent) {
         match event {
             FixtureEvent::Provenance { source } => {
@@ -1465,6 +1471,31 @@ mod tests {
         assert_eq!(state.telemetry.voltage_v, vec![84]);
         assert_eq!(state.telemetry.current_a, vec![12]);
         assert_eq!(state.telemetry.temperature_c, vec![37]);
+    }
+
+    #[test]
+    fn live_battery_level_updates_battery_gauge_from_real_reading() {
+        let mut state = DashboardState::empty();
+
+        state.apply_battery_percent(88);
+
+        assert_eq!(state.telemetry.battery_pct, 88);
+        assert!(
+            state
+                .logs
+                .iter()
+                .any(|entry| entry.message == "battery level 88%")
+        );
+
+        state.apply_battery_percent(150);
+
+        assert_eq!(state.telemetry.battery_pct, 100);
+        assert!(
+            state
+                .logs
+                .iter()
+                .any(|entry| entry.message == "battery level 100%")
+        );
     }
 
     #[test]
