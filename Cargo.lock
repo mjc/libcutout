@@ -486,6 +486,7 @@ dependencies = [
  "hex-literal",
  "ratatui",
  "serde_json",
+ "signal-hook",
  "tokio",
  "tracing",
  "tracing-appender",

@@ -1,7 +1,11 @@
 use std::{
     collections::VecDeque,
     io::{self, Read, Write},
-    sync::mpsc,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -1104,12 +1108,13 @@ pub(crate) fn run_dashboard_with_updates(
     state: DashboardState,
     updates: &mpsc::Receiver<DashboardUpdate>,
 ) -> Result<()> {
-    run_dashboard_loop(state, Some(updates))
+    run_dashboard_loop(state, Some(updates), dashboard_termination_requested())
 }
 
 fn run_dashboard_loop(
     mut state: DashboardState,
     updates: Option<&mpsc::Receiver<DashboardUpdate>>,
+    termination_requested: &AtomicBool,
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel::<DashboardInput>();
     let _input_thread = spawn_input_thread(tx);
@@ -1118,6 +1123,10 @@ fn run_dashboard_loop(
     let mut last_tick = Instant::now();
 
     let result = 'dashboard: loop {
+        if dashboard_should_exit(termination_requested) {
+            break 'dashboard Ok(());
+        }
+
         drain_dashboard_updates(&mut state, updates);
 
         if let Err(error) = terminal.draw(|frame| {
@@ -1151,6 +1160,32 @@ fn run_dashboard_loop(
 }
 
 type DashboardTerminal = Terminal<TerminaBackend<PlatformTerminal>>;
+
+/// Installs signal flags that let the dashboard leave raw/alternate-screen mode on reload.
+///
+/// # Errors
+///
+/// Returns an error when process signal registration fails.
+pub fn install_dashboard_signal_restore() -> Result<()> {
+    let flag = dashboard_termination_requested().clone();
+    for signal in [
+        signal_hook::consts::SIGINT,
+        signal_hook::consts::SIGTERM,
+        signal_hook::consts::SIGHUP,
+    ] {
+        signal_hook::flag::register(signal, flag.clone())?;
+    }
+    Ok(())
+}
+
+fn dashboard_termination_requested() -> &'static Arc<AtomicBool> {
+    static TERMINATION_REQUESTED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+    TERMINATION_REQUESTED.get_or_init(|| Arc::new(AtomicBool::new(false)))
+}
+
+fn dashboard_should_exit(termination_requested: &AtomicBool) -> bool {
+    termination_requested.load(Ordering::Relaxed)
+}
 
 fn init_dashboard_terminal() -> Result<DashboardTerminal> {
     init_dashboard_terminal_inner().inspect_err(|_error| {
@@ -2082,6 +2117,17 @@ mod tests {
             decset(csi::DecPrivateModeCode::ShowCursor).to_string(),
             "\u{1b}[?25h"
         );
+    }
+
+    #[test]
+    fn dashboard_loop_observes_termination_signal_flag() {
+        let termination_requested = AtomicBool::new(false);
+
+        assert!(!dashboard_should_exit(&termination_requested));
+
+        termination_requested.store(true, Ordering::Relaxed);
+
+        assert!(dashboard_should_exit(&termination_requested));
     }
 
     #[test]

@@ -1,10 +1,15 @@
 use clap::Parser;
-use cutout_cli::{Cli, init_logging, run};
+use cutout_cli::{Cli, init_logging, install_dashboard_signal_restore, run};
 use std::process::ExitCode;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
-    let _log_guard = init_logging(dashboard_mode_requested());
+    let dashboard_mode = dashboard_mode_requested();
+    let _log_guard = init_logging(dashboard_mode);
+    if dashboard_mode && let Err(error) = install_dashboard_signal_restore() {
+        eprintln!("failed to install dashboard signal restore: {error}");
+        return ExitCode::FAILURE;
+    }
     let cli = Cli::parse();
 
     match run(cli).await {

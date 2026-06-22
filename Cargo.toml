@@ -38,6 +38,7 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm",
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+signal-hook = "0.3"
 smallvec = "1"
 smol = "2"
 thiserror = "2"

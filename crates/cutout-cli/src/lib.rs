@@ -11,4 +11,5 @@ mod validation;
 
 pub use cli::Cli;
 pub use commands::run;
+pub use dashboard::install_dashboard_signal_restore;
 pub use logging::init_logging;
