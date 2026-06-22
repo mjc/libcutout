@@ -13,6 +13,9 @@ use std::ops::RangeInclusive;
 use arrayvec::ArrayVec;
 use thiserror::Error;
 
+mod pevcap;
+pub use pevcap::*;
+
 /// Monotonic timestamp in milliseconds, supplied by the host.
 pub type MonotonicMillis = u64;
 
