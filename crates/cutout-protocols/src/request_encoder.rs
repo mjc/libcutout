@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use cutout_core::{CommandKind, WriteMode};
+use cutout_core::{CommandKind, RequestKey, RequestTarget, WriteMode};
 
 use crate::{
     AeroProbe, FalconProbe, VESC_MAX_FRAME_LEN, VescCanReadOnlyRequest, VescReadOnlyCodec,
@@ -148,6 +148,17 @@ impl VescCanTarget {
     #[must_use]
     pub const fn controller_id(self) -> u8 {
         self.controller_id
+    }
+
+    /// Builds the core request key used to correlate this target's command.
+    #[must_use]
+    pub const fn request_key(self, kind: CommandKind) -> RequestKey {
+        RequestKey::for_target(
+            kind,
+            RequestTarget::VescCanController {
+                controller_id: self.controller_id,
+            },
+        )
     }
 
     /// Encodes a supported read-only command through VESC CAN forwarding.
@@ -338,6 +349,19 @@ mod tests {
         assert_eq!(target.encode_command(CommandKind::SetLights), None);
         assert_eq!(target.encode_command(CommandKind::SoundHorn), None);
         assert_eq!(target.encode_command(CommandKind::RequestBatteryInfo), None);
+    }
+
+    #[test]
+    fn vesc_can_target_builds_core_request_key_for_correlation() {
+        let target = VescCanTarget::new(7);
+
+        assert_eq!(
+            target.request_key(CommandKind::RequestTelemetry),
+            RequestKey::for_target(
+                CommandKind::RequestTelemetry,
+                RequestTarget::VescCanController { controller_id: 7 }
+            )
+        );
     }
 
     #[test]

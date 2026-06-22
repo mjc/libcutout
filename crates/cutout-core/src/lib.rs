@@ -1340,18 +1340,41 @@ impl DiagnosticError {
     }
 }
 
+/// Transport-independent request target used for correlation.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RequestTarget {
+    /// Direct request to the connected controller/device.
+    #[default]
+    Local,
+
+    /// Request forwarded to a VESC CAN controller id.
+    VescCanController {
+        /// VESC CAN controller id.
+        controller_id: u8,
+    },
+}
+
 /// Transport-independent key used to correlate a scheduled request.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RequestKey {
     /// Command kind represented by this request.
     pub command: CommandKind,
+
+    /// Transport-independent target represented by this request.
+    pub target: RequestTarget,
 }
 
 impl RequestKey {
     /// Creates a request key from a command kind.
     #[must_use]
     pub const fn new(command: CommandKind) -> Self {
-        Self { command }
+        Self::for_target(command, RequestTarget::Local)
+    }
+
+    /// Creates a request key from a command kind and explicit target.
+    #[must_use]
+    pub const fn for_target(command: CommandKind, target: RequestTarget) -> Self {
+        Self { command, target }
     }
 }
 
@@ -4310,6 +4333,24 @@ mod tests {
     }
 
     #[test]
+    fn request_key_preserves_optional_transport_target() {
+        let local = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+        let can = crate::RequestKey::for_target(
+            crate::CommandKind::RequestTelemetry,
+            crate::RequestTarget::VescCanController { controller_id: 42 },
+        );
+
+        assert_eq!(local.command, crate::CommandKind::RequestTelemetry);
+        assert_eq!(local.target, crate::RequestTarget::Local);
+        assert_eq!(can.command, crate::CommandKind::RequestTelemetry);
+        assert_eq!(
+            can.target,
+            crate::RequestTarget::VescCanController { controller_id: 42 }
+        );
+        assert_ne!(local, can);
+    }
+
+    #[test]
     fn benign_controls_are_distinct_from_read_only_requests() {
         let lights = DeviceCommand::SetLights(crate::LightState::On);
         let horn = DeviceCommand::SoundHorn;
@@ -4754,6 +4795,33 @@ mod tests {
         assert_eq!(
             tracker.start(identity, policy, 21),
             Err(crate::RequestStartError::Busy { key: telemetry })
+        );
+    }
+
+    #[test]
+    fn request_tracker_correlates_can_target_separately_from_local_command() {
+        let policy = crate::RequestPolicy::default();
+        let mut tracker = crate::RequestTracker::default();
+        let local = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
+        let can = crate::RequestKey::for_target(
+            crate::CommandKind::RequestTelemetry,
+            crate::RequestTarget::VescCanController { controller_id: 7 },
+        );
+        let mut diagnostics = crate::ParserDiagnostics::default();
+
+        tracker.start(can, policy, 20).unwrap();
+
+        assert_eq!(
+            tracker.correlate_reply(local, &mut diagnostics),
+            crate::CorrelationResult::Unmatched { key: local }
+        );
+        assert_eq!(diagnostics.unmatched_replies, 1);
+        assert_eq!(
+            tracker.correlate_reply(can, &mut diagnostics),
+            crate::CorrelationResult::Matched {
+                key: can,
+                attempts: 1
+            }
         );
     }
 
