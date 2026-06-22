@@ -11,9 +11,17 @@ async fn main() -> ExitCode {
     match run(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("{error}");
+            eprintln!("{}", render_error(&error));
             ExitCode::FAILURE
         }
+    }
+}
+
+fn render_error(error: &anyhow::Error) -> String {
+    if let Some(btle_error) = error.downcast_ref::<cutout_btle::BtleError>() {
+        format!("{error}\nhint: {}", btle_error.diagnostic_hint())
+    } else {
+        error.to_string()
     }
 }
 
@@ -31,4 +39,29 @@ fn init_logging() {
         .with_writer(std::io::stderr)
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    #[test]
+    fn rendered_btle_errors_include_actionable_hint() {
+        let error = anyhow::Error::from(cutout_btle::BtleError::OperationTimedOut {
+            operation: "connect peripheral",
+            after: Duration::from_secs(10),
+        });
+
+        let rendered = super::render_error(&error);
+
+        assert!(rendered.contains("bluetooth operation timed out: connect peripheral after 10s"));
+        assert!(rendered.contains("hint: retry the operation"));
+    }
+
+    #[test]
+    fn rendered_non_btle_errors_do_not_gain_ble_hint() {
+        let error = anyhow::anyhow!("usage failed");
+
+        assert_eq!(super::render_error(&error), "usage failed");
+    }
 }

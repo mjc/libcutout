@@ -918,6 +918,36 @@ pub enum BtleError {
     Bridge(#[from] SessionBridgeError),
 }
 
+impl BtleError {
+    /// Returns a concise user-facing hint for common desktop BLE failures.
+    #[must_use]
+    pub const fn diagnostic_hint(&self) -> &'static str {
+        match self {
+            Self::NoAdapterAvailable => {
+                "enable Bluetooth, grant Bluetooth permission to this terminal, and verify the OS exposes an adapter"
+            }
+            Self::NoPeripheralMatched => {
+                "power on the device, keep it nearby, increase --seconds, or use --name-contains/--identifier to narrow selection"
+            }
+            Self::OperationTimedOut { .. } => {
+                "retry the operation, move closer to the device, and check whether another app is holding the BLE connection"
+            }
+            Self::Bridge(SessionBridgeError::MissingSessionEndpoint) => {
+                "inspect GATT services and select a device exposing a writable and notify-capable session characteristic"
+            }
+            Self::Bridge(SessionBridgeError::MissingNotifyEndpoint { .. }) => {
+                "inspect GATT services and select a notify-capable characteristic for the session channel"
+            }
+            Self::Bridge(SessionBridgeError::UnexpectedChannel { .. }) => {
+                "report this protocol binding mismatch with the selected profile, GATT inventory, and capture logs"
+            }
+            Self::Backend(_) => {
+                "check OS Bluetooth permissions, adapter state, and whether another app is already connected"
+            }
+        }
+    }
+}
+
 /// Scans for peripherals and returns what was observed.
 ///
 /// # Errors
@@ -2255,6 +2285,37 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "bluetooth operation timed out: start scan after 10s"
+        );
+    }
+
+    #[test]
+    fn btle_errors_expose_actionable_desktop_diagnostic_hints() {
+        let no_adapter = crate::BtleError::NoAdapterAvailable;
+        assert_eq!(
+            no_adapter.diagnostic_hint(),
+            "enable Bluetooth, grant Bluetooth permission to this terminal, and verify the OS exposes an adapter"
+        );
+
+        let no_match = crate::BtleError::NoPeripheralMatched;
+        assert_eq!(
+            no_match.diagnostic_hint(),
+            "power on the device, keep it nearby, increase --seconds, or use --name-contains/--identifier to narrow selection"
+        );
+
+        let timed_out = crate::BtleError::OperationTimedOut {
+            operation: "discover services",
+            after: Duration::from_secs(5),
+        };
+        assert_eq!(
+            timed_out.diagnostic_hint(),
+            "retry the operation, move closer to the device, and check whether another app is holding the BLE connection"
+        );
+
+        let missing_endpoint =
+            crate::BtleError::Bridge(crate::SessionBridgeError::MissingSessionEndpoint);
+        assert_eq!(
+            missing_endpoint.diagnostic_hint(),
+            "inspect GATT services and select a device exposing a writable and notify-capable session characteristic"
         );
     }
 
