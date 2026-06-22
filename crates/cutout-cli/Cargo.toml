@@ -30,3 +30,4 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
+uuid.workspace = true

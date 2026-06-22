@@ -20,7 +20,7 @@ use btleplug::{
 };
 use cutout_core::{
     DeviceEvent, GattChannel, LinkInfo, ParserDiagnostics, ProtocolSession, SessionInput,
-    SessionOutput, TelemetrySnapshot, TransportAction, WriteMode,
+    SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, WriteMode,
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
@@ -336,8 +336,48 @@ pub struct SessionBridgeReport {
     /// Aggregated parser diagnostic counters emitted by the session.
     pub diagnostics_snapshot: ParserDiagnostics,
 
+    /// Timestamped raw and processed telemetry events observed during the run.
+    pub events: Vec<SessionBridgeEvent>,
+
     /// Transport disconnect operations executed through the bridge.
     pub disconnects: usize,
+}
+
+/// Timestamped raw or processed telemetry event emitted by the bridge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionBridgeEvent {
+    /// Raw notification payload received from BTLE.
+    RawNotification {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Characteristic that emitted the notification.
+        characteristic: Uuid,
+
+        /// Service associated with the notification.
+        service: Uuid,
+
+        /// Notification payload length.
+        len: usize,
+    },
+
+    /// Decoded telemetry emitted by the protocol session.
+    ProcessedTelemetry {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Telemetry delta emitted by the protocol session.
+        delta: TelemetryDelta,
+    },
+
+    /// Parser diagnostics emitted by the protocol session.
+    Diagnostics {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Parser diagnostic counters emitted at this timestamp.
+        diagnostics: ParserDiagnostics,
+    },
 }
 
 /// Captured bridge records suitable for live BTLE evidence files.
@@ -768,6 +808,7 @@ where
                         bytes: notification.value.clone(),
                     });
                 }
+                record_raw_notification(&mut report, monotonic_ms, &notification);
                 session.handle(
                     SessionInput::Notification {
                         channel: gatt_channel_from_uuid(notification.uuid),
@@ -812,6 +853,19 @@ const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Charact
 
 const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
     GattChannel::from_bytes(*uuid.as_bytes())
+}
+
+fn record_raw_notification(
+    report: &mut SessionBridgeReport,
+    monotonic_ms: u64,
+    notification: &ValueNotification,
+) {
+    report.events.push(SessionBridgeEvent::RawNotification {
+        monotonic_ms,
+        characteristic: notification.uuid,
+        service: notification.service_uuid,
+        len: notification.value.len(),
+    });
 }
 
 struct SessionOutputContext<'a, P: ?Sized> {
@@ -901,10 +955,21 @@ where
             SessionOutput::Event(DeviceEvent::Telemetry(delta)) => {
                 context.report.telemetry += 1;
                 context.report.telemetry_snapshot.apply_delta(delta);
+                context
+                    .report
+                    .events
+                    .push(SessionBridgeEvent::ProcessedTelemetry {
+                        monotonic_ms,
+                        delta,
+                    });
             }
             SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => {
                 context.report.diagnostics += 1;
                 context.report.diagnostics_snapshot.merge(diagnostics);
+                context.report.events.push(SessionBridgeEvent::Diagnostics {
+                    monotonic_ms,
+                    diagnostics,
+                });
             }
         }
     }
@@ -1521,6 +1586,28 @@ mod tests {
         );
         assert_eq!(report.diagnostics, 1);
         assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::RawNotification {
+                monotonic_ms: 2,
+                len: 2,
+                ..
+            }
+        )));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: 2,
+                ..
+            }
+        )));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::Diagnostics {
+                monotonic_ms: 2,
+                diagnostics,
+            } if diagnostics.malformed_frames == 1
+        )));
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
     }
 
