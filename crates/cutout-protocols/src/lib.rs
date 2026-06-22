@@ -35,6 +35,8 @@ mod fixture;
 pub use fixture::*;
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
+mod registry;
+pub use registry::BEGODE_FALCON_REGISTRY_ENTRY;
 mod request_encoder;
 mod session;
 mod veteran_bms;
@@ -141,7 +143,7 @@ mod tests {
         assert!(output.iter().any(|item| matches!(
             item,
             SessionOutput::Transport(TransportAction::Subscribe {
-                channel: crate::FALCON_WRITE_CHANNEL
+                channel: crate::BEGODE_DATA_CHANNEL
             })
         )));
     }

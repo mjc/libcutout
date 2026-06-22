@@ -7,7 +7,7 @@ use cutout_core::{
 };
 
 use crate::{
-    FALCON_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VeteranBmsPageEvidence, VeteranFrame,
+    BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL, VeteranBmsPageEvidence, VeteranFrame,
     VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
     decode_veteran_bms_page,
 };
@@ -287,7 +287,7 @@ impl SupportsReadRequests for BegodeFalconModel {
         CommandKind::RequestTelemetry,
         CommandKind::RequestBatteryInfo,
     ]);
-    const SUBSCRIBE_CHANNEL: GattChannel = FALCON_WRITE_CHANNEL;
+    const SUBSCRIBE_CHANNEL: GattChannel = BEGODE_DATA_CHANNEL;
     type NotificationDecoder = NoopNotificationDecoder;
 }
 
