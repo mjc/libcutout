@@ -20,9 +20,9 @@ use btleplug::{
 };
 use cutout_core::{
     DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, GattFingerprint, GattRoles, LinkInfo,
-    ParserDiagnostics, ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput,
-    SettingsReadback, TelemetryDelta, TelemetrySnapshot, TransportAction, VerificationStatus,
-    WriteMode,
+    ParserDiagnostics, PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord,
+    ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput, SettingsReadback,
+    TelemetryDelta, TelemetrySnapshot, TransportAction, VerificationStatus, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, IdentityConfidence, IdentityEvidence,
@@ -539,6 +539,77 @@ pub struct SessionCapture {
 
     /// Aggregate bridge counters.
     pub report: SessionBridgeReport,
+}
+
+/// Caller-supplied metadata for converting a live BTLE session capture into
+/// PEVCAP.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PevcapSessionMetadata<'a> {
+    /// Wall-clock capture start time in Unix milliseconds.
+    pub wall_clock_start_unix_ms: u64,
+
+    /// Platform identifier recorded by the capture producer.
+    pub platform_id: &'a str,
+
+    /// Version of the Cutout library or binary that produced the capture.
+    pub library_version: &'a str,
+
+    /// Registry hash used while producing the capture.
+    pub registry_hash: [u8; 32],
+
+    /// Human annotations attached to the capture.
+    pub annotations: &'a [&'a str],
+}
+
+impl SessionCapture {
+    /// Converts this live BTLE bridge capture into a PEVCAP envelope.
+    ///
+    /// Link and subscribe records are represented in the PEVCAP header or GATT
+    /// metadata; outbound writes and inbound notifications become ordered
+    /// PEVCAP transport records.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapHeaderError`] if observed metadata exceeds PEVCAP
+    /// bounds.
+    pub fn to_pevcap(
+        &self,
+        summary: &ConnectionSummary,
+        metadata: PevcapSessionMetadata<'_>,
+    ) -> Result<PevcapCapture, PevcapHeaderError> {
+        let advertised_services = summary
+            .observation
+            .advertised_services
+            .iter()
+            .copied()
+            .map(gatt_channel_from_uuid)
+            .collect::<Vec<_>>();
+        let gatt_fingerprints = summary.gatt_fingerprints();
+        let write_limit = self.records.iter().find_map(|record| match record {
+            SessionCaptureRecord::Link { max_write_len, .. } => *max_write_len,
+            SessionCaptureRecord::Subscribe { .. }
+            | SessionCaptureRecord::Write { .. }
+            | SessionCaptureRecord::Notification { .. } => None,
+        });
+        let header = PevcapHeader::new(
+            metadata.wall_clock_start_unix_ms,
+            metadata.platform_id,
+            write_limit,
+            &advertised_services,
+            &gatt_fingerprints,
+            None,
+            metadata.library_version,
+            metadata.registry_hash,
+            metadata.annotations,
+        )?;
+        let records = self
+            .records
+            .iter()
+            .filter_map(session_record_to_pevcap_record)
+            .collect();
+
+        Ok(PevcapCapture::new(header, records))
+    }
 }
 
 /// Errors surfaced while bridging protocol outputs to BTLE operations.
@@ -1074,6 +1145,42 @@ const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
     GattChannel::from_bytes(*uuid.as_bytes())
 }
 
+fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<PevcapRecord> {
+    match record {
+        SessionCaptureRecord::Write {
+            monotonic_ms,
+            characteristic,
+            mode,
+            bytes,
+            provisional: _,
+        } => Some(PevcapRecord::outbound_write(
+            *monotonic_ms,
+            gatt_channel_from_uuid(*characteristic),
+            write_mode_from_btle(*mode),
+            bytes.clone(),
+        )),
+        SessionCaptureRecord::Notification {
+            monotonic_ms,
+            characteristic,
+            service,
+            bytes,
+        } => Some(PevcapRecord::inbound_notification(
+            *monotonic_ms,
+            gatt_channel_from_uuid(*characteristic),
+            gatt_channel_from_uuid(*service),
+            bytes.clone(),
+        )),
+        SessionCaptureRecord::Link { .. } | SessionCaptureRecord::Subscribe { .. } => None,
+    }
+}
+
+const fn write_mode_from_btle(mode: WriteType) -> WriteMode {
+    match mode {
+        WriteType::WithResponse => WriteMode::WithResponse,
+        WriteType::WithoutResponse => WriteMode::WithoutResponse,
+    }
+}
+
 fn gatt_roles_from_flags(flags: CharPropFlags) -> GattRoles {
     let mut roles = GattRoles::empty();
     if flags.contains(CharPropFlags::READ) {
@@ -1476,9 +1583,9 @@ mod tests {
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
     use cutout_core::{
         DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, Measured, ParserDiagnostics,
-        ProtocolSession, RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput,
-        SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction, ValueQuality,
-        ValueSource, VerificationStatus, WriteMode,
+        PevcapDirection, ProtocolSession, RawFieldValue, ReadOnlyResponse, SessionInput,
+        SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction,
+        ValueQuality, ValueSource, VerificationStatus, WriteMode,
     };
     use cutout_protocols::IdentityConfidence;
     use futures_util::stream;
@@ -1722,6 +1829,140 @@ mod tests {
             record.to_string(),
             "notification t_ms=11 characteristic=0000ffe1-0000-1000-8000-00805f9b34fb service=0000ffe0-0000-1000-8000-00805f9b34fb bytes=deadbeef"
         );
+    }
+
+    #[test]
+    fn session_capture_converts_to_pevcap_with_summary_metadata() {
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "cb-uuid".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: Some(-67),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
+                }],
+            }],
+        };
+        let capture = crate::SessionCapture {
+            records: vec![
+                crate::SessionCaptureRecord::Link {
+                    monotonic_ms: 0,
+                    max_write_len: Some(23),
+                },
+                crate::SessionCaptureRecord::Subscribe {
+                    monotonic_ms: 1,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                },
+                crate::SessionCaptureRecord::Write {
+                    monotonic_ms: 2,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    mode: WriteType::WithoutResponse,
+                    bytes: b"N".to_vec(),
+                    provisional: false,
+                },
+                crate::SessionCaptureRecord::Notification {
+                    monotonic_ms: 3,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    bytes: b"NAME=NF2557".to_vec(),
+                },
+            ],
+            report: crate::SessionBridgeReport::default(),
+        };
+
+        let pevcap = capture
+            .to_pevcap(
+                &summary,
+                crate::PevcapSessionMetadata {
+                    wall_clock_start_unix_ms: 1_725_000_123_456,
+                    platform_id: "darwin",
+                    library_version: "0.1.0",
+                    registry_hash: [0x42; 32],
+                    annotations: &["live aero"],
+                },
+            )
+            .expect("session capture converts to PEVCAP");
+
+        assert_eq!(pevcap.header.wall_clock_start_unix_ms, 1_725_000_123_456);
+        assert_eq!(pevcap.header.platform_id, "darwin");
+        assert_eq!(pevcap.header.write_limit, Some(23));
+        assert_eq!(pevcap.header.advertised_services.len(), 1);
+        assert_eq!(pevcap.header.gatt_fingerprints.len(), 1);
+        assert_eq!(pevcap.records.len(), 2);
+        assert_eq!(pevcap.records[0].direction, PevcapDirection::Outbound);
+        assert_eq!(
+            pevcap.records[0].write_mode,
+            Some(WriteMode::WithoutResponse)
+        );
+        assert_eq!(pevcap.records[0].bytes, b"N");
+        assert_eq!(pevcap.records[1].direction, PevcapDirection::Inbound);
+        assert_eq!(
+            pevcap.records[1].service,
+            pevcap.header.advertised_services.first().copied()
+        );
+        assert_eq!(pevcap.records[1].bytes, b"NAME=NF2557");
+    }
+
+    #[test]
+    fn session_capture_pevcap_conversion_preserves_write_response_mode() {
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                name: Some("Begode_Falcon".to_owned()),
+                rssi: None,
+                advertised_services: vec![],
+            },
+            services: vec![],
+        };
+        let capture = crate::SessionCapture {
+            records: vec![
+                crate::SessionCaptureRecord::Link {
+                    monotonic_ms: 0,
+                    max_write_len: None,
+                },
+                crate::SessionCaptureRecord::Subscribe {
+                    monotonic_ms: 1,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                },
+                crate::SessionCaptureRecord::Write {
+                    monotonic_ms: 2,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    mode: WriteType::WithResponse,
+                    bytes: vec![0x01, 0x02],
+                    provisional: true,
+                },
+            ],
+            report: crate::SessionBridgeReport::default(),
+        };
+
+        let pevcap = capture
+            .to_pevcap(
+                &summary,
+                crate::PevcapSessionMetadata {
+                    wall_clock_start_unix_ms: 1,
+                    platform_id: "test",
+                    library_version: "0.1.0",
+                    registry_hash: [0; 32],
+                    annotations: &[],
+                },
+            )
+            .expect("session capture converts to PEVCAP");
+
+        assert_eq!(pevcap.header.write_limit, None);
+        assert_eq!(pevcap.records.len(), 1);
+        assert_eq!(pevcap.records[0].write_mode, Some(WriteMode::WithResponse));
+        assert_eq!(pevcap.records[0].bytes, [0x01, 0x02]);
     }
 
     #[test]
