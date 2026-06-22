@@ -232,6 +232,59 @@ pub enum BegodeFalconBatteryVariant {
     Planned100V24S900WhSamsung50S,
 }
 
+impl BegodeFalconBatteryVariant {
+    /// Voltage profile selected for this Falcon variant.
+    #[must_use]
+    pub const fn voltage_profile(self) -> BegodePackVoltageProfile {
+        match self {
+            Self::Target84V20S => BegodePackVoltageProfile::Begode84VFullCharge,
+            Self::Planned100V24S900WhSamsung50S => BegodePackVoltageProfile::Begode100VFullCharge,
+        }
+    }
+
+    /// Series cell count selected for this Falcon variant.
+    #[must_use]
+    pub const fn series_cells(self) -> u8 {
+        self.voltage_profile().series_cells()
+    }
+
+    /// Cell model selected for this Falcon variant, when evidence-backed.
+    #[must_use]
+    pub const fn cell_model(self) -> Option<BegodeCellModel> {
+        match self {
+            Self::Target84V20S => None,
+            Self::Planned100V24S900WhSamsung50S => Some(BegodeCellModel::Samsung50S),
+        }
+    }
+
+    /// Parallel cell count selected for this Falcon variant, when evidence-backed.
+    #[must_use]
+    pub const fn parallel_count(self) -> Option<u8> {
+        match self {
+            Self::Target84V20S => None,
+            Self::Planned100V24S900WhSamsung50S => Some(2),
+        }
+    }
+
+    /// Nominal pack capacity selected for this Falcon variant, when evidence-backed.
+    #[must_use]
+    pub const fn nominal_capacity_mah(self) -> Option<u32> {
+        match self {
+            Self::Target84V20S => None,
+            Self::Planned100V24S900WhSamsung50S => Some(10_000),
+        }
+    }
+
+    /// Pack energy selected for this Falcon variant, when evidence-backed.
+    #[must_use]
+    pub const fn reported_wh(self) -> Option<u32> {
+        match self {
+            Self::Target84V20S => None,
+            Self::Planned100V24S900WhSamsung50S => Some(900),
+        }
+    }
+}
+
 /// Result of selecting a Falcon-specific battery variant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BegodeFalconBatteryVariantSelection {
@@ -1852,6 +1905,36 @@ mod tests {
             ),
             BegodeFalconBatteryVariantSelection::Conflicting
         );
+    }
+
+    #[test]
+    fn falcon_target_84v_variant_metadata_keeps_capacity_unknown() {
+        let variant = BegodeFalconBatteryVariant::Target84V20S;
+
+        assert_eq!(
+            variant.voltage_profile(),
+            BegodePackVoltageProfile::Begode84VFullCharge
+        );
+        assert_eq!(variant.series_cells(), 20);
+        assert_eq!(variant.cell_model(), None);
+        assert_eq!(variant.parallel_count(), None);
+        assert_eq!(variant.nominal_capacity_mah(), None);
+        assert_eq!(variant.reported_wh(), None);
+    }
+
+    #[test]
+    fn falcon_planned_100v_variant_metadata_preserves_source_backed_shape() {
+        let variant = BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S;
+
+        assert_eq!(
+            variant.voltage_profile(),
+            BegodePackVoltageProfile::Begode100VFullCharge
+        );
+        assert_eq!(variant.series_cells(), 24);
+        assert_eq!(variant.cell_model(), Some(BegodeCellModel::Samsung50S));
+        assert_eq!(variant.parallel_count(), Some(2));
+        assert_eq!(variant.nominal_capacity_mah(), Some(10_000));
+        assert_eq!(variant.reported_wh(), Some(900));
     }
 
     proptest! {
