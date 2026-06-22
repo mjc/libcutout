@@ -770,13 +770,15 @@ where
     drive_session_inner(
         peripheral,
         session,
-        channel,
-        summary,
-        endpoints,
-        notification_window,
-        commands,
+        DriveSessionConfig {
+            channel,
+            summary,
+            endpoints,
+            notification_window,
+            commands,
+            provisional_writes: false,
+        },
         None,
-        false,
     )
     .await
 }
@@ -805,13 +807,15 @@ where
     let report = drive_session_inner(
         peripheral,
         session,
-        channel,
-        summary,
-        endpoints,
-        notification_window,
-        &[],
+        DriveSessionConfig {
+            channel,
+            summary,
+            endpoints,
+            notification_window,
+            commands: &[],
+            provisional_writes,
+        },
         Some(&mut records),
-        provisional_writes,
     )
     .await?;
 
@@ -841,40 +845,47 @@ where
     let report = drive_session_inner(
         peripheral,
         session,
-        channel,
-        summary,
-        endpoints,
-        notification_window,
-        commands,
+        DriveSessionConfig {
+            channel,
+            summary,
+            endpoints,
+            notification_window,
+            commands,
+            provisional_writes: false,
+        },
         Some(&mut records),
-        false,
     )
     .await?;
     Ok(SessionCapture { records, report })
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+struct DriveSessionConfig<'a> {
+    channel: GattChannel,
+    summary: &'a ConnectionSummary,
+    endpoints: SessionEndpoints<'a>,
+    notification_window: Duration,
+    commands: &'a [DeviceCommand],
+    provisional_writes: bool,
+}
+
 async fn drive_session_inner<P, S>(
     peripheral: &P,
     session: &mut S,
-    channel: GattChannel,
-    summary: &ConnectionSummary,
-    endpoints: SessionEndpoints<'_>,
-    notification_window: Duration,
-    commands: &[DeviceCommand],
+    config: DriveSessionConfig<'_>,
     mut capture: Option<&mut Vec<SessionCaptureRecord>>,
-    provisional_writes: bool,
 ) -> Result<SessionBridgeReport, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
     let mut report = SessionBridgeReport::default();
-    let identity_context = IdentityContext::new(summary);
+    let identity_context = IdentityContext::new(config.summary);
     let mut identity_state = IdentityState::default();
     update_identity_report(&mut report, &identity_context, &identity_state);
-    let write_characteristic = characteristic_from_summary(endpoints.write);
-    let notify_characteristic = endpoints.notify.map(characteristic_from_summary);
+    let bindings = BridgeBindings {
+        write_characteristic: characteristic_from_summary(config.endpoints.write),
+        notify_characteristic: config.endpoints.notify.map(characteristic_from_summary),
+    };
     let mut outputs = Vec::new();
     let mut monotonic_ms = 0;
     let max_write_len = Some(peripheral.mtu());
@@ -895,30 +906,30 @@ where
     process_session_outputs(
         SessionOutputContext {
             peripheral,
-            channel,
-            write_characteristic: &write_characteristic,
-            notify_characteristic: notify_characteristic.as_ref(),
+            channel: config.channel,
+            write_characteristic: &bindings.write_characteristic,
+            notify_characteristic: bindings.notify_characteristic.as_ref(),
             report: &mut report,
             capture: capture.as_deref_mut(),
-            provisional_writes,
+            provisional_writes: config.provisional_writes,
         },
         &mut outputs,
         monotonic_ms,
     )
     .await?;
 
-    for command in commands {
+    for command in config.commands {
         monotonic_ms += 1;
         session.handle(SessionInput::Command(*command), &mut outputs);
         process_session_outputs(
             SessionOutputContext {
                 peripheral,
-                channel,
-                write_characteristic: &write_characteristic,
-                notify_characteristic: notify_characteristic.as_ref(),
+                channel: config.channel,
+                write_characteristic: &bindings.write_characteristic,
+                notify_characteristic: bindings.notify_characteristic.as_ref(),
                 report: &mut report,
                 capture: capture.as_deref_mut(),
-                provisional_writes,
+                provisional_writes: config.provisional_writes,
             },
             &mut outputs,
             monotonic_ms,
@@ -931,71 +942,123 @@ where
     process_session_outputs(
         SessionOutputContext {
             peripheral,
-            channel,
-            write_characteristic: &write_characteristic,
-            notify_characteristic: notify_characteristic.as_ref(),
+            channel: config.channel,
+            write_characteristic: &bindings.write_characteristic,
+            notify_characteristic: bindings.notify_characteristic.as_ref(),
             report: &mut report,
             capture: capture.as_deref_mut(),
-            provisional_writes,
+            provisional_writes: config.provisional_writes,
         },
         &mut outputs,
         monotonic_ms,
     )
     .await?;
 
-    if notification_window.is_zero() || notify_characteristic.is_none() {
+    if config.notification_window.is_zero() || bindings.notify_characteristic.is_none() {
         return Ok(report);
     }
 
-    let mut notifications = peripheral.notifications().await?;
+    process_notification_window(
+        NotificationLoopContext {
+            peripheral,
+            channel: config.channel,
+            bindings: &bindings,
+            identity_context: &identity_context,
+            identity_state: &mut identity_state,
+            report: &mut report,
+            capture,
+            provisional_writes: config.provisional_writes,
+        },
+        session,
+        &mut outputs,
+        &mut monotonic_ms,
+        config.notification_window,
+    )
+    .await?;
+
+    Ok(report)
+}
+
+struct BridgeBindings {
+    write_characteristic: Characteristic,
+    notify_characteristic: Option<Characteristic>,
+}
+
+struct NotificationLoopContext<'a, P: ?Sized> {
+    peripheral: &'a P,
+    channel: GattChannel,
+    bindings: &'a BridgeBindings,
+    identity_context: &'a IdentityContext<'a>,
+    identity_state: &'a mut IdentityState,
+    report: &'a mut SessionBridgeReport,
+    capture: Option<&'a mut Vec<SessionCaptureRecord>>,
+    provisional_writes: bool,
+}
+
+async fn process_notification_window<P, S>(
+    mut context: NotificationLoopContext<'_, P>,
+    session: &mut S,
+    outputs: &mut Vec<SessionOutput>,
+    monotonic_ms: &mut u64,
+    notification_window: Duration,
+) -> Result<(), BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    let mut notifications = context.peripheral.notifications().await?;
     let deadline = tokio::time::Instant::now() + notification_window;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match tokio::time::timeout(remaining, notifications.next()).await {
             Ok(Some(notification)) => {
-                monotonic_ms += 1;
-                if let Some(records) = capture.as_deref_mut() {
+                *monotonic_ms += 1;
+                if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Notification {
-                        monotonic_ms,
+                        monotonic_ms: *monotonic_ms,
                         characteristic: notification.uuid,
                         service: notification.service_uuid,
                         bytes: notification.value.clone(),
                     });
                 }
-                record_raw_notification(&mut report, monotonic_ms, &notification);
-                identity_state.observe(&notification.value);
-                update_identity_report(&mut report, &identity_context, &identity_state);
+                record_raw_notification(context.report, *monotonic_ms, &notification);
+                context.identity_state.observe(&notification.value);
+                update_identity_report(
+                    context.report,
+                    context.identity_context,
+                    context.identity_state,
+                );
                 session.handle(
                     SessionInput::Notification {
                         channel: gatt_channel_from_uuid(notification.uuid),
                         bytes: &notification.value,
-                        monotonic_ms,
+                        monotonic_ms: *monotonic_ms,
                     },
-                    &mut outputs,
+                    outputs,
                 );
                 process_session_outputs(
                     SessionOutputContext {
-                        peripheral,
-                        channel,
-                        write_characteristic: &write_characteristic,
-                        notify_characteristic: notify_characteristic.as_ref(),
-                        report: &mut report,
-                        capture: capture.as_deref_mut(),
-                        provisional_writes,
+                        peripheral: context.peripheral,
+                        channel: context.channel,
+                        write_characteristic: &context.bindings.write_characteristic,
+                        notify_characteristic: context.bindings.notify_characteristic.as_ref(),
+                        report: context.report,
+                        capture: context.capture.as_deref_mut(),
+                        provisional_writes: context.provisional_writes,
                     },
-                    &mut outputs,
-                    monotonic_ms,
+                    outputs,
+                    *monotonic_ms,
                 )
                 .await?;
-                report.notifications += 1;
-                report.notification_bytes += notification.value.len();
-                report.latest_notification_len = Some(notification.value.len());
+                context.report.notifications += 1;
+                context.report.notification_bytes += notification.value.len();
+                context.report.latest_notification_len = Some(notification.value.len());
             }
             Ok(None) | Err(_) => break,
         }
     }
 
-    Ok(report)
+    Ok(())
 }
 
 const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Characteristic {
@@ -1765,6 +1828,24 @@ mod tests {
         assert!(identity.evidence.has_advertised_name_hint());
         assert!(identity.evidence.has_gatt_hint());
         assert_eq!(peripheral.writes.lock().expect("write log").len(), 0);
+    }
+
+    #[test]
+    fn identity_context_preserves_advertised_name_and_gatt_roles() {
+        let summary = begode_falcon_summary("Falcon");
+
+        let context = crate::IdentityContext::new(&summary);
+
+        assert_eq!(context.advertised_name, Some("Falcon"));
+        assert_eq!(context.gatt.len(), 1);
+        assert_eq!(
+            context.gatt[0].service,
+            GattChannel::from_bytes(
+                *Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
+            )
+        );
+        assert!(context.gatt[0].roles.supports_write_without_response());
+        assert!(context.gatt[0].roles.supports_notify());
     }
 
     #[tokio::test]
