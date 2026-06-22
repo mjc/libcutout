@@ -25,6 +25,7 @@ pub(crate) struct DashboardState {
     pub(crate) active_tab: usize,
     pub(crate) provenance: Option<&'static str>,
     pub(crate) device: DeviceSnapshot,
+    pub(crate) scan_browser: ScanBrowser,
     pub(crate) telemetry: TelemetryWindow,
     pub(crate) profiles: Vec<ProfileSnapshot>,
     pub(crate) counters: SessionCounters,
@@ -46,6 +47,29 @@ pub(crate) struct ProfileSnapshot {
     pub(crate) source: String,
     pub(crate) status: String,
     pub(crate) family: ProfileFamily,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScanBrowser {
+    pub(crate) filters: TargetFilterSummary,
+    pub(crate) observations: Vec<ScanObservation>,
+    pub(crate) selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct TargetFilterSummary {
+    pub(crate) address: Option<String>,
+    pub(crate) identifier: Option<String>,
+    pub(crate) name_contains: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScanObservation {
+    pub(crate) name: String,
+    pub(crate) address: String,
+    pub(crate) identifier: String,
+    pub(crate) rssi: String,
+    pub(crate) services: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +119,34 @@ impl From<FixtureProfileFamily> for ProfileFamily {
     }
 }
 
+impl ScanBrowser {
+    fn empty() -> Self {
+        Self {
+            filters: TargetFilterSummary::default(),
+            observations: Vec::new(),
+            selected: 0,
+        }
+    }
+
+    fn selected(&self) -> Option<&ScanObservation> {
+        self.observations.get(self.selected)
+    }
+
+    fn push_observation(&mut self, observation: ScanObservation, selected: bool) {
+        if self.observations.len() == HISTORY_LIMIT {
+            self.observations.remove(0);
+            if self.selected > 0 {
+                self.selected -= 1;
+            }
+        }
+
+        self.observations.push(observation);
+        if selected {
+            self.selected = self.observations.len().saturating_sub(1);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SessionCounters {
     pub(crate) discovered: u64,
@@ -137,6 +189,19 @@ pub(crate) enum FixtureEvent {
         identifier: &'static str,
         firmware: &'static str,
         connection_state: &'static str,
+    },
+    ScanFilters {
+        address: Option<&'static str>,
+        identifier: Option<&'static str>,
+        name_contains: Option<&'static str>,
+    },
+    ScanObservation {
+        name: &'static str,
+        address: &'static str,
+        identifier: &'static str,
+        rssi: &'static str,
+        services: &'static str,
+        selected: bool,
     },
     Counters {
         discovered: u64,
@@ -192,6 +257,35 @@ const FIXTURE_DEMO_STEPS: &[FixtureEvent] = &[
         identifier: "platform-0001",
         firmware: "v3.8.12",
         connection_state: "connected",
+    },
+    FixtureEvent::ScanFilters {
+        address: Some("AA:BB:CC:DD:EE:FF"),
+        identifier: Some("platform-0001"),
+        name_contains: Some("Aero"),
+    },
+    FixtureEvent::ScanObservation {
+        name: "Aero NF2557",
+        address: "AA:BB:CC:DD:EE:FF",
+        identifier: "platform-0001",
+        rssi: "-61 dBm",
+        services: "battery, throttle, telemetry",
+        selected: true,
+    },
+    FixtureEvent::ScanObservation {
+        name: "Begode X",
+        address: "11:22:33:44:55:66",
+        identifier: "platform-0202",
+        rssi: "-77 dBm",
+        services: "diagnostics, state",
+        selected: false,
+    },
+    FixtureEvent::ScanObservation {
+        name: "Veteran V14",
+        address: "AA:00:11:22:33:44",
+        identifier: "platform-0303",
+        rssi: "-84 dBm",
+        services: "battery, control",
+        selected: false,
     },
     FixtureEvent::Counters {
         discovered: 8,
@@ -286,6 +380,7 @@ impl DashboardState {
                 firmware: "unknown".to_owned(),
                 connection_state: "scanning".to_owned(),
             },
+            scan_browser: ScanBrowser::empty(),
             telemetry: TelemetryWindow::empty(),
             profiles: Vec::new(),
             counters: SessionCounters::default(),
@@ -320,6 +415,34 @@ impl DashboardState {
                     firmware: firmware.to_owned(),
                     connection_state: connection_state.to_owned(),
                 };
+            }
+            FixtureEvent::ScanFilters {
+                address,
+                identifier,
+                name_contains,
+            } => {
+                self.scan_browser.filters = TargetFilterSummary {
+                    address: address.map(ToOwned::to_owned),
+                    identifier: identifier.map(ToOwned::to_owned),
+                    name_contains: name_contains.map(ToOwned::to_owned),
+                };
+            }
+            FixtureEvent::ScanObservation {
+                name,
+                address,
+                identifier,
+                rssi,
+                services,
+                selected,
+            } => {
+                let observation = ScanObservation {
+                    name: name.to_owned(),
+                    address: address.to_owned(),
+                    identifier: identifier.to_owned(),
+                    rssi: rssi.to_owned(),
+                    services: services.to_owned(),
+                };
+                self.scan_browser.push_observation(observation, selected);
             }
             FixtureEvent::Counters {
                 discovered,
@@ -636,22 +759,25 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(10),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Fill(1),
         ])
         .split(area);
 
+    render_device_browser(frame, chunks[0], state);
+
     render_sparkline(
         frame,
-        chunks[0],
+        chunks[1],
         "Speed",
         &state.telemetry.speed_mph,
         Color::Yellow,
     );
     render_sparkline(
         frame,
-        chunks[1],
+        chunks[2],
         "Voltage",
         &state.telemetry.voltage_v,
         Color::Magenta,
@@ -675,7 +801,78 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         f64::from(u32::try_from(HISTORY_LIMIT).unwrap_or(u32::MAX)),
     ]))
     .y_axis(Axis::default().title("value").bounds([0.0, 100.0]));
-    frame.render_widget(counters, chunks[2]);
+    frame.render_widget(counters, chunks[3]);
+}
+
+fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let browser = &state.scan_browser;
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(vec![
+        Span::styled("filters ", Style::new().fg(Color::Gray)),
+        Span::raw("address "),
+        Span::raw(browser.filters.address.as_deref().unwrap_or("none")),
+        Span::raw(" id "),
+        Span::raw(browser.filters.identifier.as_deref().unwrap_or("none")),
+        Span::raw(" name "),
+        Span::raw(browser.filters.name_contains.as_deref().unwrap_or("none")),
+    ]));
+
+    if let Some(selected) = browser.selected() {
+        lines.push(Line::from(vec![
+            Span::styled("selected ", Style::new().fg(Color::Gray)),
+            Span::raw(selected.name.as_str()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("address ", Style::new().fg(Color::Gray)),
+            Span::raw(selected.address.as_str()),
+            Span::raw(" id "),
+            Span::raw(selected.identifier.as_str()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("rssi ", Style::new().fg(Color::Gray)),
+            Span::raw(selected.rssi.as_str()),
+            Span::raw(" services "),
+            Span::raw(selected.services.as_str()),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("selected ", Style::new().fg(Color::Gray)),
+            Span::raw("none"),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("detail ", Style::new().fg(Color::Gray)),
+            Span::raw("scan observations empty"),
+        ]));
+    }
+
+    lines.push(Line::from(vec![Span::styled(
+        "observations",
+        Style::new().fg(Color::Gray),
+    )]));
+
+    if browser.observations.is_empty() {
+        lines.push(Line::from(vec![Span::raw("no scan observations")]));
+    } else {
+        for observation in browser.observations.iter().take(3) {
+            lines.push(Line::from(vec![
+                Span::raw(observation.name.as_str()),
+                Span::raw(" | "),
+                Span::raw(observation.address.as_str()),
+                Span::raw(" | "),
+                Span::raw(observation.identifier.as_str()),
+                Span::raw(" | "),
+                Span::raw(observation.rssi.as_str()),
+                Span::raw(" | "),
+                Span::raw(observation.services.as_str()),
+            ]));
+        }
+    }
+
+    let panel = Paragraph::new(lines)
+        .block(Block::bordered().title("Device browser"))
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(panel, area);
 }
 
 fn render_sparkline(frame: &mut Frame<'_>, area: Rect, title: &str, samples: &[u64], color: Color) {
@@ -757,6 +954,20 @@ mod tests {
             Some("fixture/demo replay: aero-nf2557.v1")
         );
         assert_eq!(state.device.name, "Aero NF2557");
+        assert_eq!(state.scan_browser.selected, 0);
+        assert_eq!(state.scan_browser.observations.len(), 3);
+        assert_eq!(
+            state.scan_browser.filters.address.as_deref(),
+            Some("AA:BB:CC:DD:EE:FF")
+        );
+        assert_eq!(
+            state.scan_browser.filters.identifier.as_deref(),
+            Some("platform-0001")
+        );
+        assert_eq!(
+            state.scan_browser.filters.name_contains.as_deref(),
+            Some("Aero")
+        );
         assert_eq!(state.profiles.len(), 3);
         assert_eq!(state.logs.len(), 2);
         assert_eq!(
@@ -809,6 +1020,10 @@ mod tests {
             "Target",
             "Battery",
             "Signal",
+            "Device browser",
+            "selected Aero NF2557",
+            "Begode X",
+            "observations",
             "Profiles",
             "Aero/Veteran",
             "Speed",
@@ -837,13 +1052,14 @@ mod tests {
     }
 
     #[test]
-    fn profile_table_shows_pending_family_state() {
+    fn device_browser_shows_multiple_scan_observations() {
         let state = DashboardState::sample();
 
         let buffer = render_buffer(&state, 120, 36);
         let text = buffer_text(&buffer);
 
-        assert!(text.contains("pending"));
+        assert!(text.contains("Begode X"));
+        assert!(text.contains("-77 dBm"));
     }
 
     #[test]
@@ -885,12 +1101,27 @@ mod tests {
     }
 
     #[test]
-    fn profile_table_shows_missing_aero_fields_as_unknown() {
+    fn device_browser_shows_selected_device_details() {
         let state = DashboardState::sample();
 
         let buffer = render_buffer(&state, 120, 36);
         let text = buffer_text(&buffer);
 
-        assert!(text.contains("unknown"));
+        assert!(text.contains("selected Aero NF2557"));
+        assert!(text.contains("platform-0001"));
+        assert!(text.contains("-61 dBm"));
+        assert!(text.contains("battery, throttle, telemetry"));
+    }
+
+    #[test]
+    fn empty_device_browser_renders_no_scan_state() {
+        let state = DashboardState::empty();
+
+        let buffer = render_buffer(&state, 120, 36);
+        let text = buffer_text(&buffer);
+
+        assert!(text.contains("Device browser"));
+        assert!(text.contains("scan observations empty"));
+        assert!(text.contains("no scan observations"));
     }
 }
