@@ -1,17 +1,62 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
-    FirmwareInfo, Measured, MonotonicMillis, RawFieldValue, ReadOnlyResponse, SettingsEntry,
-    SettingsReadback, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
+    BmsLayoutSpec, BmsPageSelectorSpec, FirmwareInfo, Measured, MonotonicMillis, RawFieldValue,
+    ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality, ValueSource,
+    VerificationStatus,
 };
 use thiserror::Error;
 
 use crate::{BatteryVoltageProfile, SAMSUNG_50S_PROFILE, VeteranFrame};
+use crate::{VETERAN_BMS_CELL_VALUES_PER_PAGE, classify_veteran_bms_selector};
 
 /// Samsung 50S profile minimum pack voltage for a NOSFET Aero 30s pack.
 pub const NOSFET_AERO_MIN_VOLTAGE_MV: i32 = 91_000;
 
 /// Samsung 50S profile maximum pack voltage for a NOSFET Aero 30s pack.
 pub const NOSFET_AERO_MAX_VOLTAGE_MV: i32 = 126_000;
+
+const VETERAN_BMS_LAYOUT_VERIFICATION: VerificationStatus = VerificationStatus::Inferred;
+
+const VETERAN_BMS_SELECTOR_VERIFICATION: VerificationStatus = VerificationStatus::SourceVerified;
+
+const VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE_U8: u8 = 6;
+
+const VETERAN_BMS_SELECTORS: [BmsPageSelectorSpec; 9] = [
+    bms_page_selector(0),
+    bms_page_selector(1),
+    bms_page_selector(2),
+    bms_page_selector(3),
+    bms_page_selector(4),
+    bms_page_selector(5),
+    bms_page_selector(6),
+    bms_page_selector(7),
+    bms_page_selector(8),
+];
+
+const VETERAN_BMS_30S_2P_LAYOUT: BmsLayoutSpec = veteran_bms_layout(30, 2);
+const VETERAN_BMS_36S_2P_LAYOUT: BmsLayoutSpec = veteran_bms_layout(36, 2);
+const VETERAN_BMS_36S_4P_LAYOUT: BmsLayoutSpec = veteran_bms_layout(36, 4);
+const VETERAN_BMS_36S_6P_LAYOUT: BmsLayoutSpec = veteran_bms_layout(36, 6);
+const VETERAN_BMS_42S_6P_LAYOUT: BmsLayoutSpec = veteran_bms_layout(42, 6);
+
+const fn bms_page_selector(selector: u8) -> BmsPageSelectorSpec {
+    BmsPageSelectorSpec {
+        selector,
+        kind: classify_veteran_bms_selector(selector),
+        verification: VETERAN_BMS_SELECTOR_VERIFICATION,
+    }
+}
+
+const fn veteran_bms_layout(series_cells: u8, parallel_packs: u8) -> BmsLayoutSpec {
+    BmsLayoutSpec {
+        series_cells,
+        parallel_packs,
+        cell_values_per_page: VETERAN_BMS_CELL_VALUES_PER_PAGE,
+        temperature_values_per_page: VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE_U8,
+        selectors: &VETERAN_BMS_SELECTORS,
+        verification: VETERAN_BMS_LAYOUT_VERIFICATION,
+    }
+}
 
 /// Minimal read-only telemetry decoded from a Veteran/LeaperKim/NOSFET frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,6 +136,9 @@ pub struct VeteranModelProfile {
 
     /// Whether the model family emits smart-BMS pages.
     pub has_smart_bms: bool,
+
+    /// Static smart-BMS layout for model-specific page interpretation.
+    pub bms_layout: Option<&'static BmsLayoutSpec>,
 
     /// Whether horn requires the newer binary `LeaperKim` command frame.
     pub requires_binary_horn: bool,
@@ -176,6 +224,7 @@ impl VeteranModelProfile {
             voltage_range_mv,
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
+            bms_layout: None,
             requires_binary_horn: model_id >= 3,
         }
     }
@@ -199,6 +248,7 @@ impl VeteranModelProfile {
             voltage_range_mv: battery_profile_pack_range(battery_profile, cell_count),
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
+            bms_layout: bms_layout_for_geometry(cell_count, parallel_cells),
             requires_binary_horn: model_id >= 3,
         }
     }
@@ -222,6 +272,20 @@ impl VeteranModelProfile {
         let numerator = (voltage_mv - start) * 100;
         let denominator = end - start;
         u8::try_from((numerator + denominator / 2) / denominator).unwrap_or(100)
+    }
+}
+
+const fn bms_layout_for_geometry(
+    series_cells: u8,
+    parallel_packs: u8,
+) -> Option<&'static BmsLayoutSpec> {
+    match (series_cells, parallel_packs) {
+        (30, 2) => Some(&VETERAN_BMS_30S_2P_LAYOUT),
+        (36, 2) => Some(&VETERAN_BMS_36S_2P_LAYOUT),
+        (36, 4) => Some(&VETERAN_BMS_36S_4P_LAYOUT),
+        (36, 6) => Some(&VETERAN_BMS_36S_6P_LAYOUT),
+        (42, 6) => Some(&VETERAN_BMS_42S_6P_LAYOUT),
+        _ => None,
     }
 }
 
@@ -750,6 +814,56 @@ mod tests {
             assert_eq!(profile.battery_profile, Some(&SAMSUNG_50S_PROFILE));
             assert_eq!(profile.voltage_range_mv, voltage_range_mv);
         }
+    }
+
+    #[test]
+    fn known_veteran_smart_bms_models_expose_static_bms_layouts() {
+        let models = [
+            (4, "Veteran Patton", 30, 2),
+            (5, "Veteran Lynx", 36, 4),
+            (6, "Veteran Sherman L", 36, 6),
+            (7, "Veteran Patton S", 30, 2),
+            (8, "Veteran Oryx", 42, 6),
+            (9, "Veteran Lynx S", 36, 4),
+            (42, "NOSFET Apex", 36, 4),
+            (43, "NOSFET Aero", 30, 2),
+            (44, "NOSFET Aeon", 36, 2),
+        ];
+
+        for (model_id, name, series_cells, parallel_packs) in models {
+            let profile =
+                VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
+            let layout = profile.bms_layout.expect("smart-BMS layout is known");
+
+            assert_eq!(profile.name, name);
+            assert_eq!(layout.series_cells, series_cells);
+            assert_eq!(layout.parallel_packs, parallel_packs);
+            assert_eq!(layout.cell_values_per_page, 15);
+            assert_eq!(layout.temperature_values_per_page, 6);
+            assert_eq!(layout.verification, VerificationStatus::Inferred);
+        }
+    }
+
+    #[test]
+    fn aero_bms_layout_preserves_conservative_selector_map() {
+        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let layout = aero.bms_layout.expect("Aero smart-BMS layout is known");
+
+        assert_eq!(layout.selectors, &VETERAN_BMS_SELECTORS);
+        assert_eq!(
+            layout.selectors[0].kind,
+            cutout_core::BatteryPageKind::Metadata
+        );
+        assert_eq!(
+            layout.selectors[1].kind,
+            cutout_core::BatteryPageKind::CellVoltage
+        );
+        assert_eq!(layout.selectors[3].kind, cutout_core::BatteryPageKind::Raw);
+        assert_eq!(layout.selectors[8].kind, cutout_core::BatteryPageKind::Raw);
+        assert_eq!(
+            layout.selectors[3].verification,
+            VerificationStatus::SourceVerified
+        );
     }
 
     #[test]

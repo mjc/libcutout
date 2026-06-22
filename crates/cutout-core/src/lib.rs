@@ -276,6 +276,41 @@ pub struct BatterySpec {
     pub verification: VerificationStatus,
 }
 
+/// Static BMS selector interpretation for a registry entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BmsPageSelectorSpec {
+    /// BMS page selector value.
+    pub selector: u8,
+
+    /// Current interpretation of the selector.
+    pub kind: BatteryPageKind,
+
+    /// Verification status for this selector interpretation.
+    pub verification: VerificationStatus,
+}
+
+/// Static BMS layout metadata for a registry entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BmsLayoutSpec {
+    /// Series-connected cell count covered by this BMS layout.
+    pub series_cells: u8,
+
+    /// Parallel pack count for this model.
+    pub parallel_packs: u8,
+
+    /// Cell-voltage values decoded from a full cell-voltage page.
+    pub cell_values_per_page: u8,
+
+    /// Temperature values decoded from a full temperature page.
+    pub temperature_values_per_page: u8,
+
+    /// Static selector interpretation table.
+    pub selectors: &'static [BmsPageSelectorSpec],
+
+    /// Verification status for the layout geometry.
+    pub verification: VerificationStatus,
+}
+
 /// Observed roles for a GATT characteristic.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct GattRoles(u8);
@@ -391,6 +426,9 @@ pub struct ModelRegistryEntry {
     /// Battery metadata when known.
     pub battery: Option<BatterySpec>,
 
+    /// BMS layout metadata when known.
+    pub bms: Option<BmsLayoutSpec>,
+
     /// Observed GATT fingerprints.
     pub gatt: &'static [GattFingerprint],
 
@@ -448,6 +486,7 @@ impl RegistryHashBuilder {
         self.write_strs(entry.advertised_name_hints);
         self.write_verified_u16(entry.wire_model_id);
         self.write_battery(entry.battery.as_ref());
+        self.write_bms(entry.bms.as_ref());
         self.write_gatt(entry.gatt);
         self.write_capabilities(entry.capabilities);
         self.write_u8(verification_code(entry.verification));
@@ -480,6 +519,26 @@ impl RegistryHashBuilder {
                 self.write_u32(*battery.voltage_range_mv.start());
                 self.write_u32(*battery.voltage_range_mv.end());
                 self.write_u8(verification_code(battery.verification));
+            }
+            None => self.write_u8(0),
+        }
+    }
+
+    fn write_bms(&mut self, bms: Option<&BmsLayoutSpec>) {
+        match bms {
+            Some(bms) => {
+                self.write_u8(1);
+                self.write_u8(bms.series_cells);
+                self.write_u8(bms.parallel_packs);
+                self.write_u8(bms.cell_values_per_page);
+                self.write_u8(bms.temperature_values_per_page);
+                self.write_usize(bms.selectors.len());
+                for selector in bms.selectors {
+                    self.write_u8(selector.selector);
+                    self.write_u8(battery_page_kind_code(selector.kind));
+                    self.write_u8(verification_code(selector.verification));
+                }
+                self.write_u8(verification_code(bms.verification));
             }
             None => self.write_u8(0),
         }
@@ -597,6 +656,15 @@ const fn gatt_roles_code(roles: GattRoles) -> u8 {
         bits |= 1 << 4;
     }
     bits
+}
+
+const fn battery_page_kind_code(kind: BatteryPageKind) -> u8 {
+    match kind {
+        BatteryPageKind::Metadata => 1,
+        BatteryPageKind::CellVoltage => 2,
+        BatteryPageKind::Temperature => 3,
+        BatteryPageKind::Raw => 4,
+    }
 }
 
 /// Current command capabilities for a resolved device/session.
@@ -3209,6 +3277,25 @@ mod tests {
                 voltage_range_mv: 99_180..=123_370,
                 verification: VerificationStatus::SourceAndHardwareVerified,
             }),
+            bms: Some(crate::BmsLayoutSpec {
+                series_cells: 30,
+                parallel_packs: 2,
+                cell_values_per_page: 15,
+                temperature_values_per_page: 6,
+                selectors: &[
+                    crate::BmsPageSelectorSpec {
+                        selector: 0,
+                        kind: crate::BatteryPageKind::Metadata,
+                        verification: VerificationStatus::HardwareVerified,
+                    },
+                    crate::BmsPageSelectorSpec {
+                        selector: 1,
+                        kind: crate::BatteryPageKind::CellVoltage,
+                        verification: VerificationStatus::HardwareVerified,
+                    },
+                ],
+                verification: VerificationStatus::HardwareVerified,
+            }),
             gatt: &AERO_GATT,
             capabilities: crate::Capabilities::from_supported_commands([
                 crate::CommandKind::RequestIdentity,
@@ -3241,6 +3328,12 @@ mod tests {
         assert!(entry.gatt[0].roles.supports_write_without_response());
         assert!(entry.gatt[0].roles.supports_notify());
         assert!(!entry.gatt[0].roles.supports_indicate());
+        let bms = entry
+            .bms
+            .expect("Aero registry entry should carry BMS layout");
+        assert_eq!(bms.series_cells, 30);
+        assert_eq!(bms.parallel_packs, 2);
+        assert_eq!(bms.selectors[1].kind, crate::BatteryPageKind::CellVoltage);
     }
 
     #[test]
@@ -3264,6 +3357,59 @@ mod tests {
         );
     }
 
+    #[test]
+    fn registry_hash_changes_when_bms_layout_changes() {
+        let without_bms = sample_registry_entry("NOSFET", "Aero");
+        let with_bms = sample_registry_entry_with_bms("NOSFET", "Aero", 30, 2);
+
+        assert_ne!(
+            crate::registry_entries_hash(&[&without_bms]),
+            crate::registry_entries_hash(&[&with_bms])
+        );
+    }
+
+    #[test]
+    fn bms_layout_spec_preserves_static_selector_map() {
+        const SELECTORS: [crate::BmsPageSelectorSpec; 4] = [
+            crate::BmsPageSelectorSpec {
+                selector: 0,
+                kind: crate::BatteryPageKind::Metadata,
+                verification: VerificationStatus::HardwareVerified,
+            },
+            crate::BmsPageSelectorSpec {
+                selector: 1,
+                kind: crate::BatteryPageKind::CellVoltage,
+                verification: VerificationStatus::HardwareVerified,
+            },
+            crate::BmsPageSelectorSpec {
+                selector: 3,
+                kind: crate::BatteryPageKind::Raw,
+                verification: VerificationStatus::SourceVerified,
+            },
+            crate::BmsPageSelectorSpec {
+                selector: 8,
+                kind: crate::BatteryPageKind::Raw,
+                verification: VerificationStatus::SourceVerified,
+            },
+        ];
+        let layout = crate::BmsLayoutSpec {
+            series_cells: 30,
+            parallel_packs: 2,
+            cell_values_per_page: 15,
+            temperature_values_per_page: 6,
+            selectors: &SELECTORS,
+            verification: VerificationStatus::HardwareVerified,
+        };
+
+        assert_eq!(layout.selectors.len(), 4);
+        assert_eq!(layout.selectors[2].selector, 3);
+        assert_eq!(layout.selectors[2].kind, crate::BatteryPageKind::Raw);
+        assert_eq!(
+            layout.selectors[2].verification,
+            VerificationStatus::SourceVerified
+        );
+    }
+
     fn sample_registry_entry(
         manufacturer: &'static str,
         model: &'static str,
@@ -3284,6 +3430,7 @@ mod tests {
             advertised_name_hints: &["NF"],
             wire_model_id: None,
             battery: None,
+            bms: None,
             gatt: &SAMPLE_GATT,
             capabilities: crate::Capabilities::from_supported_commands([
                 crate::CommandKind::RequestIdentity,
@@ -3291,6 +3438,29 @@ mod tests {
             ]),
             verification: VerificationStatus::Inferred,
         }
+    }
+
+    fn sample_registry_entry_with_bms(
+        manufacturer: &'static str,
+        model: &'static str,
+        series_cells: u8,
+        parallel_packs: u8,
+    ) -> crate::ModelRegistryEntry {
+        const SELECTORS: [crate::BmsPageSelectorSpec; 1] = [crate::BmsPageSelectorSpec {
+            selector: 1,
+            kind: crate::BatteryPageKind::CellVoltage,
+            verification: VerificationStatus::SourceVerified,
+        }];
+        let mut entry = sample_registry_entry(manufacturer, model);
+        entry.bms = Some(crate::BmsLayoutSpec {
+            series_cells,
+            parallel_packs,
+            cell_values_per_page: 15,
+            temperature_values_per_page: 6,
+            selectors: &SELECTORS,
+            verification: VerificationStatus::Inferred,
+        });
+        entry
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry 
         voltage_range_mv: 60_000..=84_000,
         verification: VerificationStatus::Inferred,
     }),
+    bms: None,
     gatt: &BEGODE_FALCON_GATT,
     capabilities: Capabilities::from_supported_commands([
         CommandKind::RequestIdentity,
