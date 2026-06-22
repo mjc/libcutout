@@ -26,11 +26,13 @@ pub use begode_telemetry::{
     BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BEGODE_FIELD_ALERT_FLAGS,
     BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
     BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeCapacityEvidence,
-    BegodeCapacitySelection, BegodeExtraTelemetry, BegodeLiveATelemetry, BegodeLiveBTelemetry,
+    BegodeCapacitySelection, BegodeCellModel, BegodeExtraTelemetry, BegodeLiveATelemetry,
+    BegodeLiveBTelemetry, BegodePackLayoutEvidence, BegodePackLayoutSelection,
     BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
     BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
     estimate_begode_battery_percent, select_begode_pack_capacity_from_annotations,
-    select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
+    select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
+    select_begode_pack_voltage_profile_from_annotations,
 };
 mod battery_profile;
 pub use battery_profile::{

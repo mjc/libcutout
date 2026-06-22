@@ -26,8 +26,9 @@ use cutout_core::{
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeBmsSummary, BegodeCapacityEvidence,
     BegodeCapacitySelection, BegodeFalconModel, BegodeFrame, BegodeNotificationDecoder,
-    BegodeVoltageEvidence, BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession,
-    VETERAN_DATA_CHANNEL, select_begode_pack_capacity_from_annotations,
+    BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeVoltageEvidence,
+    BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
+    select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
     select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
 };
 use tracing::info;
@@ -146,6 +147,7 @@ struct PevcapReplayReport {
     telemetry_snapshot: TelemetrySnapshot,
     firmware: Option<FirmwareInfo>,
     capacity: BegodeCapacitySelection,
+    layout: BegodePackLayoutSelection,
     diagnostic_snapshots: Vec<DiagnosticSnapshot>,
     diagnostic_errors: Vec<DiagnosticError>,
     read_only_response_events: Vec<ReadOnlyResponse>,
@@ -166,6 +168,7 @@ fn replay_pevcap_capture(
     };
     report.capacity =
         select_begode_pack_capacity_from_annotations(capture.header.annotations.iter());
+    report.layout = select_begode_pack_layout_from_annotations(capture.header.annotations.iter());
     Ok(report)
 }
 
@@ -265,6 +268,7 @@ fn summarize_pevcap_replay(
         telemetry_snapshot: TelemetrySnapshot::default(),
         firmware: None,
         capacity: BegodeCapacitySelection::Missing,
+        layout: BegodePackLayoutSelection::Missing,
         diagnostic_snapshots: Vec::new(),
         diagnostic_errors: Vec::new(),
         read_only_response_events: Vec::new(),
@@ -381,6 +385,7 @@ fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
         report.chunk_arbitrary_matches
     );
     append_capacity_evidence(&mut rendered, report.capacity);
+    append_layout_evidence(&mut rendered, report.layout);
     rendered
 }
 
@@ -402,6 +407,31 @@ fn append_selected_capacity_evidence(rendered: &mut String, evidence: BegodeCapa
     if let Some(reported_wh) = evidence.reported_wh {
         rendered.push_str(" capacity_reported_wh=");
         rendered.push_str(&reported_wh.to_string());
+    }
+}
+
+fn append_layout_evidence(rendered: &mut String, layout: BegodePackLayoutSelection) {
+    match layout {
+        BegodePackLayoutSelection::Missing => {}
+        BegodePackLayoutSelection::Conflicting => rendered.push_str(" layout_conflict=true"),
+        BegodePackLayoutSelection::Selected(evidence) => {
+            append_selected_layout_evidence(rendered, evidence);
+        }
+    }
+}
+
+fn append_selected_layout_evidence(rendered: &mut String, evidence: BegodePackLayoutEvidence) {
+    if let Some(cell_model) = evidence.cell_model {
+        rendered.push_str(" layout_cell_model=");
+        rendered.push_str(cell_model.label());
+    }
+    if let Some(series_cells) = evidence.series_cells {
+        rendered.push_str(" layout_series_cells=");
+        rendered.push_str(&series_cells.to_string());
+    }
+    if let Some(parallel_count) = evidence.parallel_count {
+        rendered.push_str(" layout_parallel_count=");
+        rendered.push_str(&parallel_count.to_string());
     }
 }
 
@@ -2039,6 +2069,7 @@ mod tests {
             telemetry_snapshot: TelemetrySnapshot::default(),
             firmware: None,
             capacity: BegodeCapacitySelection::Missing,
+            layout: BegodePackLayoutSelection::Missing,
             diagnostic_snapshots: Vec::new(),
             diagnostic_errors: Vec::new(),
             read_only_response_events: Vec::new(),
@@ -2452,6 +2483,58 @@ mod tests {
             .expect("capacity conflict does not block voltage replay");
 
         assert!(render_pevcap_replay_report(&report).contains("capacity_conflict=true"));
+    }
+
+    #[test]
+    fn pevcap_replay_report_renders_explicit_falcon_pack_layout_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&[
+            "battery=84v",
+            "cell_model=Samsung 50S",
+            "series_cells=20",
+            "parallel_count=1",
+        ]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile).expect("voltage evidence is present");
+
+        assert!(render_pevcap_replay_report(&report).contains(
+            "layout_cell_model=Samsung 50S layout_series_cells=20 layout_parallel_count=1"
+        ));
+    }
+
+    #[test]
+    fn pevcap_replay_report_renders_conflicting_falcon_pack_layout_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&[
+            "battery=84v",
+            "series_cells=20",
+            "series_cells=24",
+        ]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile)
+            .expect("layout conflict does not block replay");
+
+        assert!(render_pevcap_replay_report(&report).contains("layout_conflict=true"));
+    }
+
+    #[test]
+    fn pevcap_replay_does_not_treat_falcon_pack_layout_as_voltage_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&[
+            "cell_model=Samsung 50S",
+            "series_cells=20",
+            "parallel_count=1",
+        ]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+
+        let error = replay_pevcap_capture(&capture, profile)
+            .expect_err("layout evidence alone should not select voltage profile");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires explicit Falcon battery voltage evidence")
+        );
     }
 
     #[test]

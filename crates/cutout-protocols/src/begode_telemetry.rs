@@ -166,6 +166,49 @@ pub enum BegodeCapacitySelection {
     Selected(BegodeCapacityEvidence),
 }
 
+/// Explicit Begode cell model evidence from capture/app/pack labels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodeCellModel {
+    /// Samsung INR21700-50S cells.
+    Samsung50S,
+}
+
+impl BegodeCellModel {
+    /// Stable display label for this cell model.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Samsung50S => "Samsung 50S",
+        }
+    }
+}
+
+/// Explicit Begode pack-layout evidence from capture/app/pack labels.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodePackLayoutEvidence {
+    /// Cell model, when explicitly reported.
+    pub cell_model: Option<BegodeCellModel>,
+
+    /// Series cell count, when explicitly reported.
+    pub series_cells: Option<u8>,
+
+    /// Parallel cell count, when explicitly reported.
+    pub parallel_count: Option<u8>,
+}
+
+/// Result of selecting Begode pack-layout evidence from explicit inputs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodePackLayoutSelection {
+    /// No explicit layout evidence was present.
+    Missing,
+
+    /// Evidence contained conflicting layout values.
+    Conflicting,
+
+    /// Evidence selected a non-conflicting layout record.
+    Selected(BegodePackLayoutEvidence),
+}
+
 impl BegodePackVoltageProfile {
     const fn scaler_milli(self) -> i32 {
         match self {
@@ -275,6 +318,29 @@ where
         })
 }
 
+/// Selects Begode pack-layout evidence from capture/app annotations.
+#[must_use]
+pub fn select_begode_pack_layout_from_annotations<I, A>(annotations: I) -> BegodePackLayoutSelection
+where
+    I: IntoIterator<Item = A>,
+    A: AsRef<str>,
+{
+    annotations
+        .into_iter()
+        .filter_map(|annotation| layout_evidence_from_annotation(annotation.as_ref()))
+        .try_fold(BegodePackLayoutEvidence::default(), merge_layout_evidence)
+        .map_or(BegodePackLayoutSelection::Conflicting, |evidence| {
+            if evidence.cell_model.is_some()
+                || evidence.series_cells.is_some()
+                || evidence.parallel_count.is_some()
+            {
+                BegodePackLayoutSelection::Selected(evidence)
+            } else {
+                BegodePackLayoutSelection::Missing
+            }
+        })
+}
+
 fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvidence> {
     let (key, value) = annotation.split_once('=')?;
     match key.trim() {
@@ -306,6 +372,44 @@ fn capacity_evidence_from_annotation(annotation: &str) -> Option<BegodeCapacityE
     }
 }
 
+fn layout_evidence_from_annotation(annotation: &str) -> Option<BegodePackLayoutEvidence> {
+    let (key, value) = annotation.split_once('=')?;
+    match key.trim() {
+        "cell_model" | "pack_cell_model" => cell_model_evidence(value),
+        "series_cells" | "pack_series_cells" => {
+            parse_u8_evidence(value).map(|series_cells| BegodePackLayoutEvidence {
+                cell_model: None,
+                series_cells: Some(series_cells),
+                parallel_count: None,
+            })
+        }
+        "parallel_count" | "parallel_cells" | "parallel_packs" | "pack_parallel_count" => {
+            parse_u8_evidence(value).map(|parallel_count| BegodePackLayoutEvidence {
+                cell_model: None,
+                series_cells: None,
+                parallel_count: Some(parallel_count),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn cell_model_evidence(value: &str) -> Option<BegodePackLayoutEvidence> {
+    let value = value.trim();
+    if eq_ignore_ascii_case(value, "samsung 50s")
+        || eq_ignore_ascii_case(value, "samsung50s")
+        || eq_ignore_ascii_case(value, "50s")
+    {
+        Some(BegodePackLayoutEvidence {
+            cell_model: Some(BegodeCellModel::Samsung50S),
+            series_cells: None,
+            parallel_count: None,
+        })
+    } else {
+        None
+    }
+}
+
 fn voltage_class_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
     let value = value
         .trim()
@@ -332,6 +436,10 @@ fn parse_mv_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
         .parse::<u32>()
         .ok()
         .map(BegodeVoltageEvidence::ObservedPackVoltageMv)
+}
+
+fn parse_u8_evidence(value: &str) -> Option<u8> {
+    value.trim().parse::<u8>().ok()
 }
 
 fn eq_ignore_ascii_case(left: &str, right: &str) -> bool {
@@ -382,6 +490,38 @@ fn merge_capacity_evidence(
         )?,
         reported_wh: merge_optional_u32(selected.reported_wh, evidence.reported_wh)?,
     })
+}
+
+fn merge_layout_evidence(
+    selected: BegodePackLayoutEvidence,
+    evidence: BegodePackLayoutEvidence,
+) -> Result<BegodePackLayoutEvidence, ()> {
+    Ok(BegodePackLayoutEvidence {
+        cell_model: merge_optional_cell_model(selected.cell_model, evidence.cell_model)?,
+        series_cells: merge_optional_u8(selected.series_cells, evidence.series_cells)?,
+        parallel_count: merge_optional_u8(selected.parallel_count, evidence.parallel_count)?,
+    })
+}
+
+const fn merge_optional_cell_model(
+    left: Option<BegodeCellModel>,
+    right: Option<BegodeCellModel>,
+) -> Result<Option<BegodeCellModel>, ()> {
+    match (left, right) {
+        (None, None) => Ok(None),
+        (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
+        (Some(left), Some(right)) if left as u8 == right as u8 => Ok(Some(left)),
+        (Some(_), Some(_)) => Err(()),
+    }
+}
+
+const fn merge_optional_u8(left: Option<u8>, right: Option<u8>) -> Result<Option<u8>, ()> {
+    match (left, right) {
+        (None, None) => Ok(None),
+        (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
+        (Some(left), Some(right)) if left == right => Ok(Some(left)),
+        (Some(_), Some(_)) => Err(()),
+    }
 }
 
 const fn merge_optional_u32(left: Option<u32>, right: Option<u32>) -> Result<Option<u32>, ()> {
@@ -843,9 +983,10 @@ fn percent_from_i32(percent: i32) -> u8 {
 mod tests {
     use super::{
         BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeCapacityEvidence, BegodeCapacitySelection,
+        BegodeCellModel, BegodePackLayoutEvidence, BegodePackLayoutSelection,
         BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
-        select_begode_pack_capacity_from_annotations, select_begode_pack_voltage_profile,
-        select_begode_pack_voltage_profile_from_annotations,
+        select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
+        select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
     };
     use crate::{
         BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -1289,6 +1430,70 @@ mod tests {
         assert_eq!(
             select_begode_pack_capacity_from_annotations(["reported_wh=672", "reported_wh=900",]),
             BegodeCapacitySelection::Conflicting
+        );
+    }
+
+    #[test]
+    fn pack_layout_evidence_from_annotations_parses_explicit_layout_values() {
+        assert_eq!(
+            select_begode_pack_layout_from_annotations([
+                "cell_model=Samsung 50S",
+                "series_cells=20",
+                "parallel_count=1",
+            ]),
+            BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                cell_model: Some(BegodeCellModel::Samsung50S),
+                series_cells: Some(20),
+                parallel_count: Some(1),
+            })
+        );
+    }
+
+    #[test]
+    fn pack_layout_evidence_accepts_common_cell_model_spellings() {
+        for annotation in ["cell_model=Samsung50S", "cell_model=50s"] {
+            assert_eq!(
+                select_begode_pack_layout_from_annotations([annotation]),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: None,
+                    parallel_count: None,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn pack_layout_evidence_from_annotations_reports_missing_and_conflicts() {
+        assert_eq!(
+            select_begode_pack_layout_from_annotations(["battery=84v", "reported_wh=672"]),
+            BegodePackLayoutSelection::Missing
+        );
+        assert_eq!(
+            select_begode_pack_layout_from_annotations(["series_cells=20", "series_cells=24"]),
+            BegodePackLayoutSelection::Conflicting
+        );
+        assert_eq!(
+            select_begode_pack_layout_from_annotations(["parallel_count=1", "parallel_cells=2",]),
+            BegodePackLayoutSelection::Conflicting
+        );
+    }
+
+    #[test]
+    fn pack_layout_evidence_does_not_select_voltage_or_capacity() {
+        let annotations = [
+            "cell_model=Samsung 50S",
+            "series_cells=20",
+            "parallel_count=1",
+        ];
+
+        assert_eq!(
+            select_begode_pack_voltage_profile_from_annotations(annotations),
+            BegodeVoltageProfileSelection::Missing
+        );
+        assert_eq!(
+            select_begode_pack_capacity_from_annotations(annotations),
+            BegodeCapacitySelection::Missing
         );
     }
 
