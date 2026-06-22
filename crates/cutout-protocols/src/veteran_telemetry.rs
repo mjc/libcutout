@@ -1,13 +1,16 @@
 use cutout_core::{Measured, MonotonicMillis, TelemetryDelta};
 use thiserror::Error;
 
-use crate::VeteranFrame;
+use crate::{SAMSUNG_50S_30S2P_PROFILE, VeteranFrame};
 
-/// Capture-backed minimum pack voltage for a NOSFET Aero 30s pack.
-pub const NOSFET_AERO_MIN_VOLTAGE_MV: i32 = 99_180;
+/// Minimum pack voltage for the Samsung 50S 30s2p profile used by NOSFET Aero.
+pub const NOSFET_AERO_MIN_VOLTAGE_MV: i32 = SAMSUNG_50S_30S2P_PROFILE.empty.voltage_mv;
 
-/// Capture-backed maximum pack voltage for a NOSFET Aero 30s pack.
-pub const NOSFET_AERO_MAX_VOLTAGE_MV: i32 = 123_370;
+/// Maximum pack voltage for the Samsung 50S 30s2p profile used by NOSFET Aero.
+pub const NOSFET_AERO_MAX_VOLTAGE_MV: i32 = SAMSUNG_50S_30S2P_PROFILE.full.voltage_mv;
+
+/// Hardware-observed Samsung 50S 30s2p calibration point from the NOSFET app.
+pub const NOSFET_AERO_CALIBRATED_45_PERCENT_MV: i32 = SAMSUNG_50S_30S2P_PROFILE.midpoint.voltage_mv;
 
 /// Minimal read-only telemetry decoded from a Veteran/LeaperKim/NOSFET frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,19 +160,10 @@ impl VeteranFirmwareVersion {
     }
 }
 
-/// Estimates Aero battery percent from the capture-backed 30s voltage range.
+/// Estimates Aero battery percent using the Samsung 50S 30s2p battery profile.
 #[must_use]
 pub fn estimate_nosfet_aero_battery_percent(voltage_mv: i32) -> u8 {
-    if voltage_mv <= NOSFET_AERO_MIN_VOLTAGE_MV {
-        return 0;
-    }
-    if voltage_mv >= NOSFET_AERO_MAX_VOLTAGE_MV {
-        return 100;
-    }
-
-    let numerator = (voltage_mv - NOSFET_AERO_MIN_VOLTAGE_MV) * 100;
-    let denominator = NOSFET_AERO_MAX_VOLTAGE_MV - NOSFET_AERO_MIN_VOLTAGE_MV;
-    u8::try_from(numerator / denominator).unwrap_or(100)
+    SAMSUNG_50S_30S2P_PROFILE.estimate_percent(voltage_mv)
 }
 
 fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
@@ -253,7 +247,7 @@ mod tests {
                 pedals_mode: 1_920,
                 pitch_mdeg: 69_060,
                 hardware_pwm_raw: 0,
-                battery_percent_estimated: 39,
+                battery_percent_estimated: 47,
             }
         );
     }
@@ -262,7 +256,7 @@ mod tests {
     fn veteran_telemetry_estimates_live_aero_battery_percent() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
-        assert_eq!(telemetry.battery_percent_estimated, 39);
+        assert_eq!(telemetry.battery_percent_estimated, 47);
     }
 
     #[test]
@@ -274,6 +268,14 @@ mod tests {
         assert_eq!(
             estimate_nosfet_aero_battery_percent(NOSFET_AERO_MAX_VOLTAGE_MV + 1),
             100
+        );
+    }
+
+    #[test]
+    fn aero_battery_percent_estimate_uses_hardware_observed_midpoint() {
+        assert_eq!(
+            estimate_nosfet_aero_battery_percent(NOSFET_AERO_CALIBRATED_45_PERCENT_MV),
+            45
         );
     }
 
@@ -296,7 +298,7 @@ mod tests {
         assert_eq!(delta.pitch_mdeg, Some(Measured::reported(69_060)));
         assert_eq!(
             delta.battery_percent_estimated,
-            Some(Measured::estimated(39))
+            Some(Measured::estimated(47))
         );
     }
 
