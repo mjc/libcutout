@@ -295,6 +295,22 @@ pub(crate) struct RawSubscribeArgs {
     #[arg(long, value_name = "UUID")]
     pub(crate) characteristic: Option<Uuid>,
 
+    /// Standard capture scenario label stored in PEVCAP metadata.
+    #[arg(long = "capture-label", value_enum)]
+    pub(crate) capture_label: Option<CaptureLabelArg>,
+
+    /// Capture privacy marker stored in PEVCAP metadata.
+    #[arg(long = "capture-privacy", value_enum)]
+    pub(crate) capture_privacy: Option<CapturePrivacyArg>,
+
+    /// Capture evidence marker stored in PEVCAP metadata.
+    #[arg(long = "capture-evidence", value_enum)]
+    pub(crate) capture_evidence: Option<CaptureEvidenceArg>,
+
+    /// Capture redistribution marker stored in PEVCAP metadata.
+    #[arg(long = "capture-distribution", value_enum)]
+    pub(crate) capture_distribution: Option<CaptureDistributionArg>,
+
     /// Optional PEVCAP output path for the raw notification capture.
     #[arg(long = "pevcap-output", value_name = "PATH")]
     pub(crate) pevcap_output: Option<PathBuf>,
@@ -748,6 +764,10 @@ mod tests {
                 },
                 scan: ScanArgs { seconds: 7 },
                 characteristic: Some(Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb)),
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
             })
@@ -780,10 +800,46 @@ mod tests {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
                 characteristic: None,
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: Some(PathBuf::from("raw.pevcap")),
                 pevcap_format: PevcapFormat::Binary,
             })
         );
+    }
+
+    #[test]
+    fn parses_subscribe_raw_command_with_capture_annotations() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "subscribe-raw",
+            "--name-contains",
+            "Unknown PEV",
+            "--capture-label",
+            "powered-on-stationary",
+            "--capture-privacy",
+            "private",
+            "--capture-evidence",
+            "hardware-tested",
+        ])
+        .expect("parser accepts raw capture provenance annotations");
+
+        let Command::SubscribeRaw(args) = cli.command else {
+            panic!("expected subscribe-raw command");
+        };
+
+        assert_eq!(
+            args.capture_label,
+            Some(CaptureLabelArg::PoweredOnStationary)
+        );
+        assert_eq!(args.capture_privacy, Some(CapturePrivacyArg::Private));
+        assert_eq!(
+            args.capture_evidence,
+            Some(CaptureEvidenceArg::HardwareTested)
+        );
+        assert_eq!(args.capture_distribution, None);
     }
 
     #[test]

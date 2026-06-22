@@ -464,6 +464,7 @@ async fn scan(seconds: u64) -> Result<(), BtleError> {
 async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
     let seconds = args.seconds();
     let requested = args.characteristic;
+    let annotations = raw_capture_annotations(&args);
     let RawSubscribeArgs {
         target,
         pevcap_output,
@@ -491,12 +492,14 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
     .await?;
     match output {
         Some((path, format)) => {
+            let annotation_refs: Vec<&str> = annotations.iter().map(String::as_str).collect();
             let bytes = encode_raw_capture_pevcap(
                 &records,
                 &connection.summary,
                 Some(connection.peripheral.mtu()),
                 format,
                 capture_wall_clock_unix_ms(),
+                annotation_refs.as_slice(),
             )?;
             fs::write(&path, bytes)?;
             println!("wrote raw pevcap {} ({format:?})", path.display());
@@ -514,6 +517,26 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn raw_capture_annotations(args: &RawSubscribeArgs) -> Vec<String> {
+    [
+        args.capture_label
+            .map(CaptureSessionLabel::from)
+            .map(CaptureSessionLabel::annotation),
+        args.capture_privacy
+            .map(CapturePrivacy::from)
+            .map(CapturePrivacy::annotation),
+        args.capture_evidence
+            .map(CaptureEvidence::from)
+            .map(CaptureEvidence::annotation),
+        args.capture_distribution
+            .map(CaptureDistribution::from)
+            .map(CaptureDistribution::annotation),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn encode_hex(bytes: &[u8]) -> String {
@@ -877,6 +900,7 @@ fn encode_raw_capture_pevcap(
     write_limit: Option<u16>,
     format: PevcapFormat,
     wall_clock_start_unix_ms: u64,
+    annotations: &[&str],
 ) -> Result<Vec<u8>> {
     let advertised_services = summary
         .observation
@@ -897,6 +921,9 @@ fn encode_raw_capture_pevcap(
             )
         })
         .collect();
+    let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
+    capture_annotations.push("cutout-cli subscribe-raw");
+    capture_annotations.extend_from_slice(annotations);
     let header = PevcapHeader::new(
         wall_clock_start_unix_ms,
         std::env::consts::OS,
@@ -906,7 +933,7 @@ fn encode_raw_capture_pevcap(
         None,
         env!("CARGO_PKG_VERSION"),
         cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
-        &["cutout-cli subscribe-raw"],
+        capture_annotations.as_slice(),
     )?;
     Ok(PevcapCapture::new(header, pevcap_records).encode(pevcap_encoding(format))?)
 }
@@ -1577,9 +1604,18 @@ mod tests {
             bytes: vec![0xde, 0xad, 0xbe, 0xef],
         }];
 
-        let bytes =
-            encode_raw_capture_pevcap(&records, &summary, Some(185), PevcapFormat::Binary, 99)
-                .expect("raw capture encodes");
+        let bytes = encode_raw_capture_pevcap(
+            &records,
+            &summary,
+            Some(185),
+            PevcapFormat::Binary,
+            99,
+            &[
+                "capture_label=powered_on_stationary",
+                "capture_privacy=private",
+            ],
+        )
+        .expect("raw capture encodes");
         let decoded =
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
@@ -1593,7 +1629,11 @@ mod tests {
         assert_eq!(decoded.header.resolved_identity, None);
         assert_eq!(
             decoded.header.annotations.as_slice(),
-            &["cutout-cli subscribe-raw".to_owned()]
+            &[
+                "cutout-cli subscribe-raw".to_owned(),
+                "capture_label=powered_on_stationary".to_owned(),
+                "capture_privacy=private".to_owned(),
+            ]
         );
         assert_eq!(decoded.records.len(), 1);
         assert_eq!(decoded.records[0].bytes, [0xde, 0xad, 0xbe, 0xef]);
