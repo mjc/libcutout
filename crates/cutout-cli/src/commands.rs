@@ -18,14 +18,16 @@ use cutout_core::{
     BatteryInfo, BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
     CapturePrivacy, CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
-    ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput, SettingsReadback,
-    TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
+    PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
+    PevcapResolvedIdentity, ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput,
+    SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+    VerifiedValue,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel,
-    BegodeNotificationDecoder, BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession,
-    VETERAN_DATA_CHANNEL, select_begode_pack_voltage_profile_from_annotations,
+    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeBmsSummary, BegodeFalconModel,
+    BegodeFrame, BegodeNotificationDecoder, BegodeVoltageEvidence, BegodeVoltageProfileSelection,
+    NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL, select_begode_pack_voltage_profile,
+    select_begode_pack_voltage_profile_from_annotations,
 };
 use tracing::info;
 
@@ -166,7 +168,7 @@ fn replay_pevcap_capture(
 fn falcon_replay_session(
     capture: &PevcapCapture,
 ) -> Result<ReadOnlySession<BegodeFalconModel, true>> {
-    match select_begode_pack_voltage_profile_from_annotations(capture.header.annotations.iter()) {
+    match select_falcon_replay_voltage_profile(capture) {
         BegodeVoltageProfileSelection::Selected(profile) => {
             Ok(ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
                 BegodeNotificationDecoder::with_pack_voltage_profile(profile),
@@ -179,6 +181,49 @@ fn falcon_replay_session(
             bail!("Falcon PEVCAP replay has conflicting Falcon battery voltage evidence")
         }
     }
+}
+
+fn select_falcon_replay_voltage_profile(capture: &PevcapCapture) -> BegodeVoltageProfileSelection {
+    match select_begode_pack_voltage_profile_from_annotations(capture.header.annotations.iter()) {
+        BegodeVoltageProfileSelection::Conflicting => BegodeVoltageProfileSelection::Conflicting,
+        BegodeVoltageProfileSelection::Selected(profile) => select_begode_pack_voltage_profile(
+            core::iter::once(profile_evidence(profile))
+                .chain(falcon_replay_bms_voltage_evidence(capture))
+                .collect::<Vec<_>>()
+                .as_slice(),
+        ),
+        BegodeVoltageProfileSelection::Missing => select_begode_pack_voltage_profile(
+            &falcon_replay_bms_voltage_evidence(capture).collect::<Vec<_>>(),
+        ),
+    }
+}
+
+fn profile_evidence(profile: cutout_protocols::BegodePackVoltageProfile) -> BegodeVoltageEvidence {
+    match profile {
+        cutout_protocols::BegodePackVoltageProfile::Begode84VFullCharge => {
+            BegodeVoltageEvidence::VoltageClass84V
+        }
+        cutout_protocols::BegodePackVoltageProfile::Begode100VFullCharge => {
+            BegodeVoltageEvidence::VoltageClass100V
+        }
+    }
+}
+
+fn falcon_replay_bms_voltage_evidence(
+    capture: &PevcapCapture,
+) -> impl Iterator<Item = BegodeVoltageEvidence> + '_ {
+    capture.records.iter().filter_map(|record| {
+        if record.direction != PevcapDirection::Inbound
+            || record.characteristic != BEGODE_DATA_CHANNEL
+        {
+            return None;
+        }
+        let frame = BegodeFrame::try_from_slice(record.bytes.as_slice()).ok()?;
+        let summary = BegodeBmsSummary::decode(&frame).ok()?;
+        u32::try_from(summary.pack_voltage_mv)
+            .ok()
+            .map(BegodeVoltageEvidence::ObservedPackVoltageMv)
+    })
 }
 
 fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapReplayReport
@@ -1598,6 +1643,21 @@ mod tests {
     }
 
     fn sample_falcon_live_a_replay_capture(annotations: &[&str]) -> PevcapCapture {
+        sample_falcon_replay_capture_with_records(
+            annotations,
+            vec![PevcapRecord::inbound_notification(
+                42,
+                BEGODE_DATA_CHANNEL,
+                BEGODE_DATA_CHANNEL,
+                hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+            )],
+        )
+    }
+
+    fn sample_falcon_replay_capture_with_records(
+        annotations: &[&str],
+        records: Vec<PevcapRecord>,
+    ) -> PevcapCapture {
         let header = PevcapHeader::new(
             1_725_000_123_456,
             "darwin",
@@ -1618,15 +1678,7 @@ mod tests {
         )
         .expect("header should validate");
 
-        PevcapCapture::new(
-            header,
-            vec![PevcapRecord::inbound_notification(
-                42,
-                BEGODE_DATA_CHANNEL,
-                BEGODE_DATA_CHANNEL,
-                hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
-            )],
-        )
+        PevcapCapture::new(header, records)
     }
 
     fn sample_aero_replay_capture() -> PevcapCapture {
@@ -1769,10 +1821,7 @@ mod tests {
             Some(ProtocolFamily::VeteranLeaperkimNosfet)
         );
         assert_eq!(decoded.records.len(), 3);
-        assert_eq!(
-            decoded.records[0].direction,
-            cutout_core::PevcapDirection::LinkUp
-        );
+        assert_eq!(decoded.records[0].direction, PevcapDirection::LinkUp);
         assert_eq!(
             decoded.records[1].write_mode,
             Some(WriteMode::WithoutResponse)
@@ -2341,6 +2390,63 @@ mod tests {
             error
                 .to_string()
                 .contains("conflicting Falcon battery voltage evidence")
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_uses_falcon_bms_voltage_evidence_for_scaling() {
+        let capture = sample_falcon_replay_capture_with_records(
+            &[],
+            vec![
+                PevcapRecord::inbound_notification(
+                    41,
+                    BEGODE_DATA_CHANNEL,
+                    BEGODE_DATA_CHANNEL,
+                    hex_literal::hex!("55aa2710000003b6ff9c0019001a0190000001035a5a5a5a").to_vec(),
+                ),
+                PevcapRecord::inbound_notification(
+                    42,
+                    BEGODE_DATA_CHANNEL,
+                    BEGODE_DATA_CHANNEL,
+                    hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+                ),
+            ],
+        );
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile)
+            .expect("95V BMS evidence selects Falcon 100.8V profile");
+
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .voltage_mv
+                .map(|voltage| voltage.value),
+            Some(90_075)
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_rejects_ambiguous_falcon_bms_voltage_evidence() {
+        let capture = sample_falcon_replay_capture_with_records(
+            &[],
+            vec![PevcapRecord::inbound_notification(
+                41,
+                BEGODE_DATA_CHANNEL,
+                BEGODE_DATA_CHANNEL,
+                hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a").to_vec(),
+            )],
+        );
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+
+        let error = replay_pevcap_capture(&capture, profile)
+            .expect_err("ambiguous BMS voltage should not select a Falcon profile");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires explicit Falcon battery voltage evidence")
         );
     }
 
