@@ -95,6 +95,12 @@ device is considered fully specced.
   temperature, and true PWM. Smart-BMS tags `0x01`/`0x02`/`0x03` are separate
   parser work because `0x01` can provide authoritative pack voltage and BMS
   current while `0x02`/`0x03` carry cell pages.
+- Begode/Gotway ASCII banners share the same FFE1 notify pipe as binary frames
+  and must be detected before binary reassembly. Source behavior shows `V`
+  query replies with firmware prefixes `GW`, `JN`, `CF`, or `BF`; `N` query
+  replies with `NAME=...` or `NAME:...`; and `MPU...` banners are IMU evidence
+  for temperature conversion. `CF` and `BF` firmware imply the frame `0x00`
+  hardware-PWM field is authoritative; stock `GW` and `JN` do not.
 
 ## Backlog Implications
 

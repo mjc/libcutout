@@ -17,6 +17,10 @@ mod begode_bms;
 pub use begode_bms::{
     BEGODE_BMS_CELL_VALUES_PER_PAGE, BegodeBmsCellPage, BegodeBmsPageError, BegodeBmsSummary,
 };
+mod begode_banner;
+pub use begode_banner::{
+    BegodeBanner, BegodeFirmwarePrefix, BegodeImuKind, parse_begode_ascii_banner,
+};
 mod begode_telemetry;
 pub use begode_telemetry::{
     BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
