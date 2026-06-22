@@ -24,10 +24,11 @@ use cutout_core::{
     VerifiedValue,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeBmsSummary, BegodeFalconModel,
-    BegodeFrame, BegodeNotificationDecoder, BegodeVoltageEvidence, BegodeVoltageProfileSelection,
-    NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL, select_begode_pack_voltage_profile,
-    select_begode_pack_voltage_profile_from_annotations,
+    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeBmsSummary, BegodeCapacityEvidence,
+    BegodeCapacitySelection, BegodeFalconModel, BegodeFrame, BegodeNotificationDecoder,
+    BegodeVoltageEvidence, BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession,
+    VETERAN_DATA_CHANNEL, select_begode_pack_capacity_from_annotations,
+    select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
 };
 use tracing::info;
 
@@ -144,6 +145,7 @@ struct PevcapReplayReport {
     chunk_arbitrary_matches: bool,
     telemetry_snapshot: TelemetrySnapshot,
     firmware: Option<FirmwareInfo>,
+    capacity: BegodeCapacitySelection,
     diagnostic_snapshots: Vec<DiagnosticSnapshot>,
     diagnostic_errors: Vec<DiagnosticError>,
     read_only_response_events: Vec<ReadOnlyResponse>,
@@ -153,16 +155,18 @@ fn replay_pevcap_capture(
     capture: &PevcapCapture,
     profile: SelectedSessionProfile,
 ) -> Result<PevcapReplayReport> {
-    match profile {
-        SelectedSessionProfile::Aero => Ok(replay_pevcap_with_session(
+    let mut report = match profile {
+        SelectedSessionProfile::Aero => replay_pevcap_with_session(
             capture,
             ReadOnlySession::<NosfetAeroModel, false>::default(),
-        )),
-        SelectedSessionProfile::Falcon => Ok(replay_pevcap_with_session(
-            capture,
-            falcon_replay_session(capture)?,
-        )),
-    }
+        ),
+        SelectedSessionProfile::Falcon => {
+            replay_pevcap_with_session(capture, falcon_replay_session(capture)?)
+        }
+    };
+    report.capacity =
+        select_begode_pack_capacity_from_annotations(capture.header.annotations.iter());
+    Ok(report)
 }
 
 fn falcon_replay_session(
@@ -260,6 +264,7 @@ fn summarize_pevcap_replay(
         chunk_arbitrary_matches: chunk_comparison.arbitrary_matches,
         telemetry_snapshot: TelemetrySnapshot::default(),
         firmware: None,
+        capacity: BegodeCapacitySelection::Missing,
         diagnostic_snapshots: Vec::new(),
         diagnostic_errors: Vec::new(),
         read_only_response_events: Vec::new(),
@@ -364,7 +369,7 @@ const fn diagnostic_error_kind_name(kind: DiagnosticErrorKind) -> &'static str {
 }
 
 fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
-    format!(
+    let mut rendered = format!(
         "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={} arbitrary_chunk_plan_len={} chunk_one_byte_matches={} chunk_arbitrary_matches={}",
         report.replay_records,
         report.outputs,
@@ -374,7 +379,30 @@ fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
         report.arbitrary_chunk_plan_len,
         report.chunk_one_byte_matches,
         report.chunk_arbitrary_matches
-    )
+    );
+    append_capacity_evidence(&mut rendered, report.capacity);
+    rendered
+}
+
+fn append_capacity_evidence(rendered: &mut String, capacity: BegodeCapacitySelection) {
+    match capacity {
+        BegodeCapacitySelection::Missing => {}
+        BegodeCapacitySelection::Conflicting => rendered.push_str(" capacity_conflict=true"),
+        BegodeCapacitySelection::Selected(evidence) => {
+            append_selected_capacity_evidence(rendered, evidence);
+        }
+    }
+}
+
+fn append_selected_capacity_evidence(rendered: &mut String, evidence: BegodeCapacityEvidence) {
+    if let Some(nominal_capacity_mah) = evidence.nominal_capacity_mah {
+        rendered.push_str(" capacity_nominal_mah=");
+        rendered.push_str(&nominal_capacity_mah.to_string());
+    }
+    if let Some(reported_wh) = evidence.reported_wh {
+        rendered.push_str(" capacity_reported_wh=");
+        rendered.push_str(&reported_wh.to_string());
+    }
 }
 
 async fn dashboard(args: DashboardArgs) -> Result<()> {
@@ -2010,6 +2038,7 @@ mod tests {
             chunk_arbitrary_matches: true,
             telemetry_snapshot: TelemetrySnapshot::default(),
             firmware: None,
+            capacity: BegodeCapacitySelection::Missing,
             diagnostic_snapshots: Vec::new(),
             diagnostic_errors: Vec::new(),
             read_only_response_events: Vec::new(),
@@ -2391,6 +2420,38 @@ mod tests {
                 .to_string()
                 .contains("requires explicit Falcon battery voltage evidence")
         );
+    }
+
+    #[test]
+    fn pevcap_replay_report_renders_explicit_falcon_capacity_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&[
+            "battery=84v",
+            "nominal_capacity_mah=10000",
+            "reported_wh=672",
+        ]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile).expect("voltage evidence is present");
+
+        assert!(
+            render_pevcap_replay_report(&report)
+                .contains("capacity_nominal_mah=10000 capacity_reported_wh=672")
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_report_renders_conflicting_falcon_capacity_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&[
+            "battery=84v",
+            "nominal_capacity_mah=10000",
+            "nominal_capacity_mah=9000",
+        ]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile)
+            .expect("capacity conflict does not block voltage replay");
+
+        assert!(render_pevcap_replay_report(&report).contains("capacity_conflict=true"));
     }
 
     #[test]
