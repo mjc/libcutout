@@ -11,6 +11,8 @@
 
 mod protocol_model;
 pub use protocol_model::*;
+mod session;
+pub use session::{AeroReadOnlySession, FalconReadOnlySession};
 
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
