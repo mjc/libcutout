@@ -179,13 +179,35 @@ pub(crate) struct LogEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TelemetryWindow {
     pub(crate) battery_pct: Option<u64>,
+    pub(crate) battery_source: BatterySource,
     pub(crate) signal_pct: u64,
+    pub(crate) latest_voltage_v: Option<u64>,
     pub(crate) speed_mph: Vec<u64>,
     pub(crate) voltage_v: Vec<u64>,
     pub(crate) current_a: Vec<u64>,
     pub(crate) temperature_c: Vec<u64>,
     pub(crate) current_points: Vec<(f64, f64)>,
     pub(crate) temperature_points: Vec<(f64, f64)>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum BatterySource {
+    #[default]
+    Unknown,
+    StandardBle,
+    TelemetryReported,
+    TelemetryEstimated,
+}
+
+impl BatterySource {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "Battery",
+            Self::StandardBle => "Battery BLE",
+            Self::TelemetryReported => "Battery telemetry",
+            Self::TelemetryEstimated => "Battery estimated",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -526,13 +548,25 @@ impl DashboardState {
         }
 
         if report.telemetry > 0 {
-            self.telemetry.apply_snapshot(report.telemetry_snapshot);
+            let snapshot = report.telemetry_snapshot;
+            if let Some(voltage) = snapshot.voltage_mv {
+                let volts = millivolts_to_volts(voltage.value);
+                self.push_log("info", &format!("telemetry voltage {volts} V"));
+            }
+            if let Some(percent) = snapshot
+                .battery_percent_reported
+                .or(snapshot.battery_percent_estimated)
+            {
+                self.push_log("info", &format!("telemetry battery {}%", percent.value));
+            }
+            self.telemetry.apply_snapshot(snapshot);
         }
     }
 
     pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
         let percent = percent.min(100);
         self.telemetry.battery_pct = Some(u64::from(percent));
+        self.telemetry.battery_source = BatterySource::StandardBle;
         self.push_log("info", &format!("battery level {percent}%"));
     }
 
@@ -675,7 +709,9 @@ impl TelemetryWindow {
     fn empty() -> Self {
         Self {
             battery_pct: None,
+            battery_source: BatterySource::Unknown,
             signal_pct: 0,
+            latest_voltage_v: None,
             speed_mph: Vec::with_capacity(HISTORY_LIMIT),
             voltage_v: Vec::with_capacity(HISTORY_LIMIT),
             current_a: Vec::with_capacity(HISTORY_LIMIT),
@@ -695,7 +731,9 @@ impl TelemetryWindow {
         temperature_c: &'static [u64],
     ) {
         self.battery_pct = Some(battery_pct);
+        self.battery_source = BatterySource::TelemetryReported;
         self.signal_pct = signal_pct;
+        self.latest_voltage_v = voltage_v.last().copied();
         self.speed_mph.clear();
         self.voltage_v.clear();
         self.current_a.clear();
@@ -742,17 +780,20 @@ impl TelemetryWindow {
     }
 
     fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
-        if let Some(percent) = snapshot
-            .battery_percent_reported
-            .or(snapshot.battery_percent_estimated)
-        {
+        if let Some(percent) = snapshot.battery_percent_reported {
             self.battery_pct = Some(u64::from(percent.value));
+            self.battery_source = BatterySource::TelemetryReported;
+        } else if let Some(percent) = snapshot.battery_percent_estimated {
+            self.battery_pct = Some(u64::from(percent.value));
+            self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed_mm_s {
             push_sample(&mut self.speed_mph, mm_s_to_mph(speed.value));
         }
         if let Some(voltage) = snapshot.voltage_mv {
-            push_sample(&mut self.voltage_v, millivolts_to_volts(voltage.value));
+            let volts = millivolts_to_volts(voltage.value);
+            self.latest_voltage_v = Some(volts);
+            push_sample(&mut self.voltage_v, volts);
         }
         if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
             push_sample(&mut self.current_a, milliamps_to_amps_abs(current.value));
@@ -981,7 +1022,13 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    render_battery_gauge(frame, gauges[0], state.telemetry.battery_pct);
+    render_battery_gauge(
+        frame,
+        gauges[0],
+        state.telemetry.battery_pct,
+        state.telemetry.battery_source,
+        state.telemetry.latest_voltage_v,
+    );
 
     let signal = Gauge::default()
         .block(Block::bordered().title("Signal"))
@@ -1020,15 +1067,25 @@ fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     frame.render_widget(table, area);
 }
 
-fn render_battery_gauge(frame: &mut Frame<'_>, area: Rect, battery_pct: Option<u64>) {
+fn render_battery_gauge(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    battery_pct: Option<u64>,
+    source: BatterySource,
+    latest_voltage_v: Option<u64>,
+) {
     if let Some(battery_pct) = battery_pct {
         let battery = Gauge::default()
-            .block(Block::bordered().title("Battery"))
+            .block(Block::bordered().title(source.label()))
             .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
             .ratio(percent_ratio(battery_pct));
         frame.render_widget(battery, area);
     } else {
-        let battery = Paragraph::new("unknown").block(Block::bordered().title("Battery"));
+        let message = latest_voltage_v.map_or_else(
+            || "unknown".to_owned(),
+            |voltage| format!("voltage {voltage} V / battery unknown"),
+        );
+        let battery = Paragraph::new(message).block(Block::bordered().title("Battery"));
         frame.render_widget(battery, area);
     }
 }
@@ -1419,6 +1476,7 @@ mod tests {
         assert_eq!(state.device.connection_state, "connected");
         assert_eq!(state.counters.connected, 1);
         assert_eq!(state.telemetry.battery_pct, None);
+        assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
@@ -1479,6 +1537,11 @@ mod tests {
         state.apply_session_report(&report);
 
         assert_eq!(state.telemetry.battery_pct, Some(77));
+        assert_eq!(
+            state.telemetry.battery_source,
+            BatterySource::TelemetryReported
+        );
+        assert_eq!(state.telemetry.latest_voltage_v, Some(84));
         assert_eq!(state.telemetry.speed_mph, vec![10]);
         assert_eq!(state.telemetry.voltage_v, vec![84]);
         assert_eq!(state.telemetry.current_a, vec![12]);
@@ -1492,6 +1555,7 @@ mod tests {
         state.apply_battery_percent(88);
 
         assert_eq!(state.telemetry.battery_pct, Some(88));
+        assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
             state
                 .logs
@@ -1502,12 +1566,48 @@ mod tests {
         state.apply_battery_percent(150);
 
         assert_eq!(state.telemetry.battery_pct, Some(100));
+        assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
             state
                 .logs
                 .iter()
                 .any(|entry| entry.message == "battery level 100%")
         );
+    }
+
+    #[test]
+    fn live_session_report_uses_estimated_battery_from_voltage_telemetry() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            writes: 0,
+            subscribes: 1,
+            notifications: 1,
+            notification_bytes: 20,
+            latest_notification_len: Some(20),
+            telemetry: 1,
+            telemetry_snapshot: TelemetrySnapshot {
+                voltage_mv: Some(Measured::reported(108_760)),
+                battery_percent_estimated: Some(Measured::estimated(39)),
+                ..TelemetrySnapshot::default()
+            },
+            diagnostics: 0,
+            disconnects: 0,
+        };
+
+        state.apply_session_report(&report);
+
+        assert_eq!(state.telemetry.battery_pct, Some(39));
+        assert_eq!(
+            state.telemetry.battery_source,
+            BatterySource::TelemetryEstimated
+        );
+        assert_eq!(state.telemetry.latest_voltage_v, Some(109));
+        assert_eq!(state.telemetry.voltage_v, vec![109]);
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+        assert!(text.contains("Battery estimated"));
+        assert!(text.contains("39%"));
+        assert!(text.contains("Voltage"));
     }
 
     #[test]
