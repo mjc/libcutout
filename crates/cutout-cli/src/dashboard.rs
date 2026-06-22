@@ -1006,6 +1006,9 @@ fn format_mapped_telemetry_event(snapshot: TelemetrySnapshot) -> String {
 
 fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
     match event {
+        SessionBridgeEvent::LinkDown { monotonic_ms } => {
+            ("warn", format!("t={monotonic_ms}ms link down"))
+        }
         SessionBridgeEvent::RawNotification {
             monotonic_ms,
             characteristic,
@@ -1903,8 +1906,9 @@ mod tests {
                         ..ParserDiagnostics::default()
                     },
                 },
+                SessionBridgeEvent::LinkDown { monotonic_ms: 19 },
             ],
-            disconnects: 0,
+            disconnects: 1,
         };
 
         state.apply_session_report(&report);
@@ -1937,6 +1941,11 @@ mod tests {
                 && entry.message.contains("t=18ms telemetry diagnostics")
                 && entry.message.contains("malformed=2")
         }));
+        assert!(
+            state.logs.iter().any(|entry| {
+                entry.level == "warn" && entry.message.contains("t=19ms link down")
+            })
+        );
     }
 
     #[test]

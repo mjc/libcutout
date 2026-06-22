@@ -9,7 +9,7 @@
 //! Bluetooth transport adapter scaffolding for Cutout.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
     future::Future,
     pin::Pin,
@@ -491,6 +491,12 @@ pub struct BridgeIdentityResolution {
 /// Timestamped raw or processed telemetry event emitted by the bridge.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionBridgeEvent {
+    /// Link-down event emitted by the protocol session after transport disconnect.
+    LinkDown {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+    },
+
     /// Raw notification payload received from BTLE.
     RawNotification {
         /// Relative monotonic timestamp in milliseconds.
@@ -1150,6 +1156,7 @@ where
             capture: capture.as_deref_mut(),
             provisional_writes: config.provisional_writes,
         },
+        session,
         &mut outputs,
         monotonic_ms,
     )
@@ -1168,6 +1175,7 @@ where
                 capture: capture.as_deref_mut(),
                 provisional_writes: config.provisional_writes,
             },
+            session,
             &mut outputs,
             monotonic_ms,
         )
@@ -1186,6 +1194,7 @@ where
             capture: capture.as_deref_mut(),
             provisional_writes: config.provisional_writes,
         },
+        session,
         &mut outputs,
         monotonic_ms,
     )
@@ -1283,6 +1292,7 @@ where
                         capture: context.capture.as_deref_mut(),
                         provisional_writes: context.provisional_writes,
                     },
+                    session,
                     outputs,
                     *monotonic_ms,
                 )
@@ -1474,15 +1484,18 @@ struct SessionOutputContext<'a, P: ?Sized> {
     provisional_writes: bool,
 }
 
-async fn process_session_outputs<P>(
+async fn process_session_outputs<P, S>(
     mut context: SessionOutputContext<'_, P>,
+    session: &mut S,
     outputs: &mut Vec<SessionOutput>,
     monotonic_ms: u64,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
 {
-    for output in outputs.drain(..) {
+    let mut pending = outputs.drain(..).collect::<VecDeque<_>>();
+    while let Some(output) = pending.pop_front() {
         match output {
             SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
                 if observed != context.channel {
@@ -1544,6 +1557,8 @@ where
             SessionOutput::Transport(TransportAction::Disconnect) => {
                 context.peripheral.disconnect().await?;
                 context.report.disconnects += 1;
+                session.handle(SessionInput::LinkDown, outputs);
+                pending.extend(outputs.drain(..));
             }
             SessionOutput::Event(event) => {
                 process_device_event(context.report, event, monotonic_ms);
@@ -1557,9 +1572,13 @@ fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, mo
     match event {
         DeviceEvent::NotificationReceived { .. }
         | DeviceEvent::LinkUp(_)
-        | DeviceEvent::LinkDown
         | DeviceEvent::Tick { .. }
         | DeviceEvent::ControlRefusal(_) => {}
+        DeviceEvent::LinkDown => {
+            report
+                .events
+                .push(SessionBridgeEvent::LinkDown { monotonic_ms });
+        }
         DeviceEvent::Telemetry(delta) => {
             report.telemetry += 1;
             report.telemetry_snapshot.apply_delta(delta);
@@ -2826,6 +2845,34 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn drive_session_feeds_link_down_after_intentional_disconnect() {
+        let peripheral = RecordingPeripheral::default();
+        let mut session = DisconnectOnTickSession::default();
+        let summary = shared_write_notify_summary("NOSFET Aero");
+
+        let report = crate::drive_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            &summary,
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            Duration::ZERO,
+        )
+        .await
+        .expect("bridge handles intentional disconnect");
+
+        assert_eq!(report.disconnects, 1);
+        assert_eq!(
+            report.events.as_slice(),
+            &[crate::SessionBridgeEvent::LinkDown { monotonic_ms: 1 }]
+        );
+        assert_eq!(*session.link_down_count.lock().expect("count"), 1);
+        assert_eq!(*peripheral.disconnects.lock().expect("disconnect log"), 1);
+    }
+
     #[derive(Default)]
     struct BridgeSession {
         notification_count: Arc<Mutex<usize>>,
@@ -2848,6 +2895,11 @@ mod tests {
     struct CommandWriteSession;
 
     struct LargeWriteSession;
+
+    #[derive(Default)]
+    struct DisconnectOnTickSession {
+        link_down_count: Arc<Mutex<usize>>,
+    }
 
     impl ProtocolSession for CommandWriteSession {
         fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
@@ -2890,6 +2942,23 @@ mod tests {
                         .expect("fixture payload fits"),
                     mode: WriteMode::WithoutResponse,
                 }));
+            }
+        }
+    }
+
+    impl ProtocolSession for DisconnectOnTickSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::Tick { .. } => {
+                    output.push(SessionOutput::Transport(TransportAction::Disconnect));
+                }
+                SessionInput::LinkDown => {
+                    *self.link_down_count.lock().expect("link down count") += 1;
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                }
+                SessionInput::LinkUp(_)
+                | SessionInput::Command(_)
+                | SessionInput::Notification { .. } => {}
             }
         }
     }
@@ -2971,6 +3040,7 @@ mod tests {
         subscribes: Arc<Mutex<Vec<Uuid>>>,
         writes: WriteLog,
         notifications: NotificationLog,
+        disconnects: Arc<Mutex<usize>>,
         mtu: u16,
     }
 
@@ -2980,6 +3050,7 @@ mod tests {
                 subscribes: Arc::new(Mutex::new(Vec::new())),
                 writes: Arc::new(Mutex::new(Vec::new())),
                 notifications: Arc::new(Mutex::new(Vec::new())),
+                disconnects: Arc::new(Mutex::new(0)),
                 mtu: 185,
             }
         }
@@ -3095,6 +3166,7 @@ mod tests {
         }
 
         async fn disconnect(&self) -> Result<(), crate::BtleError> {
+            *self.disconnects.lock().expect("disconnect log") += 1;
             Ok(())
         }
     }
