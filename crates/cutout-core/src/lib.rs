@@ -1341,6 +1341,9 @@ pub struct Measured<T> {
 
     /// Quality of the value.
     pub quality: ValueQuality,
+
+    /// Verification state for the decoded value.
+    pub verification: VerificationStatus,
 }
 
 impl<T> Measured<T> {
@@ -1351,6 +1354,29 @@ impl<T> Measured<T> {
             value,
             source: ValueSource::Reported,
             quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
+
+    /// Creates a value calculated from other known values.
+    #[must_use]
+    pub const fn calculated(value: T) -> Self {
+        Self {
+            value,
+            source: ValueSource::Calculated,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::Inferred,
+        }
+    }
+
+    /// Creates a value estimated from incomplete evidence.
+    #[must_use]
+    pub const fn estimated(value: T) -> Self {
+        Self {
+            value,
+            source: ValueSource::Estimated,
+            quality: ValueQuality::Inferred,
+            verification: VerificationStatus::Inferred,
         }
     }
 }
@@ -1438,6 +1464,9 @@ pub struct DiagnosticDetail {
 
     /// Confidence in the diagnostic interpretation.
     pub quality: ValueQuality,
+
+    /// Verification state for the diagnostic interpretation.
+    pub verification: VerificationStatus,
 }
 
 /// Bounded diagnostic readback response.
@@ -1458,6 +1487,9 @@ pub struct SettingsEntry {
 
     /// Confidence in the settings value.
     pub quality: ValueQuality,
+
+    /// Verification state for the settings value.
+    pub verification: VerificationStatus,
 }
 
 /// Bounded settings readback response.
@@ -2337,13 +2369,28 @@ mod tests {
     }
 
     #[test]
+    fn measured_constructors_preserve_provenance_and_verification() {
+        let reported = Measured::reported(7);
+        let calculated = Measured::calculated(11);
+        let estimated = Measured::estimated(13);
+
+        assert_eq!(reported.source, ValueSource::Reported);
+        assert_eq!(reported.quality, ValueQuality::Known);
+        assert_eq!(reported.verification, VerificationStatus::HardwareVerified);
+
+        assert_eq!(calculated.source, ValueSource::Calculated);
+        assert_eq!(calculated.quality, ValueQuality::Known);
+        assert_eq!(calculated.verification, VerificationStatus::Inferred);
+
+        assert_eq!(estimated.source, ValueSource::Estimated);
+        assert_eq!(estimated.quality, ValueQuality::Inferred);
+        assert_eq!(estimated.verification, VerificationStatus::Inferred);
+    }
+
+    #[test]
     fn telemetry_keeps_distinct_current_temperature_and_estimate_fields() {
         let mut snapshot = TelemetrySnapshot::default();
-        let estimated_percent = Measured {
-            value: 76,
-            source: ValueSource::Estimated,
-            quality: ValueQuality::Inferred,
-        };
+        let estimated_percent = Measured::estimated(76);
 
         snapshot.apply_delta(TelemetryDelta {
             at_ms: 300,
@@ -2379,6 +2426,12 @@ mod tests {
             Some(Measured::reported(80))
         );
         assert_eq!(snapshot.battery_percent_estimated, Some(estimated_percent));
+        assert_eq!(
+            snapshot
+                .battery_percent_estimated
+                .map(|value| value.verification),
+            Some(VerificationStatus::Inferred)
+        );
     }
 
     #[test]
@@ -2423,11 +2476,7 @@ mod tests {
             voltage_mv: Some(Measured::reported(80_400)),
             current_ma: Some(Measured::reported(0)),
             percent_reported: Some(Measured::reported(0)),
-            percent_estimated: Some(Measured {
-                value: 42,
-                source: ValueSource::Estimated,
-                quality: ValueQuality::Inferred,
-            }),
+            percent_estimated: Some(Measured::estimated(42)),
             temperature_mc: None,
             raw_state: None,
         };
@@ -2445,6 +2494,20 @@ mod tests {
             response.battery().percent_reported,
             Some(Measured::reported(0))
         );
+        assert_eq!(
+            response
+                .battery()
+                .voltage_mv
+                .map(|value| value.verification),
+            Some(VerificationStatus::HardwareVerified)
+        );
+        assert_eq!(
+            response
+                .battery()
+                .percent_estimated
+                .map(|value| value.verification),
+            Some(VerificationStatus::Inferred)
+        );
         assert_eq!(response.battery().temperature_mc, None);
     }
 
@@ -2454,12 +2517,14 @@ mod tests {
             field: crate::RawFieldValue::new(0x55, -7),
             severity: crate::DiagnosticSeverity::Warning,
             quality: ValueQuality::Inferred,
+            verification: VerificationStatus::Inferred,
         };
 
         assert_eq!(detail.field.id, 0x55);
         assert_eq!(detail.field.value, -7);
         assert_eq!(detail.severity, crate::DiagnosticSeverity::Warning);
         assert_eq!(detail.quality, ValueQuality::Inferred);
+        assert_eq!(detail.verification, VerificationStatus::Inferred);
     }
 
     #[test]
@@ -2468,6 +2533,7 @@ mod tests {
             field: crate::RawFieldValue::new(0x10, 2),
             source: ValueSource::Reported,
             quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
         };
         let response = crate::SettingsReadback {
             entries: [Some(entry), None, None, None],
@@ -2475,6 +2541,10 @@ mod tests {
 
         assert_eq!(response.entries[0], Some(entry));
         assert_eq!(response.entries[1], None);
+        assert_eq!(
+            response.entries[0].map(|entry| entry.verification),
+            Some(VerificationStatus::HardwareVerified)
+        );
     }
 
     #[test]
