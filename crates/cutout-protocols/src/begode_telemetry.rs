@@ -222,6 +222,29 @@ pub enum BegodePackEvidenceConsistency {
     Inconsistent,
 }
 
+/// Explicit Falcon battery variant selected from voltage/capacity/layout evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodeFalconBatteryVariant {
+    /// Current live target hardware: 84 V / 20S, capacity still evidence-gated.
+    Target84V20S,
+
+    /// Planned/high-voltage Falcon mapping: 100.8 V / 24S / 900 Wh Samsung 50S.
+    Planned100V24S900WhSamsung50S,
+}
+
+/// Result of selecting a Falcon-specific battery variant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodeFalconBatteryVariantSelection {
+    /// No variant could be selected from evidence.
+    Missing,
+
+    /// Evidence contradicted itself or selected no known Falcon variant.
+    Conflicting,
+
+    /// Evidence selected exactly one Falcon battery variant.
+    Selected(BegodeFalconBatteryVariant),
+}
+
 impl BegodePackVoltageProfile {
     const fn scaler_milli(self) -> i32 {
         match self {
@@ -264,6 +287,24 @@ impl BegodePackVoltageProfile {
 #[must_use]
 pub const fn begode_falcon_target_voltage_profile() -> BegodePackVoltageProfile {
     BEGODE_FALCON_TARGET_VOLTAGE_PROFILE
+}
+
+/// Selects a Falcon-specific battery variant from already parsed evidence.
+#[must_use]
+pub const fn select_begode_falcon_battery_variant(
+    profile: BegodeVoltageProfileSelection,
+    capacity: BegodeCapacitySelection,
+    layout: BegodePackLayoutSelection,
+) -> BegodeFalconBatteryVariantSelection {
+    match validate_begode_pack_evidence(profile, capacity, layout) {
+        BegodePackEvidenceConsistency::Inconsistent => {
+            BegodeFalconBatteryVariantSelection::Conflicting
+        }
+        BegodePackEvidenceConsistency::Incomplete => BegodeFalconBatteryVariantSelection::Missing,
+        BegodePackEvidenceConsistency::Consistent => {
+            select_consistent_begode_falcon_battery_variant(profile, capacity, layout)
+        }
+    }
 }
 
 /// Selects a Begode pack voltage profile from explicit evidence.
@@ -433,6 +474,40 @@ const fn validate_samsung_50s_capacity(
     }
 
     BegodePackEvidenceConsistency::Consistent
+}
+
+const fn select_consistent_begode_falcon_battery_variant(
+    profile: BegodeVoltageProfileSelection,
+    capacity: BegodeCapacitySelection,
+    layout: BegodePackLayoutSelection,
+) -> BegodeFalconBatteryVariantSelection {
+    match (profile, capacity, layout) {
+        (
+            BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge),
+            BegodeCapacitySelection::Missing,
+            BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                series_cells: Some(20),
+                ..
+            }),
+        ) => {
+            BegodeFalconBatteryVariantSelection::Selected(BegodeFalconBatteryVariant::Target84V20S)
+        }
+        (
+            BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge),
+            BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                nominal_capacity_mah: Some(10_000),
+                reported_wh: Some(900),
+            }),
+            BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                cell_model: Some(BegodeCellModel::Samsung50S),
+                series_cells: Some(24),
+                parallel_count: Some(2),
+            }),
+        ) => BegodeFalconBatteryVariantSelection::Selected(
+            BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
+        ),
+        _ => BegodeFalconBatteryVariantSelection::Missing,
+    }
 }
 
 const fn within_percent(value: u32, expected: u32, percent: u32) -> bool {
@@ -1082,10 +1157,12 @@ fn percent_from_i32(percent: i32) -> u8 {
 mod tests {
     use super::{
         BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeCapacityEvidence, BegodeCapacitySelection,
-        BegodeCellModel, BegodePackLayoutEvidence, BegodePackLayoutSelection,
-        BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
-        select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
-        select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
+        BegodeCellModel, BegodeFalconBatteryVariant, BegodeFalconBatteryVariantSelection,
+        BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeVoltageEvidence,
+        BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
+        select_begode_falcon_battery_variant, select_begode_pack_capacity_from_annotations,
+        select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
+        select_begode_pack_voltage_profile_from_annotations,
     };
     use crate::{
         BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -1693,6 +1770,87 @@ mod tests {
                 }),
             ),
             BegodePackEvidenceConsistency::Incomplete
+        );
+    }
+
+    #[test]
+    fn falcon_battery_variant_selects_current_84v_target_from_explicit_voltage_and_layout() {
+        assert_eq!(
+            select_begode_falcon_battery_variant(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ),
+                BegodeCapacitySelection::Missing,
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: None,
+                    series_cells: Some(20),
+                    parallel_count: None,
+                }),
+            ),
+            BegodeFalconBatteryVariantSelection::Selected(BegodeFalconBatteryVariant::Target84V20S)
+        );
+    }
+
+    #[test]
+    fn falcon_battery_variant_selects_planned_100v_900wh_50s_mapping_from_full_evidence() {
+        assert_eq!(
+            select_begode_falcon_battery_variant(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode100VFullCharge,
+                ),
+                BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                    nominal_capacity_mah: Some(10_000),
+                    reported_wh: Some(900),
+                }),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: Some(24),
+                    parallel_count: Some(2),
+                }),
+            ),
+            BegodeFalconBatteryVariantSelection::Selected(
+                BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
+            )
+        );
+    }
+
+    #[test]
+    fn falcon_battery_variant_does_not_select_from_model_name_or_capacity_only() {
+        assert_eq!(
+            select_begode_falcon_battery_variant(
+                BegodeVoltageProfileSelection::Missing,
+                BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                    nominal_capacity_mah: Some(10_000),
+                    reported_wh: Some(900),
+                }),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: Some(24),
+                    parallel_count: Some(2),
+                }),
+            ),
+            BegodeFalconBatteryVariantSelection::Missing
+        );
+    }
+
+    #[test]
+    fn falcon_battery_variant_rejects_contradictory_evidence() {
+        assert_eq!(
+            select_begode_falcon_battery_variant(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ),
+                BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                    nominal_capacity_mah: Some(10_000),
+                    reported_wh: Some(900),
+                }),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: Some(24),
+                    parallel_count: Some(2),
+                }),
+            ),
+            BegodeFalconBatteryVariantSelection::Conflicting
         );
     }
 
