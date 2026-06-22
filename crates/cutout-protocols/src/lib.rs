@@ -937,7 +937,9 @@ fn veteran_expected_len(bytes: &[u8]) -> Option<usize> {
 }
 
 fn veteran_uses_crc(bytes: &[u8]) -> bool {
-    bytes.get(3).is_some_and(|len| *len > VETERAN_SHORT_FRAME_MAX_LEN)
+    bytes
+        .get(3)
+        .is_some_and(|len| *len > VETERAN_SHORT_FRAME_MAX_LEN)
 }
 
 fn veteran_crc_matches(bytes: &[u8]) -> bool {
@@ -986,6 +988,9 @@ fn deci_kmh_to_mm_s(value: i16) -> i32 {
 fn veteran_pwm_permille(raw: u16) -> i16 {
     i16::try_from(raw / 10).unwrap_or(i16::MAX)
 }
+
+#[cfg(test)]
+mod fixture_corpus;
 
 /// Family-specific request probe used by fixture records.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1386,6 +1391,7 @@ pub const fn crate_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::crate_name;
+    use super::fixture_corpus::{FixtureCorpus, ReassembledFrames};
     use cutout_core::{
         Capabilities, CommandKind, DeviceEvent, LinkInfo, Measured, ProtocolSession, SessionInput,
         SessionOutput, TelemetryDelta, TransportAction, WriteMode,
@@ -1754,6 +1760,38 @@ mod tests {
         );
     }
 
+    fn notification_fixture_chunks() -> Vec<Vec<u8>> {
+        FixtureCorpus::notification_chunks()
+    }
+
+    fn bms_page_fixture_chunks() -> Vec<Vec<u8>> {
+        FixtureCorpus::bms_page_chunks()
+    }
+
+    fn long_powered_on_fixture_chunks() -> Vec<Vec<u8>> {
+        FixtureCorpus::long_powered_on_chunks()
+    }
+
+    fn veteran_frames_from_chunks(
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+    ) -> Vec<crate::VeteranFrame> {
+        FixtureCorpus::veteran_frames_from_chunks(chunks)
+    }
+
+    fn lossy_veteran_frames_from_chunks(
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+    ) -> ReassembledFrames {
+        FixtureCorpus::lossy_veteran_frames_from_chunks(chunks)
+    }
+
+    fn arbitrary_fixture_chunks() -> Vec<Vec<u8>> {
+        FixtureCorpus::arbitrary_fixture_chunks()
+    }
+
+    fn fixture_chunks_with_pattern<const N: usize>(sizes: [usize; N]) -> Vec<Vec<u8>> {
+        FixtureCorpus::fixture_chunks_with_pattern(sizes)
+    }
+
     fn feed_chunk(
         reassembler: &mut crate::VeteranFrameReassembler,
         bytes: &[u8],
@@ -1780,85 +1818,6 @@ mod tests {
         let crc = crc32fast::hash(&frame);
         frame.extend(crc.to_be_bytes());
         frame
-    }
-
-    fn notification_fixture_chunks() -> Vec<Vec<u8>> {
-        hex_fixture_chunks(include_str!(
-            "../fixtures/nosfet-aero/nf2557-2026-06-21-notifications.hex"
-        ))
-    }
-
-    fn bms_page_fixture_chunks() -> Vec<Vec<u8>> {
-        hex_fixture_chunks(include_str!(
-            "../fixtures/nosfet-aero/nf2557-2026-06-21-bms-pages.hex"
-        ))
-    }
-
-    fn long_powered_on_fixture_chunks() -> Vec<Vec<u8>> {
-        hex_fixture_chunks(include_str!(
-            "../fixtures/nosfet-aero/nf2557-2026-06-21-powered-on-long.hex"
-        ))
-    }
-
-    fn hex_fixture_chunks(fixture: &str) -> Vec<Vec<u8>> {
-        fixture.lines().filter_map(hex_fixture_line).collect()
-    }
-
-    fn veteran_frames_from_chunks(
-        chunks: impl IntoIterator<Item = Vec<u8>>,
-    ) -> Vec<crate::VeteranFrame> {
-        let mut reassembler = crate::VeteranFrameReassembler::default();
-        let mut frames = Vec::new();
-
-        for chunk in chunks {
-            frames.extend(feed_chunk(&mut reassembler, &chunk));
-        }
-
-        frames
-    }
-
-    fn lossy_veteran_frames_from_chunks(
-        chunks: impl IntoIterator<Item = Vec<u8>>,
-    ) -> (Vec<crate::VeteranFrame>, usize) {
-        let mut reassembler = crate::VeteranFrameReassembler::default();
-        let mut frames = Vec::new();
-        let mut errors = 0;
-
-        for chunk in chunks {
-            for byte in chunk {
-                match reassembler.feed_byte(byte) {
-                    Ok(Some(frame)) => frames.push(frame),
-                    Ok(None) => {}
-                    Err(_) => errors += 1,
-                }
-            }
-        }
-
-        (frames, errors)
-    }
-
-    fn arbitrary_fixture_chunks() -> Vec<Vec<u8>> {
-        fixture_chunks_with_pattern([1_usize, 7, 13, 2, 31, 5])
-    }
-
-    fn fixture_chunks_with_pattern<const N: usize>(sizes: [usize; N]) -> Vec<Vec<u8>> {
-        let bytes: Vec<_> = notification_fixture_chunks()
-            .into_iter()
-            .flatten()
-            .collect();
-        let mut chunks = Vec::new();
-        let mut offset = 0;
-        let mut size_index = 0;
-
-        while offset < bytes.len() {
-            let size = sizes[size_index % sizes.len()];
-            let end = offset.saturating_add(size).min(bytes.len());
-            chunks.push(bytes[offset..end].to_vec());
-            offset = end;
-            size_index += 1;
-        }
-
-        chunks
     }
 
     fn session_events_from_notification(
@@ -1923,14 +1882,6 @@ mod tests {
                 _ => None,
             })
             .collect()
-    }
-
-    fn hex_fixture_line(line: &str) -> Option<Vec<u8>> {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            return None;
-        }
-        Some(hex_to_bytes(trimmed))
     }
 
     fn hex_to_bytes(hex: &str) -> Vec<u8> {
@@ -2201,11 +2152,18 @@ mod tests {
     #[test]
     fn veteran_bms_cell_pages_decode_consistently_across_live_aero_fixtures() {
         let fixture_sets = [
-            (veteran_frames_from_chunks(bms_page_fixture_chunks()), 0),
+            ReassembledFrames {
+                frames: veteran_frames_from_chunks(bms_page_fixture_chunks()),
+                diagnostics: 0,
+            },
             lossy_veteran_frames_from_chunks(long_powered_on_fixture_chunks()),
         ];
 
-        for (frames, errors) in fixture_sets {
+        for ReassembledFrames {
+            frames,
+            diagnostics: errors,
+        } in fixture_sets
+        {
             assert!(errors <= 1, "long capture has at most one known diagnostic");
 
             let decoded_pages: Vec<_> = frames
@@ -2233,7 +2191,10 @@ mod tests {
 
     #[test]
     fn veteran_bms_cell_page_offsets_match_live_aero_layout() {
-        let (frames, errors) = lossy_veteran_frames_from_chunks(long_powered_on_fixture_chunks());
+        let ReassembledFrames {
+            frames,
+            diagnostics: errors,
+        } = lossy_veteran_frames_from_chunks(long_powered_on_fixture_chunks());
         assert_eq!(errors, 1);
 
         let cell_pages: Vec<_> = frames
