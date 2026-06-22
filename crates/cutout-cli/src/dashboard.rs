@@ -30,7 +30,7 @@ const TAB_COUNT: usize = 4;
 pub(crate) struct DashboardState {
     pub(crate) source: DashboardSource,
     pub(crate) active_tab: usize,
-    pub(crate) provenance: Option<&'static str>,
+    pub(crate) provenance: Option<String>,
     pub(crate) device: DeviceSnapshot,
     pub(crate) scan_browser: ScanBrowser,
     pub(crate) telemetry: TelemetryWindow,
@@ -107,31 +107,6 @@ impl ProfileFamily {
     fn summary(&self) -> &str {
         match self {
             Self::AeroVeteran { summary, .. } | Self::Pending { summary, .. } => summary.as_str(),
-        }
-    }
-}
-
-impl From<FixtureProfileFamily> for ProfileFamily {
-    fn from(value: FixtureProfileFamily) -> Self {
-        match value {
-            FixtureProfileFamily::AeroVeteran {
-                current_limit_a,
-                tail_status,
-            } => Self::AeroVeteran {
-                current_limit_a: current_limit_a.map(ToOwned::to_owned),
-                tail_status: tail_status.to_owned(),
-                summary: match current_limit_a {
-                    Some(current_limit) => {
-                        format!("Aero/Veteran current {current_limit} / {tail_status}")
-                    }
-                    None => format!("unknown Aero/Veteran current unknown / {tail_status}"),
-                },
-            },
-            FixtureProfileFamily::Pending { family, note } => Self::Pending {
-                family: family.to_owned(),
-                note: note.to_owned(),
-                summary: format!("pending {family} {note}"),
-            },
         }
     }
 }
@@ -292,199 +267,11 @@ enum DashboardInput {
     PreviousTab,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FixtureEvent {
-    Provenance {
-        source: &'static str,
-    },
-    Device {
-        name: &'static str,
-        address: &'static str,
-        identifier: &'static str,
-        firmware: &'static str,
-        connection_state: &'static str,
-    },
-    ScanFilters {
-        address: Option<&'static str>,
-        identifier: Option<&'static str>,
-        name_contains: Option<&'static str>,
-    },
-    ScanObservation {
-        name: &'static str,
-        address: &'static str,
-        identifier: &'static str,
-        rssi: &'static str,
-        services: &'static str,
-        real_device: bool,
-        selected: bool,
-    },
-    Counters {
-        discovered: u64,
-        connected: u64,
-        subscriptions: u64,
-        notifications: u64,
-    },
-    Telemetry {
-        battery_pct: u64,
-        signal_pct: u64,
-        speed_mph: &'static [u64],
-        voltage_v: &'static [u64],
-        current_a: &'static [u64],
-        temperature_c: &'static [u64],
-    },
-    Profile {
-        name: &'static str,
-        source: &'static str,
-        status: &'static str,
-        family: FixtureProfileFamily,
-    },
-    Log {
-        level: &'static str,
-        message: &'static str,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FixtureReplay {
-    steps: &'static [FixtureEvent],
-    index: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FixtureProfileFamily {
-    AeroVeteran {
-        current_limit_a: Option<&'static str>,
-        tail_status: &'static str,
-    },
-    Pending {
-        family: &'static str,
-        note: &'static str,
-    },
-}
-
-const FIXTURE_DEMO_STEPS: &[FixtureEvent] = &[
-    FixtureEvent::Provenance {
-        source: "fixture/demo replay: aero-nf2557.v1",
-    },
-    FixtureEvent::Device {
-        name: "Aero NF2557",
-        address: "AA:BB:CC:DD:EE:FF",
-        identifier: "platform-0001",
-        firmware: "v3.8.12",
-        connection_state: "connected",
-    },
-    FixtureEvent::ScanFilters {
-        address: Some("AA:BB:CC:DD:EE:FF"),
-        identifier: Some("platform-0001"),
-        name_contains: Some("Aero"),
-    },
-    FixtureEvent::ScanObservation {
-        name: "Aero NF2557",
-        address: "AA:BB:CC:DD:EE:FF",
-        identifier: "platform-0001",
-        rssi: "-61 dBm",
-        services: "battery, throttle, telemetry",
-        real_device: true,
-        selected: true,
-    },
-    FixtureEvent::ScanObservation {
-        name: "Begode X",
-        address: "11:22:33:44:55:66",
-        identifier: "platform-0202",
-        rssi: "-77 dBm",
-        services: "diagnostics, state",
-        real_device: true,
-        selected: false,
-    },
-    FixtureEvent::ScanObservation {
-        name: "Veteran V14",
-        address: "AA:00:11:22:33:44",
-        identifier: "platform-0303",
-        rssi: "-84 dBm",
-        services: "battery, control",
-        real_device: true,
-        selected: false,
-    },
-    FixtureEvent::Counters {
-        discovered: 8,
-        connected: 1,
-        subscriptions: 4,
-        notifications: 27,
-    },
-    FixtureEvent::Telemetry {
-        battery_pct: 74,
-        signal_pct: 81,
-        speed_mph: &[0, 4, 9, 14, 18, 22, 24, 21, 19, 17, 16, 18],
-        voltage_v: &[52, 52, 53, 53, 54, 54, 55, 55, 55, 54, 54, 53],
-        current_a: &[3, 4, 6, 7, 8, 9, 10, 10, 9, 8, 7, 6],
-        temperature_c: &[30, 31, 31, 32, 32, 33, 34, 34, 35, 35, 34, 33],
-    },
-    FixtureEvent::Profile {
-        name: "Primary drive",
-        source: "probe",
-        status: "ready",
-        family: FixtureProfileFamily::AeroVeteran {
-            current_limit_a: Some("45A"),
-            tail_status: "raw tail preserved",
-        },
-    },
-    FixtureEvent::Profile {
-        name: "Battery pack",
-        source: "capture",
-        status: "warming",
-        family: FixtureProfileFamily::Pending {
-            family: "Begode/Falcon",
-            note: "unsupported / pending",
-        },
-    },
-    FixtureEvent::Profile {
-        name: "Motor controller",
-        source: "manual",
-        status: "partial",
-        family: FixtureProfileFamily::AeroVeteran {
-            current_limit_a: None,
-            tail_status: "raw tail unknown",
-        },
-    },
-    FixtureEvent::Log {
-        level: "info",
-        message: "fixture replay loaded from fixture/demo replay: aero-nf2557.v1",
-    },
-    FixtureEvent::Log {
-        level: "debug",
-        message: "dashboard booted in read-only mode",
-    },
-];
-
-impl FixtureReplay {
-    pub(crate) const fn demo() -> Self {
-        Self {
-            steps: FIXTURE_DEMO_STEPS,
-            index: 0,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn provenance(self) -> Option<&'static str> {
-        self.steps.iter().find_map(|step| match step {
-            FixtureEvent::Provenance { source } => Some(*source),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn apply_next(&mut self, state: &mut DashboardState) -> bool {
-        let Some(step) = self.steps.get(self.index).copied() else {
-            return false;
-        };
-        self.index += 1;
-        state.apply_fixture_event(step);
-        true
-    }
-
-    pub(crate) fn apply_all(&mut self, state: &mut DashboardState) {
-        while self.apply_next(state) {}
-    }
-}
+const DEMO_PROVENANCE: &str = "demo state: aero-nf2557.v1";
+const DEMO_SPEED_MPH: &[u64] = &[0, 4, 9, 14, 18, 22, 24, 21, 19, 17, 16, 18];
+const DEMO_VOLTAGE_V: &[u64] = &[52, 52, 53, 53, 54, 54, 55, 55, 55, 54, 54, 53];
+const DEMO_CURRENT_A: &[u64] = &[3, 4, 6, 7, 8, 9, 10, 10, 9, 8, 7, 6];
+const DEMO_TEMPERATURE_C: &[u64] = &[30, 31, 31, 32, 32, 33, 34, 34, 35, 35, 34, 33];
 
 impl DashboardState {
     pub(crate) fn empty() -> Self {
@@ -512,18 +299,13 @@ impl DashboardState {
 
     #[cfg(test)]
     pub(crate) fn sample() -> Self {
-        let mut state = Self::empty();
-        state.source = DashboardSource::Demo;
-        let mut replay = FixtureReplay::demo();
-        replay.apply_all(&mut state);
-        state
+        Self::demo(None)
     }
 
     pub(crate) fn demo(device: Option<&str>) -> Self {
         let mut state = Self::empty();
         state.source = DashboardSource::Demo;
-        let mut replay = FixtureReplay::demo();
-        replay.apply_all(&mut state);
+        state.apply_demo_seed();
 
         if let Some(device) = device {
             if state.device.name != device {
@@ -536,6 +318,103 @@ impl DashboardState {
         }
 
         state
+    }
+
+    fn apply_demo_seed(&mut self) {
+        self.provenance = Some(DEMO_PROVENANCE.to_owned());
+        self.apply_device_snapshot(
+            "Aero NF2557",
+            "AA:BB:CC:DD:EE:FF",
+            "platform-0001",
+            "v3.8.12",
+            "connected",
+        );
+        self.scan_browser.filters = TargetFilterSummary {
+            address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+            identifier: Some("platform-0001".to_owned()),
+            name_contains: Some("Aero".to_owned()),
+        };
+        self.scan_browser.push_observation(
+            ScanObservation {
+                name: "Aero NF2557".to_owned(),
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                identifier: "platform-0001".to_owned(),
+                rssi: "-61 dBm".to_owned(),
+                services: "battery, throttle, telemetry".to_owned(),
+                real_device: true,
+            },
+            true,
+        );
+        self.scan_browser.push_observation(
+            ScanObservation {
+                name: "Begode X".to_owned(),
+                address: "11:22:33:44:55:66".to_owned(),
+                identifier: "platform-0202".to_owned(),
+                rssi: "-77 dBm".to_owned(),
+                services: "diagnostics, state".to_owned(),
+                real_device: true,
+            },
+            false,
+        );
+        self.scan_browser.push_observation(
+            ScanObservation {
+                name: "Veteran V14".to_owned(),
+                address: "AA:00:11:22:33:44".to_owned(),
+                identifier: "platform-0303".to_owned(),
+                rssi: "-84 dBm".to_owned(),
+                services: "battery, control".to_owned(),
+                real_device: true,
+            },
+            false,
+        );
+        self.counters = SessionCounters {
+            discovered: 8,
+            connected: 1,
+            subscriptions: 4,
+            notifications: 27,
+            notification_bytes: 0,
+            latest_notification_len: None,
+        };
+        self.telemetry.load_window(
+            74,
+            81,
+            DEMO_SPEED_MPH,
+            DEMO_VOLTAGE_V,
+            DEMO_CURRENT_A,
+            DEMO_TEMPERATURE_C,
+        );
+        self.profiles.push(ProfileSnapshot {
+            name: "Primary drive".to_owned(),
+            source: "probe".to_owned(),
+            status: "ready".to_owned(),
+            family: ProfileFamily::AeroVeteran {
+                current_limit_a: Some("45A".to_owned()),
+                tail_status: "raw tail preserved".to_owned(),
+                summary: "Aero/Veteran current 45A / raw tail preserved".to_owned(),
+            },
+        });
+        self.profiles.push(ProfileSnapshot {
+            name: "Battery pack".to_owned(),
+            source: "capture".to_owned(),
+            status: "warming".to_owned(),
+            family: ProfileFamily::Pending {
+                family: "Begode/Falcon".to_owned(),
+                note: "unsupported / pending".to_owned(),
+                summary: "pending Begode/Falcon unsupported / pending".to_owned(),
+            },
+        });
+        self.profiles.push(ProfileSnapshot {
+            name: "Motor controller".to_owned(),
+            source: "manual".to_owned(),
+            status: "partial".to_owned(),
+            family: ProfileFamily::AeroVeteran {
+                current_limit_a: None,
+                tail_status: "raw tail unknown".to_owned(),
+                summary: "unknown Aero/Veteran current unknown / raw tail unknown".to_owned(),
+            },
+        });
+        self.push_log("info", "demo state loaded from demo state: aero-nf2557.v1");
+        self.push_log("debug", "dashboard booted in read-only mode");
     }
 
     #[cfg(test)]
@@ -678,99 +557,6 @@ impl DashboardState {
             DashboardUpdate::BatteryPercent(percent) => self.apply_battery_percent(percent),
             DashboardUpdate::SessionReport(report) => self.apply_session_report(&report),
             DashboardUpdate::Log { level, message } => self.push_log(&level, &message),
-        }
-    }
-
-    pub(crate) fn apply_fixture_event(&mut self, event: FixtureEvent) {
-        match event {
-            FixtureEvent::Provenance { source } => {
-                self.provenance = Some(source);
-            }
-            FixtureEvent::Device {
-                name,
-                address,
-                identifier,
-                firmware,
-                connection_state,
-            } => self.apply_device_snapshot(name, address, identifier, firmware, connection_state),
-            FixtureEvent::ScanFilters {
-                address,
-                identifier,
-                name_contains,
-            } => {
-                self.scan_browser.filters = TargetFilterSummary {
-                    address: address.map(ToOwned::to_owned),
-                    identifier: identifier.map(ToOwned::to_owned),
-                    name_contains: name_contains.map(ToOwned::to_owned),
-                };
-            }
-            FixtureEvent::ScanObservation {
-                name,
-                address,
-                identifier,
-                rssi,
-                services,
-                real_device,
-                selected,
-            } => {
-                let observation = ScanObservation {
-                    name: name.to_owned(),
-                    address: address.to_owned(),
-                    identifier: identifier.to_owned(),
-                    rssi: rssi.to_owned(),
-                    services: services.to_owned(),
-                    real_device,
-                };
-                self.scan_browser.push_observation(observation, selected);
-            }
-            FixtureEvent::Counters {
-                discovered,
-                connected,
-                subscriptions,
-                notifications,
-            } => {
-                self.counters = SessionCounters {
-                    discovered,
-                    connected,
-                    subscriptions,
-                    notifications,
-                    notification_bytes: 0,
-                    latest_notification_len: None,
-                };
-            }
-            FixtureEvent::Telemetry {
-                battery_pct,
-                signal_pct,
-                speed_mph,
-                voltage_v,
-                current_a,
-                temperature_c,
-            } => {
-                self.telemetry.load_window(
-                    battery_pct,
-                    signal_pct,
-                    speed_mph,
-                    voltage_v,
-                    current_a,
-                    temperature_c,
-                );
-            }
-            FixtureEvent::Profile {
-                name,
-                source,
-                status,
-                family,
-            } => {
-                self.profiles.push(ProfileSnapshot {
-                    name: name.to_owned(),
-                    source: source.to_owned(),
-                    status: status.to_owned(),
-                    family: family.into(),
-                });
-            }
-            FixtureEvent::Log { level, message } => {
-                self.push_log(level, message);
-            }
         }
     }
 
@@ -1447,7 +1233,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         ]),
         Line::from(vec![
             Span::styled("source ", Style::new().fg(Color::Gray)),
-            Span::raw(state.provenance.unwrap_or("live")),
+            Span::raw(state.provenance.as_deref().unwrap_or("live")),
         ]),
     ])
     .block(panel_block("Target"));
@@ -1938,8 +1724,8 @@ mod tests {
         assert_eq!(state.source, DashboardSource::Demo);
         assert_eq!(state.active_tab, 0);
         assert_eq!(
-            state.provenance,
-            Some("fixture/demo replay: aero-nf2557.v1")
+            state.provenance.as_deref(),
+            Some("demo state: aero-nf2557.v1")
         );
         assert_eq!(state.device.make, "NOSFET");
         assert_eq!(state.device.model, "Aero");
@@ -2709,7 +2495,7 @@ mod tests {
             "Voltage",
             "Recent events",
             "Aero NF2557",
-            "fixture replay loaded from fixture/demo replay: aero-nf2557.v1",
+            "demo state loaded from demo state: aero-nf2557.v1",
         ] {
             assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
         }
@@ -2745,19 +2531,12 @@ mod tests {
     }
 
     #[test]
-    fn fixture_replay_hydrates_state_from_checked_in_demo_steps() {
-        let mut state = DashboardState::empty();
-        let mut replay = FixtureReplay::demo();
+    fn demo_seed_hydrates_state_without_capture_replay() {
+        let state = DashboardState::demo(None);
 
         assert_eq!(
-            replay.provenance(),
-            Some("fixture/demo replay: aero-nf2557.v1")
-        );
-        replay.apply_all(&mut state);
-
-        assert_eq!(
-            state.provenance,
-            Some("fixture/demo replay: aero-nf2557.v1")
+            state.provenance.as_deref(),
+            Some("demo state: aero-nf2557.v1")
         );
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.counters.notifications, 27);
@@ -2769,17 +2548,16 @@ mod tests {
             state
                 .logs
                 .iter()
-                .any(|entry| entry.message.contains("fixture replay"))
+                .any(|entry| entry.message.contains("demo state"))
         );
-        assert!(!replay.apply_next(&mut state));
     }
 
     #[test]
-    fn dashboard_render_shows_fixture_provenance() {
+    fn dashboard_render_shows_demo_provenance() {
         let buffer = render_buffer(&DashboardState::sample(), 120, 36);
         let text = buffer_text(&buffer);
 
-        assert!(text.contains("fixture/demo replay"));
+        assert!(text.contains("demo state"));
     }
 
     #[test]

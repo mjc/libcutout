@@ -18,7 +18,7 @@ use cutout_core::{
     BatteryInfo, BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
     CapturePrivacy, CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
+    ParserDiagnostics, PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
     PevcapResolvedIdentity, ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput,
     SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     VerifiedValue,
@@ -320,6 +320,101 @@ fn summarize_pevcap_replay(
     report
 }
 
+fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<DashboardState> {
+    let report = replay_pevcap_capture(capture, SelectedSessionProfile::Aero)?;
+    if !(report.chunk_one_byte_matches && report.chunk_arbitrary_matches) {
+        bail!("Aero PEVCAP replay chunks did not produce equivalent dashboard state");
+    }
+
+    let mut state = DashboardState::empty();
+    state.provenance = Some(pevcap_dashboard_provenance(capture));
+    state
+        .device
+        .identifier
+        .clone_from(&capture.header.platform_id);
+    "replayed".clone_into(&mut state.device.connection_state);
+    if let Some(identity) = &capture.header.resolved_identity {
+        if let Some(model) = &identity.model {
+            state.device.model.clone_from(&model.value);
+        }
+        if let Some(firmware) = &identity.firmware {
+            state.device.firmware.clone_from(&firmware.value);
+        }
+        if matches!(
+            identity.protocol_family,
+            Some(ProtocolFamily::VeteranLeaperkimNosfet)
+        ) {
+            "NOSFET".clone_into(&mut state.device.make);
+        }
+    }
+
+    state.apply_session_report(&SessionBridgeReport {
+        protocol_writes: 0,
+        writes: 0,
+        subscribes: 0,
+        notifications: replay_notification_count(capture),
+        notification_bytes: replay_notification_bytes(capture),
+        latest_notification_len: latest_replay_notification_len(capture),
+        telemetry: report.telemetry,
+        telemetry_snapshot: report.telemetry_snapshot,
+        read_only_responses: report.read_only_responses,
+        read_only_response_events: report.read_only_response_events,
+        firmware: report.firmware,
+        settings: Vec::new(),
+        diagnostics: report.diagnostics,
+        diagnostics_snapshot: ParserDiagnostics::default(),
+        diagnostic_errors: report.diagnostic_errors,
+        identity: None,
+        events: Vec::new(),
+        disconnects: 0,
+    });
+    Ok(state)
+}
+
+fn pevcap_dashboard_provenance(capture: &PevcapCapture) -> String {
+    if capture.header.annotations.is_empty() {
+        return format!("pevcap replay platform={}", capture.header.platform_id);
+    }
+
+    format!(
+        "pevcap replay platform={} annotations={}",
+        capture.header.platform_id,
+        capture
+            .header
+            .annotations
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+fn replay_notification_count(capture: &PevcapCapture) -> usize {
+    capture
+        .records
+        .iter()
+        .filter(|record| record.direction == PevcapDirection::Inbound)
+        .count()
+}
+
+fn replay_notification_bytes(capture: &PevcapCapture) -> usize {
+    capture
+        .records
+        .iter()
+        .filter(|record| record.direction == PevcapDirection::Inbound)
+        .map(|record| record.bytes.len())
+        .sum()
+}
+
+fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<usize> {
+    capture
+        .records
+        .iter()
+        .rev()
+        .find(|record| record.direction == PevcapDirection::Inbound)
+        .map(|record| record.bytes.len())
+}
+
 fn render_diagnostic_snapshots_jsonl(
     snapshots: &[DiagnosticSnapshot],
 ) -> Result<Vec<String>, serde_json::Error> {
@@ -464,6 +559,12 @@ fn append_selected_layout_evidence(rendered: &mut String, evidence: BegodePackLa
 async fn dashboard(args: DashboardArgs) -> Result<()> {
     if args.demo {
         return run_dashboard(DashboardState::demo(args.device.as_deref()));
+    }
+
+    if let Some(path) = args.pevcap.as_ref() {
+        let input = fs::read(path)?;
+        let capture = PevcapCapture::decode(&input, pevcap_encoding(args.pevcap_format))?;
+        return run_dashboard(dashboard_state_from_aero_pevcap(&capture)?);
     }
 
     let target = dashboard_live_target(&args)?;
@@ -1688,6 +1789,8 @@ mod tests {
     fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
         DashboardArgs {
             demo,
+            pevcap: None,
+            pevcap_format: PevcapFormat::Jsonl,
             device: device.map(ToOwned::to_owned),
             scan: ScanArgs { seconds: 5 },
         }
@@ -2238,7 +2341,7 @@ mod tests {
         let report = SessionBridgeReport {
             protocol_writes: 1,
             writes: 3,
-            diagnostics_snapshot: cutout_core::ParserDiagnostics {
+            diagnostics_snapshot: ParserDiagnostics {
                 dropped_bytes: 1,
                 resyncs: 2,
                 bad_checksums: 3,
@@ -2299,7 +2402,7 @@ mod tests {
                 subscribes: 1,
                 notifications: 8,
                 disconnects: 0,
-                diagnostics_snapshot: cutout_core::ParserDiagnostics {
+                diagnostics_snapshot: ParserDiagnostics {
                     dropped_bytes: 5,
                     resyncs: 1,
                     bad_checksums: 0,
@@ -2401,6 +2504,52 @@ mod tests {
                 .and_then(|firmware| firmware.firmware_major.map(|major| major.value)),
             Some(43)
         );
+    }
+
+    #[test]
+    fn pevcap_replay_builds_aero_dashboard_state() {
+        let capture = sample_aero_replay_capture();
+
+        let state = dashboard_state_from_aero_pevcap(&capture)
+            .expect("Aero dashboard replay uses existing Aero session");
+
+        assert_eq!(
+            state.provenance.as_deref(),
+            Some("pevcap replay platform=darwin annotations=aero replay")
+        );
+        assert_eq!(state.device.identifier, "darwin");
+        assert_eq!(state.device.connection_state, "replayed");
+        assert_eq!(state.counters.notifications, 1);
+        assert_eq!(state.counters.notification_bytes, 99);
+        assert_eq!(state.counters.latest_notification_len, Some(99));
+        assert_eq!(state.telemetry.latest_voltage_v, Some(108));
+        assert!(state.read_only.firmware.is_some());
+        assert!(
+            state
+                .read_only
+                .settings
+                .iter()
+                .any(|setting| setting.contains("hardware_verified"))
+        );
+        assert!(
+            state
+                .read_only
+                .bms_pages
+                .iter()
+                .any(|page| page.contains("selector=3 kind=raw"))
+        );
+        assert_eq!(state.read_only.unknown_raw_pages, 1);
+    }
+
+    #[test]
+    fn pevcap_replay_dashboard_state_requires_equivalent_chunk_modes() {
+        let capture = sample_aero_replay_capture();
+        let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero)
+            .expect("Aero replay does not require Falcon battery evidence");
+
+        assert!(report.chunk_one_byte_matches);
+        assert!(report.chunk_arbitrary_matches);
+        assert!(dashboard_state_from_aero_pevcap(&capture).is_ok());
     }
 
     #[test]

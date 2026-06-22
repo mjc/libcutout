@@ -448,6 +448,14 @@ pub(crate) struct DashboardArgs {
     #[arg(long)]
     pub(crate) demo: bool,
 
+    /// Replay an Aero PEVCAP capture into the dashboard instead of connecting live.
+    #[arg(long = "pevcap", value_name = "PATH", conflicts_with = "demo")]
+    pub(crate) pevcap: Option<PathBuf>,
+
+    /// PEVCAP input format when --pevcap is supplied.
+    #[arg(long = "pevcap-format", value_enum, default_value_t = PevcapFormat::Jsonl)]
+    pub(crate) pevcap_format: PevcapFormat,
+
     /// Live device name substring, or demo device name when used with --demo.
     #[arg(long = "device", value_name = "NAME")]
     pub(crate) device: Option<String>,
@@ -1187,6 +1195,8 @@ mod tests {
             cli.command,
             Command::Dashboard(DashboardArgs {
                 demo: false,
+                pevcap: None,
+                pevcap_format: PevcapFormat::Jsonl,
                 device: None,
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
@@ -1204,6 +1214,8 @@ mod tests {
             cli.command,
             Command::Dashboard(DashboardArgs {
                 demo: true,
+                pevcap: None,
+                pevcap_format: PevcapFormat::Jsonl,
                 device: Some("Aero NF2557".to_owned()),
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS,
@@ -1228,8 +1240,36 @@ mod tests {
             cli.command,
             Command::Dashboard(DashboardArgs {
                 demo: false,
+                pevcap: None,
+                pevcap_format: PevcapFormat::Jsonl,
                 device: Some("NF2557".to_owned()),
                 scan: ScanArgs { seconds: 12 },
+            })
+        );
+    }
+
+    #[test]
+    fn parses_dashboard_command_with_pevcap_replay() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "dashboard",
+            "--pevcap",
+            "aero.pevcap",
+            "--pevcap-format",
+            "binary",
+        ])
+        .expect("parser accepts dashboard PEVCAP replay options");
+
+        assert_eq!(
+            cli.command,
+            Command::Dashboard(DashboardArgs {
+                demo: false,
+                pevcap: Some(PathBuf::from("aero.pevcap")),
+                pevcap_format: PevcapFormat::Binary,
+                device: None,
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS,
+                },
             })
         );
     }
