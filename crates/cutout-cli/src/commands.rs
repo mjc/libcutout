@@ -7,6 +7,7 @@ use cutout_btle::{
 };
 use cutout_core::{FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
 use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
+use tracing::info;
 
 use crate::cli::{Cli, Command, DashboardArgs, TargetedScanArgs};
 use crate::dashboard::{DashboardState, run_dashboard};
@@ -36,7 +37,16 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
     }
 
     let target = dashboard_live_target(&args)?;
+    info!(
+        device = target.name_contains.as_deref().unwrap_or("<none>"),
+        seconds = args.seconds(),
+        "scanning for dashboard device"
+    );
     let connection = connect_and_discover(&target, Duration::from_secs(args.seconds())).await?;
+    info!(
+        observation = %connection.summary.observation,
+        "connected dashboard device"
+    );
     let state = DashboardState::live_connected(&target, &connection.summary);
     run_dashboard(state)
 }
