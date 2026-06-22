@@ -56,6 +56,27 @@ struct MobileFfiSmoke {
         } catch {
             preconditionFailure("unexpected constructor error: \(error)")
         }
+
+        let capture = MobilePevcapCaptureBuilder(
+            wallClockStartUnixMs: 1_700_000_000_000,
+            platformId: "ios-corebluetooth",
+            writeLimit: 185
+        )
+        capture.addAnnotation(annotation: "capture_label=powered_on_stationary")
+        capture.addAnnotation(annotation: "capture_privacy=redacted")
+        capture.addAnnotation(annotation: "capture_distribution=redistributable")
+        capture.addAnnotation(annotation: "capture_evidence=hardware_tested")
+        capture.recordLinkUp(monotonicMs: 1, maxWriteLen: 185)
+        capture.recordNotification(
+            monotonicMs: 2,
+            characteristic: Data(repeating: 0x11, count: 16),
+            service: Data(repeating: 0x22, count: 16),
+            bytes: Data([0xde, 0xad, 0xbe, 0xef])
+        )
+        let exported = try capture.export(encoding: .jsonl)
+        let exportedText = String(data: exported, encoding: .utf8)!
+        precondition(exportedText.contains("capture_label=powered_on_stationary"))
+        precondition(exportedText.contains(#""bytes":[222,173,190,239]"#))
     }
 }
 

@@ -3,8 +3,9 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, ParserDiagnosticsDto,
-    SessionInputDto, SessionOutputDto, TelemetrySnapshotDto, TransportActionDto,
+    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, ParserDiagnosticsDto,
+    PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto, TransportActionDto,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -175,12 +176,164 @@ pub enum MobileFalconProfileDto {
     Unsupported,
 }
 
+/// Mobile PEVCAP export encoding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePevcapEncodingDto {
+    /// JSON Lines PEVCAP stream.
+    Jsonl,
+
+    /// Binary PEVCAP container.
+    Binary,
+}
+
 /// Mobile Falcon construction error.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileSessionConstructorError {
     /// Requested Falcon profile is not supported.
     #[error("unsupported Falcon profile")]
     UnsupportedFalconProfile,
+}
+
+/// Mobile PEVCAP export error.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileCaptureExportError {
+    /// Header metadata exceeded PEVCAP bounded fields.
+    #[error("invalid capture header")]
+    InvalidHeader,
+
+    /// PEVCAP encoding failed.
+    #[error("capture encode failed")]
+    EncodeFailed,
+}
+
+/// Mobile-facing builder for a PEVCAP capture export.
+#[derive(Debug, uniffi::Object)]
+pub struct MobilePevcapCaptureBuilder {
+    wall_clock_start_unix_ms: u64,
+    platform_id: String,
+    write_limit: Option<u16>,
+    annotations: Mutex<Vec<String>>,
+    records: Mutex<Vec<PevcapRecord>>,
+}
+
+#[uniffi::export]
+impl MobilePevcapCaptureBuilder {
+    /// Creates an empty PEVCAP capture builder.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new(
+        wall_clock_start_unix_ms: u64,
+        platform_id: String,
+        write_limit: Option<u16>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            wall_clock_start_unix_ms,
+            platform_id,
+            write_limit,
+            annotations: Mutex::new(Vec::new()),
+            records: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Adds a capture annotation, preserving key/value text exactly.
+    pub fn add_annotation(&self, annotation: String) {
+        self.annotations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(annotation);
+    }
+
+    /// Records a link-up lifecycle event.
+    pub fn record_link_up(&self, monotonic_ms: u64, max_write_len: Option<u16>) {
+        self.records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(PevcapRecord::link_up(monotonic_ms, max_write_len));
+    }
+
+    /// Records a link-down lifecycle event.
+    pub fn record_link_down(&self, monotonic_ms: u64) {
+        self.records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(PevcapRecord::link_down(monotonic_ms));
+    }
+
+    /// Records inbound notification bytes.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn record_notification(
+        &self,
+        monotonic_ms: u64,
+        characteristic: Vec<u8>,
+        service: Vec<u8>,
+        bytes: Vec<u8>,
+    ) {
+        self.records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(PevcapRecord::inbound_notification(
+                monotonic_ms,
+                mobile_gatt_channel(&characteristic),
+                mobile_gatt_channel(&service),
+                bytes,
+            ));
+    }
+
+    /// Exports the current capture as PEVCAP bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileCaptureExportError`] when metadata is outside PEVCAP
+    /// bounds or encoding fails.
+    pub fn export(
+        &self,
+        encoding: MobilePevcapEncodingDto,
+    ) -> Result<Vec<u8>, MobileCaptureExportError> {
+        self.capture()?
+            .encode(encoding.into())
+            .map_err(|_err| MobileCaptureExportError::EncodeFailed)
+    }
+}
+
+impl MobilePevcapCaptureBuilder {
+    fn capture(&self) -> Result<PevcapCapture, MobileCaptureExportError> {
+        let annotations = self
+            .annotations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let annotation_refs = annotations.iter().map(String::as_str).collect::<Vec<_>>();
+        let header = PevcapHeader::new(
+            self.wall_clock_start_unix_ms,
+            self.platform_id.as_str(),
+            self.write_limit,
+            &[],
+            &[],
+            None,
+            env!("CARGO_PKG_VERSION"),
+            [0; 32],
+            &annotation_refs,
+        )
+        .map_err(|_err| MobileCaptureExportError::InvalidHeader)?;
+        let records = self
+            .records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        Ok(PevcapCapture::new(header, records))
+    }
+}
+
+impl From<MobilePevcapEncodingDto> for PevcapEncoding {
+    fn from(encoding: MobilePevcapEncodingDto) -> Self {
+        match encoding {
+            MobilePevcapEncodingDto::Jsonl => Self::Jsonl,
+            MobilePevcapEncodingDto::Binary => Self::Binary,
+        }
+    }
+}
+
+fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
+    GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
 /// Mobile-facing wrapper for a NOSFET Aero read-only session.
@@ -552,5 +705,61 @@ mod tests {
 
         assert_eq!(result.error, None);
         assert_eq!(session.current_snapshot().voltage_mv, Some(108_760));
+    }
+
+    #[test]
+    fn mobile_capture_builder_exports_cli_readable_jsonl() {
+        let builder = MobilePevcapCaptureBuilder::new(
+            1_700_000_000_000,
+            "ios-corebluetooth".into(),
+            Some(185),
+        );
+        builder.add_annotation("capture_label=powered_on_stationary".into());
+        builder.add_annotation("capture_privacy=redacted".into());
+        builder.add_annotation("capture_distribution=redistributable".into());
+        builder.add_annotation("capture_evidence=hardware_tested".into());
+        builder.record_link_up(1, Some(185));
+        builder.record_notification(
+            2,
+            vec![0x11; 16],
+            vec![0x22; 16],
+            vec![0xde, 0xad, 0xbe, 0xef],
+        );
+
+        let bytes = builder
+            .export(MobilePevcapEncodingDto::Jsonl)
+            .expect("JSONL export succeeds");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
+
+        assert_eq!(capture.header.platform_id, "ios-corebluetooth");
+        assert_eq!(
+            capture.header.annotations.as_slice(),
+            [
+                "capture_label=powered_on_stationary",
+                "capture_privacy=redacted",
+                "capture_distribution=redistributable",
+                "capture_evidence=hardware_tested",
+            ]
+        );
+        assert_eq!(capture.records.len(), 2);
+        assert_eq!(capture.records[1].bytes, [0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn mobile_capture_builder_exports_binary_container() {
+        let builder =
+            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+        builder.record_link_down(9);
+
+        let bytes = builder
+            .export(MobilePevcapEncodingDto::Binary)
+            .expect("binary export succeeds");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary is PEVCAP");
+
+        assert_eq!(capture.header.platform_id, "ios-corebluetooth");
+        assert_eq!(capture.records.len(), 1);
+        assert_eq!(capture.records[0].monotonic_ms, 9);
     }
 }

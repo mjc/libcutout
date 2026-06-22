@@ -17,7 +17,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 workspace = true
 
 [dependencies]
-cutout-core = { path = "../cutout-core", version = "0.1.0" }
+cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 thiserror.workspace = true
 uniffi = { workspace = true, features = ["cli"] }

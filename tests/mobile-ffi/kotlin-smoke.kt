@@ -2,6 +2,8 @@ import uniffi.cutout_mobile_ffi.AeroReadOnlySession
 import uniffi.cutout_mobile_ffi.FalconReadOnlySession
 import uniffi.cutout_mobile_ffi.MobileCommandDto
 import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
+import uniffi.cutout_mobile_ffi.MobilePevcapCaptureBuilder
+import uniffi.cutout_mobile_ffi.MobilePevcapEncodingDto
 import uniffi.cutout_mobile_ffi.MobileSessionConstructorException
 import uniffi.cutout_mobile_ffi.MobileSessionInputDto
 import uniffi.cutout_mobile_ffi.MobileSessionInputKindDto
@@ -63,6 +65,27 @@ fun main() {
         FalconReadOnlySession.withProfile(MobileFalconProfileDto.UNSUPPORTED)
         error("unsupported Falcon profile should throw")
     } catch (_: MobileSessionConstructorException.UnsupportedFalconProfile) {
+    }
+
+    MobilePevcapCaptureBuilder(
+        wallClockStartUnixMs = 1_700_000_000_000UL,
+        platformId = "ios-corebluetooth",
+        writeLimit = 185U,
+    ).use { capture ->
+        capture.addAnnotation("capture_label=powered_on_stationary")
+        capture.addAnnotation("capture_privacy=redacted")
+        capture.addAnnotation("capture_distribution=redistributable")
+        capture.addAnnotation("capture_evidence=hardware_tested")
+        capture.recordLinkUp(monotonicMs = 1UL, maxWriteLen = 185U)
+        capture.recordNotification(
+            monotonicMs = 2UL,
+            characteristic = ByteArray(16) { 0x11 },
+            service = ByteArray(16) { 0x22 },
+            bytes = byteArrayOf(0xde.toByte(), 0xad.toByte(), 0xbe.toByte(), 0xef.toByte()),
+        )
+        val exported = capture.export(MobilePevcapEncodingDto.JSONL).decodeToString()
+        check(exported.contains("capture_label=powered_on_stationary"))
+        check(exported.contains("\"bytes\":[222,173,190,239]"))
     }
 }
 
