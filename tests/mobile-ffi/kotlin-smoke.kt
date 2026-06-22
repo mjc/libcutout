@@ -2,13 +2,19 @@ import uniffi.cutout_mobile_ffi.AeroReadOnlySession
 import uniffi.cutout_mobile_ffi.FalconReadOnlySession
 import uniffi.cutout_mobile_ffi.MobileCommandDto
 import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
+import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
+import uniffi.cutout_mobile_ffi.MobileGattRoleDto
 import uniffi.cutout_mobile_ffi.MobilePevcapCaptureBuilder
 import uniffi.cutout_mobile_ffi.MobilePevcapEncodingDto
+import uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto
+import uniffi.cutout_mobile_ffi.MobileResolvedIdentityDto
 import uniffi.cutout_mobile_ffi.MobileSessionConstructorException
 import uniffi.cutout_mobile_ffi.MobileSessionInputDto
 import uniffi.cutout_mobile_ffi.MobileSessionInputKindDto
 import uniffi.cutout_mobile_ffi.MobileSessionOutputKindDto
 import uniffi.cutout_mobile_ffi.MobileSessionStepErrorKindDto
+import uniffi.cutout_mobile_ffi.MobileVerificationStatusDto
+import uniffi.cutout_mobile_ffi.MobileVerifiedStringDto
 
 fun main() {
     AeroReadOnlySession().use { aero ->
@@ -76,6 +82,34 @@ fun main() {
         capture.addAnnotation("capture_privacy=redacted")
         capture.addAnnotation("capture_distribution=redistributable")
         capture.addAnnotation("capture_evidence=hardware_tested")
+        val ffe0 = hexBytes("0000ffe000001000800000805f9b34fb")
+        val ffe1 = hexBytes("0000ffe100001000800000805f9b34fb")
+        capture.addAdvertisedService(ffe0)
+        capture.addGattFingerprint(
+            MobileGattFingerprintDto(
+                service = ffe0,
+                characteristic = ffe1,
+                roles = listOf(
+                    MobileGattRoleDto.READ,
+                    MobileGattRoleDto.WRITE_WITHOUT_RESPONSE,
+                    MobileGattRoleDto.NOTIFY,
+                ),
+                verification = MobileVerificationStatusDto.HARDWARE_VERIFIED,
+            ),
+        )
+        capture.setResolvedIdentity(
+            MobileResolvedIdentityDto(
+                protocolFamily = MobileProtocolFamilyDto.BEGODE_GOTWAY,
+                model = MobileVerifiedStringDto(
+                    value = "Begode Falcon",
+                    verification = MobileVerificationStatusDto.INFERRED,
+                ),
+                firmware = MobileVerifiedStringDto(
+                    value = "GW2015004",
+                    verification = MobileVerificationStatusDto.HARDWARE_VERIFIED,
+                ),
+            ),
+        )
         capture.recordLinkUp(monotonicMs = 1UL, maxWriteLen = 185U)
         capture.recordNotification(
             monotonicMs = 2UL,
@@ -85,6 +119,9 @@ fun main() {
         )
         val exported = capture.export(MobilePevcapEncodingDto.JSONL).decodeToString()
         check(exported.contains("capture_label=powered_on_stationary"))
+        check(exported.contains("\"protocol_family\":\"BegodeGotway\""))
+        check(exported.contains("\"model\":{\"value\":\"Begode Falcon\",\"verification\":\"Inferred\"}"))
+        check(exported.contains("\"roles\":[\"Read\",\"WriteWithoutResponse\",\"Notify\"]"))
         check(exported.contains("\"bytes\":[222,173,190,239]"))
     }
 }

@@ -66,6 +66,20 @@ struct MobileFfiSmoke {
         capture.addAnnotation(annotation: "capture_privacy=redacted")
         capture.addAnnotation(annotation: "capture_distribution=redistributable")
         capture.addAnnotation(annotation: "capture_evidence=hardware_tested")
+        let ffe0 = hexBytes("0000ffe000001000800000805f9b34fb")
+        let ffe1 = hexBytes("0000ffe100001000800000805f9b34fb")
+        capture.addAdvertisedService(service: ffe0)
+        capture.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
+            service: ffe0,
+            characteristic: ffe1,
+            roles: [.read, .writeWithoutResponse, .notify],
+            verification: .hardwareVerified
+        ))
+        capture.setResolvedIdentity(identity: MobileResolvedIdentityDto(
+            protocolFamily: .begodeGotway,
+            model: MobileVerifiedStringDto(value: "Begode Falcon", verification: .inferred),
+            firmware: MobileVerifiedStringDto(value: "GW2015004", verification: .hardwareVerified)
+        ))
         capture.recordLinkUp(monotonicMs: 1, maxWriteLen: 185)
         capture.recordNotification(
             monotonicMs: 2,
@@ -76,6 +90,9 @@ struct MobileFfiSmoke {
         let exported = try capture.export(encoding: .jsonl)
         let exportedText = String(data: exported, encoding: .utf8)!
         precondition(exportedText.contains("capture_label=powered_on_stationary"))
+        precondition(exportedText.contains(#""protocol_family":"BegodeGotway""#))
+        precondition(exportedText.contains(#""model":{"value":"Begode Falcon","verification":"Inferred"}"#))
+        precondition(exportedText.contains(#""roles":["Read","WriteWithoutResponse","Notify"]"#))
         precondition(exportedText.contains(#""bytes":[222,173,190,239]"#))
     }
 }

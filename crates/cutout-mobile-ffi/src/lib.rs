@@ -3,9 +3,10 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, ParserDiagnosticsDto,
-    PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto, TransportActionDto,
+    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
+    GattRoles, ParserDiagnosticsDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
+    PevcapResolvedIdentity, ProtocolFamily, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto, TransportActionDto, VerificationStatus, VerifiedValue,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -186,6 +187,96 @@ pub enum MobilePevcapEncodingDto {
     Binary,
 }
 
+/// Mobile protocol-family identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileProtocolFamilyDto {
+    /// Veteran/LeaperKim/NOSFET frame family.
+    VeteranLeaperkimNosfet,
+
+    /// Begode/Gotway frame family.
+    BegodeGotway,
+
+    /// VESC UART/CAN-derived family.
+    Vesc,
+}
+
+/// Mobile verification status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVerificationStatusDto {
+    /// Not yet verified.
+    Unverified,
+
+    /// Inferred from partial evidence.
+    Inferred,
+
+    /// Verified against source-attributed protocol documentation.
+    SourceVerified,
+
+    /// Verified against actual Bluetooth hardware.
+    HardwareVerified,
+
+    /// Verified against source-attributed documentation and hardware.
+    SourceAndHardwareVerified,
+}
+
+/// Mobile GATT characteristic role.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileGattRoleDto {
+    /// Characteristic supports reads.
+    Read,
+
+    /// Characteristic supports writes with response.
+    Write,
+
+    /// Characteristic supports writes without response.
+    WriteWithoutResponse,
+
+    /// Characteristic supports notifications.
+    Notify,
+
+    /// Characteristic supports indications.
+    Indicate,
+}
+
+/// Mobile GATT service/characteristic fingerprint.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileGattFingerprintDto {
+    /// Service UUID bytes.
+    pub service: Vec<u8>,
+
+    /// Characteristic UUID bytes.
+    pub characteristic: Vec<u8>,
+
+    /// Observed characteristic roles.
+    pub roles: Vec<MobileGattRoleDto>,
+
+    /// Verification status for this fingerprint.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Mobile verified string field.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileVerifiedStringDto {
+    /// Field value.
+    pub value: String,
+
+    /// Verification status for the value.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Mobile resolved identity metadata.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileResolvedIdentityDto {
+    /// Resolved protocol family, when known.
+    pub protocol_family: Option<MobileProtocolFamilyDto>,
+
+    /// Resolved model name, when known.
+    pub model: Option<MobileVerifiedStringDto>,
+
+    /// Resolved firmware string, when known.
+    pub firmware: Option<MobileVerifiedStringDto>,
+}
+
 /// Mobile Falcon construction error.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileSessionConstructorError {
@@ -212,6 +303,9 @@ pub struct MobilePevcapCaptureBuilder {
     wall_clock_start_unix_ms: u64,
     platform_id: String,
     write_limit: Option<u16>,
+    advertised_services: Mutex<Vec<GattChannel>>,
+    gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
+    resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
     annotations: Mutex<Vec<String>>,
     records: Mutex<Vec<PevcapRecord>>,
 }
@@ -230,9 +324,37 @@ impl MobilePevcapCaptureBuilder {
             wall_clock_start_unix_ms,
             platform_id,
             write_limit,
+            advertised_services: Mutex::new(Vec::new()),
+            gatt_fingerprints: Mutex::new(Vec::new()),
+            resolved_identity: Mutex::new(None),
             annotations: Mutex::new(Vec::new()),
             records: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Adds an advertised service UUID observed by the mobile BLE stack.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn add_advertised_service(&self, service: Vec<u8>) {
+        self.advertised_services
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(mobile_gatt_channel(&service));
+    }
+
+    /// Adds an observed GATT service/characteristic fingerprint.
+    pub fn add_gatt_fingerprint(&self, fingerprint: MobileGattFingerprintDto) {
+        self.gatt_fingerprints
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(fingerprint.into());
+    }
+
+    /// Sets the resolved model/firmware identity for the capture.
+    pub fn set_resolved_identity(&self, identity: MobileResolvedIdentityDto) {
+        *self
+            .resolved_identity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(identity.into());
     }
 
     /// Adds a capture annotation, preserving key/value text exactly.
@@ -301,14 +423,27 @@ impl MobilePevcapCaptureBuilder {
             .annotations
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let advertised_services = self
+            .advertised_services
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let gatt_fingerprints = self
+            .gatt_fingerprints
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let resolved_identity = self
+            .resolved_identity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let annotation_refs = annotations.iter().map(String::as_str).collect::<Vec<_>>();
         let header = PevcapHeader::new(
             self.wall_clock_start_unix_ms,
             self.platform_id.as_str(),
             self.write_limit,
-            &[],
-            &[],
-            None,
+            &advertised_services,
+            &gatt_fingerprints,
+            resolved_identity,
             env!("CARGO_PKG_VERSION"),
             [0; 32],
             &annotation_refs,
@@ -320,6 +455,84 @@ impl MobilePevcapCaptureBuilder {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         Ok(PevcapCapture::new(header, records))
+    }
+}
+
+impl From<MobileProtocolFamilyDto> for ProtocolFamily {
+    fn from(family: MobileProtocolFamilyDto) -> Self {
+        match family {
+            MobileProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
+            MobileProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
+            MobileProtocolFamilyDto::Vesc => Self::Vesc,
+        }
+    }
+}
+
+impl From<MobileVerificationStatusDto> for VerificationStatus {
+    fn from(status: MobileVerificationStatusDto) -> Self {
+        match status {
+            MobileVerificationStatusDto::Unverified => Self::Unverified,
+            MobileVerificationStatusDto::Inferred => Self::Inferred,
+            MobileVerificationStatusDto::SourceVerified => Self::SourceVerified,
+            MobileVerificationStatusDto::HardwareVerified => Self::HardwareVerified,
+            MobileVerificationStatusDto::SourceAndHardwareVerified => {
+                Self::SourceAndHardwareVerified
+            }
+        }
+    }
+}
+
+impl From<MobileGattRoleDto> for GattRoles {
+    fn from(role: MobileGattRoleDto) -> Self {
+        match role {
+            MobileGattRoleDto::Read => Self::empty().with_read(),
+            MobileGattRoleDto::Write => Self::empty().with_write(),
+            MobileGattRoleDto::WriteWithoutResponse => Self::empty().with_write_without_response(),
+            MobileGattRoleDto::Notify => Self::empty().with_notify(),
+            MobileGattRoleDto::Indicate => Self::empty().with_indicate(),
+        }
+    }
+}
+
+fn mobile_gatt_roles(roles: Vec<MobileGattRoleDto>) -> GattRoles {
+    roles
+        .into_iter()
+        .fold(GattRoles::empty(), |accumulator, role| match role {
+            MobileGattRoleDto::Read => accumulator.with_read(),
+            MobileGattRoleDto::Write => accumulator.with_write(),
+            MobileGattRoleDto::WriteWithoutResponse => accumulator.with_write_without_response(),
+            MobileGattRoleDto::Notify => accumulator.with_notify(),
+            MobileGattRoleDto::Indicate => accumulator.with_indicate(),
+        })
+}
+
+impl From<MobileGattFingerprintDto> for GattFingerprint {
+    fn from(fingerprint: MobileGattFingerprintDto) -> Self {
+        Self {
+            service: mobile_gatt_channel(&fingerprint.service),
+            characteristic: mobile_gatt_channel(&fingerprint.characteristic),
+            roles: mobile_gatt_roles(fingerprint.roles),
+            verification: fingerprint.verification.into(),
+        }
+    }
+}
+
+impl From<MobileVerifiedStringDto> for VerifiedValue<String> {
+    fn from(value: MobileVerifiedStringDto) -> Self {
+        Self {
+            value: value.value,
+            verification: value.verification.into(),
+        }
+    }
+}
+
+impl From<MobileResolvedIdentityDto> for PevcapResolvedIdentity {
+    fn from(identity: MobileResolvedIdentityDto) -> Self {
+        Self {
+            protocol_family: identity.protocol_family.map(Into::into),
+            model: identity.model.map(Into::into),
+            firmware: identity.firmware.map(Into::into),
+        }
     }
 }
 
@@ -744,6 +957,78 @@ mod tests {
         );
         assert_eq!(capture.records.len(), 2);
         assert_eq!(capture.records[1].bytes, [0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn mobile_capture_builder_exports_ble_inventory_metadata() {
+        let builder =
+            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+        let service = vec![0x22; 16];
+        let characteristic = vec![0x11; 16];
+
+        builder.add_advertised_service(service.clone());
+        builder.add_gatt_fingerprint(MobileGattFingerprintDto {
+            service: service.clone(),
+            characteristic: characteristic.clone(),
+            roles: vec![
+                MobileGattRoleDto::Read,
+                MobileGattRoleDto::WriteWithoutResponse,
+                MobileGattRoleDto::Notify,
+            ],
+            verification: MobileVerificationStatusDto::HardwareVerified,
+        });
+
+        let bytes = builder
+            .export(MobilePevcapEncodingDto::Jsonl)
+            .expect("JSONL export succeeds");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
+        let [fingerprint] = capture.header.gatt_fingerprints.as_slice() else {
+            panic!("expected one GATT fingerprint");
+        };
+
+        assert_eq!(capture.header.advertised_services[0].as_bytes(), [0x22; 16]);
+        assert_eq!(fingerprint.service.as_bytes(), [0x22; 16]);
+        assert_eq!(fingerprint.characteristic.as_bytes(), [0x11; 16]);
+        assert!(fingerprint.roles.supports_read());
+        assert!(fingerprint.roles.supports_write_without_response());
+        assert!(fingerprint.roles.supports_notify());
+        assert_eq!(
+            fingerprint.verification,
+            VerificationStatus::HardwareVerified
+        );
+    }
+
+    #[test]
+    fn mobile_capture_builder_exports_resolved_identity_metadata() {
+        let builder =
+            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+
+        builder.set_resolved_identity(MobileResolvedIdentityDto {
+            protocol_family: Some(MobileProtocolFamilyDto::BegodeGotway),
+            model: Some(MobileVerifiedStringDto {
+                value: "Begode Falcon".into(),
+                verification: MobileVerificationStatusDto::Inferred,
+            }),
+            firmware: Some(MobileVerifiedStringDto {
+                value: "GW2015004".into(),
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            }),
+        });
+
+        let bytes = builder
+            .export(MobilePevcapEncodingDto::Jsonl)
+            .expect("JSONL export succeeds");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
+        let identity = capture
+            .header
+            .resolved_identity
+            .expect("resolved identity should export");
+
+        assert_eq!(identity.protocol_family, Some(ProtocolFamily::BegodeGotway));
+        assert_eq!(identity.model.expect("model").value, "Begode Falcon");
+        assert_eq!(identity.firmware.expect("firmware").value, "GW2015004");
     }
 
     #[test]
