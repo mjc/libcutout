@@ -532,10 +532,12 @@ impl DashboardState {
         );
 
         if report.telemetry == 0 {
-            self.push_log(
-                "warn",
-                "notifications received but telemetry decoder produced no samples",
-            );
+            if report_has_no_parsed_events(report) {
+                self.push_log(
+                    "warn",
+                    "notifications received but telemetry decoder produced no samples",
+                );
+            }
         } else {
             self.push_log("info", &format!("telemetry samples={}", report.telemetry));
         }
@@ -2668,6 +2670,33 @@ mod tests {
                 .iter()
                 .any(|entry| { entry.level == "info" && entry.message == "read-only responses=5" })
         );
+    }
+
+    #[test]
+    fn read_only_session_report_does_not_warn_about_missing_telemetry_samples() {
+        let mut state = DashboardState::empty();
+        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+            BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+            BatteryInfo::default(),
+        ));
+        let report = SessionBridgeReport {
+            telemetry: 0,
+            read_only_responses: 1,
+            read_only_response_events: vec![read_only_response],
+            events: vec![SessionBridgeEvent::ReadOnlyResponse {
+                monotonic_ms: 7,
+                response: read_only_response,
+            }],
+            ..empty_session_bridge_report()
+        };
+
+        state.apply_session_report(&report);
+
+        assert!(state.logs.iter().all(|entry| entry.message
+            != "notifications received but telemetry decoder produced no samples"));
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info" && entry.message.contains("read-only battery selector=8")
+        }));
     }
 
     #[test]
