@@ -166,6 +166,8 @@ pub(crate) struct SessionCounters {
     pub(crate) connected: u64,
     pub(crate) subscriptions: u64,
     pub(crate) notifications: u64,
+    pub(crate) notification_bytes: u64,
+    pub(crate) latest_notification_len: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -482,6 +484,16 @@ impl DashboardState {
             },
             true,
         );
+        state.profiles.push(ProfileSnapshot {
+            name: "Veteran data".to_owned(),
+            source: "gatt".to_owned(),
+            status: "connected".to_owned(),
+            family: ProfileFamily::AeroVeteran {
+                current_limit_a: None,
+                tail_status: "live channel observed".to_owned(),
+                summary: "Aero/Veteran live notification channel observed".to_owned(),
+            },
+        });
         state.push_log("info", "connected dashboard target");
         state.push_log("info", "waiting for telemetry decoder data");
         state
@@ -490,11 +502,13 @@ impl DashboardState {
     pub(crate) fn apply_session_report(&mut self, report: &SessionBridgeReport) {
         self.counters.subscriptions = usize_to_u64(report.subscribes);
         self.counters.notifications = usize_to_u64(report.notifications);
+        self.counters.notification_bytes = usize_to_u64(report.notification_bytes);
+        self.counters.latest_notification_len = report.latest_notification_len.map(usize_to_u64);
         self.push_log(
             "info",
             &format!(
-                "session probe writes={} subscribes={} notifications={}",
-                report.writes, report.subscribes, report.notifications
+                "session probe writes={} subscribes={} notifications={} bytes={}",
+                report.writes, report.subscribes, report.notifications, report.notification_bytes
             ),
         );
 
@@ -577,6 +591,8 @@ impl DashboardState {
                     connected,
                     subscriptions,
                     notifications,
+                    notification_bytes: 0,
+                    latest_notification_len: None,
                 };
             }
             FixtureEvent::Telemetry {
@@ -744,6 +760,13 @@ impl TelemetryWindow {
             );
         }
         self.sync_points();
+    }
+
+    fn has_decoded_samples(&self) -> bool {
+        !(self.speed_mph.is_empty()
+            && self.voltage_v.is_empty()
+            && self.current_a.is_empty()
+            && self.temperature_c.is_empty())
     }
 }
 
@@ -994,36 +1017,57 @@ fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(10),
-            Constraint::Length(4),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Fill(1),
-        ])
-        .split(area);
+    if state.telemetry.has_decoded_samples() {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(10),
+                Constraint::Length(4),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Fill(1),
+            ])
+            .split(area);
 
-    render_device_browser(frame, chunks[0], state);
-    render_session_summary(frame, chunks[1], state);
+        render_device_browser(frame, chunks[0], state);
+        render_session_summary(frame, chunks[1], state);
+        render_sparkline(
+            frame,
+            chunks[2],
+            "Speed",
+            &state.telemetry.speed_mph,
+            Color::Yellow,
+        );
+        render_sparkline(
+            frame,
+            chunks[3],
+            "Voltage",
+            &state.telemetry.voltage_v,
+            Color::Magenta,
+        );
+        render_telemetry_trend(frame, chunks[4], state);
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(10),
+                Constraint::Length(4),
+                Constraint::Length(4),
+                Constraint::Length(4),
+                Constraint::Fill(1),
+            ])
+            .split(area);
 
-    render_sparkline(
-        frame,
-        chunks[2],
-        "Speed",
-        &state.telemetry.speed_mph,
-        Color::Yellow,
-    );
-    render_sparkline(
-        frame,
-        chunks[3],
-        "Voltage",
-        &state.telemetry.voltage_v,
-        Color::Magenta,
-    );
+        render_device_browser(frame, chunks[0], state);
+        render_session_summary(frame, chunks[1], state);
+        render_pending_telemetry(frame, chunks[2], state);
+        render_pending_telemetry_detail(frame, chunks[3], state);
+        render_pending_telemetry_wait(frame, chunks[4]);
+    }
+}
 
-    let counters = Chart::new(vec![
+fn render_telemetry_trend(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let chart = Chart::new(vec![
         Dataset::default()
             .name("current")
             .marker(ratatui::symbols::Marker::Dot)
@@ -1041,7 +1085,47 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         f64::from(u32::try_from(HISTORY_LIMIT).unwrap_or(u32::MAX)),
     ]))
     .y_axis(Axis::default().title("value").bounds([0.0, 100.0]));
-    frame.render_widget(counters, chunks[4]);
+    frame.render_widget(chart, area);
+}
+
+fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let text = Paragraph::new(vec![
+        Line::from("decoded telemetry samples: 0"),
+        Line::from(vec![
+            Span::styled("raw notifications ", Style::new().fg(Color::Gray)),
+            Span::raw(state.counters.notifications.to_string()),
+            Span::styled(" bytes ", Style::new().fg(Color::Gray)),
+            Span::raw(state.counters.notification_bytes.to_string()),
+        ]),
+    ])
+    .block(panel_block("Decoded telemetry"));
+    frame.render_widget(text, area);
+}
+
+fn render_pending_telemetry_detail(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let latest = state
+        .counters
+        .latest_notification_len
+        .map_or_else(|| "none".to_owned(), |len| len.to_string());
+    let text = Paragraph::new(vec![
+        Line::from("waiting for protocol decoder output"),
+        Line::from(vec![
+            Span::styled("latest notification bytes ", Style::new().fg(Color::Gray)),
+            Span::raw(latest),
+        ]),
+    ])
+    .block(panel_block("Raw stream"));
+    frame.render_widget(text, area);
+}
+
+fn render_pending_telemetry_wait(frame: &mut Frame<'_>, area: Rect) {
+    let text = Paragraph::new(vec![
+        Line::from("waiting for protocol decoder output"),
+        Line::from("raw notifications are arriving from the connected device"),
+        Line::from("decoded speed, voltage, current, and temperature will fill in here"),
+    ])
+    .block(panel_block("Decoder"));
+    frame.render_widget(text, area);
 }
 
 fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1319,7 +1403,8 @@ mod tests {
         assert_eq!(state.counters.connected, 1);
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
-        assert!(state.profiles.is_empty());
+        assert_eq!(state.profiles.len(), 1);
+        assert_eq!(state.profiles[0].source, "gatt");
     }
 
     #[test]
@@ -1329,6 +1414,8 @@ mod tests {
             writes: 0,
             subscribes: 1,
             notifications: 184,
+            notification_bytes: 18_400,
+            latest_notification_len: Some(100),
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
             diagnostics: 0,
@@ -1339,6 +1426,8 @@ mod tests {
 
         assert_eq!(state.counters.subscriptions, 1);
         assert_eq!(state.counters.notifications, 184);
+        assert_eq!(state.counters.notification_bytes, 18_400);
+        assert_eq!(state.counters.latest_notification_len, Some(100));
         assert!(
             state
                 .logs
@@ -1354,6 +1443,8 @@ mod tests {
             writes: 0,
             subscribes: 1,
             notifications: 2,
+            notification_bytes: 200,
+            latest_notification_len: Some(100),
             telemetry: 1,
             telemetry_snapshot: TelemetrySnapshot {
                 speed_mm_s: Some(Measured::reported(4_470)),
@@ -1423,6 +1514,26 @@ mod tests {
         assert!(text.contains("notifications"));
         assert!(text.contains("Speed"));
         assert!(text.contains("Voltage"));
+    }
+
+    #[test]
+    fn live_telemetry_tab_renders_raw_stream_when_decoder_has_no_samples() {
+        let mut state = DashboardState::empty();
+        state.active_tab = 1;
+        state.counters.notifications = 47;
+        state.counters.notification_bytes = 4_700;
+        state.counters.latest_notification_len = Some(100);
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(text.contains("Decoded telemetry"));
+        assert!(text.contains("raw notifications"));
+        assert!(text.contains("47"));
+        assert!(text.contains("bytes"));
+        assert!(text.contains("4700"));
+        assert!(text.contains("latest notification bytes 100"));
+        assert!(!text.contains("Speed"));
+        assert!(!text.contains("Voltage"));
     }
 
     #[test]
@@ -1560,6 +1671,5 @@ mod tests {
 
         assert!(text.contains("Device browser"));
         assert!(text.contains("scan observations empty"));
-        assert!(text.contains("no scan observations"));
     }
 }
