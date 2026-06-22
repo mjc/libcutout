@@ -1009,6 +1009,9 @@ pub enum RequestUrgency {
     Critical,
 }
 
+/// Number of higher-priority pops allowed before older queued work can age ahead.
+pub const REQUEST_STARVATION_SKIP_THRESHOLD: u8 = 2;
+
 /// Request staged in a bounded scheduler queue.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QueuedRequest {
@@ -1189,6 +1192,13 @@ impl<const N: usize> RequestQueue<N> {
     /// queued, or [`RequestQueueError::Full`] when the fixed capacity is
     /// exhausted.
     pub fn enqueue_by_urgency(&mut self, request: QueuedRequest) -> Result<(), RequestQueueError> {
+        self.enqueue_by_urgency_with_index(request).map(|_| ())
+    }
+
+    fn enqueue_by_urgency_with_index(
+        &mut self,
+        request: QueuedRequest,
+    ) -> Result<usize, RequestQueueError> {
         if self.contains_key(request.key) {
             return Err(RequestQueueError::DuplicateKey { key: request.key });
         }
@@ -1197,17 +1207,12 @@ impl<const N: usize> RequestQueue<N> {
             return Err(RequestQueueError::Full { capacity: N });
         }
 
-        let mut insert_at = self.len;
-        let mut index = 0;
-        while index < self.len {
-            if let Some(queued) = self.entries[index]
-                && request.urgency > queued.urgency
-            {
-                insert_at = index;
-                break;
-            }
-            index += 1;
-        }
+        let insert_at = self
+            .entries
+            .iter()
+            .take(self.len)
+            .position(|entry| entry.is_some_and(|queued| request.urgency > queued.urgency))
+            .unwrap_or(self.len);
 
         let mut move_from = self.len;
         while move_from > insert_at {
@@ -1216,7 +1221,7 @@ impl<const N: usize> RequestQueue<N> {
         }
         self.entries[insert_at] = Some(request);
         self.len += 1;
-        Ok(())
+        Ok(insert_at)
     }
 
     /// Removes and returns the front request.
@@ -1241,6 +1246,7 @@ impl<const N: usize> RequestQueue<N> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestScheduler<const N: usize> {
     queue: RequestQueue<N>,
+    skip_counts: [u8; N],
     diagnostics: RequestSchedulerDiagnostics,
 }
 
@@ -1256,6 +1262,7 @@ impl<const N: usize> RequestScheduler<N> {
     pub const fn new() -> Self {
         Self {
             queue: RequestQueue::new(),
+            skip_counts: [0; N],
             diagnostics: RequestSchedulerDiagnostics {
                 duplicate_refusals: 0,
                 overflow_refusals: 0,
@@ -1298,7 +1305,11 @@ impl<const N: usize> RequestScheduler<N> {
     ///
     /// Returns the same refusal reason as [`RequestQueue::enqueue`].
     pub fn enqueue(&mut self, request: QueuedRequest) -> Result<(), RequestQueueError> {
+        let previous_len = self.queue.len();
         let result = self.queue.enqueue(request);
+        if result.is_ok() {
+            self.skip_counts[previous_len] = 0;
+        }
         self.record_enqueue_result(request, result)
     }
 
@@ -1308,15 +1319,74 @@ impl<const N: usize> RequestScheduler<N> {
     ///
     /// Returns the same refusal reason as [`RequestQueue::enqueue_by_urgency`].
     pub fn enqueue_by_urgency(&mut self, request: QueuedRequest) -> Result<(), RequestQueueError> {
-        let result = self.queue.enqueue_by_urgency(request);
-        self.record_enqueue_result(request, result)
+        let result = self.queue.enqueue_by_urgency_with_index(request);
+        if let Ok(insert_at) = result {
+            self.insert_skip_count(insert_at);
+        }
+        self.record_enqueue_result(request, result.map(|_| ()))
     }
 
     /// Removes and returns the next request while updating diagnostics.
     pub fn pop_next(&mut self) -> Option<QueuedRequest> {
-        let request = self.queue.pop_next()?;
+        let selected = self.aged_pop_index()?;
+        let request = self.remove_at(selected)?;
+        if selected > 0 {
+            self.diagnostics.starvation_aging_events =
+                self.diagnostics.starvation_aging_events.saturating_add(1);
+        }
+        self.age_skipped_after_pop(selected);
         self.diagnostics.dequeued.increment(request.urgency);
         Some(request)
+    }
+
+    fn insert_skip_count(&mut self, insert_at: usize) {
+        let mut move_from = self.queue.len().saturating_sub(1);
+        while move_from > insert_at {
+            self.skip_counts[move_from] = self.skip_counts[move_from - 1];
+            move_from -= 1;
+        }
+        self.skip_counts[insert_at] = 0;
+    }
+
+    fn aged_pop_index(&self) -> Option<usize> {
+        if self.queue.is_empty() {
+            return None;
+        }
+        let mut index = 1;
+        while index < self.queue.len() {
+            if self.skip_counts[index] >= REQUEST_STARVATION_SKIP_THRESHOLD {
+                return Some(index);
+            }
+            index += 1;
+        }
+        Some(0)
+    }
+
+    fn remove_at(&mut self, selected: usize) -> Option<QueuedRequest> {
+        let request = self.queue.entries[selected]?;
+        let mut index = selected + 1;
+        while index < self.queue.len() {
+            self.queue.entries[index - 1] = self.queue.entries[index];
+            self.skip_counts[index - 1] = self.skip_counts[index];
+            index += 1;
+        }
+        self.queue.len -= 1;
+        self.queue.entries[self.queue.len] = None;
+        self.skip_counts[self.queue.len] = 0;
+        Some(request)
+    }
+
+    fn age_skipped_after_pop(&mut self, selected: usize) {
+        for (index, skip_count) in self
+            .skip_counts
+            .iter_mut()
+            .take(self.queue.len())
+            .enumerate()
+        {
+            if index >= selected {
+                *skip_count = skip_count.saturating_add(1);
+            }
+        }
     }
 
     fn record_enqueue_result(
@@ -3399,6 +3469,54 @@ mod tests {
     }
 
     #[test]
+    fn request_scheduler_preserves_fifo_within_same_urgency() {
+        let mut scheduler = crate::RequestScheduler::<3>::new();
+        let telemetry = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+
+        assert_eq!(scheduler.enqueue_by_urgency(telemetry), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(identity), Ok(()));
+
+        assert_eq!(scheduler.pop_next(), Some(telemetry));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+    }
+
+    #[test]
+    fn request_scheduler_inserts_between_higher_and_lower_urgency_work() {
+        let mut scheduler = crate::RequestScheduler::<3>::new();
+        let critical = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let routine = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let high = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+
+        assert_eq!(scheduler.enqueue_by_urgency(critical), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(routine), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(high), Ok(()));
+
+        assert_eq!(scheduler.pop_next(), Some(critical));
+        assert_eq!(scheduler.pop_next(), Some(high));
+        assert_eq!(scheduler.pop_next(), Some(routine));
+    }
+
+    #[test]
     fn request_scheduler_counts_duplicate_and_overflow_refusals() {
         let mut scheduler = crate::RequestScheduler::<1>::new();
         let telemetry = crate::QueuedRequest::new(
@@ -3451,8 +3569,136 @@ mod tests {
     }
 
     #[test]
-    fn request_scheduler_exposes_starvation_counter_for_future_aging_policy() {
-        let scheduler = crate::RequestScheduler::<1>::new();
+    fn request_scheduler_ages_skipped_routine_work_ahead_of_repeated_critical_work() {
+        let mut scheduler = crate::RequestScheduler::<3>::new();
+        let routine = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let firmware = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestFirmwareInfo),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let diagnostics = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+
+        assert_eq!(scheduler.enqueue_by_urgency(routine), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(firmware), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(firmware));
+        assert_eq!(scheduler.enqueue_by_urgency(identity), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+        assert_eq!(scheduler.enqueue_by_urgency(diagnostics), Ok(()));
+
+        assert_eq!(scheduler.pop_next(), Some(routine));
+        assert_eq!(scheduler.diagnostics().starvation_aging_events, 1);
+        assert_eq!(scheduler.pop_next(), Some(diagnostics));
+    }
+
+    #[test]
+    fn request_scheduler_continues_after_aged_promotion_without_stale_skip_counts() {
+        let mut scheduler = crate::RequestScheduler::<3>::new();
+        let routine = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let firmware = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestFirmwareInfo),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let diagnostics = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+
+        assert_eq!(scheduler.enqueue_by_urgency(routine), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(identity), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+        assert_eq!(scheduler.enqueue_by_urgency(firmware), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(firmware));
+        assert_eq!(scheduler.enqueue_by_urgency(diagnostics), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(routine));
+
+        assert_eq!(scheduler.pop_next(), Some(diagnostics));
+        assert_eq!(scheduler.pop_next(), None);
+        assert_eq!(scheduler.enqueue_by_urgency(identity), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+        assert_eq!(scheduler.diagnostics().starvation_aging_events, 1);
+    }
+
+    #[test]
+    fn request_scheduler_does_not_age_new_middle_insert_after_promotion() {
+        let mut scheduler = crate::RequestScheduler::<4>::new();
+        let routine = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let firmware = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestFirmwareInfo),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let identity = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let diagnostics = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::Critical,
+        );
+        let set_lights = crate::QueuedRequest::with_urgency(
+            crate::RequestKey::new(crate::CommandKind::SetLights),
+            crate::RequestPolicy::default(),
+            crate::RequestUrgency::High,
+        );
+
+        assert_eq!(scheduler.enqueue_by_urgency(routine), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(firmware), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(firmware));
+        assert_eq!(scheduler.enqueue_by_urgency(identity), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+        assert_eq!(scheduler.enqueue_by_urgency(diagnostics), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(routine));
+        assert_eq!(scheduler.enqueue_by_urgency(set_lights), Ok(()));
+
+        assert_eq!(scheduler.pop_next(), Some(diagnostics));
+        assert_eq!(scheduler.pop_next(), Some(set_lights));
+        assert_eq!(scheduler.diagnostics().starvation_aging_events, 1);
+    }
+
+    #[test]
+    fn request_scheduler_does_not_count_aging_when_fifo_front_is_selected() {
+        let mut scheduler = crate::RequestScheduler::<2>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+        );
+
+        assert_eq!(scheduler.enqueue(telemetry), Ok(()));
+        assert_eq!(scheduler.enqueue(identity), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(telemetry));
+        assert_eq!(scheduler.pop_next(), Some(identity));
 
         assert_eq!(scheduler.diagnostics().starvation_aging_events, 0);
     }

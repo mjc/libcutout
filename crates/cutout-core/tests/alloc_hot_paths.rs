@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_core::{
     CommandKind, GattChannel, HostSession, LinkInfo, ProtocolSession, RequestKey, RequestPolicy,
-    RequestQueue, SessionInput, SessionOutput,
+    RequestQueue, RequestScheduler, RequestUrgency, SessionInput, SessionOutput,
 };
 
 struct CountingAllocator;
@@ -137,5 +137,30 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
         assert_eq!(queue.pop_next(), Some(telemetry));
         assert_eq!(queue.pop_next(), Some(identity));
         assert_eq!(queue.pop_next(), None);
+    });
+
+    assert_no_allocations("request scheduler aging churn", || {
+        let mut scheduler = RequestScheduler::<3>::new();
+        let telemetry = cutout_core::QueuedRequest::new(
+            RequestKey::new(CommandKind::RequestTelemetry),
+            RequestPolicy::default(),
+        );
+        let identity = cutout_core::QueuedRequest::with_urgency(
+            RequestKey::new(CommandKind::RequestIdentity),
+            RequestPolicy::default(),
+            RequestUrgency::Critical,
+        );
+        let firmware = cutout_core::QueuedRequest::with_urgency(
+            RequestKey::new(CommandKind::RequestFirmwareInfo),
+            RequestPolicy::default(),
+            RequestUrgency::Critical,
+        );
+
+        assert_eq!(scheduler.enqueue_by_urgency(telemetry), Ok(()));
+        assert_eq!(scheduler.enqueue_by_urgency(identity), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+        assert_eq!(scheduler.enqueue_by_urgency(firmware), Ok(()));
+        assert_eq!(scheduler.pop_next(), Some(firmware));
+        assert_eq!(scheduler.pop_next(), Some(telemetry));
     });
 }
