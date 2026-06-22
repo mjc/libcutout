@@ -29,6 +29,7 @@ use uuid::Uuid;
 const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
 const BATTERY_LEVEL_UUID: Uuid = Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb);
 const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
@@ -517,6 +518,16 @@ pub enum BtleError {
     #[error(transparent)]
     Backend(#[from] btleplug::Error),
 
+    /// The underlying BTLE stack did not finish an operation in time.
+    #[error("bluetooth operation timed out: {operation} after {after:?}")]
+    OperationTimedOut {
+        /// Operation that timed out.
+        operation: &'static str,
+
+        /// Timeout duration.
+        after: Duration,
+    },
+
     /// Error reported by the session bridge.
     #[error(transparent)]
     Bridge(#[from] SessionBridgeError),
@@ -530,10 +541,10 @@ pub enum BtleError {
 /// adapters, or [`BtleError::Backend`] when the BTLE backend reports a failure.
 pub async fn scan_peripherals(scan_for: Duration) -> Result<Vec<PeripheralObservation>, BtleError> {
     let adapter = first_adapter().await?;
-    adapter.start_scan(ScanFilter::default()).await?;
+    backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
     tokio::time::sleep(scan_for).await;
     let observations = collect_observations(&adapter).await?;
-    let _ = adapter.stop_scan().await;
+    let _ = backend_call("stop scan", adapter.stop_scan()).await;
     Ok(observations)
 }
 
@@ -549,17 +560,17 @@ pub async fn connect_and_discover(
     scan_for: Duration,
 ) -> Result<ConnectedPeripheral, BtleError> {
     let adapter = first_adapter().await?;
-    adapter.start_scan(ScanFilter::default()).await?;
+    backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
 
     let peripheral = wait_for_scan_match(scan_for, TARGETED_SCAN_POLL_INTERVAL, || {
         find_peripheral(&adapter, target)
     })
     .await;
-    let _ = adapter.stop_scan().await;
+    let _ = backend_call("stop scan", adapter.stop_scan()).await;
     let peripheral = peripheral?;
 
-    peripheral.connect().await?;
-    peripheral.discover_services().await?;
+    backend_call("connect peripheral", peripheral.connect()).await?;
+    backend_call("discover services", peripheral.discover_services()).await?;
 
     let observation = observation_from_peripheral(&peripheral).await?;
     let services = peripheral
@@ -593,9 +604,11 @@ pub async fn read_battery_level(
         return Ok(None);
     };
 
-    let value = peripheral
-        .read(&characteristic_from_summary(characteristic))
-        .await?;
+    let value = backend_call(
+        "read battery level",
+        peripheral.read(&characteristic_from_summary(characteristic)),
+    )
+    .await?;
     Ok(value.first().copied().map(|percent| percent.min(100)))
 }
 
@@ -943,14 +956,16 @@ impl SessionPeripheral for btleplug::platform::Peripheral {
 
 async fn first_adapter() -> Result<Adapter, BtleError> {
     let manager = Manager::new().await?;
-    let mut adapters = manager.adapters().await?;
+    let mut adapters = backend_call("list adapters", manager.adapters()).await?;
     adapters.pop().ok_or(BtleError::NoAdapterAvailable)
 }
 
 async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObservation>, BtleError> {
     let mut observations = Vec::new();
-    for peripheral in adapter.peripherals().await? {
-        if let Some(properties) = peripheral.properties().await? {
+    for peripheral in backend_call("list peripherals", adapter.peripherals()).await? {
+        if let Some(properties) =
+            backend_call("read peripheral properties", peripheral.properties()).await?
+        {
             observations.push(PeripheralObservation::from_peripheral(
                 &peripheral,
                 &properties,
@@ -963,7 +978,9 @@ async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObserva
 async fn observation_from_peripheral(
     peripheral: &btleplug::platform::Peripheral,
 ) -> Result<PeripheralObservation, BtleError> {
-    let Some(properties) = peripheral.properties().await? else {
+    let Some(properties) =
+        backend_call("read peripheral properties", peripheral.properties()).await?
+    else {
         return Ok(PeripheralObservation {
             identifier: peripheral.id().to_string(),
             address: None,
@@ -982,8 +999,10 @@ async fn find_peripheral(
     adapter: &Adapter,
     target: &ConnectionTarget,
 ) -> Result<btleplug::platform::Peripheral, BtleError> {
-    for peripheral in adapter.peripherals().await? {
-        let Some(properties) = peripheral.properties().await? else {
+    for peripheral in backend_call("list peripherals", adapter.peripherals()).await? {
+        let Some(properties) =
+            backend_call("read peripheral properties", peripheral.properties()).await?
+        else {
             continue;
         };
         let observation = PeripheralObservation::from_peripheral(&peripheral, &properties);
@@ -1016,6 +1035,19 @@ where
             Err(error) => return Err(error),
         }
     }
+}
+
+async fn backend_call<T, F>(operation: &'static str, future: F) -> Result<T, BtleError>
+where
+    F: Future<Output = Result<T, btleplug::Error>>,
+{
+    tokio::time::timeout(BACKEND_OPERATION_TIMEOUT, future)
+        .await
+        .map_err(|_| BtleError::OperationTimedOut {
+            operation,
+            after: BACKEND_OPERATION_TIMEOUT,
+        })?
+        .map_err(BtleError::Backend)
 }
 
 #[cfg(test)]
@@ -1155,6 +1187,19 @@ mod tests {
         };
 
         assert!(target.matches(&observation));
+    }
+
+    #[test]
+    fn operation_timeout_error_names_the_backend_operation() {
+        let error = crate::BtleError::OperationTimedOut {
+            operation: "start scan",
+            after: Duration::from_secs(10),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "bluetooth operation timed out: start scan after 10s"
+        );
     }
 
     #[test]
