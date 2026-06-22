@@ -1836,9 +1836,9 @@ mod tests {
     use super::*;
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
     use cutout_core::{
-        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, FirmwareInfo, Measured,
-        RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-        TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback, FirmwareInfo,
+        Measured, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry,
+        SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -2218,6 +2218,106 @@ mod tests {
                 .iter()
                 .any(|entry| { entry.level == "info" && entry.message == "read-only responses=5" })
         );
+    }
+
+    #[test]
+    fn live_session_report_wires_complete_aero_dashboard_state() {
+        let mut state = DashboardState::empty();
+        let telemetry = TelemetryDelta {
+            speed_mm_s: Some(Measured::reported(4_470)),
+            voltage_mv: Some(Measured::reported(108_760)),
+            battery_percent_estimated: Some(Measured::estimated(47)),
+            ..TelemetryDelta::empty(42)
+        };
+        let report = SessionBridgeReport {
+            protocol_writes: 0,
+            writes: 0,
+            subscribes: 1,
+            notifications: 4,
+            notification_bytes: 400,
+            latest_notification_len: Some(100),
+            telemetry: 1,
+            telemetry_snapshot: {
+                let mut snapshot = TelemetrySnapshot::default();
+                snapshot.apply_delta(telemetry);
+                snapshot
+            },
+            read_only_responses: 5,
+            read_only_response_events: vec![
+                ReadOnlyResponse::Firmware(FirmwareInfo {
+                    firmware_major: Some(Measured::reported(43)),
+                    firmware_minor: Some(Measured::reported(2)),
+                    firmware_patch: Some(Measured::reported(54)),
+                    ..FirmwareInfo::default()
+                }),
+                ReadOnlyResponse::Settings(SettingsReadback {
+                    entries: [
+                        Some(SettingsEntry {
+                            field: RawFieldValue::new(0x24, 1_920),
+                            source: ValueSource::Reported,
+                            quality: ValueQuality::Known,
+                            verification: VerificationStatus::HardwareVerified,
+                        }),
+                        None,
+                        None,
+                        None,
+                    ],
+                }),
+                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                )),
+                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                )),
+                ReadOnlyResponse::Diagnostics(DiagnosticReadback::default()),
+            ],
+            firmware: None,
+            settings: Vec::new(),
+            diagnostics: 1,
+            diagnostics_snapshot: ParserDiagnostics {
+                malformed_frames: 1,
+                ..ParserDiagnostics::default()
+            },
+            diagnostic_errors: Vec::new(),
+            identity: None,
+            events: vec![
+                SessionBridgeEvent::ProcessedTelemetry {
+                    monotonic_ms: 42,
+                    delta: telemetry,
+                },
+                SessionBridgeEvent::Diagnostics {
+                    monotonic_ms: 43,
+                    diagnostics: ParserDiagnostics {
+                        malformed_frames: 1,
+                        ..ParserDiagnostics::default()
+                    },
+                },
+            ],
+            disconnects: 0,
+        };
+
+        state.apply_session_report(&report);
+
+        assert_eq!(state.counters.subscriptions, 1);
+        assert_eq!(state.counters.notifications, 4);
+        assert_eq!(state.telemetry.latest_speed_mph, Some(10));
+        assert_eq!(state.telemetry.latest_voltage_v, Some(109));
+        assert_eq!(state.telemetry.battery_pct, Some(47));
+        assert_eq!(state.read_only.firmware.as_deref(), Some("43.2.54"));
+        assert_eq!(state.read_only.settings.len(), 1);
+        assert_eq!(state.read_only.bms_pages.len(), 2);
+        assert_eq!(state.read_only.unknown_raw_pages, 1);
+        assert_eq!(state.read_only.diagnostics, 1);
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info" && entry.message.contains("read-only responses=5")
+        }));
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "warn"
+                && entry.message.contains("t=43ms telemetry diagnostics")
+                && entry.message.contains("malformed=1")
+        }));
     }
 
     #[test]
