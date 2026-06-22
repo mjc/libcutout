@@ -33,6 +33,15 @@ pub const PEVCAP_MAX_ANNOTATIONS: usize = 8;
 /// Stable annotation key used for labeled capture sessions.
 pub const PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY: &str = "capture_label";
 
+/// Stable annotation key used for capture privacy class.
+pub const PEVCAP_CAPTURE_PRIVACY_ANNOTATION_KEY: &str = "capture_privacy";
+
+/// Stable annotation key used for capture redistribution permission.
+pub const PEVCAP_CAPTURE_DISTRIBUTION_ANNOTATION_KEY: &str = "capture_distribution";
+
+/// Stable annotation key used for capture-level evidence class.
+pub const PEVCAP_CAPTURE_EVIDENCE_ANNOTATION_KEY: &str = "capture_evidence";
+
 #[cfg(feature = "serde")]
 const PEVCAP_BINARY_LENGTH_PREFIX_BYTES: usize = 4;
 
@@ -116,6 +125,93 @@ impl CaptureSessionLabel {
     #[must_use]
     pub fn annotation(self) -> String {
         format!("{}={}", PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY, self.slug())
+    }
+}
+
+/// Capture privacy state for long-lived PEVCAP files.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CapturePrivacy {
+    /// Capture contains private identifiers, timing, location-adjacent data, or
+    /// user annotations and should not be redistributed.
+    Private,
+
+    /// Sensitive data has been intentionally redacted.
+    Redacted,
+}
+
+impl CapturePrivacy {
+    /// Stable lowercase slug used in PEVCAP annotations and Beads issue notes.
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Redacted => "redacted",
+        }
+    }
+
+    /// Stable PEVCAP annotation string for this privacy marker.
+    #[must_use]
+    pub fn annotation(self) -> String {
+        format!("{}={}", PEVCAP_CAPTURE_PRIVACY_ANNOTATION_KEY, self.slug())
+    }
+}
+
+/// Capture redistribution permission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureDistribution {
+    /// Capture can be redistributed as a checked-in fixture or shared corpus
+    /// item.
+    Redistributable,
+}
+
+impl CaptureDistribution {
+    /// Stable lowercase slug used in PEVCAP annotations and Beads issue notes.
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::Redistributable => "redistributable",
+        }
+    }
+
+    /// Stable PEVCAP annotation string for this redistribution marker.
+    #[must_use]
+    pub fn annotation(self) -> String {
+        format!(
+            "{}={}",
+            PEVCAP_CAPTURE_DISTRIBUTION_ANNOTATION_KEY,
+            self.slug()
+        )
+    }
+}
+
+/// Capture-level evidence class.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureEvidence {
+    /// Evidence was recorded from actual Bluetooth hardware.
+    HardwareTested,
+
+    /// Evidence is inferred from indirect source, model, or fixture data.
+    Inferred,
+
+    /// Evidence has not been verified.
+    Unverified,
+}
+
+impl CaptureEvidence {
+    /// Stable lowercase slug used in PEVCAP annotations and Beads issue notes.
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::HardwareTested => "hardware_tested",
+            Self::Inferred => "inferred",
+            Self::Unverified => "unverified",
+        }
+    }
+
+    /// Stable PEVCAP annotation string for this evidence marker.
+    #[must_use]
+    pub fn annotation(self) -> String {
+        format!("{}={}", PEVCAP_CAPTURE_EVIDENCE_ANNOTATION_KEY, self.slug())
     }
 }
 
@@ -1356,6 +1452,60 @@ mod tests {
 
         assert_eq!(label, "capture_label=charging");
         assert_eq!(header.annotations.as_slice(), &[label]);
+    }
+
+    #[test]
+    fn capture_privacy_distribution_and_evidence_annotations_are_stable() {
+        let annotations = [
+            CapturePrivacy::Private.annotation(),
+            CapturePrivacy::Redacted.annotation(),
+            CaptureDistribution::Redistributable.annotation(),
+            CaptureEvidence::HardwareTested.annotation(),
+            CaptureEvidence::Inferred.annotation(),
+            CaptureEvidence::Unverified.annotation(),
+        ];
+
+        assert_eq!(
+            annotations,
+            [
+                "capture_privacy=private",
+                "capture_privacy=redacted",
+                "capture_distribution=redistributable",
+                "capture_evidence=hardware_tested",
+                "capture_evidence=inferred",
+                "capture_evidence=unverified",
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_privacy_provenance_annotations_are_pevcap_metadata() {
+        let label = CaptureSessionLabel::PoweredOnStationary.annotation();
+        let privacy = CapturePrivacy::Redacted.annotation();
+        let distribution = CaptureDistribution::Redistributable.annotation();
+        let evidence = CaptureEvidence::HardwareTested.annotation();
+        let header = PevcapHeader::new(
+            1_725_000_000_000,
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            "0.1.0",
+            [0; 32],
+            &[
+                label.as_str(),
+                privacy.as_str(),
+                distribution.as_str(),
+                evidence.as_str(),
+            ],
+        )
+        .expect("header should validate");
+
+        assert_eq!(
+            header.annotations.as_slice(),
+            &[label, privacy, distribution, evidence]
+        );
     }
 
     #[test]
