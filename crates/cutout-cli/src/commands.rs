@@ -7,10 +7,12 @@ use cutout_btle::{
     scan_peripherals,
 };
 use cutout_core::{FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
-use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
+use cutout_protocols::{
+    BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
+};
 use tracing::info;
 
-use crate::cli::{Cli, Command, DashboardArgs, TargetedScanArgs};
+use crate::cli::{Cli, Command, DashboardArgs, SessionProfile, TargetedScanArgs};
 use crate::dashboard::{
     DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
 };
@@ -189,14 +191,20 @@ async fn scan(seconds: u64) -> Result<(), BtleError> {
 
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<(), BtleError> {
     let seconds = args.seconds();
+    let profile = selected_session_profile(args.profile());
     let connection =
         connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
 
     println!("{}", connection.summary);
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
         print_session_endpoints(endpoints);
-        mode.run(&connection, endpoints, Duration::from_secs(seconds))
-            .await?;
+        mode.run(
+            &connection,
+            endpoints,
+            profile,
+            Duration::from_secs(seconds),
+        )
+        .await?;
     }
 
     Ok(())
@@ -213,15 +221,50 @@ impl SessionMode {
         self,
         connection: &ConnectedPeripheral,
         endpoints: SessionEndpoints<'_>,
+        profile: SelectedSessionProfile,
         window: Duration,
     ) -> Result<(), BtleError> {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        match profile {
+            SelectedSessionProfile::Aero => {
+                self.run_with_session(
+                    connection,
+                    endpoints,
+                    ReadOnlySession::<NosfetAeroModel, false>::default(),
+                    VETERAN_DATA_CHANNEL,
+                    window,
+                )
+                .await
+            }
+            SelectedSessionProfile::Falcon => {
+                self.run_with_session(
+                    connection,
+                    endpoints,
+                    ReadOnlySession::<BegodeFalconModel, true>::default(),
+                    BEGODE_DATA_CHANNEL,
+                    window,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn run_with_session<S>(
+        self,
+        connection: &ConnectedPeripheral,
+        endpoints: SessionEndpoints<'_>,
+        mut session: S,
+        channel: cutout_core::GattChannel,
+        window: Duration,
+    ) -> Result<(), BtleError>
+    where
+        S: cutout_core::ProtocolSession + Send,
+    {
         match self {
             Self::Drive => {
                 let report = drive_session(
                     &connection.peripheral,
                     &mut session,
-                    VETERAN_DATA_CHANNEL,
+                    channel,
                     &connection.summary,
                     endpoints,
                     window,
@@ -233,7 +276,7 @@ impl SessionMode {
                 let capture = capture_session(
                     &connection.peripheral,
                     &mut session,
-                    VETERAN_DATA_CHANNEL,
+                    channel,
                     &connection.summary,
                     endpoints,
                     window,
@@ -244,6 +287,19 @@ impl SessionMode {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectedSessionProfile {
+    Aero,
+    Falcon,
+}
+
+const fn selected_session_profile(profile: SessionProfile) -> SelectedSessionProfile {
+    match profile {
+        SessionProfile::Auto | SessionProfile::Aero => SelectedSessionProfile::Aero,
+        SessionProfile::Falcon => SelectedSessionProfile::Falcon,
     }
 }
 
@@ -523,6 +579,26 @@ mod tests {
             Some(
                 "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true"
             )
+        );
+    }
+
+    #[test]
+    fn selected_session_profile_keeps_auto_on_existing_aero_path() {
+        assert_eq!(
+            selected_session_profile(SessionProfile::Auto),
+            SelectedSessionProfile::Aero
+        );
+        assert_eq!(
+            selected_session_profile(SessionProfile::Aero),
+            SelectedSessionProfile::Aero
+        );
+    }
+
+    #[test]
+    fn selected_session_profile_allows_explicit_falcon_verification_path() {
+        assert_eq!(
+            selected_session_profile(SessionProfile::Falcon),
+            SelectedSessionProfile::Falcon
         );
     }
 

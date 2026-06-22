@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use cutout_btle::ConnectionTarget;
 
 const DEFAULT_SCAN_SECONDS: u64 = 5;
@@ -113,6 +113,10 @@ pub(crate) struct TargetedScanArgs {
 
     #[command(flatten)]
     pub(crate) scan: ScanArgs,
+
+    /// Read-only protocol profile to run after connecting.
+    #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
+    pub(crate) profile: SessionProfile,
 }
 
 impl TargetedScanArgs {
@@ -123,6 +127,18 @@ impl TargetedScanArgs {
     pub(crate) const fn seconds(&self) -> u64 {
         self.scan.seconds()
     }
+
+    pub(crate) const fn profile(&self) -> SessionProfile {
+        self.profile
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub(crate) enum SessionProfile {
+    #[default]
+    Auto,
+    Aero,
+    Falcon,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -175,7 +191,8 @@ mod tests {
     use clap::{CommandFactory, Parser, error::ErrorKind};
 
     use super::{
-        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, ScanArgs, TargetArgs, TargetedScanArgs,
+        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, ScanArgs, SessionProfile, TargetArgs,
+        TargetedScanArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -249,6 +266,7 @@ mod tests {
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -276,6 +294,7 @@ mod tests {
                     name_contains: Some("Aero".to_owned()),
                 },
                 scan: ScanArgs { seconds: 8 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -301,6 +320,7 @@ mod tests {
                     name_contains: Some("Aero".to_owned()),
                 },
                 scan: ScanArgs { seconds: 11 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -321,6 +341,7 @@ mod tests {
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -341,6 +362,7 @@ mod tests {
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -366,6 +388,7 @@ mod tests {
                     name_contains: Some("NF2557".to_owned()),
                 },
                 scan: ScanArgs { seconds: 3 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -386,6 +409,7 @@ mod tests {
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -413,6 +437,35 @@ mod tests {
                     name_contains: Some("NF2557".to_owned()),
                 },
                 scan: ScanArgs { seconds: 21 },
+                profile: SessionProfile::Auto,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_capture_aero_command_with_falcon_profile() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "Falcon",
+            "--profile",
+            "falcon",
+        ])
+        .expect("parser accepts explicit Falcon profile");
+
+        assert_eq!(
+            cli.command,
+            Command::CaptureAero(TargetedScanArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: None,
+                    name_contains: Some("Falcon".to_owned()),
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS
+                },
+                profile: SessionProfile::Falcon,
             })
         );
     }
@@ -521,6 +574,7 @@ mod tests {
                 scan: ScanArgs {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
+                profile: SessionProfile::Auto,
             })
         );
     }
@@ -546,9 +600,11 @@ mod tests {
                 name_contains: Some("NF2557".to_owned()),
             },
             scan: ScanArgs { seconds: 30 },
+            profile: SessionProfile::Auto,
         };
 
         assert_eq!(args.seconds(), 30);
+        assert_eq!(args.profile(), SessionProfile::Auto);
         assert_eq!(args.into_target().name_contains.as_deref(), Some("NF2557"));
     }
 
