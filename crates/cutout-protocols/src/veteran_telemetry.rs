@@ -1,4 +1,7 @@
-use cutout_core::{Measured, MonotonicMillis, TelemetryDelta};
+use cutout_core::{
+    FirmwareInfo, Measured, MonotonicMillis, RawFieldValue, ReadOnlyResponse, SettingsEntry,
+    SettingsReadback, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
+};
 use thiserror::Error;
 
 use crate::VeteranFrame;
@@ -121,6 +124,86 @@ impl VeteranTelemetry {
             battery_percent_estimated: Some(Measured::estimated(self.battery_percent_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
+    }
+
+    /// Converts decoded firmware fields into a generic read-only response.
+    #[must_use]
+    pub fn to_firmware_response(self) -> ReadOnlyResponse {
+        ReadOnlyResponse::Firmware(FirmwareInfo {
+            protocol_version: None,
+            firmware_major: Some(Measured::reported(self.firmware.model_id)),
+            firmware_minor: Some(Measured::reported(self.firmware.minor)),
+            firmware_patch: Some(Measured::reported(self.firmware.revision)),
+            build_id: Some(RawFieldValue::new(
+                VETERAN_FIELD_FIRMWARE_VERSION,
+                i64::from(self.firmware.raw_version),
+            )),
+        })
+    }
+
+    /// Converts decoded fixed-header settings fields into generic readback slots.
+    #[must_use]
+    pub fn to_settings_responses(self) -> [ReadOnlyResponse; 2] {
+        [
+            ReadOnlyResponse::Settings(SettingsReadback {
+                entries: [
+                    Some(settings_entry(
+                        VETERAN_FIELD_AUTO_OFF_SECONDS,
+                        i64::from(self.auto_off_seconds),
+                    )),
+                    Some(settings_entry(
+                        VETERAN_FIELD_CHARGE_MODE,
+                        i64::from(self.charge_mode),
+                    )),
+                    Some(settings_entry(
+                        VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+                        i64::from(self.speed_alert_deci_kmh),
+                    )),
+                    Some(settings_entry(
+                        VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                        i64::from(self.speed_tiltback_deci_kmh),
+                    )),
+                ],
+            }),
+            ReadOnlyResponse::Settings(SettingsReadback {
+                entries: [
+                    Some(settings_entry(
+                        VETERAN_FIELD_PEDALS_MODE,
+                        i64::from(self.pedals_mode),
+                    )),
+                    None,
+                    None,
+                    None,
+                ],
+            }),
+        ]
+    }
+}
+
+/// Veteran fixed-header raw field id for firmware version.
+pub const VETERAN_FIELD_FIRMWARE_VERSION: u16 = 0x001c;
+
+/// Veteran fixed-header raw field id for auto-off seconds.
+pub const VETERAN_FIELD_AUTO_OFF_SECONDS: u16 = 0x0014;
+
+/// Veteran fixed-header raw field id for charge mode.
+pub const VETERAN_FIELD_CHARGE_MODE: u16 = 0x0016;
+
+/// Veteran fixed-header raw field id for speed alert threshold.
+pub const VETERAN_FIELD_SPEED_ALERT_DECI_KMH: u16 = 0x0018;
+
+/// Veteran fixed-header raw field id for speed tiltback threshold.
+pub const VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH: u16 = 0x001a;
+
+/// Veteran fixed-header raw field id for pedals mode.
+pub const VETERAN_FIELD_PEDALS_MODE: u16 = 0x001e;
+
+const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
+    SettingsEntry {
+        field: RawFieldValue::new(id, value),
+        source: ValueSource::Reported,
+        quality: ValueQuality::Known,
+        verification: VerificationStatus::HardwareVerified,
     }
 }
 
@@ -305,6 +388,52 @@ mod tests {
         assert_eq!(
             delta.battery_percent_estimated,
             Some(Measured::estimated(39))
+        );
+    }
+
+    #[test]
+    fn veteran_telemetry_maps_firmware_to_read_only_response() {
+        let response = VeteranTelemetry::decode(&live_aero_frame())
+            .expect("telemetry decodes")
+            .to_firmware_response();
+
+        let ReadOnlyResponse::Firmware(firmware) = response else {
+            panic!("expected firmware response");
+        };
+        assert_eq!(firmware.firmware_major, Some(Measured::reported(43)));
+        assert_eq!(firmware.firmware_minor, Some(Measured::reported(2)));
+        assert_eq!(firmware.firmware_patch, Some(Measured::reported(54)));
+        assert_eq!(
+            firmware.build_id,
+            Some(RawFieldValue::new(VETERAN_FIELD_FIRMWARE_VERSION, 43_254))
+        );
+    }
+
+    #[test]
+    fn veteran_telemetry_maps_fixed_header_settings_to_read_only_response() {
+        let responses = VeteranTelemetry::decode(&live_aero_frame())
+            .expect("telemetry decodes")
+            .to_settings_responses();
+
+        let present: Vec<_> = responses
+            .into_iter()
+            .flat_map(|response| match response {
+                ReadOnlyResponse::Settings(settings) => settings.entries,
+                _ => [None, None, None, None],
+            })
+            .flatten()
+            .map(|entry| entry.field)
+            .collect();
+
+        assert_eq!(
+            present,
+            vec![
+                RawFieldValue::new(VETERAN_FIELD_AUTO_OFF_SECONDS, 0),
+                RawFieldValue::new(VETERAN_FIELD_CHARGE_MODE, 0),
+                RawFieldValue::new(VETERAN_FIELD_SPEED_ALERT_DECI_KMH, 550),
+                RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 540),
+                RawFieldValue::new(VETERAN_FIELD_PEDALS_MODE, 1_920),
+            ]
         );
     }
 

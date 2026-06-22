@@ -163,9 +163,19 @@ fn push_veteran_frame(
     output: &mut Vec<SessionOutput>,
 ) {
     match VeteranTelemetry::decode(frame) {
-        Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-            telemetry.to_delta(monotonic_ms),
-        ))),
+        Ok(telemetry) => {
+            output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                telemetry.to_delta(monotonic_ms),
+            )));
+            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                telemetry.to_firmware_response(),
+            )));
+            for response in telemetry.to_settings_responses() {
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    response,
+                )));
+            }
+        }
         Err(VeteranTelemetryError::FrameTooShort) => {
             output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                 diagnostics_for(ParserError::MalformedFrame),
@@ -374,7 +384,9 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
 mod tests {
     use super::*;
     use core::mem::size_of;
-    use cutout_core::{LinkInfo, Measured, TelemetryDelta, TransportAction};
+    use cutout_core::{
+        LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta, TransportAction,
+    };
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
 
@@ -408,6 +420,16 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 SessionOutput::Event(DeviceEvent::Telemetry(delta)) => Some(*delta),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn read_only_response_events(output: &[SessionOutput]) -> Vec<ReadOnlyResponse> {
+        output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => Some(*response),
                 _ => None,
             })
             .collect()
@@ -545,6 +567,49 @@ mod tests {
             Some(Measured::reported(1_551_169_000))
         );
         assert_eq!(telemetry.pitch_mdeg, Some(Measured::reported(69_060)));
+    }
+
+    #[test]
+    fn nosfet_aero_session_emits_fixed_header_read_only_responses_from_live_fixture_notification() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: &live_aero_frame(),
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        let responses = read_only_response_events(&output);
+        assert_eq!(responses.len(), 3);
+
+        let ReadOnlyResponse::Firmware(firmware) = responses[0] else {
+            panic!("expected firmware response");
+        };
+        assert_eq!(firmware.firmware_major, Some(Measured::reported(43)));
+        assert_eq!(firmware.firmware_minor, Some(Measured::reported(2)));
+        assert_eq!(firmware.firmware_patch, Some(Measured::reported(54)));
+
+        let fields: Vec<_> = responses[1..]
+            .iter()
+            .flat_map(|response| match response {
+                ReadOnlyResponse::Settings(settings) => settings.entries,
+                _ => [None, None, None, None],
+            })
+            .flatten()
+            .map(|entry| entry.field)
+            .collect();
+        assert!(fields.contains(&RawFieldValue::new(crate::VETERAN_FIELD_PEDALS_MODE, 1_920,)));
     }
 
     #[test]

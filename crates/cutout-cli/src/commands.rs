@@ -5,7 +5,7 @@ use cutout_btle::{
     BtleError, ConnectedPeripheral, SessionBridgeReport, SessionCapture, SessionEndpoints,
     capture_session, connect_and_discover, drive_session, scan_peripherals,
 };
-use cutout_core::{Measured, TelemetrySnapshot};
+use cutout_core::{FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
 use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
 
 use crate::cli::{Cli, Command, TargetedScanArgs};
@@ -114,16 +114,23 @@ fn print_capture(capture: SessionCapture) {
 
 fn print_session_report(report: &SessionBridgeReport) {
     println!(
-        "session writes={} subscribes={} notifications={} telemetry={} diagnostics={} disconnects={}",
+        "session writes={} subscribes={} notifications={} telemetry={} read_only_responses={} diagnostics={} disconnects={}",
         report.writes,
         report.subscribes,
         report.notifications,
         report.telemetry,
+        report.read_only_responses,
         report.diagnostics,
         report.disconnects
     );
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
         println!("{telemetry}");
+    }
+    if let Some(firmware) = render_firmware_info(report.firmware) {
+        println!("{firmware}");
+    }
+    for settings in render_settings_readbacks(&report.settings) {
+        println!("{settings}");
     }
 }
 
@@ -217,6 +224,43 @@ fn push_measured_u64(
     }
 }
 
+fn render_firmware_info(firmware: Option<FirmwareInfo>) -> Option<String> {
+    let firmware = firmware?;
+    let mut fields = Vec::new();
+    push_measured_u16(&mut fields, "firmware_major", firmware.firmware_major);
+    push_measured_u16(&mut fields, "firmware_minor", firmware.firmware_minor);
+    push_measured_u16(&mut fields, "firmware_patch", firmware.firmware_patch);
+    if let Some(build_id) = firmware.build_id {
+        fields.push(format!("raw_{:04x}={}", build_id.id, build_id.value));
+    }
+
+    (!fields.is_empty()).then(|| format!("firmware {}", fields.join(" ")))
+}
+
+fn render_settings_readbacks(settings: &[SettingsReadback]) -> Vec<String> {
+    settings
+        .iter()
+        .filter_map(|settings| {
+            let mut fields = Vec::new();
+            for entry in settings.entries.into_iter().flatten() {
+                fields.push(format!("raw_{:04x}={}", entry.field.id, entry.field.value));
+            }
+
+            (!fields.is_empty()).then(|| format!("settings {}", fields.join(" ")))
+        })
+        .collect()
+}
+
+fn push_measured_u16(
+    fields: &mut Vec<String>,
+    name: &'static str,
+    measured: Option<Measured<u16>>,
+) {
+    if let Some(measured) = measured {
+        fields.push(format!("{name}={}", measured.value));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +294,51 @@ mod tests {
         assert_eq!(
             render_telemetry_snapshot(&TelemetrySnapshot::default()),
             None
+        );
+    }
+
+    #[test]
+    fn firmware_renderer_includes_fixed_header_version_fields() {
+        let firmware = FirmwareInfo {
+            firmware_major: Some(Measured::reported(43)),
+            firmware_minor: Some(Measured::reported(2)),
+            firmware_patch: Some(Measured::reported(54)),
+            build_id: Some(cutout_core::RawFieldValue::new(0x001c, 43_254)),
+            ..FirmwareInfo::default()
+        };
+
+        assert_eq!(
+            render_firmware_info(Some(firmware)).as_deref(),
+            Some("firmware firmware_major=43 firmware_minor=2 firmware_patch=54 raw_001c=43254")
+        );
+    }
+
+    #[test]
+    fn settings_renderer_includes_fixed_header_raw_fields() {
+        let entry = |id, value| cutout_core::SettingsEntry {
+            field: cutout_core::RawFieldValue::new(id, value),
+            source: cutout_core::ValueSource::Reported,
+            quality: cutout_core::ValueQuality::Known,
+            verification: cutout_core::VerificationStatus::HardwareVerified,
+        };
+        let settings = SettingsReadback {
+            entries: [
+                Some(entry(0x0014, 0)),
+                Some(entry(0x0016, 0)),
+                Some(entry(0x0018, 550)),
+                Some(entry(0x001a, 540)),
+            ],
+        };
+        let more_settings = SettingsReadback {
+            entries: [Some(entry(0x001e, 1_920)), None, None, None],
+        };
+
+        assert_eq!(
+            render_settings_readbacks(&[settings, more_settings]),
+            vec![
+                "settings raw_0014=0 raw_0016=0 raw_0018=550 raw_001a=540",
+                "settings raw_001e=1920",
+            ]
         );
     }
 }

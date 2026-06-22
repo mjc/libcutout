@@ -19,8 +19,8 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceEvent, GattChannel, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
-    TelemetrySnapshot, TransportAction, WriteMode,
+    DeviceEvent, FirmwareInfo, GattChannel, LinkInfo, ProtocolSession, ReadOnlyResponse,
+    SessionInput, SessionOutput, SettingsReadback, TelemetrySnapshot, TransportAction, WriteMode,
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
@@ -322,6 +322,15 @@ pub struct SessionBridgeReport {
 
     /// Latest semantic telemetry values emitted by the session.
     pub telemetry_snapshot: TelemetrySnapshot,
+
+    /// Semantic read-only response events emitted by the session.
+    pub read_only_responses: usize,
+
+    /// Latest firmware readback emitted by the session.
+    pub firmware: Option<FirmwareInfo>,
+
+    /// Settings readbacks emitted by the session.
+    pub settings: Vec<SettingsReadback>,
 
     /// Parser diagnostics events emitted by the session.
     pub diagnostics: usize,
@@ -878,6 +887,18 @@ where
                 context.report.telemetry += 1;
                 context.report.telemetry_snapshot.apply_delta(delta);
             }
+            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
+                context.report.read_only_responses += 1;
+                match response {
+                    ReadOnlyResponse::Firmware(firmware) => {
+                        context.report.firmware = Some(firmware);
+                    }
+                    ReadOnlyResponse::Settings(settings) => {
+                        context.report.settings.push(settings);
+                    }
+                    ReadOnlyResponse::Battery(_) | ReadOnlyResponse::Diagnostics(_) => {}
+                }
+            }
             SessionOutput::Event(DeviceEvent::Diagnostics(_)) => {
                 context.report.diagnostics += 1;
             }
@@ -1028,8 +1049,10 @@ mod tests {
 
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
     use cutout_core::{
-        DeviceEvent, GattChannel, Measured, ParserDiagnostics, ProtocolSession, SessionInput,
-        SessionOutput, TelemetryDelta, TransportAction, WriteMode,
+        DeviceEvent, FirmwareInfo, GattChannel, Measured, ParserDiagnostics, ProtocolSession,
+        RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry,
+        SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
+        VerificationStatus, WriteMode,
     };
     use futures_util::stream;
     use uuid::Uuid;
@@ -1448,6 +1471,7 @@ mod tests {
 
         assert_eq!(report.notifications, 1);
         assert_eq!(report.telemetry, 1);
+        assert_eq!(report.read_only_responses, 2);
         assert_eq!(
             report.telemetry_snapshot.speed_mm_s,
             Some(Measured::reported(1_200))
@@ -1459,6 +1483,16 @@ mod tests {
         assert_eq!(
             report.telemetry_snapshot.battery_percent_estimated,
             Some(Measured::estimated(61))
+        );
+        assert_eq!(
+            report.firmware.expect("firmware response").firmware_major,
+            Some(Measured::reported(43))
+        );
+        assert_eq!(
+            report.settings.first().expect("settings response").entries[0]
+                .expect("settings entry")
+                .field,
+            RawFieldValue::new(0x0014, 30)
         );
         assert_eq!(report.diagnostics, 1);
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
@@ -1578,6 +1612,27 @@ mod tests {
                             battery_percent_estimated: Some(Measured::estimated(61)),
                             ..TelemetryDelta::empty(0)
                         },
+                    )));
+                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                        ReadOnlyResponse::Firmware(FirmwareInfo {
+                            firmware_major: Some(Measured::reported(43)),
+                            ..FirmwareInfo::default()
+                        }),
+                    )));
+                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                        ReadOnlyResponse::Settings(SettingsReadback {
+                            entries: [
+                                Some(SettingsEntry {
+                                    field: RawFieldValue::new(0x0014, 30),
+                                    source: ValueSource::Reported,
+                                    quality: ValueQuality::Known,
+                                    verification: VerificationStatus::HardwareVerified,
+                                }),
+                                None,
+                                None,
+                                None,
+                            ],
+                        }),
                     )));
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         ParserDiagnostics {

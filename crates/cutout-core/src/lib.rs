@@ -666,7 +666,8 @@ impl DiagnosticSnapshot {
             | DeviceEvent::LinkDown
             | DeviceEvent::NotificationReceived { .. }
             | DeviceEvent::Tick { .. }
-            | DeviceEvent::Telemetry(_) => None,
+            | DeviceEvent::Telemetry(_)
+            | DeviceEvent::ReadOnlyResponse(_) => None,
         }
     }
 }
@@ -2058,6 +2059,9 @@ pub enum DeviceEvent {
     /// Telemetry update emitted by a protocol session.
     Telemetry(TelemetryDelta),
 
+    /// Read-only response emitted by a protocol session.
+    ReadOnlyResponse(ReadOnlyResponse),
+
     /// Parser diagnostics emitted by a protocol session.
     Diagnostics(ParserDiagnostics),
 }
@@ -2199,7 +2203,8 @@ where
                     DeviceEvent::Diagnostics(diagnostics) => {
                         self.diagnostics.merge(*diagnostics);
                     }
-                    DeviceEvent::LinkUp(_)
+                    DeviceEvent::ReadOnlyResponse(_)
+                    | DeviceEvent::LinkUp(_)
                     | DeviceEvent::LinkDown
                     | DeviceEvent::NotificationReceived { .. }
                     | DeviceEvent::Tick { .. } => {}
@@ -2863,6 +2868,22 @@ mod tests {
             crate::CommandKind::RequestDiagnostics
         );
         assert_eq!(settings.command_kind(), crate::CommandKind::RequestSettings);
+    }
+
+    #[test]
+    fn read_only_response_can_be_emitted_as_device_event() {
+        let firmware = crate::FirmwareInfo {
+            firmware_major: Some(Measured::reported(43)),
+            ..crate::FirmwareInfo::default()
+        };
+
+        assert_eq!(
+            DeviceEvent::ReadOnlyResponse(crate::ReadOnlyResponse::Firmware(firmware)),
+            DeviceEvent::ReadOnlyResponse(crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo {
+                firmware_major: Some(Measured::reported(43)),
+                ..crate::FirmwareInfo::default()
+            }))
+        );
     }
 
     #[test]
