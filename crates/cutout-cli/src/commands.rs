@@ -5,6 +5,7 @@ use cutout_btle::{
     BtleError, ConnectedPeripheral, SessionBridgeReport, SessionCapture, SessionEndpoints,
     capture_session, connect_and_discover, drive_session, scan_peripherals,
 };
+use cutout_core::{Measured, TelemetrySnapshot};
 use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
 
 use crate::cli::{Cli, Command, TargetedScanArgs};
@@ -121,4 +122,133 @@ fn print_session_report(report: &SessionBridgeReport) {
         report.diagnostics,
         report.disconnects
     );
+    if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
+        println!("{telemetry}");
+    }
+}
+
+fn render_telemetry_snapshot(snapshot: &TelemetrySnapshot) -> Option<String> {
+    let mut fields = Vec::new();
+    push_measured_i32(&mut fields, "speed_mm_s", snapshot.speed_mm_s);
+    push_measured_i32(&mut fields, "voltage_mv", snapshot.voltage_mv);
+    push_measured_i32(
+        &mut fields,
+        "battery_current_ma",
+        snapshot.battery_current_ma,
+    );
+    push_measured_i32(&mut fields, "motor_current_ma", snapshot.motor_current_ma);
+    push_measured_i64(&mut fields, "power_mw", snapshot.power_mw);
+    push_measured_i32(
+        &mut fields,
+        "controller_temperature_mc",
+        snapshot.controller_temperature_mc,
+    );
+    push_measured_i32(
+        &mut fields,
+        "motor_temperature_mc",
+        snapshot.motor_temperature_mc,
+    );
+    push_measured_i32(
+        &mut fields,
+        "battery_temperature_mc",
+        snapshot.battery_temperature_mc,
+    );
+    push_measured_i16(&mut fields, "pwm_permille", snapshot.pwm_permille);
+    push_measured_u64(&mut fields, "distance_mm", snapshot.distance_mm);
+    push_measured_i32(&mut fields, "pitch_mdeg", snapshot.pitch_mdeg);
+    push_measured_i32(&mut fields, "roll_mdeg", snapshot.roll_mdeg);
+    push_measured_u8(
+        &mut fields,
+        "battery_percent_reported",
+        snapshot.battery_percent_reported,
+    );
+    push_measured_u8(
+        &mut fields,
+        "battery_percent_estimated",
+        snapshot.battery_percent_estimated,
+    );
+
+    (!fields.is_empty()).then(|| format!("telemetry {}", fields.join(" ")))
+}
+
+fn push_measured_i16(
+    fields: &mut Vec<String>,
+    name: &'static str,
+    measured: Option<Measured<i16>>,
+) {
+    if let Some(measured) = measured {
+        fields.push(format!("{name}={}", measured.value));
+    }
+}
+
+fn push_measured_i32(
+    fields: &mut Vec<String>,
+    name: &'static str,
+    measured: Option<Measured<i32>>,
+) {
+    if let Some(measured) = measured {
+        fields.push(format!("{name}={}", measured.value));
+    }
+}
+
+fn push_measured_i64(
+    fields: &mut Vec<String>,
+    name: &'static str,
+    measured: Option<Measured<i64>>,
+) {
+    if let Some(measured) = measured {
+        fields.push(format!("{name}={}", measured.value));
+    }
+}
+
+fn push_measured_u8(fields: &mut Vec<String>, name: &'static str, measured: Option<Measured<u8>>) {
+    if let Some(measured) = measured {
+        fields.push(format!("{name}={}", measured.value));
+    }
+}
+
+fn push_measured_u64(
+    fields: &mut Vec<String>,
+    name: &'static str,
+    measured: Option<Measured<u64>>,
+) {
+    if let Some(measured) = measured {
+        fields.push(format!("{name}={}", measured.value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_snapshot_renderer_includes_present_fields() {
+        let mut snapshot = TelemetrySnapshot::default();
+        snapshot.apply_delta(cutout_core::TelemetryDelta {
+            speed_mm_s: Some(Measured::reported(1_200)),
+            voltage_mv: Some(Measured::reported(108_760)),
+            motor_current_ma: Some(Measured::reported(-1_700)),
+            controller_temperature_mc: Some(Measured::reported(33_270)),
+            pwm_permille: Some(Measured::reported(-1_000)),
+            distance_mm: Some(Measured::reported(1_551_169_000)),
+            pitch_mdeg: Some(Measured::reported(69_060)),
+            battery_percent_estimated: Some(Measured::estimated(39)),
+            ..cutout_core::TelemetryDelta::empty(42)
+        });
+
+        assert_eq!(
+            render_telemetry_snapshot(&snapshot).as_deref(),
+            Some(
+                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=39"
+            )
+        );
+    }
+
+    #[test]
+    fn telemetry_snapshot_renderer_omits_empty_snapshot() {
+        assert_eq!(
+            render_telemetry_snapshot(&TelemetrySnapshot::default()),
+            None
+        );
+    }
 }

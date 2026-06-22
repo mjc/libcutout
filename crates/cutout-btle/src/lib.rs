@@ -20,7 +20,7 @@ use btleplug::{
 };
 use cutout_core::{
     DeviceEvent, GattChannel, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
-    TransportAction, WriteMode,
+    TelemetrySnapshot, TransportAction, WriteMode,
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
@@ -319,6 +319,9 @@ pub struct SessionBridgeReport {
 
     /// Semantic telemetry events emitted by the session.
     pub telemetry: usize,
+
+    /// Latest semantic telemetry values emitted by the session.
+    pub telemetry_snapshot: TelemetrySnapshot,
 
     /// Parser diagnostics events emitted by the session.
     pub diagnostics: usize,
@@ -871,8 +874,9 @@ where
                 | DeviceEvent::LinkDown
                 | DeviceEvent::Tick { .. },
             ) => {}
-            SessionOutput::Event(DeviceEvent::Telemetry(_)) => {
+            SessionOutput::Event(DeviceEvent::Telemetry(delta)) => {
                 context.report.telemetry += 1;
+                context.report.telemetry_snapshot.apply_delta(delta);
             }
             SessionOutput::Event(DeviceEvent::Diagnostics(_)) => {
                 context.report.diagnostics += 1;
@@ -1444,6 +1448,18 @@ mod tests {
 
         assert_eq!(report.notifications, 1);
         assert_eq!(report.telemetry, 1);
+        assert_eq!(
+            report.telemetry_snapshot.speed_mm_s,
+            Some(Measured::reported(1_200))
+        );
+        assert_eq!(
+            report.telemetry_snapshot.voltage_mv,
+            Some(Measured::reported(84_200))
+        );
+        assert_eq!(
+            report.telemetry_snapshot.battery_percent_estimated,
+            Some(Measured::estimated(61))
+        );
         assert_eq!(report.diagnostics, 1);
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
     }
@@ -1558,6 +1574,8 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta {
                             speed_mm_s: Some(Measured::reported(1_200)),
+                            voltage_mv: Some(Measured::reported(84_200)),
+                            battery_percent_estimated: Some(Measured::estimated(61)),
                             ..TelemetryDelta::empty(0)
                         },
                     )));
