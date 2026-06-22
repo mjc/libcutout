@@ -180,6 +180,47 @@ pub struct VescStatsTelemetry {
     pub count_time_ms: u32,
 }
 
+/// Verified VESC board geometry used to calculate road speed from eRPM.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VescBoardProfile {
+    /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
+    pub motor_pole_pairs: u8,
+
+    /// Mechanical gear reduction denominator.
+    pub gear_ratio_denominator: u8,
+
+    /// Wheel circumference in millimeters.
+    pub wheel_circumference_mm: u16,
+}
+
+impl VescBoardProfile {
+    /// Creates a board profile from explicit geometry.
+    #[must_use]
+    pub const fn new(
+        motor_pole_pairs: u8,
+        gear_ratio_denominator: u8,
+        wheel_circumference_mm: u16,
+    ) -> Self {
+        Self {
+            motor_pole_pairs,
+            gear_ratio_denominator,
+            wheel_circumference_mm,
+        }
+    }
+
+    /// Calculates signed road speed in millimeters per second from eRPM.
+    #[must_use]
+    pub const fn speed_mm_s_from_erpm(self, erpm: i32) -> Option<i32> {
+        let denominator = self.motor_pole_pairs as i64 * self.gear_ratio_denominator as i64 * 60;
+        if denominator == 0 {
+            return None;
+        }
+
+        let numerator = erpm as i64 * self.wheel_circumference_mm as i64;
+        Some(round_div_i64_to_i32(numerator, denominator))
+    }
+}
+
 /// VESC fault code subset.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum VescFaultCode {
@@ -477,6 +518,23 @@ impl From<vesc::FaultCode> for VescFaultCode {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
+const fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
+    let half = denominator / 2;
+    let rounded = if numerator >= 0 {
+        (numerator + half) / denominator
+    } else {
+        (numerator - half) / denominator
+    };
+    if rounded > i32::MAX as i64 {
+        i32::MAX
+    } else if rounded < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        rounded as i32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +661,41 @@ mod tests {
         assert_eq!(stats.current_avg_ma, 5_000);
         assert_eq!(stats.current_max_ma, 6_000);
         assert_eq!(stats.count_time_ms, 11_000);
+    }
+
+    #[test]
+    fn vesc_board_profile_calculates_speed_from_erpm() {
+        let profile = VescBoardProfile::new(15, 1, 2_100);
+
+        assert_eq!(profile.speed_mm_s_from_erpm(4_500), Some(10_500));
+    }
+
+    #[test]
+    fn vesc_board_profile_preserves_reverse_erpm_sign() {
+        let profile = VescBoardProfile::new(15, 1, 2_100);
+
+        assert_eq!(profile.speed_mm_s_from_erpm(-4_500), Some(-10_500));
+    }
+
+    #[test]
+    fn vesc_board_profile_applies_gear_reduction() {
+        let direct_drive = VescBoardProfile::new(15, 1, 2_100);
+        let geared = VescBoardProfile::new(15, 2, 2_100);
+
+        assert_eq!(direct_drive.speed_mm_s_from_erpm(4_500), Some(10_500));
+        assert_eq!(geared.speed_mm_s_from_erpm(4_500), Some(5_250));
+    }
+
+    #[test]
+    fn vesc_board_profile_refuses_zero_denominators() {
+        assert_eq!(
+            VescBoardProfile::new(0, 1, 2_100).speed_mm_s_from_erpm(4_500),
+            None
+        );
+        assert_eq!(
+            VescBoardProfile::new(15, 0, 2_100).speed_mm_s_from_erpm(4_500),
+            None
+        );
     }
 
     #[test]
