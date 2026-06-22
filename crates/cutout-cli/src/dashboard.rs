@@ -45,6 +45,54 @@ pub(crate) struct ProfileSnapshot {
     pub(crate) name: String,
     pub(crate) source: String,
     pub(crate) status: String,
+    pub(crate) family: ProfileFamily,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProfileFamily {
+    AeroVeteran {
+        current_limit_a: Option<String>,
+        tail_status: String,
+        summary: String,
+    },
+    Pending {
+        family: String,
+        note: String,
+        summary: String,
+    },
+}
+
+impl ProfileFamily {
+    fn summary(&self) -> &str {
+        match self {
+            Self::AeroVeteran { summary, .. } | Self::Pending { summary, .. } => summary.as_str(),
+        }
+    }
+}
+
+impl From<FixtureProfileFamily> for ProfileFamily {
+    fn from(value: FixtureProfileFamily) -> Self {
+        match value {
+            FixtureProfileFamily::AeroVeteran {
+                current_limit_a,
+                tail_status,
+            } => Self::AeroVeteran {
+                current_limit_a: current_limit_a.map(ToOwned::to_owned),
+                tail_status: tail_status.to_owned(),
+                summary: match current_limit_a {
+                    Some(current_limit) => {
+                        format!("Aero/Veteran current {current_limit} / {tail_status}")
+                    }
+                    None => format!("unknown Aero/Veteran current unknown / {tail_status}"),
+                },
+            },
+            FixtureProfileFamily::Pending { family, note } => Self::Pending {
+                family: family.to_owned(),
+                note: note.to_owned(),
+                summary: format!("pending {family} {note}"),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -108,6 +156,7 @@ pub(crate) enum FixtureEvent {
         name: &'static str,
         source: &'static str,
         status: &'static str,
+        family: FixtureProfileFamily,
     },
     Log {
         level: &'static str,
@@ -119,6 +168,18 @@ pub(crate) enum FixtureEvent {
 pub(crate) struct FixtureReplay {
     steps: &'static [FixtureEvent],
     index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FixtureProfileFamily {
+    AeroVeteran {
+        current_limit_a: Option<&'static str>,
+        tail_status: &'static str,
+    },
+    Pending {
+        family: &'static str,
+        note: &'static str,
+    },
 }
 
 const FIXTURE_DEMO_STEPS: &[FixtureEvent] = &[
@@ -150,16 +211,28 @@ const FIXTURE_DEMO_STEPS: &[FixtureEvent] = &[
         name: "Primary drive",
         source: "probe",
         status: "ready",
+        family: FixtureProfileFamily::AeroVeteran {
+            current_limit_a: Some("45A"),
+            tail_status: "raw tail preserved",
+        },
     },
     FixtureEvent::Profile {
         name: "Battery pack",
         source: "capture",
         status: "warming",
+        family: FixtureProfileFamily::Pending {
+            family: "Begode/Falcon",
+            note: "unsupported / pending",
+        },
     },
     FixtureEvent::Profile {
         name: "Motor controller",
         source: "manual",
         status: "partial",
+        family: FixtureProfileFamily::AeroVeteran {
+            current_limit_a: None,
+            tail_status: "raw tail unknown",
+        },
     },
     FixtureEvent::Log {
         level: "info",
@@ -282,11 +355,13 @@ impl DashboardState {
                 name,
                 source,
                 status,
+                family,
             } => {
                 self.profiles.push(ProfileSnapshot {
                     name: name.to_owned(),
                     source: source.to_owned(),
                     status: status.to_owned(),
+                    family: family.into(),
                 });
             }
             FixtureEvent::Log { level, message } => {
@@ -444,7 +519,7 @@ pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(10),
+            Constraint::Length(17),
             Constraint::Fill(1),
         ])
         .split(frame.area());
@@ -482,8 +557,8 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),
             Constraint::Length(5),
+            Constraint::Length(3),
             Constraint::Fill(1),
         ])
         .split(area);
@@ -537,6 +612,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
                 Cell::from(profile.name.as_str()),
                 Cell::from(profile.source.as_str()),
                 Cell::from(profile.status.as_str()),
+                Cell::from(profile.family.summary()),
             ])
         })
         .collect::<Vec<_>>();
@@ -544,12 +620,13 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let table = Table::new(
         rows,
         [
+            Constraint::Percentage(25),
+            Constraint::Percentage(15),
+            Constraint::Percentage(10),
             Constraint::Percentage(50),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
         ],
     )
-    .header(Row::new(vec!["Profile", "Source", "Status"]).style(Style::new().bold()))
+    .header(Row::new(vec!["Profile", "Source", "Status", "Family"]).style(Style::new().bold()))
     .block(Block::bordered().title("Profiles"))
     .column_spacing(1);
     frame.render_widget(table, chunks[2]);
@@ -683,6 +760,22 @@ mod tests {
         assert_eq!(state.profiles.len(), 3);
         assert_eq!(state.logs.len(), 2);
         assert_eq!(
+            state.profiles[0].family,
+            ProfileFamily::AeroVeteran {
+                current_limit_a: Some("45A".to_owned()),
+                tail_status: "raw tail preserved".to_owned(),
+                summary: "Aero/Veteran current 45A / raw tail preserved".to_owned(),
+            }
+        );
+        assert_eq!(
+            state.profiles[1].family,
+            ProfileFamily::Pending {
+                family: "Begode/Falcon".to_owned(),
+                note: "unsupported / pending".to_owned(),
+                summary: "pending Begode/Falcon unsupported / pending".to_owned(),
+            }
+        );
+        assert_eq!(
             state.telemetry.current_points.len(),
             state.telemetry.current_a.len()
         );
@@ -717,6 +810,7 @@ mod tests {
             "Battery",
             "Signal",
             "Profiles",
+            "Aero/Veteran",
             "Speed",
             "Voltage",
             "Trend",
@@ -740,6 +834,16 @@ mod tests {
         let text = buffer_text(&buffer);
 
         assert!(text.contains("battery chemistry"));
+    }
+
+    #[test]
+    fn profile_table_shows_pending_family_state() {
+        let state = DashboardState::sample();
+
+        let buffer = render_buffer(&state, 120, 36);
+        let text = buffer_text(&buffer);
+
+        assert!(text.contains("pending"));
     }
 
     #[test]
@@ -778,5 +882,15 @@ mod tests {
         let text = buffer_text(&buffer);
 
         assert!(text.contains("fixture/demo replay"));
+    }
+
+    #[test]
+    fn profile_table_shows_missing_aero_fields_as_unknown() {
+        let state = DashboardState::sample();
+
+        let buffer = render_buffer(&state, 120, 36);
+        let text = buffer_text(&buffer);
+
+        assert!(text.contains("unknown"));
     }
 }
