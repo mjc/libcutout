@@ -105,6 +105,7 @@ fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_REQUEST_LEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DeviceFamily, ProtocolProbe, load_request_fixtures};
     use core::mem::size_of;
 
     #[test]
@@ -190,6 +191,39 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn falcon_encoder_matches_checked_in_write_request_fixtures() {
+        let fixtures = load_request_fixtures(include_str!(
+            "../fixtures/requests/falcon-read-only.requests"
+        ))
+        .expect("checked-in request fixtures load");
+
+        let matched_probes = fixtures
+            .iter()
+            .filter(|fixture| fixture.family == DeviceFamily::BegodeFalcon)
+            .filter_map(|fixture| match fixture.probe {
+                ProtocolProbe::Falcon(probe) => Some((probe, fixture)),
+                ProtocolProbe::Aero(_) => None,
+            })
+            .map(|(probe, fixture)| {
+                let RequestDisposition::Write(request) = FalconRequestEncoder::encode(probe) else {
+                    panic!("checked-in Falcon request fixture should be write-backed");
+                };
+
+                assert_eq!(request.probe, probe);
+                assert_eq!(request.command, fixture.command);
+                assert_eq!(request.mode, fixture.mode);
+                assert_eq!(request.payload.as_slice(), fixture.bytes.as_slice());
+                probe
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            matched_probes,
+            vec![FalconProbe::Identity, FalconProbe::FirmwareInfo]
+        );
     }
 
     #[test]
