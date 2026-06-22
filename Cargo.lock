@@ -334,6 +334,7 @@ name = "cutout-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "btleplug",
  "clap",
  "cutout-btle",
  "cutout-core",

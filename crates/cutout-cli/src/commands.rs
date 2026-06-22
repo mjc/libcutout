@@ -1,10 +1,15 @@
-use std::{fs, sync::mpsc, thread, time::Duration};
+use std::{
+    fs,
+    sync::mpsc,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Result;
 use cutout_btle::{
-    BtleError, ConnectedPeripheral, ConnectionTarget, SessionBridgeReport, SessionCapture,
-    SessionEndpoints, capture_session_with_commands, connect_and_discover, drive_session,
-    drive_session_with_commands, read_battery_level, scan_peripherals,
+    BtleError, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata, SessionBridgeReport,
+    SessionCapture, SessionEndpoints, capture_session_with_commands, connect_and_discover,
+    drive_session, drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
     DeviceCommand, DeviceEvent, FirmwareInfo, HostSession, Measured, PevcapCapture, PevcapEncoding,
@@ -16,8 +21,8 @@ use cutout_protocols::{
 use tracing::info;
 
 use crate::cli::{
-    Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs, PevcapFormat,
-    ReadProbe, SessionProfile, TargetedScanArgs,
+    CaptureAeroArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
+    PevcapFormat, ReadProbe, SessionProfile, TargetedScanArgs,
 };
 use crate::dashboard::{
     DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
@@ -37,7 +42,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Scan(args) => scan(args.seconds()).await?,
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
-        Command::CaptureAero(args) => connect(args, SessionMode::Capture).await?,
+        Command::CaptureAero(args) => capture_aero(args).await?,
         Command::Validation => print!("{}", render_validation_report()),
         Command::Pevcap(args) => pevcap(args)?,
         Command::Dashboard(args) => dashboard(args).await?,
@@ -357,7 +362,7 @@ async fn scan(seconds: u64) -> Result<(), BtleError> {
     Ok(())
 }
 
-async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<(), BtleError> {
+async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let seconds = args.seconds();
     let profile = selected_session_profile(args.profile());
     let commands = read_probe_commands(args.probes());
@@ -380,10 +385,29 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<(), BtleEr
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+async fn capture_aero(args: CaptureAeroArgs) -> Result<()> {
+    let output = args
+        .pevcap_output
+        .map_or(CaptureOutput::Text, |path| CaptureOutput::Pevcap {
+            path,
+            format: args.pevcap_format,
+        });
+    connect(args.target, SessionMode::Capture { output }).await
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum SessionMode {
     Drive,
-    Capture,
+    Capture { output: CaptureOutput },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CaptureOutput {
+    Text,
+    Pevcap {
+        path: std::path::PathBuf,
+        format: PevcapFormat,
+    },
 }
 
 impl SessionMode {
@@ -394,7 +418,7 @@ impl SessionMode {
         profile: SelectedSessionProfile,
         commands: &[DeviceCommand],
         window: Duration,
-    ) -> Result<(), BtleError> {
+    ) -> Result<()> {
         match profile {
             SelectedSessionProfile::Aero => {
                 self.run_with_session(
@@ -429,7 +453,7 @@ impl SessionMode {
         channel: cutout_core::GattChannel,
         commands: &[DeviceCommand],
         window: Duration,
-    ) -> Result<(), BtleError>
+    ) -> Result<()>
     where
         S: cutout_core::ProtocolSession + Send,
     {
@@ -447,7 +471,7 @@ impl SessionMode {
                 .await?;
                 print_session_report(&report);
             }
-            Self::Capture => {
+            Self::Capture { output } => {
                 let capture = capture_session_with_commands(
                     &connection.peripheral,
                     &mut session,
@@ -458,7 +482,7 @@ impl SessionMode {
                     commands,
                 )
                 .await?;
-                print_capture(capture);
+                write_or_print_capture(capture, &connection.summary, &output)?;
             }
         }
         Ok(())
@@ -507,6 +531,59 @@ fn print_capture(capture: SessionCapture) {
         println!("{record}");
     }
     print_session_report(&capture.report);
+}
+
+fn write_or_print_capture(
+    capture: SessionCapture,
+    summary: &cutout_btle::ConnectionSummary,
+    output: &CaptureOutput,
+) -> Result<()> {
+    match output {
+        CaptureOutput::Text => {
+            print_capture(capture);
+            Ok(())
+        }
+        CaptureOutput::Pevcap { path, format } => {
+            let report = capture.report.clone();
+            let bytes = encode_session_capture_pevcap(
+                &capture,
+                summary,
+                *format,
+                capture_wall_clock_unix_ms(),
+            )?;
+            fs::write(path, bytes)?;
+            println!("wrote pevcap {} ({format:?})", path.display());
+            print_session_report(&report);
+            Ok(())
+        }
+    }
+}
+
+fn encode_session_capture_pevcap(
+    capture: &SessionCapture,
+    summary: &cutout_btle::ConnectionSummary,
+    format: PevcapFormat,
+    wall_clock_start_unix_ms: u64,
+) -> Result<Vec<u8>> {
+    let pevcap = capture.to_pevcap(
+        summary,
+        PevcapSessionMetadata {
+            wall_clock_start_unix_ms,
+            platform_id: std::env::consts::OS,
+            library_version: env!("CARGO_PKG_VERSION"),
+            registry_hash: [0; 32],
+            annotations: &["cutout-cli capture-aero"],
+        },
+    )?;
+    Ok(pevcap.encode(pevcap_encoding(format))?)
+}
+
+fn capture_wall_clock_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 fn print_session_report(report: &SessionBridgeReport) {
@@ -677,7 +754,11 @@ fn push_measured_u16(
 
 #[cfg(test)]
 mod tests {
-    use cutout_btle::{BridgeIdentityResolution, ConnectionTarget};
+    use btleplug::api::{CharPropFlags, WriteType};
+    use cutout_btle::{
+        BridgeIdentityResolution, ConnectionSummary, ConnectionTarget, PeripheralObservation,
+        ServiceSummary, SessionCaptureRecord,
+    };
     use cutout_core::{
         GattChannel, PevcapHeader, PevcapRecord, ProtocolFamily, VerificationStatus, VerifiedValue,
         WriteMode,
@@ -686,6 +767,7 @@ mod tests {
         BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, DeviceFamily, IdentityConfidence,
         ProtocolFamilyClassification, StagedIdentityInput, identify_model,
     };
+    use uuid::Uuid;
 
     use super::*;
     use crate::cli::ScanArgs;
@@ -796,6 +878,66 @@ mod tests {
                 .expect("JSONL decodes");
 
         assert_eq!(decoded, capture);
+    }
+
+    #[test]
+    fn cli_encodes_session_capture_to_pevcap_bytes() {
+        let summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "cb-uuid".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: Some(-67),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )],
+            },
+            services: vec![ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
+                }],
+            }],
+        };
+        let capture = SessionCapture {
+            records: vec![
+                SessionCaptureRecord::Link {
+                    monotonic_ms: 0,
+                    max_write_len: Some(23),
+                },
+                SessionCaptureRecord::Write {
+                    monotonic_ms: 2,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    mode: WriteType::WithoutResponse,
+                    bytes: b"N".to_vec(),
+                    provisional: false,
+                },
+                SessionCaptureRecord::Notification {
+                    monotonic_ms: 3,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    bytes: b"NAME=NF2557".to_vec(),
+                },
+            ],
+            report: SessionBridgeReport::default(),
+        };
+
+        let bytes = encode_session_capture_pevcap(&capture, &summary, PevcapFormat::Binary, 42)
+            .expect("capture encodes");
+        let decoded =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
+
+        assert_eq!(decoded.header.wall_clock_start_unix_ms, 42);
+        assert_eq!(decoded.header.write_limit, Some(23));
+        assert_eq!(decoded.records.len(), 2);
+        assert_eq!(
+            decoded.records[0].write_mode,
+            Some(WriteMode::WithoutResponse)
+        );
+        assert_eq!(decoded.records[1].bytes, b"NAME=NF2557");
     }
 
     #[test]

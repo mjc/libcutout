@@ -102,7 +102,7 @@ pub(crate) enum Command {
 
     /// Capture read-only Aero/Veteran protocol evidence.
     #[command(long_about = CAPTURE_AERO_LONG_ABOUT)]
-    CaptureAero(TargetedScanArgs),
+    CaptureAero(CaptureAeroArgs),
 
     /// Print the generated hardware validation matrix.
     #[command(long_about = VALIDATION_LONG_ABOUT)]
@@ -145,6 +145,20 @@ pub(crate) struct TargetedScanArgs {
     /// Explicit read-only probe command to issue after subscribing.
     #[arg(long = "probe", value_enum)]
     pub(crate) probes: Vec<ReadProbe>,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct CaptureAeroArgs {
+    #[command(flatten)]
+    pub(crate) target: TargetedScanArgs,
+
+    /// Optional PEVCAP output path for the captured session.
+    #[arg(long = "pevcap-output", value_name = "PATH")]
+    pub(crate) pevcap_output: Option<PathBuf>,
+
+    /// PEVCAP output format when --pevcap-output is supplied.
+    #[arg(long = "pevcap-format", value_enum, default_value_t = PevcapFormat::Jsonl)]
+    pub(crate) pevcap_format: PevcapFormat,
 }
 
 impl TargetedScanArgs {
@@ -291,9 +305,9 @@ mod tests {
     use clap::{CommandFactory, Parser, error::ErrorKind};
 
     use super::{
-        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs, PevcapCommand,
-        PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, ReadProbe, ScanArgs, SessionProfile,
-        TargetArgs, TargetedScanArgs,
+        CaptureAeroArgs, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
+        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, ReadProbe, ScanArgs,
+        SessionProfile, TargetArgs, TargetedScanArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -487,15 +501,19 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(TargetedScanArgs {
-                target: TargetArgs {
-                    address: None,
-                    identifier: None,
-                    name_contains: Some("NF2557".to_owned()),
+            Command::CaptureAero(CaptureAeroArgs {
+                target: TargetedScanArgs {
+                    target: TargetArgs {
+                        address: None,
+                        identifier: None,
+                        name_contains: Some("NF2557".to_owned()),
+                    },
+                    scan: ScanArgs { seconds: 3 },
+                    profile: SessionProfile::Auto,
+                    probes: Vec::new(),
                 },
-                scan: ScanArgs { seconds: 3 },
-                profile: SessionProfile::Auto,
-                probes: Vec::new(),
+                pevcap_output: None,
+                pevcap_format: PevcapFormat::Jsonl,
             })
         );
     }
@@ -507,17 +525,21 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(TargetedScanArgs {
-                target: TargetArgs {
-                    address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
-                    identifier: None,
-                    name_contains: None,
+            Command::CaptureAero(CaptureAeroArgs {
+                target: TargetedScanArgs {
+                    target: TargetArgs {
+                        address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                        identifier: None,
+                        name_contains: None,
+                    },
+                    scan: ScanArgs {
+                        seconds: DEFAULT_SCAN_SECONDS
+                    },
+                    profile: SessionProfile::Auto,
+                    probes: Vec::new(),
                 },
-                scan: ScanArgs {
-                    seconds: DEFAULT_SCAN_SECONDS
-                },
-                profile: SessionProfile::Auto,
-                probes: Vec::new(),
+                pevcap_output: None,
+                pevcap_format: PevcapFormat::Jsonl,
             })
         );
     }
@@ -538,15 +560,19 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(TargetedScanArgs {
-                target: TargetArgs {
-                    address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
-                    identifier: None,
-                    name_contains: Some("NF2557".to_owned()),
+            Command::CaptureAero(CaptureAeroArgs {
+                target: TargetedScanArgs {
+                    target: TargetArgs {
+                        address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                        identifier: None,
+                        name_contains: Some("NF2557".to_owned()),
+                    },
+                    scan: ScanArgs { seconds: 21 },
+                    profile: SessionProfile::Auto,
+                    probes: Vec::new(),
                 },
-                scan: ScanArgs { seconds: 21 },
-                profile: SessionProfile::Auto,
-                probes: Vec::new(),
+                pevcap_output: None,
+                pevcap_format: PevcapFormat::Jsonl,
             })
         );
     }
@@ -565,17 +591,21 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(TargetedScanArgs {
-                target: TargetArgs {
-                    address: None,
-                    identifier: None,
-                    name_contains: Some("Falcon".to_owned()),
+            Command::CaptureAero(CaptureAeroArgs {
+                target: TargetedScanArgs {
+                    target: TargetArgs {
+                        address: None,
+                        identifier: None,
+                        name_contains: Some("Falcon".to_owned()),
+                    },
+                    scan: ScanArgs {
+                        seconds: DEFAULT_SCAN_SECONDS
+                    },
+                    profile: SessionProfile::Falcon,
+                    probes: Vec::new(),
                 },
-                scan: ScanArgs {
-                    seconds: DEFAULT_SCAN_SECONDS
-                },
-                profile: SessionProfile::Falcon,
-                probes: Vec::new(),
+                pevcap_output: None,
+                pevcap_format: PevcapFormat::Jsonl,
             })
         );
     }
@@ -598,17 +628,56 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(TargetedScanArgs {
-                target: TargetArgs {
-                    address: None,
-                    identifier: None,
-                    name_contains: Some("Falcon".to_owned()),
+            Command::CaptureAero(CaptureAeroArgs {
+                target: TargetedScanArgs {
+                    target: TargetArgs {
+                        address: None,
+                        identifier: None,
+                        name_contains: Some("Falcon".to_owned()),
+                    },
+                    scan: ScanArgs {
+                        seconds: DEFAULT_SCAN_SECONDS
+                    },
+                    profile: SessionProfile::Falcon,
+                    probes: vec![ReadProbe::Identity, ReadProbe::Firmware],
                 },
-                scan: ScanArgs {
-                    seconds: DEFAULT_SCAN_SECONDS
+                pevcap_output: None,
+                pevcap_format: PevcapFormat::Jsonl,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_capture_aero_command_with_pevcap_output() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "NF2557",
+            "--pevcap-output",
+            "session.pevcap",
+            "--pevcap-format",
+            "binary",
+        ])
+        .expect("parser accepts capture PEVCAP output");
+
+        assert_eq!(
+            cli.command,
+            Command::CaptureAero(CaptureAeroArgs {
+                target: TargetedScanArgs {
+                    target: TargetArgs {
+                        address: None,
+                        identifier: None,
+                        name_contains: Some("NF2557".to_owned()),
+                    },
+                    scan: ScanArgs {
+                        seconds: DEFAULT_SCAN_SECONDS
+                    },
+                    profile: SessionProfile::Auto,
+                    probes: Vec::new(),
                 },
-                profile: SessionProfile::Falcon,
-                probes: vec![ReadProbe::Identity, ReadProbe::Firmware],
+                pevcap_output: Some(PathBuf::from("session.pevcap")),
+                pevcap_format: PevcapFormat::Binary,
             })
         );
     }
