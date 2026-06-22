@@ -26,6 +26,9 @@ use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
 use uuid::Uuid;
 
+const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
+const BATTERY_LEVEL_UUID: Uuid = Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb);
+
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
 pub const fn crate_name() -> &'static str {
@@ -138,6 +141,12 @@ impl CharacteristicSummary {
             .intersects(CharPropFlags::WRITE | CharPropFlags::WRITE_WITHOUT_RESPONSE)
     }
 
+    /// Returns whether this characteristic can be read.
+    #[must_use]
+    pub fn can_read(&self) -> bool {
+        self.properties.contains(CharPropFlags::READ)
+    }
+
     /// Returns whether this characteristic can notify or indicate.
     #[must_use]
     pub fn can_notify(&self) -> bool {
@@ -220,6 +229,19 @@ impl fmt::Display for ConnectionSummary {
 }
 
 impl ConnectionSummary {
+    /// Selects the standard BLE Battery Level characteristic when present.
+    #[must_use]
+    pub fn battery_level_characteristic(&self) -> Option<&CharacteristicSummary> {
+        self.services
+            .iter()
+            .find(|service| service.uuid == BATTERY_SERVICE_UUID)
+            .and_then(|service| {
+                service.characteristics.iter().find(|characteristic| {
+                    characteristic.uuid == BATTERY_LEVEL_UUID && characteristic.can_read()
+                })
+            })
+    }
+
     /// Returns characteristics that can accept writes.
     #[must_use]
     pub fn write_candidates(&self) -> Vec<&CharacteristicSummary> {
@@ -546,6 +568,28 @@ pub async fn connect_and_discover(
             services,
         },
     })
+}
+
+/// Reads the standard BLE Battery Level characteristic from a connected peripheral.
+///
+/// Returns `Ok(None)` when the device does not expose a readable Battery Level
+/// characteristic or when the characteristic returns an empty payload.
+///
+/// # Errors
+///
+/// Returns [`BtleError::Backend`] if the underlying BTLE stack fails the read.
+pub async fn read_battery_level(
+    peripheral: &btleplug::platform::Peripheral,
+    summary: &ConnectionSummary,
+) -> Result<Option<u8>, BtleError> {
+    let Some(characteristic) = summary.battery_level_characteristic() else {
+        return Ok(None);
+    };
+
+    let value = peripheral
+        .read(&characteristic_from_summary(characteristic))
+        .await?;
+    Ok(value.first().copied().map(|percent| percent.min(100)))
 }
 
 /// Drives a protocol session against the selected BTLE endpoints.
@@ -1029,6 +1073,35 @@ mod tests {
         assert!(summary.to_string().contains("NOSFET Aero"));
         assert!(summary.to_string().contains("ffe0"));
         assert!(summary.to_string().contains("ffe1"));
+    }
+
+    #[test]
+    fn connection_summary_selects_standard_battery_level_characteristic() {
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                name: Some("NOSFET Aero".to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::READ,
+                }],
+            }],
+        };
+
+        assert_eq!(
+            summary
+                .battery_level_characteristic()
+                .map(|characteristic| characteristic.uuid),
+            Some(Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb))
+        );
     }
 
     #[test]
