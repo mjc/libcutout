@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use cutout_core::MonotonicMillis;
 use thiserror::Error;
 
 /// Complete fixed-size Begode/Gotway frame length.
@@ -65,12 +66,33 @@ pub enum BegodeFrameError {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFrameReassembler {
     buffer: ArrayVec<u8, BEGODE_FRAME_LEN>,
+    last_byte_ms: Option<MonotonicMillis>,
 }
 
 impl BegodeFrameReassembler {
     /// Drops any partial frame state.
     pub fn reset(&mut self) {
-        self.buffer.clear();
+        self.clear_buffer();
+    }
+
+    /// Drops partial frame state if no byte has arrived within `timeout_ms`.
+    ///
+    /// Returns `true` when a partial frame was expired.
+    #[must_use]
+    pub fn expire_idle(
+        &mut self,
+        monotonic_ms: MonotonicMillis,
+        timeout_ms: MonotonicMillis,
+    ) -> bool {
+        let Some(last_byte_ms) = self.last_byte_ms else {
+            return false;
+        };
+        if self.buffer.is_empty() || monotonic_ms.saturating_sub(last_byte_ms) <= timeout_ms {
+            return false;
+        }
+
+        self.clear_buffer();
+        true
     }
 
     /// Feeds one byte and returns a complete frame when one is assembled.
@@ -83,6 +105,7 @@ impl BegodeFrameReassembler {
         if self.buffer.is_empty() {
             if byte == BEGODE_HEADER[0] {
                 self.buffer.push(byte);
+                self.last_byte_ms = None;
             }
             return Ok(None);
         }
@@ -91,7 +114,7 @@ impl BegodeFrameReassembler {
             if byte == BEGODE_HEADER[1] {
                 self.buffer.push(byte);
             } else if byte != BEGODE_HEADER[0] {
-                self.buffer.clear();
+                self.clear_buffer();
             }
             return Ok(None);
         }
@@ -105,8 +128,28 @@ impl BegodeFrameReassembler {
         }
 
         let frame = BegodeFrame::try_from_slice(self.buffer.as_slice());
-        self.buffer.clear();
+        self.clear_buffer();
         frame.map(Some)
+    }
+
+    /// Feeds one byte and records the byte arrival time for timeout handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BegodeFrameError::InvalidFrame`] when a 24-byte candidate has
+    /// the Begode header but not the required terminator.
+    pub fn feed_byte_at(
+        &mut self,
+        byte: u8,
+        monotonic_ms: MonotonicMillis,
+    ) -> Result<Option<BegodeFrame>, BegodeFrameError> {
+        let frame = self.feed_byte(byte)?;
+        self.last_byte_ms = if self.buffer.is_empty() {
+            None
+        } else {
+            Some(monotonic_ms)
+        };
+        Ok(frame)
     }
 
     fn apply_embedded_header_resync(&mut self) {
@@ -122,6 +165,11 @@ impl BegodeFrameReassembler {
         self.buffer.clear();
         self.buffer.push(BEGODE_HEADER[0]);
         self.buffer.push(BEGODE_HEADER[1]);
+    }
+
+    fn clear_buffer(&mut self) {
+        self.buffer.clear();
+        self.last_byte_ms = None;
     }
 }
 
@@ -220,6 +268,40 @@ mod tests {
         let frames = feed_bytes(&mut reassembler, &LIVE_A[12..]);
 
         assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn reassembler_idle_timeout_drops_partial_frame() {
+        let mut reassembler = BegodeFrameReassembler::default();
+
+        for (offset, byte) in LIVE_A[..12].iter().enumerate() {
+            assert_eq!(
+                reassembler.feed_byte_at(*byte, offset as u64).unwrap(),
+                None
+            );
+        }
+
+        assert!(reassembler.expire_idle(1_012, 1_000));
+        let frames = feed_bytes(&mut reassembler, &LIVE_A[12..]);
+
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn reassembler_timeout_recovery_accepts_next_complete_frame() {
+        let mut reassembler = BegodeFrameReassembler::default();
+
+        for (offset, byte) in LIVE_A[..12].iter().enumerate() {
+            assert_eq!(
+                reassembler.feed_byte_at(*byte, offset as u64).unwrap(),
+                None
+            );
+        }
+
+        assert!(reassembler.expire_idle(1_012, 1_000));
+        let frames = feed_bytes(&mut reassembler, &LIVE_A);
+
+        assert_eq!(frames, vec![BegodeFrame::try_from_slice(&LIVE_A).unwrap()]);
     }
 
     #[test]
