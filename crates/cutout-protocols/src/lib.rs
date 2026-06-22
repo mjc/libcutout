@@ -40,11 +40,11 @@ pub use veteran_frame::{
     MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
 };
 pub use veteran_telemetry::{
-    NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV, VETERAN_FIELD_AUTO_OFF_SECONDS,
-    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE,
-    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    VeteranFirmwareVersion, VeteranTelemetry, VeteranTelemetryError,
-    estimate_nosfet_aero_battery_percent,
+    NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV,
+    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
+    VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VeteranFirmwareVersion, VeteranTelemetry,
+    VeteranTelemetryError, estimate_nosfet_aero_battery_percent,
 };
 
 /// Returns the crate name used by setup smoke tests.

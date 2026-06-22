@@ -36,8 +36,8 @@ pub struct VeteranTelemetry {
     /// MOSFET/controller temperature in millicelsius.
     pub mosfet_temperature_mc: i32,
 
-    /// Auto-off setting in seconds.
-    pub auto_off_seconds: u16,
+    /// Auto shutdown time remaining field in seconds.
+    pub auto_shutdown_time_remaining_seconds: u16,
 
     /// Raw charge-mode field.
     pub charge_mode: u16,
@@ -88,7 +88,8 @@ impl VeteranTelemetry {
             mosfet_temperature_mc: i32::from(
                 read_be_i16(bytes, 18).ok_or(VeteranTelemetryError::FrameTooShort)?,
             ) * 10,
-            auto_off_seconds: read_be_u16(bytes, 20).ok_or(VeteranTelemetryError::FrameTooShort)?,
+            auto_shutdown_time_remaining_seconds: read_be_u16(bytes, 20)
+                .ok_or(VeteranTelemetryError::FrameTooShort)?,
             charge_mode: read_be_u16(bytes, 22).ok_or(VeteranTelemetryError::FrameTooShort)?,
             speed_alert_deci_kmh: read_be_u16(bytes, 24)
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -148,8 +149,8 @@ impl VeteranTelemetry {
             ReadOnlyResponse::Settings(SettingsReadback {
                 entries: [
                     Some(settings_entry(
-                        VETERAN_FIELD_AUTO_OFF_SECONDS,
-                        i64::from(self.auto_off_seconds),
+                        VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+                        i64::from(self.auto_shutdown_time_remaining_seconds),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_CHARGE_MODE,
@@ -183,8 +184,8 @@ impl VeteranTelemetry {
 /// Veteran fixed-header raw field id for firmware version.
 pub const VETERAN_FIELD_FIRMWARE_VERSION: u16 = 0x001c;
 
-/// Veteran fixed-header raw field id for auto-off seconds.
-pub const VETERAN_FIELD_AUTO_OFF_SECONDS: u16 = 0x0014;
+/// Veteran fixed-header raw field id for auto shutdown time remaining seconds.
+pub const VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS: u16 = 0x0014;
 
 /// Veteran fixed-header raw field id for charge mode.
 pub const VETERAN_FIELD_CHARGE_MODE: u16 = 0x0016;
@@ -310,6 +311,17 @@ mod tests {
         .expect("fixture frame is valid")
     }
 
+    fn live_aero_2026_06_22_frame() -> VeteranFrame {
+        VeteranFrame::try_from_slice(&hex_literal::hex!(
+            "dc5a5c532a09000000170000ab6c001700000be6\
+             045d00000226021ca8f607801b23000080c80000\
+             8080808080800100000080801e0e050e020e020e\
+             020e020e020e070e030e030e090e060e020e060e\
+             050e04f5d81527"
+        ))
+        .expect("fixture frame is valid")
+    }
+
     #[test]
     fn veteran_telemetry_decodes_live_aero_voltage() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
@@ -336,7 +348,7 @@ mod tests {
                 total_distance_m: 1_551_169,
                 phase_current_deci_a: 0,
                 mosfet_temperature_mc: 33_270,
-                auto_off_seconds: 0,
+                auto_shutdown_time_remaining_seconds: 0,
                 charge_mode: 0,
                 speed_alert_deci_kmh: 550,
                 speed_tiltback_deci_kmh: 540,
@@ -353,6 +365,19 @@ mod tests {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
         assert_eq!(telemetry.battery_percent_estimated, 39);
+    }
+
+    #[test]
+    fn veteran_telemetry_decodes_second_live_aero_capture() {
+        let telemetry =
+            VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
+
+        assert_eq!(telemetry.voltage_mv, 107_610);
+        assert_eq!(telemetry.battery_percent_estimated, 34);
+        assert_eq!(telemetry.auto_shutdown_time_remaining_seconds, 1_117);
+        assert_eq!(telemetry.firmware.model_id, 43);
+        assert_eq!(telemetry.firmware.minor, 2);
+        assert_eq!(telemetry.firmware.revision, 54);
     }
 
     #[test]
@@ -428,7 +453,7 @@ mod tests {
         assert_eq!(
             present,
             vec![
-                RawFieldValue::new(VETERAN_FIELD_AUTO_OFF_SECONDS, 0),
+                RawFieldValue::new(VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, 0),
                 RawFieldValue::new(VETERAN_FIELD_CHARGE_MODE, 0),
                 RawFieldValue::new(VETERAN_FIELD_SPEED_ALERT_DECI_KMH, 550),
                 RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 540),
