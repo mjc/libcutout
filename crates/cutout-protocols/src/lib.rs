@@ -56,6 +56,7 @@ mod registry;
 pub use registry::BEGODE_FALCON_REGISTRY_ENTRY;
 mod request_encoder;
 mod session;
+mod vesc_codec;
 mod veteran_bms;
 mod veteran_frame;
 mod veteran_telemetry;
@@ -71,6 +72,11 @@ pub use session::{
     ReadOnlyOperation, ReadOnlySession, SettingsWriteOperation, SupportsBenignControls,
     SupportsDangerousActuation, SupportsReadRequests, SupportsSettingsWrites,
     VeteranNotificationDecoder,
+};
+pub use vesc_codec::{
+    VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN, VescCanReadOnlyRequest, VescCodecError, VescFaultCode,
+    VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest, VescStatsMask, VescStatsTelemetry,
+    VescValuesMask, VescValuesTelemetry,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,

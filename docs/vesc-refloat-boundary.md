@@ -80,8 +80,11 @@ The boundary still needs to stay owned by libcutout for three reasons:
 
 - Add TDD-first VESC packet framing and request-encoding fixtures from protocol
   docs/captures.
-- Add a private `vesc-rs` adapter spike only if it reduces implementation risk
-  without leaking dependency types.
+- Private `vesc-rs` adapter spike result: implemented in `cutout-protocols` as
+  libcutout-owned request/reply DTOs over a private `vesc` dependency. The first
+  adapter covers firmware-info decode, values/selective-values telemetry decode,
+  stats decode, read-only request encoding, and CAN-forwarded read-only request
+  encoding without exposing `vesc-rs` types or actuator commands.
 - Add Refloat custom-app INFO payload tests before implementing realtime field
   discovery.
 - Add hardware-gated acceptance for a real Refloat board: capture, stream,

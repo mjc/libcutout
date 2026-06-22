@@ -15,10 +15,12 @@ workspace = true
 
 [dependencies]
 arrayvec.workspace = true
+bitflags.workspace = true
 bytes.workspace = true
 crc32fast.workspace = true
 cutout-core = { path = "../cutout-core", version = "0.1.0" }
 thiserror.workspace = true
+vesc.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
