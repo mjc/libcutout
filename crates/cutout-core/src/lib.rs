@@ -24,6 +24,9 @@ pub type MonotonicMillis = u64;
 /// Maximum payload bytes accepted for a single GATT write value.
 pub const MAX_TRANSPORT_WRITE_LEN: usize = 512;
 
+/// Payload bytes stored inline before falling back to an explicit large write.
+pub const MAX_INLINE_TRANSPORT_WRITE_LEN: usize = 32;
+
 /// Transport-independent identifier for a GATT characteristic or endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GattChannel([u8; 16]);
@@ -1952,7 +1955,13 @@ pub enum SessionInput<'a> {
 
 /// Bounded transport write payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WritePayload(ArrayVec<u8, MAX_TRANSPORT_WRITE_LEN>);
+pub struct WritePayload(WritePayloadStorage);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WritePayloadStorage {
+    Inline(ArrayVec<u8, MAX_INLINE_TRANSPORT_WRITE_LEN>),
+    Large(Box<ArrayVec<u8, MAX_TRANSPORT_WRITE_LEN>>),
+}
 
 impl WritePayload {
     /// Creates a bounded write payload by copying bytes from a slice.
@@ -1962,30 +1971,59 @@ impl WritePayload {
     /// Returns [`WritePayloadTooLong`] when `bytes` exceeds
     /// [`MAX_TRANSPORT_WRITE_LEN`].
     pub fn try_from_slice(bytes: &[u8]) -> Result<Self, WritePayloadTooLong> {
-        ArrayVec::try_from(bytes)
-            .map(Self)
-            .map_err(|_| WritePayloadTooLong {
+        if bytes.len() > MAX_TRANSPORT_WRITE_LEN {
+            return Err(WritePayloadTooLong {
                 len: bytes.len(),
                 max: MAX_TRANSPORT_WRITE_LEN,
-            })
+            });
+        }
+
+        if bytes.len() <= MAX_INLINE_TRANSPORT_WRITE_LEN {
+            return Ok(Self(WritePayloadStorage::Inline(
+                ArrayVec::<u8, MAX_INLINE_TRANSPORT_WRITE_LEN>::try_from(bytes).map_err(|_| {
+                    WritePayloadTooLong {
+                        len: bytes.len(),
+                        max: MAX_TRANSPORT_WRITE_LEN,
+                    }
+                })?,
+            )));
+        }
+
+        Ok(Self(WritePayloadStorage::Large(Box::new(
+            ArrayVec::<u8, MAX_TRANSPORT_WRITE_LEN>::try_from(bytes).map_err(|_| {
+                WritePayloadTooLong {
+                    len: bytes.len(),
+                    max: MAX_TRANSPORT_WRITE_LEN,
+                }
+            })?,
+        ))))
     }
 
     /// Returns the write payload as bytes.
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        self.0.as_slice()
+        match &self.0 {
+            WritePayloadStorage::Inline(bytes) => bytes.as_slice(),
+            WritePayloadStorage::Large(bytes) => bytes.as_slice(),
+        }
     }
 
     /// Returns the payload length in bytes.
     #[must_use]
-    pub const fn len(&self) -> usize {
-        self.0.len()
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
     }
 
     /// Returns whether the payload is empty.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.0.is_empty()
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+
+    /// Returns whether this payload uses the common inline representation.
+    #[must_use]
+    pub const fn is_inline(&self) -> bool {
+        matches!(self.0, WritePayloadStorage::Inline(_))
     }
 }
 
@@ -2002,10 +2040,6 @@ pub struct WritePayloadTooLong {
 
 /// Action a host transport must perform for a protocol session.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "write payloads stay inline to avoid per-write heap allocation"
-)]
 pub enum TransportAction {
     /// Subscribe to notifications from a transport endpoint.
     Subscribe {
@@ -2377,6 +2411,17 @@ mod tests {
 
         assert_eq!(payload.as_slice(), b"telemetry");
         assert_eq!(payload.len(), 9);
+        assert!(payload.is_inline());
+    }
+
+    #[test]
+    fn write_payload_uses_explicit_large_variant_for_rare_max_size_writes() {
+        let bytes = [0xa5; crate::MAX_TRANSPORT_WRITE_LEN];
+        let payload = WritePayload::try_from_slice(&bytes).expect("max payload fits");
+
+        assert_eq!(payload.as_slice(), bytes);
+        assert_eq!(payload.len(), crate::MAX_TRANSPORT_WRITE_LEN);
+        assert!(!payload.is_inline());
     }
 
     #[test]
@@ -2399,16 +2444,17 @@ mod tests {
         assert!(size_of::<crate::BatteryInfo>() <= 64);
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
         assert!(size_of::<crate::ReadOnlyResponse>() <= 104);
-        assert!(size_of::<SessionOutput>() <= 536);
-        assert!(size_of::<TransportAction>() <= 536);
+        assert_eq!(size_of::<SessionOutput>(), 128);
+        assert_eq!(size_of::<TransportAction>(), 64);
     }
 
     #[test]
     fn inline_write_capacity_size_snapshot_quantifies_transport_cost() {
         assert_eq!(crate::MAX_TRANSPORT_WRITE_LEN, 512);
-        assert_eq!(size_of::<WritePayload>(), 516);
-        assert_eq!(size_of::<TransportAction>(), 536);
-        assert_eq!(size_of::<SessionOutput>(), 536);
+        assert_eq!(crate::MAX_INLINE_TRANSPORT_WRITE_LEN, 32);
+        assert_eq!(size_of::<WritePayload>(), 40);
+        assert_eq!(size_of::<TransportAction>(), 64);
+        assert_eq!(size_of::<SessionOutput>(), 128);
     }
 
     #[test]
