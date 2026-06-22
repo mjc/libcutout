@@ -9,7 +9,7 @@ use crate::GattRoles;
 use crate::VerificationStatus;
 use crate::{
     CaptureRecord, GattChannel, GattFingerprint, LinkInfo, MonotonicMillis, ProtocolFamily,
-    VerifiedValue, WriteMode,
+    RequestTarget, VerifiedValue, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -447,6 +447,9 @@ pub struct PevcapRecord {
     /// Negotiated maximum write length, when this is a link-up record.
     pub link_max_write_len: Option<u16>,
 
+    /// Optional request target metadata for outbound correlation.
+    pub target: Option<RequestTarget>,
+
     /// Exact bytes captured for the record.
     pub bytes: Vec<u8>,
 }
@@ -462,6 +465,7 @@ impl PevcapRecord {
             service: None,
             write_mode: None,
             link_max_write_len: max_write_len,
+            target: None,
             bytes: Vec::new(),
         }
     }
@@ -476,6 +480,7 @@ impl PevcapRecord {
             service: None,
             write_mode: None,
             link_max_write_len: None,
+            target: None,
             bytes: Vec::new(),
         }
     }
@@ -495,7 +500,23 @@ impl PevcapRecord {
             service: None,
             write_mode: Some(write_mode),
             link_max_write_len: None,
+            target: None,
             bytes,
+        }
+    }
+
+    /// Creates an outbound write record with explicit request target metadata.
+    #[must_use]
+    pub fn targeted_outbound_write(
+        monotonic_ms: MonotonicMillis,
+        characteristic: GattChannel,
+        write_mode: WriteMode,
+        bytes: Vec<u8>,
+        target: RequestTarget,
+    ) -> Self {
+        Self {
+            target: Some(target),
+            ..Self::outbound_write(monotonic_ms, characteristic, write_mode, bytes)
         }
     }
 
@@ -514,6 +535,7 @@ impl PevcapRecord {
             service: Some(service),
             write_mode: None,
             link_max_write_len: None,
+            target: None,
             bytes,
         }
     }
@@ -1369,6 +1391,8 @@ struct PevcapRecordJson {
     write_mode: Option<WriteModeJson>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     link_max_write_len: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target: Option<PevcapRequestTargetJson>,
     bytes: Vec<u8>,
 }
 
@@ -1382,6 +1406,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             service: record.service.map(GattChannel::as_bytes),
             write_mode: record.write_mode.map(WriteModeJson::from),
             link_max_write_len: record.link_max_write_len,
+            target: record.target.map(PevcapRequestTargetJson::from),
             bytes: record.bytes.clone(),
         }
     }
@@ -1397,7 +1422,40 @@ impl PevcapRecordJson {
             service: self.service.map(GattChannel::from_bytes),
             write_mode: self.write_mode.map(WriteModeJson::into_mode),
             link_max_write_len: self.link_max_write_len,
+            target: self.target.map(PevcapRequestTargetJson::into_target),
             bytes: self.bytes,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PevcapRequestTargetJson {
+    Local,
+    VescCanController { controller_id: u8 },
+}
+
+#[cfg(feature = "serde")]
+impl From<RequestTarget> for PevcapRequestTargetJson {
+    fn from(target: RequestTarget) -> Self {
+        match target {
+            RequestTarget::Local => Self::Local,
+            RequestTarget::VescCanController { controller_id } => {
+                Self::VescCanController { controller_id }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapRequestTargetJson {
+    const fn into_target(self) -> RequestTarget {
+        match self {
+            Self::Local => RequestTarget::Local,
+            Self::VescCanController { controller_id } => {
+                RequestTarget::VescCanController { controller_id }
+            }
         }
     }
 }
@@ -1697,6 +1755,23 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_records_preserve_optional_request_target() {
+        let characteristic = GattChannel::from_bytes([0x33; 16]);
+        let target = RequestTarget::VescCanController { controller_id: 7 };
+        let write = PevcapRecord::targeted_outbound_write(
+            7,
+            characteristic,
+            WriteMode::WithoutResponse,
+            vec![0x01, 0x23],
+            target,
+        );
+
+        assert_eq!(write.target, Some(target));
+        assert_eq!(write.direction, PevcapDirection::Outbound);
+        assert_eq!(write.write_mode, Some(WriteMode::WithoutResponse));
+    }
+
+    #[test]
     fn pevcap_capture_wraps_header_and_records() {
         let header = PevcapHeader::new(
             1,
@@ -1980,6 +2055,7 @@ mod tests {
     fn pevcap_jsonl_round_trips_header_and_ordered_records() {
         let service = GattChannel::from_bytes([0xFE; 16]);
         let characteristic = GattChannel::from_bytes([0xE1; 16]);
+        let can_target = RequestTarget::VescCanController { controller_id: 7 };
         let header = PevcapHeader::new(
             1_725_000_123_456,
             "darwin",
@@ -2009,11 +2085,12 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![
-                PevcapRecord::outbound_write(
+                PevcapRecord::targeted_outbound_write(
                     7,
                     characteristic,
                     WriteMode::WithoutResponse,
                     b"N".to_vec(),
+                    can_target,
                 ),
                 PevcapRecord::inbound_notification(
                     9,
@@ -2028,6 +2105,7 @@ mod tests {
         let decoded = PevcapCapture::from_jsonl(&jsonl).expect("capture deserializes");
 
         assert_eq!(decoded, capture);
+        assert_eq!(decoded.records[0].target, Some(can_target));
         assert_eq!(jsonl.lines().count(), 3);
     }
 
@@ -2076,13 +2154,16 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn pevcap_binary_round_trips_header_and_ordered_records() {
-        let capture = sample_pevcap_capture();
+        let mut capture = sample_pevcap_capture();
+        let target = RequestTarget::VescCanController { controller_id: 9 };
+        capture.records[0].target = Some(target);
 
         let binary = capture.to_binary().expect("capture serializes");
         let decoded = PevcapCapture::from_binary(&binary).expect("capture deserializes");
 
         assert!(binary.starts_with(&PEVCAP_MAGIC));
         assert_eq!(decoded, capture);
+        assert_eq!(decoded.records[0].target, Some(target));
     }
 
     #[cfg(feature = "serde")]
