@@ -14,8 +14,8 @@ use crate::{
     FalconProbe, FalconRequestEncoder, RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL,
     VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply,
     VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry,
-    VescValuesTelemetry, VeteranBmsPageEvidence, VeteranFrame, VeteranFrameReassembler,
-    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsPageEvidence, VeteranFrame,
+    VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
     begode_falcon_target_voltage_profile, decode_veteran_bms_page,
 };
 
@@ -519,9 +519,14 @@ fn push_veteran_frame(
                 )));
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
+                let observed_cell_values =
+                    VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
+                        .map_or(0, |page| {
+                            u8::try_from(page.cell_mv.len()).unwrap_or_default()
+                        });
                 let response = decode_veteran_bms_page(
                     evidence.selector,
-                    0,
+                    observed_cell_values,
                     BatteryInfo::default(),
                     VerificationStatus::HardwareVerified,
                 );
@@ -1640,7 +1645,7 @@ mod tests {
         );
 
         let responses = read_only_response_events(&output);
-        assert_eq!(responses.len(), 3);
+        assert_eq!(responses.len(), 4);
 
         let ReadOnlyResponse::Firmware(firmware) = responses[0] else {
             panic!("expected firmware response");
@@ -1659,6 +1664,12 @@ mod tests {
             .map(|entry| entry.field)
             .collect();
         assert!(fields.contains(&RawFieldValue::new(crate::VETERAN_FIELD_PEDALS_MODE, 1_920,)));
+        assert!(responses.iter().any(|response| matches!(
+            response,
+            ReadOnlyResponse::Battery(payload)
+                if payload.page().selector == 2
+                    && payload.page().kind == BatteryPageKind::CellVoltage
+        )));
     }
 
     #[test]
@@ -1670,6 +1681,19 @@ mod tests {
             ReadOnlyResponse::Battery(payload)
                 if payload.page().selector == 3
                     && payload.page().kind == BatteryPageKind::Raw
+                    && payload.page().verification == VerificationStatus::HardwareVerified
+        )));
+    }
+
+    #[test]
+    fn nosfet_aero_session_emits_typed_bms_cell_page_response() {
+        let responses = read_only_responses_for_notification(&live_aero_frame());
+
+        assert!(responses.iter().any(|response| matches!(
+            response,
+            ReadOnlyResponse::Battery(payload)
+                if payload.page().selector == 2
+                    && payload.page().kind == BatteryPageKind::CellVoltage
                     && payload.page().verification == VerificationStatus::HardwareVerified
         )));
     }
