@@ -1143,20 +1143,29 @@ fn run_dashboard_loop(
         }
     };
 
+    let restore_result = restore_dashboard_terminal(&mut terminal);
+    drop(terminal);
     ratatui::restore();
+    restore_result?;
     result
 }
 
 type DashboardTerminal = Terminal<TerminaBackend<PlatformTerminal>>;
 
 fn init_dashboard_terminal() -> Result<DashboardTerminal> {
+    init_dashboard_terminal_inner().inspect_err(|_error| {
+        ratatui::restore();
+    })
+}
+
+fn init_dashboard_terminal_inner() -> Result<DashboardTerminal> {
     let mut output = PlatformTerminal::new()?;
     output.enter_raw_mode()?;
     write!(
         output,
         "{}{}",
         decset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
-        decset(csi::DecPrivateModeCode::ShowCursor)
+        decreset(csi::DecPrivateModeCode::ShowCursor)
     )?;
     output.flush()?;
 
@@ -1164,8 +1173,26 @@ fn init_dashboard_terminal() -> Result<DashboardTerminal> {
     Ok(Terminal::new(backend)?)
 }
 
+fn restore_dashboard_terminal(terminal: &mut DashboardTerminal) -> Result<()> {
+    let backend = terminal.backend_mut();
+    write!(
+        backend,
+        "{}{}",
+        decreset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
+        decset(csi::DecPrivateModeCode::ShowCursor)
+    )?;
+    backend.flush()?;
+    Ok(())
+}
+
 fn decset(code: csi::DecPrivateModeCode) -> csi::Csi {
     csi::Csi::Mode(csi::Mode::SetDecPrivateMode(csi::DecPrivateMode::Code(
+        code,
+    )))
+}
+
+fn decreset(code: csi::DecPrivateModeCode) -> csi::Csi {
+    csi::Csi::Mode(csi::Mode::ResetDecPrivateMode(csi::DecPrivateMode::Code(
         code,
     )))
 }
@@ -1979,6 +2006,26 @@ mod tests {
         assert_eq!(rssi_to_signal_percent(-100), 0);
         assert_eq!(rssi_to_signal_percent(-120), 0);
         assert_eq!(rssi_to_signal_percent(-20), 100);
+    }
+
+    #[test]
+    fn dashboard_terminal_modes_enter_and_restore_symmetrically() {
+        assert_eq!(
+            decset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen).to_string(),
+            "\u{1b}[?1049h"
+        );
+        assert_eq!(
+            decreset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen).to_string(),
+            "\u{1b}[?1049l"
+        );
+        assert_eq!(
+            decreset(csi::DecPrivateModeCode::ShowCursor).to_string(),
+            "\u{1b}[?25l"
+        );
+        assert_eq!(
+            decset(csi::DecPrivateModeCode::ShowCursor).to_string(),
+            "\u{1b}[?25h"
+        );
     }
 
     #[test]
