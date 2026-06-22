@@ -106,6 +106,7 @@ struct PevcapReplayReport {
     telemetry: usize,
     read_only_responses: usize,
     diagnostics: usize,
+    arbitrary_chunk_plan_len: usize,
     chunk_one_byte_matches: bool,
     chunk_arbitrary_matches: bool,
     telemetry_snapshot: TelemetrySnapshot,
@@ -136,16 +137,18 @@ where
     let comparison_session = session.clone();
     let mut host = HostSession::new(session);
     let outputs = cutout_core::replay_capture(&mut host, &records);
+    let arbitrary_chunks = cutout_core::replay_arbitrary_chunk_lengths(&records);
     let comparison = cutout_core::compare_replay_capture_chunks(
         || comparison_session.clone(),
         &records,
-        &[2, 3, 5],
+        &arbitrary_chunks,
     );
-    summarize_pevcap_replay(records.len(), &outputs, comparison)
+    summarize_pevcap_replay(records.len(), arbitrary_chunks.len(), &outputs, comparison)
 }
 
 fn summarize_pevcap_replay(
     replay_records: usize,
+    arbitrary_chunk_plan_len: usize,
     outputs: &[SessionOutput],
     chunk_comparison: ReplayChunkComparison,
 ) -> PevcapReplayReport {
@@ -155,6 +158,7 @@ fn summarize_pevcap_replay(
         telemetry: 0,
         read_only_responses: 0,
         diagnostics: 0,
+        arbitrary_chunk_plan_len,
         chunk_one_byte_matches: chunk_comparison.one_byte_matches,
         chunk_arbitrary_matches: chunk_comparison.arbitrary_matches,
         telemetry_snapshot: TelemetrySnapshot::default(),
@@ -191,12 +195,13 @@ fn summarize_pevcap_replay(
 
 fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
     format!(
-        "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={} chunk_one_byte_matches={} chunk_arbitrary_matches={}",
+        "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={} arbitrary_chunk_plan_len={} chunk_one_byte_matches={} chunk_arbitrary_matches={}",
         report.replay_records,
         report.outputs,
         report.telemetry,
         report.read_only_responses,
         report.diagnostics,
+        report.arbitrary_chunk_plan_len,
         report.chunk_one_byte_matches,
         report.chunk_arbitrary_matches
     )
@@ -801,6 +806,7 @@ mod tests {
             telemetry: 1,
             read_only_responses: 1,
             diagnostics: 1,
+            arbitrary_chunk_plan_len: 3,
             chunk_one_byte_matches: true,
             chunk_arbitrary_matches: true,
             telemetry_snapshot: TelemetrySnapshot::default(),
@@ -809,7 +815,7 @@ mod tests {
 
         assert_eq!(
             render_pevcap_replay_report(&report),
-            "pevcap replay records=2 outputs=3 telemetry=1 read_only_responses=1 diagnostics=1 chunk_one_byte_matches=true chunk_arbitrary_matches=true"
+            "pevcap replay records=2 outputs=3 telemetry=1 read_only_responses=1 diagnostics=1 arbitrary_chunk_plan_len=3 chunk_one_byte_matches=true chunk_arbitrary_matches=true"
         );
     }
 
@@ -820,6 +826,7 @@ mod tests {
         let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero);
 
         assert_eq!(report.replay_records, 2);
+        assert!(report.arbitrary_chunk_plan_len > 3);
         assert!(report.chunk_one_byte_matches);
         assert!(report.chunk_arbitrary_matches);
         assert!(report.telemetry >= 1);

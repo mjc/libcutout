@@ -2460,6 +2460,40 @@ where
     }
 }
 
+/// Builds a deterministic arbitrary notification chunk plan from replay
+/// records.
+///
+/// The plan is sized to split the longest notification in the capture using a
+/// repeating 2/3/5 byte pattern. Shorter notifications ignore extra chunk
+/// lengths during replay.
+#[must_use]
+pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<usize> {
+    let max_notification_len = records
+        .iter()
+        .filter_map(|record| match record {
+            CaptureRecord::Notification { bytes, .. } => Some(bytes.len()),
+            CaptureRecord::LinkUp(_)
+            | CaptureRecord::LinkDown
+            | CaptureRecord::Tick { .. }
+            | CaptureRecord::Command(_) => None,
+        })
+        .max()
+        .unwrap_or_default();
+
+    let mut lengths = Vec::new();
+    let mut covered = 0usize;
+    for chunk_len in [2usize, 3, 5].into_iter().cycle() {
+        if covered >= max_notification_len {
+            break;
+        }
+        let remaining = max_notification_len - covered;
+        let next = chunk_len.min(remaining);
+        lengths.push(next);
+        covered += next;
+    }
+    lengths
+}
+
 fn split_capture_notifications_by_len(
     records: &[CaptureRecord],
     chunk_len: usize,
@@ -4447,6 +4481,32 @@ mod tests {
 
         assert!(!comparison.one_byte_matches);
         assert!(!comparison.arbitrary_matches);
+    }
+
+    #[test]
+    fn replay_arbitrary_chunk_lengths_are_derived_from_capture_notifications() {
+        let channel = GattChannel::from_bytes([0x78; 16]);
+        let records = [
+            crate::CaptureRecord::Tick { monotonic_ms: 1 },
+            crate::CaptureRecord::notification(channel, vec![0; 4], 2),
+            crate::CaptureRecord::notification(channel, vec![0; 10], 3),
+            crate::CaptureRecord::LinkDown,
+        ];
+
+        assert_eq!(
+            crate::replay_arbitrary_chunk_lengths(&records),
+            vec![2, 3, 5]
+        );
+    }
+
+    #[test]
+    fn replay_arbitrary_chunk_lengths_are_empty_without_notifications() {
+        assert_eq!(
+            crate::replay_arbitrary_chunk_lengths(&[crate::CaptureRecord::Tick {
+                monotonic_ms: 1
+            }]),
+            Vec::<usize>::new()
+        );
     }
 
     proptest! {
