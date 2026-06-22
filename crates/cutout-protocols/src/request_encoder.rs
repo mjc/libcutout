@@ -193,6 +193,27 @@ mod tests {
     }
 
     #[test]
+    fn source_backed_write_request_lengths_are_tiny_relative_to_transport_capacity() {
+        let write_lengths = [
+            FalconRequestEncoder::encode(FalconProbe::Identity),
+            FalconRequestEncoder::encode(FalconProbe::FirmwareInfo),
+        ]
+        .into_iter()
+        .filter_map(|disposition| match disposition {
+            RequestDisposition::Write(request) => Some(request.payload.len()),
+            RequestDisposition::Passive { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
+        assert_eq!(write_lengths, vec![1, 1]);
+        assert_eq!(
+            write_lengths.into_iter().max(),
+            Some(1),
+            "Falcon N/V writes are 1 byte versus the 512-byte core transport bound"
+        );
+    }
+
+    #[test]
     fn request_encoder_types_remain_bounded_in_size() {
         assert_eq!(size_of::<AeroRequestEncoder>(), 0);
         assert!(

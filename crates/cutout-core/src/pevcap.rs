@@ -3,11 +3,13 @@ use arrayvec::ArrayVec;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[cfg(test)]
+use crate::GattRoles;
+#[cfg(feature = "serde")]
+use crate::VerificationStatus;
 use crate::{
     GattChannel, GattFingerprint, MonotonicMillis, ProtocolFamily, VerifiedValue, WriteMode,
 };
-#[cfg(any(feature = "serde", test))]
-use crate::{GattRoles, VerificationStatus};
 
 /// PEVCAP file format magic bytes.
 pub const PEVCAP_MAGIC: [u8; 8] = *b"PEVCAP\0\0";

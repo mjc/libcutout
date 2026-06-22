@@ -2412,6 +2412,16 @@ mod tests {
     }
 
     #[test]
+    fn request_scheduler_size_snapshot_separates_queue_and_diagnostics_cost() {
+        assert_eq!(size_of::<crate::QueuedRequest>(), 32);
+        assert_eq!(size_of::<crate::RequestSchedulerDiagnostics>(), 72);
+        assert_eq!(size_of::<crate::RequestQueue<3>>(), 104);
+        assert_eq!(size_of::<crate::RequestScheduler<3>>(), 184);
+        assert_eq!(size_of::<crate::RequestQueue<8>>(), 264);
+        assert_eq!(size_of::<crate::RequestScheduler<8>>(), 344);
+    }
+
+    #[test]
     fn request_hot_path_types_remain_small() {
         assert!(size_of::<crate::RequestKey>() <= 16);
         assert!(size_of::<crate::RequestPolicy>() <= 24);
@@ -2419,6 +2429,7 @@ mod tests {
         assert!(size_of::<crate::RequestTracker>() <= 56);
         assert!(size_of::<crate::PollRequest>() <= 32);
         assert!(size_of::<crate::RequestQueue<3>>() <= 104);
+        assert!(size_of::<crate::RequestScheduler<3>>() <= 184);
         assert!(size_of::<crate::PollingPlan<4>>() <= 128);
     }
 
