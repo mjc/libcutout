@@ -8,8 +8,9 @@ use std::{
 use anyhow::{Result, bail};
 use cutout_btle::{
     BtleError, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata, SessionBridgeReport,
-    SessionCapture, SessionEndpoints, capture_session_with_commands, connect_and_discover,
-    drive_session, drive_session_with_commands, read_battery_level, scan_peripherals,
+    SessionCapture, SessionEndpoints, capture_raw_notifications, capture_session_with_commands,
+    connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
+    scan_peripherals,
 };
 use cutout_core::{
     DeviceCommand, DeviceEvent, FirmwareInfo, HostSession, Measured, PevcapCapture, PevcapEncoding,
@@ -24,7 +25,7 @@ use tracing::info;
 
 use crate::cli::{
     CaptureAeroArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
-    PevcapFormat, ReadProbe, SessionProfile, TargetedScanArgs,
+    PevcapFormat, RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs,
 };
 use crate::dashboard::{
     DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
@@ -44,6 +45,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Scan(args) => scan(args.seconds()).await?,
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
+        Command::SubscribeRaw(args) => subscribe_raw(args).await?,
         Command::CaptureAero(args) => capture_aero(args).await?,
         Command::Validation => print!("{}", render_validation_report()),
         Command::Pevcap(args) => pevcap(args)?,
@@ -365,6 +367,50 @@ async fn scan(seconds: u64) -> Result<(), BtleError> {
         println!("{observation}");
     }
     Ok(())
+}
+
+async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
+    let seconds = args.seconds();
+    let requested = args.characteristic;
+    let connection =
+        connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
+    println!("{}", connection.summary);
+    let Some(characteristic) = connection.summary.select_notify_characteristic(requested) else {
+        if let Some(uuid) = requested {
+            bail!("no notify/indicate characteristic matched {uuid}");
+        }
+        bail!("no notify/indicate characteristics discovered");
+    };
+    println!(
+        "raw subscribe characteristic={} service={} window={}s",
+        characteristic.uuid, characteristic.service_uuid, seconds
+    );
+    let records = capture_raw_notifications(
+        &connection.peripheral,
+        characteristic,
+        Duration::from_secs(seconds),
+    )
+    .await?;
+    for record in records {
+        println!(
+            "raw-notification t_ms={} characteristic={} service={} bytes={}",
+            record.monotonic_ms,
+            record.characteristic,
+            record.service,
+            encode_hex(&record.bytes)
+        );
+    }
+    Ok(())
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {

@@ -288,6 +288,22 @@ impl ConnectionSummary {
             .collect()
     }
 
+    /// Selects a notify/indicate characteristic by UUID, or the first
+    /// notify-capable candidate when no UUID is requested.
+    #[must_use]
+    pub fn select_notify_characteristic(
+        &self,
+        requested: Option<Uuid>,
+    ) -> Option<&CharacteristicSummary> {
+        self.services
+            .iter()
+            .flat_map(|service| service.characteristics.iter())
+            .find(|characteristic| {
+                characteristic.can_notify()
+                    && requested.is_none_or(|uuid| characteristic.uuid == uuid)
+            })
+    }
+
     /// Selects session endpoints from the discovered tree.
     #[must_use]
     pub fn select_session_endpoints(&self) -> Option<SessionEndpoints<'_>> {
@@ -539,6 +555,23 @@ pub struct SessionCapture {
 
     /// Aggregate bridge counters.
     pub report: SessionBridgeReport,
+}
+
+/// Protocol-agnostic raw notification record captured from a subscribed
+/// characteristic.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RawNotificationRecord {
+    /// Monotonic capture time relative to the start of the raw subscription.
+    pub monotonic_ms: u64,
+
+    /// Characteristic UUID that emitted the notification.
+    pub characteristic: Uuid,
+
+    /// Service UUID associated with the notification.
+    pub service: Uuid,
+
+    /// Exact notification bytes.
+    pub bytes: Vec<u8>,
 }
 
 /// Caller-supplied metadata for converting a live BTLE session capture into
@@ -931,6 +964,50 @@ where
     )
     .await?;
     Ok(SessionCapture { records, report })
+}
+
+/// Subscribes to a notify/indicate characteristic and records raw notification chunks.
+///
+/// # Errors
+///
+/// Returns the underlying Bluetooth transport error if subscribe or
+/// notification streaming fails.
+pub async fn capture_raw_notifications<P>(
+    peripheral: &P,
+    characteristic: &CharacteristicSummary,
+    notification_window: Duration,
+) -> Result<Vec<RawNotificationRecord>, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+{
+    let characteristic = characteristic_from_summary(characteristic);
+    peripheral.subscribe(&characteristic).await?;
+    if notification_window.is_zero() {
+        return Ok(Vec::new());
+    }
+
+    let mut notifications = peripheral.notifications().await?;
+    let started_at = tokio::time::Instant::now();
+    let deadline = started_at + notification_window;
+    let mut records = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, notifications.next()).await {
+            Ok(Some(notification)) if notification.uuid == characteristic.uuid => {
+                records.push(RawNotificationRecord {
+                    monotonic_ms: u64::try_from(started_at.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                    characteristic: notification.uuid,
+                    service: notification.service_uuid,
+                    bytes: notification.value,
+                });
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+
+    Ok(records)
 }
 
 struct DriveSessionConfig<'a> {
@@ -1756,6 +1833,124 @@ mod tests {
         assert!(summary.to_string().contains("NOSFET Aero"));
         assert!(summary.to_string().contains("ffe0"));
         assert!(summary.to_string().contains("ffe1"));
+    }
+
+    #[test]
+    fn connection_summary_selects_explicit_notify_characteristic() {
+        let requested = Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "peripheral-id".to_owned(),
+                address: None,
+                name: Some("Raw device".to_owned()),
+                rssi: None,
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE_WITHOUT_RESPONSE,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: requested,
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::NOTIFY,
+                    },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            summary
+                .select_notify_characteristic(Some(requested))
+                .map(|characteristic| characteristic.uuid),
+            Some(requested)
+        );
+    }
+
+    #[test]
+    fn connection_summary_rejects_explicit_non_notify_characteristic() {
+        let requested = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+        let summary = crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "peripheral-id".to_owned(),
+                address: None,
+                name: Some("Raw device".to_owned()),
+                rssi: None,
+                advertised_services: vec![],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: requested,
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE_WITHOUT_RESPONSE,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::NOTIFY,
+                    },
+                ],
+            }],
+        };
+
+        assert!(
+            summary
+                .select_notify_characteristic(Some(requested))
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn raw_notification_capture_subscribes_and_filters_selected_characteristic() {
+        let service = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+        let selected = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+        let other = Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
+        let peripheral = RecordingPeripheral::with_notifications(vec![
+            ValueNotification {
+                uuid: other,
+                service_uuid: service,
+                value: vec![0x99],
+            },
+            ValueNotification {
+                uuid: selected,
+                service_uuid: service,
+                value: vec![0x01, 0x02, 0x03],
+            },
+        ]);
+        let characteristic = crate::CharacteristicSummary {
+            uuid: selected,
+            service_uuid: service,
+            properties: CharPropFlags::NOTIFY,
+        };
+
+        let records = crate::capture_raw_notifications(
+            &peripheral,
+            &characteristic,
+            Duration::from_millis(5),
+        )
+        .await
+        .expect("raw notification capture succeeds");
+
+        assert_eq!(
+            peripheral
+                .subscribes
+                .lock()
+                .expect("subscribe log")
+                .as_slice(),
+            &[selected]
+        );
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].characteristic, selected);
+        assert_eq!(records[0].service, service);
+        assert_eq!(records[0].bytes, [0x01, 0x02, 0x03]);
     }
 
     #[test]

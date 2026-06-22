@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cutout_btle::ConnectionTarget;
+use uuid::Uuid;
 
 const DEFAULT_SCAN_SECONDS: u64 = 5;
 const CLI_LONG_ABOUT: &str = "\
@@ -16,6 +17,7 @@ Examples:
   cutout scan --seconds 10
   cutout connect --name-contains Aero
   cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
+  cutout subscribe-raw --name-contains NF2557 --characteristic 0000ffe1-0000-1000-8000-00805f9b34fb
   cutout capture-aero --name-contains NF2557 --seconds 20
   cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
@@ -37,6 +39,13 @@ summary of the discovered service/characteristic tree.
 If writable and notification-capable endpoints are discovered, Cutout also
 runs the read-only Aero probe session against the selected endpoints and prints
 bridge counters.";
+const SUBSCRIBE_RAW_LONG_ABOUT: &str = "\
+Scan for a peripheral, connect, discover GATT, subscribe to a notify/indicate
+characteristic, and print raw notification chunks with timestamps.
+
+This command is protocol-agnostic. Use --characteristic to select a specific
+notify/indicate characteristic UUID; otherwise the first notify-capable
+characteristic in the discovered GATT tree is used.";
 const CAPTURE_AERO_LONG_ABOUT: &str = "\
 Connect to an Aero/Veteran-family device and print capture records suitable for
 fixture work. Records include link metadata, subscribe/write actions, inbound
@@ -64,8 +73,8 @@ const PEVCAP_REPLAY_LONG_ABOUT: &str = "\
 Replay a PEVCAP capture into a selected read-only protocol session without
 connecting to Bluetooth hardware.
 
-This command currently requires an explicit profile. Auto-detection from
-persisted identity and GATT evidence is tracked separately.";
+By default the command auto-selects the replay profile from persisted PEVCAP
+identity metadata. Use --profile to override that metadata for verification.";
 const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
@@ -99,6 +108,10 @@ pub(crate) enum Command {
     /// Inspect GATT services on a selected peripheral.
     #[command(long_about = CONNECT_LONG_ABOUT)]
     Connect(TargetedScanArgs),
+
+    /// Subscribe to a raw notify/indicate characteristic.
+    #[command(long_about = SUBSCRIBE_RAW_LONG_ABOUT)]
+    SubscribeRaw(RawSubscribeArgs),
 
     /// Capture read-only Aero/Veteran protocol evidence.
     #[command(long_about = CAPTURE_AERO_LONG_ABOUT)]
@@ -159,6 +172,29 @@ pub(crate) struct CaptureAeroArgs {
     /// PEVCAP output format when --pevcap-output is supplied.
     #[arg(long = "pevcap-format", value_enum, default_value_t = PevcapFormat::Jsonl)]
     pub(crate) pevcap_format: PevcapFormat,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct RawSubscribeArgs {
+    #[command(flatten)]
+    pub(crate) target: TargetArgs,
+
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+
+    /// Notify/indicate characteristic UUID to subscribe to.
+    #[arg(long, value_name = "UUID")]
+    pub(crate) characteristic: Option<Uuid>,
+}
+
+impl RawSubscribeArgs {
+    pub(crate) fn into_target(self) -> ConnectionTarget {
+        self.target.into()
+    }
+
+    pub(crate) const fn seconds(&self) -> u64 {
+        self.scan.seconds()
+    }
 }
 
 impl TargetedScanArgs {
@@ -303,11 +339,12 @@ mod tests {
     use std::path::PathBuf;
 
     use clap::{CommandFactory, Parser, error::ErrorKind};
+    use uuid::Uuid;
 
     use super::{
         CaptureAeroArgs, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
-        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, ReadProbe, ScanArgs,
-        SessionProfile, TargetArgs, TargetedScanArgs,
+        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, RawSubscribeArgs,
+        ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -483,6 +520,34 @@ mod tests {
                 },
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_subscribe_raw_command_with_explicit_characteristic() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "subscribe-raw",
+            "--name-contains",
+            "NF2557",
+            "--seconds",
+            "7",
+            "--characteristic",
+            "0000ffe1-0000-1000-8000-00805f9b34fb",
+        ])
+        .expect("parser accepts raw subscription");
+
+        assert_eq!(
+            cli.command,
+            Command::SubscribeRaw(RawSubscribeArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: None,
+                    name_contains: Some("NF2557".to_owned()),
+                },
+                scan: ScanArgs { seconds: 7 },
+                characteristic: Some(Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb)),
             })
         );
     }
@@ -1035,6 +1100,7 @@ mod tests {
                 "cutout scan --seconds 10",
                 "cutout connect --name-contains Aero",
                 "cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8",
+                "cutout subscribe-raw --name-contains NF2557",
                 "cutout capture-aero --name-contains NF2557 --seconds 20",
                 "cutout pevcap convert --input session.pevcap.jsonl",
                 "cutout validation",
@@ -1056,6 +1122,7 @@ mod tests {
             [
                 "scan",
                 "connect",
+                "subscribe-raw",
                 "capture-aero",
                 "validation",
                 "pevcap",
