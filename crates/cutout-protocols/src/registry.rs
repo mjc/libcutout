@@ -3,7 +3,7 @@ use cutout_core::{
     ProtocolFamily, VerificationStatus,
 };
 
-use crate::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL};
+use crate::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodePackVoltageProfile};
 
 const BEGODE_FALCON_GATT: [GattFingerprint; 1] = [GattFingerprint {
     service: BEGODE_SERVICE_CHANNEL,
@@ -22,7 +22,8 @@ pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry 
     advertised_name_hints: &["Falcon", "Begode", "Gotway"],
     wire_model_id: None,
     battery: Some(BatterySpec {
-        series_cells: 20,
+        series_cells: BegodePackVoltageProfile::Falcon84V.series_cells(),
+        nominal_capacity_mah: BegodePackVoltageProfile::Falcon84V.nominal_capacity_mah(),
         voltage_range_mv: 60_000..=84_000,
         verification: VerificationStatus::Inferred,
     }),
@@ -50,6 +51,7 @@ mod tests {
 
         assert_eq!(battery.series_cells, 20);
         assert_eq!(battery.voltage_range_mv, 60_000..=84_000);
+        assert_eq!(battery.nominal_capacity_mah, Some(3_750));
         assert_eq!(battery.verification, VerificationStatus::Inferred);
     }
 

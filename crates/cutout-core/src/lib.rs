@@ -264,6 +264,9 @@ pub struct BatterySpec {
     /// Series cell count.
     pub series_cells: u8,
 
+    /// Nominal pack capacity in milliamp-hours, when known.
+    pub nominal_capacity_mah: Option<u32>,
+
     /// Expected pack voltage range in millivolts.
     pub voltage_range_mv: RangeInclusive<u32>,
 
@@ -2867,6 +2870,7 @@ mod tests {
             }),
             battery: Some(crate::BatterySpec {
                 series_cells: 30,
+                nominal_capacity_mah: Some(10_000),
                 voltage_range_mv: 99_180..=123_370,
                 verification: VerificationStatus::SourceAndHardwareVerified,
             }),

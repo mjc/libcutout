@@ -1,3 +1,5 @@
+use core::ops::RangeInclusive;
+
 use cutout_core::{
     DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Measured, MonotonicMillis,
     RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality,
@@ -110,6 +112,30 @@ impl BegodePackVoltageProfile {
     const fn scaler_milli(self) -> i32 {
         match self {
             Self::Falcon84V => 1_250,
+        }
+    }
+
+    /// Series cell count for this pack profile.
+    #[must_use]
+    pub const fn series_cells(self) -> u8 {
+        match self {
+            Self::Falcon84V => 20,
+        }
+    }
+
+    /// Nominal pack capacity in milliamp-hours, when known.
+    #[must_use]
+    pub const fn nominal_capacity_mah(self) -> Option<u32> {
+        match self {
+            Self::Falcon84V => Some(3_750),
+        }
+    }
+
+    /// Expected pack voltage range in millivolts.
+    #[must_use]
+    pub fn voltage_range_mv(self) -> RangeInclusive<u32> {
+        match self {
+            Self::Falcon84V => 60_000..=84_000,
         }
     }
 }
@@ -793,6 +819,15 @@ mod tests {
             estimate_begode_battery_percent(75_000, BegodePackVoltageProfile::Falcon84V),
             50
         );
+    }
+
+    #[test]
+    fn falcon_84v_profile_exposes_pack_geometry_and_capacity() {
+        let profile = BegodePackVoltageProfile::Falcon84V;
+
+        assert_eq!(profile.series_cells(), 20);
+        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
+        assert_eq!(profile.nominal_capacity_mah(), Some(3_750));
     }
 
     proptest! {
