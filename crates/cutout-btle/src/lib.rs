@@ -552,6 +552,12 @@ pub enum SessionCaptureRecord {
         max_write_len: Option<u16>,
     },
 
+    /// Link-down event observed after the session requested disconnect.
+    LinkDown {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+    },
+
     /// Notification subscription issued by the session.
     Subscribe {
         /// Relative monotonic timestamp in milliseconds.
@@ -606,6 +612,9 @@ impl fmt::Display for SessionCaptureRecord {
                 "link t_ms={monotonic_ms} max_write_len={}",
                 max_write_len.map_or_else(|| "<unknown>".to_owned(), |value| value.to_string())
             ),
+            Self::LinkDown { monotonic_ms } => {
+                write!(f, "link_down t_ms={monotonic_ms}")
+            }
             Self::Subscribe {
                 monotonic_ms,
                 characteristic,
@@ -715,7 +724,8 @@ impl SessionCapture {
         let gatt_fingerprints = summary.gatt_fingerprints();
         let write_limit = self.records.iter().find_map(|record| match record {
             SessionCaptureRecord::Link { max_write_len, .. } => *max_write_len,
-            SessionCaptureRecord::Subscribe { .. }
+            SessionCaptureRecord::LinkDown { .. }
+            | SessionCaptureRecord::Subscribe { .. }
             | SessionCaptureRecord::Write { .. }
             | SessionCaptureRecord::Notification { .. } => None,
         });
@@ -1346,7 +1356,9 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             gatt_channel_from_uuid(*service),
             bytes.clone(),
         )),
-        SessionCaptureRecord::Link { .. } | SessionCaptureRecord::Subscribe { .. } => None,
+        SessionCaptureRecord::Link { .. }
+        | SessionCaptureRecord::LinkDown { .. }
+        | SessionCaptureRecord::Subscribe { .. } => None,
     }
 }
 
@@ -1556,6 +1568,9 @@ where
             }
             SessionOutput::Transport(TransportAction::Disconnect) => {
                 context.peripheral.disconnect().await?;
+                if let Some(records) = context.capture.as_deref_mut() {
+                    records.push(SessionCaptureRecord::LinkDown { monotonic_ms });
+                }
                 context.report.disconnects += 1;
                 session.handle(SessionInput::LinkDown, outputs);
                 pending.extend(outputs.drain(..));
@@ -2831,6 +2846,7 @@ mod tests {
                     Some((bytes.as_slice(), *mode))
                 }
                 crate::SessionCaptureRecord::Link { .. }
+                | crate::SessionCaptureRecord::LinkDown { .. }
                 | crate::SessionCaptureRecord::Subscribe { .. }
                 | crate::SessionCaptureRecord::Notification { .. } => None,
             })
@@ -2871,6 +2887,39 @@ mod tests {
         );
         assert_eq!(*session.link_down_count.lock().expect("count"), 1);
         assert_eq!(*peripheral.disconnects.lock().expect("disconnect log"), 1);
+    }
+
+    #[tokio::test]
+    async fn capture_session_records_link_down_after_intentional_disconnect() {
+        let peripheral = RecordingPeripheral::default();
+        let mut session = DisconnectOnTickSession::default();
+        let summary = shared_write_notify_summary("NOSFET Aero");
+
+        let capture = crate::capture_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            &summary,
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            Duration::ZERO,
+            false,
+        )
+        .await
+        .expect("capture records intentional disconnect");
+
+        assert_eq!(
+            capture.records,
+            vec![
+                crate::SessionCaptureRecord::Link {
+                    monotonic_ms: 0,
+                    max_write_len: Some(185),
+                },
+                crate::SessionCaptureRecord::LinkDown { monotonic_ms: 1 },
+            ]
+        );
+        assert_eq!(capture.report.disconnects, 1);
     }
 
     #[derive(Default)]
