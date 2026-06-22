@@ -22,6 +22,7 @@ use ratatui::{
 
 const LOG_LIMIT: usize = 10;
 const HISTORY_LIMIT: usize = 32;
+const TAB_COUNT: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DashboardState {
@@ -187,6 +188,8 @@ pub(crate) struct TelemetryWindow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DashboardInput {
     Quit,
+    NextTab,
+    PreviousTab,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -479,6 +482,7 @@ impl DashboardState {
             true,
         );
         state.push_log("info", "connected dashboard target");
+        state.push_log("info", "waiting for telemetry decoder data");
         state
     }
 
@@ -592,6 +596,18 @@ impl DashboardState {
         self.push_log("trace", "fixture heartbeat advanced");
     }
 
+    fn next_tab(&mut self) {
+        self.active_tab = (self.active_tab + 1) % TAB_COUNT;
+    }
+
+    fn previous_tab(&mut self) {
+        self.active_tab = if self.active_tab == 0 {
+            TAB_COUNT - 1
+        } else {
+            self.active_tab - 1
+        };
+    }
+
     fn push_log(&mut self, level: &str, message: &str) {
         if self.logs.len() == LOG_LIMIT {
             self.logs.pop_front();
@@ -694,7 +710,7 @@ fn services_summary(summary: &ConnectionSummary) -> String {
 
 pub(crate) fn run_dashboard(mut state: DashboardState) -> Result<()> {
     let (tx, rx) = mpsc::channel::<DashboardInput>();
-    let input_thread = spawn_input_thread(tx);
+    let _input_thread = spawn_input_thread(tx);
 
     let mut stdout = io::stdout().lock();
     stdout.write_all(b"\x1b[2J\x1b[H")?;
@@ -706,14 +722,18 @@ pub(crate) fn run_dashboard(mut state: DashboardState) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     let mut last_tick = Instant::now();
 
-    loop {
+    'dashboard: loop {
         terminal.draw(|frame| {
             frame.render_widget(Clear, frame.area());
             render_dashboard(frame, &state);
         })?;
 
-        if matches!(rx.try_recv(), Ok(DashboardInput::Quit)) {
-            break;
+        while let Ok(input) = rx.try_recv() {
+            match input {
+                DashboardInput::Quit => break 'dashboard,
+                DashboardInput::NextTab => state.next_tab(),
+                DashboardInput::PreviousTab => state.previous_tab(),
+            }
         }
 
         if last_tick.elapsed() >= Duration::from_millis(250) {
@@ -724,7 +744,6 @@ pub(crate) fn run_dashboard(mut state: DashboardState) -> Result<()> {
         }
     }
 
-    drop(input_thread);
     Ok(())
 }
 
@@ -736,14 +755,35 @@ fn spawn_input_thread(tx: mpsc::Sender<DashboardInput>) -> thread::JoinHandle<()
 
         while locked.read_exact(&mut byte).is_ok() {
             match byte[0] {
-                b'q' | b'Q' | 0x1b => {
+                b'q' | b'Q' => {
                     let _ = tx.send(DashboardInput::Quit);
                     break;
                 }
+                b'\t' => {
+                    let _ = tx.send(DashboardInput::NextTab);
+                }
+                0x1b => handle_escape_sequence(&mut locked, &tx),
                 _ => {}
             }
         }
     })
+}
+
+fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInput>) {
+    let mut sequence = [0_u8; 2];
+    if input.read_exact(&mut sequence).is_err() {
+        return;
+    }
+
+    match sequence {
+        [b'[', b'C'] => {
+            let _ = tx.send(DashboardInput::NextTab);
+        }
+        [b'[', b'D'] => {
+            let _ = tx.send(DashboardInput::PreviousTab);
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
@@ -776,6 +816,16 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn render_body(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    match state.active_tab.min(TAB_COUNT - 1) {
+        0 => render_overview_tab(frame, area, state),
+        1 => render_telemetry(frame, area, state),
+        2 => render_profiles(frame, area, state),
+        3 => render_logs(frame, area, state),
+        _ => unreachable!("active tab is clamped to known dashboard tabs"),
+    }
+}
+
+fn render_overview_tab(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let rows = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
@@ -835,7 +885,10 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
         .ratio(percent_ratio(state.telemetry.signal_pct));
     frame.render_widget(signal, gauges[1]);
+    render_profiles(frame, chunks[2], state);
+}
 
+fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let rows = state
         .profiles
         .iter()
@@ -861,7 +914,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     .header(Row::new(vec!["Profile", "Source", "Status", "Family"]).style(Style::new().bold()))
     .block(Block::bordered().title("Profiles"))
     .column_spacing(1);
-    frame.render_widget(table, chunks[2]);
+    frame.render_widget(table, area);
 }
 
 fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1033,6 +1086,8 @@ fn index_to_f64(value: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -1167,6 +1222,43 @@ mod tests {
 
         assert!(state.logs.is_empty());
         assert_eq!(state.counters.notifications, 0);
+    }
+
+    #[test]
+    fn tab_navigation_wraps_forward_and_backward() {
+        let mut state = DashboardState::empty();
+
+        state.next_tab();
+        assert_eq!(state.active_tab, 1);
+
+        state.previous_tab();
+        assert_eq!(state.active_tab, 0);
+
+        state.previous_tab();
+        assert_eq!(state.active_tab, 3);
+    }
+
+    #[test]
+    fn arrow_escape_sequences_emit_tab_navigation() {
+        let (tx, rx) = mpsc::channel();
+
+        handle_escape_sequence(&mut Cursor::new([b'[', b'C']), &tx);
+        assert_eq!(rx.try_recv(), Ok(DashboardInput::NextTab));
+
+        handle_escape_sequence(&mut Cursor::new([b'[', b'D']), &tx);
+        assert_eq!(rx.try_recv(), Ok(DashboardInput::PreviousTab));
+    }
+
+    #[test]
+    fn telemetry_tab_renders_telemetry_page() {
+        let mut state = DashboardState::sample();
+        state.active_tab = 1;
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(text.contains("Device browser"));
+        assert!(text.contains("Speed"));
+        assert!(text.contains("Voltage"));
     }
 
     #[test]
