@@ -3620,6 +3620,37 @@ mod tests {
     }
 
     #[test]
+    fn command_safety_classes_match_control_matrix() {
+        let matrix = [
+            (
+                crate::SafetyClass::ReadOnly,
+                &[
+                    crate::CommandKind::RequestIdentity,
+                    crate::CommandKind::RequestTelemetry,
+                    crate::CommandKind::RequestFirmwareInfo,
+                    crate::CommandKind::RequestBatteryInfo,
+                    crate::CommandKind::RequestDiagnostics,
+                    crate::CommandKind::RequestSettings,
+                ][..],
+            ),
+            (
+                crate::SafetyClass::BenignControl,
+                &[crate::CommandKind::SetLights, crate::CommandKind::SoundHorn][..],
+            ),
+            (
+                crate::SafetyClass::Actuation,
+                &[crate::CommandKind::SetRawMotorCurrent][..],
+            ),
+        ];
+
+        for (safety_class, commands) in matrix {
+            for command in commands {
+                assert_eq!(command.safety_class(), safety_class);
+            }
+        }
+    }
+
+    #[test]
     fn actuation_commands_are_not_supported_without_capability() {
         let capabilities = crate::Capabilities::default();
         let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
