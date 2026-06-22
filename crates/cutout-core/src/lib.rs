@@ -2386,6 +2386,102 @@ where
     outputs
 }
 
+/// Summary of deterministic replay equivalence across notification chunking
+/// modes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReplayChunkComparison {
+    /// Semantic event count from whole-notification replay.
+    pub whole_semantic_events: usize,
+
+    /// Semantic event count from one-byte notification replay.
+    pub one_byte_semantic_events: usize,
+
+    /// Semantic event count from arbitrary notification chunk replay.
+    pub arbitrary_semantic_events: usize,
+
+    /// Whether one-byte replay produced the same semantic events as whole
+    /// replay.
+    pub one_byte_matches: bool,
+
+    /// Whether arbitrary chunk replay produced the same semantic events as
+    /// whole replay.
+    pub arbitrary_matches: bool,
+}
+
+/// Replays a capture and returns semantic events only.
+///
+/// Raw [`DeviceEvent::NotificationReceived`] metadata is intentionally
+/// excluded because notification lengths differ between chunking modes even
+/// when decoded protocol behavior is equivalent.
+#[must_use]
+pub fn replay_capture_semantic_events<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+) -> Vec<DeviceEvent>
+where
+    S: ProtocolSession,
+{
+    replay_capture(host, records)
+        .into_iter()
+        .filter_map(|output| match output {
+            SessionOutput::Event(DeviceEvent::NotificationReceived { .. })
+            | SessionOutput::Transport(_) => None,
+            SessionOutput::Event(event) => Some(event),
+        })
+        .collect()
+}
+
+/// Compares whole-notification replay against one-byte and arbitrary
+/// notification chunk replay.
+#[must_use]
+pub fn compare_replay_capture_chunks<S, F>(
+    mut make_session: F,
+    records: &[CaptureRecord],
+    arbitrary_lengths: &[usize],
+) -> ReplayChunkComparison
+where
+    S: ProtocolSession,
+    F: FnMut() -> S,
+{
+    let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
+    let one_byte_records = split_capture_notifications_by_len(records, 1);
+    let one_byte =
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
+    let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
+    let arbitrary =
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
+
+    ReplayChunkComparison {
+        whole_semantic_events: whole.len(),
+        one_byte_semantic_events: one_byte.len(),
+        arbitrary_semantic_events: arbitrary.len(),
+        one_byte_matches: one_byte == whole,
+        arbitrary_matches: arbitrary == whole,
+    }
+}
+
+fn split_capture_notifications_by_len(
+    records: &[CaptureRecord],
+    chunk_len: usize,
+) -> Vec<CaptureRecord> {
+    records
+        .iter()
+        .cloned()
+        .flat_map(|record| record.split_notification_bytes(chunk_len))
+        .collect()
+}
+
+fn split_capture_notifications_by_lengths(
+    records: &[CaptureRecord],
+    lengths: &[usize],
+) -> Vec<CaptureRecord> {
+    records
+        .iter()
+        .cloned()
+        .flat_map(|record| record.split_notification_by_lengths(lengths))
+        .collect()
+}
+
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
 pub const fn crate_name() -> &'static str {
@@ -4286,6 +4382,71 @@ mod tests {
             .split_notification_bytes(1);
 
         assert_eq!(replay_events(&one_byte), replay_events(&whole));
+    }
+
+    #[test]
+    fn replay_chunk_comparison_ignores_notification_boundaries() {
+        let channel = GattChannel::from_bytes([0x66; 16]);
+        let records = [crate::CaptureRecord::notification(
+            channel,
+            vec![1, 2, 3, 0xff],
+            10,
+        )];
+
+        let comparison =
+            crate::compare_replay_capture_chunks(FramedCaptureSession::default, &records, &[2, 1]);
+
+        assert_eq!(
+            comparison,
+            crate::ReplayChunkComparison {
+                whole_semantic_events: 1,
+                one_byte_semantic_events: 1,
+                arbitrary_semantic_events: 1,
+                one_byte_matches: true,
+                arbitrary_matches: true,
+            }
+        );
+    }
+
+    #[test]
+    fn replay_chunk_comparison_reports_semantic_mismatch() {
+        #[derive(Default)]
+        struct NotificationLengthSession;
+
+        impl ProtocolSession for NotificationLengthSession {
+            fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+                let SessionInput::Notification {
+                    bytes,
+                    monotonic_ms,
+                    ..
+                } = input
+                else {
+                    return;
+                };
+                output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                    TelemetryDelta {
+                        at_ms: monotonic_ms,
+                        speed_mm_s: Some(Measured::reported(
+                            i32::try_from(bytes.len()).unwrap_or(0),
+                        )),
+                        ..TelemetryDelta::empty(monotonic_ms)
+                    },
+                )));
+            }
+        }
+
+        let channel = GattChannel::from_bytes([0x77; 16]);
+        let records = [crate::CaptureRecord::notification(
+            channel,
+            vec![1, 2, 3, 4],
+            10,
+        )];
+
+        let comparison =
+            crate::compare_replay_capture_chunks(|| NotificationLengthSession, &records, &[2, 2]);
+
+        assert!(!comparison.one_byte_matches);
+        assert!(!comparison.arbitrary_matches);
     }
 
     proptest! {

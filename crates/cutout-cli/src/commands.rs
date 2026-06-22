@@ -8,7 +8,7 @@ use cutout_btle::{
 };
 use cutout_core::{
     DeviceCommand, DeviceEvent, FirmwareInfo, HostSession, Measured, PevcapCapture, PevcapEncoding,
-    SessionOutput, SettingsReadback, TelemetrySnapshot,
+    ReplayChunkComparison, SessionOutput, SettingsReadback, TelemetrySnapshot,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
@@ -106,6 +106,8 @@ struct PevcapReplayReport {
     telemetry: usize,
     read_only_responses: usize,
     diagnostics: usize,
+    chunk_one_byte_matches: bool,
+    chunk_arbitrary_matches: bool,
     telemetry_snapshot: TelemetrySnapshot,
     firmware: Option<FirmwareInfo>,
 }
@@ -128,21 +130,33 @@ fn replay_pevcap_capture(
 
 fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapReplayReport
 where
-    S: cutout_core::ProtocolSession,
+    S: Clone + cutout_core::ProtocolSession,
 {
     let records = capture.replay_records();
+    let comparison_session = session.clone();
     let mut host = HostSession::new(session);
     let outputs = cutout_core::replay_capture(&mut host, &records);
-    summarize_pevcap_replay(records.len(), &outputs)
+    let comparison = cutout_core::compare_replay_capture_chunks(
+        || comparison_session.clone(),
+        &records,
+        &[2, 3, 5],
+    );
+    summarize_pevcap_replay(records.len(), &outputs, comparison)
 }
 
-fn summarize_pevcap_replay(replay_records: usize, outputs: &[SessionOutput]) -> PevcapReplayReport {
+fn summarize_pevcap_replay(
+    replay_records: usize,
+    outputs: &[SessionOutput],
+    chunk_comparison: ReplayChunkComparison,
+) -> PevcapReplayReport {
     let mut report = PevcapReplayReport {
         replay_records,
         outputs: outputs.len(),
         telemetry: 0,
         read_only_responses: 0,
         diagnostics: 0,
+        chunk_one_byte_matches: chunk_comparison.one_byte_matches,
+        chunk_arbitrary_matches: chunk_comparison.arbitrary_matches,
         telemetry_snapshot: TelemetrySnapshot::default(),
         firmware: None,
     };
@@ -177,12 +191,14 @@ fn summarize_pevcap_replay(replay_records: usize, outputs: &[SessionOutput]) -> 
 
 fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
     format!(
-        "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={}",
+        "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={} chunk_one_byte_matches={} chunk_arbitrary_matches={}",
         report.replay_records,
         report.outputs,
         report.telemetry,
         report.read_only_responses,
-        report.diagnostics
+        report.diagnostics,
+        report.chunk_one_byte_matches,
+        report.chunk_arbitrary_matches
     )
 }
 
@@ -785,13 +801,15 @@ mod tests {
             telemetry: 1,
             read_only_responses: 1,
             diagnostics: 1,
+            chunk_one_byte_matches: true,
+            chunk_arbitrary_matches: true,
             telemetry_snapshot: TelemetrySnapshot::default(),
             firmware: None,
         };
 
         assert_eq!(
             render_pevcap_replay_report(&report),
-            "pevcap replay records=2 outputs=3 telemetry=1 read_only_responses=1 diagnostics=1"
+            "pevcap replay records=2 outputs=3 telemetry=1 read_only_responses=1 diagnostics=1 chunk_one_byte_matches=true chunk_arbitrary_matches=true"
         );
     }
 
@@ -802,6 +820,8 @@ mod tests {
         let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero);
 
         assert_eq!(report.replay_records, 2);
+        assert!(report.chunk_one_byte_matches);
+        assert!(report.chunk_arbitrary_matches);
         assert!(report.telemetry >= 1);
         assert!(report.read_only_responses >= 1);
         assert_eq!(
