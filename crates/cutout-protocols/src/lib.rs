@@ -26,8 +26,8 @@ pub use begode_telemetry::{
     BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
     BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, BEGODE_FIELD_SETTINGS_BITS,
     BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeLiveATelemetry,
-    BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryError,
-    estimate_begode_battery_percent,
+    BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
+    BegodeUnitMode, estimate_begode_battery_percent,
 };
 mod battery_profile;
 pub use battery_profile::{
@@ -55,11 +55,12 @@ pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
 };
 pub use session::{
-    BegodeFalconModel, BenignControlOperation, DangerousActuationOperation, Manufacturer,
-    NoopNotificationDecoder, NosfetAeroModel, ProtocolModelSpec, ProtocolOperation,
-    ReadOnlyModelSpec, ReadOnlyNotificationDecoder, ReadOnlyOperation, ReadOnlySession,
-    SettingsWriteOperation, SupportsBenignControls, SupportsDangerousActuation,
-    SupportsReadRequests, SupportsSettingsWrites, VeteranNotificationDecoder,
+    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
+    DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
+    ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
+    ReadOnlyOperation, ReadOnlySession, SettingsWriteOperation, SupportsBenignControls,
+    SupportsDangerousActuation, SupportsReadRequests, SupportsSettingsWrites,
+    VeteranNotificationDecoder,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,

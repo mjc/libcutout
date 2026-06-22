@@ -3,7 +3,7 @@ use arrayvec::ArrayVec;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[cfg(test)]
+#[cfg(any(feature = "serde", test))]
 use crate::GattRoles;
 #[cfg(feature = "serde")]
 use crate::VerificationStatus;

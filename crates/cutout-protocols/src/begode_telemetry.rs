@@ -7,6 +7,98 @@ use thiserror::Error;
 
 use crate::BegodeFrame;
 
+/// Begode speed/distance unit mode inferred from Live B settings bit 0.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BegodeUnitMode {
+    /// Wheel wire values are already metric.
+    #[default]
+    Metric,
+
+    /// Wheel wire values are imperial-scaled and must be converted to metric.
+    Imperial,
+}
+
+impl BegodeUnitMode {
+    const fn from_settings_bits(settings_bits: u16) -> Self {
+        if settings_bits & 0x0001 == 0 {
+            Self::Metric
+        } else {
+            Self::Imperial
+        }
+    }
+
+    fn distance_m_to_mm(self, distance_m: u32) -> u64 {
+        match self {
+            Self::Metric => u64::from(distance_m) * 1_000,
+            Self::Imperial => miles_milli_to_metric_mm(distance_m),
+        }
+    }
+
+    fn speed_milli_kmh(self, raw_metric_milli_kmh: i32) -> i32 {
+        match self {
+            Self::Metric => raw_metric_milli_kmh,
+            Self::Imperial => mph_milli_to_kmh_milli(raw_metric_milli_kmh),
+        }
+    }
+
+    fn speed_kmh_u16(self, raw_speed: u16) -> u16 {
+        match self {
+            Self::Metric => raw_speed,
+            Self::Imperial => mph_to_kmh_u16(raw_speed),
+        }
+    }
+}
+
+/// Stateful Begode telemetry normalizer for cross-frame unit-mode evidence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeTelemetryContext {
+    unit_mode: BegodeUnitMode,
+}
+
+impl BegodeTelemetryContext {
+    /// Returns the currently inferred unit mode.
+    #[must_use]
+    pub const fn unit_mode(self) -> BegodeUnitMode {
+        self.unit_mode
+    }
+
+    /// Resets cross-frame evidence to the conservative metric default.
+    pub const fn reset(&mut self) {
+        self.unit_mode = BegodeUnitMode::Metric;
+    }
+
+    /// Updates cross-frame evidence from a decoded Live B frame.
+    pub fn observe_live_b(&mut self, telemetry: BegodeLiveBTelemetry) {
+        self.unit_mode = telemetry.unit_mode();
+    }
+
+    /// Converts decoded Live A fields into a normalized telemetry delta.
+    #[must_use]
+    pub fn live_a_to_delta(
+        self,
+        telemetry: BegodeLiveATelemetry,
+        at_ms: MonotonicMillis,
+    ) -> TelemetryDelta {
+        telemetry.to_delta_with_units(at_ms, self.unit_mode)
+    }
+
+    /// Converts decoded Live B fields into a normalized telemetry delta.
+    #[must_use]
+    pub fn live_b_to_delta(
+        self,
+        telemetry: BegodeLiveBTelemetry,
+        at_ms: MonotonicMillis,
+    ) -> TelemetryDelta {
+        telemetry.to_delta_with_units(at_ms)
+    }
+
+    /// Converts decoded Live B settings into normalized read-only settings.
+    #[must_use]
+    pub fn live_b_to_settings_response(self, telemetry: BegodeLiveBTelemetry) -> ReadOnlyResponse {
+        telemetry.to_settings_response_with_units()
+    }
+}
+
 /// Begode/Gotway pack voltage profile used to scale raw 67.2 V-equivalent telemetry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BegodePackVoltageProfile {
@@ -86,8 +178,20 @@ impl BegodeLiveATelemetry {
     /// Converts decoded Live A fields into a transport-independent telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+        self.to_delta_with_units(at_ms, BegodeUnitMode::Metric)
+    }
+
+    /// Converts decoded Live A fields into a transport-independent telemetry delta.
+    #[must_use]
+    pub fn to_delta_with_units(
+        self,
+        at_ms: MonotonicMillis,
+        unit_mode: BegodeUnitMode,
+    ) -> TelemetryDelta {
         TelemetryDelta {
-            speed_mm_s: Some(source_reported(milli_kmh_to_mm_s(self.speed_milli_kmh))),
+            speed_mm_s: Some(source_reported(milli_kmh_to_mm_s(
+                unit_mode.speed_milli_kmh(self.speed_milli_kmh),
+            ))),
             voltage_mv: Some(source_reported(self.voltage_mv)),
             motor_current_ma: Some(source_reported(self.phase_current_ma)),
             power_mw: Some(source_calculated(power_mw(
@@ -96,7 +200,9 @@ impl BegodeLiveATelemetry {
             ))),
             controller_temperature_mc: Some(source_reported(self.imu_temperature_mc)),
             pwm_permille: Some(source_reported(raw_pwm_to_permille(self.hardware_pwm_raw))),
-            distance_mm: Some(source_reported(u64::from(self.trip_distance_low_m) * 1_000)),
+            distance_mm: Some(source_reported(
+                unit_mode.distance_m_to_mm(u32::from(self.trip_distance_low_m)),
+            )),
             battery_percent_estimated: Some(source_estimated(self.battery_percent_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -152,8 +258,16 @@ impl BegodeLiveBTelemetry {
     /// Converts decoded Live B fields into a telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+        self.to_delta_with_units(at_ms)
+    }
+
+    /// Converts decoded Live B fields into a telemetry delta with unit normalization.
+    #[must_use]
+    pub fn to_delta_with_units(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            distance_mm: Some(source_reported(u64::from(self.total_distance_m) * 1_000)),
+            distance_mm: Some(source_reported(
+                self.unit_mode().distance_m_to_mm(self.total_distance_m),
+            )),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -161,6 +275,12 @@ impl BegodeLiveBTelemetry {
     /// Converts decoded Live B settings into a generic read-only response.
     #[must_use]
     pub fn to_settings_response(self) -> ReadOnlyResponse {
+        self.to_settings_response_with_units()
+    }
+
+    /// Converts decoded Live B settings into a generic read-only response.
+    #[must_use]
+    pub fn to_settings_response_with_units(self) -> ReadOnlyResponse {
         ReadOnlyResponse::Settings(SettingsReadback {
             entries: [
                 Some(settings_entry(
@@ -173,7 +293,7 @@ impl BegodeLiveBTelemetry {
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(self.tiltback_speed_kmh),
+                    i64::from(self.unit_mode().speed_kmh_u16(self.tiltback_speed_kmh)),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -181,6 +301,12 @@ impl BegodeLiveBTelemetry {
                 )),
             ],
         })
+    }
+
+    /// Returns the unit mode encoded by Live B settings bit 0.
+    #[must_use]
+    pub const fn unit_mode(self) -> BegodeUnitMode {
+        BegodeUnitMode::from_settings_bits(self.settings_bits)
     }
 
     /// Converts decoded Live B alert flags into a diagnostic readback response.
@@ -398,6 +524,29 @@ const fn div_round(numerator: i32, denominator: i32) -> i32 {
     (numerator + denominator / 2) / denominator
 }
 
+fn mph_milli_to_kmh_milli(value: i32) -> i32 {
+    let scaled = i64::from(value) * 1_609_344;
+    match i32::try_from(scaled / 1_000_000) {
+        Ok(value) => value,
+        Err(_) => {
+            if scaled.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }
+        }
+    }
+}
+
+fn miles_milli_to_metric_mm(value: u32) -> u64 {
+    u64::from(value) * 1_609_344 / 1_000
+}
+
+fn mph_to_kmh_u16(value: u16) -> u16 {
+    let scaled = u32::from(value) * 1_609_344;
+    u16::try_from(scaled / 1_000_000).unwrap_or(u16::MAX)
+}
+
 fn percent_from_i32(percent: i32) -> u8 {
     match u8::try_from(percent) {
         Ok(value) => value,
@@ -417,8 +566,8 @@ mod tests {
         BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
         BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, BEGODE_FIELD_SETTINGS_BITS,
         BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeFrame, BegodeLiveATelemetry,
-        BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryError,
-        estimate_begode_battery_percent,
+        BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext,
+        BegodeTelemetryError, BegodeUnitMode, estimate_begode_battery_percent,
     };
     use cutout_core::{
         DiagnosticSeverity, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
@@ -428,6 +577,8 @@ mod tests {
 
     const LIVE_A: [u8; 24] = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
     const LIVE_B: [u8; 24] = hex_literal::hex!("55aa000000320000000f003200030502000004185a5a5a5a");
+    const LIVE_B_IMPERIAL: [u8; 24] =
+        hex_literal::hex!("55aa000000320001000f003200030502000004185a5a5a5a");
     const EXTRA: [u8; 24] = hex_literal::hex!("55aaff9c0000002affd8000000000000000007185a5a5a5a");
 
     #[test]
@@ -526,6 +677,73 @@ mod tests {
     }
 
     #[test]
+    fn live_b_settings_bit_zero_selects_imperial_unit_mode() {
+        let metric = BegodeFrame::try_from_slice(&LIVE_B).expect("metric frame is valid");
+        let imperial =
+            BegodeFrame::try_from_slice(&LIVE_B_IMPERIAL).expect("imperial frame is valid");
+
+        assert_eq!(
+            BegodeLiveBTelemetry::decode(&metric)
+                .expect("metric live B decodes")
+                .unit_mode(),
+            BegodeUnitMode::Metric
+        );
+        assert_eq!(
+            BegodeLiveBTelemetry::decode(&imperial)
+                .expect("imperial live B decodes")
+                .unit_mode(),
+            BegodeUnitMode::Imperial
+        );
+    }
+
+    #[test]
+    fn telemetry_context_converts_imperial_live_a_values_to_metric_delta() {
+        let live_b =
+            BegodeFrame::try_from_slice(&LIVE_B_IMPERIAL).expect("imperial live B is valid");
+        let live_a = BegodeFrame::try_from_slice(&LIVE_A).expect("live A frame is valid");
+        let mut context = BegodeTelemetryContext::default();
+        context.observe_live_b(BegodeLiveBTelemetry::decode(&live_b).expect("live B decodes"));
+        let telemetry = BegodeLiveATelemetry::decode(&live_a, BegodePackVoltageProfile::Falcon84V)
+            .expect("live A decodes");
+
+        let delta = context.live_a_to_delta(telemetry, 42);
+
+        assert_eq!(delta.speed_mm_s, Some(source_reported(21_500)));
+        assert_eq!(delta.distance_mm, Some(source_reported(1_207_008)));
+    }
+
+    #[test]
+    fn telemetry_context_resets_to_metric_unit_mode() {
+        let live_b =
+            BegodeFrame::try_from_slice(&LIVE_B_IMPERIAL).expect("imperial live B is valid");
+        let mut context = BegodeTelemetryContext::default();
+        context.observe_live_b(BegodeLiveBTelemetry::decode(&live_b).expect("live B decodes"));
+
+        context.reset();
+
+        assert_eq!(context.unit_mode(), BegodeUnitMode::Metric);
+    }
+
+    #[test]
+    fn live_b_imperial_mode_normalizes_total_distance_and_tiltback_speed() {
+        let frame = BegodeFrame::try_from_slice(&LIVE_B_IMPERIAL).expect("imperial frame is valid");
+        let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B decodes");
+
+        assert_eq!(
+            telemetry.to_delta(7).distance_mm,
+            Some(source_reported(80_467))
+        );
+        let ReadOnlyResponse::Settings(settings) = telemetry.to_settings_response() else {
+            panic!("expected settings response");
+        };
+
+        assert_eq!(
+            settings.entries[2],
+            Some(settings_entry(BEGODE_FIELD_TILTBACK_SPEED_KMH, 80))
+        );
+    }
+
+    #[test]
     fn live_b_maps_alert_flags_to_diagnostics() {
         let frame = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
@@ -586,6 +804,28 @@ mod tests {
             prop_assert!(
                 estimate_begode_battery_percent(low, BegodePackVoltageProfile::Falcon84V)
                     <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Falcon84V)
+            );
+        }
+
+        #[test]
+        fn live_b_unit_mode_follows_settings_bit_zero(settings_bits in any::<u16>()) {
+            let telemetry = BegodeLiveBTelemetry {
+                total_distance_m: 0,
+                settings_bits,
+                power_off_timer_minutes: 0,
+                tiltback_speed_kmh: 0,
+                led_mode: 0,
+                alert_flags: 0,
+                light_mode: 0,
+            };
+
+            prop_assert_eq!(
+                telemetry.unit_mode(),
+                if settings_bits & 1 == 0 {
+                    BegodeUnitMode::Metric
+                } else {
+                    BegodeUnitMode::Imperial
+                }
             );
         }
     }

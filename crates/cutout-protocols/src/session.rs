@@ -7,10 +7,12 @@ use cutout_core::{
 };
 
 use crate::{
-    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, FalconProbe, FalconRequestEncoder,
-    RequestDisposition, VETERAN_DATA_CHANNEL, VeteranBmsPageEvidence, VeteranFrame,
-    VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
-    decode_veteran_bms_page,
+    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BegodeBmsCellPage, BegodeBmsPageError,
+    BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameReassembler, BegodeLiveATelemetry,
+    BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
+    FalconProbe, FalconRequestEncoder, RequestDisposition, VETERAN_DATA_CHANNEL,
+    VeteranBmsPageEvidence, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
+    VeteranTelemetry, VeteranTelemetryError, decode_veteran_bms_page,
 };
 
 /// Static manufacturer identifier for a supported model spec.
@@ -166,6 +168,120 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     }
 }
 
+/// Begode/Gotway notification decoder for Falcon read-only telemetry.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BegodeNotificationDecoder {
+    reassembler: BegodeFrameReassembler,
+    context: BegodeTelemetryContext,
+}
+
+impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
+    fn reset(&mut self) {
+        self.reassembler.reset();
+        self.context.reset();
+    }
+
+    fn handle_notification(
+        &mut self,
+        bytes: &[u8],
+        monotonic_ms: MonotonicMillis,
+        output: &mut Vec<SessionOutput>,
+    ) {
+        for byte in bytes {
+            match self.reassembler.feed_byte_at(*byte, monotonic_ms) {
+                Ok(Some(frame)) => {
+                    push_begode_frame(&mut self.context, &frame, monotonic_ms, output);
+                }
+                Ok(None) => {}
+                Err(BegodeFrameError::InvalidFrame) => {
+                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                        diagnostics_for(ParserError::MalformedFrame),
+                    )));
+                }
+            }
+        }
+    }
+}
+
+fn push_begode_frame(
+    context: &mut BegodeTelemetryContext,
+    frame: &BegodeFrame,
+    monotonic_ms: MonotonicMillis,
+    output: &mut Vec<SessionOutput>,
+) {
+    match frame.tag() {
+        0x00 => match BegodeLiveATelemetry::decode(frame, BegodePackVoltageProfile::Falcon84V) {
+            Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                context.live_a_to_delta(telemetry, monotonic_ms),
+            ))),
+            Err(error) => push_begode_telemetry_error(error, output),
+        },
+        0x01 => match BegodeBmsSummary::decode(frame) {
+            Ok(summary) => {
+                output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                    summary.to_delta(monotonic_ms),
+                )));
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    summary.to_battery_response(),
+                )));
+            }
+            Err(error) => push_begode_bms_error(error, output),
+        },
+        0x02 | 0x03 => match BegodeBmsCellPage::decode(frame) {
+            Ok(page) => output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                page.to_battery_response(),
+            ))),
+            Err(error) => push_begode_bms_error(error, output),
+        },
+        0x04 => match BegodeLiveBTelemetry::decode(frame) {
+            Ok(telemetry) => {
+                context.observe_live_b(telemetry);
+                output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                    context.live_b_to_delta(telemetry, monotonic_ms),
+                )));
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    context.live_b_to_settings_response(telemetry),
+                )));
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    telemetry.to_diagnostics_response(),
+                )));
+            }
+            Err(error) => push_begode_telemetry_error(error, output),
+        },
+        0x07 => match crate::BegodeExtraTelemetry::decode(frame) {
+            Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                telemetry.to_delta(monotonic_ms),
+            ))),
+            Err(error) => push_begode_telemetry_error(error, output),
+        },
+        _ => {
+            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                diagnostics_for(ParserError::MalformedFrame),
+            )));
+        }
+    }
+}
+
+fn push_begode_telemetry_error(error: BegodeTelemetryError, output: &mut Vec<SessionOutput>) {
+    match error {
+        BegodeTelemetryError::UnexpectedFrameTag { .. } => {
+            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                diagnostics_for(ParserError::MalformedFrame),
+            )));
+        }
+    }
+}
+
+fn push_begode_bms_error(error: BegodeBmsPageError, output: &mut Vec<SessionOutput>) {
+    match error {
+        BegodeBmsPageError::UnexpectedFrameTag { .. } => {
+            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                diagnostics_for(ParserError::MalformedFrame),
+            )));
+        }
+    }
+}
+
 fn push_veteran_frame(
     frame: &VeteranFrame,
     monotonic_ms: MonotonicMillis,
@@ -303,7 +419,7 @@ impl SupportsReadRequests for BegodeFalconModel {
         CommandKind::RequestBatteryInfo,
     ]);
     const SUBSCRIBE_CHANNEL: GattChannel = BEGODE_DATA_CHANNEL;
-    type NotificationDecoder = NoopNotificationDecoder;
+    type NotificationDecoder = BegodeNotificationDecoder;
 
     fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
         FalconRequestEncoder::encode_command(kind)
@@ -489,6 +605,18 @@ mod tests {
         )
     }
 
+    fn live_begode_a_frame() -> [u8; 24] {
+        hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a")
+    }
+
+    fn live_begode_b_frame() -> [u8; 24] {
+        hex_literal::hex!("55aa000000320000000f003200030502000004185a5a5a5a")
+    }
+
+    fn live_begode_b_imperial_frame() -> [u8; 24] {
+        hex_literal::hex!("55aa000000320001000f003200030502000004185a5a5a5a")
+    }
+
     fn telemetry_events(output: &[SessionOutput]) -> Vec<TelemetryDelta> {
         output
             .iter()
@@ -507,6 +635,31 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn falcon_telemetry_for_notifications(notifications: &[&[u8]]) -> Vec<TelemetryDelta> {
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        for (index, bytes) in notifications.iter().enumerate() {
+            session.handle(
+                SessionInput::Notification {
+                    channel: BEGODE_DATA_CHANNEL,
+                    bytes,
+                    monotonic_ms: 42 + u64::try_from(index).expect("fixture index fits"),
+                },
+                &mut output,
+            );
+        }
+
+        telemetry_events(&output)
     }
 
     fn read_only_responses_for_notification(bytes: &[u8]) -> Vec<ReadOnlyResponse> {
@@ -627,8 +780,115 @@ mod tests {
 
     #[test]
     fn read_only_session_shells_remain_small() {
-        assert_eq!(size_of::<ReadOnlySession<BegodeFalconModel, true>>(), 1);
+        assert!(size_of::<ReadOnlySession<BegodeFalconModel, true>>() <= 64);
         assert!(size_of::<ReadOnlySession<NosfetAeroModel, false>>() <= 272);
+    }
+
+    #[test]
+    fn begode_falcon_session_emits_live_a_telemetry() {
+        let live_a = live_begode_a_frame();
+        let telemetry = falcon_telemetry_for_notifications(&[&live_a]);
+
+        assert_eq!(telemetry.len(), 1);
+        assert_eq!(
+            telemetry[0].voltage_mv.map(|value| value.value),
+            Some(75_063)
+        );
+        assert_eq!(
+            telemetry[0].speed_mm_s.map(|value| value.value),
+            Some(13_360)
+        );
+        assert_eq!(
+            telemetry[0].distance_mm.map(|value| value.value),
+            Some(750_000)
+        );
+    }
+
+    #[test]
+    fn begode_falcon_session_keeps_metric_live_b_values_metric() {
+        let live_b = live_begode_b_frame();
+        let telemetry = falcon_telemetry_for_notifications(&[&live_b]);
+
+        assert_eq!(telemetry.len(), 1);
+        assert_eq!(
+            telemetry[0].distance_mm.map(|value| value.value),
+            Some(50_000)
+        );
+    }
+
+    #[test]
+    fn begode_falcon_session_applies_imperial_live_b_to_following_live_a() {
+        let live_b = live_begode_b_imperial_frame();
+        let live_a = live_begode_a_frame();
+        let telemetry = falcon_telemetry_for_notifications(&[&live_b, &live_a]);
+
+        assert_eq!(telemetry.len(), 2);
+        assert_eq!(
+            telemetry[0].distance_mm.map(|value| value.value),
+            Some(80_467)
+        );
+        assert_eq!(
+            telemetry[1].speed_mm_s.map(|value| value.value),
+            Some(21_500)
+        );
+        assert_eq!(
+            telemetry[1].distance_mm.map(|value| value.value),
+            Some(1_207_008)
+        );
+    }
+
+    #[test]
+    fn begode_falcon_session_resets_imperial_unit_state_on_reconnect() {
+        let live_b = live_begode_b_imperial_frame();
+        let live_a = live_begode_a_frame();
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: &live_b,
+                monotonic_ms: 2,
+            },
+            &mut output,
+        );
+        session.handle(SessionInput::LinkDown, &mut output);
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 3,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: &live_a,
+                monotonic_ms: 4,
+            },
+            &mut output,
+        );
+
+        let telemetry = telemetry_events(&output);
+        assert_eq!(
+            telemetry
+                .last()
+                .and_then(|delta| delta.speed_mm_s.map(|value| value.value)),
+            Some(13_360)
+        );
+        assert_eq!(
+            telemetry
+                .last()
+                .and_then(|delta| delta.distance_mm.map(|value| value.value)),
+            Some(750_000)
+        );
     }
 
     #[test]
