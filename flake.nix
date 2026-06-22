@@ -40,9 +40,13 @@
             pname = "libcutout";
             version = "0.1.0";
             strictDeps = true;
-            nativeBuildInputs = nixpkgs.lib.optionals pkgs.stdenv.isLinux [
-              pkgs.mold
-            ];
+            nativeBuildInputs =
+              nixpkgs.lib.optionals pkgs.stdenv.isLinux [
+                pkgs.mold
+              ]
+              ++ nixpkgs.lib.optionals pkgs.stdenv.isDarwin [
+                pkgs.llvmPackages.lld
+              ];
           };
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         in
@@ -82,9 +86,13 @@
             pname = "libcutout";
             version = "0.1.0";
             strictDeps = true;
-            nativeBuildInputs = nixpkgs.lib.optionals pkgs.stdenv.isLinux [
-              pkgs.mold
-            ];
+            nativeBuildInputs =
+              nixpkgs.lib.optionals pkgs.stdenv.isLinux [
+                pkgs.mold
+              ]
+              ++ nixpkgs.lib.optionals pkgs.stdenv.isDarwin [
+                pkgs.llvmPackages.lld
+              ];
           };
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         in
@@ -137,6 +145,9 @@
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.mold
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              pkgs.llvmPackages.lld
             ]
             ++ [
               pkgs.nixfmt
