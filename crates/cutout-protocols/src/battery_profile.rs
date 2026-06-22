@@ -133,6 +133,48 @@ mod tests {
     }
 
     #[test]
+    fn samsung_50s_cell_curve_is_strictly_increasing() {
+        for window in SAMSUNG_50S_CELL_POINTS.windows(2) {
+            let [low, high] = window else {
+                continue;
+            };
+
+            assert!(low.cell_uv < high.cell_uv);
+            assert!(low.percent < high.percent);
+        }
+    }
+
+    #[test]
+    fn samsung_50s_cell_curve_matches_sticker_voltage_points_for_30s_pack() {
+        let sticker_points = [
+            (91_000, 0),
+            (96_000, 7),
+            (100_000, 15),
+            (103_000, 25),
+            (107_000, 40),
+            (112_000, 60),
+            (116_000, 75),
+            (126_000, 100),
+        ];
+
+        for (pack_mv, percent) in sticker_points {
+            assert_eq!(
+                SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(pack_mv, 30),
+                percent
+            );
+        }
+    }
+
+    #[test]
+    fn samsung_50s_cell_curve_stores_cell_voltages_not_pack_voltages() {
+        assert!(
+            SAMSUNG_50S_CELL_POINTS
+                .iter()
+                .all(|point| (3_000_000..=4_300_000).contains(&point.cell_uv))
+        );
+    }
+
+    #[test]
     fn samsung_50s_profile_normalizes_pack_voltage_to_cell_voltage() {
         assert_eq!(
             SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(91_000, 30),
@@ -145,6 +187,14 @@ mod tests {
     }
 
     #[test]
+    fn samsung_50s_profile_uses_series_cells_as_voltage_multiplier() {
+        let thirty_series = SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(108_000, 30);
+        let thirty_six_series = SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(108_000, 36);
+
+        assert!(thirty_series > thirty_six_series);
+    }
+
+    #[test]
     fn samsung_50s_profile_estimates_same_percent_for_equivalent_series_packs() {
         assert_eq!(
             SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(107_950, 30),
@@ -154,6 +204,28 @@ mod tests {
             SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(151_130, 42),
             SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(107_950, 30)
         );
+    }
+
+    #[test]
+    fn samsung_50s_profile_interpolates_midpoint_between_adjacent_cell_points() {
+        let low = SAMSUNG_50S_CELL_POINTS[3];
+        let high = SAMSUNG_50S_CELL_POINTS[4];
+        let midpoint_uv = (low.cell_uv + high.cell_uv) / 2;
+
+        assert_eq!(
+            SAMSUNG_50S_PROFILE.estimate_percent_from_cell_voltage(midpoint_uv),
+            33
+        );
+    }
+
+    #[test]
+    fn samsung_50s_profile_estimates_are_monotonic_across_pack_range() {
+        let mut previous = 0;
+        for pack_mv in (91_000..=126_000).step_by(250) {
+            let percent = SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(pack_mv, 30);
+            assert!(percent >= previous);
+            previous = percent;
+        }
     }
 
     #[test]

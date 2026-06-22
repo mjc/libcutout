@@ -590,6 +590,68 @@ mod tests {
     }
 
     #[test]
+    fn aero_model_profile_points_at_samsung_50s_profile() {
+        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let profile = aero
+            .battery_profile
+            .expect("Aero has a cell battery profile");
+
+        assert_eq!(profile, &SAMSUNG_50S_PROFILE);
+    }
+
+    #[test]
+    fn aero_model_profile_keeps_pack_geometry_separate_from_cell_profile() {
+        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let profile = aero
+            .battery_profile
+            .expect("Aero has a cell battery profile");
+
+        assert_eq!(aero.cell_count, 30);
+        assert_eq!(aero.parallel_cells, 2);
+        assert_eq!(profile.cell_model, "Samsung 50S");
+        assert_eq!(
+            profile.points.first().expect("low point").cell_uv,
+            3_033_333
+        );
+        assert_eq!(
+            profile.points.last().expect("high point").cell_uv,
+            4_200_000
+        );
+    }
+
+    #[test]
+    fn aero_model_profile_estimates_sticker_points_by_scaling_single_cells() {
+        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let sticker_points = [
+            (91_000, 0),
+            (96_000, 7),
+            (100_000, 15),
+            (103_000, 25),
+            (107_000, 40),
+            (112_000, 60),
+            (116_000, 75),
+            (126_000, 100),
+        ];
+
+        for (pack_mv, percent) in sticker_points {
+            assert_eq!(aero.estimate_battery_percent(pack_mv), percent);
+        }
+    }
+
+    #[test]
+    fn aero_parallel_count_does_not_change_voltage_percentage_estimation() {
+        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let profile = aero
+            .battery_profile
+            .expect("Aero has a cell battery profile");
+
+        assert_eq!(
+            aero.estimate_battery_percent(107_950),
+            profile.estimate_percent_from_pack_voltage(107_950, aero.cell_count)
+        );
+    }
+
+    #[test]
     fn aero_model_profile_uses_samsung_50s_curve_for_battery_percent() {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
 
@@ -608,6 +670,16 @@ mod tests {
         assert_eq!(lynx.estimate_battery_percent(119_020), 0);
         assert_eq!(lynx.estimate_battery_percent(133_535), 50);
         assert_eq!(lynx.estimate_battery_percent(148_050), 100);
+    }
+
+    #[test]
+    fn known_non_aero_models_do_not_inherit_aero_battery_curve() {
+        for model_id in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 42, 44] {
+            let profile =
+                VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
+
+            assert_eq!(profile.battery_profile, None);
+        }
     }
 
     #[test]
