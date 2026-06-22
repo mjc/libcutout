@@ -50,8 +50,9 @@ const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
 selection, telemetry samples, and recent events while the profile model grows.
-Use --demo for fixture-backed data and --device to focus the view on a specific
-device name.
+Use --demo for fixture-backed data. Without --demo, --device selects a live
+Bluetooth device by advertised name substring and the dashboard opens only
+after the device connects.
 
 This command does not modify the device. It is a visualization and monitoring
 surface for the data Cutout already knows how to collect.";
@@ -130,9 +131,18 @@ pub(crate) struct DashboardArgs {
     #[arg(long)]
     pub(crate) demo: bool,
 
-    /// Focus the dashboard on a specific device name.
+    /// Live device name substring, or demo device name when used with --demo.
     #[arg(long = "device", value_name = "NAME")]
     pub(crate) device: Option<String>,
+
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+}
+
+impl DashboardArgs {
+    pub(crate) const fn seconds(&self) -> u64 {
+        self.scan.seconds()
+    }
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -416,6 +426,9 @@ mod tests {
             Command::Dashboard(DashboardArgs {
                 demo: false,
                 device: None,
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS,
+                },
             })
         );
     }
@@ -430,6 +443,31 @@ mod tests {
             Command::Dashboard(DashboardArgs {
                 demo: true,
                 device: Some("Aero NF2557".to_owned()),
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn parses_dashboard_command_with_live_device_and_scan_duration() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "dashboard",
+            "--device",
+            "NF2557",
+            "--seconds",
+            "12",
+        ])
+        .expect("parser accepts dashboard live target options");
+
+        assert_eq!(
+            cli.command,
+            Command::Dashboard(DashboardArgs {
+                demo: false,
+                device: Some("NF2557".to_owned()),
+                scan: ScanArgs { seconds: 12 },
             })
         );
     }
@@ -832,6 +870,7 @@ mod tests {
             &[
                 "Ratatui dashboard",
                 "Termina terminal backend",
+                "dashboard opens only",
                 "visualization and monitoring",
                 "does not modify the device",
             ],
