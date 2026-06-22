@@ -110,6 +110,23 @@ pub trait ReadOnlyModelSpec: SupportsReadRequests {
 
 impl<M: SupportsReadRequests> ReadOnlyModelSpec for M {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadOnlyCommandGate {
+    SupportedRead(CommandKind),
+    Unsupported(CommandKind),
+}
+
+fn gate_read_only_command<M: SupportsReadRequests>(command: DeviceCommand) -> ReadOnlyCommandGate {
+    let kind = command.kind();
+    if kind.safety_class() == SafetyClass::ReadOnly
+        && M::READ_CAPABILITIES.supports_command_kind(kind)
+    {
+        ReadOnlyCommandGate::SupportedRead(kind)
+    } else {
+        ReadOnlyCommandGate::Unsupported(kind)
+    }
+}
+
 /// NOSFET Aero read-only model spec.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NosfetAeroModel;
@@ -184,17 +201,9 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                 }));
             }
         }
-        SessionInput::Command(
-            DeviceCommand::RequestIdentity
-            | DeviceCommand::RequestTelemetry
-            | DeviceCommand::RequestFirmwareInfo
-            | DeviceCommand::RequestBatteryInfo
-            | DeviceCommand::RequestDiagnostics
-            | DeviceCommand::RequestSettings
-            | DeviceCommand::SetLights(_)
-            | DeviceCommand::SoundHorn
-            | DeviceCommand::SetRawMotorCurrent { .. },
-        ) => {}
+        SessionInput::Command(command) => match gate_read_only_command::<M>(command) {
+            ReadOnlyCommandGate::SupportedRead(_) | ReadOnlyCommandGate::Unsupported(_) => {}
+        },
     }
 }
 
@@ -415,6 +424,67 @@ mod tests {
         assert_eq!(
             DangerousActuationOperation.safety_class(),
             SafetyClass::Actuation
+        );
+    }
+
+    #[test]
+    fn read_only_gate_accepts_supported_read_commands() {
+        assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestDiagnostics),
+            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestDiagnostics)
+        );
+        assert_eq!(
+            gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestIdentity),
+            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestIdentity)
+        );
+    }
+
+    #[test]
+    fn read_only_gate_rejects_unsupported_read_commands() {
+        assert_eq!(
+            gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestDiagnostics),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestDiagnostics)
+        );
+    }
+
+    #[test]
+    fn read_only_gate_rejects_write_control_and_actuation_commands() {
+        assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestSettings),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings)
+        );
+        assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SetLights(
+                cutout_core::LightState::On
+            )),
+            ReadOnlyCommandGate::Unsupported(CommandKind::SetLights)
+        );
+        assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SoundHorn),
+            ReadOnlyCommandGate::Unsupported(CommandKind::SoundHorn)
+        );
+        assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SetRawMotorCurrent {
+                current_ma: 1
+            }),
+            ReadOnlyCommandGate::Unsupported(CommandKind::SetRawMotorCurrent)
+        );
+    }
+
+    #[test]
+    fn read_only_session_never_emits_transport_for_unsupported_commands() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1 }),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
         );
     }
 }
