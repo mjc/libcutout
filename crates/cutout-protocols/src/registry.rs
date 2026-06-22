@@ -22,9 +22,9 @@ pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry 
     advertised_name_hints: &["Falcon", "Begode", "Gotway"],
     wire_model_id: None,
     battery: Some(BatterySpec {
-        series_cells: BegodePackVoltageProfile::Falcon100VFullCharge.series_cells(),
-        nominal_capacity_mah: BegodePackVoltageProfile::Falcon100VFullCharge.nominal_capacity_mah(),
-        voltage_range_mv: 72_000..=100_800,
+        series_cells: BegodePackVoltageProfile::Begode84VFullCharge.series_cells(),
+        nominal_capacity_mah: BegodePackVoltageProfile::Begode84VFullCharge.nominal_capacity_mah(),
+        voltage_range_mv: 60_000..=84_000,
         verification: VerificationStatus::Inferred,
     }),
     bms: None,
@@ -45,14 +45,14 @@ mod tests {
     use crate::{BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL};
 
     #[test]
-    fn begode_falcon_registry_entry_records_100v_full_charge_battery_profile() {
+    fn begode_falcon_registry_entry_records_user_confirmed_84v_battery_profile() {
         let battery = BEGODE_FALCON_REGISTRY_ENTRY
             .battery
             .expect("Falcon registry entry should include an initial battery profile");
 
-        assert_eq!(battery.series_cells, 24);
-        assert_eq!(battery.voltage_range_mv, 72_000..=100_800);
-        assert_eq!(battery.nominal_capacity_mah, Some(10_000));
+        assert_eq!(battery.series_cells, 20);
+        assert_eq!(battery.voltage_range_mv, 60_000..=84_000);
+        assert_eq!(battery.nominal_capacity_mah, None);
         assert_eq!(battery.verification, VerificationStatus::Inferred);
     }
 

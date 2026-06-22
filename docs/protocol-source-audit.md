@@ -87,10 +87,10 @@ device is considered fully specced.
 - Begode/Gotway tag `0x00` is Live A telemetry: raw voltage at offset `2`,
   speed at `4`, trip-distance candidates at `6`/`8`, phase current at `10`,
   IMU temperature at `12`, and raw hardware PWM at `14`. For Falcon, user
-  confirmation puts the target hardware at 84 V nominal. Public retailer specs
-  list a 100.8 V charger/full-charge class and Samsung 50S 900 Wh pack, so model
-  the current Falcon target as 24S/2P with a 1.5 scaler from the Begode 67.2 V
-  wire basis unless a Smart-BMS voltage frame supersedes it.
+  confirmation puts the current target hardware at 84 V. Public retailer specs
+  for 100.8 V / 900 Wh Falcons are variant evidence to track separately; do not
+  make that class the default Falcon profile without matching Bluetooth or
+  app-visible evidence for the specific device under test.
 - Begode/Gotway tag `0x04` is Live B telemetry/settings: total distance,
   settings bits, power-off timer, tiltback/max speed, LED mode, alert flags,
   and light mode. Tag `0x07` is extra telemetry for true battery current, motor
