@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use cutout_core::{
     Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, ProtocolFamily,
-    ProtocolSession, SessionInput, SessionOutput, TransportAction,
+    ProtocolSession, SafetyClass, SessionInput, SessionOutput, TransportAction,
 };
 
 use crate::{FALCON_WRITE_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -16,8 +16,8 @@ pub enum Manufacturer {
     Begode,
 }
 
-/// Type-level read-only model contract.
-pub trait ReadOnlyModelSpec {
+/// Static protocol model contract.
+pub trait ProtocolModelSpec {
     /// Device manufacturer.
     const MANUFACTURER: Manufacturer;
 
@@ -26,23 +26,102 @@ pub trait ReadOnlyModelSpec {
 
     /// Stable model name.
     const MODEL: &'static str;
+}
+
+/// Type-level operation class marker.
+pub trait ProtocolOperation: Sized {
+    /// Safety class for this operation class.
+    const SAFETY_CLASS: SafetyClass;
+
+    /// Returns the operation safety class.
+    #[must_use]
+    fn safety_class(self) -> SafetyClass {
+        Self::SAFETY_CLASS
+    }
+}
+
+/// Read-only request operation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ReadOnlyOperation;
+
+impl ProtocolOperation for ReadOnlyOperation {
+    const SAFETY_CLASS: SafetyClass = SafetyClass::ReadOnly;
+}
+
+/// Settings writes that require stationary-state validation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SettingsWriteOperation;
+
+impl ProtocolOperation for SettingsWriteOperation {
+    const SAFETY_CLASS: SafetyClass = SafetyClass::StationaryOnly;
+}
+
+/// Benign controls such as lights or horn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BenignControlOperation;
+
+impl ProtocolOperation for BenignControlOperation {
+    const SAFETY_CLASS: SafetyClass = SafetyClass::BenignControl;
+}
+
+/// Dangerous actuation or motion-affecting controls.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DangerousActuationOperation;
+
+impl ProtocolOperation for DangerousActuationOperation {
+    const SAFETY_CLASS: SafetyClass = SafetyClass::Actuation;
+}
+
+/// Type-level read-only request capability.
+pub trait SupportsReadRequests: ProtocolModelSpec {
+    /// Operation marker for read requests.
+    const READ_OPERATION: ReadOnlyOperation = ReadOnlyOperation;
 
     /// Commands this read-only model session can schedule.
-    const CAPABILITIES: Capabilities;
+    const READ_CAPABILITIES: Capabilities;
 
     /// GATT characteristic to subscribe to after link-up.
     const SUBSCRIBE_CHANNEL: GattChannel;
 }
 
+/// Type-level settings-write capability.
+pub trait SupportsSettingsWrites: ProtocolModelSpec {
+    /// Commands this model can write after stationary-state validation.
+    const WRITE_CAPABILITIES: Capabilities;
+}
+
+/// Type-level benign-control capability.
+pub trait SupportsBenignControls: ProtocolModelSpec {
+    /// Commands this model can control through benign write paths.
+    const CONTROL_CAPABILITIES: Capabilities;
+}
+
+/// Type-level dangerous-actuation capability.
+pub trait SupportsDangerousActuation: ProtocolModelSpec {
+    /// Commands this model can use for direct actuation.
+    const ACTUATION_CAPABILITIES: Capabilities;
+}
+
+/// Type-level read-only model contract.
+pub trait ReadOnlyModelSpec: SupportsReadRequests {
+    /// Commands this read-only model session can schedule.
+    const CAPABILITIES: Capabilities = Self::READ_CAPABILITIES;
+}
+
+impl<M: SupportsReadRequests> ReadOnlyModelSpec for M {}
+
 /// NOSFET Aero read-only model spec.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NosfetAeroModel;
 
-impl ReadOnlyModelSpec for NosfetAeroModel {
+impl ProtocolModelSpec for NosfetAeroModel {
     const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
     const MODEL: &'static str = "NOSFET Aero";
     const PROTOCOL: ProtocolFamily = ProtocolFamily::VeteranLeaperkimNosfet;
-    const CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+}
+
+impl SupportsReadRequests for NosfetAeroModel {
+    const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
         CommandKind::RequestIdentity,
         CommandKind::RequestFirmwareInfo,
         CommandKind::RequestTelemetry,
@@ -56,11 +135,14 @@ impl ReadOnlyModelSpec for NosfetAeroModel {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFalconModel;
 
-impl ReadOnlyModelSpec for BegodeFalconModel {
+impl ProtocolModelSpec for BegodeFalconModel {
     const MANUFACTURER: Manufacturer = Manufacturer::Begode;
     const MODEL: &'static str = "Begode Falcon";
     const PROTOCOL: ProtocolFamily = ProtocolFamily::BegodeGotway;
-    const CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+}
+
+impl SupportsReadRequests for BegodeFalconModel {
+    const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
         CommandKind::RequestIdentity,
         CommandKind::RequestFirmwareInfo,
         CommandKind::RequestTelemetry,
@@ -180,11 +262,14 @@ mod tests {
 
     struct TestModel;
 
-    impl ReadOnlyModelSpec for TestModel {
+    impl ProtocolModelSpec for TestModel {
         const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
         const MODEL: &'static str = "test";
         const PROTOCOL: ProtocolFamily = ProtocolFamily::VeteranLeaperkimNosfet;
-        const CAPABILITIES: Capabilities =
+    }
+
+    impl SupportsReadRequests for TestModel {
+        const READ_CAPABILITIES: Capabilities =
             Capabilities::from_supported_commands([CommandKind::RequestTelemetry]);
         const SUBSCRIBE_CHANNEL: GattChannel = TEST_CHANNEL;
     }
@@ -290,6 +375,46 @@ mod tests {
         assert_eq!(
             ReadOnlySession::<TestModel, false>::capabilities(),
             Capabilities::from_supported_commands([CommandKind::RequestTelemetry])
+        );
+    }
+
+    #[test]
+    fn model_specs_expose_read_only_operation_class() {
+        assert_eq!(
+            NosfetAeroModel::READ_OPERATION.safety_class(),
+            SafetyClass::ReadOnly
+        );
+        assert_eq!(
+            BegodeFalconModel::READ_OPERATION.safety_class(),
+            SafetyClass::ReadOnly
+        );
+    }
+
+    #[test]
+    fn read_only_operation_traits_preserve_model_capabilities() {
+        assert_eq!(
+            <NosfetAeroModel as SupportsReadRequests>::READ_CAPABILITIES,
+            ReadOnlySession::<NosfetAeroModel, false>::capabilities()
+        );
+        assert_eq!(
+            <BegodeFalconModel as SupportsReadRequests>::READ_CAPABILITIES,
+            ReadOnlySession::<BegodeFalconModel, true>::capabilities()
+        );
+    }
+
+    #[test]
+    fn write_and_actuation_operations_have_distinct_safety_classes() {
+        assert_eq!(
+            SettingsWriteOperation.safety_class(),
+            SafetyClass::StationaryOnly
+        );
+        assert_eq!(
+            BenignControlOperation.safety_class(),
+            SafetyClass::BenignControl
+        );
+        assert_eq!(
+            DangerousActuationOperation.safety_class(),
+            SafetyClass::Actuation
         );
     }
 }

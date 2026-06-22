@@ -23,7 +23,10 @@ pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
 };
 pub use session::{
-    BegodeFalconModel, Manufacturer, NosfetAeroModel, ReadOnlyModelSpec, ReadOnlySession,
+    BegodeFalconModel, BenignControlOperation, DangerousActuationOperation, Manufacturer,
+    NosfetAeroModel, ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyOperation,
+    ReadOnlySession, SettingsWriteOperation, SupportsBenignControls, SupportsDangerousActuation,
+    SupportsReadRequests, SupportsSettingsWrites,
 };
 
 /// Returns the crate name used by setup smoke tests.
