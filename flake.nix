@@ -40,6 +40,9 @@
             pname = "libcutout";
             version = "0.1.0";
             strictDeps = true;
+            nativeBuildInputs = nixpkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.mold
+            ];
           };
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         in
@@ -79,6 +82,9 @@
             pname = "libcutout";
             version = "0.1.0";
             strictDeps = true;
+            nativeBuildInputs = nixpkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.mold
+            ];
           };
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
         in
@@ -128,6 +134,11 @@
               pkgs.cargo-nextest
               pkgs.jna
               pkgs.kotlin
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              pkgs.mold
+            ]
+            ++ [
               pkgs.nixfmt
             ];
 
