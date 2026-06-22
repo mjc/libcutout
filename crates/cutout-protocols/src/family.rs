@@ -32,11 +32,11 @@ impl ProtocolFamilyClassifier {
         if matches_prefix(bytes, &[0xdc, 0x5a, 0x5c]) {
             return ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero);
         }
-        if matches_prefix(bytes, &[0x55, 0xaa, 0x19, 0xc1]) {
+        if matches_prefix(bytes, &[0x55, 0xaa]) {
             return ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon);
         }
         if complete_or_pending(bytes, &[0xdc, 0x5a, 0x5c])
-            || complete_or_pending(bytes, &[0x55, 0xaa, 0x19, 0xc1])
+            || complete_or_pending(bytes, &[0x55, 0xaa])
         {
             return ProtocolFamilyClassification::Pending;
         }
@@ -71,7 +71,7 @@ mod tests {
         );
         assert_eq!(
             ProtocolFamilyClassifier::classify(&[0x55, 0xaa, 0x19]),
-            ProtocolFamilyClassification::Pending
+            ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon)
         );
         assert_eq!(
             ProtocolFamilyClassifier::classify(&[0x55, 0xaa, 0x19, 0xc1]),
@@ -80,6 +80,22 @@ mod tests {
         assert_eq!(
             ProtocolFamilyClassifier::classify(&[0x01, 0x02, 0x03]),
             ProtocolFamilyClassification::Unknown
+        );
+    }
+
+    #[test]
+    fn classifier_uses_begode_magic_not_sample_payload_bytes() {
+        assert_eq!(
+            ProtocolFamilyClassifier::classify(&[0x55]),
+            ProtocolFamilyClassification::Pending
+        );
+        assert_eq!(
+            ProtocolFamilyClassifier::classify(&[0x55, 0xaa]),
+            ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon)
+        );
+        assert_eq!(
+            ProtocolFamilyClassifier::classify(&[0x55, 0xaa, 0x00, 0x00, 0x5a, 0x5a, 0x5a, 0x5a,]),
+            ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon)
         );
     }
 }

@@ -11,6 +11,8 @@
 
 mod gatt;
 pub use gatt::*;
+mod begode_frame;
+pub use begode_frame::{BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameReassembler};
 mod battery_profile;
 pub use battery_profile::{
     BatteryVoltagePoint, BatteryVoltageProfile, SAMSUNG_50S_CELL_POINTS, SAMSUNG_50S_PROFILE,

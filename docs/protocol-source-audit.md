@@ -79,8 +79,11 @@ device is considered fully specced.
   should stay on documented linear ranges until cell-profile evidence is added.
   NOSFET Aeon is a smaller 151 V-class Samsung 50S pack at about 1300 Wh, so it
   uses the same 36-series voltage curve as Apex/Lynx but 2p pack capacity.
-- Begode/Falcon remains a separate family: same GATT UUIDs, but `55aa` 24-byte
-  frames with `5a5a5a5a` terminator and short ASCII command writes.
+- Begode/Falcon remains a separate family: same GATT UUIDs, but `55aa` identifies
+  the fixed 24-byte Begode/Gotway frame family. A valid complete frame has the
+  `55aa` header, tag byte at offset `18`, sub-index at offset `19`, and
+  `5a5a5a5a` terminator at offsets `20..23`. Do not overfit classification to
+  sample payload bytes after the `55aa` magic.
 
 ## Backlog Implications
 
