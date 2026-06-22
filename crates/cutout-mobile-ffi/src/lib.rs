@@ -42,6 +42,15 @@ pub enum MobileSessionInputKindDto {
     /// Link-up input.
     LinkUp,
 
+    /// Link-down input.
+    LinkDown,
+
+    /// Notification input.
+    Notification,
+
+    /// Timer tick input.
+    Tick,
+
     /// Device command input.
     Command,
 }
@@ -57,6 +66,12 @@ pub struct MobileSessionInputDto {
 
     /// Maximum write length, when known.
     pub max_write_len: Option<u16>,
+
+    /// Transport channel bytes for notification inputs.
+    pub channel: Vec<u8>,
+
+    /// Owned notification bytes.
+    pub bytes: Vec<u8>,
 
     /// Command for command inputs.
     pub command: Option<MobileCommandDto>,
@@ -232,6 +247,15 @@ impl From<MobileSessionInputDto> for SessionInputDto {
                 monotonic_ms: input.monotonic_ms,
                 max_write_len: input.max_write_len,
             },
+            MobileSessionInputKindDto::LinkDown => Self::LinkDown,
+            MobileSessionInputKindDto::Notification => Self::Notification {
+                channel: mobile_channel_bytes(&input.channel),
+                bytes: input.bytes,
+                monotonic_ms: input.monotonic_ms,
+            },
+            MobileSessionInputKindDto::Tick => Self::Tick {
+                monotonic_ms: input.monotonic_ms,
+            },
             MobileSessionInputKindDto::Command => Self::Command(
                 input
                     .command
@@ -240,6 +264,13 @@ impl From<MobileSessionInputDto> for SessionInputDto {
             ),
         }
     }
+}
+
+fn mobile_channel_bytes(channel: &[u8]) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    let len = channel.len().min(bytes.len());
+    bytes[..len].copy_from_slice(&channel[..len]);
+    bytes
 }
 
 impl From<MobileCommandDto> for DeviceCommandDto {
@@ -460,6 +491,8 @@ mod tests {
             kind: MobileSessionInputKindDto::Command,
             monotonic_ms: 0,
             max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
             command: Some(MobileCommandDto::SoundHorn),
         });
 
@@ -480,5 +513,44 @@ mod tests {
             result,
             Err(MobileSessionConstructorError::UnsupportedFalconProfile)
         ));
+    }
+
+    #[test]
+    fn aero_wrapper_accepts_owned_notification_input() {
+        let session = AeroReadOnlySession::new();
+        let link_result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: 1,
+            max_write_len: Some(185),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        let channel = link_result
+            .outputs
+            .iter()
+            .find(|output| output.kind == MobileSessionOutputKindDto::Subscribe)
+            .expect("link-up should subscribe")
+            .channel
+            .clone();
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Notification,
+            monotonic_ms: 2,
+            max_write_len: None,
+            channel,
+            bytes: hex_literal::hex!(
+                "dc5a5c532a7c000000000000ab41001700000cff\
+                 000000000226021ca8f607801afa000080c80000\
+                 808080808080022880803080800e310e310e2f0e\
+                 2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e\
+                 310e2e9e05e3ad"
+            )
+            .to_vec(),
+            command: None,
+        });
+
+        assert_eq!(result.error, None);
+        assert_eq!(session.current_snapshot().voltage_mv, Some(108_760));
     }
 }

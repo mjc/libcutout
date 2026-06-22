@@ -448,6 +448,7 @@ version = "0.1.0"
 dependencies = [
  "cutout-core",
  "cutout-protocols",
+ "hex-literal",
  "thiserror 2.0.18",
  "uniffi",
 ]

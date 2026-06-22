@@ -21,3 +21,6 @@ cutout-core = { path = "../cutout-core", version = "0.1.0" }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 thiserror.workspace = true
 uniffi = { workspace = true, features = ["cli"] }
+
+[dev-dependencies]
+hex-literal.workspace = true

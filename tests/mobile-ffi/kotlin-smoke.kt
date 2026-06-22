@@ -14,15 +14,35 @@ fun main() {
             kind = MobileSessionInputKindDto.LINK_UP,
             monotonicMs = 1UL,
             maxWriteLen = 185U,
+            channel = ByteArray(0),
+            bytes = ByteArray(0),
             command = null,
         )
         val result = aero.ingestChecked(link)
         check(result.error == null)
-        check(result.outputs.any { output ->
+        val channel = result.outputs.firstOrNull { output ->
             output.kind == MobileSessionOutputKindDto.SUBSCRIBE && output.channel.isNotEmpty()
-        })
+        }?.channel
+        check(channel != null)
+        val notification = MobileSessionInputDto(
+            kind = MobileSessionInputKindDto.NOTIFICATION,
+            monotonicMs = 2UL,
+            maxWriteLen = null,
+            channel = channel,
+            bytes = hexBytes(
+                """
+                dc5a5c532a7c000000000000ab41001700000cff
+                000000000226021ca8f607801afa000080c80000
+                808080808080022880803080800e310e310e2f0e
+                2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e
+                310e2e9e05e3ad
+                """,
+            ),
+            command = null,
+        )
+        check(aero.ingestChecked(notification).error == null)
+        check(aero.currentSnapshot().voltageMv == 108_760)
         check(aero.diagnostics().malformedFrames == 0UL)
-        aero.currentSnapshot()
     }
 
     FalconReadOnlySession().use { falcon ->
@@ -30,6 +50,8 @@ fun main() {
             kind = MobileSessionInputKindDto.COMMAND,
             monotonicMs = 2UL,
             maxWriteLen = null,
+            channel = ByteArray(0),
+            bytes = ByteArray(0),
             command = MobileCommandDto.SOUND_HORN,
         )
         val result = falcon.ingestChecked(horn)
@@ -42,4 +64,10 @@ fun main() {
         error("unsupported Falcon profile should throw")
     } catch (_: MobileSessionConstructorException.UnsupportedFalconProfile) {
     }
+}
+
+fun hexBytes(text: String): ByteArray {
+    val digits = text.filterNot { it.isWhitespace() }
+    require(digits.length % 2 == 0)
+    return digits.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }

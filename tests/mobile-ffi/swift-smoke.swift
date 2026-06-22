@@ -8,21 +8,41 @@ struct MobileFfiSmoke {
             kind: .linkUp,
             monotonicMs: 1,
             maxWriteLen: 185,
+            channel: Data(),
+            bytes: Data(),
             command: nil
         )
         let aeroResult = aero.ingestChecked(input: aeroLink)
         precondition(aeroResult.error == nil)
-        precondition(aeroResult.outputs.contains { output in
-            output.kind == .subscribe && !output.channel.isEmpty
-        })
+        let aeroChannel = aeroResult.outputs.first { output in
+            output.kind == MobileSessionOutputKindDto.subscribe && !output.channel.isEmpty
+        }?.channel
+        precondition(aeroChannel != nil)
+        let aeroNotification = MobileSessionInputDto(
+            kind: .notification,
+            monotonicMs: 2,
+            maxWriteLen: nil,
+            channel: aeroChannel!,
+            bytes: hexBytes("""
+                dc5a5c532a7c000000000000ab41001700000cff
+                000000000226021ca8f607801afa000080c80000
+                808080808080022880803080800e310e310e2f0e
+                2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e
+                310e2e9e05e3ad
+            """),
+            command: nil
+        )
+        precondition(aero.ingestChecked(input: aeroNotification).error == nil)
+        precondition(aero.currentSnapshot().voltageMv == 108_760)
         precondition(aero.diagnostics().malformedFrames == 0)
-        _ = aero.currentSnapshot()
 
         let falcon = try FalconReadOnlySession()
         let horn = MobileSessionInputDto(
             kind: .command,
             monotonicMs: 2,
             maxWriteLen: nil,
+            channel: Data(),
+            bytes: Data(),
             command: .soundHorn
         )
         let hornResult = falcon.ingestChecked(input: horn)
@@ -37,4 +57,17 @@ struct MobileFfiSmoke {
             preconditionFailure("unexpected constructor error: \(error)")
         }
     }
+}
+
+func hexBytes(_ text: String) -> Data {
+    let digits = text.filter { !$0.isWhitespace }
+    precondition(digits.count % 2 == 0)
+    var bytes: [UInt8] = []
+    var index = digits.startIndex
+    while index < digits.endIndex {
+        let next = digits.index(index, offsetBy: 2)
+        bytes.append(UInt8(digits[index..<next], radix: 16)!)
+        index = next
+    }
+    return Data(bytes)
 }

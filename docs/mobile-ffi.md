@@ -53,6 +53,7 @@ The smoke clients prove the same behavior in Swift and Kotlin:
 
 - construct Aero and Falcon read-only sessions;
 - feed `LinkUp` and command DTO inputs;
+- feed owned notification bytes from a captured Aero frame through Rust;
 - drain owned output DTOs;
 - query current telemetry snapshot and parser diagnostics;
 - observe a typed unsupported-command error from `ingest_checked`;
