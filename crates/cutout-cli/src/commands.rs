@@ -16,7 +16,8 @@ use cutout_core::{
     ReplayChunkComparison, SessionOutput, SettingsReadback, TelemetrySnapshot,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
+    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel, NosfetAeroModel,
+    ReadOnlySession, VETERAN_DATA_CHANNEL,
 };
 use tracing::info;
 
@@ -571,7 +572,7 @@ fn encode_session_capture_pevcap(
             wall_clock_start_unix_ms,
             platform_id: std::env::consts::OS,
             library_version: env!("CARGO_PKG_VERSION"),
-            registry_hash: [0; 32],
+            registry_hash: cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
             annotations: &["cutout-cli capture-aero"],
         },
     )?;
@@ -932,6 +933,11 @@ mod tests {
 
         assert_eq!(decoded.header.wall_clock_start_unix_ms, 42);
         assert_eq!(decoded.header.write_limit, Some(23));
+        assert_eq!(
+            decoded.header.registry_hash,
+            cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY])
+        );
+        assert_ne!(decoded.header.registry_hash, [0; 32]);
         assert_eq!(decoded.records.len(), 2);
         assert_eq!(
             decoded.records[0].write_mode,

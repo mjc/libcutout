@@ -399,6 +399,204 @@ pub struct ModelRegistryEntry {
     pub verification: VerificationStatus,
 }
 
+/// Deterministic fingerprint for a registry snapshot.
+///
+/// This is intended for capture provenance and replay compatibility checks. It
+/// is not a cryptographic authenticity mechanism.
+#[must_use]
+pub fn registry_entries_hash(entries: &[&ModelRegistryEntry]) -> [u8; 32] {
+    let mut hasher = RegistryHashBuilder::new();
+    hasher.write_bytes(b"cutout-registry-v1");
+    hasher.write_usize(entries.len());
+    for entry in entries {
+        hasher.write_registry_entry(entry);
+    }
+    hasher.finish()
+}
+
+struct RegistryHashBuilder {
+    lanes: [u64; 4],
+}
+
+impl RegistryHashBuilder {
+    const fn new() -> Self {
+        Self {
+            lanes: [
+                0xcbf2_9ce4_8422_2325,
+                0x9e37_79b9_7f4a_7c15,
+                0x517c_c1b7_2722_0a95,
+                0x94d0_49bb_1331_11eb,
+            ],
+        }
+    }
+
+    fn finish(self) -> [u8; 32] {
+        let mut output = [0u8; 32];
+        for (index, lane) in self.lanes.into_iter().enumerate() {
+            let start = index * 8;
+            output[start..start + 8].copy_from_slice(&lane.to_le_bytes());
+        }
+        output
+    }
+
+    fn write_registry_entry(&mut self, entry: &ModelRegistryEntry) {
+        self.write_str(entry.manufacturer);
+        self.write_str(entry.model);
+        self.write_u8(protocol_family_code(entry.protocol_family));
+        self.write_strs(entry.advertised_name_hints);
+        self.write_verified_u16(entry.wire_model_id);
+        self.write_battery(entry.battery.as_ref());
+        self.write_gatt(entry.gatt);
+        self.write_capabilities(entry.capabilities);
+        self.write_u8(verification_code(entry.verification));
+    }
+
+    fn write_strs(&mut self, values: &[&str]) {
+        self.write_usize(values.len());
+        for value in values {
+            self.write_str(value);
+        }
+    }
+
+    fn write_verified_u16(&mut self, value: Option<VerifiedValue<u16>>) {
+        match value {
+            Some(value) => {
+                self.write_u8(1);
+                self.write_u16(value.value);
+                self.write_u8(verification_code(value.verification));
+            }
+            None => self.write_u8(0),
+        }
+    }
+
+    fn write_battery(&mut self, battery: Option<&BatterySpec>) {
+        match battery {
+            Some(battery) => {
+                self.write_u8(1);
+                self.write_u8(battery.series_cells);
+                self.write_optional_u32(battery.nominal_capacity_mah);
+                self.write_u32(*battery.voltage_range_mv.start());
+                self.write_u32(*battery.voltage_range_mv.end());
+                self.write_u8(verification_code(battery.verification));
+            }
+            None => self.write_u8(0),
+        }
+    }
+
+    fn write_gatt(&mut self, fingerprints: &[GattFingerprint]) {
+        self.write_usize(fingerprints.len());
+        for fingerprint in fingerprints {
+            self.write_bytes(&fingerprint.service.as_bytes());
+            self.write_bytes(&fingerprint.characteristic.as_bytes());
+            self.write_u8(gatt_roles_code(fingerprint.roles));
+            self.write_u8(verification_code(fingerprint.verification));
+        }
+    }
+
+    fn write_capabilities(&mut self, capabilities: Capabilities) {
+        for command in ALL_COMMAND_KINDS {
+            self.write_u8(u8::from(capabilities.supports_command_kind(command)));
+        }
+    }
+
+    fn write_optional_u32(&mut self, value: Option<u32>) {
+        match value {
+            Some(value) => {
+                self.write_u8(1);
+                self.write_u32(value);
+            }
+            None => self.write_u8(0),
+        }
+    }
+
+    fn write_str(&mut self, value: &str) {
+        self.write_usize(value.len());
+        self.write_bytes(value.as_bytes());
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(u64::try_from(value).unwrap_or(u64::MAX));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.write_bytes(&value.to_le_bytes());
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_bytes(&value.to_le_bytes());
+    }
+
+    fn write_u16(&mut self, value: u16) {
+        self.write_bytes(&value.to_le_bytes());
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.write_bytes(&[value]);
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            for (lane_index, lane) in self.lanes.iter_mut().enumerate() {
+                let lane_index_u64 = u64::try_from(lane_index).unwrap_or_default();
+                let lane_index_u32 = u32::try_from(lane_index).unwrap_or_default();
+                *lane ^= u64::from(*byte).wrapping_add(lane_index_u64 << 8);
+                *lane = lane.wrapping_mul(0x0000_0100_0000_01b3 + lane_index_u64);
+                *lane ^= lane.rotate_left(17 + lane_index_u32);
+            }
+        }
+    }
+}
+
+const ALL_COMMAND_KINDS: [CommandKind; 9] = [
+    CommandKind::RequestIdentity,
+    CommandKind::RequestTelemetry,
+    CommandKind::RequestFirmwareInfo,
+    CommandKind::RequestBatteryInfo,
+    CommandKind::RequestDiagnostics,
+    CommandKind::RequestSettings,
+    CommandKind::SetLights,
+    CommandKind::SoundHorn,
+    CommandKind::SetRawMotorCurrent,
+];
+
+const fn protocol_family_code(family: ProtocolFamily) -> u8 {
+    match family {
+        ProtocolFamily::VeteranLeaperkimNosfet => 1,
+        ProtocolFamily::BegodeGotway => 2,
+        ProtocolFamily::Vesc => 3,
+    }
+}
+
+const fn verification_code(verification: VerificationStatus) -> u8 {
+    match verification {
+        VerificationStatus::Unverified => 0,
+        VerificationStatus::Inferred => 1,
+        VerificationStatus::SourceVerified => 2,
+        VerificationStatus::HardwareVerified => 3,
+        VerificationStatus::SourceAndHardwareVerified => 4,
+    }
+}
+
+const fn gatt_roles_code(roles: GattRoles) -> u8 {
+    let mut bits = 0u8;
+    if roles.supports_read() {
+        bits |= 1 << 0;
+    }
+    if roles.supports_write() {
+        bits |= 1 << 1;
+    }
+    if roles.supports_write_without_response() {
+        bits |= 1 << 2;
+    }
+    if roles.supports_notify() {
+        bits |= 1 << 3;
+    }
+    if roles.supports_indicate() {
+        bits |= 1 << 4;
+    }
+    bits
+}
+
 /// Current command capabilities for a resolved device/session.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Capabilities {
@@ -3036,6 +3234,56 @@ mod tests {
         assert!(entry.gatt[0].roles.supports_write_without_response());
         assert!(entry.gatt[0].roles.supports_notify());
         assert!(!entry.gatt[0].roles.supports_indicate());
+    }
+
+    #[test]
+    fn registry_hash_is_stable_for_same_entries() {
+        let entry = sample_registry_entry("NOSFET", "Aero");
+
+        assert_eq!(
+            crate::registry_entries_hash(&[&entry]),
+            crate::registry_entries_hash(&[&entry])
+        );
+    }
+
+    #[test]
+    fn registry_hash_changes_when_entry_metadata_changes() {
+        let aero = sample_registry_entry("NOSFET", "Aero");
+        let aeon = sample_registry_entry("NOSFET", "Aeon");
+
+        assert_ne!(
+            crate::registry_entries_hash(&[&aero]),
+            crate::registry_entries_hash(&[&aeon])
+        );
+    }
+
+    fn sample_registry_entry(
+        manufacturer: &'static str,
+        model: &'static str,
+    ) -> crate::ModelRegistryEntry {
+        const SAMPLE_GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
+            service: GattChannel::from_bytes([0x11; 16]),
+            characteristic: GattChannel::from_bytes([0x22; 16]),
+            roles: crate::GattRoles::empty()
+                .with_write_without_response()
+                .with_notify(),
+            verification: VerificationStatus::SourceVerified,
+        }];
+
+        crate::ModelRegistryEntry {
+            manufacturer,
+            model,
+            protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            advertised_name_hints: &["NF"],
+            wire_model_id: None,
+            battery: None,
+            gatt: &SAMPLE_GATT,
+            capabilities: crate::Capabilities::from_supported_commands([
+                crate::CommandKind::RequestIdentity,
+                crate::CommandKind::RequestTelemetry,
+            ]),
+            verification: VerificationStatus::Inferred,
+        }
     }
 
     #[test]
