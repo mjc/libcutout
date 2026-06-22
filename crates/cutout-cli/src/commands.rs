@@ -324,7 +324,18 @@ fn push_measured_u16(
 
 #[cfg(test)]
 mod tests {
+    use cutout_btle::ConnectionTarget;
+
     use super::*;
+    use crate::cli::ScanArgs;
+
+    fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
+        DashboardArgs {
+            demo,
+            device: device.map(ToOwned::to_owned),
+            scan: ScanArgs { seconds: 5 },
+        }
+    }
 
     #[test]
     fn telemetry_snapshot_renderer_includes_present_fields() {
@@ -401,22 +412,6 @@ mod tests {
                 "settings raw_001e=1920",
             ]
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use cutout_btle::ConnectionTarget;
-
-    use super::*;
-    use crate::cli::ScanArgs;
-
-    fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
-        DashboardArgs {
-            demo,
-            device: device.map(ToOwned::to_owned),
-            scan: ScanArgs { seconds: 5 },
-        }
     }
 
     #[test]
