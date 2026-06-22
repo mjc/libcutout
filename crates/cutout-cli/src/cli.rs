@@ -164,7 +164,9 @@ impl From<TargetArgs> for ConnectionTarget {
 mod tests {
     use clap::{CommandFactory, Parser, error::ErrorKind};
 
-    use super::{Cli, Command, DEFAULT_SCAN_SECONDS, ScanArgs, TargetArgs, TargetedScanArgs};
+    use super::{
+        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, ScanArgs, TargetArgs, TargetedScanArgs,
+    };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
         for needle in needles {

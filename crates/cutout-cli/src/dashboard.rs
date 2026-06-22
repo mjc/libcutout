@@ -14,7 +14,9 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Axis, Block, Cell, Chart, Clear, Dataset, Gauge, Paragraph, Row, Sparkline, Table, Tabs},
+    widgets::{
+        Axis, Block, Cell, Chart, Clear, Dataset, Gauge, Paragraph, Row, Sparkline, Table, Tabs,
+    },
 };
 
 use crate::cli::DashboardArgs;
@@ -24,6 +26,7 @@ const HISTORY_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DashboardState {
+    pub(crate) source: DashboardSource,
     pub(crate) active_tab: usize,
     pub(crate) provenance: Option<&'static str>,
     pub(crate) device: DeviceSnapshot,
@@ -32,6 +35,12 @@ pub(crate) struct DashboardState {
     pub(crate) profiles: Vec<ProfileSnapshot>,
     pub(crate) counters: SessionCounters,
     pub(crate) logs: VecDeque<LogEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DashboardSource {
+    Demo,
+    Live,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -378,6 +387,7 @@ impl FixtureReplay {
 impl DashboardState {
     pub(crate) fn empty() -> Self {
         Self {
+            source: DashboardSource::Live,
             active_tab: 0,
             provenance: None,
             device: DeviceSnapshot {
@@ -397,32 +407,37 @@ impl DashboardState {
 
     #[cfg(test)]
     pub(crate) fn sample() -> Self {
-        Self::sample_for(DashboardArgs {
-            demo: true,
-            device: None,
-        })
+        let mut state = Self::empty();
+        state.source = DashboardSource::Demo;
+        let mut replay = FixtureReplay::demo();
+        replay.apply_all(&mut state);
+        state
     }
 
-    pub(crate) fn sample_for(args: DashboardArgs) -> Self {
-        let mut state = if args.demo {
-            let mut state = Self::empty();
-            let mut replay = FixtureReplay::demo();
-            replay.apply_all(&mut state);
-            state
-        } else {
-            Self::empty()
-        };
+    pub(crate) fn demo(device: Option<&str>) -> Self {
+        let mut state = Self::empty();
+        state.source = DashboardSource::Demo;
+        let mut replay = FixtureReplay::demo();
+        replay.apply_all(&mut state);
 
-        if args.demo {
-            if let Some(device) = args.device {
-                if state.device.name != device {
-                    state.scan_browser.observations.retain(|observation| {
-                        observation.real_device && observation.name == device
-                    });
-                    state.scan_browser.selected = 0;
-                }
+        if let Some(device) = device {
+            if state.device.name != device {
+                state
+                    .scan_browser
+                    .observations
+                    .retain(|observation| observation.real_device && observation.name == device);
+                state.scan_browser.selected = 0;
             }
         }
+
+        state
+    }
+
+    pub(crate) fn live_target(device: String) -> Self {
+        let mut state = Self::empty();
+        state.device.name.clone_from(&device);
+        "target selected".clone_into(&mut state.device.connection_state);
+        state.scan_browser.filters.name_contains = Some(device);
         state
     }
 
@@ -526,6 +541,10 @@ impl DashboardState {
     }
 
     pub(crate) fn advance(&mut self) {
+        if self.source == DashboardSource::Live {
+            return;
+        }
+
         let next_notification = self.counters.notifications.saturating_add(1);
         self.counters.notifications = next_notification;
         self.telemetry.step();
@@ -620,13 +639,16 @@ fn push_sample(series: &mut Vec<u64>, value: u64) {
 }
 
 pub(crate) fn run_dashboard(args: DashboardArgs) -> Result<()> {
-    if !args.demo && args.device.is_none() {
-        return Err(anyhow::anyhow!(
-            "dashboard requires --demo or --device to start"
-        ));
-    }
-
-    let mut state = DashboardState::sample_for(args);
+    let mut state = if args.demo {
+        DashboardState::demo(args.device.as_deref())
+    } else {
+        let Some(device) = args.device else {
+            return Err(anyhow::anyhow!(
+                "dashboard requires --demo or --device to start"
+            ));
+        };
+        DashboardState::live_target(device)
+    };
     let (tx, rx) = mpsc::channel::<DashboardInput>();
     let input_thread = spawn_input_thread(tx);
 
@@ -643,7 +665,7 @@ pub(crate) fn run_dashboard(args: DashboardArgs) -> Result<()> {
     loop {
         terminal.draw(|frame| {
             frame.render_widget(Clear, frame.area());
-            render_dashboard(frame, &state)
+            render_dashboard(frame, &state);
         })?;
 
         if matches!(rx.try_recv(), Ok(DashboardInput::Quit)) {
@@ -996,6 +1018,7 @@ mod tests {
     fn sample_state_has_device_profiles_and_logs() {
         let state = DashboardState::sample();
 
+        assert_eq!(state.source, DashboardSource::Demo);
         assert_eq!(state.active_tab, 0);
         assert_eq!(
             state.provenance,
@@ -1042,6 +1065,33 @@ mod tests {
             state.telemetry.temperature_points.len(),
             state.telemetry.temperature_c.len()
         );
+    }
+
+    #[test]
+    fn live_target_state_never_uses_demo_fixture_data() {
+        let state = DashboardState::live_target("NF2557".to_owned());
+
+        assert_eq!(state.source, DashboardSource::Live);
+        assert_eq!(state.device.name, "NF2557");
+        assert_eq!(state.device.connection_state, "target selected");
+        assert_eq!(
+            state.scan_browser.filters.name_contains.as_deref(),
+            Some("NF2557")
+        );
+        assert_eq!(state.provenance, None);
+        assert!(state.scan_browser.observations.is_empty());
+        assert!(state.profiles.is_empty());
+        assert!(state.logs.is_empty());
+    }
+
+    #[test]
+    fn live_target_advance_does_not_emit_fixture_heartbeat() {
+        let mut state = DashboardState::live_target("NF2557".to_owned());
+
+        state.advance();
+
+        assert!(state.logs.is_empty());
+        assert_eq!(state.counters.notifications, 0);
     }
 
     #[test]
