@@ -3,8 +3,8 @@ use crate::{
     ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail,
     DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
     LightState, Measured, ParserDiagnostics, RawFieldValue, ReadOnlyResponse, SafetyClass,
-    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction,
-    ValueQuality, ValueSource, VerificationStatus, WriteMode,
+    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta,
+    TelemetrySnapshot, TransportAction, ValueQuality, ValueSource, VerificationStatus, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -1047,6 +1047,77 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
     }
 }
 
+/// UniFFI-ready telemetry snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TelemetrySnapshotDto {
+    /// Host monotonic timestamp for the latest update, when known.
+    pub at_ms: Option<u64>,
+
+    /// Reported or calculated speed in millimeters per second.
+    pub speed_mm_s: Option<MeasuredI32Dto>,
+
+    /// Reported or measured input voltage in millivolts.
+    pub voltage_mv: Option<MeasuredI32Dto>,
+
+    /// Battery/input current in milliamps.
+    pub battery_current_ma: Option<MeasuredI32Dto>,
+
+    /// Motor/phase current in milliamps.
+    pub motor_current_ma: Option<MeasuredI32Dto>,
+
+    /// Electrical power in milliwatts.
+    pub power_mw: Option<MeasuredI64Dto>,
+
+    /// Controller temperature in millicelsius.
+    pub controller_temperature_mc: Option<MeasuredI32Dto>,
+
+    /// Motor temperature in millicelsius.
+    pub motor_temperature_mc: Option<MeasuredI32Dto>,
+
+    /// Battery temperature in millicelsius.
+    pub battery_temperature_mc: Option<MeasuredI32Dto>,
+
+    /// PWM duty in permille.
+    pub pwm_permille: Option<MeasuredI16Dto>,
+
+    /// Total or trip distance in millimeters.
+    pub distance_mm: Option<MeasuredU64Dto>,
+
+    /// Pitch in millidegrees.
+    pub pitch_mdeg: Option<MeasuredI32Dto>,
+
+    /// Roll in millidegrees.
+    pub roll_mdeg: Option<MeasuredI32Dto>,
+
+    /// Battery percentage reported by the device.
+    pub battery_percent_reported: Option<MeasuredU8Dto>,
+
+    /// Battery percentage estimated by Cutout.
+    pub battery_percent_estimated: Option<MeasuredU8Dto>,
+}
+
+impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
+    fn from(snapshot: TelemetrySnapshot) -> Self {
+        Self {
+            at_ms: snapshot.at_ms,
+            speed_mm_s: snapshot.speed_mm_s.map(Into::into),
+            voltage_mv: snapshot.voltage_mv.map(Into::into),
+            battery_current_ma: snapshot.battery_current_ma.map(Into::into),
+            motor_current_ma: snapshot.motor_current_ma.map(Into::into),
+            power_mw: snapshot.power_mw.map(Into::into),
+            controller_temperature_mc: snapshot.controller_temperature_mc.map(Into::into),
+            motor_temperature_mc: snapshot.motor_temperature_mc.map(Into::into),
+            battery_temperature_mc: snapshot.battery_temperature_mc.map(Into::into),
+            pwm_permille: snapshot.pwm_permille.map(Into::into),
+            distance_mm: snapshot.distance_mm.map(Into::into),
+            pitch_mdeg: snapshot.pitch_mdeg.map(Into::into),
+            roll_mdeg: snapshot.roll_mdeg.map(Into::into),
+            battery_percent_reported: snapshot.battery_percent_reported.map(Into::into),
+            battery_percent_estimated: snapshot.battery_percent_estimated.map(Into::into),
+        }
+    }
+}
+
 /// UniFFI-ready control refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ControlRefusalDto {
@@ -1212,8 +1283,8 @@ mod tests {
         BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DeviceCommand, DeviceEvent,
         DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
         LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput,
-        SettingsEntry, SettingsReadback, TransportAction, ValueQuality, ValueSource,
-        VerificationStatus, WriteMode, WritePayload,
+        SettingsEntry, SettingsReadback, TelemetrySnapshot, TransportAction, ValueQuality,
+        ValueSource, VerificationStatus, WriteMode, WritePayload,
     };
 
     use super::*;
@@ -1439,5 +1510,35 @@ mod tests {
                 max_write_len: Some(182),
             })
         );
+    }
+
+    #[test]
+    fn telemetry_snapshot_dto_preserves_optional_fields() {
+        let snapshot = TelemetrySnapshot {
+            at_ms: Some(42),
+            speed_mm_s: Some(Measured::reported(1_200)),
+            voltage_mv: Some(Measured::reported(84_000)),
+            battery_current_ma: None,
+            motor_current_ma: Some(Measured::reported(-1_500)),
+            power_mw: None,
+            controller_temperature_mc: Some(Measured::reported(31_000)),
+            motor_temperature_mc: None,
+            battery_temperature_mc: None,
+            pwm_permille: Some(Measured::reported(250)),
+            distance_mm: Some(Measured::reported(12_345)),
+            pitch_mdeg: None,
+            roll_mdeg: None,
+            battery_percent_reported: None,
+            battery_percent_estimated: Some(Measured::estimated(80)),
+        };
+
+        let dto = TelemetrySnapshotDto::from(snapshot);
+
+        assert_eq!(dto.at_ms, Some(42));
+        assert_eq!(dto.speed_mm_s.expect("speed").value, 1_200);
+        assert_eq!(dto.voltage_mv.expect("voltage").value, 84_000);
+        assert_eq!(dto.battery_current_ma, None);
+        assert_eq!(dto.motor_current_ma.expect("current").value, -1_500);
+        assert_eq!(dto.battery_percent_estimated.expect("percent").value, 80);
     }
 }

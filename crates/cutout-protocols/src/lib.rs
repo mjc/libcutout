@@ -38,6 +38,8 @@ pub use battery_profile::{
 };
 mod family;
 pub use family::*;
+mod ffi;
+pub use ffi::*;
 mod fixture;
 pub use fixture::*;
 mod identification;
