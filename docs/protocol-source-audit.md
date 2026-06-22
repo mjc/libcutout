@@ -60,6 +60,16 @@ device is considered fully specced.
 - NOSFET Aero is documented as a 30-cell / 134 V Patton-family model with
   model id `43`. Its battery range is documented as raw centivolts
   `9918..12337` for 0..100%.
+- Veteran/NOSFET smart-BMS long frames use the byte at absolute offset `46` as
+  the BMS page selector. Selectors `0` and `4` are pack metadata; selectors
+  `1`/`5` and `2`/`6` are 15-value cell-voltage pages starting at absolute
+  offset `53`; selectors `3`/`7` carry six signed temperature values starting
+  at absolute offset `47`; selector `8` is currently reserved/newer and must
+  stay raw until live behavior proves a stable meaning.
+- For metadata pages `0` and `4`, the documented BMS pack-current fields live
+  at absolute offsets `69` and `71` and are signed big-endian centiamps. For
+  Aero's 30-cell layout, page `3`/`7` should not expose cells beyond index 29;
+  those pages are temperature/status evidence until typed core support exists.
 - Begode/Falcon remains a separate family: same GATT UUIDs, but `55aa` 24-byte
   frames with `5a5a5a5a` terminator and short ASCII command writes.
 

@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, VerificationStatus,
 };
@@ -6,7 +7,19 @@ use thiserror::Error;
 use crate::VeteranFrame;
 
 /// Cell-voltage count observed for typed Veteran/NOSFET BMS pages.
-pub const VETERAN_BMS_CELL_VALUES_PER_PAGE: u8 = 16;
+pub const VETERAN_BMS_CELL_VALUES_PER_PAGE: u8 = 15;
+
+/// Temperature sensor count documented for Veteran/NOSFET BMS temperature pages.
+pub const VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE: usize = 6;
+
+/// Absolute offset of the first cell voltage value in complete Veteran BMS frames.
+pub const VETERAN_BMS_CELL_VALUES_OFFSET: usize = 53;
+
+/// Absolute offset of the first temperature value in complete Veteran BMS frames.
+pub const VETERAN_BMS_TEMPERATURE_VALUES_OFFSET: usize = 47;
+
+/// Absolute offset of the first pack-current value in complete Veteran BMS frames.
+pub const VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET: usize = 69;
 
 /// Classifies a Veteran/NOSFET BMS page selector from hardware-backed Aero captures.
 #[must_use]
@@ -53,6 +66,167 @@ impl<'frame> VeteranBmsPageEvidence<'frame> {
             body,
         })
     }
+
+    /// Absolute frame offset corresponding to the first byte in [`Self::body`].
+    pub const BODY_OFFSET: usize = Self::SELECTOR_OFFSET + 1;
+}
+
+/// Typed Veteran/NOSFET BMS cell-voltage values parsed from a cell page body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VeteranBmsCellPage {
+    /// BMS page selector.
+    pub selector: u8,
+
+    /// Cell voltage values in millivolts.
+    pub cell_mv: ArrayVec<u16, { VETERAN_BMS_CELL_VALUES_PER_PAGE as usize }>,
+}
+
+impl VeteranBmsCellPage {
+    /// Decodes the documented 15 cell-voltage values from a BMS cell page body.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranBmsPageError::InvalidCellCount`] when `selector` is not
+    /// a cell page or [`VeteranBmsPageError::PageBodyTooShort`] when the body
+    /// cannot contain the documented absolute cell offset and 15 values.
+    pub fn from_body(selector: u8, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
+        if !matches!(
+            classify_veteran_bms_selector(selector),
+            BatteryPageKind::CellVoltage
+        ) {
+            return Err(VeteranBmsPageError::InvalidCellCount {
+                selector,
+                observed: 0,
+                expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
+            });
+        }
+
+        let offset = body_offset(VETERAN_BMS_CELL_VALUES_OFFSET);
+        let end = offset + usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE) * 2;
+        let values = body
+            .get(offset..end)
+            .ok_or(VeteranBmsPageError::PageBodyTooShort {
+                selector,
+                expected: end,
+                observed: body.len(),
+            })?;
+        let mut cell_mv = ArrayVec::new();
+        for bytes in values.chunks_exact(2) {
+            if let Some(value) = read_be_u16_pair(bytes) {
+                cell_mv.push(value);
+            }
+        }
+
+        Ok(Self { selector, cell_mv })
+    }
+}
+
+/// Typed Veteran/NOSFET BMS temperature values parsed from a temperature page body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VeteranBmsTemperaturePage {
+    /// BMS page selector.
+    pub selector: u8,
+
+    /// Temperature values in millicelsius.
+    pub temperatures_mc: ArrayVec<i32, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
+}
+
+impl VeteranBmsTemperaturePage {
+    /// Decodes the documented six BMS temperatures from selectors 3 and 7.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranBmsPageError::InvalidTemperaturePage`] for selectors
+    /// other than 3/7, or [`VeteranBmsPageError::PageBodyTooShort`] when the
+    /// body cannot contain the documented values.
+    pub fn from_body(selector: u8, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
+        if !matches!(selector, 3 | 7) {
+            return Err(VeteranBmsPageError::InvalidTemperaturePage { selector });
+        }
+
+        let offset = body_offset(VETERAN_BMS_TEMPERATURE_VALUES_OFFSET);
+        let end = offset + VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE * 2;
+        let values = body
+            .get(offset..end)
+            .ok_or(VeteranBmsPageError::PageBodyTooShort {
+                selector,
+                expected: end,
+                observed: body.len(),
+            })?;
+        let mut temperatures_mc = ArrayVec::new();
+        for bytes in values.chunks_exact(2) {
+            if let Some(value) = read_be_i16_pair(bytes) {
+                temperatures_mc.push(i32::from(value) * 10);
+            }
+        }
+
+        Ok(Self {
+            selector,
+            temperatures_mc,
+        })
+    }
+}
+
+/// Veteran/NOSFET BMS metadata values parsed from a metadata page body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VeteranBmsMetadataPage {
+    /// BMS page selector.
+    pub selector: u8,
+
+    /// First documented pack current value in milliamps.
+    pub current_0_ma: i32,
+
+    /// Second documented pack current value in milliamps.
+    pub current_1_ma: i32,
+}
+
+impl VeteranBmsMetadataPage {
+    /// Decodes the documented page 0/4 pack-current fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranBmsPageError::InvalidMetadataPage`] for selectors other
+    /// than 0/4, or [`VeteranBmsPageError::PageBodyTooShort`] when the body
+    /// cannot contain both current values.
+    pub fn from_body(selector: u8, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
+        if !matches!(selector, 0 | 4) {
+            return Err(VeteranBmsPageError::InvalidMetadataPage { selector });
+        }
+
+        let offset = body_offset(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
+        let end = offset + 4;
+        let values = body
+            .get(offset..end)
+            .ok_or(VeteranBmsPageError::PageBodyTooShort {
+                selector,
+                expected: end,
+                observed: body.len(),
+            })?;
+
+        Ok(Self {
+            selector,
+            current_0_ma: read_be_i16_at(values, 0).map_or(0, |value| i32::from(value) * 10),
+            current_1_ma: read_be_i16_at(values, 2).map_or(0, |value| i32::from(value) * 10),
+        })
+    }
+}
+
+const fn body_offset(absolute_offset: usize) -> usize {
+    absolute_offset - VeteranBmsPageEvidence::BODY_OFFSET
+}
+
+fn read_be_i16_at(bytes: &[u8], offset: usize) -> Option<i16> {
+    read_be_i16_pair(bytes.get(offset..offset + 2)?)
+}
+
+fn read_be_i16_pair(bytes: &[u8]) -> Option<i16> {
+    read_be_u16_pair(bytes).map(|value| i16::from_be_bytes(value.to_be_bytes()))
+}
+
+fn read_be_u16_pair(bytes: &[u8]) -> Option<u16> {
+    let high = *bytes.first()?;
+    let low = *bytes.get(1)?;
+    Some(u16::from_be_bytes([high, low]))
 }
 
 /// Error returned when a typed Veteran/NOSFET BMS page violates invariants.
@@ -69,6 +243,33 @@ pub enum VeteranBmsPageError {
 
         /// Expected cell value count.
         expected: u8,
+    },
+
+    /// The BMS page body was shorter than the documented value offsets.
+    #[error("selector {selector} body had {observed} bytes, expected at least {expected}")]
+    PageBodyTooShort {
+        /// BMS page selector.
+        selector: u8,
+
+        /// Required body length.
+        expected: usize,
+
+        /// Observed body length.
+        observed: usize,
+    },
+
+    /// A non-temperature selector was decoded as a temperature page.
+    #[error("selector {selector} is not a BMS temperature page")]
+    InvalidTemperaturePage {
+        /// BMS page selector.
+        selector: u8,
+    },
+
+    /// A non-metadata selector was decoded as a metadata page.
+    #[error("selector {selector} is not a BMS metadata page")]
+    InvalidMetadataPage {
+        /// BMS page selector.
+        selector: u8,
     },
 }
 
@@ -107,7 +308,49 @@ pub const fn decode_veteran_bms_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::VeteranFrameReassembler;
     use proptest::prelude::*;
+
+    const PAGE_8_BODY: [u8; 24] =
+        hex_literal::hex!("0000803200364f371e00000100808028062e796480008080");
+
+    fn fixture_bytes(input: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for token in input
+            .lines()
+            .filter_map(hex_line)
+            .flat_map(str::split_whitespace)
+        {
+            for chunk in token.as_bytes().chunks_exact(2) {
+                let high = hex_nibble(chunk[0]).expect("fixture hex high nibble is valid");
+                let low = hex_nibble(chunk[1]).expect("fixture hex low nibble is valid");
+                bytes.push((high << 4) | low);
+            }
+        }
+        bytes
+    }
+
+    fn hex_line(line: &str) -> Option<&str> {
+        line.split_once('#')
+            .map_or(Some(line), |(hex, _)| Some(hex))
+    }
+
+    const fn hex_nibble(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    fn reassemble_fixture(input: &str) -> Vec<VeteranFrame> {
+        let mut reassembler = VeteranFrameReassembler::default();
+        fixture_bytes(input)
+            .into_iter()
+            .filter_map(|byte| reassembler.feed_byte(byte).expect("fixture CRC is valid"))
+            .collect()
+    }
 
     fn live_aero_selector_3_frame() -> VeteranFrame {
         VeteranFrame::try_from_slice(&hex_literal::hex!(
@@ -173,8 +416,28 @@ mod tests {
 
         assert_eq!(evidence.selector, 8);
         assert_eq!(evidence.kind, BatteryPageKind::Raw);
-        assert_eq!(evidence.body.len(), 24);
-        assert_eq!(&evidence.body[..8], &hex_literal::hex!("0000803200364f37"));
+        assert_eq!(evidence.body, PAGE_8_BODY);
+    }
+
+    #[test]
+    fn moved_no_balancing_capture_keeps_page_8_body_stable() {
+        let frames = reassemble_fixture(include_str!(
+            "../fixtures/nosfet-aero/nf2557-2026-06-22-moved-no-balancing-page8.hex"
+        ));
+        let page_8: Vec<_> = frames
+            .iter()
+            .map(VeteranBmsPageEvidence::from_frame)
+            .map(|evidence| evidence.expect("fixture contains only BMS page frames"))
+            .collect();
+
+        assert_eq!(page_8.len(), 14);
+        assert!(page_8.iter().all(|evidence| evidence.selector == 8));
+        assert!(
+            page_8
+                .iter()
+                .all(|evidence| evidence.kind == BatteryPageKind::Raw)
+        );
+        assert!(page_8.iter().all(|evidence| evidence.body == PAGE_8_BODY));
     }
 
     #[test]
@@ -186,7 +449,99 @@ mod tests {
     }
 
     #[test]
-    fn typed_cell_pages_require_sixteen_cell_values() {
+    fn documented_cell_pages_start_at_absolute_offset_53() {
+        let mut body = [0_u8; 36];
+        for (index, slot) in body[body_offset(VETERAN_BMS_CELL_VALUES_OFFSET)..]
+            .chunks_exact_mut(2)
+            .take(usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE))
+            .enumerate()
+        {
+            slot.copy_from_slice(&(3700 + u16::try_from(index).unwrap()).to_be_bytes());
+        }
+
+        let page = VeteranBmsCellPage::from_body(1, &body).expect("documented body decodes");
+
+        assert_eq!(page.selector, 1);
+        assert_eq!(page.cell_mv.len(), 15);
+        assert_eq!(page.cell_mv[0], 3700);
+        assert_eq!(page.cell_mv[14], 3714);
+    }
+
+    #[test]
+    fn documented_cell_page_decoder_rejects_fourteen_and_sixteen_value_bodies() {
+        let fourteen_value_body = [0_u8; body_offset(VETERAN_BMS_CELL_VALUES_OFFSET) + 14 * 2];
+        let sixteen_value_body = [0_u8; body_offset(VETERAN_BMS_CELL_VALUES_OFFSET) + 16 * 2];
+
+        assert_eq!(
+            VeteranBmsCellPage::from_body(2, &fourteen_value_body),
+            Err(VeteranBmsPageError::PageBodyTooShort {
+                selector: 2,
+                expected: body_offset(VETERAN_BMS_CELL_VALUES_OFFSET)
+                    + usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE) * 2,
+                observed: fourteen_value_body.len(),
+            })
+        );
+        assert_eq!(
+            VeteranBmsCellPage::from_body(2, &sixteen_value_body)
+                .expect("extra trailing data after 15 documented values is ignored")
+                .cell_mv
+                .len(),
+            15
+        );
+    }
+
+    #[test]
+    fn documented_temperature_pages_start_at_absolute_offset_47() {
+        let body = hex_literal::hex!("0689065706a20686067c06f7");
+
+        let page = VeteranBmsTemperaturePage::from_body(3, &body)
+            .expect("documented temperature body decodes");
+
+        assert_eq!(page.selector, 3);
+        assert_eq!(
+            page.temperatures_mc.as_slice(),
+            &[16730, 16230, 16980, 16700, 16600, 17830]
+        );
+    }
+
+    #[test]
+    fn documented_metadata_pages_decode_pack_currents_at_absolute_offsets_69_and_71() {
+        let mut body = [0_u8; body_offset(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET) + 4];
+        let offset = body_offset(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
+        body[offset..offset + 2].copy_from_slice(&(-123_i16).to_be_bytes());
+        body[offset + 2..offset + 4].copy_from_slice(&(45_i16).to_be_bytes());
+
+        let page = VeteranBmsMetadataPage::from_body(0, &body)
+            .expect("documented metadata current body decodes");
+
+        assert_eq!(page.selector, 0);
+        assert_eq!(page.current_0_ma, -1230);
+        assert_eq!(page.current_1_ma, 450);
+    }
+
+    #[test]
+    fn documented_aero_page_8_stays_reserved_without_typed_decoder() {
+        assert_eq!(classify_veteran_bms_selector(8), BatteryPageKind::Raw);
+        assert_eq!(
+            VeteranBmsCellPage::from_body(8, &PAGE_8_BODY),
+            Err(VeteranBmsPageError::InvalidCellCount {
+                selector: 8,
+                observed: 0,
+                expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
+            })
+        );
+        assert_eq!(
+            VeteranBmsTemperaturePage::from_body(8, &PAGE_8_BODY),
+            Err(VeteranBmsPageError::InvalidTemperaturePage { selector: 8 })
+        );
+        assert_eq!(
+            VeteranBmsMetadataPage::from_body(8, &PAGE_8_BODY),
+            Err(VeteranBmsPageError::InvalidMetadataPage { selector: 8 })
+        );
+    }
+
+    #[test]
+    fn typed_cell_pages_require_fifteen_cell_values() {
         let decoded = decode_veteran_bms_page(
             1,
             VETERAN_BMS_CELL_VALUES_PER_PAGE,

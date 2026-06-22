@@ -33,7 +33,10 @@ pub use session::{
     SupportsReadRequests, SupportsSettingsWrites, VeteranNotificationDecoder,
 };
 pub use veteran_bms::{
-    VETERAN_BMS_CELL_VALUES_PER_PAGE, VeteranBmsPageError, VeteranBmsPageEvidence,
+    VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,
+    VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET, VETERAN_BMS_TEMPERATURE_VALUES_OFFSET,
+    VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE, VeteranBmsCellPage, VeteranBmsMetadataPage,
+    VeteranBmsPageError, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
     classify_veteran_bms_selector, decode_veteran_bms_page,
 };
 pub use veteran_frame::{
