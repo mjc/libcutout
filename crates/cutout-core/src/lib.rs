@@ -218,6 +218,112 @@ pub enum UnsupportedReason {
     CommandNotSupported(CommandKind),
 }
 
+/// Short-lived authorization token for dangerous actuation commands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DangerousActuationArm {
+    /// Model this token was issued for.
+    pub model: &'static str,
+
+    /// Monotonic expiry time in milliseconds.
+    pub expires_at_ms: MonotonicMillis,
+}
+
+/// Dangerous actuation policy for a single model/session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DangerousActuationPolicy {
+    /// Model this policy allows.
+    pub model: &'static str,
+
+    /// Maximum absolute raw motor current allowed by this policy.
+    pub max_current_ma: i32,
+
+    /// Duration of newly issued arming tokens.
+    pub arm_duration_ms: MonotonicMillis,
+}
+
+impl DangerousActuationPolicy {
+    /// Creates an expiring arm token for this policy's model.
+    #[must_use]
+    pub const fn arm(self, monotonic_ms: MonotonicMillis) -> DangerousActuationArm {
+        DangerousActuationArm {
+            model: self.model,
+            expires_at_ms: monotonic_ms.saturating_add(self.arm_duration_ms),
+        }
+    }
+
+    /// Authorizes a dangerous actuation command if the policy and token allow it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DangerousActuationRefusal`] when the command is not dangerous
+    /// actuation, the token is missing/expired/wrong-model, or the requested
+    /// current exceeds this policy's absolute limit.
+    pub const fn authorize(
+        self,
+        command: DeviceCommand,
+        monotonic_ms: MonotonicMillis,
+        arm: Option<DangerousActuationArm>,
+    ) -> Result<CommandMetadata, DangerousActuationRefusal> {
+        if !matches!(command.safety_class(), SafetyClass::Actuation) {
+            return Err(DangerousActuationRefusal::WrongSafetyClass);
+        }
+
+        let Some(arm) = arm else {
+            return Err(DangerousActuationRefusal::MissingArm);
+        };
+
+        if !str_eq(arm.model, self.model) {
+            return Err(DangerousActuationRefusal::WrongModel);
+        }
+        if monotonic_ms > arm.expires_at_ms {
+            return Err(DangerousActuationRefusal::ExpiredArm);
+        }
+        if let DeviceCommand::SetRawMotorCurrent { current_ma } = command
+            && current_ma.saturating_abs() > self.max_current_ma
+        {
+            return Err(DangerousActuationRefusal::CurrentLimitExceeded);
+        }
+
+        Ok(command.metadata())
+    }
+}
+
+/// Refusal reason for dangerous actuation authorization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DangerousActuationRefusal {
+    /// Command is not classified as dangerous actuation.
+    WrongSafetyClass,
+
+    /// No arm token was supplied.
+    MissingArm,
+
+    /// Arm token was issued for another model.
+    WrongModel,
+
+    /// Arm token has expired.
+    ExpiredArm,
+
+    /// Requested current exceeds the policy limit.
+    CurrentLimitExceeded,
+}
+
+const fn str_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 /// Protocol family identifier used by registry data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProtocolFamily {
@@ -3659,6 +3765,89 @@ mod tests {
         assert_eq!(
             capabilities.check_command(command),
             Err(UnsupportedReason::CommandNotSupported(command.kind()))
+        );
+    }
+
+    #[test]
+    fn dangerous_actuation_policy_requires_arm_token() {
+        let policy = crate::DangerousActuationPolicy {
+            model: "Begode Falcon",
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+
+        assert_eq!(
+            policy.authorize(command, 42, None),
+            Err(crate::DangerousActuationRefusal::MissingArm)
+        );
+    }
+
+    #[test]
+    fn dangerous_actuation_policy_rejects_expired_or_wrong_model_arms() {
+        let falcon = crate::DangerousActuationPolicy {
+            model: "Begode Falcon",
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let aero = crate::DangerousActuationPolicy {
+            model: "NOSFET Aero",
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+        let falcon_arm = falcon.arm(10);
+        let aero_arm = aero.arm(10);
+
+        assert_eq!(
+            falcon.authorize(command, 1_011, Some(falcon_arm)),
+            Err(crate::DangerousActuationRefusal::ExpiredArm)
+        );
+        assert_eq!(
+            falcon.authorize(command, 42, Some(aero_arm)),
+            Err(crate::DangerousActuationRefusal::WrongModel)
+        );
+    }
+
+    #[test]
+    fn dangerous_actuation_policy_rejects_non_actuation_and_over_limit_commands() {
+        let policy = crate::DangerousActuationPolicy {
+            model: "Begode Falcon",
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let arm = policy.arm(10);
+
+        assert_eq!(
+            policy.authorize(DeviceCommand::SoundHorn, 42, Some(arm)),
+            Err(crate::DangerousActuationRefusal::WrongSafetyClass)
+        );
+        assert_eq!(
+            policy.authorize(
+                DeviceCommand::SetRawMotorCurrent { current_ma: 5_001 },
+                42,
+                Some(arm)
+            ),
+            Err(crate::DangerousActuationRefusal::CurrentLimitExceeded)
+        );
+    }
+
+    #[test]
+    fn dangerous_actuation_policy_accepts_armed_in_limit_actuation() {
+        let policy = crate::DangerousActuationPolicy {
+            model: "Begode Falcon",
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let command = DeviceCommand::SetRawMotorCurrent { current_ma: -5_000 };
+        let arm = policy.arm(10);
+
+        assert_eq!(
+            policy.authorize(command, 1_010, Some(arm)),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::SetRawMotorCurrent,
+                safety_class: crate::SafetyClass::Actuation,
+            })
         );
     }
 
