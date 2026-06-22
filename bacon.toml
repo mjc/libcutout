@@ -13,6 +13,11 @@ need_stdout = true
 allow_warnings = true
 background = false
 on_change_strategy = "kill_then_restart"
-kill = ["pkill", "-TERM", "-P"]
+kill = [
+    "sh",
+    "-c",
+    "kill_tree() { for child in $(pgrep -P \"$1\"); do kill_tree \"$child\"; done; kill -TERM \"$1\" 2>/dev/null || true; }; kill_tree \"$1\"",
+    "cutout-bacon-kill",
+]
 scroll_anchor = "auto"
 show_command_error_code = true
