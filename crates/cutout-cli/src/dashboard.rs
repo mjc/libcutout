@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeEvent, SessionBridgeReport};
-use cutout_core::{ParserDiagnostics, TelemetryDelta, TelemetrySnapshot};
+use cutout_core::{ParserDiagnostics, ReadOnlyResponse, TelemetryDelta, TelemetrySnapshot};
 use ratatui::termina::{PlatformTerminal, Terminal as _};
 use ratatui::{
     Frame, Terminal,
@@ -23,6 +23,7 @@ use ratatui::{
 
 const LOG_LIMIT: usize = 10;
 const HISTORY_LIMIT: usize = 32;
+const READ_ONLY_SUMMARY_LIMIT: usize = 16;
 const TAB_COUNT: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +34,7 @@ pub(crate) struct DashboardState {
     pub(crate) device: DeviceSnapshot,
     pub(crate) scan_browser: ScanBrowser,
     pub(crate) telemetry: TelemetryWindow,
+    pub(crate) read_only: ReadOnlyDashboardState,
     pub(crate) profiles: Vec<ProfileSnapshot>,
     pub(crate) counters: SessionCounters,
     pub(crate) logs: VecDeque<LogEntry>,
@@ -176,6 +178,64 @@ pub(crate) struct SessionCounters {
 pub(crate) struct LogEntry {
     pub(crate) level: String,
     pub(crate) message: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ReadOnlyDashboardState {
+    pub(crate) firmware: Option<String>,
+    pub(crate) settings: VecDeque<String>,
+    pub(crate) bms_pages: VecDeque<String>,
+    pub(crate) diagnostics: u64,
+    pub(crate) raw_telemetry: u64,
+    pub(crate) unknown_raw_pages: u64,
+}
+
+impl ReadOnlyDashboardState {
+    fn apply_response(&mut self, response: ReadOnlyResponse) {
+        match response {
+            ReadOnlyResponse::Firmware(firmware) => {
+                self.firmware = Some(format_firmware_summary(firmware));
+            }
+            ReadOnlyResponse::Settings(settings) => {
+                for entry in settings.entries.into_iter().flatten() {
+                    push_bounded(
+                        &mut self.settings,
+                        format!(
+                            "field={} value={} quality={} verification={}",
+                            entry.field.id,
+                            entry.field.value,
+                            quality_name(entry.quality),
+                            verification_name(entry.verification)
+                        ),
+                    );
+                }
+            }
+            ReadOnlyResponse::Battery(payload) => {
+                let page = payload.page();
+                if matches!(
+                    page.kind,
+                    cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
+                ) {
+                    self.unknown_raw_pages = self.unknown_raw_pages.saturating_add(1);
+                }
+                push_bounded(
+                    &mut self.bms_pages,
+                    format!(
+                        "selector={} kind={} verification={}",
+                        page.selector,
+                        battery_page_kind_name(page.kind),
+                        verification_name(page.verification)
+                    ),
+                );
+            }
+            ReadOnlyResponse::Diagnostics(_) => {
+                self.diagnostics = self.diagnostics.saturating_add(1);
+            }
+            ReadOnlyResponse::RawTelemetry(_) => {
+                self.raw_telemetry = self.raw_telemetry.saturating_add(1);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,6 +503,7 @@ impl DashboardState {
             },
             scan_browser: ScanBrowser::empty(),
             telemetry: TelemetryWindow::empty(),
+            read_only: ReadOnlyDashboardState::default(),
             profiles: Vec::new(),
             counters: SessionCounters::default(),
             logs: VecDeque::new(),
@@ -588,6 +649,15 @@ impl DashboardState {
             let snapshot = report.telemetry_snapshot;
             self.push_log("info", &format_mapped_telemetry_event(snapshot));
             self.telemetry.apply_snapshot(snapshot);
+        }
+        for response in &report.read_only_response_events {
+            self.read_only.apply_response(*response);
+        }
+        if report.read_only_responses > 0 {
+            self.push_log(
+                "info",
+                &format!("read-only responses={}", report.read_only_responses),
+            );
         }
         self.push_log("trace", &format_unmapped_telemetry_event(report));
         for event in &report.events {
@@ -903,6 +973,54 @@ fn push_sample(series: &mut Vec<u64>, value: u64) {
         series.remove(0);
     }
     series.push(value);
+}
+
+fn push_bounded<T>(items: &mut VecDeque<T>, item: T) {
+    if items.len() == READ_ONLY_SUMMARY_LIMIT {
+        items.pop_front();
+    }
+    items.push_back(item);
+}
+
+fn format_firmware_summary(firmware: cutout_core::FirmwareInfo) -> String {
+    let major = firmware
+        .firmware_major
+        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
+    let minor = firmware
+        .firmware_minor
+        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
+    let patch = firmware
+        .firmware_patch
+        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
+    format!("{major}.{minor}.{patch}")
+}
+
+const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static str {
+    match kind {
+        cutout_core::BatteryPageKind::Metadata => "metadata",
+        cutout_core::BatteryPageKind::CellVoltage => "cell_voltage",
+        cutout_core::BatteryPageKind::Temperature => "temperature",
+        cutout_core::BatteryPageKind::Raw => "raw",
+    }
+}
+
+const fn quality_name(quality: cutout_core::ValueQuality) -> &'static str {
+    match quality {
+        cutout_core::ValueQuality::Known => "known",
+        cutout_core::ValueQuality::Inferred => "inferred",
+    }
+}
+
+const fn verification_name(verification: cutout_core::VerificationStatus) -> &'static str {
+    match verification {
+        cutout_core::VerificationStatus::Unverified => "unverified",
+        cutout_core::VerificationStatus::Inferred => "inferred",
+        cutout_core::VerificationStatus::SourceVerified => "source_verified",
+        cutout_core::VerificationStatus::HardwareVerified => "hardware_verified",
+        cutout_core::VerificationStatus::SourceAndHardwareVerified => {
+            "source_and_hardware_verified"
+        }
+    }
 }
 
 fn mm_s_to_mph(value: i32) -> u64 {
@@ -1717,7 +1835,11 @@ mod tests {
 
     use super::*;
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
-    use cutout_core::{Measured, TelemetrySnapshot};
+    use cutout_core::{
+        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, FirmwareInfo, Measured,
+        RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+        TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+    };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
@@ -2021,6 +2143,121 @@ mod tests {
                 && entry.message.contains("t=42ms processed telemetry")
                 && entry.message.contains("voltage=84V")
         }));
+    }
+
+    #[test]
+    fn live_session_report_summarizes_read_only_responses() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            protocol_writes: 0,
+            writes: 0,
+            subscribes: 1,
+            notifications: 3,
+            notification_bytes: 300,
+            latest_notification_len: Some(100),
+            telemetry: 0,
+            telemetry_snapshot: TelemetrySnapshot::default(),
+            read_only_responses: 5,
+            read_only_response_events: vec![
+                ReadOnlyResponse::Firmware(FirmwareInfo {
+                    firmware_major: Some(Measured::reported(43)),
+                    firmware_minor: Some(Measured::reported(2)),
+                    firmware_patch: Some(Measured::reported(54)),
+                    ..FirmwareInfo::default()
+                }),
+                ReadOnlyResponse::Settings(SettingsReadback {
+                    entries: [
+                        Some(SettingsEntry {
+                            field: RawFieldValue::new(0x20, 540),
+                            source: ValueSource::Reported,
+                            quality: ValueQuality::Known,
+                            verification: VerificationStatus::HardwareVerified,
+                        }),
+                        None,
+                        None,
+                        None,
+                    ],
+                }),
+                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                )),
+                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                )),
+                ReadOnlyResponse::RawTelemetry(RawTelemetryReadback::default()),
+            ],
+            firmware: None,
+            settings: Vec::new(),
+            diagnostics: 0,
+            diagnostics_snapshot: ParserDiagnostics::default(),
+            diagnostic_errors: Vec::new(),
+            identity: None,
+            events: Vec::new(),
+            disconnects: 0,
+        };
+
+        state.apply_session_report(&report);
+
+        assert_eq!(state.read_only.firmware.as_deref(), Some("43.2.54"));
+        assert_eq!(state.read_only.settings.len(), 1);
+        assert!(
+            state.read_only.settings[0].contains("field=32")
+                && state.read_only.settings[0].contains("value=540")
+                && state.read_only.settings[0].contains("hardware_verified")
+        );
+        assert_eq!(state.read_only.bms_pages.len(), 2);
+        assert!(state.read_only.bms_pages[0].contains("selector=2 kind=cell_voltage"));
+        assert!(state.read_only.bms_pages[1].contains("selector=8 kind=raw"));
+        assert_eq!(state.read_only.unknown_raw_pages, 1);
+        assert_eq!(state.read_only.raw_telemetry, 1);
+        assert!(
+            state
+                .logs
+                .iter()
+                .any(|entry| { entry.level == "info" && entry.message == "read-only responses=5" })
+        );
+    }
+
+    #[test]
+    fn live_session_report_bounds_read_only_summaries() {
+        let mut state = DashboardState::empty();
+        let pages: Vec<_> = (0_u8..20)
+            .map(|selector| {
+                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                    BatteryPageMetadata::raw(selector, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                ))
+            })
+            .collect();
+        let report = SessionBridgeReport {
+            protocol_writes: 0,
+            writes: 0,
+            subscribes: 0,
+            notifications: 0,
+            notification_bytes: 0,
+            latest_notification_len: None,
+            telemetry: 0,
+            telemetry_snapshot: TelemetrySnapshot::default(),
+            read_only_responses: pages.len(),
+            read_only_response_events: pages,
+            firmware: None,
+            settings: Vec::new(),
+            diagnostics: 0,
+            diagnostics_snapshot: ParserDiagnostics::default(),
+            diagnostic_errors: Vec::new(),
+            identity: None,
+            events: Vec::new(),
+            disconnects: 0,
+        };
+
+        state.apply_session_report(&report);
+
+        assert_eq!(state.read_only.bms_pages.len(), READ_ONLY_SUMMARY_LIMIT);
+        assert!(state.read_only.bms_pages[0].contains("selector=4"));
+        assert!(state.read_only.bms_pages[READ_ONLY_SUMMARY_LIMIT - 1].contains("selector=19"));
+        assert_eq!(state.read_only.unknown_raw_pages, 20);
     }
 
     #[test]
