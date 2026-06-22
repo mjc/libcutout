@@ -2789,6 +2789,11 @@ where
         self.handle(SessionInput::Command(command));
     }
 
+    /// Supplies one borrowed host input to the protocol session.
+    pub fn ingest(&mut self, input: SessionInput<'_>) {
+        self.handle(input);
+    }
+
     /// Drains owned session outputs accumulated so far.
     #[must_use]
     pub fn drain_outputs(&mut self) -> Vec<SessionOutput> {
@@ -5426,6 +5431,28 @@ mod tests {
                 channel,
                 monotonic_ms: 20,
                 len: 3,
+            })]
+        );
+    }
+
+    #[test]
+    fn host_session_ingests_borrowed_session_input_for_ffi_wrappers() {
+        let mut host = crate::HostSession::new(EchoSession::default());
+        let channel = GattChannel::from_bytes([0xa1; 16]);
+        let bytes = [0xde, 0xad, 0xbe, 0xef];
+
+        host.ingest(SessionInput::Notification {
+            channel,
+            bytes: &bytes,
+            monotonic_ms: 42,
+        });
+
+        assert_eq!(
+            host.drain_outputs().as_slice(),
+            &[SessionOutput::Event(DeviceEvent::NotificationReceived {
+                channel,
+                monotonic_ms: 42,
+                len: 4,
             })]
         );
     }
