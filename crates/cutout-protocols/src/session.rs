@@ -12,11 +12,11 @@ use crate::{
     BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameReassembler, BegodeLiveATelemetry,
     BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
     FalconProbe, FalconRequestEncoder, RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL,
-    VETERAN_DATA_CHANNEL, VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
-    VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry, VescValuesTelemetry,
-    VeteranBmsPageEvidence, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
-    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
-    decode_veteran_bms_page,
+    VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply,
+    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry,
+    VescValuesTelemetry, VeteranBmsPageEvidence, VeteranFrame, VeteranFrameReassembler,
+    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    begode_falcon_target_voltage_profile, decode_veteran_bms_page,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -266,6 +266,18 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 #[derive(Debug, Default)]
 pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
+    board_profile: Option<VescBoardProfile>,
+}
+
+impl VescNotificationDecoder {
+    /// Creates a VESC decoder that can calculate speed from explicit board geometry.
+    #[must_use]
+    pub fn with_board_profile(board_profile: VescBoardProfile) -> Self {
+        Self {
+            stream: VescReadOnlyStreamDecoder::new(),
+            board_profile: Some(board_profile),
+        }
+    }
 }
 
 impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
@@ -282,7 +294,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         match self.stream.feed(bytes) {
             Ok(replies) => {
                 for reply in replies {
-                    push_vesc_reply(&reply, monotonic_ms, output);
+                    push_vesc_reply(&reply, monotonic_ms, self.board_profile, output);
                 }
             }
             Err(VescCodecError::UnsupportedReply) => {
@@ -302,6 +314,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
 fn push_vesc_reply(
     reply: &VescReadOnlyReply,
     monotonic_ms: MonotonicMillis,
+    board_profile: Option<VescBoardProfile>,
     output: &mut Vec<SessionOutput>,
 ) {
     match reply {
@@ -320,7 +333,7 @@ fn push_vesc_reply(
         ))),
         VescReadOnlyReply::Values(values) => {
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                vesc_values_to_delta(*values, monotonic_ms),
+                vesc_values_to_delta(*values, monotonic_ms, board_profile),
             )));
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::RawTelemetry(vesc_values_to_raw_telemetry(*values)),
@@ -337,9 +350,13 @@ fn push_vesc_reply(
 fn vesc_values_to_delta(
     values: VescValuesTelemetry,
     monotonic_ms: MonotonicMillis,
+    board_profile: Option<VescBoardProfile>,
 ) -> cutout_core::TelemetryDelta {
     cutout_core::TelemetryDelta {
         at_ms: monotonic_ms,
+        speed_mm_s: board_profile
+            .and_then(|profile| profile.speed_mm_s_from_erpm(values.rpm_erpm))
+            .map(Measured::calculated),
         voltage_mv: Some(Measured::reported(values.voltage_mv)),
         battery_current_ma: Some(Measured::reported(values.input_current_ma)),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
@@ -1393,6 +1410,44 @@ mod tests {
         assert_eq!(
             raw.fields[3].expect("fault"),
             RawFieldValue::new(VESC_RAW_FAULT_CODE_FIELD_ID, 0)
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_emits_calculated_speed_when_board_profile_is_explicit() {
+        let decoder = VescNotificationDecoder::with_board_profile(VescBoardProfile::new(1, 1, 60));
+        let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &vesc_selective_values_frame(),
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        let telemetry = telemetry_events(&output);
+        let delta = telemetry.last().expect("VESC values telemetry");
+        assert_eq!(delta.speed_mm_s, Some(Measured::calculated(989)));
+
+        let responses = read_only_response_events(&output);
+        let ReadOnlyResponse::RawTelemetry(raw) =
+            responses.last().expect("VESC values raw telemetry")
+        else {
+            panic!("expected raw telemetry response");
+        };
+        assert_eq!(
+            raw.fields[0].expect("erpm"),
+            RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 989)
         );
     }
 
