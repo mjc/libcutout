@@ -259,7 +259,7 @@ mod tests {
 
         let live_delta = BegodeLiveATelemetry::decode(
             &live_frame,
-            BegodePackVoltageProfile::Falcon84VFullCharge,
+            BegodePackVoltageProfile::Falcon100VFullCharge,
         )
         .expect("live A decodes")
         .to_delta(1);
@@ -267,7 +267,7 @@ mod tests {
             .expect("summary decodes")
             .to_delta(2);
 
-        assert_eq!(live_delta.voltage_mv, Some(source_reported(75_063)));
+        assert_eq!(live_delta.voltage_mv, Some(source_reported(90_075)));
         assert_eq!(bms_delta.voltage_mv, Some(source_reported(80_000)));
     }
 

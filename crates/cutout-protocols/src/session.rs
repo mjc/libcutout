@@ -205,8 +205,10 @@ fn push_begode_frame(
 ) {
     match frame.tag() {
         0x00 => {
-            match BegodeLiveATelemetry::decode(frame, BegodePackVoltageProfile::Falcon84VFullCharge)
-            {
+            match BegodeLiveATelemetry::decode(
+                frame,
+                BegodePackVoltageProfile::Falcon100VFullCharge,
+            ) {
                 Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
                 ))),
@@ -847,7 +849,7 @@ mod tests {
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
             telemetry[0].voltage_mv.map(|value| value.value),
-            Some(75_063)
+            Some(90_075)
         );
         assert_eq!(
             telemetry[0].speed_mm_s.map(|value| value.value),
