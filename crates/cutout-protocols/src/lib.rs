@@ -27,7 +27,8 @@ pub use begode_telemetry::{
     BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, BEGODE_FIELD_SETTINGS_BITS,
     BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeLiveATelemetry,
     BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
-    BegodeUnitMode, estimate_begode_battery_percent,
+    BegodeUnitMode, BegodeVoltageEvidence, BegodeVoltageProfileSelection,
+    estimate_begode_battery_percent, select_begode_pack_voltage_profile,
 };
 mod battery_profile;
 pub use battery_profile::{
