@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
+use cutout_btle::{ConnectionSummary, ConnectionTarget};
 use ratatui::termina::{PlatformTerminal, Terminal as _};
 use ratatui::{
     Frame, Terminal,
@@ -18,8 +19,6 @@ use ratatui::{
         Axis, Block, Cell, Chart, Clear, Dataset, Gauge, Paragraph, Row, Sparkline, Table, Tabs,
     },
 };
-
-use crate::cli::DashboardArgs;
 
 const LOG_LIMIT: usize = 10;
 const HISTORY_LIMIT: usize = 32;
@@ -433,11 +432,53 @@ impl DashboardState {
         state
     }
 
+    #[cfg(test)]
     pub(crate) fn live_target(device: String) -> Self {
         let mut state = Self::empty();
         state.device.name.clone_from(&device);
         "target selected".clone_into(&mut state.device.connection_state);
         state.scan_browser.filters.name_contains = Some(device);
+        state
+    }
+
+    pub(crate) fn live_connected(target: &ConnectionTarget, summary: &ConnectionSummary) -> Self {
+        let mut state = Self::empty();
+        state.scan_browser.filters = TargetFilterSummary {
+            address: target.address.clone(),
+            identifier: target.identifier.clone(),
+            name_contains: target.name_contains.clone(),
+        };
+
+        let observation = &summary.observation;
+        state.device = DeviceSnapshot {
+            name: observation
+                .name
+                .clone()
+                .unwrap_or_else(|| "unknown".to_owned()),
+            address: observation
+                .address
+                .clone()
+                .unwrap_or_else(|| "unknown".to_owned()),
+            identifier: observation.identifier.clone(),
+            firmware: "unknown".to_owned(),
+            connection_state: "connected".to_owned(),
+        };
+        state.counters.discovered = 1;
+        state.counters.connected = 1;
+        state.scan_browser.push_observation(
+            ScanObservation {
+                name: state.device.name.clone(),
+                address: state.device.address.clone(),
+                identifier: state.device.identifier.clone(),
+                rssi: observation
+                    .rssi
+                    .map_or_else(|| "unknown".to_owned(), |rssi| format!("{rssi} dBm")),
+                services: services_summary(summary),
+                real_device: true,
+            },
+            true,
+        );
+        state.push_log("info", "connected dashboard target");
         state
     }
 
@@ -638,17 +679,20 @@ fn push_sample(series: &mut Vec<u64>, value: u64) {
     series.push(value);
 }
 
-pub(crate) fn run_dashboard(args: DashboardArgs) -> Result<()> {
-    let mut state = if args.demo {
-        DashboardState::demo(args.device.as_deref())
-    } else {
-        let Some(device) = args.device else {
-            return Err(anyhow::anyhow!(
-                "dashboard requires --demo or --device to start"
-            ));
-        };
-        DashboardState::live_target(device)
-    };
+fn services_summary(summary: &ConnectionSummary) -> String {
+    if summary.services.is_empty() {
+        return "none discovered".to_owned();
+    }
+
+    summary
+        .services
+        .iter()
+        .map(|service| format!("{}:{} chars", service.uuid, service.characteristics.len()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(crate) fn run_dashboard(mut state: DashboardState) -> Result<()> {
     let (tx, rx) = mpsc::channel::<DashboardInput>();
     let input_thread = spawn_input_thread(tx);
 
@@ -990,6 +1034,7 @@ fn index_to_f64(value: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cutout_btle::{ConnectionTarget, PeripheralObservation};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     fn render_buffer(state: &DashboardState, width: u16, height: u16) -> Buffer {
@@ -1082,6 +1127,36 @@ mod tests {
         assert!(state.scan_browser.observations.is_empty());
         assert!(state.profiles.is_empty());
         assert!(state.logs.is_empty());
+    }
+
+    #[test]
+    fn live_connected_state_uses_connection_summary_data() {
+        let target = ConnectionTarget {
+            address: None,
+            identifier: None,
+            name_contains: Some("NF2557".to_owned()),
+        };
+        let summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "platform-0001".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                name: Some("Aero NF2557".to_owned()),
+                rssi: Some(-61),
+                advertised_services: vec![],
+            },
+            services: Vec::new(),
+        };
+
+        let state = DashboardState::live_connected(&target, &summary);
+
+        assert_eq!(state.source, DashboardSource::Live);
+        assert_eq!(state.device.name, "Aero NF2557");
+        assert_eq!(state.device.address, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(state.device.connection_state, "connected");
+        assert_eq!(state.counters.connected, 1);
+        assert_eq!(state.scan_browser.observations.len(), 1);
+        assert!(state.scan_browser.observations[0].real_device);
+        assert!(state.profiles.is_empty());
     }
 
     #[test]

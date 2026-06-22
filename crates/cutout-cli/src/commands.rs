@@ -2,14 +2,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 use cutout_btle::{
-    BtleError, ConnectedPeripheral, SessionBridgeReport, SessionCapture, SessionEndpoints,
-    capture_session, connect_and_discover, drive_session, scan_peripherals,
+    BtleError, ConnectedPeripheral, ConnectionTarget, SessionBridgeReport, SessionCapture,
+    SessionEndpoints, capture_session, connect_and_discover, drive_session, scan_peripherals,
 };
 use cutout_core::{FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
 use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
 
-use crate::cli::{Cli, Command, TargetedScanArgs};
-use crate::dashboard::run_dashboard;
+use crate::cli::{Cli, Command, DashboardArgs, TargetedScanArgs};
+use crate::dashboard::{DashboardState, run_dashboard};
 use crate::validation::render_validation_report;
 
 /// Executes a parsed CLI invocation.
@@ -24,10 +24,33 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
         Command::CaptureAero(args) => connect(args, SessionMode::Capture).await?,
         Command::Validation => print!("{}", render_validation_report()),
-        Command::Dashboard(args) => run_dashboard(args)?,
+        Command::Dashboard(args) => dashboard(args).await?,
     }
 
     Ok(())
+}
+
+async fn dashboard(args: DashboardArgs) -> Result<()> {
+    if args.demo {
+        return run_dashboard(DashboardState::demo(args.device.as_deref()));
+    }
+
+    let target = dashboard_live_target(&args)?;
+    let connection = connect_and_discover(&target, Duration::from_secs(args.seconds())).await?;
+    let state = DashboardState::live_connected(&target, &connection.summary);
+    run_dashboard(state)
+}
+
+fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
+    let Some(device) = args.device.clone() else {
+        anyhow::bail!("dashboard requires --demo or --device to start");
+    };
+
+    Ok(ConnectionTarget {
+        address: None,
+        identifier: None,
+        name_contains: Some(device),
+    })
 }
 
 async fn scan(seconds: u64) -> Result<(), BtleError> {
@@ -339,6 +362,48 @@ mod tests {
                 "settings raw_0014=0 raw_0016=0 raw_0018=550 raw_001a=540",
                 "settings raw_001e=1920",
             ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cutout_btle::ConnectionTarget;
+
+    use super::*;
+    use crate::cli::ScanArgs;
+
+    fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
+        DashboardArgs {
+            demo,
+            device: device.map(ToOwned::to_owned),
+            scan: ScanArgs { seconds: 5 },
+        }
+    }
+
+    #[test]
+    fn dashboard_live_target_requires_device_outside_demo_mode() {
+        let error = dashboard_live_target(&dashboard_args(false, None))
+            .expect_err("live dashboard requires an explicit device");
+
+        assert_eq!(
+            error.to_string(),
+            "dashboard requires --demo or --device to start"
+        );
+    }
+
+    #[test]
+    fn dashboard_live_target_maps_device_to_name_filter() {
+        let target = dashboard_live_target(&dashboard_args(false, Some("NF2557")))
+            .expect("device becomes a live target");
+
+        assert_eq!(
+            target,
+            ConnectionTarget {
+                address: None,
+                identifier: None,
+                name_contains: Some("NF2557".to_owned()),
+            }
         );
     }
 }
