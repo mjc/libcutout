@@ -54,6 +54,17 @@ impl PevcapFormatVersion {
     }
 }
 
+/// Supported PEVCAP byte encodings for file and tooling surfaces.
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PevcapEncoding {
+    /// Line-delimited JSON representation for review.
+    Jsonl,
+
+    /// Binary PEVCAP container representation for storage and replay tooling.
+    Binary,
+}
+
 /// Direction of a captured transport record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PevcapDirection {
@@ -500,6 +511,34 @@ impl PevcapCapture {
             records,
         })
     }
+
+    /// Serializes this capture using the requested PEVCAP encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapCodecError`] when the selected encoder cannot serialize
+    /// the capture.
+    #[cfg(feature = "serde")]
+    pub fn encode(&self, encoding: PevcapEncoding) -> Result<Vec<u8>, PevcapCodecError> {
+        match encoding {
+            PevcapEncoding::Jsonl => Ok(self.to_jsonl()?.into_bytes()),
+            PevcapEncoding::Binary => Ok(self.to_binary()?),
+        }
+    }
+
+    /// Deserializes a capture using the requested PEVCAP encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapCodecError`] when the selected decoder cannot parse the
+    /// input bytes.
+    #[cfg(feature = "serde")]
+    pub fn decode(input: &[u8], encoding: PevcapEncoding) -> Result<Self, PevcapCodecError> {
+        match encoding {
+            PevcapEncoding::Jsonl => Ok(Self::from_jsonl(std::str::from_utf8(input)?)?),
+            PevcapEncoding::Binary => Ok(Self::from_binary(input)?),
+        }
+    }
 }
 
 /// JSONL PEVCAP import/export error.
@@ -551,6 +590,23 @@ pub enum PevcapJsonlError {
     /// Header metadata violated bounded PEVCAP limits.
     #[error(transparent)]
     Header(#[from] PevcapHeaderError),
+}
+
+/// PEVCAP encoding/decoding error for format-dispatched tooling.
+#[cfg(feature = "serde")]
+#[derive(Debug, Error)]
+pub enum PevcapCodecError {
+    /// JSONL text was not valid UTF-8.
+    #[error("PEVCAP JSONL input is not valid UTF-8: {0}")]
+    Utf8(#[from] std::str::Utf8Error),
+
+    /// JSONL import or export failed.
+    #[error(transparent)]
+    Jsonl(#[from] PevcapJsonlError),
+
+    /// Binary import or export failed.
+    #[error(transparent)]
+    Binary(#[from] PevcapBinaryError),
 }
 
 /// PEVCAP binary container import/export error.
@@ -1466,6 +1522,45 @@ mod tests {
                 max: PEVCAP_MAX_ANNOTATIONS
             }) if len == PEVCAP_MAX_ANNOTATIONS + 1
         ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_codec_dispatches_jsonl_round_trip() {
+        let capture = sample_pevcap_capture();
+
+        let encoded = capture
+            .encode(PevcapEncoding::Jsonl)
+            .expect("JSONL encodes");
+        let decoded =
+            PevcapCapture::decode(&encoded, PevcapEncoding::Jsonl).expect("JSONL decodes");
+
+        assert_eq!(decoded, capture);
+        assert!(encoded.starts_with(br#"{"kind":"header""#));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_codec_dispatches_binary_round_trip() {
+        let capture = sample_pevcap_capture();
+
+        let encoded = capture
+            .encode(PevcapEncoding::Binary)
+            .expect("binary encodes");
+        let decoded =
+            PevcapCapture::decode(&encoded, PevcapEncoding::Binary).expect("binary decodes");
+
+        assert_eq!(decoded, capture);
+        assert!(encoded.starts_with(&PEVCAP_MAGIC));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_codec_rejects_non_utf8_jsonl_bytes() {
+        let error = PevcapCapture::decode(&[0xff], PevcapEncoding::Jsonl)
+            .expect_err("JSONL input must be UTF-8");
+
+        assert!(matches!(error, PevcapCodecError::Utf8(_)));
     }
 
     #[cfg(feature = "serde")]

@@ -7,7 +7,8 @@ use cutout_btle::{
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    DeviceCommand, FirmwareInfo, Measured, PevcapCapture, SettingsReadback, TelemetrySnapshot,
+    DeviceCommand, FirmwareInfo, Measured, PevcapCapture, PevcapEncoding, SettingsReadback,
+    TelemetrySnapshot,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
@@ -72,24 +73,14 @@ fn convert_pevcap_bytes(
     input_format: PevcapFormat,
     output_format: PevcapFormat,
 ) -> Result<Vec<u8>> {
-    let capture = decode_pevcap_bytes(input, input_format)?;
-    encode_pevcap_capture(&capture, output_format)
+    let capture = PevcapCapture::decode(input, pevcap_encoding(input_format));
+    Ok(capture?.encode(pevcap_encoding(output_format))?)
 }
 
-fn decode_pevcap_bytes(input: &[u8], format: PevcapFormat) -> Result<PevcapCapture> {
+const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
     match format {
-        PevcapFormat::Jsonl => {
-            let text = std::str::from_utf8(input)?;
-            Ok(PevcapCapture::from_jsonl(text)?)
-        }
-        PevcapFormat::Binary => Ok(PevcapCapture::from_binary(input)?),
-    }
-}
-
-fn encode_pevcap_capture(capture: &PevcapCapture, format: PevcapFormat) -> Result<Vec<u8>> {
-    match format {
-        PevcapFormat::Jsonl => Ok(capture.to_jsonl()?.into_bytes()),
-        PevcapFormat::Binary => Ok(capture.to_binary()?),
+        PevcapFormat::Jsonl => PevcapEncoding::Jsonl,
+        PevcapFormat::Binary => PevcapEncoding::Binary,
     }
 }
 
