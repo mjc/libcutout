@@ -84,17 +84,6 @@ impl FalconProbe {
         }
     }
 
-    /// Returns the temporary placeholder label for this probe.
-    #[must_use]
-    pub const fn placeholder_label(self) -> &'static [u8] {
-        match self {
-            Self::Identity => b"falcon:identity",
-            Self::FirmwareInfo => b"falcon:firmware",
-            Self::Telemetry => b"falcon:telemetry",
-            Self::BatteryInfo => b"falcon:battery",
-        }
-    }
-
     /// Returns the generic command kind correlated with this probe.
     #[must_use]
     pub const fn command_kind(self) -> CommandKind {
