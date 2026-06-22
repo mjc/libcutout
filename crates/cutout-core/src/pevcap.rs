@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    GattChannel, GattFingerprint, GattRoles, MonotonicMillis, ProtocolFamily, VerificationStatus,
-    VerifiedValue, WriteMode,
+    GattChannel, GattFingerprint, MonotonicMillis, ProtocolFamily, VerifiedValue, WriteMode,
 };
+#[cfg(any(feature = "serde", test))]
+use crate::{GattRoles, VerificationStatus};
 
 /// PEVCAP file format magic bytes.
 pub const PEVCAP_MAGIC: [u8; 8] = *b"PEVCAP\0\0";

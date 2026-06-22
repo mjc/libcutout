@@ -3,11 +3,12 @@ use cutout_core::{
     BatteryInfo, Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel,
     MonotonicMillis, ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession,
     ReadOnlyResponse, SafetyClass, SessionInput, SessionOutput, TransportAction,
-    VerificationStatus,
+    VerificationStatus, WritePayload,
 };
 
 use crate::{
-    BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL, VeteranBmsPageEvidence, VeteranFrame,
+    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, FalconProbe, FalconRequestEncoder,
+    RequestDisposition, VETERAN_DATA_CHANNEL, VeteranBmsPageEvidence, VeteranFrame,
     VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
     decode_veteran_bms_page,
 };
@@ -80,6 +81,9 @@ impl ProtocolOperation for DangerousActuationOperation {
 
 /// Type-level read-only request capability.
 pub trait SupportsReadRequests: ProtocolModelSpec {
+    /// Family-specific read probe enum.
+    type Probe;
+
     /// Operation marker for read requests.
     const READ_OPERATION: ReadOnlyOperation = ReadOnlyOperation;
 
@@ -91,6 +95,9 @@ pub trait SupportsReadRequests: ProtocolModelSpec {
 
     /// Stateful decoder for accepted notifications from this model.
     type NotificationDecoder: ReadOnlyNotificationDecoder + Default;
+
+    /// Encodes a supported read-only command for this model family.
+    fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>>;
 }
 
 /// Decoder hook for read-only model notification streams.
@@ -259,6 +266,8 @@ impl ProtocolModelSpec for NosfetAeroModel {
 }
 
 impl SupportsReadRequests for NosfetAeroModel {
+    type Probe = AeroProbe;
+
     const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
         CommandKind::RequestIdentity,
         CommandKind::RequestFirmwareInfo,
@@ -268,6 +277,10 @@ impl SupportsReadRequests for NosfetAeroModel {
     ]);
     const SUBSCRIBE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
     type NotificationDecoder = VeteranNotificationDecoder;
+
+    fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
+        AeroRequestEncoder::encode_command(kind)
+    }
 }
 
 /// Begode Falcon read-only model spec.
@@ -281,6 +294,8 @@ impl ProtocolModelSpec for BegodeFalconModel {
 }
 
 impl SupportsReadRequests for BegodeFalconModel {
+    type Probe = FalconProbe;
+
     const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
         CommandKind::RequestIdentity,
         CommandKind::RequestFirmwareInfo,
@@ -289,6 +304,10 @@ impl SupportsReadRequests for BegodeFalconModel {
     ]);
     const SUBSCRIBE_CHANNEL: GattChannel = BEGODE_DATA_CHANNEL;
     type NotificationDecoder = NoopNotificationDecoder;
+
+    fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
+        FalconRequestEncoder::encode_command(kind)
+    }
 }
 
 fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>(
@@ -328,9 +347,23 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                 decoder.handle_notification(bytes, monotonic_ms, output);
             }
         }
-        SessionInput::Command(command) => match gate_read_only_command::<M>(command) {
-            ReadOnlyCommandGate::SupportedRead(_) | ReadOnlyCommandGate::Unsupported(_) => {}
-        },
+        SessionInput::Command(command) => {
+            if let ReadOnlyCommandGate::SupportedRead(kind) = gate_read_only_command::<M>(command) {
+                push_read_request::<M>(kind, output);
+            }
+        }
+    }
+}
+
+fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Vec<SessionOutput>) {
+    if let Some(RequestDisposition::Write(request)) = M::encode_read_command(kind)
+        && let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice())
+    {
+        output.push(SessionOutput::Transport(TransportAction::Write {
+            channel: M::SUBSCRIBE_CHANNEL,
+            bytes,
+            mode: request.mode,
+        }));
     }
 }
 
@@ -401,7 +434,7 @@ mod tests {
     use core::mem::size_of;
     use cutout_core::{
         BatteryPageKind, LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
-        TransportAction, VerificationStatus,
+        TransportAction, VerificationStatus, WriteMode,
     };
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
@@ -415,10 +448,16 @@ mod tests {
     }
 
     impl SupportsReadRequests for TestModel {
+        type Probe = AeroProbe;
+
         const READ_CAPABILITIES: Capabilities =
             Capabilities::from_supported_commands([CommandKind::RequestTelemetry]);
         const SUBSCRIBE_CHANNEL: GattChannel = TEST_CHANNEL;
         type NotificationDecoder = NoopNotificationDecoder;
+
+        fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
+            AeroRequestEncoder::encode_command(kind)
+        }
     }
 
     fn live_aero_frame() -> [u8; 87] {
@@ -815,6 +854,76 @@ mod tests {
             }),
             ReadOnlyCommandGate::Unsupported(CommandKind::SetRawMotorCurrent)
         );
+    }
+
+    #[test]
+    fn falcon_read_only_session_writes_identity_request_bytes() {
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestIdentity),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Transport(TransportAction::Write {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: WritePayload::try_from_slice(b"N").expect("fixture payload fits"),
+                mode: WriteMode::WithoutResponse,
+            })]
+        );
+    }
+
+    #[test]
+    fn falcon_read_only_session_writes_firmware_request_bytes() {
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestFirmwareInfo),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Transport(TransportAction::Write {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: WritePayload::try_from_slice(b"V").expect("fixture payload fits"),
+                mode: WriteMode::WithoutResponse,
+            })]
+        );
+    }
+
+    #[test]
+    fn falcon_read_only_session_keeps_passive_requests_write_free() {
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+            &mut output,
+        );
+
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn falcon_read_only_session_rejects_unsupported_diagnostics_without_writes() {
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            &mut output,
+        );
+
+        assert!(output.is_empty());
     }
 
     #[test]
