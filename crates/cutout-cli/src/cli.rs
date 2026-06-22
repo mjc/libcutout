@@ -162,6 +162,10 @@ pub(crate) struct TargetedScanArgs {
     /// Explicit read-only probe command to issue after subscribing.
     #[arg(long = "probe", value_enum)]
     pub(crate) probes: Vec<ReadProbe>,
+
+    /// Emit aggregate session diagnostics as JSONL records.
+    #[arg(long = "diagnostics-jsonl")]
+    pub(crate) diagnostics_jsonl: bool,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -220,6 +224,10 @@ impl TargetedScanArgs {
 
     pub(crate) fn probes(&self) -> &[ReadProbe] {
         &self.probes
+    }
+
+    pub(crate) const fn diagnostics_jsonl(&self) -> bool {
+        self.diagnostics_jsonl
     }
 }
 
@@ -432,6 +440,7 @@ mod tests {
                 },
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
+                diagnostics_jsonl: false,
             })
         );
     }
@@ -461,6 +470,36 @@ mod tests {
                 scan: ScanArgs { seconds: 8 },
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
+                diagnostics_jsonl: false,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_connect_command_with_diagnostics_jsonl() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "connect",
+            "--name-contains",
+            "NF2557",
+            "--diagnostics-jsonl",
+        ])
+        .expect("parser accepts connect diagnostic JSONL flag");
+
+        assert_eq!(
+            cli.command,
+            Command::Connect(TargetedScanArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: None,
+                    name_contains: Some("NF2557".to_owned()),
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS
+                },
+                profile: SessionProfile::Auto,
+                probes: Vec::new(),
+                diagnostics_jsonl: true,
             })
         );
     }
@@ -488,6 +527,7 @@ mod tests {
                 scan: ScanArgs { seconds: 11 },
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
+                diagnostics_jsonl: false,
             })
         );
     }
@@ -510,6 +550,7 @@ mod tests {
                 },
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
+                diagnostics_jsonl: false,
             })
         );
     }
@@ -532,6 +573,7 @@ mod tests {
                 },
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
+                diagnostics_jsonl: false,
             })
         );
     }
@@ -622,6 +664,7 @@ mod tests {
                     scan: ScanArgs { seconds: 3 },
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
+                    diagnostics_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -648,6 +691,7 @@ mod tests {
                     },
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
+                    diagnostics_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -681,6 +725,7 @@ mod tests {
                     scan: ScanArgs { seconds: 21 },
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
+                    diagnostics_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -714,6 +759,7 @@ mod tests {
                     },
                     profile: SessionProfile::Falcon,
                     probes: Vec::new(),
+                    diagnostics_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -751,6 +797,7 @@ mod tests {
                     },
                     profile: SessionProfile::Falcon,
                     probes: vec![ReadProbe::Identity, ReadProbe::Firmware],
+                    diagnostics_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -786,9 +833,43 @@ mod tests {
                     },
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
+                    diagnostics_jsonl: false,
                 },
                 pevcap_output: Some(PathBuf::from("session.pevcap")),
                 pevcap_format: PevcapFormat::Binary,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_capture_aero_command_with_diagnostics_jsonl() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "NF2557",
+            "--diagnostics-jsonl",
+        ])
+        .expect("parser accepts capture diagnostic JSONL flag");
+
+        assert_eq!(
+            cli.command,
+            Command::CaptureAero(CaptureAeroArgs {
+                target: TargetedScanArgs {
+                    target: TargetArgs {
+                        address: None,
+                        identifier: None,
+                        name_contains: Some("NF2557".to_owned()),
+                    },
+                    scan: ScanArgs {
+                        seconds: DEFAULT_SCAN_SECONDS
+                    },
+                    profile: SessionProfile::Auto,
+                    probes: Vec::new(),
+                    diagnostics_jsonl: true,
+                },
+                pevcap_output: None,
+                pevcap_format: PevcapFormat::Jsonl,
             })
         );
     }
@@ -1010,6 +1091,7 @@ mod tests {
                 },
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
+                diagnostics_jsonl: false,
             })
         );
     }
@@ -1037,6 +1119,7 @@ mod tests {
             scan: ScanArgs { seconds: 30 },
             profile: SessionProfile::Auto,
             probes: Vec::new(),
+            diagnostics_jsonl: false,
         };
 
         assert_eq!(args.seconds(), 30);

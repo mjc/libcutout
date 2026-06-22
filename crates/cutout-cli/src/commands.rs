@@ -516,6 +516,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let seconds = args.seconds();
     let profile = selected_session_profile(args.profile());
     let commands = read_probe_commands(args.probes());
+    let diagnostics_jsonl = args.diagnostics_jsonl();
     let connection =
         connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
 
@@ -526,8 +527,11 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
             &connection,
             endpoints,
             profile,
-            &commands,
-            Duration::from_secs(seconds),
+            SessionRunOptions {
+                commands: &commands,
+                window: Duration::from_secs(seconds),
+                diagnostics_jsonl,
+            },
         )
         .await?;
     }
@@ -560,14 +564,20 @@ enum CaptureOutput {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SessionRunOptions<'a> {
+    commands: &'a [DeviceCommand],
+    window: Duration,
+    diagnostics_jsonl: bool,
+}
+
 impl SessionMode {
     async fn run(
         self,
         connection: &ConnectedPeripheral,
         endpoints: SessionEndpoints<'_>,
         profile: SelectedSessionProfile,
-        commands: &[DeviceCommand],
-        window: Duration,
+        options: SessionRunOptions<'_>,
     ) -> Result<()> {
         match profile {
             SelectedSessionProfile::Aero => {
@@ -578,8 +588,7 @@ impl SessionMode {
                     endpoints,
                     ReadOnlySession::<NosfetAeroModel, false>::default(),
                     binding,
-                    commands,
-                    window,
+                    options,
                 )
                 .await
             }
@@ -591,8 +600,7 @@ impl SessionMode {
                     endpoints,
                     ReadOnlySession::<BegodeFalconModel, true>::default(),
                     binding,
-                    commands,
-                    window,
+                    options,
                 )
                 .await
             }
@@ -605,8 +613,7 @@ impl SessionMode {
         endpoints: SessionEndpoints<'_>,
         mut session: S,
         binding: SessionBinding,
-        commands: &[DeviceCommand],
-        window: Duration,
+        options: SessionRunOptions<'_>,
     ) -> Result<()>
     where
         S: cutout_core::ProtocolSession + Send,
@@ -619,11 +626,12 @@ impl SessionMode {
                     binding.channel,
                     &connection.summary,
                     endpoints,
-                    window,
-                    commands,
+                    options.window,
+                    options.commands,
                 )
                 .await?;
                 print_session_report(&report);
+                print_session_diagnostics_jsonl(&report, options.diagnostics_jsonl)?;
             }
             Self::Capture { output } => {
                 let capture = capture_session_with_commands(
@@ -632,11 +640,17 @@ impl SessionMode {
                     binding.channel,
                     &connection.summary,
                     endpoints,
-                    window,
-                    commands,
+                    options.window,
+                    options.commands,
                 )
                 .await?;
-                write_or_print_capture(capture, &connection.summary, &output, binding.profile)?;
+                write_or_print_capture(
+                    capture,
+                    &connection.summary,
+                    &output,
+                    binding.profile,
+                    options.diagnostics_jsonl,
+                )?;
             }
         }
         Ok(())
@@ -738,11 +752,13 @@ fn print_session_endpoints(endpoints: SessionEndpoints<'_>) {
     );
 }
 
-fn print_capture(capture: SessionCapture) {
+fn print_capture(capture: SessionCapture, diagnostics_jsonl: bool) -> Result<()> {
     for record in capture.records {
         println!("{record}");
     }
     print_session_report(&capture.report);
+    print_session_diagnostics_jsonl(&capture.report, diagnostics_jsonl)?;
+    Ok(())
 }
 
 fn write_or_print_capture(
@@ -750,10 +766,11 @@ fn write_or_print_capture(
     summary: &cutout_btle::ConnectionSummary,
     output: &CaptureOutput,
     profile: SelectedSessionProfile,
+    diagnostics_jsonl: bool,
 ) -> Result<()> {
     match output {
         CaptureOutput::Text => {
-            print_capture(capture);
+            print_capture(capture, diagnostics_jsonl)?;
             Ok(())
         }
         CaptureOutput::Pevcap { path, format } => {
@@ -768,6 +785,7 @@ fn write_or_print_capture(
             fs::write(path, bytes)?;
             println!("wrote pevcap {} ({format:?})", path.display());
             print_session_report(&report);
+            print_session_diagnostics_jsonl(&report, diagnostics_jsonl)?;
             Ok(())
         }
     }
@@ -869,6 +887,25 @@ fn print_session_report(report: &SessionBridgeReport) {
     for settings in render_settings_readbacks(&report.settings) {
         println!("{settings}");
     }
+}
+
+fn print_session_diagnostics_jsonl(
+    report: &SessionBridgeReport,
+    enabled: bool,
+) -> Result<(), serde_json::Error> {
+    if enabled {
+        println!("{}", render_session_diagnostics_jsonl(report)?);
+    }
+    Ok(())
+}
+
+fn render_session_diagnostics_jsonl(
+    report: &SessionBridgeReport,
+) -> Result<String, serde_json::Error> {
+    render_diagnostic_snapshot_jsonl(
+        0,
+        DiagnosticSnapshot::from_parser_diagnostics(report.diagnostics_snapshot),
+    )
 }
 
 fn render_identity(report: &SessionBridgeReport) -> Option<String> {
@@ -1322,6 +1359,37 @@ mod tests {
         assert_eq!(value["oversized_frames"], 8);
         assert_eq!(value["malformed_frames"], 13);
         assert_eq!(value["unmatched_replies"], 21);
+    }
+
+    #[test]
+    fn live_session_diagnostics_jsonl_uses_aggregate_report_snapshot() {
+        let report = SessionBridgeReport {
+            diagnostics_snapshot: cutout_core::ParserDiagnostics {
+                dropped_bytes: 1,
+                resyncs: 2,
+                bad_checksums: 3,
+                timeouts: 4,
+                oversized_frames: 5,
+                malformed_frames: 6,
+                unmatched_replies: 7,
+            },
+            ..SessionBridgeReport::default()
+        };
+
+        let line = render_session_diagnostics_jsonl(&report)
+            .expect("session diagnostics JSONL serializes");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("session diagnostics JSONL is JSON");
+        assert_eq!(value["type"], "diagnostic_snapshot");
+        assert_eq!(value["sequence"], 0);
+        assert_eq!(value["dropped_bytes"], 1);
+        assert_eq!(value["resyncs"], 2);
+        assert_eq!(value["bad_checksums"], 3);
+        assert_eq!(value["timeouts"], 4);
+        assert_eq!(value["oversized_frames"], 5);
+        assert_eq!(value["malformed_frames"], 6);
+        assert_eq!(value["unmatched_replies"], 7);
     }
 
     #[test]
