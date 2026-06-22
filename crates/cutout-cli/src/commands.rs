@@ -277,14 +277,14 @@ mod tests {
             pwm_permille: Some(Measured::reported(-1_000)),
             distance_mm: Some(Measured::reported(1_551_169_000)),
             pitch_mdeg: Some(Measured::reported(69_060)),
-            battery_percent_estimated: Some(Measured::estimated(39)),
+            battery_percent_estimated: Some(Measured::estimated(47)),
             ..cutout_core::TelemetryDelta::empty(42)
         });
 
         assert_eq!(
             render_telemetry_snapshot(&snapshot).as_deref(),
             Some(
-                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=39"
+                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=47"
             )
         );
     }

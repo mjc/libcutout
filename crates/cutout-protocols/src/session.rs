@@ -604,7 +604,7 @@ mod tests {
     fn nosfet_aero_session_emits_estimated_battery_percent_from_live_fixture_notification() {
         assert_eq!(
             live_aero_telemetry().battery_percent_estimated,
-            Some(Measured::estimated(39))
+            Some(Measured::estimated(47))
         );
     }
 
