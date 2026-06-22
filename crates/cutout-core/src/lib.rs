@@ -1340,6 +1340,208 @@ impl DiagnosticError {
     }
 }
 
+/// Bounded notification evidence shared by protocol ingest outcomes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationEvidence {
+    /// Protocol family that accepted or classified the bytes, when known.
+    pub family: Option<ProtocolFamily>,
+
+    /// Logical protocol channel used for session ingest.
+    pub channel: GattChannel,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: MonotonicMillis,
+
+    /// Number of notification bytes observed.
+    pub len: usize,
+}
+
+impl NotificationEvidence {
+    /// Creates bounded notification evidence without retaining raw bytes.
+    #[must_use]
+    pub const fn new(
+        family: Option<ProtocolFamily>,
+        channel: GattChannel,
+        len: usize,
+        monotonic_ms: MonotonicMillis,
+    ) -> Self {
+        Self {
+            family,
+            channel,
+            monotonic_ms,
+            len,
+        }
+    }
+}
+
+/// Bounded evidence for protocol payloads that are known but intentionally not
+/// decoded as stable telemetry yet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReservedPayloadEvidence {
+    /// Protocol selector/page id, when the family has one.
+    pub selector: Option<u8>,
+
+    /// Protocol tag/opcode, when observed.
+    pub tag: Option<u16>,
+
+    /// Length of the classified body, without retaining raw bytes.
+    pub body_len: usize,
+
+    /// Verification status for this reserved-payload classification.
+    pub verification: VerificationStatus,
+}
+
+/// Bounded evidence for a known-family payload that still has no stable parser
+/// mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserGapEvidence {
+    /// Protocol tag/opcode, when observed.
+    pub tag: Option<u16>,
+
+    /// Protocol selector/page id, when observed.
+    pub selector: Option<u8>,
+
+    /// Length of the unparsed body, without retaining raw bytes.
+    pub body_len: usize,
+}
+
+/// Typed result of feeding one transport notification into a protocol decoder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NotificationIngestOutcome {
+    /// The notification produced one or more semantic session events.
+    SemanticEvents {
+        /// Bounded notification evidence.
+        notification: NotificationEvidence,
+
+        /// Number of semantic events produced by this ingest step.
+        event_count: usize,
+    },
+
+    /// The protocol accepted the bytes but is still waiting for a complete
+    /// frame/message.
+    BufferedFragment(NotificationEvidence),
+
+    /// The protocol produced parser diagnostics for the notification.
+    ParserDiagnostic {
+        /// Bounded notification evidence.
+        notification: NotificationEvidence,
+
+        /// Parser error emitted for this ingest step.
+        error: ParserError,
+    },
+
+    /// The protocol recognized the payload as known/reserved evidence.
+    KnownReserved {
+        /// Bounded notification evidence.
+        notification: NotificationEvidence,
+
+        /// Reserved payload evidence without raw bytes.
+        payload: ReservedPayloadEvidence,
+    },
+
+    /// The protocol family accepted the notification but lacks a stable mapping
+    /// for the payload.
+    ParserGap {
+        /// Bounded notification evidence.
+        notification: NotificationEvidence,
+
+        /// Parser-gap evidence without raw bytes.
+        gap: ParserGapEvidence,
+    },
+
+    /// The session ignored the notification, usually because it arrived on the
+    /// wrong logical channel for the selected protocol model.
+    Ignored(NotificationEvidence),
+}
+
+impl NotificationIngestOutcome {
+    /// Creates a semantic-events outcome.
+    #[must_use]
+    pub const fn semantic_events(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: usize,
+        monotonic_ms: MonotonicMillis,
+        event_count: usize,
+    ) -> Self {
+        Self::SemanticEvents {
+            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            event_count,
+        }
+    }
+
+    /// Creates an accepted buffered-fragment outcome.
+    #[must_use]
+    pub const fn buffered_fragment(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: usize,
+        monotonic_ms: MonotonicMillis,
+    ) -> Self {
+        Self::BufferedFragment(NotificationEvidence::new(
+            Some(family),
+            channel,
+            len,
+            monotonic_ms,
+        ))
+    }
+
+    /// Creates a parser-diagnostic outcome.
+    #[must_use]
+    pub const fn parser_diagnostic(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: usize,
+        monotonic_ms: MonotonicMillis,
+        error: ParserError,
+    ) -> Self {
+        Self::ParserDiagnostic {
+            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            error,
+        }
+    }
+
+    /// Creates a known-reserved payload outcome.
+    #[must_use]
+    pub const fn known_reserved(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: usize,
+        monotonic_ms: MonotonicMillis,
+        payload: ReservedPayloadEvidence,
+    ) -> Self {
+        Self::KnownReserved {
+            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            payload,
+        }
+    }
+
+    /// Creates a parser-gap outcome.
+    #[must_use]
+    pub const fn parser_gap(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: usize,
+        monotonic_ms: MonotonicMillis,
+        gap: ParserGapEvidence,
+    ) -> Self {
+        Self::ParserGap {
+            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            gap,
+        }
+    }
+
+    /// Creates an ignored wrong-channel/unsupported notification outcome.
+    #[must_use]
+    pub const fn ignored_wrong_channel(
+        channel: GattChannel,
+        len: usize,
+        monotonic_ms: MonotonicMillis,
+    ) -> Self {
+        Self::Ignored(NotificationEvidence::new(None, channel, len, monotonic_ms))
+    }
+}
+
 /// Transport-independent request target used for correlation.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RequestTarget {
@@ -3369,6 +3571,8 @@ mod tests {
     use core::mem::size_of;
     use proptest::prelude::*;
 
+    const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0xA1; 16]);
+
     #[test]
     fn exposes_the_expected_name() {
         assert_eq!(crate_name(), "cutout-core");
@@ -3482,9 +3686,133 @@ mod tests {
         assert_eq!(size_of::<crate::ParserDiagnostics>(), 56);
         assert_eq!(size_of::<crate::DiagnosticSnapshot>(), 56);
         assert!(size_of::<crate::DiagnosticError>() <= 80);
+        assert!(size_of::<crate::NotificationIngestOutcome>() <= 128);
+        assert!(size_of::<crate::NotificationEvidence>() <= 64);
+        assert!(size_of::<crate::ReservedPayloadEvidence>() <= 64);
         assert!(size_of::<TelemetrySnapshot>() <= 256);
         assert!(size_of::<crate::CaptureRecord>() <= 48);
         assert!(size_of::<crate::HostSession<EchoSession>>() <= 352);
+    }
+
+    #[test]
+    fn notification_ingest_outcome_distinguishes_buffered_fragments_from_ignored_traffic() {
+        let buffered = crate::NotificationIngestOutcome::buffered_fragment(
+            crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            TEST_CHANNEL,
+            20,
+            7,
+        );
+        let ignored = crate::NotificationIngestOutcome::ignored_wrong_channel(TEST_CHANNEL, 20, 7);
+
+        assert!(matches!(
+            buffered,
+            crate::NotificationIngestOutcome::BufferedFragment(evidence)
+                if evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == 20
+                    && evidence.monotonic_ms == 7
+        ));
+        assert!(matches!(
+            ignored,
+            crate::NotificationIngestOutcome::Ignored(evidence)
+                if evidence.family.is_none()
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == 20
+                    && evidence.monotonic_ms == 7
+        ));
+    }
+
+    #[test]
+    fn notification_ingest_outcome_carries_known_reserved_payload_evidence() {
+        let outcome = crate::NotificationIngestOutcome::known_reserved(
+            crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            TEST_CHANNEL,
+            75,
+            12,
+            crate::ReservedPayloadEvidence {
+                selector: Some(8),
+                tag: Some(0x42),
+                body_len: 68,
+                verification: VerificationStatus::HardwareVerified,
+            },
+        );
+
+        assert!(matches!(
+            outcome,
+            crate::NotificationIngestOutcome::KnownReserved {
+                notification,
+                payload,
+            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                && notification.channel == TEST_CHANNEL
+                && notification.len == 75
+                && notification.monotonic_ms == 12
+                && payload.selector == Some(8)
+                && payload.body_len == 68
+                && payload.verification == VerificationStatus::HardwareVerified
+        ));
+    }
+
+    #[test]
+    fn notification_ingest_outcome_counts_semantic_events_without_storing_them() {
+        let outcome = crate::NotificationIngestOutcome::semantic_events(
+            crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            TEST_CHANNEL,
+            77,
+            21,
+            3,
+        );
+
+        assert!(matches!(
+            outcome,
+            crate::NotificationIngestOutcome::SemanticEvents {
+                notification,
+                event_count: 3,
+            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                && notification.channel == TEST_CHANNEL
+                && notification.len == 77
+                && notification.monotonic_ms == 21
+        ));
+    }
+
+    #[test]
+    fn notification_ingest_outcome_carries_parser_diagnostics_without_raw_bytes() {
+        let outcome = crate::NotificationIngestOutcome::parser_diagnostic(
+            crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            TEST_CHANNEL,
+            77,
+            22,
+            crate::ParserError::BadChecksum,
+        );
+
+        assert!(matches!(
+            outcome,
+            crate::NotificationIngestOutcome::ParserDiagnostic {
+                notification,
+                error: crate::ParserError::BadChecksum,
+            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                && notification.channel == TEST_CHANNEL
+        ));
+    }
+
+    #[test]
+    fn notification_ingest_debug_redacts_raw_bytes() {
+        let outcome = crate::NotificationIngestOutcome::parser_gap(
+            crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            TEST_CHANNEL,
+            77,
+            15,
+            crate::ParserGapEvidence {
+                tag: Some(0x5c),
+                selector: Some(8),
+                body_len: 70,
+            },
+        );
+        let debug = format!("{outcome:?}");
+
+        assert!(debug.contains("ParserGap"));
+        assert!(debug.contains("body_len: 70"));
+        assert!(!debug.contains("dc5a5c"));
+        assert!(!debug.contains("bytes"));
     }
 
     #[derive(Default)]
