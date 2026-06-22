@@ -19,6 +19,7 @@ mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod request_encoder;
 mod session;
+mod veteran_bms;
 pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
 };
@@ -27,6 +28,10 @@ pub use session::{
     NosfetAeroModel, ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyOperation,
     ReadOnlySession, SettingsWriteOperation, SupportsBenignControls, SupportsDangerousActuation,
     SupportsReadRequests, SupportsSettingsWrites,
+};
+pub use veteran_bms::{
+    VETERAN_BMS_CELL_VALUES_PER_PAGE, VeteranBmsPageError, classify_veteran_bms_selector,
+    decode_veteran_bms_page,
 };
 
 /// Returns the crate name used by setup smoke tests.
