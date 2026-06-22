@@ -1,0 +1,28 @@
+[package]
+name = "cutout-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+cutout-protocols = { path = "../crates/cutout-protocols" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "begode_frame_reassembler"
+path = "fuzz_targets/begode_frame_reassembler.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "veteran_frame_reassembler"
+path = "fuzz_targets/veteran_frame_reassembler.rs"
+test = false
+doc = false
+bench = false

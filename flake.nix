@@ -111,12 +111,19 @@
             overlays = [ rust-overlay.overlays.default ];
           };
           stableRust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          nightlyRust = pkgs.rust-bin.nightly.latest.default;
+          cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
+            export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
+            exec cargo fuzz "$@"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = [
               stableRust
+              cutoutCargoFuzz
               pkgs.cargo-deny
+              pkgs.cargo-fuzz
               pkgs.cargo-mutants
               pkgs.nixfmt
             ];
