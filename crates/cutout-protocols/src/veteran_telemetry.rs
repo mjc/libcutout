@@ -77,6 +77,9 @@ pub struct VeteranModelProfile {
     /// Parallel cell count for model pack configuration.
     pub parallel_cells: u8,
 
+    /// Nominal pack capacity in milliamp-hours, when known.
+    pub nominal_capacity_mah: Option<u32>,
+
     /// Single-cell battery curve used for estimated battery percent, when known.
     pub battery_profile: Option<&'static BatteryVoltageProfile>,
 
@@ -101,17 +104,57 @@ impl VeteranModelProfile {
             0 | 1 => Self::new_linear(model_id, "Veteran Sherman", 24, 79_350..=98_700),
             2 => Self::new_linear(model_id, "Veteran Abrams", 24, 79_350..=98_700),
             3 => Self::new_linear(model_id, "Veteran Sherman S", 24, 79_350..=98_700),
-            4 => Self::new_linear(model_id, "Veteran Patton", 30, 99_180..=123_370),
-            5 => Self::new_linear(model_id, "Veteran Lynx", 36, 119_020..=148_050),
-            6 => Self::new_linear(model_id, "Veteran Sherman L", 36, 119_020..=148_050),
-            7 => Self::new_linear(model_id, "Veteran Patton S", 30, 99_180..=123_370),
-            8 => Self::new_linear(model_id, "Veteran Oryx", 42, 138_860..=172_720),
-            9 => Self::new_linear(model_id, "Veteran Lynx S", 36, 119_020..=148_050),
-            42 => Self::new_linear(model_id, "NOSFET Apex", 36, 119_020..=148_050),
+            4 => Self::new_with_battery_profile(
+                model_id,
+                "Veteran Patton",
+                30,
+                2,
+                &SAMSUNG_50S_PROFILE,
+            ),
+            5 => Self::new_with_battery_profile(
+                model_id,
+                "Veteran Lynx",
+                36,
+                4,
+                &SAMSUNG_50S_PROFILE,
+            ),
+            6 => Self::new_with_battery_profile(
+                model_id,
+                "Veteran Sherman L",
+                36,
+                6,
+                &SAMSUNG_50S_PROFILE,
+            ),
+            7 => Self::new_with_battery_profile(
+                model_id,
+                "Veteran Patton S",
+                30,
+                2,
+                &SAMSUNG_50S_PROFILE,
+            ),
+            8 => Self::new_with_battery_profile(
+                model_id,
+                "Veteran Oryx",
+                42,
+                6,
+                &SAMSUNG_50S_PROFILE,
+            ),
+            9 => Self::new_with_battery_profile(
+                model_id,
+                "Veteran Lynx S",
+                36,
+                4,
+                &SAMSUNG_50S_PROFILE,
+            ),
+            42 => {
+                Self::new_with_battery_profile(model_id, "NOSFET Apex", 36, 4, &SAMSUNG_50S_PROFILE)
+            }
             43 => {
                 Self::new_with_battery_profile(model_id, "NOSFET Aero", 30, 2, &SAMSUNG_50S_PROFILE)
             }
-            44 => Self::new_linear(model_id, "NOSFET Aeon", 36, 119_020..=148_050),
+            44 => {
+                Self::new_with_battery_profile(model_id, "NOSFET Aeon", 36, 2, &SAMSUNG_50S_PROFILE)
+            }
             _ => return None,
         };
         Some(profile)
@@ -128,6 +171,7 @@ impl VeteranModelProfile {
             name,
             cell_count,
             parallel_cells: 1,
+            nominal_capacity_mah: None,
             battery_profile: None,
             voltage_range_mv,
             has_pwm_readback: model_id >= 2,
@@ -148,6 +192,9 @@ impl VeteranModelProfile {
             name,
             cell_count,
             parallel_cells,
+            nominal_capacity_mah: Some(
+                u32::from(battery_profile.nominal_capacity_mah) * u32::from(parallel_cells),
+            ),
             battery_profile: Some(battery_profile),
             voltage_range_mv: battery_profile_pack_range(battery_profile, cell_count),
             has_pwm_readback: model_id >= 2,
@@ -551,6 +598,7 @@ mod tests {
         assert_eq!(aero.name, "NOSFET Aero");
         assert_eq!(aero.cell_count, 30);
         assert_eq!(aero.parallel_cells, 2);
+        assert_eq!(aero.nominal_capacity_mah, Some(10_000));
         assert_eq!(
             aero.battery_profile.map(|profile| profile.cell_model),
             Some("Samsung 50S")
@@ -561,11 +609,18 @@ mod tests {
 
         assert_eq!(oryx.name, "Veteran Oryx");
         assert_eq!(oryx.cell_count, 42);
-        assert_eq!(oryx.voltage_range_mv, 138_860..=172_720);
+        assert_eq!(oryx.parallel_cells, 6);
+        assert_eq!(oryx.nominal_capacity_mah, Some(30_000));
+        assert_eq!(
+            oryx.battery_profile.map(|profile| profile.cell_model),
+            Some("Samsung 50S")
+        );
+        assert_eq!(oryx.voltage_range_mv, 127_400..=176_400);
         assert!(oryx.has_smart_bms);
 
         assert_eq!(sherman.cell_count, 24);
         assert_eq!(sherman.parallel_cells, 1);
+        assert_eq!(sherman.nominal_capacity_mah, None);
         assert_eq!(sherman.battery_profile, None);
         assert_eq!(sherman.voltage_range_mv, 79_350..=98_700);
         assert!(!sherman.has_pwm_readback);
@@ -662,23 +717,61 @@ mod tests {
     }
 
     #[test]
-    fn non_profiled_veteran_models_keep_linear_pack_estimation() {
-        let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
+    fn known_samsung_50s_veteran_models_share_cell_curve_with_model_geometry() {
+        let models = [
+            (4, "Veteran Patton", 30, 2, Some(10_000), 91_000..=126_000),
+            (5, "Veteran Lynx", 36, 4, Some(20_000), 109_200..=151_200),
+            (
+                6,
+                "Veteran Sherman L",
+                36,
+                6,
+                Some(30_000),
+                109_200..=151_200,
+            ),
+            (7, "Veteran Patton S", 30, 2, Some(10_000), 91_000..=126_000),
+            (8, "Veteran Oryx", 42, 6, Some(30_000), 127_400..=176_400),
+            (9, "Veteran Lynx S", 36, 4, Some(20_000), 109_200..=151_200),
+            (42, "NOSFET Apex", 36, 4, Some(20_000), 109_200..=151_200),
+            (43, "NOSFET Aero", 30, 2, Some(10_000), 91_000..=126_000),
+            (44, "NOSFET Aeon", 36, 2, Some(10_000), 109_200..=151_200),
+        ];
 
-        assert_eq!(lynx.battery_profile, None);
-        assert_eq!(lynx.parallel_cells, 1);
-        assert_eq!(lynx.estimate_battery_percent(119_020), 0);
-        assert_eq!(lynx.estimate_battery_percent(133_535), 50);
-        assert_eq!(lynx.estimate_battery_percent(148_050), 100);
+        for (model_id, name, cell_count, parallel_cells, nominal_capacity_mah, voltage_range_mv) in
+            models
+        {
+            let profile =
+                VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
+
+            assert_eq!(profile.name, name);
+            assert_eq!(profile.cell_count, cell_count);
+            assert_eq!(profile.parallel_cells, parallel_cells);
+            assert_eq!(profile.nominal_capacity_mah, nominal_capacity_mah);
+            assert_eq!(profile.battery_profile, Some(&SAMSUNG_50S_PROFILE));
+            assert_eq!(profile.voltage_range_mv, voltage_range_mv);
+        }
     }
 
     #[test]
-    fn known_non_aero_models_do_not_inherit_aero_battery_curve() {
-        for model_id in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 42, 44] {
+    fn samsung_50s_veteran_models_estimate_equivalent_pack_voltages_equally() {
+        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
+        let oryx = VeteranModelProfile::from_model_id(8).expect("Oryx profile is known");
+
+        assert_eq!(aero.estimate_battery_percent(107_950), 44);
+        assert_eq!(lynx.estimate_battery_percent(129_540), 44);
+        assert_eq!(oryx.estimate_battery_percent(151_130), 44);
+    }
+
+    #[test]
+    fn models_without_cell_profile_evidence_keep_linear_pack_estimation() {
+        for model_id in [0, 1, 2, 3] {
             let profile =
                 VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
 
             assert_eq!(profile.battery_profile, None);
+            assert_eq!(profile.parallel_cells, 1);
+            assert_eq!(profile.nominal_capacity_mah, None);
         }
     }
 
@@ -691,15 +784,15 @@ mod tests {
     fn veteran_model_profile_estimates_battery_percent_from_profile_range() {
         let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
 
-        assert_eq!(lynx.estimate_battery_percent(119_020), 0);
-        assert_eq!(lynx.estimate_battery_percent(148_050), 100);
-        assert_eq!(lynx.estimate_battery_percent(133_535), 50);
+        assert_eq!(lynx.estimate_battery_percent(109_200), 0);
+        assert_eq!(lynx.estimate_battery_percent(151_200), 100);
+        assert_eq!(lynx.estimate_battery_percent(129_540), 44);
     }
 
     #[test]
     fn veteran_battery_estimation_uses_model_specific_strategy() {
         assert_eq!(estimate_veteran_battery_percent(43, 107_950), 44);
-        assert_eq!(estimate_veteran_battery_percent(5, 133_535), 50);
+        assert_eq!(estimate_veteran_battery_percent(5, 129_540), 44);
         assert_eq!(estimate_veteran_battery_percent(99, 133_535), 0);
     }
 
@@ -713,11 +806,11 @@ mod tests {
 
     #[test]
     fn veteran_telemetry_uses_model_profile_for_battery_percent() {
-        let telemetry = VeteranTelemetry::decode(&synthetic_short_frame(5, 133_535))
+        let telemetry = VeteranTelemetry::decode(&synthetic_short_frame(5, 129_540))
             .expect("synthetic Lynx frame decodes");
 
         assert_eq!(telemetry.firmware.model_id, 5);
-        assert_eq!(telemetry.battery_percent_estimated, 50);
+        assert_eq!(telemetry.battery_percent_estimated, 44);
     }
 
     #[test]

@@ -70,6 +70,15 @@ device is considered fully specced.
   at absolute offsets `69` and `71` and are signed big-endian centiamps. For
   Aero's 30-cell layout, page `3`/`7` should not expose cells beyond index 29;
   those pages are temperature/status evidence until typed core support exists.
+- Battery chemistry should be represented separately from Veteran series-cell
+  count. NOSFET Aero is confirmed as a Samsung 50S 30s2p pack. Public retailer
+  specs also identify Samsung 50S packs for Veteran Patton/Patton S, Lynx/Lynx S,
+  Sherman L, Oryx, NOSFET Apex, and NOSFET Aeon. The protocol model should
+  therefore keep `cell_count` as electrical series count while using the shared
+  Samsung 50S single-cell curve for those models. Older Sherman/Abrams/Sherman S
+  should stay on documented linear ranges until cell-profile evidence is added.
+  NOSFET Aeon is a smaller 151 V-class Samsung 50S pack at about 1300 Wh, so it
+  uses the same 36-series voltage curve as Apex/Lynx but 2p pack capacity.
 - Begode/Falcon remains a separate family: same GATT UUIDs, but `55aa` 24-byte
   frames with `5a5a5a5a` terminator and short ASCII command writes.
 

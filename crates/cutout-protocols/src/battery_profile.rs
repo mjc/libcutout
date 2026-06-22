@@ -14,6 +14,9 @@ pub struct BatteryVoltageProfile {
     /// Human-readable cell model.
     pub cell_model: &'static str,
 
+    /// Nominal cell capacity in milliamp-hours.
+    pub nominal_capacity_mah: u16,
+
     /// Ordered single-cell voltage curve from empty to full.
     pub points: &'static [BatteryVoltagePoint],
 }
@@ -90,6 +93,7 @@ pub const SAMSUNG_50S_CELL_POINTS: [BatteryVoltagePoint; 8] = [
 /// Samsung 50S single-cell profile.
 pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     cell_model: "Samsung 50S",
+    nominal_capacity_mah: 5_000,
     points: &SAMSUNG_50S_CELL_POINTS,
 };
 
@@ -231,6 +235,7 @@ mod tests {
     #[test]
     fn samsung_50s_profile_does_not_encode_parallel_count() {
         assert_eq!(SAMSUNG_50S_PROFILE.cell_model, "Samsung 50S");
+        assert_eq!(SAMSUNG_50S_PROFILE.nominal_capacity_mah, 5_000);
         assert_eq!(SAMSUNG_50S_PROFILE.points.len(), 8);
     }
 
