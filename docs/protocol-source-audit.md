@@ -84,6 +84,17 @@ device is considered fully specced.
   `55aa` header, tag byte at offset `18`, sub-index at offset `19`, and
   `5a5a5a5a` terminator at offsets `20..23`. Do not overfit classification to
   sample payload bytes after the `55aa` magic.
+- Begode/Gotway tag `0x00` is Live A telemetry: raw voltage at offset `2`,
+  speed at `4`, trip-distance candidates at `6`/`8`, phase current at `10`,
+  IMU temperature at `12`, and raw hardware PWM at `14`. For Falcon, user
+  confirmation puts the pack at 84 V / 20S, so use the Begode 1.25 scaler and
+  the better-percent curve unless a Smart-BMS voltage frame supersedes it.
+- Begode/Gotway tag `0x04` is Live B telemetry/settings: total distance,
+  settings bits, power-off timer, tiltback/max speed, LED mode, alert flags,
+  and light mode. Tag `0x07` is extra telemetry for true battery current, motor
+  temperature, and true PWM. Smart-BMS tags `0x01`/`0x02`/`0x03` are separate
+  parser work because `0x01` can provide authoritative pack voltage and BMS
+  current while `0x02`/`0x03` carry cell pages.
 
 ## Backlog Implications
 

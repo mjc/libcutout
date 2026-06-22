@@ -13,6 +13,11 @@ mod gatt;
 pub use gatt::*;
 mod begode_frame;
 pub use begode_frame::{BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameReassembler};
+mod begode_telemetry;
+pub use begode_telemetry::{
+    BegodeExtraTelemetry, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
+    BegodeTelemetryError, estimate_begode_battery_percent,
+};
 mod battery_profile;
 pub use battery_profile::{
     BatteryVoltagePoint, BatteryVoltageProfile, SAMSUNG_50S_CELL_POINTS, SAMSUNG_50S_PROFILE,
