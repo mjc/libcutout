@@ -1,8 +1,9 @@
 use core::marker::PhantomData;
 use cutout_core::{
-    BatteryInfo, Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel,
-    MonotonicMillis, ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession,
-    ReadOnlyResponse, SafetyClass, SessionInput, SessionOutput, TransportAction,
+    BatteryInfo, Capabilities, CommandKind, DeviceCommand, DeviceEvent, DiagnosticDetail,
+    DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
+    ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession, RawFieldValue,
+    ReadOnlyResponse, SafetyClass, SessionInput, SessionOutput, TransportAction, ValueQuality,
     VerificationStatus, WritePayload,
 };
 
@@ -10,11 +11,37 @@ use crate::{
     AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BegodeBmsCellPage, BegodeBmsPageError,
     BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameReassembler, BegodeLiveATelemetry,
     BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
-    FalconProbe, FalconRequestEncoder, RequestDisposition, VETERAN_DATA_CHANNEL,
+    FalconProbe, FalconRequestEncoder, RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL,
+    VETERAN_DATA_CHANNEL, VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry, VescValuesTelemetry,
     VeteranBmsPageEvidence, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
     VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
     decode_veteran_bms_page,
 };
+
+/// Raw VESC electrical RPM telemetry field id.
+pub const VESC_RAW_ERPM_FIELD_ID: u16 = 0x8001;
+
+/// Raw VESC relative tachometer telemetry field id.
+pub const VESC_RAW_TACHOMETER_FIELD_ID: u16 = 0x8002;
+
+/// Raw VESC controller id telemetry field id.
+pub const VESC_RAW_CONTROLLER_ID_FIELD_ID: u16 = 0x8003;
+
+/// Raw VESC fault-code telemetry field id.
+pub const VESC_RAW_FAULT_CODE_FIELD_ID: u16 = 0x8004;
+
+/// Raw VESC average speed statistics field id.
+pub const VESC_RAW_STATS_SPEED_AVG_FIELD_ID: u16 = 0x8101;
+
+/// Raw VESC average power statistics field id.
+pub const VESC_RAW_STATS_POWER_AVG_FIELD_ID: u16 = 0x8102;
+
+/// Raw VESC average current statistics field id.
+pub const VESC_RAW_STATS_CURRENT_AVG_FIELD_ID: u16 = 0x8103;
+
+/// Raw VESC statistics count-time field id.
+pub const VESC_RAW_STATS_COUNT_TIME_FIELD_ID: u16 = 0x8104;
 
 /// Static manufacturer identifier for a supported model spec.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +51,9 @@ pub enum Manufacturer {
 
     /// Begode/Gotway hardware.
     Begode,
+
+    /// Generic VESC-compatible controller.
+    Vesc,
 }
 
 /// Static protocol model contract.
@@ -92,6 +122,9 @@ pub trait SupportsReadRequests: ProtocolModelSpec {
 
     /// Commands this read-only model session can schedule.
     const READ_CAPABILITIES: Capabilities;
+
+    /// GATT characteristic to write read-only request frames to.
+    const WRITE_CHANNEL: GattChannel;
 
     /// GATT characteristic to subscribe to after link-up.
     const SUBSCRIBE_CHANNEL: GattChannel;
@@ -226,6 +259,153 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 }
             }
         }
+    }
+}
+
+/// Generic VESC notification decoder for read-only UART replies.
+#[derive(Debug, Default)]
+pub struct VescNotificationDecoder {
+    stream: VescReadOnlyStreamDecoder,
+}
+
+impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
+    fn reset(&mut self) {
+        self.stream = VescReadOnlyStreamDecoder::new();
+    }
+
+    fn handle_notification(
+        &mut self,
+        bytes: &[u8],
+        monotonic_ms: MonotonicMillis,
+        output: &mut Vec<SessionOutput>,
+    ) {
+        match self.stream.feed(bytes) {
+            Ok(replies) => {
+                for reply in replies {
+                    push_vesc_reply(&reply, monotonic_ms, output);
+                }
+            }
+            Err(VescCodecError::UnsupportedReply) => {
+                push_parser_error(ParserError::UnmatchedReply, output);
+            }
+            Err(
+                VescCodecError::DecodeFailed
+                | VescCodecError::EncodedFrameTooLong
+                | VescCodecError::EncodeFailed,
+            ) => {
+                push_parser_error(ParserError::MalformedFrame, output);
+            }
+        }
+    }
+}
+
+fn push_vesc_reply(
+    reply: &VescReadOnlyReply,
+    monotonic_ms: MonotonicMillis,
+    output: &mut Vec<SessionOutput>,
+) {
+    match reply {
+        VescReadOnlyReply::FirmwareInfo {
+            major,
+            minor,
+            test_version_number,
+            ..
+        } => output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            ReadOnlyResponse::Firmware(FirmwareInfo {
+                firmware_major: Some(Measured::reported(u16::from(*major))),
+                firmware_minor: Some(Measured::reported(u16::from(*minor))),
+                firmware_patch: Some(Measured::reported(u16::from(*test_version_number))),
+                ..FirmwareInfo::default()
+            }),
+        ))),
+        VescReadOnlyReply::Values(values) => {
+            output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                vesc_values_to_delta(*values, monotonic_ms),
+            )));
+            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Diagnostics(vesc_values_to_diagnostics(*values)),
+            )));
+        }
+        VescReadOnlyReply::Stats(stats) => {
+            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Diagnostics(vesc_stats_to_diagnostics(*stats)),
+            )));
+        }
+    }
+}
+
+fn vesc_values_to_delta(
+    values: VescValuesTelemetry,
+    monotonic_ms: MonotonicMillis,
+) -> cutout_core::TelemetryDelta {
+    cutout_core::TelemetryDelta {
+        at_ms: monotonic_ms,
+        voltage_mv: Some(Measured::reported(values.voltage_mv)),
+        battery_current_ma: Some(Measured::reported(values.input_current_ma)),
+        ..cutout_core::TelemetryDelta::empty(monotonic_ms)
+    }
+}
+
+fn vesc_values_to_diagnostics(values: VescValuesTelemetry) -> DiagnosticReadback {
+    DiagnosticReadback {
+        details: [
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_ERPM_FIELD_ID,
+                i64::from(values.rpm_erpm),
+            )),
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_TACHOMETER_FIELD_ID,
+                i64::from(values.tachometer),
+            )),
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_CONTROLLER_ID_FIELD_ID,
+                i64::from(values.controller_id),
+            )),
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_FAULT_CODE_FIELD_ID,
+                i64::from(vesc_fault_code_raw(values.fault_code)),
+            )),
+        ],
+    }
+}
+
+const fn vesc_fault_code_raw(code: VescFaultCode) -> u8 {
+    match code {
+        VescFaultCode::None => 0,
+        VescFaultCode::AbsOverCurrent => 1,
+        VescFaultCode::Other(value) => value,
+    }
+}
+
+fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
+    DiagnosticReadback {
+        details: [
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
+                i64::from(stats.speed_avg_milli),
+            )),
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_STATS_POWER_AVG_FIELD_ID,
+                i64::from(stats.power_avg_mw),
+            )),
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
+                i64::from(stats.current_avg_ma),
+            )),
+            Some(vesc_diagnostic_detail(
+                VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
+                i64::from(stats.count_time_ms),
+            )),
+        ],
+    }
+}
+
+const fn vesc_diagnostic_detail(id: u16, value: i64) -> DiagnosticDetail {
+    DiagnosticDetail {
+        field: RawFieldValue::new(id, value),
+        severity: DiagnosticSeverity::Info,
+        quality: ValueQuality::Known,
+        verification: VerificationStatus::Inferred,
     }
 }
 
@@ -419,6 +599,7 @@ impl SupportsReadRequests for NosfetAeroModel {
         CommandKind::RequestBatteryInfo,
         CommandKind::RequestDiagnostics,
     ]);
+    const WRITE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
     const SUBSCRIBE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
     type NotificationDecoder = VeteranNotificationDecoder;
 
@@ -446,11 +627,39 @@ impl SupportsReadRequests for BegodeFalconModel {
         CommandKind::RequestTelemetry,
         CommandKind::RequestBatteryInfo,
     ]);
+    const WRITE_CHANNEL: GattChannel = BEGODE_DATA_CHANNEL;
     const SUBSCRIBE_CHANNEL: GattChannel = BEGODE_DATA_CHANNEL;
     type NotificationDecoder = BegodeNotificationDecoder;
 
     fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
         FalconRequestEncoder::encode_command(kind)
+    }
+}
+
+/// Generic VESC read-only model spec.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VescGenericModel;
+
+impl ProtocolModelSpec for VescGenericModel {
+    const MANUFACTURER: Manufacturer = Manufacturer::Vesc;
+    const MODEL: &'static str = "Generic VESC";
+    const PROTOCOL: ProtocolFamily = ProtocolFamily::Vesc;
+}
+
+impl SupportsReadRequests for VescGenericModel {
+    type Probe = VescReadOnlyRequest;
+
+    const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::RequestFirmwareInfo,
+        CommandKind::RequestTelemetry,
+        CommandKind::RequestDiagnostics,
+    ]);
+    const WRITE_CHANNEL: GattChannel = VESC_WRITE_CHANNEL;
+    const SUBSCRIBE_CHANNEL: GattChannel = VESC_NOTIFY_CHANNEL;
+    type NotificationDecoder = VescNotificationDecoder;
+
+    fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
+        VescRequestEncoder::encode_command(kind)
     }
 }
 
@@ -504,7 +713,7 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
         && let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice())
     {
         output.push(SessionOutput::Transport(TransportAction::Write {
-            channel: M::SUBSCRIBE_CHANNEL,
+            channel: M::WRITE_CHANNEL,
             bytes,
             mode: request.mode,
         }));
@@ -692,6 +901,7 @@ mod tests {
 
         const READ_CAPABILITIES: Capabilities =
             Capabilities::from_supported_commands([CommandKind::RequestTelemetry]);
+        const WRITE_CHANNEL: GattChannel = TEST_CHANNEL;
         const SUBSCRIBE_CHANNEL: GattChannel = TEST_CHANNEL;
         type NotificationDecoder = NoopNotificationDecoder;
 
@@ -745,6 +955,21 @@ mod tests {
 
     fn live_begode_b_imperial_frame() -> [u8; 24] {
         hex_literal::hex!("55aa000000320001000f003200030502000004185a5a5a5a")
+    }
+
+    fn vesc_selective_values_frame() -> [u8; 28] {
+        [
+            2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43,
+            0, 20, 45, 58, 3,
+        ]
+    }
+
+    fn vesc_stats_frame() -> [u8; 54] {
+        [
+            2, 49, 128, 0, 0, 7, 255, 63, 128, 0, 0, 64, 0, 0, 0, 64, 64, 0, 0, 64, 128, 0, 0, 64,
+            160, 0, 0, 64, 192, 0, 0, 64, 224, 0, 0, 65, 0, 0, 0, 65, 16, 0, 0, 65, 32, 0, 0, 65,
+            48, 0, 0, 213, 206, 3,
+        ]
     }
 
     fn telemetry_events(output: &[SessionOutput]) -> Vec<TelemetryDelta> {
@@ -1032,6 +1257,187 @@ mod tests {
         assert_eq!(
             decoder.pack_voltage_profile(),
             begode_falcon_target_voltage_profile()
+        );
+    }
+
+    #[test]
+    fn generic_vesc_model_session_requests_subscription_on_link_up() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![
+                SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
+                    monotonic_ms: 1,
+                    max_write_len: Some(185),
+                })),
+                SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: VESC_NOTIFY_CHANNEL,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_writes_values_request_for_telemetry() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestTelemetry),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Transport(TransportAction::Write {
+                channel: VESC_WRITE_CHANNEL,
+                bytes: WritePayload::try_from_slice(&[2, 1, 4, 64, 132, 3])
+                    .expect("VESC values request fits"),
+                mode: WriteMode::WithoutResponse,
+            })]
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_writes_stats_request_for_diagnostics() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Transport(TransportAction::Write {
+                channel: VESC_WRITE_CHANNEL,
+                bytes: WritePayload::try_from_slice(&[2, 3, 128, 4, 21, 181, 10, 3])
+                    .expect("VESC stats request fits"),
+                mode: WriteMode::WithoutResponse,
+            })]
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_rejects_actuation_without_writes() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1 }),
+            &mut output,
+        );
+
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn generic_vesc_session_emits_values_telemetry_and_preserves_raw_readback() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        for chunk in vesc_selective_values_frame().chunks(5) {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes: chunk,
+                    monotonic_ms: 42,
+                },
+                &mut output,
+            );
+        }
+
+        let telemetry = telemetry_events(&output);
+        let delta = telemetry.last().expect("VESC values telemetry");
+        assert_eq!(delta.at_ms, 42);
+        assert_eq!(delta.voltage_mv, Some(Measured::reported(37_500)));
+        assert_eq!(delta.battery_current_ma, Some(Measured::reported(40)));
+        assert_eq!(delta.speed_mm_s, None);
+
+        let responses = read_only_response_events(&output);
+        let ReadOnlyResponse::Diagnostics(diagnostics) =
+            responses.last().expect("VESC values diagnostics")
+        else {
+            panic!("expected diagnostics response");
+        };
+        assert_eq!(
+            diagnostics.details[0].expect("erpm").field,
+            RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 989)
+        );
+        assert_eq!(
+            diagnostics.details[1].expect("tachometer").field,
+            RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -21_973)
+        );
+        assert_eq!(
+            diagnostics.details[2].expect("controller id").field,
+            RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 20)
+        );
+        assert_eq!(
+            diagnostics.details[3].expect("fault").field,
+            RawFieldValue::new(VESC_RAW_FAULT_CODE_FIELD_ID, 0)
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_maps_stats_to_diagnostics_readback() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &vesc_stats_frame(),
+                monotonic_ms: 43,
+            },
+            &mut output,
+        );
+
+        let responses = read_only_response_events(&output);
+        let ReadOnlyResponse::Diagnostics(diagnostics) =
+            responses.last().expect("VESC stats diagnostics")
+        else {
+            panic!("expected diagnostics response");
+        };
+        assert_eq!(
+            diagnostics.details[0].expect("speed avg").field,
+            RawFieldValue::new(VESC_RAW_STATS_SPEED_AVG_FIELD_ID, 1_000)
+        );
+        assert_eq!(
+            diagnostics.details[1].expect("power avg").field,
+            RawFieldValue::new(VESC_RAW_STATS_POWER_AVG_FIELD_ID, 3_000)
+        );
+        assert_eq!(
+            diagnostics.details[2].expect("current avg").field,
+            RawFieldValue::new(VESC_RAW_STATS_CURRENT_AVG_FIELD_ID, 5_000)
+        );
+        assert_eq!(
+            diagnostics.details[3].expect("count time").field,
+            RawFieldValue::new(VESC_RAW_STATS_COUNT_TIME_FIELD_ID, 11_000)
         );
     }
 

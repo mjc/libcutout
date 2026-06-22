@@ -1,9 +1,9 @@
 use arrayvec::ArrayVec;
 use cutout_core::{CommandKind, WriteMode};
 
-use crate::{AeroProbe, FalconProbe};
+use crate::{AeroProbe, FalconProbe, VESC_MAX_FRAME_LEN, VescReadOnlyCodec, VescReadOnlyRequest};
 
-const MAX_REQUEST_LEN: usize = 24;
+const MAX_REQUEST_LEN: usize = VESC_MAX_FRAME_LEN;
 
 /// Bounded encoded request payload plus correlation metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,6 +90,41 @@ impl FalconRequestEncoder {
     #[must_use]
     pub fn encode_command(kind: CommandKind) -> Option<RequestDisposition<FalconProbe>> {
         FalconProbe::from_command_kind(kind).map(Self::encode)
+    }
+}
+
+/// Request encoder for generic VESC read-only probes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VescRequestEncoder;
+
+impl VescRequestEncoder {
+    /// Encodes a supported VESC read-only command.
+    #[must_use]
+    pub fn encode_command(kind: CommandKind) -> Option<RequestDisposition<VescReadOnlyRequest>> {
+        let request = match kind {
+            CommandKind::RequestFirmwareInfo => VescReadOnlyRequest::FirmwareInfo,
+            CommandKind::RequestTelemetry => VescReadOnlyRequest::Values,
+            CommandKind::RequestDiagnostics => VescReadOnlyRequest::Stats(
+                crate::VescStatsMask::SPEED_AVG
+                    | crate::VescStatsMask::POWER_AVG
+                    | crate::VescStatsMask::CURRENT_AVG
+                    | crate::VescStatsMask::COUNT_TIME,
+            ),
+            CommandKind::RequestIdentity
+            | CommandKind::RequestBatteryInfo
+            | CommandKind::RequestSettings
+            | CommandKind::SetLights
+            | CommandKind::SoundHorn
+            | CommandKind::SetRawMotorCurrent => return None,
+        };
+        let mut payload = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
+        Some(RequestDisposition::Write(EncodedRequest {
+            probe: request,
+            command: kind,
+            payload,
+            mode: WriteMode::WithoutResponse,
+        }))
     }
 }
 

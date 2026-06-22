@@ -62,6 +62,7 @@ mod veteran_frame;
 mod veteran_telemetry;
 pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
+    VescRequestEncoder,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;
@@ -71,6 +72,10 @@ pub use session::{
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, SettingsWriteOperation, SupportsBenignControls,
     SupportsDangerousActuation, SupportsReadRequests, SupportsSettingsWrites,
+    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID, VESC_RAW_FAULT_CODE_FIELD_ID,
+    VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
+    VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
+    VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
     VeteranNotificationDecoder,
 };
 pub use vesc_codec::{

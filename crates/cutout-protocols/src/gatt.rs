@@ -20,6 +20,16 @@ pub const BEGODE_DATA_CHANNEL: GattChannel = GattChannel::from_bytes([
     0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
 ]);
 
+/// Common Nordic UART write characteristic used by generic VESC BLE UART adapters.
+pub const VESC_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([
+    0x6e, 0x40, 0x00, 0x02, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+]);
+
+/// Common Nordic UART notify characteristic used by generic VESC BLE UART adapters.
+pub const VESC_NOTIFY_CHANNEL: GattChannel = GattChannel::from_bytes([
+    0x6e, 0x40, 0x00, 0x03, 0xb5, 0xa3, 0xf3, 0x93, 0xe0, 0xa9, 0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+]);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,5 +52,6 @@ mod tests {
         );
         assert_eq!(BEGODE_SERVICE_CHANNEL, VETERAN_SERVICE_CHANNEL);
         assert_eq!(BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL);
+        assert_ne!(VESC_WRITE_CHANNEL, VESC_NOTIFY_CHANNEL);
     }
 }
