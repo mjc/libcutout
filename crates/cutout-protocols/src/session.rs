@@ -165,10 +165,29 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
 }
 
 /// Begode/Gotway notification decoder for Falcon read-only telemetry.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BegodeNotificationDecoder {
     reassembler: BegodeFrameReassembler,
     context: BegodeTelemetryContext,
+    pack_voltage_profile: BegodePackVoltageProfile,
+}
+
+impl Default for BegodeNotificationDecoder {
+    fn default() -> Self {
+        Self::with_pack_voltage_profile(BegodePackVoltageProfile::Begode84VFullCharge)
+    }
+}
+
+impl BegodeNotificationDecoder {
+    /// Creates a Begode decoder with an explicit pack-voltage profile.
+    #[must_use]
+    pub fn with_pack_voltage_profile(profile: BegodePackVoltageProfile) -> Self {
+        Self {
+            reassembler: BegodeFrameReassembler::default(),
+            context: BegodeTelemetryContext::default(),
+            pack_voltage_profile: profile,
+        }
+    }
 }
 
 impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
@@ -186,7 +205,13 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         for byte in bytes {
             match self.reassembler.feed_byte_at(*byte, monotonic_ms) {
                 Ok(Some(frame)) => {
-                    push_begode_frame(&mut self.context, &frame, monotonic_ms, output);
+                    push_begode_frame(
+                        &mut self.context,
+                        self.pack_voltage_profile,
+                        &frame,
+                        monotonic_ms,
+                        output,
+                    );
                 }
                 Ok(None) => {}
                 Err(BegodeFrameError::InvalidFrame) => {
@@ -199,20 +224,18 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 
 fn push_begode_frame(
     context: &mut BegodeTelemetryContext,
+    pack_voltage_profile: BegodePackVoltageProfile,
     frame: &BegodeFrame,
     monotonic_ms: MonotonicMillis,
     output: &mut Vec<SessionOutput>,
 ) {
     match frame.tag() {
-        0x00 => {
-            match BegodeLiveATelemetry::decode(frame, BegodePackVoltageProfile::Begode84VFullCharge)
-            {
-                Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                    context.live_a_to_delta(telemetry, monotonic_ms),
-                ))),
-                Err(error) => push_begode_telemetry_error(error, output),
-            }
-        }
+        0x00 => match BegodeLiveATelemetry::decode(frame, pack_voltage_profile) {
+            Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                context.live_a_to_delta(telemetry, monotonic_ms),
+            ))),
+            Err(error) => push_begode_telemetry_error(error, output),
+        },
         0x01 => match BegodeBmsSummary::decode(frame) {
             Ok(summary) => {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
@@ -504,6 +527,16 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> Default
 impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>
     ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
 {
+    /// Creates a read-only session with an explicitly configured notification decoder.
+    #[must_use]
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+        Self {
+            connected: false,
+            decoder,
+            model: PhantomData,
+        }
+    }
+
     /// Returns the commands this session shell can schedule.
     #[must_use]
     pub const fn capabilities() -> Capabilities {
@@ -948,6 +981,40 @@ mod tests {
         assert_eq!(
             telemetry[0].distance_mm.map(|value| value.value),
             Some(750_000)
+        );
+    }
+
+    #[test]
+    fn begode_falcon_session_can_use_explicit_100v_pack_profile() {
+        let live_a = live_begode_a_frame();
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
+            BegodeNotificationDecoder::with_pack_voltage_profile(
+                BegodePackVoltageProfile::Begode100VFullCharge,
+            ),
+        );
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: &live_a,
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        let telemetry = telemetry_events(&output);
+        assert_eq!(telemetry.len(), 1);
+        assert_eq!(
+            telemetry[0].voltage_mv.map(|value| value.value),
+            Some(90_075)
         );
     }
 

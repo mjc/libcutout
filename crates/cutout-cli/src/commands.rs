@@ -23,8 +23,9 @@ use cutout_core::{
     TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel, NosfetAeroModel,
-    ReadOnlySession, VETERAN_DATA_CHANNEL,
+    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel,
+    BegodeNotificationDecoder, BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession,
+    VETERAN_DATA_CHANNEL, select_begode_pack_voltage_profile_from_annotations,
 };
 use tracing::info;
 
@@ -155,10 +156,22 @@ fn replay_pevcap_capture(
             capture,
             ReadOnlySession::<NosfetAeroModel, false>::default(),
         ),
-        SelectedSessionProfile::Falcon => replay_pevcap_with_session(
-            capture,
-            ReadOnlySession::<BegodeFalconModel, true>::default(),
-        ),
+        SelectedSessionProfile::Falcon => {
+            replay_pevcap_with_session(capture, falcon_replay_session(capture))
+        }
+    }
+}
+
+fn falcon_replay_session(capture: &PevcapCapture) -> ReadOnlySession<BegodeFalconModel, true> {
+    match select_begode_pack_voltage_profile_from_annotations(capture.header.annotations.iter()) {
+        BegodeVoltageProfileSelection::Selected(profile) => {
+            ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
+                BegodeNotificationDecoder::with_pack_voltage_profile(profile),
+            )
+        }
+        BegodeVoltageProfileSelection::Missing | BegodeVoltageProfileSelection::Conflicting => {
+            ReadOnlySession::<BegodeFalconModel, true>::default()
+        }
     }
 }
 
@@ -1578,6 +1591,38 @@ mod tests {
         )
     }
 
+    fn sample_falcon_live_a_replay_capture(annotations: &[&str]) -> PevcapCapture {
+        let header = PevcapHeader::new(
+            1_725_000_123_456,
+            "darwin",
+            Some(182),
+            &[BEGODE_DATA_CHANNEL],
+            &[],
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::BegodeGotway),
+                model: Some(VerifiedValue {
+                    value: "Begode Falcon".to_owned(),
+                    verification: VerificationStatus::Inferred,
+                }),
+                firmware: None,
+            }),
+            "0.1.0",
+            [0x42; 32],
+            annotations,
+        )
+        .expect("header should validate");
+
+        PevcapCapture::new(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                42,
+                BEGODE_DATA_CHANNEL,
+                BEGODE_DATA_CHANNEL,
+                hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
+            )],
+        )
+    }
+
     fn sample_aero_replay_capture() -> PevcapCapture {
         let header = PevcapHeader::new(
             1_725_000_123_456,
@@ -2240,6 +2285,23 @@ mod tests {
             .expect("explicit profile does not require metadata");
 
         assert_eq!(profile, SelectedSessionProfile::Falcon);
+    }
+
+    #[test]
+    fn pevcap_replay_uses_falcon_battery_annotation_for_voltage_scaling() {
+        let capture = sample_falcon_live_a_replay_capture(&["battery=100.8v"]);
+
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile);
+
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .voltage_mv
+                .map(|voltage| voltage.value),
+            Some(90_075)
+        );
     }
 
     #[test]
