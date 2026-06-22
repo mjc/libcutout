@@ -13,6 +13,10 @@ mod gatt;
 pub use gatt::*;
 mod begode_frame;
 pub use begode_frame::{BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameReassembler};
+mod begode_bms;
+pub use begode_bms::{
+    BEGODE_BMS_CELL_VALUES_PER_PAGE, BegodeBmsCellPage, BegodeBmsPageError, BegodeBmsSummary,
+};
 mod begode_telemetry;
 pub use begode_telemetry::{
     BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
