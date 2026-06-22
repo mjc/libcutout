@@ -2404,6 +2404,14 @@ mod tests {
     }
 
     #[test]
+    fn inline_write_capacity_size_snapshot_quantifies_transport_cost() {
+        assert_eq!(crate::MAX_TRANSPORT_WRITE_LEN, 512);
+        assert_eq!(size_of::<WritePayload>(), 516);
+        assert_eq!(size_of::<TransportAction>(), 536);
+        assert_eq!(size_of::<SessionOutput>(), 536);
+    }
+
+    #[test]
     fn request_hot_path_types_remain_small() {
         assert!(size_of::<crate::RequestKey>() <= 16);
         assert!(size_of::<crate::RequestPolicy>() <= 24);
