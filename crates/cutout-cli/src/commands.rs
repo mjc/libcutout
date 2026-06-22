@@ -51,9 +51,14 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
         "connected dashboard device"
     );
     let mut state = DashboardState::live_connected(&target, &connection.summary);
-    if let Some(percent) = read_battery_level(&connection.peripheral, &connection.summary).await? {
-        info!(percent, "read dashboard battery level");
-        state.apply_battery_percent(percent);
+    match read_battery_level(&connection.peripheral, &connection.summary).await? {
+        Some(percent) => {
+            info!(percent, "read dashboard battery level");
+            state.apply_battery_percent(percent);
+        }
+        None => {
+            info!("dashboard battery level unavailable from standard BLE characteristic");
+        }
     }
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
         info!(
