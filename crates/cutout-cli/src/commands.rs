@@ -13,7 +13,8 @@ use cutout_btle::{
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    BatteryInfo, BatteryPageKind, BatteryPagePayload, DeviceCommand, DeviceEvent, DiagnosticError,
+    BatteryInfo, BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
+    CapturePrivacy, CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
     PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
     ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput, SettingsReadback,
@@ -555,13 +556,35 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
 }
 
 async fn capture_aero(args: CaptureAeroArgs) -> Result<()> {
+    let annotations = capture_annotations(&args);
     let output = args
         .pevcap_output
         .map_or(CaptureOutput::Text, |path| CaptureOutput::Pevcap {
             path,
             format: args.pevcap_format,
+            annotations,
         });
     connect(args.target, SessionMode::Capture { output }).await
+}
+
+fn capture_annotations(args: &CaptureAeroArgs) -> Vec<String> {
+    [
+        args.capture_label
+            .map(CaptureSessionLabel::from)
+            .map(CaptureSessionLabel::annotation),
+        args.capture_privacy
+            .map(CapturePrivacy::from)
+            .map(CapturePrivacy::annotation),
+        args.capture_evidence
+            .map(CaptureEvidence::from)
+            .map(CaptureEvidence::annotation),
+        args.capture_distribution
+            .map(CaptureDistribution::from)
+            .map(CaptureDistribution::annotation),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -576,6 +599,7 @@ enum CaptureOutput {
     Pevcap {
         path: std::path::PathBuf,
         format: PevcapFormat,
+        annotations: Vec<String>,
     },
 }
 
@@ -797,14 +821,20 @@ fn write_or_print_capture(
             print_capture(capture, diagnostics_jsonl, read_only_jsonl)?;
             Ok(())
         }
-        CaptureOutput::Pevcap { path, format } => {
+        CaptureOutput::Pevcap {
+            path,
+            format,
+            annotations,
+        } => {
             let report = capture.report.clone();
+            let annotation_refs: Vec<&str> = annotations.iter().map(String::as_str).collect();
             let bytes = encode_session_capture_pevcap(
                 &capture,
                 summary,
                 *format,
                 capture_wall_clock_unix_ms(),
                 profile,
+                annotation_refs.as_slice(),
             )?;
             fs::write(path, bytes)?;
             println!("wrote pevcap {} ({format:?})", path.display());
@@ -822,7 +852,11 @@ fn encode_session_capture_pevcap(
     format: PevcapFormat,
     wall_clock_start_unix_ms: u64,
     profile: SelectedSessionProfile,
+    annotations: &[&str],
 ) -> Result<Vec<u8>> {
+    let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
+    capture_annotations.push("cutout-cli capture-aero");
+    capture_annotations.extend_from_slice(annotations);
     let pevcap = capture.to_pevcap(
         summary,
         PevcapSessionMetadata {
@@ -831,7 +865,7 @@ fn encode_session_capture_pevcap(
             library_version: env!("CARGO_PKG_VERSION"),
             registry_hash: cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
             resolved_identity: Some(pevcap_identity_for_profile(profile)),
-            annotations: &["cutout-cli capture-aero"],
+            annotations: capture_annotations.as_slice(),
         },
     )?;
     Ok(pevcap.encode(pevcap_encoding(format))?)
@@ -1476,6 +1510,7 @@ mod tests {
             PevcapFormat::Binary,
             42,
             SelectedSessionProfile::Aero,
+            &["capture_label=charging", "capture_privacy=private"],
         )
         .expect("capture encodes");
         let decoded =
@@ -1483,6 +1518,14 @@ mod tests {
 
         assert_eq!(decoded.header.wall_clock_start_unix_ms, 42);
         assert_eq!(decoded.header.write_limit, Some(23));
+        assert_eq!(
+            decoded.header.annotations.as_slice(),
+            &[
+                "cutout-cli capture-aero".to_owned(),
+                "capture_label=charging".to_owned(),
+                "capture_privacy=private".to_owned(),
+            ]
+        );
         assert_eq!(
             decoded.header.registry_hash,
             cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY])

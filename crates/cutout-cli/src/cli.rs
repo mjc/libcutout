@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cutout_btle::ConnectionTarget;
+use cutout_core::{CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel};
 use uuid::Uuid;
 
 const DEFAULT_SCAN_SECONDS: u64 = 5;
@@ -177,6 +178,22 @@ pub(crate) struct CaptureAeroArgs {
     #[command(flatten)]
     pub(crate) target: TargetedScanArgs,
 
+    /// Standard capture scenario label stored in PEVCAP metadata.
+    #[arg(long = "capture-label", value_enum)]
+    pub(crate) capture_label: Option<CaptureLabelArg>,
+
+    /// Capture privacy marker stored in PEVCAP metadata.
+    #[arg(long = "capture-privacy", value_enum)]
+    pub(crate) capture_privacy: Option<CapturePrivacyArg>,
+
+    /// Capture evidence marker stored in PEVCAP metadata.
+    #[arg(long = "capture-evidence", value_enum)]
+    pub(crate) capture_evidence: Option<CaptureEvidenceArg>,
+
+    /// Capture redistribution marker stored in PEVCAP metadata.
+    #[arg(long = "capture-distribution", value_enum)]
+    pub(crate) capture_distribution: Option<CaptureDistributionArg>,
+
     /// Optional PEVCAP output path for the captured session.
     #[arg(long = "pevcap-output", value_name = "PATH")]
     pub(crate) pevcap_output: Option<PathBuf>,
@@ -184,6 +201,86 @@ pub(crate) struct CaptureAeroArgs {
     /// PEVCAP output format when --pevcap-output is supplied.
     #[arg(long = "pevcap-format", value_enum, default_value_t = PevcapFormat::Jsonl)]
     pub(crate) pevcap_format: PevcapFormat,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub(crate) enum CaptureLabelArg {
+    PoweredOnStationary,
+    RollingForward,
+    RollingBackward,
+    LiftedWheel,
+    Charging,
+    HeadlightToggled,
+    Horn,
+    RideModeChange,
+    AlarmChange,
+    BmsScreen,
+    DisconnectReconnect,
+    PowerCycle,
+}
+
+impl From<CaptureLabelArg> for CaptureSessionLabel {
+    fn from(value: CaptureLabelArg) -> Self {
+        match value {
+            CaptureLabelArg::PoweredOnStationary => Self::PoweredOnStationary,
+            CaptureLabelArg::RollingForward => Self::RollingForward,
+            CaptureLabelArg::RollingBackward => Self::RollingBackward,
+            CaptureLabelArg::LiftedWheel => Self::LiftedWheel,
+            CaptureLabelArg::Charging => Self::Charging,
+            CaptureLabelArg::HeadlightToggled => Self::HeadlightToggled,
+            CaptureLabelArg::Horn => Self::Horn,
+            CaptureLabelArg::RideModeChange => Self::RideModeChange,
+            CaptureLabelArg::AlarmChange => Self::AlarmChange,
+            CaptureLabelArg::BmsScreen => Self::BmsScreen,
+            CaptureLabelArg::DisconnectReconnect => Self::DisconnectReconnect,
+            CaptureLabelArg::PowerCycle => Self::PowerCycle,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub(crate) enum CapturePrivacyArg {
+    Private,
+    Redacted,
+}
+
+impl From<CapturePrivacyArg> for CapturePrivacy {
+    fn from(value: CapturePrivacyArg) -> Self {
+        match value {
+            CapturePrivacyArg::Private => Self::Private,
+            CapturePrivacyArg::Redacted => Self::Redacted,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub(crate) enum CaptureEvidenceArg {
+    HardwareTested,
+    Inferred,
+    Unverified,
+}
+
+impl From<CaptureEvidenceArg> for CaptureEvidence {
+    fn from(value: CaptureEvidenceArg) -> Self {
+        match value {
+            CaptureEvidenceArg::HardwareTested => Self::HardwareTested,
+            CaptureEvidenceArg::Inferred => Self::Inferred,
+            CaptureEvidenceArg::Unverified => Self::Unverified,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub(crate) enum CaptureDistributionArg {
+    Redistributable,
+}
+
+impl From<CaptureDistributionArg> for CaptureDistribution {
+    fn from(value: CaptureDistributionArg) -> Self {
+        match value {
+            CaptureDistributionArg::Redistributable => Self::Redistributable,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -374,7 +471,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        CaptureAeroArgs, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
+        CaptureAeroArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
+        CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
         PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, RawSubscribeArgs,
         ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
     };
@@ -715,6 +813,10 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
             })
@@ -743,6 +845,10 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
             })
@@ -778,6 +884,10 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
             })
@@ -813,6 +923,10 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
             })
@@ -852,6 +966,10 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
             })
@@ -889,9 +1007,47 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: Some(PathBuf::from("session.pevcap")),
                 pevcap_format: PevcapFormat::Binary,
             })
+        );
+    }
+
+    #[test]
+    fn parses_capture_aero_command_with_capture_annotations() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "NF2557",
+            "--capture-label",
+            "charging",
+            "--capture-privacy",
+            "private",
+            "--capture-evidence",
+            "hardware-tested",
+            "--capture-distribution",
+            "redistributable",
+        ])
+        .expect("parser accepts capture provenance annotations");
+
+        let Command::CaptureAero(args) = cli.command else {
+            panic!("expected capture-aero command");
+        };
+
+        assert_eq!(args.capture_label, Some(CaptureLabelArg::Charging));
+        assert_eq!(args.capture_privacy, Some(CapturePrivacyArg::Private));
+        assert_eq!(
+            args.capture_evidence,
+            Some(CaptureEvidenceArg::HardwareTested)
+        );
+        assert_eq!(
+            args.capture_distribution,
+            Some(CaptureDistributionArg::Redistributable)
         );
     }
 
@@ -923,6 +1079,10 @@ mod tests {
                     diagnostics_jsonl: true,
                     read_only_jsonl: false,
                 },
+                capture_label: None,
+                capture_privacy: None,
+                capture_evidence: None,
+                capture_distribution: None,
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
             })
