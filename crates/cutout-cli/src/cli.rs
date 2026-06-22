@@ -117,6 +117,10 @@ pub(crate) struct TargetedScanArgs {
     /// Read-only protocol profile to run after connecting.
     #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
     pub(crate) profile: SessionProfile,
+
+    /// Explicit read-only probe command to issue after subscribing.
+    #[arg(long = "probe", value_enum)]
+    pub(crate) probes: Vec<ReadProbe>,
 }
 
 impl TargetedScanArgs {
@@ -131,6 +135,10 @@ impl TargetedScanArgs {
     pub(crate) const fn profile(&self) -> SessionProfile {
         self.profile
     }
+
+    pub(crate) fn probes(&self) -> &[ReadProbe] {
+        &self.probes
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -139,6 +147,15 @@ pub(crate) enum SessionProfile {
     Auto,
     Aero,
     Falcon,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum ReadProbe {
+    Identity,
+    Firmware,
+    Telemetry,
+    Battery,
+    Diagnostics,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -191,8 +208,8 @@ mod tests {
     use clap::{CommandFactory, Parser, error::ErrorKind};
 
     use super::{
-        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, ScanArgs, SessionProfile, TargetArgs,
-        TargetedScanArgs,
+        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, ReadProbe, ScanArgs, SessionProfile,
+        TargetArgs, TargetedScanArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -267,6 +284,7 @@ mod tests {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -295,6 +313,7 @@ mod tests {
                 },
                 scan: ScanArgs { seconds: 8 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -321,6 +340,7 @@ mod tests {
                 },
                 scan: ScanArgs { seconds: 11 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -342,6 +362,7 @@ mod tests {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -363,6 +384,7 @@ mod tests {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -389,6 +411,7 @@ mod tests {
                 },
                 scan: ScanArgs { seconds: 3 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -410,6 +433,7 @@ mod tests {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -438,6 +462,7 @@ mod tests {
                 },
                 scan: ScanArgs { seconds: 21 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -466,6 +491,40 @@ mod tests {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
                 profile: SessionProfile::Falcon,
+                probes: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_capture_aero_command_with_falcon_profile_and_read_probes() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "Falcon",
+            "--profile",
+            "falcon",
+            "--probe",
+            "identity",
+            "--probe",
+            "firmware",
+        ])
+        .expect("parser accepts explicit Falcon read probes");
+
+        assert_eq!(
+            cli.command,
+            Command::CaptureAero(TargetedScanArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: None,
+                    name_contains: Some("Falcon".to_owned()),
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS
+                },
+                profile: SessionProfile::Falcon,
+                probes: vec![ReadProbe::Identity, ReadProbe::Firmware],
             })
         );
     }
@@ -575,6 +634,7 @@ mod tests {
                     seconds: DEFAULT_SCAN_SECONDS
                 },
                 profile: SessionProfile::Auto,
+                probes: Vec::new(),
             })
         );
     }
@@ -601,10 +661,12 @@ mod tests {
             },
             scan: ScanArgs { seconds: 30 },
             profile: SessionProfile::Auto,
+            probes: Vec::new(),
         };
 
         assert_eq!(args.seconds(), 30);
         assert_eq!(args.profile(), SessionProfile::Auto);
+        assert_eq!(args.probes(), &[]);
         assert_eq!(args.into_target().name_contains.as_deref(), Some("NF2557"));
     }
 

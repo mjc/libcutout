@@ -19,7 +19,7 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceEvent, FirmwareInfo, GattChannel, GattFingerprint, GattRoles, LinkInfo,
+    DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, GattFingerprint, GattRoles, LinkInfo,
     ParserDiagnostics, ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput,
     SettingsReadback, TelemetryDelta, TelemetrySnapshot, TransportAction, VerificationStatus,
     WriteMode,
@@ -732,6 +732,41 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
+    drive_session_with_commands(
+        peripheral,
+        session,
+        channel,
+        summary,
+        endpoints,
+        notification_window,
+        &[],
+    )
+    .await
+}
+
+/// Drives a protocol session against a connected peripheral and explicit commands.
+///
+/// Commands are injected after link setup/subscription processing and before
+/// the passive notification window, so any resulting writes are captured as
+/// ordinary session transport actions.
+///
+/// # Errors
+///
+/// Returns the underlying Bluetooth transport error if subscribe, write, or
+/// notification streaming fails.
+pub async fn drive_session_with_commands<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channel: GattChannel,
+    summary: &ConnectionSummary,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: Duration,
+    commands: &[DeviceCommand],
+) -> Result<SessionBridgeReport, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
     drive_session_inner(
         peripheral,
         session,
@@ -739,6 +774,7 @@ where
         summary,
         endpoints,
         notification_window,
+        commands,
         None,
         false,
     )
@@ -773,8 +809,45 @@ where
         summary,
         endpoints,
         notification_window,
+        &[],
         Some(&mut records),
         provisional_writes,
+    )
+    .await?;
+
+    Ok(SessionCapture { records, report })
+}
+
+/// Captures a protocol session while injecting explicit read-only commands.
+///
+/// # Errors
+///
+/// Returns the underlying Bluetooth transport error if subscribe, write, or
+/// notification streaming fails.
+pub async fn capture_session_with_commands<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channel: GattChannel,
+    summary: &ConnectionSummary,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: Duration,
+    commands: &[DeviceCommand],
+) -> Result<SessionCapture, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    let mut records = Vec::new();
+    let report = drive_session_inner(
+        peripheral,
+        session,
+        channel,
+        summary,
+        endpoints,
+        notification_window,
+        commands,
+        Some(&mut records),
+        false,
     )
     .await?;
     Ok(SessionCapture { records, report })
@@ -788,6 +861,7 @@ async fn drive_session_inner<P, S>(
     summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
     notification_window: Duration,
+    commands: &[DeviceCommand],
     mut capture: Option<&mut Vec<SessionCaptureRecord>>,
     provisional_writes: bool,
 ) -> Result<SessionBridgeReport, BtleError>
@@ -832,6 +906,25 @@ where
         monotonic_ms,
     )
     .await?;
+
+    for command in commands {
+        monotonic_ms += 1;
+        session.handle(SessionInput::Command(*command), &mut outputs);
+        process_session_outputs(
+            SessionOutputContext {
+                peripheral,
+                channel,
+                write_characteristic: &write_characteristic,
+                notify_characteristic: notify_characteristic.as_ref(),
+                report: &mut report,
+                capture: capture.as_deref_mut(),
+                provisional_writes,
+            },
+            &mut outputs,
+            monotonic_ms,
+        )
+        .await?;
+    }
 
     monotonic_ms += 1;
     session.handle(SessionInput::Tick { monotonic_ms }, &mut outputs);
@@ -1319,10 +1412,10 @@ mod tests {
 
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
     use cutout_core::{
-        DeviceEvent, FirmwareInfo, GattChannel, Measured, ParserDiagnostics, ProtocolSession,
-        RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry,
-        SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
-        VerificationStatus, WriteMode,
+        DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, Measured, ParserDiagnostics,
+        ProtocolSession, RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput,
+        SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction, ValueQuality,
+        ValueSource, VerificationStatus, WriteMode,
     };
     use cutout_protocols::IdentityConfidence;
     use futures_util::stream;
@@ -1958,6 +2051,61 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn capture_session_with_commands_records_command_writes_before_tick() {
+        let peripheral = RecordingPeripheral::default();
+        let mut session = CommandWriteSession;
+        let summary = begode_falcon_summary("Begode_Falcon");
+
+        let capture = crate::capture_session_with_commands(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes(
+                *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
+            ),
+            &summary,
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            Duration::ZERO,
+            &[
+                DeviceCommand::RequestIdentity,
+                DeviceCommand::RequestFirmwareInfo,
+            ],
+        )
+        .await
+        .expect("capture records explicit command writes");
+
+        assert_eq!(capture.report.writes, 2);
+        assert_eq!(
+            capture.records,
+            vec![
+                crate::SessionCaptureRecord::Link {
+                    monotonic_ms: 0,
+                    max_write_len: Some(185),
+                },
+                crate::SessionCaptureRecord::Subscribe {
+                    monotonic_ms: 0,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                },
+                crate::SessionCaptureRecord::Write {
+                    monotonic_ms: 1,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    mode: WriteType::WithoutResponse,
+                    bytes: b"N".to_vec(),
+                    provisional: false,
+                },
+                crate::SessionCaptureRecord::Write {
+                    monotonic_ms: 2,
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    mode: WriteType::WithoutResponse,
+                    bytes: b"V".to_vec(),
+                    provisional: false,
+                },
+            ]
+        );
+    }
+
     #[derive(Default)]
     struct BridgeSession {
         notification_count: Arc<Mutex<usize>>,
@@ -1973,6 +2121,40 @@ mod tests {
                         *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
                     ),
                 }));
+            }
+        }
+    }
+
+    struct CommandWriteSession;
+
+    impl ProtocolSession for CommandWriteSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::LinkUp(_) => {
+                    output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                        channel: GattChannel::from_bytes(
+                            *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
+                        ),
+                    }));
+                }
+                SessionInput::Command(command) => {
+                    let bytes = match command {
+                        DeviceCommand::RequestIdentity => b"N".as_slice(),
+                        DeviceCommand::RequestFirmwareInfo => b"V".as_slice(),
+                        _ => return,
+                    };
+                    output.push(SessionOutput::Transport(TransportAction::Write {
+                        channel: GattChannel::from_bytes(
+                            *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
+                        ),
+                        bytes: cutout_core::WritePayload::try_from_slice(bytes)
+                            .expect("fixture payload fits"),
+                        mode: WriteMode::WithoutResponse,
+                    }));
+                }
+                SessionInput::LinkDown
+                | SessionInput::Tick { .. }
+                | SessionInput::Notification { .. } => {}
             }
         }
     }

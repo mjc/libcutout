@@ -3,16 +3,16 @@ use std::{sync::mpsc, thread, time::Duration};
 use anyhow::Result;
 use cutout_btle::{
     BtleError, ConnectedPeripheral, ConnectionTarget, SessionBridgeReport, SessionCapture,
-    SessionEndpoints, capture_session, connect_and_discover, drive_session, read_battery_level,
-    scan_peripherals,
+    SessionEndpoints, capture_session_with_commands, connect_and_discover, drive_session,
+    drive_session_with_commands, read_battery_level, scan_peripherals,
 };
-use cutout_core::{FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
+use cutout_core::{DeviceCommand, FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
 };
 use tracing::info;
 
-use crate::cli::{Cli, Command, DashboardArgs, SessionProfile, TargetedScanArgs};
+use crate::cli::{Cli, Command, DashboardArgs, ReadProbe, SessionProfile, TargetedScanArgs};
 use crate::dashboard::{
     DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
 };
@@ -192,6 +192,7 @@ async fn scan(seconds: u64) -> Result<(), BtleError> {
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<(), BtleError> {
     let seconds = args.seconds();
     let profile = selected_session_profile(args.profile());
+    let commands = read_probe_commands(args.probes());
     let connection =
         connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
 
@@ -202,6 +203,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<(), BtleEr
             &connection,
             endpoints,
             profile,
+            &commands,
             Duration::from_secs(seconds),
         )
         .await?;
@@ -222,6 +224,7 @@ impl SessionMode {
         connection: &ConnectedPeripheral,
         endpoints: SessionEndpoints<'_>,
         profile: SelectedSessionProfile,
+        commands: &[DeviceCommand],
         window: Duration,
     ) -> Result<(), BtleError> {
         match profile {
@@ -231,6 +234,7 @@ impl SessionMode {
                     endpoints,
                     ReadOnlySession::<NosfetAeroModel, false>::default(),
                     VETERAN_DATA_CHANNEL,
+                    commands,
                     window,
                 )
                 .await
@@ -241,6 +245,7 @@ impl SessionMode {
                     endpoints,
                     ReadOnlySession::<BegodeFalconModel, true>::default(),
                     BEGODE_DATA_CHANNEL,
+                    commands,
                     window,
                 )
                 .await
@@ -254,6 +259,7 @@ impl SessionMode {
         endpoints: SessionEndpoints<'_>,
         mut session: S,
         channel: cutout_core::GattChannel,
+        commands: &[DeviceCommand],
         window: Duration,
     ) -> Result<(), BtleError>
     where
@@ -261,32 +267,47 @@ impl SessionMode {
     {
         match self {
             Self::Drive => {
-                let report = drive_session(
+                let report = drive_session_with_commands(
                     &connection.peripheral,
                     &mut session,
                     channel,
                     &connection.summary,
                     endpoints,
                     window,
+                    commands,
                 )
                 .await?;
                 print_session_report(&report);
             }
             Self::Capture => {
-                let capture = capture_session(
+                let capture = capture_session_with_commands(
                     &connection.peripheral,
                     &mut session,
                     channel,
                     &connection.summary,
                     endpoints,
                     window,
-                    true,
+                    commands,
                 )
                 .await?;
                 print_capture(capture);
             }
         }
         Ok(())
+    }
+}
+
+fn read_probe_commands(probes: &[ReadProbe]) -> Vec<DeviceCommand> {
+    probes.iter().copied().map(read_probe_command).collect()
+}
+
+const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
+    match probe {
+        ReadProbe::Identity => DeviceCommand::RequestIdentity,
+        ReadProbe::Firmware => DeviceCommand::RequestFirmwareInfo,
+        ReadProbe::Telemetry => DeviceCommand::RequestTelemetry,
+        ReadProbe::Battery => DeviceCommand::RequestBatteryInfo,
+        ReadProbe::Diagnostics => DeviceCommand::RequestDiagnostics,
     }
 }
 
@@ -599,6 +620,26 @@ mod tests {
         assert_eq!(
             selected_session_profile(SessionProfile::Falcon),
             SelectedSessionProfile::Falcon
+        );
+    }
+
+    #[test]
+    fn read_probe_commands_preserve_explicit_order() {
+        assert_eq!(
+            read_probe_commands(&[
+                ReadProbe::Identity,
+                ReadProbe::Firmware,
+                ReadProbe::Telemetry,
+                ReadProbe::Battery,
+                ReadProbe::Diagnostics,
+            ]),
+            vec![
+                DeviceCommand::RequestIdentity,
+                DeviceCommand::RequestFirmwareInfo,
+                DeviceCommand::RequestTelemetry,
+                DeviceCommand::RequestBatteryInfo,
+                DeviceCommand::RequestDiagnostics,
+            ]
         );
     }
 
