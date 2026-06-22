@@ -1523,20 +1523,23 @@ where
                     WriteMode::WithResponse => WriteType::WithResponse,
                     WriteMode::WithoutResponse => WriteType::WithoutResponse,
                 };
-                context
-                    .peripheral
-                    .write(context.write_characteristic, bytes.as_slice(), write_type)
-                    .await?;
-                if let Some(records) = context.capture.as_deref_mut() {
-                    records.push(SessionCaptureRecord::Write {
-                        monotonic_ms,
-                        characteristic: context.write_characteristic.uuid,
-                        mode: write_type,
-                        bytes: bytes.as_slice().to_vec(),
-                        provisional: context.provisional_writes,
-                    });
+                let write_limit = usize::from(context.peripheral.mtu()).max(1);
+                for chunk in bytes.as_slice().chunks(write_limit) {
+                    context
+                        .peripheral
+                        .write(context.write_characteristic, chunk, write_type)
+                        .await?;
+                    if let Some(records) = context.capture.as_deref_mut() {
+                        records.push(SessionCaptureRecord::Write {
+                            monotonic_ms,
+                            characteristic: context.write_characteristic.uuid,
+                            mode: write_type,
+                            bytes: chunk.to_vec(),
+                            provisional: context.provisional_writes,
+                        });
+                    }
+                    context.report.writes += 1;
                 }
-                context.report.writes += 1;
             }
             SessionOutput::Transport(TransportAction::Disconnect) => {
                 context.peripheral.disconnect().await?;
@@ -2760,6 +2763,69 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn capture_session_chunks_writes_by_negotiated_write_limit() {
+        let peripheral = RecordingPeripheral::with_mtu(4);
+        let mut session = LargeWriteSession;
+        let summary = shared_write_notify_summary("NOSFET Aero");
+
+        let capture = crate::capture_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            &summary,
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            Duration::ZERO,
+            false,
+        )
+        .await
+        .expect("capture chunks oversized bridge writes");
+
+        assert_eq!(capture.report.writes, 3);
+        assert_eq!(
+            peripheral.writes.lock().expect("write log").as_slice(),
+            &[
+                (
+                    Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    b"0123".to_vec(),
+                    WriteType::WithoutResponse,
+                ),
+                (
+                    Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    b"4567".to_vec(),
+                    WriteType::WithoutResponse,
+                ),
+                (
+                    Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    b"89".to_vec(),
+                    WriteType::WithoutResponse,
+                ),
+            ]
+        );
+        let writes: Vec<_> = capture
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                crate::SessionCaptureRecord::Write { bytes, mode, .. } => {
+                    Some((bytes.as_slice(), *mode))
+                }
+                crate::SessionCaptureRecord::Link { .. }
+                | crate::SessionCaptureRecord::Subscribe { .. }
+                | crate::SessionCaptureRecord::Notification { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            writes,
+            vec![
+                (b"0123".as_slice(), WriteType::WithoutResponse),
+                (b"4567".as_slice(), WriteType::WithoutResponse),
+                (b"89".as_slice(), WriteType::WithoutResponse),
+            ]
+        );
+    }
+
     #[derive(Default)]
     struct BridgeSession {
         notification_count: Arc<Mutex<usize>>,
@@ -2780,6 +2846,8 @@ mod tests {
     }
 
     struct CommandWriteSession;
+
+    struct LargeWriteSession;
 
     impl ProtocolSession for CommandWriteSession {
         fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
@@ -2809,6 +2877,19 @@ mod tests {
                 SessionInput::LinkDown
                 | SessionInput::Tick { .. }
                 | SessionInput::Notification { .. } => {}
+            }
+        }
+    }
+
+    impl ProtocolSession for LargeWriteSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            if matches!(input, SessionInput::Tick { .. }) {
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: GattChannel::from_bytes([0xA1; 16]),
+                    bytes: cutout_core::WritePayload::try_from_slice(b"0123456789")
+                        .expect("fixture payload fits"),
+                    mode: WriteMode::WithoutResponse,
+                }));
             }
         }
     }
@@ -2890,6 +2971,7 @@ mod tests {
         subscribes: Arc<Mutex<Vec<Uuid>>>,
         writes: WriteLog,
         notifications: NotificationLog,
+        mtu: u16,
     }
 
     impl Default for RecordingPeripheral {
@@ -2898,11 +2980,19 @@ mod tests {
                 subscribes: Arc::new(Mutex::new(Vec::new())),
                 writes: Arc::new(Mutex::new(Vec::new())),
                 notifications: Arc::new(Mutex::new(Vec::new())),
+                mtu: 185,
             }
         }
     }
 
     impl RecordingPeripheral {
+        fn with_mtu(mtu: u16) -> Self {
+            Self {
+                mtu,
+                ..Self::default()
+            }
+        }
+
         fn with_notification(notification: ValueNotification) -> Self {
             Self::with_notifications(vec![notification])
         }
@@ -2971,7 +3061,7 @@ mod tests {
     #[async_trait::async_trait]
     impl crate::SessionPeripheral for RecordingPeripheral {
         fn mtu(&self) -> u16 {
-            185
+            self.mtu
         }
 
         async fn subscribe(&self, characteristic: &Characteristic) -> Result<(), crate::BtleError> {
