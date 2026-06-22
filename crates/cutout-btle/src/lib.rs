@@ -1150,8 +1150,7 @@ where
 ///
 /// The host owns platform-specific connect/discover work. This bridge repeats
 /// one bounded session run only when the previous link intentionally
-/// disconnected, and keeps commands out of the reconnect path until a replay
-/// policy is explicit.
+/// disconnected.
 ///
 /// # Errors
 ///
@@ -1169,13 +1168,14 @@ where
     H: ReconnectingSessionHost,
     S: ProtocolSession + Send,
 {
-    Ok(capture_reconnecting_session_with_summaries(
+    Ok(capture_reconnecting_session_with_commands(
         host,
         session,
         channel,
         notification_window,
         max_links,
         provisional_writes,
+        &[],
     )
     .await?
     .capture)
@@ -1199,6 +1199,41 @@ where
     H: ReconnectingSessionHost,
     S: ProtocolSession + Send,
 {
+    capture_reconnecting_session_with_commands(
+        host,
+        session,
+        channel,
+        notification_window,
+        max_links,
+        provisional_writes,
+        &[],
+    )
+    .await
+}
+
+/// Captures a reconnecting session, sending explicit commands on the first link only.
+///
+/// Commands are intentionally not replayed after reconnect. A link loss cancels
+/// any in-flight response expectation for those commands while allowing the
+/// read-only session to resume passive subscription on a fresh link.
+///
+/// # Errors
+///
+/// Returns the underlying host, transport, or bridge error from any link
+/// attempt.
+pub async fn capture_reconnecting_session_with_commands<H, S>(
+    host: &mut H,
+    session: &mut S,
+    channel: GattChannel,
+    notification_window: Duration,
+    max_links: usize,
+    provisional_writes: bool,
+    commands: &[DeviceCommand],
+) -> Result<ReconnectingSessionCapture, BtleError>
+where
+    H: ReconnectingSessionHost,
+    S: ProtocolSession + Send,
+{
     let mut reconnecting_capture = ReconnectingSessionCapture::default();
     let mut monotonic_start = 0;
 
@@ -1216,7 +1251,7 @@ where
                 summary: &summary,
                 endpoints,
                 notification_window,
-                commands: &[],
+                commands: if attempt == 1 { commands } else { &[] },
                 provisional_writes,
                 monotonic_start,
             },
@@ -3244,6 +3279,53 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn capture_reconnecting_session_cancels_commands_after_reconnect() {
+        let first = RecordingPeripheral::default();
+        let second = RecordingPeripheral::default();
+        let mut host = FakeReconnectHost::new(vec![first.clone(), second.clone()]);
+        let mut session = CommandThenDisconnectSession::default();
+
+        let capture = crate::capture_reconnecting_session_with_commands(
+            &mut host,
+            &mut session,
+            GattChannel::from_bytes([0xA1; 16]),
+            Duration::ZERO,
+            2,
+            false,
+            &[
+                DeviceCommand::RequestIdentity,
+                DeviceCommand::RequestFirmwareInfo,
+            ],
+        )
+        .await
+        .expect("fake host reconnects after first-link commands");
+
+        assert_eq!(capture.attempts.len(), 2);
+        assert_eq!(capture.attempts[0].report.writes, 2);
+        assert_eq!(capture.attempts[1].report.writes, 0);
+        assert_eq!(
+            first.writes.lock().expect("first writes").as_slice(),
+            &[
+                (
+                    Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    b"N".to_vec(),
+                    WriteType::WithoutResponse,
+                ),
+                (
+                    Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    b"V".to_vec(),
+                    WriteType::WithoutResponse,
+                ),
+            ]
+        );
+        assert!(second.writes.lock().expect("second writes").is_empty());
+        assert_eq!(
+            second.subscribes.lock().expect("second subscribes").len(),
+            1
+        );
+    }
+
     #[derive(Default)]
     struct BridgeSession {
         notification_count: Arc<Mutex<usize>>,
@@ -3264,6 +3346,11 @@ mod tests {
     }
 
     struct CommandWriteSession;
+
+    #[derive(Default)]
+    struct CommandThenDisconnectSession {
+        link_ups: usize,
+    }
 
     struct LargeWriteSession;
 
@@ -3348,6 +3435,38 @@ mod tests {
                         .expect("fixture payload fits"),
                     mode: WriteMode::WithoutResponse,
                 }));
+            }
+        }
+    }
+
+    impl ProtocolSession for CommandThenDisconnectSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::LinkUp(_) => {
+                    self.link_ups += 1;
+                    output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                    }));
+                }
+                SessionInput::Command(command) => {
+                    let bytes = match command {
+                        DeviceCommand::RequestIdentity => b"N".as_slice(),
+                        DeviceCommand::RequestFirmwareInfo => b"V".as_slice(),
+                        _ => return,
+                    };
+                    output.push(SessionOutput::Transport(TransportAction::Write {
+                        channel: GattChannel::from_bytes([0xA1; 16]),
+                        bytes: cutout_core::WritePayload::try_from_slice(bytes)
+                            .expect("fixture payload fits"),
+                        mode: WriteMode::WithoutResponse,
+                    }));
+                }
+                SessionInput::Tick { .. } => {
+                    if self.link_ups == 1 {
+                        output.push(SessionOutput::Transport(TransportAction::Disconnect));
+                    }
+                }
+                SessionInput::LinkDown | SessionInput::Notification { .. } => {}
             }
         }
     }

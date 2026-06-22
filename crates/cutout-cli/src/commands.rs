@@ -10,7 +10,7 @@ use cutout_btle::{
     BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata,
     RawNotificationRecord, ReconnectAttemptReport, SessionBridgeReport, SessionCapture,
     SessionEndpoints, SessionPeripheral, capture_raw_notifications,
-    capture_reconnecting_session_with_summaries, capture_session_with_commands,
+    capture_reconnecting_session_with_commands, capture_session_with_commands,
     connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
     scan_peripherals,
 };
@@ -605,33 +605,33 @@ fn capture_output(
 async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput) -> Result<()> {
     let seconds = args.target.seconds();
     let profile = selected_session_profile(args.target.profile());
-    if !args.target.probes().is_empty() {
-        bail!("capture-aero --reconnect-attempts does not replay explicit --probe commands yet");
-    }
+    let commands = read_probe_commands(args.target.probes());
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
     let read_only_jsonl = args.target.read_only_jsonl();
     let mut host =
         BtleplugReconnectHost::new(args.target.into_target(), Duration::from_secs(seconds));
     let reconnecting_capture = match profile {
         SelectedSessionProfile::Aero => {
-            capture_reconnecting_session_with_summaries(
+            capture_reconnecting_session_with_commands(
                 &mut host,
                 &mut ReadOnlySession::<NosfetAeroModel, false>::default(),
                 VETERAN_DATA_CHANNEL,
                 Duration::from_secs(seconds),
                 args.reconnect_attempts,
                 false,
+                &commands,
             )
             .await?
         }
         SelectedSessionProfile::Falcon => {
-            capture_reconnecting_session_with_summaries(
+            capture_reconnecting_session_with_commands(
                 &mut host,
                 &mut ReadOnlySession::<BegodeFalconModel, true>::default(),
                 BEGODE_DATA_CHANNEL,
                 Duration::from_secs(seconds),
                 args.reconnect_attempts,
                 false,
+                &commands,
             )
             .await?
         }
@@ -1717,8 +1717,8 @@ mod tests {
         assert_eq!(decoded.records[2].bytes, b"NAME=NF2557");
     }
 
-    #[tokio::test]
-    async fn reconnect_capture_rejects_probe_replay_until_policy_exists() {
+    #[test]
+    fn reconnect_capture_maps_probe_commands_for_first_link_policy() {
         let cli = Cli::try_parse_from([
             "cutout",
             "capture-aero",
@@ -1734,13 +1734,9 @@ mod tests {
             panic!("expected capture-aero command");
         };
 
-        let err = capture_aero_reconnecting(args, CaptureOutput::Text)
-            .await
-            .expect_err("probe replay policy is not defined");
-
-        assert!(
-            err.to_string()
-                .contains("does not replay explicit --probe commands yet")
+        assert_eq!(
+            read_probe_commands(args.target.probes()),
+            vec![DeviceCommand::RequestIdentity]
         );
     }
 
