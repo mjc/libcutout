@@ -1,8 +1,11 @@
 use arrayvec::ArrayVec;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    GattChannel, GattFingerprint, MonotonicMillis, ProtocolFamily, VerifiedValue, WriteMode,
+    GattChannel, GattFingerprint, GattRoles, MonotonicMillis, ProtocolFamily, VerificationStatus,
+    VerifiedValue, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -24,6 +27,7 @@ pub const PEVCAP_MAX_GATT_FINGERPRINTS: usize = 8;
 pub const PEVCAP_MAX_ANNOTATIONS: usize = 8;
 
 /// Current PEVCAP format version.
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PevcapFormatVersion {
     /// Major version number.
@@ -299,6 +303,548 @@ impl PevcapCapture {
             records,
         }
     }
+
+    /// Serializes this capture as line-delimited JSON for review tooling.
+    ///
+    /// The first line is a PEVCAP header line, followed by one transport
+    /// record per line in replay order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapJsonlError::Serialize`] when JSON serialization fails.
+    #[cfg(feature = "serde")]
+    pub fn to_jsonl(&self) -> Result<String, PevcapJsonlError> {
+        let mut output = serde_json::to_string(&PevcapJsonlLine::Header {
+            magic: PEVCAP_MAGIC,
+            version: self.version,
+            header: PevcapHeaderJson::from(&self.header),
+        })
+        .map_err(PevcapJsonlError::Serialize)?;
+        output.push('\n');
+
+        for record in &self.records {
+            output.push_str(
+                &serde_json::to_string(&PevcapJsonlLine::Record {
+                    record: PevcapRecordJson::from(record),
+                })
+                .map_err(PevcapJsonlError::Serialize)?,
+            );
+            output.push('\n');
+        }
+
+        Ok(output)
+    }
+
+    /// Deserializes a capture from line-delimited JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapJsonlError`] when the stream is malformed, missing a
+    /// header, has the wrong magic/version, or violates PEVCAP header bounds.
+    #[cfg(feature = "serde")]
+    pub fn from_jsonl(input: &str) -> Result<Self, PevcapJsonlError> {
+        let mut header = None;
+        let mut version = None;
+        let mut records = Vec::new();
+
+        for (index, raw_line) in input.lines().enumerate() {
+            let line = raw_line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let line_number = index + 1;
+            match serde_json::from_str::<PevcapJsonlLine>(line).map_err(|source| {
+                PevcapJsonlError::Deserialize {
+                    line: line_number,
+                    source,
+                }
+            })? {
+                PevcapJsonlLine::Header {
+                    magic,
+                    version: decoded_version,
+                    header: decoded_header,
+                } => {
+                    if header.is_some() {
+                        return Err(PevcapJsonlError::DuplicateHeader { line: line_number });
+                    }
+                    if magic != PEVCAP_MAGIC {
+                        return Err(PevcapJsonlError::InvalidMagic { line: line_number });
+                    }
+                    if decoded_version != PevcapFormatVersion::current() {
+                        return Err(PevcapJsonlError::UnsupportedVersion {
+                            line: line_number,
+                            version: decoded_version,
+                        });
+                    }
+                    version = Some(decoded_version);
+                    header = Some(decoded_header.try_into_header()?);
+                }
+                PevcapJsonlLine::Record { record } => {
+                    if header.is_none() {
+                        return Err(PevcapJsonlError::MissingHeader);
+                    }
+                    records.push(record.into_record());
+                }
+            }
+        }
+
+        Ok(Self {
+            version: version.ok_or(PevcapJsonlError::MissingHeader)?,
+            header: header.ok_or(PevcapJsonlError::MissingHeader)?,
+            records,
+        })
+    }
+}
+
+/// JSONL PEVCAP import/export error.
+#[cfg(feature = "serde")]
+#[derive(Debug, Error)]
+pub enum PevcapJsonlError {
+    /// JSON serialization failed.
+    #[error("failed to serialize PEVCAP JSONL: {0}")]
+    Serialize(serde_json::Error),
+
+    /// JSON deserialization failed for a specific line.
+    #[error("failed to deserialize PEVCAP JSONL line {line}: {source}")]
+    Deserialize {
+        /// One-based line number.
+        line: usize,
+
+        /// Underlying JSON error.
+        source: serde_json::Error,
+    },
+
+    /// The JSONL stream did not start with a capture header.
+    #[error("PEVCAP JSONL is missing a header line")]
+    MissingHeader,
+
+    /// More than one header line was encountered.
+    #[error("duplicate PEVCAP JSONL header at line {line}")]
+    DuplicateHeader {
+        /// One-based line number.
+        line: usize,
+    },
+
+    /// Header magic bytes did not match PEVCAP.
+    #[error("invalid PEVCAP JSONL magic at line {line}")]
+    InvalidMagic {
+        /// One-based line number.
+        line: usize,
+    },
+
+    /// Header version is not supported by this reader.
+    #[error("unsupported PEVCAP JSONL version {version:?} at line {line}")]
+    UnsupportedVersion {
+        /// One-based line number.
+        line: usize,
+
+        /// Decoded version.
+        version: PevcapFormatVersion,
+    },
+
+    /// Header metadata violated bounded PEVCAP limits.
+    #[error(transparent)]
+    Header(#[from] PevcapHeaderError),
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PevcapJsonlLine {
+    Header {
+        magic: [u8; 8],
+        version: PevcapFormatVersion,
+        header: PevcapHeaderJson,
+    },
+    Record {
+        record: PevcapRecordJson,
+    },
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct PevcapHeaderJson {
+    wall_clock_start_unix_ms: u64,
+    platform_id: String,
+    write_limit: Option<u16>,
+    advertised_services: Vec<[u8; 16]>,
+    gatt_fingerprints: Vec<GattFingerprintJson>,
+    resolved_identity: Option<PevcapResolvedIdentityJson>,
+    library_version: String,
+    registry_hash: [u8; 32],
+    annotations: Vec<String>,
+}
+
+#[cfg(feature = "serde")]
+impl From<&PevcapHeader> for PevcapHeaderJson {
+    fn from(header: &PevcapHeader) -> Self {
+        Self {
+            wall_clock_start_unix_ms: header.wall_clock_start_unix_ms,
+            platform_id: header.platform_id.clone(),
+            write_limit: header.write_limit,
+            advertised_services: header
+                .advertised_services
+                .iter()
+                .map(|channel| channel.as_bytes())
+                .collect(),
+            gatt_fingerprints: header
+                .gatt_fingerprints
+                .iter()
+                .map(GattFingerprintJson::from)
+                .collect(),
+            resolved_identity: header
+                .resolved_identity
+                .as_ref()
+                .map(PevcapResolvedIdentityJson::from),
+            library_version: header.library_version.clone(),
+            registry_hash: header.registry_hash,
+            annotations: header.annotations.iter().cloned().collect(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapHeaderJson {
+    fn try_into_header(self) -> Result<PevcapHeader, PevcapHeaderError> {
+        let advertised_services = self
+            .advertised_services
+            .into_iter()
+            .map(GattChannel::from_bytes)
+            .collect::<Vec<_>>();
+        let gatt_fingerprints = self
+            .gatt_fingerprints
+            .into_iter()
+            .map(GattFingerprintJson::into_fingerprint)
+            .collect::<Vec<_>>();
+        let annotations = self
+            .annotations
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+
+        PevcapHeader::new(
+            self.wall_clock_start_unix_ms,
+            self.platform_id,
+            self.write_limit,
+            &advertised_services,
+            &gatt_fingerprints,
+            self.resolved_identity
+                .map(PevcapResolvedIdentityJson::into_identity),
+            self.library_version,
+            self.registry_hash,
+            &annotations,
+        )
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct PevcapResolvedIdentityJson {
+    protocol_family: Option<ProtocolFamilyJson>,
+    model: Option<VerifiedStringJson>,
+    firmware: Option<VerifiedStringJson>,
+}
+
+#[cfg(feature = "serde")]
+impl From<&PevcapResolvedIdentity> for PevcapResolvedIdentityJson {
+    fn from(identity: &PevcapResolvedIdentity) -> Self {
+        Self {
+            protocol_family: identity.protocol_family.map(ProtocolFamilyJson::from),
+            model: identity.model.as_ref().map(VerifiedStringJson::from),
+            firmware: identity.firmware.as_ref().map(VerifiedStringJson::from),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapResolvedIdentityJson {
+    fn into_identity(self) -> PevcapResolvedIdentity {
+        PevcapResolvedIdentity {
+            protocol_family: self.protocol_family.map(ProtocolFamilyJson::into_family),
+            model: self.model.map(VerifiedStringJson::into_verified_value),
+            firmware: self.firmware.map(VerifiedStringJson::into_verified_value),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct VerifiedStringJson {
+    value: String,
+    verification: VerificationStatusJson,
+}
+
+#[cfg(feature = "serde")]
+impl From<&VerifiedValue<String>> for VerifiedStringJson {
+    fn from(value: &VerifiedValue<String>) -> Self {
+        Self {
+            value: value.value.clone(),
+            verification: VerificationStatusJson::from(value.verification),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl VerifiedStringJson {
+    fn into_verified_value(self) -> VerifiedValue<String> {
+        VerifiedValue {
+            value: self.value,
+            verification: self.verification.into_status(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum ProtocolFamilyJson {
+    VeteranLeaperkimNosfet,
+    BegodeGotway,
+    Vesc,
+}
+
+#[cfg(feature = "serde")]
+impl From<ProtocolFamily> for ProtocolFamilyJson {
+    fn from(family: ProtocolFamily) -> Self {
+        match family {
+            ProtocolFamily::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
+            ProtocolFamily::BegodeGotway => Self::BegodeGotway,
+            ProtocolFamily::Vesc => Self::Vesc,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl ProtocolFamilyJson {
+    const fn into_family(self) -> ProtocolFamily {
+        match self {
+            Self::VeteranLeaperkimNosfet => ProtocolFamily::VeteranLeaperkimNosfet,
+            Self::BegodeGotway => ProtocolFamily::BegodeGotway,
+            Self::Vesc => ProtocolFamily::Vesc,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum VerificationStatusJson {
+    Unverified,
+    Inferred,
+    SourceVerified,
+    HardwareVerified,
+    SourceAndHardwareVerified,
+}
+
+#[cfg(feature = "serde")]
+impl From<VerificationStatus> for VerificationStatusJson {
+    fn from(status: VerificationStatus) -> Self {
+        match status {
+            VerificationStatus::Unverified => Self::Unverified,
+            VerificationStatus::Inferred => Self::Inferred,
+            VerificationStatus::SourceVerified => Self::SourceVerified,
+            VerificationStatus::HardwareVerified => Self::HardwareVerified,
+            VerificationStatus::SourceAndHardwareVerified => Self::SourceAndHardwareVerified,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl VerificationStatusJson {
+    const fn into_status(self) -> VerificationStatus {
+        match self {
+            Self::Unverified => VerificationStatus::Unverified,
+            Self::Inferred => VerificationStatus::Inferred,
+            Self::SourceVerified => VerificationStatus::SourceVerified,
+            Self::HardwareVerified => VerificationStatus::HardwareVerified,
+            Self::SourceAndHardwareVerified => VerificationStatus::SourceAndHardwareVerified,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct GattFingerprintJson {
+    service: [u8; 16],
+    characteristic: [u8; 16],
+    roles: GattRolesJson,
+    verification: VerificationStatusJson,
+}
+
+#[cfg(feature = "serde")]
+impl From<&GattFingerprint> for GattFingerprintJson {
+    fn from(fingerprint: &GattFingerprint) -> Self {
+        Self {
+            service: fingerprint.service.as_bytes(),
+            characteristic: fingerprint.characteristic.as_bytes(),
+            roles: GattRolesJson::from(fingerprint.roles),
+            verification: VerificationStatusJson::from(fingerprint.verification),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl GattFingerprintJson {
+    fn into_fingerprint(self) -> GattFingerprint {
+        GattFingerprint {
+            service: GattChannel::from_bytes(self.service),
+            characteristic: GattChannel::from_bytes(self.characteristic),
+            roles: self.roles.into_roles(),
+            verification: self.verification.into_status(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct GattRolesJson {
+    roles: Vec<GattRoleJson>,
+}
+
+#[cfg(feature = "serde")]
+impl From<GattRoles> for GattRolesJson {
+    fn from(roles: GattRoles) -> Self {
+        let mut serialized = Vec::with_capacity(5);
+        if roles.supports_read() {
+            serialized.push(GattRoleJson::Read);
+        }
+        if roles.supports_write() {
+            serialized.push(GattRoleJson::Write);
+        }
+        if roles.supports_write_without_response() {
+            serialized.push(GattRoleJson::WriteWithoutResponse);
+        }
+        if roles.supports_notify() {
+            serialized.push(GattRoleJson::Notify);
+        }
+        if roles.supports_indicate() {
+            serialized.push(GattRoleJson::Indicate);
+        }
+        Self { roles: serialized }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl GattRolesJson {
+    fn into_roles(self) -> GattRoles {
+        self.roles
+            .into_iter()
+            .fold(GattRoles::empty(), |roles, role| role.apply(roles))
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum GattRoleJson {
+    Read,
+    Write,
+    WriteWithoutResponse,
+    Notify,
+    Indicate,
+}
+
+#[cfg(feature = "serde")]
+impl GattRoleJson {
+    const fn apply(self, roles: GattRoles) -> GattRoles {
+        match self {
+            Self::Read => roles.with_read(),
+            Self::Write => roles.with_write(),
+            Self::WriteWithoutResponse => roles.with_write_without_response(),
+            Self::Notify => roles.with_notify(),
+            Self::Indicate => roles.with_indicate(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct PevcapRecordJson {
+    monotonic_ms: MonotonicMillis,
+    direction: PevcapDirectionJson,
+    characteristic: [u8; 16],
+    service: Option<[u8; 16]>,
+    write_mode: Option<WriteModeJson>,
+    bytes: Vec<u8>,
+}
+
+#[cfg(feature = "serde")]
+impl From<&PevcapRecord> for PevcapRecordJson {
+    fn from(record: &PevcapRecord) -> Self {
+        Self {
+            monotonic_ms: record.monotonic_ms,
+            direction: PevcapDirectionJson::from(record.direction),
+            characteristic: record.characteristic.as_bytes(),
+            service: record.service.map(GattChannel::as_bytes),
+            write_mode: record.write_mode.map(WriteModeJson::from),
+            bytes: record.bytes.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapRecordJson {
+    fn into_record(self) -> PevcapRecord {
+        PevcapRecord {
+            monotonic_ms: self.monotonic_ms,
+            direction: self.direction.into_direction(),
+            characteristic: GattChannel::from_bytes(self.characteristic),
+            service: self.service.map(GattChannel::from_bytes),
+            write_mode: self.write_mode.map(WriteModeJson::into_mode),
+            bytes: self.bytes,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum PevcapDirectionJson {
+    Inbound,
+    Outbound,
+}
+
+#[cfg(feature = "serde")]
+impl From<PevcapDirection> for PevcapDirectionJson {
+    fn from(direction: PevcapDirection) -> Self {
+        match direction {
+            PevcapDirection::Inbound => Self::Inbound,
+            PevcapDirection::Outbound => Self::Outbound,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapDirectionJson {
+    const fn into_direction(self) -> PevcapDirection {
+        match self {
+            Self::Inbound => PevcapDirection::Inbound,
+            Self::Outbound => PevcapDirection::Outbound,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum WriteModeJson {
+    WithResponse,
+    WithoutResponse,
+}
+
+#[cfg(feature = "serde")]
+impl From<WriteMode> for WriteModeJson {
+    fn from(mode: WriteMode) -> Self {
+        match mode {
+            WriteMode::WithResponse => Self::WithResponse,
+            WriteMode::WithoutResponse => Self::WithoutResponse,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl WriteModeJson {
+    const fn into_mode(self) -> WriteMode {
+        match self {
+            Self::WithResponse => WriteMode::WithResponse,
+            Self::WithoutResponse => WriteMode::WithoutResponse,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -321,10 +867,7 @@ mod tests {
         let fingerprint = GattFingerprint {
             service,
             characteristic: GattChannel::from_bytes([0x22; 16]),
-            roles: crate::GattRoles::empty()
-                .with_read()
-                .with_write()
-                .with_notify(),
+            roles: GattRoles::empty().with_read().with_write().with_notify(),
             verification: VerificationStatus::HardwareVerified,
         };
         let header = PevcapHeader::new(
@@ -468,5 +1011,72 @@ mod tests {
         assert_eq!(capture.version, PevcapFormatVersion::current());
         assert_eq!(capture.header, header);
         assert_eq!(capture.records, records);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_jsonl_round_trips_header_and_ordered_records() {
+        let service = GattChannel::from_bytes([0xFE; 16]);
+        let characteristic = GattChannel::from_bytes([0xE1; 16]);
+        let header = PevcapHeader::new(
+            1_725_000_123_456,
+            "darwin",
+            Some(182),
+            &[service],
+            &[GattFingerprint {
+                service,
+                characteristic,
+                roles: GattRoles::empty()
+                    .with_write_without_response()
+                    .with_notify(),
+                verification: VerificationStatus::HardwareVerified,
+            }],
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::BegodeGotway),
+                model: Some(VerifiedValue {
+                    value: "Begode Falcon".to_owned(),
+                    verification: VerificationStatus::Inferred,
+                }),
+                firmware: None,
+            }),
+            "0.1.0",
+            [0x42; 32],
+            &["identity_confidence=Model", "battery=84v"],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::outbound_write(
+                    7,
+                    characteristic,
+                    WriteMode::WithoutResponse,
+                    b"N".to_vec(),
+                ),
+                PevcapRecord::inbound_notification(
+                    9,
+                    characteristic,
+                    service,
+                    b"NAME=Falcon".to_vec(),
+                ),
+            ],
+        );
+
+        let jsonl = capture.to_jsonl().expect("capture serializes");
+        let decoded = PevcapCapture::from_jsonl(&jsonl).expect("capture deserializes");
+
+        assert_eq!(decoded, capture);
+        assert_eq!(jsonl.lines().count(), 3);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_jsonl_requires_first_line_header() {
+        let err = PevcapCapture::from_jsonl(
+            r#"{"kind":"record","record":{"monotonic_ms":1,"direction":"Inbound","characteristic":[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],"service":null,"write_mode":null,"bytes":[]}}"#,
+        )
+        .expect_err("record before header is invalid");
+
+        assert!(matches!(err, PevcapJsonlError::MissingHeader));
     }
 }
