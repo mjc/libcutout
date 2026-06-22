@@ -1452,11 +1452,12 @@ fn rssi_to_signal_percent(rssi_dbm: i16) -> u64 {
 
 fn render_voltage_sparkline(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let title = voltage_sparkline_title(state);
+    let (data, len, max) = voltage_sparkline_data(state);
     let spark = Sparkline::default()
         .block(panel_block(&title))
         .style(Style::new().fg(Color::Magenta))
-        .data(&state.telemetry.voltage_v)
-        .max(voltage_sparkline_max_v(state));
+        .data(&data[..len])
+        .max(max);
     frame.render_widget(spark, area);
 }
 
@@ -1476,6 +1477,40 @@ fn voltage_sparkline_max_v(state: &DashboardState) -> u64 {
         .map_or(100, |(_min_mv, max_mv)| millivolts_to_volts(max_mv))
         .max(state.telemetry.latest_voltage_v.unwrap_or(0))
         .max(1)
+}
+
+fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize, u64) {
+    let mut data = [0; HISTORY_LIMIT];
+    let len = state.telemetry.voltage_v.len().min(HISTORY_LIMIT);
+
+    if let Some((min_mv, max_mv)) = dashboard_voltage_range_mv(state) {
+        for (slot, voltage_v) in data.iter_mut().zip(state.telemetry.voltage_v.iter()) {
+            *slot = voltage_range_percent(*voltage_v, min_mv, max_mv);
+        }
+        return (data, len, 100);
+    }
+
+    for (slot, voltage_v) in data.iter_mut().zip(state.telemetry.voltage_v.iter()) {
+        *slot = *voltage_v;
+    }
+    (data, len, voltage_sparkline_max_v(state))
+}
+
+fn voltage_range_percent(sample_v: u64, min_mv: i32, max_mv: i32) -> u64 {
+    let voltage_mv = i64::try_from(sample_v)
+        .unwrap_or(i64::MAX / 1_000)
+        .saturating_mul(1_000);
+    let min_mv = i64::from(min_mv);
+    let max_mv = i64::from(max_mv);
+    if max_mv <= min_mv || voltage_mv <= min_mv {
+        return 0;
+    }
+    if voltage_mv >= max_mv {
+        return 100;
+    }
+
+    u64::try_from(((voltage_mv - min_mv) * 100 + (max_mv - min_mv) / 2) / (max_mv - min_mv))
+        .unwrap_or(100)
 }
 
 fn dashboard_voltage_range_mv(state: &DashboardState) -> Option<(i32, i32)> {
@@ -2067,22 +2102,33 @@ mod tests {
         state.device.make = "NOSFET".to_owned();
         state.device.model = "Aero".to_owned();
         state.telemetry.latest_voltage_v = Some(120);
+        state.telemetry.voltage_v = vec![109, 120, 126];
         state.telemetry.battery_pct = Some(85);
 
         assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
         assert_eq!(voltage_sparkline_max_v(&state), 126);
         assert_eq!(voltage_sparkline_title(&state), "Voltage 120 V / 85%");
+
+        let (data, len, max) = voltage_sparkline_data(&state);
+        assert_eq!(len, 3);
+        assert_eq!(max, 100);
+        assert_eq!(&data[..len], [51, 83, 100]);
     }
 
     #[test]
     fn voltage_sparkline_falls_back_to_observed_voltage_for_unknown_device() {
         let mut state = DashboardState::empty();
         state.telemetry.latest_voltage_v = Some(151);
-        state.telemetry.voltage_v = vec![151];
+        state.telemetry.voltage_v = vec![149, 151];
 
         assert_eq!(dashboard_voltage_range_mv(&state), None);
         assert_eq!(voltage_sparkline_max_v(&state), 151);
         assert_eq!(voltage_sparkline_title(&state), "Voltage 151 V");
+
+        let (data, len, max) = voltage_sparkline_data(&state);
+        assert_eq!(len, 2);
+        assert_eq!(max, 151);
+        assert_eq!(&data[..len], [149, 151]);
     }
 
     #[test]
