@@ -12,7 +12,7 @@ use cutout_core::{ParserDiagnostics, ReadOnlyResponse, TelemetryDelta, Telemetry
 use cutout_protocols::VeteranModelProfile;
 use ratatui::termina::{
     PlatformTerminal, Terminal as _,
-    escape::csi::{self, Csi},
+    escape::csi::{self},
 };
 use ratatui::{
     Frame, Terminal,
@@ -883,6 +883,27 @@ fn u64_to_i64(value: u64) -> Option<i64> {
     i64::try_from(value).ok()
 }
 
+fn format_distance_mm(value: u64) -> String {
+    format_distance_m(value / 1_000)
+}
+
+fn format_optional_distance_m(value: Option<u64>) -> String {
+    value.map_or_else(|| "unknown".to_owned(), format_distance_m)
+}
+
+fn format_distance_m(value: u64) -> String {
+    if value < 1_000 {
+        return format!("{value} m");
+    }
+
+    let km_tenths = value.saturating_mul(10).saturating_add(500) / 1_000;
+    format!("{} km", format_tenths(km_tenths))
+}
+
+fn format_tenths(value: u64) -> String {
+    format!("{}.{}", value / 10, value % 10)
+}
+
 struct DeviceIdentity {
     make: String,
     model: String,
@@ -934,7 +955,7 @@ fn format_mapped_telemetry_event(snapshot: TelemetrySnapshot) -> String {
         fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
     }
     if let Some(distance) = snapshot.distance_mm {
-        fields.push(format!("distance={}m", distance.value / 1_000));
+        fields.push(format!("distance={}", format_distance_mm(distance.value)));
     }
     if let Some(pitch) = snapshot.pitch_mdeg {
         fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
@@ -1025,7 +1046,7 @@ fn format_telemetry_delta(delta: TelemetryDelta) -> String {
         fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
     }
     if let Some(distance) = delta.distance_mm {
-        fields.push(format!("distance={}m", distance.value / 1_000));
+        fields.push(format!("distance={}", format_distance_mm(distance.value)));
     }
     if let Some(pitch) = delta.pitch_mdeg {
         fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
@@ -1117,7 +1138,7 @@ fn run_dashboard_loop(
         }
     };
 
-    restore_dashboard_terminal(&mut terminal)?;
+    ratatui::restore();
     result
 }
 
@@ -1138,26 +1159,8 @@ fn init_dashboard_terminal() -> Result<DashboardTerminal> {
     Ok(Terminal::new(backend)?)
 }
 
-fn restore_dashboard_terminal(terminal: &mut DashboardTerminal) -> Result<()> {
-    let backend = terminal.backend_mut();
-    write!(
-        backend,
-        "{}{}",
-        decreset(csi::DecPrivateModeCode::ClearAndEnableAlternateScreen),
-        decset(csi::DecPrivateModeCode::ShowCursor)
-    )?;
-    backend.flush()?;
-    Ok(())
-}
-
-fn decset(code: csi::DecPrivateModeCode) -> Csi {
-    Csi::Mode(csi::Mode::SetDecPrivateMode(csi::DecPrivateMode::Code(
-        code,
-    )))
-}
-
-fn decreset(code: csi::DecPrivateModeCode) -> Csi {
-    Csi::Mode(csi::Mode::ResetDecPrivateMode(csi::DecPrivateMode::Code(
+fn decset(code: csi::DecPrivateModeCode) -> csi::Csi {
+    csi::Csi::Mode(csi::Mode::SetDecPrivateMode(csi::DecPrivateMode::Code(
         code,
     )))
 }
@@ -1641,7 +1644,9 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
             ]),
             Line::from(vec![
                 Span::styled("distance ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_u64(state.telemetry.latest_distance_m, " m")),
+                Span::raw(format_optional_distance_m(
+                    state.telemetry.latest_distance_m,
+                )),
                 Span::styled(" pitch ", Style::new().fg(Color::Gray)),
                 Span::raw(format_optional_i64(
                     state.telemetry.latest_pitch_deg,
@@ -1969,6 +1974,14 @@ mod tests {
         assert_eq!(rssi_to_signal_percent(-100), 0);
         assert_eq!(rssi_to_signal_percent(-120), 0);
         assert_eq!(rssi_to_signal_percent(-20), 100);
+    }
+
+    #[test]
+    fn distance_formatter_uses_odometer_scale_for_large_distances() {
+        assert_eq!(format_distance_m(999), "999 m");
+        assert_eq!(format_distance_mm(1_551_169_000), "1551.2 km");
+        assert_eq!(format_optional_distance_m(Some(1_551_169)), "1551.2 km");
+        assert_eq!(format_optional_distance_m(None), "unknown");
     }
 
     #[test]
@@ -2644,9 +2657,11 @@ mod tests {
         assert!(text.contains("0 A"));
         assert!(text.contains("33 C"));
         assert!(text.contains("-100%"));
-        assert!(text.contains("1551169 m"));
+        assert!(text.contains("1551.2 km"));
+        assert!(!text.contains("1551169 m"));
         assert!(text.contains("69 deg"));
         assert!(text.contains("telemetry mapped"));
+        assert!(text.contains("distance=1551.2 km"));
         assert!(text.contains("current=0A"));
         assert!(!text.contains("telemetry unmapped notifications=1"));
     }
