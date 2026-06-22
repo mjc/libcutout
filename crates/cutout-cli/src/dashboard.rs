@@ -178,7 +178,7 @@ pub(crate) struct LogEntry {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TelemetryWindow {
-    pub(crate) battery_pct: u64,
+    pub(crate) battery_pct: Option<u64>,
     pub(crate) signal_pct: u64,
     pub(crate) speed_mph: Vec<u64>,
     pub(crate) voltage_v: Vec<u64>,
@@ -532,7 +532,7 @@ impl DashboardState {
 
     pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
         let percent = percent.min(100);
-        self.telemetry.battery_pct = u64::from(percent);
+        self.telemetry.battery_pct = Some(u64::from(percent));
         self.push_log("info", &format!("battery level {percent}%"));
     }
 
@@ -674,7 +674,7 @@ impl DashboardState {
 impl TelemetryWindow {
     fn empty() -> Self {
         Self {
-            battery_pct: 0,
+            battery_pct: None,
             signal_pct: 0,
             speed_mph: Vec::with_capacity(HISTORY_LIMIT),
             voltage_v: Vec::with_capacity(HISTORY_LIMIT),
@@ -694,7 +694,7 @@ impl TelemetryWindow {
         current_a: &'static [u64],
         temperature_c: &'static [u64],
     ) {
-        self.battery_pct = battery_pct;
+        self.battery_pct = Some(battery_pct);
         self.signal_pct = signal_pct;
         self.speed_mph.clear();
         self.voltage_v.clear();
@@ -713,7 +713,9 @@ impl TelemetryWindow {
         let next_current = 4 + ((self.current_a.last().copied().unwrap_or(5) + 1) % 9);
         let next_temperature = 30 + ((self.temperature_c.last().copied().unwrap_or(32) + 1) % 9);
 
-        self.battery_pct = self.battery_pct.saturating_sub(1).max(10);
+        if let Some(battery_pct) = self.battery_pct.as_mut() {
+            *battery_pct = battery_pct.saturating_sub(1).max(10);
+        }
         self.signal_pct = (self.signal_pct + 1).min(100);
         push_sample(&mut self.speed_mph, next_speed);
         push_sample(&mut self.voltage_v, next_voltage);
@@ -744,7 +746,7 @@ impl TelemetryWindow {
             .battery_percent_reported
             .or(snapshot.battery_percent_estimated)
         {
-            self.battery_pct = u64::from(percent.value);
+            self.battery_pct = Some(u64::from(percent.value));
         }
         if let Some(speed) = snapshot.speed_mm_s {
             push_sample(&mut self.speed_mph, mm_s_to_mph(speed.value));
@@ -979,11 +981,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    let battery = Gauge::default()
-        .block(Block::bordered().title("Battery"))
-        .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
-        .ratio(percent_ratio(state.telemetry.battery_pct));
-    frame.render_widget(battery, gauges[0]);
+    render_battery_gauge(frame, gauges[0], state.telemetry.battery_pct);
 
     let signal = Gauge::default()
         .block(Block::bordered().title("Signal"))
@@ -1020,6 +1018,19 @@ fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     .block(panel_block("Profiles"))
     .column_spacing(1);
     frame.render_widget(table, area);
+}
+
+fn render_battery_gauge(frame: &mut Frame<'_>, area: Rect, battery_pct: Option<u64>) {
+    if let Some(battery_pct) = battery_pct {
+        let battery = Gauge::default()
+            .block(Block::bordered().title("Battery"))
+            .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
+            .ratio(percent_ratio(battery_pct));
+        frame.render_widget(battery, area);
+    } else {
+        let battery = Paragraph::new("unknown").block(Block::bordered().title("Battery"));
+        frame.render_widget(battery, area);
+    }
 }
 
 fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1407,6 +1418,7 @@ mod tests {
         assert_eq!(state.device.address, "AA:BB:CC:DD:EE:FF");
         assert_eq!(state.device.connection_state, "connected");
         assert_eq!(state.counters.connected, 1);
+        assert_eq!(state.telemetry.battery_pct, None);
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
@@ -1466,7 +1478,7 @@ mod tests {
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.telemetry.battery_pct, 77);
+        assert_eq!(state.telemetry.battery_pct, Some(77));
         assert_eq!(state.telemetry.speed_mph, vec![10]);
         assert_eq!(state.telemetry.voltage_v, vec![84]);
         assert_eq!(state.telemetry.current_a, vec![12]);
@@ -1479,7 +1491,7 @@ mod tests {
 
         state.apply_battery_percent(88);
 
-        assert_eq!(state.telemetry.battery_pct, 88);
+        assert_eq!(state.telemetry.battery_pct, Some(88));
         assert!(
             state
                 .logs
@@ -1489,13 +1501,23 @@ mod tests {
 
         state.apply_battery_percent(150);
 
-        assert_eq!(state.telemetry.battery_pct, 100);
+        assert_eq!(state.telemetry.battery_pct, Some(100));
         assert!(
             state
                 .logs
                 .iter()
                 .any(|entry| entry.message == "battery level 100%")
         );
+    }
+
+    #[test]
+    fn live_dashboard_renders_unknown_battery_until_real_reading_arrives() {
+        let state = DashboardState::empty();
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(text.contains("Battery"));
+        assert!(text.contains("unknown"));
     }
 
     #[test]
