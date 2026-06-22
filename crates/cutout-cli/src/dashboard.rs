@@ -1345,13 +1345,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    render_battery_gauge(
-        frame,
-        gauges[0],
-        state.telemetry.battery_pct,
-        state.telemetry.battery_source,
-        state.telemetry.latest_voltage_v,
-    );
+    render_battery_cluster(frame, gauges[0], state);
 
     render_signal_gauge(frame, gauges[1], state);
     render_profiles(frame, chunks[2], state);
@@ -1394,6 +1388,22 @@ fn render_profile_table(frame: &mut Frame<'_>, area: Rect, state: &DashboardStat
     .block(panel_block("Profiles"))
     .column_spacing(1);
     frame.render_widget(table, area);
+}
+
+fn render_battery_cluster(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+
+    render_battery_gauge(
+        frame,
+        chunks[0],
+        state.telemetry.battery_pct,
+        state.telemetry.battery_source,
+        state.telemetry.latest_voltage_v,
+    );
+    render_voltage_sparkline(frame, chunks[1], state);
 }
 
 fn render_battery_gauge(
@@ -1490,7 +1500,6 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
                 Constraint::Length(8),
                 Constraint::Length(7),
                 Constraint::Length(3),
-                Constraint::Length(3),
                 Constraint::Fill(1),
             ])
             .split(area);
@@ -1504,8 +1513,7 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             &state.telemetry.speed_mph,
             Color::Yellow,
         );
-        render_voltage_sparkline(frame, chunks[3], state);
-        render_telemetry_trend(frame, chunks[4], state);
+        render_telemetry_trend(frame, chunks[3], state);
     } else {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -1877,6 +1885,19 @@ mod tests {
             }
         }
         text
+    }
+
+    fn find_text_position(buffer: &Buffer, needle: &str) -> Option<(u16, u16)> {
+        for y in 0..buffer.area.height {
+            let mut row = String::new();
+            for x in 0..buffer.area.width {
+                row.push_str(buffer[(x, y)].symbol());
+            }
+            if let Some(x) = row.find(needle) {
+                return Some((u16::try_from(x).expect("x position fits u16"), y));
+            }
+        }
+        None
     }
 
     fn empty_session_bridge_report() -> SessionBridgeReport {
@@ -2702,13 +2723,12 @@ mod tests {
         assert_eq!(state.telemetry.voltage_v, vec![109]);
 
         let overview_text = buffer_text(&render_buffer(&state, 120, 36));
-        assert!(overview_text.contains("Battery estimated"));
         assert!(overview_text.contains("47%"));
         assert!(overview_text.contains("Voltage"));
 
         state.active_tab = 1;
         let text = buffer_text(&render_buffer(&state, 120, 36));
-        assert!(text.contains("Voltage 109 V / 47%"));
+        assert!(text.contains("voltage 109 V"));
         assert!(text.contains("109 V"));
         assert!(text.contains("0 A"));
         assert!(text.contains("33 C"));
@@ -2778,7 +2798,7 @@ mod tests {
         assert!(text.contains("Session"));
         assert!(text.contains("notifications"));
         assert!(text.contains("Speed"));
-        assert!(text.contains("Voltage"));
+        assert!(text.contains("voltage"));
     }
 
     #[test]
@@ -2878,6 +2898,24 @@ mod tests {
         ] {
             assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
         }
+    }
+
+    #[test]
+    fn overview_renders_voltage_sparkline_as_compact_battery_companion() {
+        let buffer = render_buffer(&DashboardState::sample(), 120, 36);
+        let battery_position =
+            find_text_position(&buffer, "Battery").expect("battery gauge renders");
+        let voltage_position =
+            find_text_position(&buffer, "Voltage").expect("voltage sparkline renders");
+        let signal_position = find_text_position(&buffer, "Signal").expect("signal gauge renders");
+
+        assert_eq!(voltage_position.1, battery_position.1);
+        assert!(voltage_position.0 > battery_position.0);
+        assert!(voltage_position.0 < signal_position.0);
+        assert!(
+            signal_position.0 - voltage_position.0 <= 18,
+            "voltage panel should stay compact near battery, positions: battery={battery_position:?} voltage={voltage_position:?} signal={signal_position:?}"
+        );
     }
 
     #[test]
