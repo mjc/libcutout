@@ -845,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_bms_layout_preserves_conservative_selector_map() {
+    fn aero_bms_layout_preserves_documented_selector_map() {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
         let layout = aero.bms_layout.expect("Aero smart-BMS layout is known");
 
@@ -858,7 +858,10 @@ mod tests {
             layout.selectors[1].kind,
             cutout_core::BatteryPageKind::CellVoltage
         );
-        assert_eq!(layout.selectors[3].kind, cutout_core::BatteryPageKind::Raw);
+        assert_eq!(
+            layout.selectors[3].kind,
+            cutout_core::BatteryPageKind::Temperature
+        );
         assert_eq!(layout.selectors[8].kind, cutout_core::BatteryPageKind::Raw);
         assert_eq!(
             layout.selectors[3].verification,

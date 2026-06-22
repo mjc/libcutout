@@ -1,4 +1,7 @@
-use crate::{BatteryInfo, VerificationStatus};
+use crate::{BatteryInfo, Measured, VerificationStatus};
+
+/// Fixed number of temperature values carried by typed BMS temperature pages.
+pub const BATTERY_TEMPERATURE_VALUES_PER_PAGE: usize = 6;
 
 /// Battery/BMS page classification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,13 +98,50 @@ pub struct BatteryTemperaturePage {
 
     /// Generic battery measurements decoded from this page.
     pub battery: BatteryInfo,
+
+    /// Contiguous BMS temperature values in millicelsius.
+    pub temperatures_mc: [i32; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+
+    /// Number of populated temperature values.
+    pub temperature_count: u8,
 }
 
 impl BatteryTemperaturePage {
     /// Creates a typed temperature/status payload.
     #[must_use]
     pub const fn new(page: BatteryPageMetadata, battery: BatteryInfo) -> Self {
-        Self { page, battery }
+        Self {
+            page,
+            battery,
+            temperatures_mc: [0; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+            temperature_count: 0,
+        }
+    }
+
+    /// Creates a typed temperature/status payload with page-specific values.
+    #[must_use]
+    pub const fn with_temperatures(
+        page: BatteryPageMetadata,
+        battery: BatteryInfo,
+        temperatures_mc: [Option<Measured<i32>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+    ) -> Self {
+        let mut values = [0; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
+        let mut index = 0;
+        let mut count = 0_u8;
+        while index < BATTERY_TEMPERATURE_VALUES_PER_PAGE {
+            let Some(temperature) = temperatures_mc[index] else {
+                break;
+            };
+            values[index] = temperature.value;
+            index += 1;
+            count += 1;
+        }
+        Self {
+            page,
+            battery,
+            temperatures_mc: values,
+            temperature_count: count,
+        }
     }
 }
 
@@ -163,6 +203,39 @@ impl BatteryPagePayload {
     #[must_use]
     pub const fn temperature(page: BatteryPageMetadata, battery: BatteryInfo) -> Self {
         Self::Temperature(BatteryTemperaturePage::new(page, battery))
+    }
+
+    /// Builds a payload for a typed temperature/status page with fixed values.
+    #[must_use]
+    pub const fn temperature_values(
+        page: BatteryPageMetadata,
+        battery: BatteryInfo,
+        temperatures_mc: [Option<Measured<i32>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+    ) -> Self {
+        Self::Temperature(BatteryTemperaturePage::with_temperatures(
+            page,
+            battery,
+            temperatures_mc,
+        ))
+    }
+
+    /// Returns page-specific temperature values when present.
+    #[must_use]
+    pub const fn temperatures_mc(
+        self,
+    ) -> [Option<Measured<i32>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
+        match self {
+            Self::Temperature(page) => {
+                let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
+                let mut index = 0;
+                while index < page.temperature_count as usize {
+                    temperatures[index] = Some(Measured::reported(page.temperatures_mc[index]));
+                    index += 1;
+                }
+                temperatures
+            }
+            Self::CellVoltage(_) | Self::Raw(_) => [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+        }
     }
 
     /// Builds a payload for a raw or reserved page.
@@ -253,7 +326,7 @@ mod tests {
             current_ma: None,
             percent_reported: None,
             percent_estimated: None,
-            temperature_mc: Some(crate::Measured::reported(16_730)),
+            temperature_mc: Some(Measured::reported(16_730)),
             raw_state: None,
         };
         let page = BatteryPageMetadata::temperature(3, VerificationStatus::SourceVerified);
@@ -306,7 +379,7 @@ mod tests {
     #[test]
     fn explicit_temperature_constructor_chooses_temperature_variant() {
         let battery = BatteryInfo {
-            temperature_mc: Some(crate::Measured::reported(17_830)),
+            temperature_mc: Some(Measured::reported(17_830)),
             ..BatteryInfo::default()
         };
         let page = BatteryPageMetadata::temperature(3, VerificationStatus::SourceVerified);

@@ -27,6 +27,7 @@ pub const fn classify_veteran_bms_selector(selector: u8) -> BatteryPageKind {
     match selector {
         0 | 4 => BatteryPageKind::Metadata,
         1 | 2 | 5 | 6 => BatteryPageKind::CellVoltage,
+        3 | 7 => BatteryPageKind::Temperature,
         _ => BatteryPageKind::Raw,
     }
 }
@@ -387,10 +388,20 @@ mod tests {
     fn hardware_observed_selectors_keep_metadata_and_unknown_pages_raw() {
         assert_eq!(classify_veteran_bms_selector(0), BatteryPageKind::Metadata);
         assert_eq!(classify_veteran_bms_selector(4), BatteryPageKind::Metadata);
-        assert_eq!(classify_veteran_bms_selector(3), BatteryPageKind::Raw);
-        assert_eq!(classify_veteran_bms_selector(7), BatteryPageKind::Raw);
         assert_eq!(classify_veteran_bms_selector(8), BatteryPageKind::Raw);
         assert_eq!(classify_veteran_bms_selector(9), BatteryPageKind::Raw);
+    }
+
+    #[test]
+    fn hardware_verified_temperature_selectors_are_typed() {
+        assert_eq!(
+            classify_veteran_bms_selector(3),
+            BatteryPageKind::Temperature
+        );
+        assert_eq!(
+            classify_veteran_bms_selector(7),
+            BatteryPageKind::Temperature
+        );
     }
 
     #[test]
@@ -400,7 +411,7 @@ mod tests {
             .expect("selector 3 fixture has BMS evidence");
 
         assert_eq!(evidence.selector, 3);
-        assert_eq!(evidence.kind, BatteryPageKind::Raw);
+        assert_eq!(evidence.kind, BatteryPageKind::Temperature);
         assert_eq!(evidence.body.len(), 48);
         assert_eq!(
             &evidence.body[..12],
@@ -576,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_and_metadata_pages_do_not_claim_cell_voltage_typing() {
+    fn raw_metadata_and_temperature_pages_do_not_claim_cell_voltage_typing() {
         let raw = decode_veteran_bms_page(
             8,
             0,
@@ -591,11 +602,20 @@ mod tests {
             VerificationStatus::HardwareVerified,
         )
         .expect("metadata pages should preserve evidence without cell typing");
+        let temperature = decode_veteran_bms_page(
+            3,
+            0,
+            BatteryInfo::default(),
+            VerificationStatus::HardwareVerified,
+        )
+        .expect("temperature pages should preserve evidence without cell typing");
 
         assert!(matches!(raw, BatteryPagePayload::Raw(_)));
         assert!(matches!(metadata, BatteryPagePayload::Raw(_)));
+        assert!(matches!(temperature, BatteryPagePayload::Temperature(_)));
         assert_eq!(raw.page().kind, BatteryPageKind::Raw);
         assert_eq!(metadata.page().kind, BatteryPageKind::Metadata);
+        assert_eq!(temperature.page().kind, BatteryPageKind::Temperature);
     }
 
     proptest! {
@@ -641,7 +661,7 @@ mod tests {
         }
 
         #[test]
-        fn raw_and_metadata_selectors_preserve_evidence_for_any_count(selector in prop_oneof![Just(0u8), Just(3), Just(4), Just(7), Just(8)], count in 0u8..32) {
+        fn raw_metadata_and_temperature_selectors_preserve_evidence_for_any_count(selector in prop_oneof![Just(0u8), Just(3), Just(4), Just(7), Just(8)], count in 0u8..32) {
             let decoded = decode_veteran_bms_page(
                 selector,
                 count,
@@ -650,10 +670,14 @@ mod tests {
             )
             .expect("non-cell selectors should preserve evidence without cell-count invariants");
 
-            prop_assert!(matches!(decoded, BatteryPagePayload::Raw(_)));
             prop_assert_eq!(decoded.page().selector, selector);
             prop_assert_eq!(decoded.page().kind, classify_veteran_bms_selector(selector));
             prop_assert_eq!(decoded.page().verification, VerificationStatus::HardwareVerified);
+            if matches!(selector, 3 | 7) {
+                prop_assert!(matches!(decoded, BatteryPagePayload::Temperature(_)));
+            } else {
+                prop_assert!(matches!(decoded, BatteryPagePayload::Raw(_)));
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 use core::marker::PhantomData;
 use cutout_core::{
-    BatteryInfo, Capabilities, CommandKind, DeviceCommand, DeviceEvent, DiagnosticDetail,
+    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
+    BatteryPagePayload, Capabilities, CommandKind, DeviceCommand, DeviceEvent, DiagnosticDetail,
     DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
     ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession, RawFieldValue,
     RawTelemetryReadback, ReadOnlyResponse, SafetyClass, SessionInput, SessionOutput,
@@ -14,9 +15,9 @@ use crate::{
     FalconProbe, FalconRequestEncoder, RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL,
     VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply,
     VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry,
-    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsPageEvidence, VeteranFrame,
-    VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
-    begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
+    VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
+    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -519,18 +520,7 @@ fn push_veteran_frame(
                 )));
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
-                let observed_cell_values =
-                    VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
-                        .map_or(0, |page| {
-                            u8::try_from(page.cell_mv.len()).unwrap_or_default()
-                        });
-                let response = decode_veteran_bms_page(
-                    evidence.selector,
-                    observed_cell_values,
-                    BatteryInfo::default(),
-                    VerificationStatus::HardwareVerified,
-                );
-                if let Ok(payload) = response {
+                if let Some(payload) = veteran_bms_payload(evidence) {
                     output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                         ReadOnlyResponse::Battery(payload),
                     )));
@@ -541,6 +531,42 @@ fn push_veteran_frame(
             push_parser_error(ParserError::MalformedFrame, output);
         }
     }
+}
+
+fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPagePayload> {
+    if evidence.kind == BatteryPageKind::Temperature {
+        return VeteranBmsTemperaturePage::from_body(evidence.selector, evidence.body)
+            .ok()
+            .map(veteran_bms_temperature_payload);
+    }
+
+    let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
+        .map_or(0, |page| {
+            u8::try_from(page.cell_mv.len()).unwrap_or_default()
+        });
+    decode_veteran_bms_page(
+        evidence.selector,
+        observed_cell_values,
+        BatteryInfo::default(),
+        VerificationStatus::HardwareVerified,
+    )
+    .ok()
+}
+
+fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPagePayload {
+    let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
+    for (slot, temperature_mc) in temperatures.iter_mut().zip(page.temperatures_mc) {
+        *slot = Some(Measured::reported(temperature_mc));
+    }
+    let battery = BatteryInfo {
+        temperature_mc: temperatures[0],
+        ..BatteryInfo::default()
+    };
+    BatteryPagePayload::temperature_values(
+        BatteryPageMetadata::temperature(page.selector, VerificationStatus::HardwareVerified),
+        battery,
+        temperatures,
+    )
 }
 
 fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
@@ -1673,15 +1699,17 @@ mod tests {
     }
 
     #[test]
-    fn nosfet_aero_session_emits_raw_bms_page_response() {
+    fn nosfet_aero_session_emits_typed_bms_temperature_page_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_3_frame());
 
         assert!(responses.iter().any(|response| matches!(
             response,
             ReadOnlyResponse::Battery(payload)
                 if payload.page().selector == 3
-                    && payload.page().kind == BatteryPageKind::Raw
+                    && payload.page().kind == BatteryPageKind::Temperature
                     && payload.page().verification == VerificationStatus::HardwareVerified
+                    && payload.battery().temperature_mc.expect("representative temperature").value == 16_730
+                    && payload.temperatures_mc()[5].expect("sixth temperature").value == 17_830
         )));
     }
 

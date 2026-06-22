@@ -581,6 +581,9 @@ pub struct BatteryInfoDto {
     /// Battery or BMS temperature in millicelsius.
     pub temperature_mc: Option<MeasuredI32Dto>,
 
+    /// Page-specific BMS temperature values in millicelsius.
+    pub temperatures_mc: Vec<Option<MeasuredI32Dto>>,
+
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
 }
@@ -588,12 +591,21 @@ pub struct BatteryInfoDto {
 impl From<BatteryPagePayload> for BatteryInfoDto {
     fn from(payload: BatteryPagePayload) -> Self {
         let battery = payload.battery();
-        Self::from_payload_parts(payload.page(), battery)
+        let temperatures_mc = payload
+            .temperatures_mc()
+            .into_iter()
+            .map(|measured| measured.map(Into::into))
+            .collect();
+        Self::from_payload_parts(payload.page(), battery, temperatures_mc)
     }
 }
 
 impl BatteryInfoDto {
-    fn from_payload_parts(page: BatteryPageMetadata, battery: BatteryInfo) -> Self {
+    fn from_payload_parts(
+        page: BatteryPageMetadata,
+        battery: BatteryInfo,
+        temperatures_mc: Vec<Option<MeasuredI32Dto>>,
+    ) -> Self {
         Self {
             page: page.into(),
             voltage_mv: battery.voltage_mv.map(Into::into),
@@ -601,6 +613,7 @@ impl BatteryInfoDto {
             percent_reported: battery.percent_reported.map(Into::into),
             percent_estimated: battery.percent_estimated.map(Into::into),
             temperature_mc: battery.temperature_mc.map(Into::into),
+            temperatures_mc,
             raw_state: battery.raw_state.map(Into::into),
         }
     }
