@@ -37,6 +37,11 @@ mod family;
 pub use family::*;
 mod fixture;
 pub use fixture::*;
+mod identification;
+pub use identification::{
+    IdentityConfidence, IdentityEvidence, StagedIdentityInput, StagedIdentityResolution,
+    identify_model,
+};
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod registry;
