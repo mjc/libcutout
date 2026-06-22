@@ -1,9 +1,9 @@
 use cutout_core::{
-    Capabilities, CommandKind, GattFingerprint, GattRoles, ModelRegistryEntry, ProtocolFamily,
-    VerificationStatus,
+    BatterySpec, Capabilities, CommandKind, GattFingerprint, GattRoles, ModelRegistryEntry,
+    ProtocolFamily, VerificationStatus,
 };
 
-use crate::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL};
+use crate::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodePackVoltageProfile};
 
 const BEGODE_FALCON_GATT: [GattFingerprint; 1] = [GattFingerprint {
     service: BEGODE_SERVICE_CHANNEL,
@@ -14,6 +14,13 @@ const BEGODE_FALCON_GATT: [GattFingerprint; 1] = [GattFingerprint {
     verification: VerificationStatus::SourceVerified,
 }];
 
+const BEGODE_FALCON_BATTERY: BatterySpec = BatterySpec {
+    series_cells: BegodePackVoltageProfile::Begode84VFullCharge.series_cells(),
+    nominal_capacity_mah: BegodePackVoltageProfile::Begode84VFullCharge.nominal_capacity_mah(),
+    voltage_range_mv: 60_000..=84_000,
+    verification: VerificationStatus::Inferred,
+};
+
 /// Source-backed initial registry entry for the Begode Falcon.
 pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
     manufacturer: "Begode",
@@ -21,7 +28,7 @@ pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry 
     protocol_family: ProtocolFamily::BegodeGotway,
     advertised_name_hints: &["Falcon", "Begode", "Gotway"],
     wire_model_id: None,
-    battery: None,
+    battery: Some(BEGODE_FALCON_BATTERY),
     bms: None,
     gatt: &BEGODE_FALCON_GATT,
     capabilities: Capabilities::from_supported_commands([
@@ -43,8 +50,15 @@ mod tests {
     };
 
     #[test]
-    fn begode_falcon_registry_entry_does_not_infer_battery_variant_from_name() {
-        assert_eq!(BEGODE_FALCON_REGISTRY_ENTRY.battery, None);
+    fn begode_falcon_registry_entry_records_confirmed_84v_pack() {
+        let battery = BEGODE_FALCON_REGISTRY_ENTRY
+            .battery
+            .expect("Falcon battery profile should be recorded");
+
+        assert_eq!(battery.series_cells, 20);
+        assert_eq!(battery.voltage_range_mv, 60_000..=84_000);
+        assert_eq!(battery.nominal_capacity_mah, None);
+        assert_eq!(battery.verification, VerificationStatus::Inferred);
     }
 
     #[test]
