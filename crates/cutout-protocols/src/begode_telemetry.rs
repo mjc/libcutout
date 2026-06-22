@@ -111,6 +111,12 @@ pub enum BegodePackVoltageProfile {
     Begode100VFullCharge,
 }
 
+/// Explicit voltage profile for the current Begode Falcon hardware target.
+///
+/// This is not generic Falcon identity evidence and does not imply capacity.
+pub const BEGODE_FALCON_TARGET_VOLTAGE_PROFILE: BegodePackVoltageProfile =
+    BegodePackVoltageProfile::Begode84VFullCharge;
+
 /// Explicit evidence used to select a Begode pack voltage profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BegodeVoltageEvidence {
@@ -193,6 +199,15 @@ impl BegodePackVoltageProfile {
             Self::Begode100VFullCharge => 72_000..=100_800,
         }
     }
+}
+
+/// Returns the explicit voltage profile for the current Begode Falcon target.
+///
+/// The generic registry entry remains battery-agnostic until live evidence
+/// selects a device-specific voltage/capacity profile.
+#[must_use]
+pub const fn begode_falcon_target_voltage_profile() -> BegodePackVoltageProfile {
+    BEGODE_FALCON_TARGET_VOLTAGE_PROFILE
 }
 
 /// Selects a Begode pack voltage profile from explicit evidence.
@@ -827,9 +842,10 @@ fn percent_from_i32(percent: i32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BegodeCapacityEvidence, BegodeCapacitySelection, BegodeVoltageEvidence,
-        BegodeVoltageProfileSelection, select_begode_pack_capacity_from_annotations,
-        select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
+        BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeCapacityEvidence, BegodeCapacitySelection,
+        BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
+        select_begode_pack_capacity_from_annotations, select_begode_pack_voltage_profile,
+        select_begode_pack_voltage_profile_from_annotations,
     };
     use crate::{
         BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -1080,6 +1096,17 @@ mod tests {
     fn begode_84v_profile_records_user_confirmed_falcon_target() {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
+        assert_eq!(profile.series_cells(), 20);
+        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
+        assert_eq!(profile.nominal_capacity_mah(), None);
+    }
+
+    #[test]
+    fn falcon_target_voltage_profile_is_explicit_84v_without_capacity() {
+        let profile = begode_falcon_target_voltage_profile();
+
+        assert_eq!(profile, BEGODE_FALCON_TARGET_VOLTAGE_PROFILE);
+        assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
         assert_eq!(profile.series_cells(), 20);
         assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
         assert_eq!(profile.nominal_capacity_mah(), None);

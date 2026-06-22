@@ -12,7 +12,8 @@ use crate::{
     BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
     FalconProbe, FalconRequestEncoder, RequestDisposition, VETERAN_DATA_CHANNEL,
     VeteranBmsPageEvidence, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
-    VeteranTelemetry, VeteranTelemetryError, decode_veteran_bms_page,
+    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
+    decode_veteran_bms_page,
 };
 
 /// Static manufacturer identifier for a supported model spec.
@@ -174,7 +175,7 @@ pub struct BegodeNotificationDecoder {
 
 impl Default for BegodeNotificationDecoder {
     fn default() -> Self {
-        Self::with_pack_voltage_profile(BegodePackVoltageProfile::Begode84VFullCharge)
+        Self::with_pack_voltage_profile(begode_falcon_target_voltage_profile())
     }
 }
 
@@ -187,6 +188,12 @@ impl BegodeNotificationDecoder {
             context: BegodeTelemetryContext::default(),
             pack_voltage_profile: profile,
         }
+    }
+
+    /// Returns the pack-voltage profile used for Live A scaling.
+    #[must_use]
+    pub const fn pack_voltage_profile(&self) -> BegodePackVoltageProfile {
+        self.pack_voltage_profile
     }
 }
 
@@ -1015,6 +1022,16 @@ mod tests {
         assert_eq!(
             telemetry[0].voltage_mv.map(|value| value.value),
             Some(90_075)
+        );
+    }
+
+    #[test]
+    fn begode_falcon_decoder_default_uses_explicit_target_voltage_profile() {
+        let decoder = BegodeNotificationDecoder::default();
+
+        assert_eq!(
+            decoder.pack_voltage_profile(),
+            begode_falcon_target_voltage_profile()
         );
     }
 

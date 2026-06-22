@@ -39,7 +39,7 @@ mod tests {
 
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL,
-        BegodePackVoltageProfile,
+        BegodePackVoltageProfile, begode_falcon_target_voltage_profile,
     };
 
     #[test]
@@ -49,8 +49,9 @@ mod tests {
 
     #[test]
     fn begode_falcon_84v_profile_remains_available_for_confirmed_variant() {
-        let profile = BegodePackVoltageProfile::Begode84VFullCharge;
+        let profile = begode_falcon_target_voltage_profile();
 
+        assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
         assert_eq!(profile.series_cells(), 20);
         assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
         assert_eq!(profile.nominal_capacity_mah(), None);
