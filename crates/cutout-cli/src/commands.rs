@@ -148,6 +148,7 @@ async fn run_dashboard_live_updates(
             &connection.peripheral,
             &mut session,
             VETERAN_DATA_CHANNEL,
+            &connection.summary,
             endpoints,
             DASHBOARD_LIVE_WINDOW,
         )
@@ -221,6 +222,7 @@ impl SessionMode {
                     &connection.peripheral,
                     &mut session,
                     VETERAN_DATA_CHANNEL,
+                    &connection.summary,
                     endpoints,
                     window,
                 )
@@ -232,6 +234,7 @@ impl SessionMode {
                     &connection.peripheral,
                     &mut session,
                     VETERAN_DATA_CHANNEL,
+                    &connection.summary,
                     endpoints,
                     window,
                     true,
@@ -278,9 +281,26 @@ fn print_session_report(report: &SessionBridgeReport) {
     if let Some(firmware) = render_firmware_info(report.firmware) {
         println!("{firmware}");
     }
+    if let Some(identity) = render_identity(report) {
+        println!("{identity}");
+    }
     for settings in render_settings_readbacks(&report.settings) {
         println!("{settings}");
     }
+}
+
+fn render_identity(report: &SessionBridgeReport) -> Option<String> {
+    let identity = report.identity.as_ref()?;
+    Some(format!(
+        "identity confidence={:?} manufacturer={} model={} advertised_name_hint={} gatt_hint={} passive_family={} banner_model={}",
+        identity.confidence,
+        identity.manufacturer.unwrap_or("<unknown>"),
+        identity.model.unwrap_or("<unknown>"),
+        identity.evidence.has_advertised_name_hint(),
+        identity.evidence.has_gatt_hint(),
+        identity.evidence.has_passive_family_match(),
+        identity.evidence.has_banner_model_match()
+    ))
 }
 
 fn render_telemetry_snapshot(snapshot: &TelemetrySnapshot) -> Option<String> {
@@ -412,7 +432,11 @@ fn push_measured_u16(
 
 #[cfg(test)]
 mod tests {
-    use cutout_btle::ConnectionTarget;
+    use cutout_btle::{BridgeIdentityResolution, ConnectionTarget};
+    use cutout_protocols::{
+        BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, DeviceFamily, IdentityConfidence,
+        ProtocolFamilyClassification, StagedIdentityInput, identify_model,
+    };
 
     use super::*;
     use crate::cli::ScanArgs;
@@ -470,6 +494,35 @@ mod tests {
         assert_eq!(
             render_firmware_info(Some(firmware)).as_deref(),
             Some("firmware firmware_major=43 firmware_minor=2 firmware_patch=54 raw_001c=43254")
+        );
+    }
+
+    #[test]
+    fn identity_renderer_includes_confidence_and_evidence() {
+        let resolution = identify_model(
+            StagedIdentityInput {
+                advertised_name: Some("Begode_Falcon"),
+                gatt: BEGODE_FALCON_REGISTRY_ENTRY.gatt,
+                stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+                banner: Some(BegodeBanner::ModelName("Falcon")),
+            },
+            &[&BEGODE_FALCON_REGISTRY_ENTRY],
+        );
+        let report = SessionBridgeReport {
+            identity: Some(BridgeIdentityResolution {
+                manufacturer: Some("Begode"),
+                model: Some("Falcon"),
+                confidence: IdentityConfidence::Model,
+                evidence: resolution.evidence,
+            }),
+            ..SessionBridgeReport::default()
+        };
+
+        assert_eq!(
+            render_identity(&report).as_deref(),
+            Some(
+                "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true"
+            )
         );
     }
 

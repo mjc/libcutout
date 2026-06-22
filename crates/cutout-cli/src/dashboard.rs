@@ -1872,6 +1872,7 @@ mod tests {
                 unmatched_replies: 1,
                 ..ParserDiagnostics::default()
             },
+            identity: None,
             events: vec![
                 SessionBridgeEvent::RawNotification {
                     monotonic_ms: 17,
@@ -1948,6 +1949,7 @@ mod tests {
             settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: 42,
                 delta: TelemetryDelta {
@@ -2051,6 +2053,7 @@ mod tests {
             settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            identity: None,
             events: Vec::new(),
             disconnects: 0,
         };
@@ -2080,6 +2083,7 @@ mod tests {
             settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: 42,
                 delta: TelemetryDelta {

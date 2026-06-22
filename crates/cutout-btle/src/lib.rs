@@ -19,9 +19,15 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceEvent, FirmwareInfo, GattChannel, LinkInfo, ParserDiagnostics, ProtocolSession,
-    ReadOnlyResponse, SessionInput, SessionOutput, SettingsReadback, TelemetryDelta,
-    TelemetrySnapshot, TransportAction, WriteMode,
+    DeviceEvent, FirmwareInfo, GattChannel, GattFingerprint, GattRoles, LinkInfo,
+    ParserDiagnostics, ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput,
+    SettingsReadback, TelemetryDelta, TelemetrySnapshot, TransportAction, VerificationStatus,
+    WriteMode,
+};
+use cutout_protocols::{
+    BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, IdentityConfidence, IdentityEvidence,
+    ProtocolFamilyClassification, ProtocolFamilyClassifier, StagedIdentityInput,
+    StagedIdentityResolution, identify_model, parse_begode_ascii_banner,
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
@@ -156,6 +162,15 @@ impl CharacteristicSummary {
         self.properties
             .intersects(CharPropFlags::NOTIFY | CharPropFlags::INDICATE)
     }
+
+    fn gatt_fingerprint(&self) -> GattFingerprint {
+        GattFingerprint {
+            service: gatt_channel_from_uuid(self.service_uuid),
+            characteristic: gatt_channel_from_uuid(self.uuid),
+            roles: gatt_roles_from_flags(self.properties),
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
 }
 
 /// Service-level summary of a discovered peripheral.
@@ -232,6 +247,14 @@ impl fmt::Display for ConnectionSummary {
 }
 
 impl ConnectionSummary {
+    fn gatt_fingerprints(&self) -> Vec<GattFingerprint> {
+        self.services
+            .iter()
+            .flat_map(|service| service.characteristics.iter())
+            .map(CharacteristicSummary::gatt_fingerprint)
+            .collect()
+    }
+
     /// Selects the standard BLE Battery Level characteristic when present.
     #[must_use]
     pub fn battery_level_characteristic(&self) -> Option<&CharacteristicSummary> {
@@ -346,11 +369,30 @@ pub struct SessionBridgeReport {
     /// Aggregated parser diagnostic counters emitted by the session.
     pub diagnostics_snapshot: ParserDiagnostics,
 
+    /// Staged identity resolution from non-actuating evidence.
+    pub identity: Option<BridgeIdentityResolution>,
+
     /// Timestamped raw and processed telemetry events observed during the run.
     pub events: Vec<SessionBridgeEvent>,
 
     /// Transport disconnect operations executed through the bridge.
     pub disconnects: usize,
+}
+
+/// Staged identity resolution surfaced by a BTLE bridge run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgeIdentityResolution {
+    /// Resolved manufacturer, when model confidence was reached.
+    pub manufacturer: Option<&'static str>,
+
+    /// Resolved model, when model confidence was reached.
+    pub model: Option<&'static str>,
+
+    /// Confidence reported by staged identification.
+    pub confidence: IdentityConfidence,
+
+    /// Evidence that contributed to the decision.
+    pub evidence: IdentityEvidence,
 }
 
 /// Timestamped raw or processed telemetry event emitted by the bridge.
@@ -682,6 +724,7 @@ pub async fn drive_session<P, S>(
     peripheral: &P,
     session: &mut S,
     channel: GattChannel,
+    summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
     notification_window: Duration,
 ) -> Result<SessionBridgeReport, BtleError>
@@ -693,6 +736,7 @@ where
         peripheral,
         session,
         channel,
+        summary,
         endpoints,
         notification_window,
         None,
@@ -712,6 +756,7 @@ pub async fn capture_session<P, S>(
     peripheral: &P,
     session: &mut S,
     channel: GattChannel,
+    summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
     notification_window: Duration,
     provisional_writes: bool,
@@ -725,6 +770,7 @@ where
         peripheral,
         session,
         channel,
+        summary,
         endpoints,
         notification_window,
         Some(&mut records),
@@ -734,10 +780,12 @@ where
     Ok(SessionCapture { records, report })
 }
 
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn drive_session_inner<P, S>(
     peripheral: &P,
     session: &mut S,
     channel: GattChannel,
+    summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
     notification_window: Duration,
     mut capture: Option<&mut Vec<SessionCaptureRecord>>,
@@ -748,6 +796,9 @@ where
     S: ProtocolSession + Send,
 {
     let mut report = SessionBridgeReport::default();
+    let identity_context = IdentityContext::new(summary);
+    let mut identity_state = IdentityState::default();
+    update_identity_report(&mut report, &identity_context, &identity_state);
     let write_characteristic = characteristic_from_summary(endpoints.write);
     let notify_characteristic = endpoints.notify.map(characteristic_from_summary);
     let mut outputs = Vec::new();
@@ -819,6 +870,8 @@ where
                     });
                 }
                 record_raw_notification(&mut report, monotonic_ms, &notification);
+                identity_state.observe(&notification.value);
+                update_identity_report(&mut report, &identity_context, &identity_state);
                 session.handle(
                     SessionInput::Notification {
                         channel: gatt_channel_from_uuid(notification.uuid),
@@ -863,6 +916,110 @@ const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Charact
 
 const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
     GattChannel::from_bytes(*uuid.as_bytes())
+}
+
+fn gatt_roles_from_flags(flags: CharPropFlags) -> GattRoles {
+    let mut roles = GattRoles::empty();
+    if flags.contains(CharPropFlags::READ) {
+        roles = roles.with_read();
+    }
+    if flags.contains(CharPropFlags::WRITE) {
+        roles = roles.with_write();
+    }
+    if flags.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE) {
+        roles = roles.with_write_without_response();
+    }
+    if flags.contains(CharPropFlags::NOTIFY) {
+        roles = roles.with_notify();
+    }
+    if flags.contains(CharPropFlags::INDICATE) {
+        roles = roles.with_indicate();
+    }
+    roles
+}
+
+struct IdentityContext<'a> {
+    advertised_name: Option<&'a str>,
+    gatt: Vec<GattFingerprint>,
+}
+
+impl<'a> IdentityContext<'a> {
+    fn new(summary: &'a ConnectionSummary) -> Self {
+        Self {
+            advertised_name: summary.observation.name.as_deref(),
+            gatt: summary.gatt_fingerprints(),
+        }
+    }
+}
+
+struct IdentityState {
+    stream_family: ProtocolFamilyClassification,
+    banner_model: Option<String>,
+}
+
+impl Default for IdentityState {
+    fn default() -> Self {
+        Self {
+            stream_family: ProtocolFamilyClassification::Pending,
+            banner_model: None,
+        }
+    }
+}
+
+impl IdentityState {
+    fn observe(&mut self, bytes: &[u8]) {
+        if !matches!(
+            self.stream_family,
+            ProtocolFamilyClassification::Known(
+                cutout_protocols::DeviceFamily::BegodeFalcon
+                    | cutout_protocols::DeviceFamily::NosfetAero
+            )
+        ) {
+            let classification = ProtocolFamilyClassifier::classify(bytes);
+            if classification != ProtocolFamilyClassification::Unknown {
+                self.stream_family = classification;
+            }
+        }
+
+        if let Some(BegodeBanner::ModelName(model)) = parse_begode_ascii_banner(bytes) {
+            self.banner_model = Some(model.to_owned());
+        }
+    }
+
+    fn banner(&self) -> Option<BegodeBanner<'_>> {
+        self.banner_model.as_deref().map(BegodeBanner::ModelName)
+    }
+}
+
+fn update_identity_report(
+    report: &mut SessionBridgeReport,
+    context: &IdentityContext<'_>,
+    state: &IdentityState,
+) {
+    let resolution = identify_model(
+        StagedIdentityInput {
+            advertised_name: context.advertised_name,
+            gatt: &context.gatt,
+            stream_family: state.stream_family,
+            banner: state.banner(),
+        },
+        &[&BEGODE_FALCON_REGISTRY_ENTRY],
+    );
+    report.identity = bridge_identity_resolution(resolution);
+}
+
+fn bridge_identity_resolution(
+    resolution: StagedIdentityResolution,
+) -> Option<BridgeIdentityResolution> {
+    (resolution.confidence != IdentityConfidence::NoMatch).then(|| {
+        let model = resolution.model;
+        BridgeIdentityResolution {
+            manufacturer: model.map(|entry| entry.manufacturer),
+            model: model.map(|entry| entry.model),
+            confidence: resolution.confidence,
+            evidence: resolution.evidence,
+        }
+    })
 }
 
 fn record_raw_notification(
@@ -1167,6 +1324,7 @@ mod tests {
         SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
         VerificationStatus, WriteMode,
     };
+    use cutout_protocols::IdentityConfidence;
     use futures_util::stream;
     use uuid::Uuid;
 
@@ -1487,6 +1645,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn drive_session_reports_hints_only_identity_from_name_and_shared_gatt() {
+        let peripheral = RecordingPeripheral::default();
+        let mut session = SubscribeOnlySession;
+        let summary = begode_falcon_summary("Falcon");
+
+        let report = crate::drive_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes(
+                *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
+            ),
+            &summary,
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            Duration::ZERO,
+        )
+        .await
+        .expect("bridge reports staged identity hints");
+
+        let identity = report.identity.expect("identity hints are reported");
+        assert_eq!(identity.confidence, IdentityConfidence::HintsOnly);
+        assert_eq!(identity.model, None);
+        assert_eq!(identity.manufacturer, None);
+        assert!(identity.evidence.has_advertised_name_hint());
+        assert!(identity.evidence.has_gatt_hint());
+        assert_eq!(peripheral.writes.lock().expect("write log").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn drive_session_resolves_falcon_after_family_and_name_banner_notifications() {
+        let peripheral = RecordingPeripheral::with_notifications(vec![
+            ValueNotification {
+                uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                value: vec![0x55, 0xaa, 0, 0],
+            },
+            ValueNotification {
+                uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                value: b"NAME=Falcon".to_vec(),
+            },
+        ]);
+        let mut session = SubscribeOnlySession;
+        let summary = begode_falcon_summary("Begode_Falcon");
+
+        let report = crate::drive_session(
+            &peripheral,
+            &mut session,
+            GattChannel::from_bytes(
+                *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
+            ),
+            &summary,
+            summary
+                .select_session_endpoints()
+                .expect("summary has session endpoints"),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("bridge resolves Falcon identity");
+
+        let identity = report.identity.expect("model identity is reported");
+        assert_eq!(identity.confidence, IdentityConfidence::Model);
+        assert_eq!(identity.manufacturer, Some("Begode"));
+        assert_eq!(identity.model, Some("Falcon"));
+        assert!(identity.evidence.has_passive_family_match());
+        assert!(identity.evidence.has_banner_model_match());
+        assert_eq!(report.notifications, 2);
+        assert_eq!(peripheral.writes.lock().expect("write log").len(), 0);
+    }
+
+    #[tokio::test]
     async fn drive_session_subscribes_and_writes_matching_transport_channels() {
         let peripheral = RecordingPeripheral::default();
         let mut session = BridgeSession::default();
@@ -1520,6 +1750,7 @@ mod tests {
             &peripheral,
             &mut session,
             GattChannel::from_bytes([0xA1; 16]),
+            &summary,
             summary
                 .select_session_endpoints()
                 .expect("summary has session endpoints"),
@@ -1587,6 +1818,7 @@ mod tests {
             &peripheral,
             &mut session,
             GattChannel::from_bytes([0xA1; 16]),
+            &summary,
             summary
                 .select_session_endpoints()
                 .expect("summary has session endpoints"),
@@ -1687,6 +1919,7 @@ mod tests {
             &peripheral,
             &mut session,
             GattChannel::from_bytes([0xA1; 16]),
+            &summary,
             summary
                 .select_session_endpoints()
                 .expect("summary has session endpoints"),
@@ -1728,6 +1961,20 @@ mod tests {
     #[derive(Default)]
     struct BridgeSession {
         notification_count: Arc<Mutex<usize>>,
+    }
+
+    struct SubscribeOnlySession;
+
+    impl ProtocolSession for SubscribeOnlySession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            if matches!(input, SessionInput::LinkUp(_)) {
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: GattChannel::from_bytes(
+                        *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
+                    ),
+                }));
+            }
+        }
     }
 
     impl ProtocolSession for BridgeSession {
@@ -1816,10 +2063,37 @@ mod tests {
 
     impl RecordingPeripheral {
         fn with_notification(notification: ValueNotification) -> Self {
+            Self::with_notifications(vec![notification])
+        }
+
+        fn with_notifications(notifications: Vec<ValueNotification>) -> Self {
             Self {
-                notifications: Arc::new(Mutex::new(vec![notification])),
+                notifications: Arc::new(Mutex::new(notifications)),
                 ..Self::default()
             }
+        }
+    }
+
+    fn begode_falcon_summary(name: &str) -> crate::ConnectionSummary {
+        crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                name: Some(name.to_owned()),
+                rssi: Some(-42),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )],
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![crate::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
+                }],
+            }],
         }
     }
 
