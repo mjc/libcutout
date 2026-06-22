@@ -1,0 +1,23 @@
+[package]
+name = "cutout-mobile-ffi"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Concrete UniFFI mobile binding surface for Cutout"
+readme = "../../README.md"
+keywords = ["ble", "pev", "ffi", "mobile"]
+categories = ["hardware-support", "api-bindings"]
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+cutout-core = { path = "../cutout-core", version = "0.1.0" }
+cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
+thiserror.workspace = true
+uniffi = { workspace = true, features = ["cli"] }

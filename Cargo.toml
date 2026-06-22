@@ -3,12 +3,15 @@ resolver = "3"
 members = [
     "crates/cutout-core",
     "crates/cutout-protocols",
+    "crates/cutout-mobile-ffi",
     "crates/cutout-btle",
     "crates/cutout-cli",
+    "crates/cutout-uniffi-bindgen",
 ]
 default-members = [
     "crates/cutout-core",
     "crates/cutout-protocols",
+    "crates/cutout-mobile-ffi",
     "crates/cutout-btle",
     "crates/cutout-cli",
 ]
@@ -42,6 +45,7 @@ tokio = { version = "1", features = ["macros", "rt", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uniffi = "0.31.2"
 uuid = "1"
 zerocopy = "0.8"
 arrayvec = "0.7"

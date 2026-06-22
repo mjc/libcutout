@@ -1,0 +1,19 @@
+[package]
+name = "cutout-uniffi-bindgen"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Workspace-local UniFFI binding generator for Cutout"
+readme = "../../README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+uniffi = { workspace = true, features = ["cli"] }
+
+[[bin]]
+name = "cutout-uniffi-bindgen"
+path = "src/main.rs"

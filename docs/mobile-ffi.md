@@ -15,24 +15,35 @@ that boundary:
   output DTOs and stable `ConcreteSessionErrorDto` values for unsupported
   commands.
 
-## Generator Gap
+## Generator Commands
 
-Generated Swift and Kotlin smoke checks are blocked until the repository has an
-actual UniFFI component crate or UDL/proc-macro export surface. The missing
-pieces are:
+The repository now has a `cutout-mobile-ffi` crate with `cdylib`/`staticlib`
+output and a workspace-local `cutout-uniffi-bindgen` runner. The exported
+UniFFI surface intentionally uses mobile-local DTOs so `cutout-core` and
+`cutout-protocols` do not depend on UniFFI.
 
-- a mobile FFI crate with `cdylib`/`staticlib` output configured;
-- UniFFI dependency and code generation wiring in Cargo/Nix;
-- exported constructors for Aero and Falcon read-only sessions;
-- exported DTO/result/error types for session inputs, outputs, snapshots, and
-  diagnostics;
-- local or CI commands that generate Swift and Kotlin bindings from the exact
-  checked-in FFI surface.
+Generate bindings from the checked-in FFI surface with:
+
+```console
+cargo build -p cutout-mobile-ffi
+cargo run -p cutout-uniffi-bindgen -- generate \
+  --library target/debug/libcutout_mobile_ffi.dylib \
+  --language swift \
+  --no-format \
+  --out-dir target/uniffi/swift
+cargo run -p cutout-uniffi-bindgen -- generate \
+  --library target/debug/libcutout_mobile_ffi.dylib \
+  --language kotlin \
+  --no-format \
+  --out-dir target/uniffi/kotlin
+```
+
+On Linux the library extension is `.so`; on Windows it is `.dll`.
 
 ## Smoke Matrix
 
-Once the generator scaffold exists, generated-language smoke checks should prove
-the same behavior in Swift and Kotlin:
+Generated-language compile smoke checks still need to prove the same behavior in
+Swift and Kotlin:
 
 - construct Aero and Falcon read-only sessions;
 - feed `LinkUp` and command DTO inputs;
