@@ -1863,6 +1863,9 @@ mod tests {
             latest_notification_len: Some(100),
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
+            read_only_responses: 0,
+            firmware: None,
+            settings: Vec::new(),
             diagnostics: 1,
             diagnostics_snapshot: ParserDiagnostics {
                 malformed_frames: 2,
@@ -1940,6 +1943,9 @@ mod tests {
                 battery_percent_reported: Some(Measured::reported(77)),
                 ..TelemetrySnapshot::default()
             },
+            read_only_responses: 0,
+            firmware: None,
+            settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
@@ -2040,6 +2046,9 @@ mod tests {
             latest_notification_len: Some(20),
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
+            read_only_responses: 0,
+            firmware: None,
+            settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
             events: Vec::new(),
@@ -2066,6 +2075,9 @@ mod tests {
             latest_notification_len: Some(20),
             telemetry: 1,
             telemetry_snapshot: live_aero_telemetry_snapshot(),
+            read_only_responses: 0,
+            firmware: None,
+            settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
             events: vec![SessionBridgeEvent::ProcessedTelemetry {

@@ -956,46 +956,49 @@ where
                 context.peripheral.disconnect().await?;
                 context.report.disconnects += 1;
             }
-            SessionOutput::Event(
-                DeviceEvent::NotificationReceived { .. }
-                | DeviceEvent::LinkUp(_)
-                | DeviceEvent::LinkDown
-                | DeviceEvent::Tick { .. },
-            ) => {}
-            SessionOutput::Event(DeviceEvent::Telemetry(delta)) => {
-                context.report.telemetry += 1;
-                context.report.telemetry_snapshot.apply_delta(delta);
-                context
-                    .report
-                    .events
-                    .push(SessionBridgeEvent::ProcessedTelemetry {
-                        monotonic_ms,
-                        delta,
-                    });
-            }
-            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                context.report.read_only_responses += 1;
-                match response {
-                    ReadOnlyResponse::Firmware(firmware) => {
-                        context.report.firmware = Some(firmware);
-                    }
-                    ReadOnlyResponse::Settings(settings) => {
-                        context.report.settings.push(settings);
-                    }
-                    ReadOnlyResponse::Battery(_) | ReadOnlyResponse::Diagnostics(_) => {}
-                }
-            }
-            SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => {
-                context.report.diagnostics += 1;
-                context.report.diagnostics_snapshot.merge(diagnostics);
-                context.report.events.push(SessionBridgeEvent::Diagnostics {
-                    monotonic_ms,
-                    diagnostics,
-                });
+            SessionOutput::Event(event) => {
+                process_device_event(context.report, event, monotonic_ms);
             }
         }
     }
     Ok(())
+}
+
+fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, monotonic_ms: u64) {
+    match event {
+        DeviceEvent::NotificationReceived { .. }
+        | DeviceEvent::LinkUp(_)
+        | DeviceEvent::LinkDown
+        | DeviceEvent::Tick { .. } => {}
+        DeviceEvent::Telemetry(delta) => {
+            report.telemetry += 1;
+            report.telemetry_snapshot.apply_delta(delta);
+            report.events.push(SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms,
+                delta,
+            });
+        }
+        DeviceEvent::ReadOnlyResponse(response) => {
+            report.read_only_responses += 1;
+            match response {
+                ReadOnlyResponse::Firmware(firmware) => {
+                    report.firmware = Some(firmware);
+                }
+                ReadOnlyResponse::Settings(settings) => {
+                    report.settings.push(settings);
+                }
+                ReadOnlyResponse::Battery(_) | ReadOnlyResponse::Diagnostics(_) => {}
+            }
+        }
+        DeviceEvent::Diagnostics(diagnostics) => {
+            report.diagnostics += 1;
+            report.diagnostics_snapshot.merge(diagnostics);
+            report.events.push(SessionBridgeEvent::Diagnostics {
+                monotonic_ms,
+                diagnostics,
+            });
+        }
+    }
 }
 
 fn format_write_type(mode: WriteType) -> &'static str {
