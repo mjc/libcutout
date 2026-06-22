@@ -1,8 +1,10 @@
 use crate::{
     BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, CommandKind,
-    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, Measured,
-    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, ValueQuality, ValueSource,
-    VerificationStatus,
+    ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail,
+    DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
+    LightState, Measured, ParserDiagnostics, RawFieldValue, ReadOnlyResponse, SafetyClass,
+    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction,
+    ValueQuality, ValueSource, VerificationStatus, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -94,6 +96,108 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SoundHorn => Self::SoundHorn,
             CommandKind::SetRawMotorCurrent => Self::SetRawMotorCurrent,
+        }
+    }
+}
+
+/// UniFFI-ready device command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceCommandDto {
+    /// Request protocol or device identity.
+    RequestIdentity,
+
+    /// Request a telemetry update.
+    RequestTelemetry,
+
+    /// Request firmware or protocol version information.
+    RequestFirmwareInfo,
+
+    /// Request battery or BMS information.
+    RequestBatteryInfo,
+
+    /// Request device diagnostics.
+    RequestDiagnostics,
+
+    /// Request current settings without changing device state.
+    RequestSettings,
+
+    /// Set the device lights.
+    SetLights(LightStateDto),
+
+    /// Sound a device horn or alert.
+    SoundHorn,
+
+    /// Set raw motor current.
+    SetRawMotorCurrent {
+        /// Target motor/phase current in milliamps.
+        current_ma: i32,
+    },
+}
+
+impl From<DeviceCommand> for DeviceCommandDto {
+    fn from(command: DeviceCommand) -> Self {
+        match command {
+            DeviceCommand::RequestIdentity => Self::RequestIdentity,
+            DeviceCommand::RequestTelemetry => Self::RequestTelemetry,
+            DeviceCommand::RequestFirmwareInfo => Self::RequestFirmwareInfo,
+            DeviceCommand::RequestBatteryInfo => Self::RequestBatteryInfo,
+            DeviceCommand::RequestDiagnostics => Self::RequestDiagnostics,
+            DeviceCommand::RequestSettings => Self::RequestSettings,
+            DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
+            DeviceCommand::SoundHorn => Self::SoundHorn,
+            DeviceCommand::SetRawMotorCurrent { current_ma } => {
+                Self::SetRawMotorCurrent { current_ma }
+            }
+        }
+    }
+}
+
+/// UniFFI-ready light state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LightStateDto {
+    /// Lights off.
+    Off,
+
+    /// Lights on.
+    On,
+}
+
+impl From<LightState> for LightStateDto {
+    fn from(state: LightState) -> Self {
+        match state {
+            LightState::Off => Self::Off,
+            LightState::On => Self::On,
+        }
+    }
+}
+
+/// UniFFI-ready safety class.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SafetyClassDto {
+    /// Read-only request with no state change expected.
+    ReadOnly,
+
+    /// Benign control such as lights or horn.
+    BenignControl,
+
+    /// Setting that should only be changed while stationary.
+    StationaryOnly,
+
+    /// Direct actuation or motion-affecting control.
+    Actuation,
+
+    /// Firmware update or firmware mutation operation.
+    Firmware,
+}
+
+impl From<SafetyClass> for SafetyClassDto {
+    fn from(class: SafetyClass) -> Self {
+        match class {
+            SafetyClass::ReadOnly => Self::ReadOnly,
+            SafetyClass::BenignControl => Self::BenignControl,
+            SafetyClass::StationaryOnly => Self::StationaryOnly,
+            SafetyClass::Actuation => Self::Actuation,
+            SafetyClass::Firmware => Self::Firmware,
         }
     }
 }
@@ -248,6 +352,60 @@ impl From<Measured<i32>> for MeasuredI32Dto {
     }
 }
 
+/// UniFFI-ready measured i64 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MeasuredI64Dto {
+    /// Fixed-unit value.
+    pub value: i64,
+
+    /// Value source.
+    pub source: ValueSourceDto,
+
+    /// Value quality.
+    pub quality: ValueQualityDto,
+
+    /// Value verification status.
+    pub verification: VerificationStatusDto,
+}
+
+impl From<Measured<i64>> for MeasuredI64Dto {
+    fn from(measured: Measured<i64>) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
+/// UniFFI-ready measured i16 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MeasuredI16Dto {
+    /// Fixed-unit value.
+    pub value: i16,
+
+    /// Value source.
+    pub source: ValueSourceDto,
+
+    /// Value quality.
+    pub quality: ValueQualityDto,
+
+    /// Value verification status.
+    pub verification: VerificationStatusDto,
+}
+
+impl From<Measured<i16>> for MeasuredI16Dto {
+    fn from(measured: Measured<i16>) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
 /// UniFFI-ready measured u8 value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MeasuredU8Dto {
@@ -293,6 +451,33 @@ pub struct MeasuredU16Dto {
 
 impl From<Measured<u16>> for MeasuredU16Dto {
     fn from(measured: Measured<u16>) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
+/// UniFFI-ready measured u64 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MeasuredU64Dto {
+    /// Fixed-unit value.
+    pub value: u64,
+
+    /// Value source.
+    pub source: ValueSourceDto,
+
+    /// Value quality.
+    pub quality: ValueQualityDto,
+
+    /// Value verification status.
+    pub verification: VerificationStatusDto,
+}
+
+impl From<Measured<u64>> for MeasuredU64Dto {
+    fn from(measured: Measured<u64>) -> Self {
         Self {
             value: measured.value,
             source: measured.source.into(),
@@ -515,12 +700,463 @@ impl From<DiagnosticDetail> for DiagnosticDetailDto {
     }
 }
 
+/// UniFFI-ready session input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionInputDto {
+    /// The underlying transport link is available.
+    LinkUp {
+        /// Host monotonic connection timestamp.
+        monotonic_ms: u64,
+
+        /// Maximum write payload length reported by the host, when known.
+        max_write_len: Option<u16>,
+    },
+
+    /// The underlying transport link is no longer available.
+    LinkDown,
+
+    /// Notification bytes received from a transport endpoint.
+    Notification {
+        /// Transport endpoint that produced the bytes.
+        channel: [u8; 16],
+
+        /// Owned notification payload.
+        bytes: Vec<u8>,
+
+        /// Host monotonic receive timestamp.
+        monotonic_ms: u64,
+    },
+
+    /// Timer tick supplied by the host.
+    Tick {
+        /// Host monotonic tick timestamp.
+        monotonic_ms: u64,
+    },
+
+    /// Command requested by the host application.
+    Command(DeviceCommandDto),
+}
+
+impl From<SessionInput<'_>> for SessionInputDto {
+    fn from(input: SessionInput<'_>) -> Self {
+        match input {
+            SessionInput::LinkUp(link) => Self::LinkUp {
+                monotonic_ms: link.monotonic_ms,
+                max_write_len: link.max_write_len,
+            },
+            SessionInput::LinkDown => Self::LinkDown,
+            SessionInput::Notification {
+                channel,
+                bytes,
+                monotonic_ms,
+            } => Self::Notification {
+                channel: channel.as_bytes(),
+                bytes: bytes.to_vec(),
+                monotonic_ms,
+            },
+            SessionInput::Tick { monotonic_ms } => Self::Tick { monotonic_ms },
+            SessionInput::Command(command) => Self::Command(command.into()),
+        }
+    }
+}
+
+/// UniFFI-ready session output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionOutputDto {
+    /// Transport action to execute outside the protocol engine.
+    Transport(TransportActionDto),
+
+    /// Semantic event to report to the application.
+    Event(SessionEventDto),
+}
+
+impl From<SessionOutput> for SessionOutputDto {
+    fn from(output: SessionOutput) -> Self {
+        match output {
+            SessionOutput::Transport(action) => Self::Transport(action.into()),
+            SessionOutput::Event(event) => Self::Event(event.into()),
+        }
+    }
+}
+
+/// UniFFI-ready transport action.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TransportActionDto {
+    /// Subscribe to notifications from a transport endpoint.
+    Subscribe {
+        /// Transport endpoint to subscribe to.
+        channel: [u8; 16],
+    },
+
+    /// Write bytes to a transport endpoint.
+    Write {
+        /// Transport endpoint to write to.
+        channel: [u8; 16],
+
+        /// Owned bytes to write.
+        bytes: Vec<u8>,
+
+        /// Transport write behavior.
+        mode: WriteModeDto,
+    },
+
+    /// Disconnect the underlying transport.
+    Disconnect,
+}
+
+impl From<TransportAction> for TransportActionDto {
+    fn from(action: TransportAction) -> Self {
+        match action {
+            TransportAction::Subscribe { channel } => Self::Subscribe {
+                channel: channel.as_bytes(),
+            },
+            TransportAction::Write {
+                channel,
+                bytes,
+                mode,
+            } => Self::Write {
+                channel: channel.as_bytes(),
+                bytes: bytes.as_slice().to_vec(),
+                mode: mode.into(),
+            },
+            TransportAction::Disconnect => Self::Disconnect,
+        }
+    }
+}
+
+/// UniFFI-ready write mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WriteModeDto {
+    /// Write with transport-level acknowledgement.
+    WithResponse,
+
+    /// Write without transport-level acknowledgement.
+    WithoutResponse,
+}
+
+impl From<WriteMode> for WriteModeDto {
+    fn from(mode: WriteMode) -> Self {
+        match mode {
+            WriteMode::WithResponse => Self::WithResponse,
+            WriteMode::WithoutResponse => Self::WithoutResponse,
+        }
+    }
+}
+
+/// UniFFI-ready semantic session event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionEventDto {
+    /// Link-up event accepted by the session.
+    LinkUp {
+        /// Host monotonic connection timestamp.
+        monotonic_ms: u64,
+
+        /// Maximum write payload length reported by the host, when known.
+        max_write_len: Option<u16>,
+    },
+
+    /// Link-down event accepted by the session.
+    LinkDown,
+
+    /// Notification metadata accepted by the session.
+    NotificationReceived {
+        /// Transport endpoint that produced the bytes.
+        channel: [u8; 16],
+
+        /// Host monotonic receive timestamp.
+        monotonic_ms: u64,
+
+        /// Number of notification bytes observed.
+        len: u64,
+    },
+
+    /// Tick event accepted by the session.
+    Tick {
+        /// Host monotonic tick timestamp.
+        monotonic_ms: u64,
+    },
+
+    /// Telemetry update emitted by a protocol session.
+    Telemetry(TelemetryDeltaDto),
+
+    /// Read-only response emitted by a protocol session.
+    ReadOnlyResponse(ReadOnlyResponseDto),
+
+    /// Control command refused before transport writes.
+    ControlRefusal(ControlRefusalDto),
+
+    /// Parser diagnostics emitted by a protocol session.
+    Diagnostics(ParserDiagnosticsDto),
+
+    /// Detailed parser diagnostic error emitted by a protocol session.
+    DiagnosticError(DiagnosticErrorDto),
+}
+
+impl From<DeviceEvent> for SessionEventDto {
+    fn from(event: DeviceEvent) -> Self {
+        match event {
+            DeviceEvent::LinkUp(link) => Self::LinkUp {
+                monotonic_ms: link.monotonic_ms,
+                max_write_len: link.max_write_len,
+            },
+            DeviceEvent::LinkDown => Self::LinkDown,
+            DeviceEvent::NotificationReceived {
+                channel,
+                monotonic_ms,
+                len,
+            } => Self::NotificationReceived {
+                channel: channel.as_bytes(),
+                monotonic_ms,
+                len: len as u64,
+            },
+            DeviceEvent::Tick { monotonic_ms } => Self::Tick { monotonic_ms },
+            DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
+            DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnlyResponse(response.into()),
+            DeviceEvent::ControlRefusal(refusal) => Self::ControlRefusal(refusal.into()),
+            DeviceEvent::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics.into()),
+            DeviceEvent::DiagnosticError(error) => Self::DiagnosticError(error.into()),
+        }
+    }
+}
+
+/// UniFFI-ready telemetry delta.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TelemetryDeltaDto {
+    /// Host monotonic timestamp for this update.
+    pub at_ms: u64,
+
+    /// Reported or calculated speed in millimeters per second.
+    pub speed_mm_s: Option<MeasuredI32Dto>,
+
+    /// Reported or measured input voltage in millivolts.
+    pub voltage_mv: Option<MeasuredI32Dto>,
+
+    /// Battery/input current in milliamps.
+    pub battery_current_ma: Option<MeasuredI32Dto>,
+
+    /// Motor/phase current in milliamps.
+    pub motor_current_ma: Option<MeasuredI32Dto>,
+
+    /// Electrical power in milliwatts.
+    pub power_mw: Option<MeasuredI64Dto>,
+
+    /// Controller temperature in millicelsius.
+    pub controller_temperature_mc: Option<MeasuredI32Dto>,
+
+    /// Motor temperature in millicelsius.
+    pub motor_temperature_mc: Option<MeasuredI32Dto>,
+
+    /// Battery temperature in millicelsius.
+    pub battery_temperature_mc: Option<MeasuredI32Dto>,
+
+    /// PWM duty in permille.
+    pub pwm_permille: Option<MeasuredI16Dto>,
+
+    /// Total or trip distance in millimeters.
+    pub distance_mm: Option<MeasuredU64Dto>,
+
+    /// Pitch in millidegrees.
+    pub pitch_mdeg: Option<MeasuredI32Dto>,
+
+    /// Roll in millidegrees.
+    pub roll_mdeg: Option<MeasuredI32Dto>,
+
+    /// Battery percentage reported by the device.
+    pub battery_percent_reported: Option<MeasuredU8Dto>,
+
+    /// Battery percentage estimated by Cutout.
+    pub battery_percent_estimated: Option<MeasuredU8Dto>,
+}
+
+impl From<TelemetryDelta> for TelemetryDeltaDto {
+    fn from(delta: TelemetryDelta) -> Self {
+        Self {
+            at_ms: delta.at_ms,
+            speed_mm_s: delta.speed_mm_s.map(Into::into),
+            voltage_mv: delta.voltage_mv.map(Into::into),
+            battery_current_ma: delta.battery_current_ma.map(Into::into),
+            motor_current_ma: delta.motor_current_ma.map(Into::into),
+            power_mw: delta.power_mw.map(Into::into),
+            controller_temperature_mc: delta.controller_temperature_mc.map(Into::into),
+            motor_temperature_mc: delta.motor_temperature_mc.map(Into::into),
+            battery_temperature_mc: delta.battery_temperature_mc.map(Into::into),
+            pwm_permille: delta.pwm_permille.map(Into::into),
+            distance_mm: delta.distance_mm.map(Into::into),
+            pitch_mdeg: delta.pitch_mdeg.map(Into::into),
+            roll_mdeg: delta.roll_mdeg.map(Into::into),
+            battery_percent_reported: delta.battery_percent_reported.map(Into::into),
+            battery_percent_estimated: delta.battery_percent_estimated.map(Into::into),
+        }
+    }
+}
+
+/// UniFFI-ready control refusal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlRefusalDto {
+    /// Command that was refused.
+    pub command: CommandKindDto,
+
+    /// Safety class of the refused command.
+    pub safety_class: SafetyClassDto,
+
+    /// Refusal reason.
+    pub reason: ControlRefusalReasonDto,
+}
+
+impl From<ControlRefusal> for ControlRefusalDto {
+    fn from(refusal: ControlRefusal) -> Self {
+        Self {
+            command: refusal.command.into(),
+            safety_class: refusal.safety_class.into(),
+            reason: refusal.reason.into(),
+        }
+    }
+}
+
+/// UniFFI-ready control refusal reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlRefusalReasonDto {
+    /// Command is not classified for this control shell.
+    WrongSafetyClass,
+
+    /// No required arming token was supplied.
+    MissingArm,
+
+    /// Arming token was issued for another model.
+    WrongModel,
+
+    /// Arming token has expired.
+    ExpiredArm,
+
+    /// Requested value exceeds the configured current limit.
+    CurrentLimitExceeded,
+
+    /// Command is not supported by this model/session.
+    UnsupportedCommand,
+}
+
+impl From<ControlRefusalReason> for ControlRefusalReasonDto {
+    fn from(reason: ControlRefusalReason) -> Self {
+        match reason {
+            ControlRefusalReason::WrongSafetyClass => Self::WrongSafetyClass,
+            ControlRefusalReason::MissingArm => Self::MissingArm,
+            ControlRefusalReason::WrongModel => Self::WrongModel,
+            ControlRefusalReason::ExpiredArm => Self::ExpiredArm,
+            ControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+            ControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+        }
+    }
+}
+
+/// UniFFI-ready parser diagnostics counters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDiagnosticsDto {
+    /// Bytes dropped while recovering from malformed or excessive input.
+    pub dropped_bytes: u64,
+
+    /// Parser resynchronization attempts.
+    pub resyncs: u64,
+
+    /// Frames rejected because their checksum did not match.
+    pub bad_checksums: u64,
+
+    /// Parser deadlines that elapsed before expected data arrived.
+    pub timeouts: u64,
+
+    /// Frames rejected because they exceeded parser limits.
+    pub oversized_frames: u64,
+
+    /// Frames rejected because their structure was invalid.
+    pub malformed_frames: u64,
+
+    /// Replies that could not be matched to an in-flight request.
+    pub unmatched_replies: u64,
+}
+
+impl From<ParserDiagnostics> for ParserDiagnosticsDto {
+    fn from(diagnostics: ParserDiagnostics) -> Self {
+        Self {
+            dropped_bytes: diagnostics.dropped_bytes,
+            resyncs: diagnostics.resyncs,
+            bad_checksums: diagnostics.bad_checksums,
+            timeouts: diagnostics.timeouts,
+            oversized_frames: diagnostics.oversized_frames,
+            malformed_frames: diagnostics.malformed_frames,
+            unmatched_replies: diagnostics.unmatched_replies,
+        }
+    }
+}
+
+/// UniFFI-ready diagnostic error kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagnosticErrorKindDto {
+    /// A frame claimed or accumulated more bytes than allowed.
+    OversizedFrame,
+
+    /// A frame checksum did not match its payload.
+    BadChecksum,
+
+    /// Input bytes could not form a valid frame.
+    MalformedFrame,
+
+    /// A parser deadline elapsed before expected data arrived.
+    Timeout,
+
+    /// A reply could not be matched to an in-flight request.
+    UnmatchedReply,
+}
+
+impl From<DiagnosticErrorKind> for DiagnosticErrorKindDto {
+    fn from(kind: DiagnosticErrorKind) -> Self {
+        match kind {
+            DiagnosticErrorKind::OversizedFrame => Self::OversizedFrame,
+            DiagnosticErrorKind::BadChecksum => Self::BadChecksum,
+            DiagnosticErrorKind::MalformedFrame => Self::MalformedFrame,
+            DiagnosticErrorKind::Timeout => Self::Timeout,
+            DiagnosticErrorKind::UnmatchedReply => Self::UnmatchedReply,
+        }
+    }
+}
+
+/// UniFFI-ready diagnostic error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiagnosticErrorDto {
+    /// Stable diagnostic error discriminator.
+    pub kind: DiagnosticErrorKindDto,
+
+    /// Claimed or observed frame length for oversized-frame errors.
+    pub claimed_len: Option<u64>,
+
+    /// Configured maximum frame length for oversized-frame errors.
+    pub max_len: Option<u64>,
+
+    /// Elapsed monotonic milliseconds for timeout errors.
+    pub elapsed_ms: Option<u64>,
+
+    /// Timeout threshold in monotonic milliseconds for timeout errors.
+    pub timeout_ms: Option<u64>,
+}
+
+impl From<DiagnosticError> for DiagnosticErrorDto {
+    fn from(error: DiagnosticError) -> Self {
+        Self {
+            kind: error.kind.into(),
+            claimed_len: error.claimed_len.map(|len| len as u64),
+            max_len: error.max_len.map(|len| len as u64),
+            elapsed_ms: error.elapsed_ms,
+            timeout_ms: error.timeout_ms,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DiagnosticDetail, DiagnosticReadback,
-        DiagnosticSeverity, FirmwareInfo, Measured, RawFieldValue, ReadOnlyResponse, SettingsEntry,
-        SettingsReadback, ValueQuality, ValueSource, VerificationStatus,
+        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DeviceCommand, DeviceEvent,
+        DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
+        LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput,
+        SettingsEntry, SettingsReadback, TransportAction, ValueQuality, ValueSource,
+        VerificationStatus, WriteMode, WritePayload,
     };
 
     use super::*;
@@ -658,6 +1294,61 @@ mod tests {
         assert_eq!(
             diagnostics.details[0].verification,
             VerificationStatusDto::SourceVerified
+        );
+    }
+
+    #[test]
+    fn session_input_dto_owns_notification_bytes_and_commands() {
+        let notification = SessionInputDto::from(SessionInput::Notification {
+            channel: GattChannel::from_bytes([0xA1; 16]),
+            bytes: &[0xde, 0xad, 0xbe, 0xef],
+            monotonic_ms: 42,
+        });
+        let command =
+            SessionInputDto::from(SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current_ma: -1_500,
+            }));
+
+        assert_eq!(
+            notification,
+            SessionInputDto::Notification {
+                channel: [0xA1; 16],
+                bytes: vec![0xde, 0xad, 0xbe, 0xef],
+                monotonic_ms: 42,
+            }
+        );
+        assert_eq!(
+            command,
+            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current_ma: -1_500 })
+        );
+    }
+
+    #[test]
+    fn session_output_dto_owns_transport_write_bytes_and_events() {
+        let write = SessionOutputDto::from(SessionOutput::Transport(TransportAction::Write {
+            channel: GattChannel::from_bytes([0xB2; 16]),
+            bytes: WritePayload::try_from_slice(&[1, 2, 3]).expect("payload fits"),
+            mode: WriteMode::WithoutResponse,
+        }));
+        let event = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
+            monotonic_ms: 7,
+            max_write_len: Some(182),
+        })));
+
+        assert_eq!(
+            write,
+            SessionOutputDto::Transport(TransportActionDto::Write {
+                channel: [0xB2; 16],
+                bytes: vec![1, 2, 3],
+                mode: WriteModeDto::WithoutResponse,
+            })
+        );
+        assert_eq!(
+            event,
+            SessionOutputDto::Event(SessionEventDto::LinkUp {
+                monotonic_ms: 7,
+                max_write_len: Some(182),
+            })
         );
     }
 }
