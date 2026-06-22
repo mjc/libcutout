@@ -1575,12 +1575,6 @@ where
         );
         match tokio::time::timeout(remaining, notifications.next()).await {
             Ok(Some(notification)) => {
-                info!(
-                    uuid = %notification.uuid,
-                    service = %notification.service_uuid,
-                    len = notification.value.len(),
-                    "session notification next await completed"
-                );
                 *monotonic_ms += 1;
                 if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Notification {
@@ -1596,6 +1590,7 @@ where
                     context.identity_context,
                     context.identity_state,
                 );
+                let event_count_before = context.report.events.len();
                 session.handle(
                     SessionInput::Notification {
                         channel: context.channel,
@@ -1619,6 +1614,15 @@ where
                     *monotonic_ms,
                 )
                 .await?;
+                if notification_produced_no_semantic_events(context.report, event_count_before) {
+                    debug!(
+                        uuid = %notification.uuid,
+                        service = %notification.service_uuid,
+                        len = notification.value.len(),
+                        channel = ?context.channel,
+                        "session notification produced no semantic events"
+                    );
+                }
                 context.report.notifications += 1;
                 context.report.notification_bytes += notification.value.len();
                 context.report.latest_notification_len = Some(notification.value.len());
@@ -1641,6 +1645,13 @@ where
     );
 
     Ok(())
+}
+
+fn notification_produced_no_semantic_events(
+    report: &SessionBridgeReport,
+    event_count_before: usize,
+) -> bool {
+    report.events.len() == event_count_before
 }
 
 const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Characteristic {
@@ -3143,6 +3154,38 @@ mod tests {
             } if error.kind == cutout_core::DiagnosticErrorKind::MalformedFrame
         )));
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
+    }
+
+    #[test]
+    fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
+        let mut report = crate::SessionBridgeReport::default();
+        let event_count_before = report.events.len();
+
+        report
+            .events
+            .push(crate::SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: 7,
+                delta: TelemetryDelta {
+                    voltage_mv: Some(Measured::reported(126_000)),
+                    ..TelemetryDelta::empty(0)
+                },
+            });
+
+        assert!(!crate::notification_produced_no_semantic_events(
+            &report,
+            event_count_before
+        ));
+    }
+
+    #[test]
+    fn unmapped_notifications_remain_eligible_for_debug_transport_logging() {
+        let report = crate::SessionBridgeReport::default();
+        let event_count_before = report.events.len();
+
+        assert!(crate::notification_produced_no_semantic_events(
+            &report,
+            event_count_before
+        ));
     }
 
     #[tokio::test]
