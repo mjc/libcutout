@@ -664,6 +664,19 @@ pub struct VeteranBmsPage {
     pub kind: VeteranBmsPageKind,
 }
 
+/// Cell-voltage values carried by a Veteran smart-BMS page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VeteranBmsCellPage {
+    /// One-based pack index inferred from the page selector.
+    pub pack_index: u8,
+
+    /// Zero-based first cell index covered by this page within the pack.
+    pub first_cell_index: u8,
+
+    /// Reported cell voltages in millivolts.
+    pub cell_millivolts: ArrayVec<u16, 15>,
+}
+
 impl VeteranBmsPage {
     /// Extracts smart-BMS page metadata from a long Veteran frame.
     ///
@@ -677,6 +690,49 @@ impl VeteranBmsPage {
             .get(46)
             .ok_or(VeteranDecodeError::FrameTooShort)?;
         Ok(Self::from_selector(selector))
+    }
+
+    /// Decodes the fixed-width cell-voltage pages carried by a long frame.
+    ///
+    /// Pages 3 and 7 also contain BMS tail data, but on Aero the extra bytes
+    /// require more state coverage before they are exposed as typed fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranDecodeError::FrameTooShort`] when a recognized cell
+    /// page is truncated before all 15 cell values.
+    pub fn cell_voltages_mv(
+        frame: &VeteranFrame,
+    ) -> Result<Option<VeteranBmsCellPage>, VeteranDecodeError> {
+        let page = Self::decode(frame)?;
+        let Some((pack_index, first_cell_index, first_cell_offset)) =
+            cell_page_layout(page.selector)
+        else {
+            return Ok(None);
+        };
+
+        let mut cell_millivolts = ArrayVec::new();
+        for cell_offset in 0..15 {
+            let offset = first_cell_offset + (cell_offset * 2);
+            let value = match page.kind {
+                VeteranBmsPageKind::Cells0To14 => read_le_u16(frame.as_slice(), offset),
+                VeteranBmsPageKind::Cells15To29 => read_be_u16(frame.as_slice(), offset),
+                VeteranBmsPageKind::Header
+                | VeteranBmsPageKind::Cells30To41AndTemperatures
+                | VeteranBmsPageKind::Reserved
+                | VeteranBmsPageKind::Unknown(_) => None,
+            }
+            .ok_or(VeteranDecodeError::FrameTooShort)?;
+            if cell_millivolts.try_push(value).is_err() {
+                return Err(VeteranDecodeError::FrameTooShort);
+            }
+        }
+
+        Ok(Some(VeteranBmsCellPage {
+            pack_index,
+            first_cell_index,
+            cell_millivolts,
+        }))
     }
 
     #[must_use]
@@ -697,6 +753,16 @@ impl VeteranBmsPage {
                 other => VeteranBmsPageKind::Unknown(other),
             },
         }
+    }
+}
+
+const fn cell_page_layout(selector: u8) -> Option<(u8, u8, usize)> {
+    match selector {
+        1 => Some((1, 0, 52)),
+        2 => Some((1, 15, 53)),
+        5 => Some((2, 0, 52)),
+        6 => Some((2, 15, 53)),
+        _ => None,
     }
 }
 
@@ -828,6 +894,12 @@ fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
     let b0 = *bytes.get(offset)?;
     let b1 = *bytes.get(offset + 1)?;
     Some(u16::from_be_bytes([b0, b1]))
+}
+
+fn read_le_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let b0 = *bytes.get(offset)?;
+    let b1 = *bytes.get(offset + 1)?;
+    Some(u16::from_le_bytes([b0, b1]))
 }
 
 fn read_be_i16(bytes: &[u8], offset: usize) -> Option<i16> {
@@ -1659,6 +1731,12 @@ mod tests {
         ))
     }
 
+    fn long_powered_on_fixture_chunks() -> Vec<Vec<u8>> {
+        hex_fixture_chunks(include_str!(
+            "../fixtures/nosfet-aero/nf2557-2026-06-21-powered-on-long.hex"
+        ))
+    }
+
     fn hex_fixture_chunks(fixture: &str) -> Vec<Vec<u8>> {
         fixture.lines().filter_map(hex_fixture_line).collect()
     }
@@ -1674,6 +1752,26 @@ mod tests {
         }
 
         frames
+    }
+
+    fn lossy_veteran_frames_from_chunks(
+        chunks: impl IntoIterator<Item = Vec<u8>>,
+    ) -> (Vec<crate::VeteranFrame>, usize) {
+        let mut reassembler = crate::VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+        let mut errors = 0;
+
+        for chunk in chunks {
+            for byte in chunk {
+                match reassembler.feed_byte(byte) {
+                    Ok(Some(frame)) => frames.push(frame),
+                    Ok(None) => {}
+                    Err(_) => errors += 1,
+                }
+            }
+        }
+
+        (frames, errors)
     }
 
     fn arbitrary_fixture_chunks() -> Vec<Vec<u8>> {
@@ -2034,6 +2132,70 @@ mod tests {
             pages
                 .iter()
                 .any(|page| page.kind == crate::VeteranBmsPageKind::Reserved)
+        );
+    }
+
+    #[test]
+    fn veteran_bms_cell_pages_decode_consistently_across_live_aero_fixtures() {
+        let fixture_sets = [
+            (veteran_frames_from_chunks(bms_page_fixture_chunks()), 0),
+            lossy_veteran_frames_from_chunks(long_powered_on_fixture_chunks()),
+        ];
+
+        for (frames, errors) in fixture_sets {
+            assert!(errors <= 1, "long capture has at most one known diagnostic");
+
+            let decoded_pages: Vec<_> = frames
+                .iter()
+                .filter_map(|frame| crate::VeteranBmsPage::cell_voltages_mv(frame).transpose())
+                .collect::<Result<_, _>>()
+                .expect("live Aero BMS cell pages decode");
+
+            assert!(
+                decoded_pages.len() >= 4,
+                "fixture should include repeated pack 1/2 cell pages"
+            );
+            assert!(
+                decoded_pages
+                    .iter()
+                    .all(|page| page.cell_millivolts.len() == 15)
+            );
+            assert!(decoded_pages.iter().all(|page| {
+                page.cell_millivolts
+                    .iter()
+                    .all(|mv| (3_500..=3_700).contains(mv))
+            }));
+        }
+    }
+
+    #[test]
+    fn veteran_bms_cell_page_offsets_match_live_aero_layout() {
+        let (frames, errors) = lossy_veteran_frames_from_chunks(long_powered_on_fixture_chunks());
+        assert_eq!(errors, 1);
+
+        let cell_pages: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| crate::VeteranBmsPage::cell_voltages_mv(frame).transpose())
+            .collect::<Result<_, _>>()
+            .expect("live long capture cell pages decode");
+
+        assert_eq!(cell_pages[0].pack_index, 1);
+        assert_eq!(cell_pages[0].first_cell_index, 0);
+        assert_eq!(
+            cell_pages[0].cell_millivolts.as_slice(),
+            &[
+                3614, 3620, 3617, 3618, 3619, 3619, 3615, 3623, 3619, 3619, 3624, 3621, 3617, 3620,
+                3620
+            ]
+        );
+        assert_eq!(cell_pages[1].pack_index, 1);
+        assert_eq!(cell_pages[1].first_cell_index, 15);
+        assert_eq!(
+            cell_pages[1].cell_millivolts.as_slice(),
+            &[
+                3627, 3628, 3626, 3626, 3627, 3620, 3628, 3625, 3626, 3628, 3628, 3624, 3626, 3627,
+                3625
+            ]
         );
     }
 
