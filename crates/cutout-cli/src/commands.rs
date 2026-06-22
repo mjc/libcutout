@@ -1,4 +1,4 @@
-use std::{sync::mpsc, thread, time::Duration};
+use std::{fs, sync::mpsc, thread, time::Duration};
 
 use anyhow::Result;
 use cutout_btle::{
@@ -6,13 +6,18 @@ use cutout_btle::{
     SessionEndpoints, capture_session_with_commands, connect_and_discover, drive_session,
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
-use cutout_core::{DeviceCommand, FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
+use cutout_core::{
+    DeviceCommand, FirmwareInfo, Measured, PevcapCapture, SettingsReadback, TelemetrySnapshot,
+};
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
 };
 use tracing::info;
 
-use crate::cli::{Cli, Command, DashboardArgs, ReadProbe, SessionProfile, TargetedScanArgs};
+use crate::cli::{
+    Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs, PevcapFormat,
+    ReadProbe, SessionProfile, TargetedScanArgs,
+};
 use crate::dashboard::{
     DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
 };
@@ -33,10 +38,59 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
         Command::CaptureAero(args) => connect(args, SessionMode::Capture).await?,
         Command::Validation => print!("{}", render_validation_report()),
+        Command::Pevcap(args) => pevcap(args)?,
         Command::Dashboard(args) => dashboard(args).await?,
     }
 
     Ok(())
+}
+
+fn pevcap(args: PevcapArgs) -> Result<()> {
+    match args.command {
+        PevcapCommand::Convert(args) => pevcap_convert(&args)?,
+    }
+
+    Ok(())
+}
+
+fn pevcap_convert(args: &PevcapConvertArgs) -> Result<()> {
+    let input = fs::read(&args.input)?;
+    let output = convert_pevcap_bytes(&input, args.input_format, args.output_format)?;
+    fs::write(&args.output, output)?;
+    println!(
+        "converted {} ({:?}) -> {} ({:?})",
+        args.input.display(),
+        args.input_format,
+        args.output.display(),
+        args.output_format
+    );
+    Ok(())
+}
+
+fn convert_pevcap_bytes(
+    input: &[u8],
+    input_format: PevcapFormat,
+    output_format: PevcapFormat,
+) -> Result<Vec<u8>> {
+    let capture = decode_pevcap_bytes(input, input_format)?;
+    encode_pevcap_capture(&capture, output_format)
+}
+
+fn decode_pevcap_bytes(input: &[u8], format: PevcapFormat) -> Result<PevcapCapture> {
+    match format {
+        PevcapFormat::Jsonl => {
+            let text = std::str::from_utf8(input)?;
+            Ok(PevcapCapture::from_jsonl(text)?)
+        }
+        PevcapFormat::Binary => Ok(PevcapCapture::from_binary(input)?),
+    }
+}
+
+fn encode_pevcap_capture(capture: &PevcapCapture, format: PevcapFormat) -> Result<Vec<u8>> {
+    match format {
+        PevcapFormat::Jsonl => Ok(capture.to_jsonl()?.into_bytes()),
+        PevcapFormat::Binary => Ok(capture.to_binary()?),
+    }
 }
 
 async fn dashboard(args: DashboardArgs) -> Result<()> {
@@ -510,6 +564,10 @@ fn push_measured_u16(
 #[cfg(test)]
 mod tests {
     use cutout_btle::{BridgeIdentityResolution, ConnectionTarget};
+    use cutout_core::{
+        GattChannel, PevcapHeader, PevcapRecord, ProtocolFamily, VerificationStatus, VerifiedValue,
+        WriteMode,
+    };
     use cutout_protocols::{
         BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, DeviceFamily, IdentityConfidence,
         ProtocolFamilyClassification, StagedIdentityInput, identify_model,
@@ -524,6 +582,75 @@ mod tests {
             device: device.map(ToOwned::to_owned),
             scan: ScanArgs { seconds: 5 },
         }
+    }
+
+    fn sample_pevcap_capture() -> PevcapCapture {
+        let service = GattChannel::from_bytes([0xFE; 16]);
+        let characteristic = GattChannel::from_bytes([0xE1; 16]);
+        let header = PevcapHeader::new(
+            1_725_000_123_456,
+            "darwin",
+            Some(182),
+            &[service],
+            &[],
+            Some(cutout_core::PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::BegodeGotway),
+                model: Some(VerifiedValue {
+                    value: "Begode Falcon".to_owned(),
+                    verification: VerificationStatus::Inferred,
+                }),
+                firmware: None,
+            }),
+            "0.1.0",
+            [0x42; 32],
+            &["review"],
+        )
+        .expect("header should validate");
+
+        PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::outbound_write(
+                    7,
+                    characteristic,
+                    WriteMode::WithoutResponse,
+                    b"N".to_vec(),
+                ),
+                PevcapRecord::inbound_notification(
+                    9,
+                    characteristic,
+                    service,
+                    b"NAME=Falcon".to_vec(),
+                ),
+            ],
+        )
+    }
+
+    #[test]
+    fn pevcap_converter_turns_jsonl_into_binary_container() {
+        let capture = sample_pevcap_capture();
+        let jsonl = capture.to_jsonl().expect("sample serializes");
+
+        let binary =
+            convert_pevcap_bytes(jsonl.as_bytes(), PevcapFormat::Jsonl, PevcapFormat::Binary)
+                .expect("JSONL converts to binary");
+        let decoded = PevcapCapture::from_binary(&binary).expect("binary decodes");
+
+        assert_eq!(decoded, capture);
+    }
+
+    #[test]
+    fn pevcap_converter_turns_binary_container_into_jsonl() {
+        let capture = sample_pevcap_capture();
+        let binary = capture.to_binary().expect("sample serializes");
+
+        let jsonl = convert_pevcap_bytes(&binary, PevcapFormat::Binary, PevcapFormat::Jsonl)
+            .expect("binary converts to JSONL");
+        let decoded =
+            PevcapCapture::from_jsonl(std::str::from_utf8(&jsonl).expect("JSONL is UTF-8"))
+                .expect("JSONL decodes");
+
+        assert_eq!(decoded, capture);
     }
 
     #[test]
@@ -649,7 +776,7 @@ mod tests {
             field: cutout_core::RawFieldValue::new(id, value),
             source: cutout_core::ValueSource::Reported,
             quality: cutout_core::ValueQuality::Known,
-            verification: cutout_core::VerificationStatus::HardwareVerified,
+            verification: VerificationStatus::HardwareVerified,
         };
         let settings = SettingsReadback {
             entries: [

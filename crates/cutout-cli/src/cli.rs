@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cutout_btle::ConnectionTarget;
 
@@ -15,6 +17,7 @@ Examples:
   cutout connect --name-contains Aero
   cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
   cutout capture-aero --name-contains NF2557 --seconds 20
+  cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
   cutout dashboard --demo --device \"Aero NF2557\"
 
@@ -46,6 +49,17 @@ Print a generated hardware validation matrix for the registry and capture
 notes Cutout already knows about. The matrix shows device families, firmware
 versions, capture IDs, tested fields, inferred fields, unverified fields,
 controls, and acceptance status.";
+const PEVCAP_LONG_ABOUT: &str = "\
+Work with PEVCAP capture files without connecting to Bluetooth hardware.
+
+PEVCAP JSONL is the review-friendly line-oriented representation. PEVCAP
+binary is the compact framed container used for storage and replay tooling.";
+const PEVCAP_CONVERT_LONG_ABOUT: &str = "\
+Convert a PEVCAP capture between JSONL and binary container formats.
+
+The command decodes the input through the canonical cutout-core PEVCAP model
+before writing the output, so malformed magic, unsupported versions, truncated
+records, and header bound violations fail before a converted file is written.";
 const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
@@ -87,6 +101,10 @@ pub(crate) enum Command {
     /// Print the generated hardware validation matrix.
     #[command(long_about = VALIDATION_LONG_ABOUT)]
     Validation,
+
+    /// Work with PEVCAP capture files.
+    #[command(long_about = PEVCAP_LONG_ABOUT)]
+    Pevcap(PevcapArgs),
 
     /// Open the interactive read-only dashboard.
     #[command(long_about = DASHBOARD_LONG_ABOUT)]
@@ -159,6 +177,44 @@ pub(crate) enum ReadProbe {
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct PevcapArgs {
+    #[command(subcommand)]
+    pub(crate) command: PevcapCommand,
+}
+
+#[derive(Clone, Debug, Subcommand, PartialEq, Eq)]
+pub(crate) enum PevcapCommand {
+    /// Convert a capture between JSONL and binary PEVCAP formats.
+    #[command(long_about = PEVCAP_CONVERT_LONG_ABOUT)]
+    Convert(PevcapConvertArgs),
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct PevcapConvertArgs {
+    /// Input capture path.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) input: PathBuf,
+
+    /// Input capture format.
+    #[arg(long = "input-format", value_enum)]
+    pub(crate) input_format: PevcapFormat,
+
+    /// Output capture path.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) output: PathBuf,
+
+    /// Output capture format.
+    #[arg(long = "output-format", value_enum)]
+    pub(crate) output_format: PevcapFormat,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum PevcapFormat {
+    Jsonl,
+    Binary,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
 pub(crate) struct DashboardArgs {
     /// Use checked-in fixture data instead of a live session.
     #[arg(long)]
@@ -205,11 +261,14 @@ impl From<TargetArgs> for ConnectionTarget {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::{CommandFactory, Parser, error::ErrorKind};
 
     use super::{
-        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, ReadProbe, ScanArgs, SessionProfile,
-        TargetArgs, TargetedScanArgs,
+        Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs, PevcapCommand,
+        PevcapConvertArgs, PevcapFormat, ReadProbe, ScanArgs, SessionProfile, TargetArgs,
+        TargetedScanArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -592,6 +651,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_pevcap_convert_command() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "convert",
+            "--input",
+            "session.pevcap.jsonl",
+            "--input-format",
+            "jsonl",
+            "--output",
+            "session.pevcap",
+            "--output-format",
+            "binary",
+        ])
+        .expect("parser accepts PEVCAP conversion");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Convert(PevcapConvertArgs {
+                    input: PathBuf::from("session.pevcap.jsonl"),
+                    input_format: PevcapFormat::Jsonl,
+                    output: PathBuf::from("session.pevcap"),
+                    output_format: PevcapFormat::Binary,
+                })
+            })
+        );
+    }
+
+    #[test]
     fn converts_target_args_to_connection_target() {
         let target: cutout_btle::ConnectionTarget = TargetArgs {
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
@@ -753,6 +842,7 @@ mod tests {
                 "scan",
                 "connect",
                 "capture-aero",
+                "pevcap",
                 "validation",
                 "dashboard",
             ],
@@ -800,6 +890,7 @@ mod tests {
                 "cutout connect --name-contains Aero",
                 "cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8",
                 "cutout capture-aero --name-contains NF2557 --seconds 20",
+                "cutout pevcap convert --input session.pevcap.jsonl",
                 "cutout validation",
                 "cutout dashboard",
             ],
@@ -816,7 +907,14 @@ mod tests {
 
         assert_eq!(
             names,
-            ["scan", "connect", "capture-aero", "validation", "dashboard"]
+            [
+                "scan",
+                "connect",
+                "capture-aero",
+                "validation",
+                "pevcap",
+                "dashboard"
+            ]
         );
     }
 
@@ -975,6 +1073,21 @@ mod tests {
             &[
                 "Print the generated hardware validation matrix",
                 "Usage: validation",
+            ],
+        );
+    }
+
+    #[test]
+    fn pevcap_long_help_describes_offline_capture_tooling() {
+        let help = long_help_for("pevcap");
+
+        assert_contains_all(
+            &help,
+            &[
+                "capture files",
+                "without connecting to Bluetooth hardware",
+                "JSONL",
+                "binary",
             ],
         );
     }
