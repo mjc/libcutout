@@ -9,9 +9,17 @@
 
 //! Protocol-family scaffolding for Cutout.
 
-mod protocol_model;
-pub use protocol_model::*;
+mod gatt;
+pub use gatt::*;
+mod family;
+pub use family::*;
+mod fixture;
+pub use fixture::*;
+mod probe;
+pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
+mod request_encoder;
 mod session;
+pub use request_encoder::{AeroRequestEncoder, EncodedRequest, FalconRequestEncoder};
 pub use session::{AeroReadOnlySession, FalconReadOnlySession};
 
 /// Returns the crate name used by setup smoke tests.

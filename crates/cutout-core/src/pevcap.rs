@@ -2,7 +2,7 @@ use arrayvec::ArrayVec;
 use thiserror::Error;
 
 use crate::{
-    GattChannel, GattFingerprint, MonotonicMillis, ProtocolFamily, VerificationStatus, WriteMode,
+    GattChannel, GattFingerprint, MonotonicMillis, ProtocolFamily, VerifiedValue, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -61,16 +61,10 @@ pub struct PevcapResolvedIdentity {
     pub protocol_family: Option<ProtocolFamily>,
 
     /// Resolved model name, when known.
-    pub model: Option<String>,
-
-    /// Verification status for the model name.
-    pub model_verification: VerificationStatus,
+    pub model: Option<VerifiedValue<String>>,
 
     /// Resolved firmware string, when known.
-    pub firmware: Option<String>,
-
-    /// Verification status for the firmware string.
-    pub firmware_verification: VerificationStatus,
+    pub firmware: Option<VerifiedValue<String>>,
 }
 
 /// PEVCAP capture header metadata.
@@ -310,6 +304,7 @@ impl PevcapCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::VerificationStatus;
 
     #[test]
     fn pevcap_current_version_and_magic_are_stable() {
@@ -340,10 +335,14 @@ mod tests {
             &[fingerprint],
             Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
-                model: Some("NOSFET Aero".to_owned()),
-                model_verification: VerificationStatus::HardwareVerified,
-                firmware: Some("3.8.12".to_owned()),
-                firmware_verification: VerificationStatus::SourceAndHardwareVerified,
+                model: Some(VerifiedValue {
+                    value: "NOSFET Aero".to_owned(),
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                firmware: Some(VerifiedValue {
+                    value: "3.8.12".to_owned(),
+                    verification: VerificationStatus::SourceAndHardwareVerified,
+                }),
             }),
             "0.1.0",
             [0xAB; 32],
@@ -360,8 +359,25 @@ mod tests {
             header
                 .resolved_identity
                 .as_ref()
-                .map(|resolved| resolved.model.as_deref()),
+                .map(|resolved| resolved.model.as_ref().map(|model| model.value.as_str())),
             Some(Some("NOSFET Aero"))
+        );
+        assert_eq!(
+            header
+                .resolved_identity
+                .as_ref()
+                .and_then(|resolved| resolved.model.as_ref().map(|model| model.verification)),
+            Some(VerificationStatus::HardwareVerified)
+        );
+        assert_eq!(
+            header
+                .resolved_identity
+                .as_ref()
+                .and_then(|resolved| resolved
+                    .firmware
+                    .as_ref()
+                    .map(|firmware| firmware.verification)),
+            Some(VerificationStatus::SourceAndHardwareVerified)
         );
         assert_eq!(header.library_version, "0.1.0");
         assert_eq!(header.registry_hash, [0xAB; 32]);
