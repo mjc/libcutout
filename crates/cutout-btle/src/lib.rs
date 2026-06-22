@@ -8,7 +8,7 @@
 
 //! Bluetooth transport adapter scaffolding for Cutout.
 
-use std::{collections::BTreeSet, fmt, pin::Pin, time::Duration};
+use std::{collections::BTreeSet, fmt, future::Future, pin::Pin, time::Duration};
 
 use async_trait::async_trait;
 use btleplug::{
@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
 const BATTERY_LEVEL_UUID: Uuid = Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb);
+const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
@@ -546,10 +547,13 @@ pub async fn connect_and_discover(
 ) -> Result<ConnectedPeripheral, BtleError> {
     let adapter = first_adapter().await?;
     adapter.start_scan(ScanFilter::default()).await?;
-    tokio::time::sleep(scan_for).await;
 
-    let peripheral = find_peripheral(&adapter, target).await?;
+    let peripheral = wait_for_scan_match(scan_for, TARGETED_SCAN_POLL_INTERVAL, || {
+        find_peripheral(&adapter, target)
+    })
+    .await;
     let _ = adapter.stop_scan().await;
+    let peripheral = peripheral?;
 
     peripheral.connect().await?;
     peripheral.discover_services().await?;
@@ -986,11 +990,36 @@ async fn find_peripheral(
     Err(BtleError::NoPeripheralMatched)
 }
 
+async fn wait_for_scan_match<T, F, Fut>(
+    scan_for: Duration,
+    poll_interval: Duration,
+    mut find: F,
+) -> Result<T, BtleError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, BtleError>>,
+{
+    let started = tokio::time::Instant::now();
+    let deadline = started + scan_for;
+
+    loop {
+        match find().await {
+            Ok(value) => return Ok(value),
+            Err(BtleError::NoPeripheralMatched) if tokio::time::Instant::now() < deadline => {
+                let next_poll = (tokio::time::Instant::now() + poll_interval).min(deadline);
+                tokio::time::sleep_until(next_poll).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
         pin::Pin,
         sync::{Arc, Mutex},
+        time::{Duration, Instant as StdInstant},
     };
 
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
@@ -1028,6 +1057,82 @@ mod tests {
         };
 
         assert!(target.matches(&observation));
+    }
+
+    #[tokio::test]
+    async fn targeted_scan_wait_returns_as_soon_as_match_is_found() {
+        let started = StdInstant::now();
+        let mut attempts = 0_u8;
+
+        let result = crate::wait_for_scan_match(
+            Duration::from_millis(200),
+            Duration::from_millis(5),
+            || {
+                attempts += 1;
+                async move {
+                    if attempts == 1 {
+                        Err(crate::BtleError::NoPeripheralMatched)
+                    } else {
+                        Ok("matched")
+                    }
+                }
+            },
+        )
+        .await
+        .expect("second poll matches");
+
+        assert_eq!(result, "matched");
+        assert_eq!(attempts, 2);
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "targeted scan should not wait for the full scan period after a match"
+        );
+    }
+
+    #[tokio::test]
+    async fn targeted_scan_wait_times_out_without_match() {
+        let started = StdInstant::now();
+        let mut attempts = 0_u8;
+
+        let result = crate::wait_for_scan_match::<(), _, _>(
+            Duration::from_millis(15),
+            Duration::from_millis(5),
+            || {
+                attempts += 1;
+                async { Err(crate::BtleError::NoPeripheralMatched) }
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(crate::BtleError::NoPeripheralMatched)));
+        assert!(attempts >= 2);
+        assert!(started.elapsed() >= Duration::from_millis(15));
+    }
+
+    #[tokio::test]
+    async fn targeted_scan_wait_returns_non_match_errors_immediately() {
+        let started = StdInstant::now();
+        let mut attempts = 0_u8;
+
+        let result = crate::wait_for_scan_match::<(), _, _>(
+            Duration::from_millis(200),
+            Duration::from_millis(5),
+            || {
+                attempts += 1;
+                async {
+                    Err(crate::BtleError::Bridge(
+                        crate::SessionBridgeError::MissingNotifyEndpoint {
+                            channel: GattChannel::from_bytes([0x44; 16]),
+                        },
+                    ))
+                }
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(crate::BtleError::Bridge(_))));
+        assert_eq!(attempts, 1);
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 
     #[test]
@@ -1265,7 +1370,7 @@ mod tests {
             summary
                 .select_session_endpoints()
                 .expect("summary has session endpoints"),
-            std::time::Duration::from_millis(10),
+            Duration::from_millis(10),
         )
         .await
         .expect("bridge accepts matching transport outputs");
@@ -1332,7 +1437,7 @@ mod tests {
             summary
                 .select_session_endpoints()
                 .expect("summary has session endpoints"),
-            std::time::Duration::from_millis(10),
+            Duration::from_millis(10),
         )
         .await
         .expect("bridge consumes notifications");
@@ -1384,7 +1489,7 @@ mod tests {
             summary
                 .select_session_endpoints()
                 .expect("summary has session endpoints"),
-            std::time::Duration::from_millis(10),
+            Duration::from_millis(10),
             true,
         )
         .await

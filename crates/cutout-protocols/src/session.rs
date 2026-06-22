@@ -413,6 +413,32 @@ mod tests {
             .collect()
     }
 
+    fn live_aero_telemetry() -> TelemetryDelta {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: &live_aero_frame(),
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        telemetry_events(&output)
+            .into_iter()
+            .next()
+            .expect("live Aero notification emits telemetry")
+    }
+
     #[test]
     fn shared_read_only_session_link_up_subscribes_profile_channel() {
         let mut connected = false;
@@ -488,55 +514,36 @@ mod tests {
 
     #[test]
     fn nosfet_aero_session_emits_voltage_from_live_fixture_notification() {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
-        let mut output = Vec::new();
-
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
-            }),
-            &mut output,
+        assert_eq!(
+            live_aero_telemetry().voltage_mv,
+            Some(Measured::reported(108_760))
         );
-        session.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &live_aero_frame(),
-                monotonic_ms: 42,
-            },
-            &mut output,
-        );
-
-        let telemetry = telemetry_events(&output);
-        assert_eq!(telemetry[0].voltage_mv, Some(Measured::reported(108_760)));
     }
 
     #[test]
     fn nosfet_aero_session_emits_estimated_battery_percent_from_live_fixture_notification() {
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
-        let mut output = Vec::new();
-
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &live_aero_frame(),
-                monotonic_ms: 42,
-            },
-            &mut output,
-        );
-
-        let telemetry = telemetry_events(&output);
         assert_eq!(
-            telemetry[0].battery_percent_estimated,
+            live_aero_telemetry().battery_percent_estimated,
             Some(Measured::estimated(39))
         );
+    }
+
+    #[test]
+    fn nosfet_aero_session_emits_fixed_header_telemetry_from_live_fixture_notification() {
+        let telemetry = live_aero_telemetry();
+
+        assert_eq!(telemetry.speed_mm_s, Some(Measured::reported(0)));
+        assert_eq!(telemetry.motor_current_ma, Some(Measured::reported(0)));
+        assert_eq!(
+            telemetry.controller_temperature_mc,
+            Some(Measured::reported(33_270))
+        );
+        assert_eq!(telemetry.pwm_permille, Some(Measured::reported(-1_000)));
+        assert_eq!(
+            telemetry.distance_mm,
+            Some(Measured::reported(1_551_169_000))
+        );
+        assert_eq!(telemetry.pitch_mdeg, Some(Measured::reported(69_060)));
     }
 
     #[test]

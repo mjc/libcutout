@@ -40,8 +40,8 @@ pub use veteran_frame::{
     MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
 };
 pub use veteran_telemetry::{
-    NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV, VeteranTelemetry,
-    VeteranTelemetryError, estimate_nosfet_aero_battery_percent,
+    NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV, VeteranFirmwareVersion,
+    VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_percent,
 };
 
 /// Returns the crate name used by setup smoke tests.
