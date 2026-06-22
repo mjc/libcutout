@@ -55,7 +55,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             seconds = DASHBOARD_PROBE_WINDOW.as_secs(),
             "probing dashboard session"
         );
-        let mut session = AeroReadOnlySession::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let report = drive_session(
             &connection.peripheral,
             &mut session,

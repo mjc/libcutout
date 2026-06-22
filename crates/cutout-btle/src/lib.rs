@@ -318,6 +318,12 @@ pub struct SessionBridgeReport {
     /// Notification payloads relayed into the session.
     pub notifications: usize,
 
+    /// Total notification payload bytes relayed into the session.
+    pub notification_bytes: usize,
+
+    /// Length of the latest notification payload, if any were observed.
+    pub latest_notification_len: Option<usize>,
+
     /// Semantic telemetry events emitted by the session.
     pub telemetry: usize,
 
@@ -782,6 +788,8 @@ where
                 )
                 .await?;
                 report.notifications += 1;
+                report.notification_bytes += notification.value.len();
+                report.latest_notification_len = Some(notification.value.len());
             }
             Ok(None) | Err(_) => break,
         }
@@ -1492,6 +1500,8 @@ mod tests {
         .expect("bridge consumes notifications");
 
         assert_eq!(report.notifications, 1);
+        assert_eq!(report.notification_bytes, 2);
+        assert_eq!(report.latest_notification_len, Some(2));
         assert_eq!(report.telemetry, 1);
         assert_eq!(
             report.telemetry_snapshot.speed_mm_s,
