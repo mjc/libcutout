@@ -343,6 +343,34 @@ impl PevcapCapture {
         records
     }
 
+    /// Converts inbound PEVCAP transport records into replay inputs, splitting
+    /// each notification into chunks no larger than `chunk_len`.
+    ///
+    /// A zero `chunk_len` preserves whole-notification replay.
+    #[must_use]
+    pub fn replay_records_with_notification_chunk_len(
+        &self,
+        chunk_len: usize,
+    ) -> Vec<CaptureRecord> {
+        self.replay_records()
+            .into_iter()
+            .flat_map(|record| record.split_notification_bytes(chunk_len))
+            .collect()
+    }
+
+    /// Converts inbound PEVCAP transport records into replay inputs, splitting
+    /// each notification by the provided chunk lengths.
+    ///
+    /// Empty and zero lengths are ignored by the underlying capture record
+    /// splitter; remaining bytes are appended as a final chunk.
+    #[must_use]
+    pub fn replay_records_with_notification_chunks(&self, lengths: &[usize]) -> Vec<CaptureRecord> {
+        self.replay_records()
+            .into_iter()
+            .flat_map(|record| record.split_notification_by_lengths(lengths))
+            .collect()
+    }
+
     /// Serializes this capture as line-delimited JSON for review tooling.
     ///
     /// The first line is a PEVCAP header line, followed by one transport
@@ -1192,6 +1220,7 @@ impl WriteModeJson {
 mod tests {
     use super::*;
     use crate::VerificationStatus;
+    use proptest::prelude::*;
 
     #[test]
     fn pevcap_current_version_and_magic_are_stable() {
@@ -1424,6 +1453,135 @@ mod tests {
                 max_write_len: None,
             })]
         );
+    }
+
+    #[test]
+    fn pevcap_capture_replay_records_can_split_notifications_to_single_bytes() {
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(
+            1,
+            "darwin",
+            Some(128),
+            &[],
+            &[],
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                9,
+                characteristic,
+                characteristic,
+                b"abc".to_vec(),
+            )],
+        );
+
+        assert_eq!(
+            capture.replay_records_with_notification_chunk_len(1),
+            vec![
+                CaptureRecord::LinkUp(LinkInfo {
+                    monotonic_ms: 0,
+                    max_write_len: Some(128),
+                }),
+                CaptureRecord::notification(characteristic, b"a".to_vec(), 9),
+                CaptureRecord::notification(characteristic, b"b".to_vec(), 9),
+                CaptureRecord::notification(characteristic, b"c".to_vec(), 9),
+            ]
+        );
+    }
+
+    #[test]
+    fn pevcap_capture_replay_records_can_apply_arbitrary_notification_chunks() {
+        let characteristic = GattChannel::from_bytes([0x66; 16]);
+        let header = PevcapHeader::new(
+            1,
+            "darwin",
+            Some(128),
+            &[],
+            &[],
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                9,
+                characteristic,
+                characteristic,
+                b"abcd".to_vec(),
+            )],
+        );
+
+        assert_eq!(
+            capture.replay_records_with_notification_chunks(&[2, 1]),
+            vec![
+                CaptureRecord::LinkUp(LinkInfo {
+                    monotonic_ms: 0,
+                    max_write_len: Some(128),
+                }),
+                CaptureRecord::notification(characteristic, b"ab".to_vec(), 9),
+                CaptureRecord::notification(characteristic, b"c".to_vec(), 9),
+                CaptureRecord::notification(characteristic, b"d".to_vec(), 9),
+            ]
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn pevcap_arbitrary_notification_chunks_preserve_replay_payloads(
+            payload in proptest::collection::vec(any::<u8>(), 1..64),
+            lengths in proptest::collection::vec(0usize..12, 0..16),
+        ) {
+            let characteristic = GattChannel::from_bytes([0x77; 16]);
+            let header = PevcapHeader::new(
+                1,
+                "darwin",
+                Some(128),
+                &[],
+                &[],
+                None,
+                "0.1.0",
+                [0; 32],
+                &[],
+            )
+            .expect("header should validate");
+            let capture = PevcapCapture::new(
+                header,
+                vec![PevcapRecord::inbound_notification(
+                    9,
+                    characteristic,
+                    characteristic,
+                    payload.clone(),
+                )],
+            );
+
+            prop_assert_eq!(
+                notification_payloads(capture.replay_records_with_notification_chunks(&lengths)),
+                vec![payload],
+            );
+        }
+    }
+
+    fn notification_payloads(records: Vec<CaptureRecord>) -> Vec<Vec<u8>> {
+        let mut payloads = Vec::new();
+        let mut current = Vec::new();
+        for record in records {
+            let CaptureRecord::Notification { bytes, .. } = record else {
+                continue;
+            };
+            current.extend(bytes);
+        }
+        if !current.is_empty() {
+            payloads.push(current);
+        }
+        payloads
     }
 
     #[cfg(feature = "serde")]
