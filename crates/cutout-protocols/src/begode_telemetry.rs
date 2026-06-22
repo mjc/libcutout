@@ -191,6 +191,78 @@ pub fn select_begode_pack_voltage_profile(
         )
 }
 
+/// Selects a Begode pack voltage profile from capture/app annotations.
+#[must_use]
+pub fn select_begode_pack_voltage_profile_from_annotations<I, A>(
+    annotations: I,
+) -> BegodeVoltageProfileSelection
+where
+    I: IntoIterator<Item = A>,
+    A: AsRef<str>,
+{
+    annotations
+        .into_iter()
+        .filter_map(|annotation| voltage_evidence_from_annotation(annotation.as_ref()))
+        .try_fold(None, |selected, evidence| {
+            evidence_profile(evidence).map_or(Ok(selected), |profile| {
+                merge_profile_selection(selected, profile)
+            })
+        })
+        .map_or(
+            BegodeVoltageProfileSelection::Conflicting,
+            |selected| match selected {
+                Some(profile) => BegodeVoltageProfileSelection::Selected(profile),
+                None => BegodeVoltageProfileSelection::Missing,
+            },
+        )
+}
+
+fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvidence> {
+    let (key, value) = annotation.split_once('=')?;
+    match key.trim() {
+        "battery" | "app_voltage_class" | "charger_voltage" | "charger_voltage_class" => {
+            voltage_class_evidence(value)
+        }
+        "charger_voltage_mv" | "observed_pack_voltage_mv" | "bms_voltage_mv" | "app_voltage_mv" => {
+            parse_mv_evidence(value)
+        }
+        _ => None,
+    }
+}
+
+fn voltage_class_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
+    let value = value.trim();
+    if eq_ignore_ascii_case(value, "84v")
+        || eq_ignore_ascii_case(value, "84.0v")
+        || eq_ignore_ascii_case(value, "20s")
+    {
+        Some(BegodeVoltageEvidence::VoltageClass84V)
+    } else if eq_ignore_ascii_case(value, "100v")
+        || eq_ignore_ascii_case(value, "100.8v")
+        || eq_ignore_ascii_case(value, "24s")
+    {
+        Some(BegodeVoltageEvidence::VoltageClass100V)
+    } else {
+        None
+    }
+}
+
+fn parse_mv_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
+    value
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .map(BegodeVoltageEvidence::ObservedPackVoltageMv)
+}
+
+fn eq_ignore_ascii_case(left: &str, right: &str) -> bool {
+    left.len() == right.len()
+        && left
+            .bytes()
+            .zip(right.bytes())
+            .all(|(left, right)| left.eq_ignore_ascii_case(&right))
+}
+
 const fn evidence_profile(evidence: BegodeVoltageEvidence) -> Option<BegodePackVoltageProfile> {
     match evidence {
         BegodeVoltageEvidence::VoltageClass84V => {
@@ -670,6 +742,7 @@ fn percent_from_i32(percent: i32) -> u8 {
 mod tests {
     use super::{
         BegodeVoltageEvidence, BegodeVoltageProfileSelection, select_begode_pack_voltage_profile,
+        select_begode_pack_voltage_profile_from_annotations,
     };
     use crate::{
         BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -984,6 +1057,62 @@ mod tests {
                 65_000
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
+        );
+    }
+
+    #[test]
+    fn voltage_evidence_from_annotations_uses_explicit_84v_capture_label() {
+        assert_eq!(
+            select_begode_pack_voltage_profile_from_annotations([
+                "capture_label=powered_on_stationary",
+                "battery=84v",
+            ]),
+            BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
+        );
+    }
+
+    #[test]
+    fn voltage_evidence_from_annotations_uses_explicit_100v_capture_label() {
+        assert_eq!(
+            select_begode_pack_voltage_profile_from_annotations([
+                "battery=100.8v",
+                "cell_model=Samsung 50S",
+            ]),
+            BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
+        );
+    }
+
+    #[test]
+    fn voltage_evidence_from_annotations_uses_non_overlapping_observed_voltage() {
+        assert_eq!(
+            select_begode_pack_voltage_profile_from_annotations([
+                "observed_pack_voltage_mv=95000",
+                "capture_label=rolling_forward",
+            ]),
+            BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
+        );
+    }
+
+    #[test]
+    fn voltage_evidence_from_annotations_rejects_conflicts() {
+        assert_eq!(
+            select_begode_pack_voltage_profile_from_annotations([
+                "battery=84v",
+                "app_voltage_class=100v",
+            ]),
+            BegodeVoltageProfileSelection::Conflicting
+        );
+    }
+
+    #[test]
+    fn voltage_evidence_from_annotations_ignores_unknown_or_ambiguous_evidence() {
+        assert_eq!(
+            select_begode_pack_voltage_profile_from_annotations([
+                "model=Falcon",
+                "cell_model=Samsung 50S",
+                "observed_pack_voltage_mv=80000",
+            ]),
+            BegodeVoltageProfileSelection::Missing
         );
     }
 

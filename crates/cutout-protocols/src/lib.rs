@@ -29,6 +29,7 @@ pub use begode_telemetry::{
     BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
     BegodeUnitMode, BegodeVoltageEvidence, BegodeVoltageProfileSelection,
     estimate_begode_battery_percent, select_begode_pack_voltage_profile,
+    select_begode_pack_voltage_profile_from_annotations,
 };
 mod battery_profile;
 pub use battery_profile::{
