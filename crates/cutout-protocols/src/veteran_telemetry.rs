@@ -140,6 +140,13 @@ pub struct VeteranModelProfile {
     /// Static smart-BMS layout for model-specific page interpretation.
     pub bms_layout: Option<&'static BmsLayoutSpec>,
 
+    /// Observed app-vs-device odometer display offset in meters, when known.
+    ///
+    /// This is model evidence, not a parser correction. Keep canonical decoded
+    /// odometer fields unchanged until same-instant raw/app/LCD captures prove
+    /// where the offset is applied.
+    pub observed_app_odometer_offset_m: Option<i32>,
+
     /// Whether horn requires the newer binary `LeaperKim` command frame.
     pub requires_binary_horn: bool,
 }
@@ -199,6 +206,7 @@ impl VeteranModelProfile {
             }
             43 => {
                 Self::new_with_battery_profile(model_id, "NOSFET Aero", 30, 2, &SAMSUNG_50S_PROFILE)
+                    .with_observed_app_odometer_offset_m(805)
             }
             44 => {
                 Self::new_with_battery_profile(model_id, "NOSFET Aeon", 36, 2, &SAMSUNG_50S_PROFILE)
@@ -225,6 +233,7 @@ impl VeteranModelProfile {
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
             bms_layout: None,
+            observed_app_odometer_offset_m: None,
             requires_binary_horn: model_id >= 3,
         }
     }
@@ -249,8 +258,17 @@ impl VeteranModelProfile {
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
             bms_layout: bms_layout_for_geometry(cell_count, parallel_cells),
+            observed_app_odometer_offset_m: None,
             requires_binary_horn: model_id >= 3,
         }
+    }
+
+    const fn with_observed_app_odometer_offset_m(
+        mut self,
+        observed_app_odometer_offset_m: i32,
+    ) -> Self {
+        self.observed_app_odometer_offset_m = Some(observed_app_odometer_offset_m);
+        self
     }
 
     /// Estimates battery percentage from this model's pack voltage.
@@ -670,6 +688,7 @@ mod tests {
         assert_eq!(aero.voltage_range_mv, 91_000..=126_000);
         assert!(aero.has_pwm_readback);
         assert!(aero.requires_binary_horn);
+        assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
 
         assert_eq!(oryx.name, "Veteran Oryx");
         assert_eq!(oryx.cell_count, 42);
@@ -689,6 +708,21 @@ mod tests {
         assert_eq!(sherman.voltage_range_mv, 79_350..=98_700);
         assert!(!sherman.has_pwm_readback);
         assert!(!sherman.requires_binary_horn);
+        assert_eq!(sherman.observed_app_odometer_offset_m, None);
+    }
+
+    #[test]
+    fn aero_model_profile_records_observed_app_odometer_offset_without_parser_correction() {
+        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let telemetry =
+            VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
+        let delta = telemetry.to_delta(42);
+
+        assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
+        assert_eq!(
+            delta.distance_mm.map(|distance| distance.value),
+            Some(u64::from(telemetry.total_distance_m) * 1_000)
+        );
     }
 
     #[test]
