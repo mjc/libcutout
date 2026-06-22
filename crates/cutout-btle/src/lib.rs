@@ -664,8 +664,21 @@ pub struct ReconnectingSessionCapture {
     /// Aggregate records and report across connected links.
     pub capture: SessionCapture,
 
-    /// Connection summaries observed for each connected link attempt.
-    pub summaries: Vec<ConnectionSummary>,
+    /// Ordered diagnostics for each connected link attempt.
+    pub attempts: Vec<ReconnectAttemptReport>,
+}
+
+/// Diagnostics captured for one reconnect link attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReconnectAttemptReport {
+    /// One-based link attempt number.
+    pub attempt: usize,
+
+    /// Connection summary observed for this link attempt.
+    pub summary: ConnectionSummary,
+
+    /// Bridge counters and lifecycle events observed during this link attempt.
+    pub report: SessionBridgeReport,
 }
 
 /// Protocol-agnostic raw notification record captured from a subscribed
@@ -1189,7 +1202,7 @@ where
     let mut reconnecting_capture = ReconnectingSessionCapture::default();
     let mut monotonic_start = 0;
 
-    for _ in 0..max_links {
+    for attempt in 1..=max_links {
         let (peripheral, summary) = host.connect().await?;
         let endpoints = summary
             .select_session_endpoints()
@@ -1216,12 +1229,16 @@ where
             .max()
             .unwrap_or(monotonic_start)
             .saturating_add(1);
-        merge_session_report(&mut reconnecting_capture.capture.report, report);
-        let should_reconnect = reconnecting_capture.capture.report.disconnects > 0
+        merge_session_report(&mut reconnecting_capture.capture.report, report.clone());
+        let should_reconnect = report.disconnects > 0
             && records
                 .iter()
                 .any(|record| matches!(record, SessionCaptureRecord::LinkDown { .. }));
-        reconnecting_capture.summaries.push(summary);
+        reconnecting_capture.attempts.push(ReconnectAttemptReport {
+            attempt,
+            summary,
+            report,
+        });
         reconnecting_capture.capture.records.extend(records);
         if !should_reconnect {
             break;
@@ -3169,16 +3186,24 @@ mod tests {
         let capture = reconnecting_capture.capture;
 
         assert_eq!(host.connects, 2);
-        assert_eq!(reconnecting_capture.summaries.len(), 2);
+        assert_eq!(reconnecting_capture.attempts.len(), 2);
+        assert_eq!(reconnecting_capture.attempts[0].attempt, 1);
+        assert_eq!(reconnecting_capture.attempts[0].report.subscribes, 1);
+        assert_eq!(reconnecting_capture.attempts[0].report.disconnects, 1);
+        assert_eq!(reconnecting_capture.attempts[1].attempt, 2);
+        assert_eq!(reconnecting_capture.attempts[1].report.subscribes, 1);
+        assert_eq!(reconnecting_capture.attempts[1].report.disconnects, 0);
         assert_eq!(
-            reconnecting_capture.summaries[0]
+            reconnecting_capture.attempts[0]
+                .summary
                 .observation
                 .name
                 .as_deref(),
             Some("NOSFET Aero")
         );
         assert_eq!(
-            reconnecting_capture.summaries[1]
+            reconnecting_capture.attempts[1]
+                .summary
                 .observation
                 .name
                 .as_deref(),

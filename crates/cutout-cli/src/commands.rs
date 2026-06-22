@@ -8,10 +8,11 @@ use std::{
 use anyhow::{Result, bail};
 use cutout_btle::{
     BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata,
-    RawNotificationRecord, SessionBridgeReport, SessionCapture, SessionEndpoints,
-    SessionPeripheral, capture_raw_notifications, capture_reconnecting_session_with_summaries,
-    capture_session_with_commands, connect_and_discover, drive_session,
-    drive_session_with_commands, read_battery_level, scan_peripherals,
+    RawNotificationRecord, ReconnectAttemptReport, SessionBridgeReport, SessionCapture,
+    SessionEndpoints, SessionPeripheral, capture_raw_notifications,
+    capture_reconnecting_session_with_summaries, capture_session_with_commands,
+    connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
+    scan_peripherals,
 };
 use cutout_core::{
     BatteryInfo, BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
@@ -635,8 +636,13 @@ async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput)
             .await?
         }
     };
-    let summary = merge_reconnect_summaries(&reconnecting_capture.summaries)
-        .ok_or(BtleError::NoPeripheralMatched)?;
+    let summary = merge_reconnect_summaries(
+        reconnecting_capture
+            .attempts
+            .iter()
+            .map(|attempt| &attempt.summary),
+    )
+    .ok_or(BtleError::NoPeripheralMatched)?;
     write_or_print_capture(
         reconnecting_capture.capture,
         &summary,
@@ -644,14 +650,17 @@ async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput)
         profile,
         diagnostics_jsonl,
         read_only_jsonl,
-    )
+    )?;
+    print_reconnect_attempt_diagnostics_jsonl(&reconnecting_capture.attempts, diagnostics_jsonl)?;
+    Ok(())
 }
 
-fn merge_reconnect_summaries(
-    summaries: &[cutout_btle::ConnectionSummary],
+fn merge_reconnect_summaries<'a>(
+    summaries: impl IntoIterator<Item = &'a cutout_btle::ConnectionSummary>,
 ) -> Option<cutout_btle::ConnectionSummary> {
-    let mut merged = summaries.first().cloned()?;
-    for summary in &summaries[1..] {
+    let mut summaries = summaries.into_iter();
+    let mut merged = summaries.next().cloned()?;
+    for summary in summaries {
         for service in &summary.observation.advertised_services {
             if !merged.observation.advertised_services.contains(service) {
                 merged.observation.advertised_services.push(*service);
@@ -1077,6 +1086,18 @@ fn print_session_diagnostics_jsonl(
     Ok(())
 }
 
+fn print_reconnect_attempt_diagnostics_jsonl(
+    attempts: &[ReconnectAttemptReport],
+    enabled: bool,
+) -> Result<(), serde_json::Error> {
+    if enabled {
+        for attempt in attempts {
+            println!("{}", render_reconnect_attempt_diagnostics_jsonl(attempt)?);
+        }
+    }
+    Ok(())
+}
+
 fn print_session_read_only_jsonl(
     report: &SessionBridgeReport,
     enabled: bool,
@@ -1096,6 +1117,34 @@ fn render_session_diagnostics_jsonl(
         0,
         DiagnosticSnapshot::from_parser_diagnostics(report.diagnostics_snapshot),
     )
+}
+
+fn render_reconnect_attempt_diagnostics_jsonl(
+    attempt: &ReconnectAttemptReport,
+) -> Result<String, serde_json::Error> {
+    let diagnostics =
+        DiagnosticSnapshot::from_parser_diagnostics(attempt.report.diagnostics_snapshot);
+    serde_json::to_string(&serde_json::json!({
+        "type": "reconnect_attempt",
+        "attempt": attempt.attempt,
+        "identifier": attempt.summary.observation.identifier,
+        "name": attempt.summary.observation.name,
+        "rssi": attempt.summary.observation.rssi,
+        "writes": attempt.report.writes,
+        "subscribes": attempt.report.subscribes,
+        "notifications": attempt.report.notifications,
+        "telemetry": attempt.report.telemetry,
+        "read_only_responses": attempt.report.read_only_responses,
+        "diagnostics": attempt.report.diagnostics,
+        "disconnects": attempt.report.disconnects,
+        "dropped_bytes": diagnostics.dropped_bytes,
+        "resyncs": diagnostics.resyncs,
+        "bad_checksums": diagnostics.bad_checksums,
+        "timeouts": diagnostics.timeouts,
+        "oversized_frames": diagnostics.oversized_frames,
+        "malformed_frames": diagnostics.malformed_frames,
+        "unmatched_replies": diagnostics.unmatched_replies,
+    }))
 }
 
 fn render_read_only_responses_jsonl(
@@ -1752,7 +1801,7 @@ mod tests {
             ],
         };
 
-        let merged = merge_reconnect_summaries(&[first, second]).expect("summaries merge");
+        let merged = merge_reconnect_summaries([&first, &second]).expect("summaries merge");
 
         assert_eq!(merged.observation.identifier, "first-link");
         assert_eq!(merged.observation.advertised_services, vec![ffe0, battery]);
@@ -2003,6 +2052,56 @@ mod tests {
             serde_json::from_str(&error_lines[0]).expect("diagnostic error JSONL is JSON");
         assert_eq!(error["type"], "diagnostic_error");
         assert_eq!(error["kind"], "malformed_frame");
+    }
+
+    #[test]
+    fn reconnect_attempt_diagnostics_jsonl_distinguishes_link_attempts() {
+        let attempt = ReconnectAttemptReport {
+            attempt: 2,
+            summary: ConnectionSummary {
+                observation: PeripheralObservation {
+                    identifier: "NF2557".to_owned(),
+                    address: None,
+                    name: Some("NF2557".to_owned()),
+                    rssi: Some(-71),
+                    advertised_services: Vec::new(),
+                    manufacturer_data: Vec::new(),
+                },
+                services: Vec::new(),
+            },
+            report: SessionBridgeReport {
+                writes: 3,
+                subscribes: 1,
+                notifications: 8,
+                disconnects: 0,
+                diagnostics_snapshot: cutout_core::ParserDiagnostics {
+                    dropped_bytes: 5,
+                    resyncs: 1,
+                    bad_checksums: 0,
+                    timeouts: 0,
+                    oversized_frames: 0,
+                    malformed_frames: 2,
+                    unmatched_replies: 0,
+                },
+                ..SessionBridgeReport::default()
+            },
+        };
+
+        let line = render_reconnect_attempt_diagnostics_jsonl(&attempt)
+            .expect("attempt diagnostics JSONL serializes");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("attempt diagnostics JSONL is JSON");
+        assert_eq!(value["type"], "reconnect_attempt");
+        assert_eq!(value["attempt"], 2);
+        assert_eq!(value["identifier"], "NF2557");
+        assert_eq!(value["writes"], 3);
+        assert_eq!(value["subscribes"], 1);
+        assert_eq!(value["notifications"], 8);
+        assert_eq!(value["disconnects"], 0);
+        assert_eq!(value["dropped_bytes"], 5);
+        assert_eq!(value["resyncs"], 1);
+        assert_eq!(value["malformed_frames"], 2);
     }
 
     #[test]
