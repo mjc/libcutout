@@ -9,6 +9,7 @@ use cutout_protocols::{AeroReadOnlySession, VETERAN_DATA_CHANNEL};
 
 use crate::cli::{Cli, Command, TargetedScanArgs};
 use crate::dashboard::run_dashboard;
+use crate::validation::render_validation_report;
 
 /// Executes a parsed CLI invocation.
 ///
@@ -21,6 +22,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Scan(args) => scan(args.seconds()).await?,
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
         Command::CaptureAero(args) => connect(args, SessionMode::Capture).await?,
+        Command::Validation => print!("{}", render_validation_report()),
         Command::Dashboard => run_dashboard()?,
     }
 

@@ -15,6 +15,7 @@ Examples:
   cutout connect --name-contains Aero
   cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
   cutout capture-aero --name-contains NF2557 --seconds 20
+  cutout validation
   cutout dashboard
 
 Target selection:
@@ -40,6 +41,11 @@ notifications, provisional write bytes, and bridge counters.
 
 Capture output may include device identifiers and raw notification payloads.
 Review it before sharing logs publicly.";
+const VALIDATION_LONG_ABOUT: &str = "\
+Print a generated hardware validation matrix for the registry and capture
+notes Cutout already knows about. The matrix shows device families, firmware
+versions, capture IDs, tested fields, inferred fields, unverified fields,
+controls, and acceptance status.";
 const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
@@ -74,6 +80,10 @@ pub(crate) enum Command {
     /// Capture read-only Aero/Veteran protocol evidence.
     #[command(long_about = CAPTURE_AERO_LONG_ABOUT)]
     CaptureAero(TargetedScanArgs),
+
+    /// Print the generated hardware validation matrix.
+    #[command(long_about = VALIDATION_LONG_ABOUT)]
+    Validation,
 
     /// Open the interactive read-only dashboard.
     #[command(long_about = DASHBOARD_LONG_ABOUT)]
@@ -390,6 +400,13 @@ mod tests {
     }
 
     #[test]
+    fn parses_validation_command() {
+        let cli = Cli::try_parse_from(["cutout", "validation"]).expect("parser accepts validation");
+
+        assert_eq!(cli.command, Command::Validation);
+    }
+
+    #[test]
     fn converts_target_args_to_connection_target() {
         let target: cutout_btle::ConnectionTarget = TargetArgs {
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
@@ -545,6 +562,7 @@ mod tests {
                 "scan",
                 "connect",
                 "capture-aero",
+                "validation",
                 "dashboard",
             ],
         );
@@ -591,6 +609,7 @@ mod tests {
                 "cutout connect --name-contains Aero",
                 "cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8",
                 "cutout capture-aero --name-contains NF2557 --seconds 20",
+                "cutout validation",
                 "cutout dashboard",
             ],
         );
@@ -604,7 +623,10 @@ mod tests {
             .map(clap::Command::get_name)
             .collect::<Vec<_>>();
 
-        assert_eq!(names, ["scan", "connect", "capture-aero", "dashboard"]);
+        assert_eq!(
+            names,
+            ["scan", "connect", "capture-aero", "validation", "dashboard"]
+        );
     }
 
     #[test]
@@ -754,6 +776,19 @@ mod tests {
     }
 
     #[test]
+    fn validation_short_help_describes_the_matrix() {
+        let help = short_help_for("validation");
+
+        assert_contains_all(
+            &help,
+            &[
+                "Print the generated hardware validation matrix",
+                "Usage: validation",
+            ],
+        );
+    }
+
+    #[test]
     fn dashboard_long_help_describes_termina_scope() {
         let help = long_help_for("dashboard");
 
@@ -764,6 +799,21 @@ mod tests {
                 "Termina terminal backend",
                 "visualization and monitoring",
                 "does not modify the device",
+            ],
+        );
+    }
+
+    #[test]
+    fn validation_long_help_describes_generated_matrix() {
+        let help = long_help_for("validation");
+
+        assert_contains_all(
+            &help,
+            &[
+                "generated hardware validation matrix",
+                "capture IDs",
+                "tested fields",
+                "unverified fields",
             ],
         );
     }

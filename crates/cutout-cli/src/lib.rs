@@ -6,6 +6,7 @@
 mod cli;
 mod commands;
 mod dashboard;
+mod validation;
 
 pub use cli::Cli;
 pub use commands::run;
