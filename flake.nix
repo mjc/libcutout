@@ -130,12 +130,17 @@
             export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
             exec cargo fuzz "$@"
           '';
+          cutoutDashboardWatch = pkgs.writeShellScriptBin "cutout-dashboard-watch" ''
+            exec ${pkgs.bacon}/bin/bacon --headless run -- -p cutout-cli -- dashboard "$@"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = [
               stableRust
               cutoutCargoFuzz
+              cutoutDashboardWatch
+              pkgs.bacon
               pkgs.cargo-deny
               pkgs.cargo-fuzz
               pkgs.cargo-mutants
