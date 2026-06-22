@@ -117,6 +117,7 @@
             packages = [
               stableRust
               pkgs.cargo-deny
+              pkgs.cargo-mutants
               pkgs.nixfmt
             ];
 

@@ -181,6 +181,18 @@ mod tests {
     }
 
     #[test]
+    fn falcon_encode_command_is_write_backed_for_identity() {
+        assert!(matches!(
+            FalconRequestEncoder::encode_command(CommandKind::RequestIdentity),
+            Some(RequestDisposition::Write(EncodedRequest {
+                command: CommandKind::RequestIdentity,
+                mode: WriteMode::WithoutResponse,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
     fn request_encoder_types_remain_bounded_in_size() {
         assert_eq!(size_of::<AeroRequestEncoder>(), 0);
         assert!(

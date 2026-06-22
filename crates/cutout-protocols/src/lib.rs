@@ -22,7 +22,9 @@ mod session;
 pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
 };
-pub use session::{AeroReadOnlySession, FalconReadOnlySession};
+pub use session::{
+    BegodeFalconModel, Manufacturer, NosfetAeroModel, ReadOnlyModelSpec, ReadOnlySession,
+};
 
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
@@ -44,8 +46,8 @@ mod tests {
     }
 
     #[test]
-    fn aero_session_exposes_read_only_capabilities() {
-        let capabilities = crate::AeroReadOnlySession::capabilities();
+    fn nosfet_aero_model_session_exposes_read_only_capabilities() {
+        let capabilities = crate::ReadOnlySession::<crate::NosfetAeroModel, false>::capabilities();
 
         assert_eq!(
             capabilities,
@@ -60,8 +62,8 @@ mod tests {
     }
 
     #[test]
-    fn aero_session_requests_subscription_on_link_up() {
-        let mut session = crate::AeroReadOnlySession::default();
+    fn nosfet_aero_model_session_requests_subscription_on_link_up() {
+        let mut session = crate::ReadOnlySession::<crate::NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
         session.handle(
@@ -81,8 +83,8 @@ mod tests {
     }
 
     #[test]
-    fn falcon_session_requests_subscription_on_link_up() {
-        let mut session = crate::FalconReadOnlySession::default();
+    fn begode_falcon_model_session_requests_subscription_on_link_up() {
+        let mut session = crate::ReadOnlySession::<crate::BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
         session.handle(

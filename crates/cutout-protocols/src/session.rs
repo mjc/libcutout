@@ -1,41 +1,75 @@
+use core::marker::PhantomData;
 use cutout_core::{
-    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, ProtocolSession,
-    SessionInput, SessionOutput, TransportAction,
+    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, ProtocolFamily,
+    ProtocolSession, SessionInput, SessionOutput, TransportAction,
 };
 
 use crate::{FALCON_WRITE_CHANNEL, VETERAN_DATA_CHANNEL};
 
-trait ReadOnlySessionProfile {
-    fn subscribe_channel() -> GattChannel;
+/// Static manufacturer identifier for a supported model spec.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Manufacturer {
+    /// NOSFET hardware using the Veteran/LeaperKim/NOSFET protocol family.
+    Nosfet,
 
-    fn accepts_notification(channel: GattChannel) -> bool;
+    /// Begode/Gotway hardware.
+    Begode,
 }
 
-struct AeroReadOnlySessionProfile;
+/// Type-level read-only model contract.
+pub trait ReadOnlyModelSpec {
+    /// Device manufacturer.
+    const MANUFACTURER: Manufacturer;
 
-impl ReadOnlySessionProfile for AeroReadOnlySessionProfile {
-    fn subscribe_channel() -> GattChannel {
-        VETERAN_DATA_CHANNEL
-    }
+    /// Protocol family used by this model.
+    const PROTOCOL: ProtocolFamily;
 
-    fn accepts_notification(channel: GattChannel) -> bool {
-        channel == VETERAN_DATA_CHANNEL
-    }
+    /// Stable model name.
+    const MODEL: &'static str;
+
+    /// Commands this read-only model session can schedule.
+    const CAPABILITIES: Capabilities;
+
+    /// GATT characteristic to subscribe to after link-up.
+    const SUBSCRIBE_CHANNEL: GattChannel;
 }
 
-struct FalconReadOnlySessionProfile;
+/// NOSFET Aero read-only model spec.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NosfetAeroModel;
 
-impl ReadOnlySessionProfile for FalconReadOnlySessionProfile {
-    fn subscribe_channel() -> GattChannel {
-        FALCON_WRITE_CHANNEL
-    }
-
-    fn accepts_notification(_: GattChannel) -> bool {
-        true
-    }
+impl ReadOnlyModelSpec for NosfetAeroModel {
+    const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
+    const MODEL: &'static str = "NOSFET Aero";
+    const PROTOCOL: ProtocolFamily = ProtocolFamily::VeteranLeaperkimNosfet;
+    const CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::RequestIdentity,
+        CommandKind::RequestFirmwareInfo,
+        CommandKind::RequestTelemetry,
+        CommandKind::RequestBatteryInfo,
+        CommandKind::RequestDiagnostics,
+    ]);
+    const SUBSCRIBE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
 }
 
-fn handle_read_only_session<P: ReadOnlySessionProfile>(
+/// Begode Falcon read-only model spec.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeFalconModel;
+
+impl ReadOnlyModelSpec for BegodeFalconModel {
+    const MANUFACTURER: Manufacturer = Manufacturer::Begode;
+    const MODEL: &'static str = "Begode Falcon";
+    const PROTOCOL: ProtocolFamily = ProtocolFamily::BegodeGotway;
+    const CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::RequestIdentity,
+        CommandKind::RequestFirmwareInfo,
+        CommandKind::RequestTelemetry,
+        CommandKind::RequestBatteryInfo,
+    ]);
+    const SUBSCRIBE_CHANNEL: GattChannel = FALCON_WRITE_CHANNEL;
+}
+
+fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>(
     connected: &mut bool,
     input: SessionInput<'_>,
     output: &mut Vec<SessionOutput>,
@@ -45,7 +79,7 @@ fn handle_read_only_session<P: ReadOnlySessionProfile>(
             *connected = true;
             output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
             output.push(SessionOutput::Transport(TransportAction::Subscribe {
-                channel: P::subscribe_channel(),
+                channel: M::SUBSCRIBE_CHANNEL,
             }));
         }
         SessionInput::LinkDown => {
@@ -60,7 +94,7 @@ fn handle_read_only_session<P: ReadOnlySessionProfile>(
             bytes,
             monotonic_ms,
         } => {
-            if *connected && P::accepts_notification(channel) {
+            if *connected && (ACCEPT_ANY_NOTIFICATION || channel == M::SUBSCRIBE_CHANNEL) {
                 output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
                     channel,
                     monotonic_ms,
@@ -82,58 +116,57 @@ fn handle_read_only_session<P: ReadOnlySessionProfile>(
     }
 }
 
-/// Minimal read-only session shell for NOSFET Aero/Veteran-family devices.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct AeroReadOnlySession {
+/// Generic read-only session shell for one statically-known model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadOnlySession<M, const ACCEPT_ANY_NOTIFICATION: bool> {
     connected: bool,
+    model: PhantomData<fn() -> M>,
 }
 
-impl AeroReadOnlySession {
+impl<M, const ACCEPT_ANY_NOTIFICATION: bool> Default
+    for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn default() -> Self {
+        Self {
+            connected: false,
+            model: PhantomData,
+        }
+    }
+}
+
+impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>
+    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
+{
     /// Returns the commands this session shell can schedule.
     #[must_use]
     pub const fn capabilities() -> Capabilities {
-        Capabilities::from_supported_commands([
-            CommandKind::RequestIdentity,
-            CommandKind::RequestFirmwareInfo,
-            CommandKind::RequestTelemetry,
-            CommandKind::RequestBatteryInfo,
-            CommandKind::RequestDiagnostics,
-        ])
+        M::CAPABILITIES
     }
-}
 
-impl ProtocolSession for AeroReadOnlySession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
-        handle_read_only_session::<AeroReadOnlySessionProfile>(&mut self.connected, input, output);
-    }
-}
-
-/// Minimal read-only session shell for Begode Falcon devices.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct FalconReadOnlySession {
-    connected: bool,
-}
-
-impl FalconReadOnlySession {
-    /// Returns the commands this session shell can schedule.
+    /// Returns this session's manufacturer.
     #[must_use]
-    pub const fn capabilities() -> Capabilities {
-        Capabilities::from_supported_commands([
-            CommandKind::RequestIdentity,
-            CommandKind::RequestFirmwareInfo,
-            CommandKind::RequestTelemetry,
-            CommandKind::RequestBatteryInfo,
-        ])
+    pub const fn manufacturer() -> Manufacturer {
+        M::MANUFACTURER
+    }
+
+    /// Returns this session's protocol family.
+    #[must_use]
+    pub const fn protocol() -> ProtocolFamily {
+        M::PROTOCOL
+    }
+
+    /// Returns this session's stable model name.
+    #[must_use]
+    pub const fn model() -> &'static str {
+        M::MODEL
     }
 }
 
-impl ProtocolSession for FalconReadOnlySession {
+impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
+    for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
+{
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
-        handle_read_only_session::<FalconReadOnlySessionProfile>(
-            &mut self.connected,
-            input,
-            output,
-        );
+        handle_read_only_session::<M, ACCEPT_ANY_NOTIFICATION>(&mut self.connected, input, output);
     }
 }
 
@@ -145,16 +178,15 @@ mod tests {
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
 
-    struct TestProfile;
+    struct TestModel;
 
-    impl ReadOnlySessionProfile for TestProfile {
-        fn subscribe_channel() -> GattChannel {
-            TEST_CHANNEL
-        }
-
-        fn accepts_notification(channel: GattChannel) -> bool {
-            channel == TEST_CHANNEL
-        }
+    impl ReadOnlyModelSpec for TestModel {
+        const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
+        const MODEL: &'static str = "test";
+        const PROTOCOL: ProtocolFamily = ProtocolFamily::VeteranLeaperkimNosfet;
+        const CAPABILITIES: Capabilities =
+            Capabilities::from_supported_commands([CommandKind::RequestTelemetry]);
+        const SUBSCRIBE_CHANNEL: GattChannel = TEST_CHANNEL;
     }
 
     #[test]
@@ -162,7 +194,7 @@ mod tests {
         let mut connected = false;
         let mut output = Vec::new();
 
-        handle_read_only_session::<TestProfile>(
+        handle_read_only_session::<TestModel, false>(
             &mut connected,
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: 7,
@@ -183,7 +215,7 @@ mod tests {
         let mut connected = true;
         let mut output = Vec::new();
 
-        handle_read_only_session::<TestProfile>(
+        handle_read_only_session::<TestModel, false>(
             &mut connected,
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
@@ -205,7 +237,7 @@ mod tests {
         let mut connected = false;
         let mut output = Vec::new();
 
-        handle_read_only_session::<TestProfile>(
+        handle_read_only_session::<TestModel, false>(
             &mut connected,
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
@@ -220,7 +252,44 @@ mod tests {
 
     #[test]
     fn read_only_session_shells_remain_small() {
-        assert_eq!(size_of::<AeroReadOnlySession>(), 1);
-        assert_eq!(size_of::<FalconReadOnlySession>(), 1);
+        assert_eq!(size_of::<ReadOnlySession<NosfetAeroModel, false>>(), 1);
+        assert_eq!(size_of::<ReadOnlySession<BegodeFalconModel, true>>(), 1);
+    }
+
+    #[test]
+    fn read_only_session_identity_comes_from_model_spec() {
+        assert_eq!(
+            ReadOnlySession::<NosfetAeroModel, false>::manufacturer(),
+            Manufacturer::Nosfet
+        );
+        assert_eq!(
+            ReadOnlySession::<NosfetAeroModel, false>::protocol(),
+            ProtocolFamily::VeteranLeaperkimNosfet
+        );
+        assert_eq!(
+            ReadOnlySession::<NosfetAeroModel, false>::model(),
+            "NOSFET Aero"
+        );
+
+        assert_eq!(
+            ReadOnlySession::<BegodeFalconModel, true>::manufacturer(),
+            Manufacturer::Begode
+        );
+        assert_eq!(
+            ReadOnlySession::<BegodeFalconModel, true>::protocol(),
+            ProtocolFamily::BegodeGotway
+        );
+        assert_eq!(
+            ReadOnlySession::<BegodeFalconModel, true>::model(),
+            "Begode Falcon"
+        );
+    }
+
+    #[test]
+    fn generic_read_only_session_uses_model_capabilities() {
+        assert_eq!(
+            ReadOnlySession::<TestModel, false>::capabilities(),
+            Capabilities::from_supported_commands([CommandKind::RequestTelemetry])
+        );
     }
 }

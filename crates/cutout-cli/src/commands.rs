@@ -5,7 +5,7 @@ use cutout_btle::{
     BtleError, ConnectedPeripheral, SessionBridgeReport, SessionCapture, SessionEndpoints,
     capture_session, connect_and_discover, drive_session, scan_peripherals,
 };
-use cutout_protocols::{AeroReadOnlySession, VETERAN_DATA_CHANNEL};
+use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
 
 use crate::cli::{Cli, Command, TargetedScanArgs};
 use crate::dashboard::run_dashboard;
@@ -64,7 +64,7 @@ impl SessionMode {
         endpoints: SessionEndpoints<'_>,
         window: Duration,
     ) -> Result<(), BtleError> {
-        let mut session = AeroReadOnlySession::default();
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         match self {
             Self::Drive => {
                 let report = drive_session(
