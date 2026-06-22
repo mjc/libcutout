@@ -1505,4 +1505,77 @@ mod tests {
             )))
         );
     }
+
+    #[cfg(feature = "dangerous-controls")]
+    #[test]
+    fn dangerous_control_session_refuses_wrong_model_arm_without_transport() {
+        let policy = cutout_core::DangerousActuationPolicy {
+            model: TestModel::MODEL,
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let wrong_model_policy = cutout_core::DangerousActuationPolicy {
+            model: "other model",
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let mut session = DangerousControlSession::<TestModel>::new(policy);
+        let mut output = Vec::new();
+
+        session.arm(wrong_model_policy.arm(10));
+        session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert!(
+            output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
+                cutout_core::ControlRefusal {
+                    command: CommandKind::SetRawMotorCurrent,
+                    safety_class: SafetyClass::Actuation,
+                    reason: cutout_core::ControlRefusalReason::WrongModel,
+                }
+            )))
+        );
+    }
+
+    #[cfg(feature = "dangerous-controls")]
+    #[test]
+    fn dangerous_control_session_refuses_over_current_without_transport() {
+        let policy = cutout_core::DangerousActuationPolicy {
+            model: TestModel::MODEL,
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let mut session = DangerousControlSession::<TestModel>::new(policy);
+        let mut output = Vec::new();
+
+        session.arm(policy.arm(10));
+        session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 5_001 }),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert!(
+            output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
+                cutout_core::ControlRefusal {
+                    command: CommandKind::SetRawMotorCurrent,
+                    safety_class: SafetyClass::Actuation,
+                    reason: cutout_core::ControlRefusalReason::CurrentLimitExceeded,
+                }
+            )))
+        );
+    }
 }
