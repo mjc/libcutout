@@ -15,8 +15,11 @@ mod begode_frame;
 pub use begode_frame::{BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameReassembler};
 mod begode_telemetry;
 pub use begode_telemetry::{
-    BegodeExtraTelemetry, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
-    BegodeTelemetryError, estimate_begode_battery_percent,
+    BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
+    BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, BEGODE_FIELD_SETTINGS_BITS,
+    BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeLiveATelemetry,
+    BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryError,
+    estimate_begode_battery_percent,
 };
 mod battery_profile;
 pub use battery_profile::{

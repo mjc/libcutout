@@ -1,3 +1,8 @@
+use cutout_core::{
+    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Measured, MonotonicMillis,
+    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality,
+    ValueSource, VerificationStatus,
+};
 use thiserror::Error;
 
 use crate::BegodeFrame;
@@ -77,6 +82,25 @@ impl BegodeLiveATelemetry {
             ),
         })
     }
+
+    /// Converts decoded Live A fields into a transport-independent telemetry delta.
+    #[must_use]
+    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+        TelemetryDelta {
+            speed_mm_s: Some(source_reported(milli_kmh_to_mm_s(self.speed_milli_kmh))),
+            voltage_mv: Some(source_reported(self.voltage_mv)),
+            motor_current_ma: Some(source_reported(self.phase_current_ma)),
+            power_mw: Some(source_calculated(power_mw(
+                self.voltage_mv,
+                self.phase_current_ma,
+            ))),
+            controller_temperature_mc: Some(source_reported(self.imu_temperature_mc)),
+            pwm_permille: Some(source_reported(raw_pwm_to_permille(self.hardware_pwm_raw))),
+            distance_mm: Some(source_reported(u64::from(self.trip_distance_low_m) * 1_000)),
+            battery_percent_estimated: Some(source_estimated(self.battery_percent_estimated)),
+            ..TelemetryDelta::empty(at_ms)
+        }
+    }
 }
 
 /// Secondary Begode live telemetry decoded from frame tag `0x04`.
@@ -124,6 +148,65 @@ impl BegodeLiveBTelemetry {
             light_mode: read_u8(bytes, 15) & 0x03,
         })
     }
+
+    /// Converts decoded Live B fields into a telemetry delta.
+    #[must_use]
+    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+        TelemetryDelta {
+            distance_mm: Some(source_reported(u64::from(self.total_distance_m) * 1_000)),
+            ..TelemetryDelta::empty(at_ms)
+        }
+    }
+
+    /// Converts decoded Live B settings into a generic read-only response.
+    #[must_use]
+    pub fn to_settings_response(self) -> ReadOnlyResponse {
+        ReadOnlyResponse::Settings(SettingsReadback {
+            entries: [
+                Some(settings_entry(
+                    BEGODE_FIELD_SETTINGS_BITS,
+                    i64::from(self.settings_bits),
+                )),
+                Some(settings_entry(
+                    BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
+                    i64::from(self.power_off_timer_minutes),
+                )),
+                Some(settings_entry(
+                    BEGODE_FIELD_TILTBACK_SPEED_KMH,
+                    i64::from(self.tiltback_speed_kmh),
+                )),
+                Some(settings_entry(
+                    BEGODE_FIELD_LED_AND_LIGHT_MODE,
+                    i64::from((u16::from(self.led_mode) << 8) | u16::from(self.light_mode)),
+                )),
+            ],
+        })
+    }
+
+    /// Converts decoded Live B alert flags into a diagnostic readback response.
+    #[must_use]
+    pub fn to_diagnostics_response(self) -> ReadOnlyResponse {
+        ReadOnlyResponse::Diagnostics(DiagnosticReadback {
+            details: [
+                Some(DiagnosticDetail {
+                    field: RawFieldValue::new(
+                        BEGODE_FIELD_ALERT_FLAGS,
+                        i64::from(self.alert_flags),
+                    ),
+                    severity: if self.alert_flags == 0 {
+                        DiagnosticSeverity::Info
+                    } else {
+                        DiagnosticSeverity::Warning
+                    },
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::SourceVerified,
+                }),
+                None,
+                None,
+                None,
+            ],
+        })
+    }
 }
 
 /// Extra Begode telemetry decoded from frame tag `0x07`.
@@ -155,7 +238,33 @@ impl BegodeExtraTelemetry {
             true_pwm_raw: read_be_i16(bytes, 8),
         })
     }
+
+    /// Converts decoded extra telemetry into a transport-independent delta.
+    #[must_use]
+    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+        TelemetryDelta {
+            battery_current_ma: Some(source_reported(self.battery_current_ma)),
+            motor_temperature_mc: Some(source_reported(self.motor_temperature_mc)),
+            pwm_permille: Some(source_reported(raw_pwm_to_permille(self.true_pwm_raw))),
+            ..TelemetryDelta::empty(at_ms)
+        }
+    }
 }
+
+/// Begode Live B raw field id for the settings bitfield.
+pub const BEGODE_FIELD_SETTINGS_BITS: u16 = 0x0406;
+
+/// Begode Live B raw field id for the power-off timer in minutes.
+pub const BEGODE_FIELD_POWER_OFF_TIMER_MINUTES: u16 = 0x0408;
+
+/// Begode Live B raw field id for tiltback/max-speed km/h.
+pub const BEGODE_FIELD_TILTBACK_SPEED_KMH: u16 = 0x040a;
+
+/// Begode Live B packed raw field id for LED mode and light mode.
+pub const BEGODE_FIELD_LED_AND_LIGHT_MODE: u16 = 0x040d;
+
+/// Begode Live B raw field id for alert flags.
+pub const BEGODE_FIELD_ALERT_FLAGS: u16 = 0x040e;
 
 /// Begode telemetry decode failure.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -208,8 +317,56 @@ fn raw_speed_to_milli_kmh(raw_speed: i16) -> i32 {
     i32::from(raw_speed) * 36
 }
 
+fn milli_kmh_to_mm_s(value: i32) -> i32 {
+    value * 5 / 18
+}
+
+fn power_mw(voltage_mv: i32, current_ma: i32) -> i64 {
+    i64::from(voltage_mv) * i64::from(current_ma) / 1_000
+}
+
+fn raw_pwm_to_permille(raw_pwm: i16) -> i16 {
+    raw_pwm / 10
+}
+
 fn mpu6050_temperature_mc(raw_temperature: i16) -> i32 {
     36_530 + (i32::from(raw_temperature) * 1_000) / 340
+}
+
+const fn source_reported<T>(value: T) -> Measured<T> {
+    Measured {
+        value,
+        source: ValueSource::Reported,
+        quality: ValueQuality::Known,
+        verification: VerificationStatus::SourceVerified,
+    }
+}
+
+const fn source_calculated<T>(value: T) -> Measured<T> {
+    Measured {
+        value,
+        source: ValueSource::Calculated,
+        quality: ValueQuality::Known,
+        verification: VerificationStatus::SourceVerified,
+    }
+}
+
+const fn source_estimated<T>(value: T) -> Measured<T> {
+    Measured {
+        value,
+        source: ValueSource::Estimated,
+        quality: ValueQuality::Inferred,
+        verification: VerificationStatus::SourceVerified,
+    }
+}
+
+const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
+    SettingsEntry {
+        field: RawFieldValue::new(id, value),
+        source: ValueSource::Reported,
+        quality: ValueQuality::Known,
+        verification: VerificationStatus::SourceVerified,
+    }
 }
 
 fn read_u8(bytes: &[u8; 24], offset: usize) -> u8 {
@@ -257,8 +414,15 @@ fn percent_from_i32(percent: i32) -> u8 {
 #[cfg(test)]
 mod tests {
     use crate::{
-        BegodeExtraTelemetry, BegodeFrame, BegodeLiveATelemetry, BegodeLiveBTelemetry,
-        BegodePackVoltageProfile, BegodeTelemetryError, estimate_begode_battery_percent,
+        BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
+        BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, BEGODE_FIELD_SETTINGS_BITS,
+        BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeFrame, BegodeLiveATelemetry,
+        BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryError,
+        estimate_begode_battery_percent,
+    };
+    use cutout_core::{
+        DiagnosticSeverity, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
+        ValueQuality, ValueSource, VerificationStatus,
     };
     use proptest::prelude::*;
 
@@ -308,6 +472,91 @@ mod tests {
     }
 
     #[test]
+    fn live_a_maps_source_backed_fields_to_canonical_delta() {
+        let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
+        let telemetry = BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Falcon84V)
+            .expect("live A frame decodes");
+
+        let delta = telemetry.to_delta(42);
+
+        assert_eq!(
+            delta,
+            TelemetryDelta {
+                at_ms: 42,
+                speed_mm_s: Some(source_reported(13_360)),
+                voltage_mv: Some(source_reported(75_063)),
+                battery_current_ma: None,
+                motor_current_ma: Some(source_reported(-11_800)),
+                power_mw: Some(source_calculated(-885_743)),
+                controller_temperature_mc: Some(source_reported(27_930)),
+                motor_temperature_mc: None,
+                battery_temperature_mc: None,
+                pwm_permille: Some(source_reported(524)),
+                distance_mm: Some(source_reported(750_000)),
+                pitch_mdeg: None,
+                roll_mdeg: None,
+                battery_percent_reported: None,
+                battery_percent_estimated: Some(source_estimated(50)),
+            }
+        );
+    }
+
+    #[test]
+    fn live_b_maps_distance_and_settings_to_canonical_readbacks() {
+        let frame = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
+        let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
+
+        assert_eq!(
+            telemetry.to_delta(99).distance_mm,
+            Some(source_reported(50_000))
+        );
+        let ReadOnlyResponse::Settings(settings) = telemetry.to_settings_response() else {
+            panic!("expected settings response");
+        };
+
+        assert_eq!(
+            settings.entries,
+            [
+                Some(settings_entry(BEGODE_FIELD_SETTINGS_BITS, 0)),
+                Some(settings_entry(BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15)),
+                Some(settings_entry(BEGODE_FIELD_TILTBACK_SPEED_KMH, 50)),
+                Some(settings_entry(BEGODE_FIELD_LED_AND_LIGHT_MODE, 0x0302)),
+            ]
+        );
+    }
+
+    #[test]
+    fn live_b_maps_alert_flags_to_diagnostics() {
+        let frame = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
+        let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
+
+        let ReadOnlyResponse::Diagnostics(diagnostics) = telemetry.to_diagnostics_response() else {
+            panic!("expected diagnostics response");
+        };
+
+        let detail = diagnostics.details[0].expect("alert flags are present");
+        assert_eq!(
+            detail.field,
+            RawFieldValue::new(BEGODE_FIELD_ALERT_FLAGS, 5)
+        );
+        assert_eq!(detail.severity, DiagnosticSeverity::Warning);
+        assert_eq!(detail.quality, ValueQuality::Known);
+        assert_eq!(detail.verification, VerificationStatus::SourceVerified);
+    }
+
+    #[test]
+    fn extra_telemetry_maps_true_values_to_canonical_delta() {
+        let frame = BegodeFrame::try_from_slice(&EXTRA).expect("fixture frame is valid");
+        let telemetry = BegodeExtraTelemetry::decode(&frame).expect("extra frame decodes");
+
+        let delta = telemetry.to_delta(7);
+
+        assert_eq!(delta.battery_current_ma, Some(source_reported(-1_000)));
+        assert_eq!(delta.motor_temperature_mc, Some(source_reported(42_000)));
+        assert_eq!(delta.pwm_permille, Some(source_reported(-4)));
+    }
+
+    #[test]
     fn typed_decoders_reject_wrong_frame_tags() {
         let live_b = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
 
@@ -338,6 +587,42 @@ mod tests {
                 estimate_begode_battery_percent(low, BegodePackVoltageProfile::Falcon84V)
                     <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Falcon84V)
             );
+        }
+    }
+
+    const fn source_reported<T>(value: T) -> Measured<T> {
+        Measured {
+            value,
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::SourceVerified,
+        }
+    }
+
+    const fn source_calculated<T>(value: T) -> Measured<T> {
+        Measured {
+            value,
+            source: ValueSource::Calculated,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::SourceVerified,
+        }
+    }
+
+    const fn source_estimated<T>(value: T) -> Measured<T> {
+        Measured {
+            value,
+            source: ValueSource::Estimated,
+            quality: ValueQuality::Inferred,
+            verification: VerificationStatus::SourceVerified,
+        }
+    }
+
+    const fn settings_entry(id: u16, value: i64) -> cutout_core::SettingsEntry {
+        cutout_core::SettingsEntry {
+            field: RawFieldValue::new(id, value),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::SourceVerified,
         }
     }
 }
