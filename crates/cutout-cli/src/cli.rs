@@ -178,6 +178,10 @@ pub(crate) struct CaptureAeroArgs {
     #[command(flatten)]
     pub(crate) target: TargetedScanArgs,
 
+    /// Maximum connected-link attempts for reconnect capture.
+    #[arg(long = "reconnect-attempts", value_name = "COUNT", default_value_t = 1)]
+    pub(crate) reconnect_attempts: usize,
+
     /// Standard capture scenario label stored in PEVCAP metadata.
     #[arg(long = "capture-label", value_enum)]
     pub(crate) capture_label: Option<CaptureLabelArg>,
@@ -869,6 +873,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                reconnect_attempts: 1,
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -877,6 +882,25 @@ mod tests {
                 pevcap_format: PevcapFormat::Jsonl,
             })
         );
+    }
+
+    #[test]
+    fn parses_capture_aero_command_with_reconnect_attempts() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "NF2557",
+            "--reconnect-attempts",
+            "3",
+        ])
+        .expect("parser accepts reconnect attempts");
+
+        let Command::CaptureAero(args) = cli.command else {
+            panic!("expected capture-aero command");
+        };
+
+        assert_eq!(args.reconnect_attempts, 3);
     }
 
     #[test]
@@ -901,6 +925,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                reconnect_attempts: 1,
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -940,6 +965,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                reconnect_attempts: 1,
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -979,6 +1005,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                reconnect_attempts: 1,
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -1022,6 +1049,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                reconnect_attempts: 1,
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -1063,6 +1091,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
+                reconnect_attempts: 1,
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -1135,6 +1164,7 @@ mod tests {
                     diagnostics_jsonl: true,
                     read_only_jsonl: false,
                 },
+                reconnect_attempts: 1,
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
