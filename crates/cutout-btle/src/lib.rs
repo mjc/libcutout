@@ -658,6 +658,16 @@ pub struct SessionCapture {
     pub report: SessionBridgeReport,
 }
 
+/// Reconnect capture plus per-link connection metadata.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReconnectingSessionCapture {
+    /// Aggregate records and report across connected links.
+    pub capture: SessionCapture,
+
+    /// Connection summaries observed for each connected link attempt.
+    pub summaries: Vec<ConnectionSummary>,
+}
+
 /// Protocol-agnostic raw notification record captured from a subscribed
 /// characteristic.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1146,7 +1156,37 @@ where
     H: ReconnectingSessionHost,
     S: ProtocolSession + Send,
 {
-    let mut capture = SessionCapture::default();
+    Ok(capture_reconnecting_session_with_summaries(
+        host,
+        session,
+        channel,
+        notification_window,
+        max_links,
+        provisional_writes,
+    )
+    .await?
+    .capture)
+}
+
+/// Captures a reconnecting session and preserves per-link connection summaries.
+///
+/// # Errors
+///
+/// Returns the underlying host, transport, or bridge error from any link
+/// attempt.
+pub async fn capture_reconnecting_session_with_summaries<H, S>(
+    host: &mut H,
+    session: &mut S,
+    channel: GattChannel,
+    notification_window: Duration,
+    max_links: usize,
+    provisional_writes: bool,
+) -> Result<ReconnectingSessionCapture, BtleError>
+where
+    H: ReconnectingSessionHost,
+    S: ProtocolSession + Send,
+{
+    let mut reconnecting_capture = ReconnectingSessionCapture::default();
     let mut monotonic_start = 0;
 
     for _ in 0..max_links {
@@ -1176,18 +1216,19 @@ where
             .max()
             .unwrap_or(monotonic_start)
             .saturating_add(1);
-        merge_session_report(&mut capture.report, report);
-        let should_reconnect = capture.report.disconnects > 0
+        merge_session_report(&mut reconnecting_capture.capture.report, report);
+        let should_reconnect = reconnecting_capture.capture.report.disconnects > 0
             && records
                 .iter()
                 .any(|record| matches!(record, SessionCaptureRecord::LinkDown { .. }));
-        capture.records.extend(records);
+        reconnecting_capture.summaries.push(summary);
+        reconnecting_capture.capture.records.extend(records);
         if !should_reconnect {
             break;
         }
     }
 
-    Ok(capture)
+    Ok(reconnecting_capture)
 }
 
 /// Subscribes to a notify/indicate characteristic and records raw notification chunks.
@@ -3115,7 +3156,7 @@ mod tests {
         let mut host = FakeReconnectHost::new(vec![first.clone(), second.clone()]);
         let mut session = ReconnectOnceSession::default();
 
-        let capture = crate::capture_reconnecting_session(
+        let reconnecting_capture = crate::capture_reconnecting_session_with_summaries(
             &mut host,
             &mut session,
             GattChannel::from_bytes([0xA1; 16]),
@@ -3125,8 +3166,24 @@ mod tests {
         )
         .await
         .expect("fake host reconnects once");
+        let capture = reconnecting_capture.capture;
 
         assert_eq!(host.connects, 2);
+        assert_eq!(reconnecting_capture.summaries.len(), 2);
+        assert_eq!(
+            reconnecting_capture.summaries[0]
+                .observation
+                .name
+                .as_deref(),
+            Some("NOSFET Aero")
+        );
+        assert_eq!(
+            reconnecting_capture.summaries[1]
+                .observation
+                .name
+                .as_deref(),
+            Some("NOSFET Aero")
+        );
         assert_eq!(capture.report.subscribes, 2);
         assert_eq!(capture.report.disconnects, 1);
         assert_eq!(*session.link_ups.lock().expect("link ups"), 2);

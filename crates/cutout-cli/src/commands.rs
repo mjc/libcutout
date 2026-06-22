@@ -9,7 +9,7 @@ use anyhow::{Result, bail};
 use cutout_btle::{
     BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata,
     RawNotificationRecord, SessionBridgeReport, SessionCapture, SessionEndpoints,
-    SessionPeripheral, capture_raw_notifications, capture_reconnecting_session,
+    SessionPeripheral, capture_raw_notifications, capture_reconnecting_session_with_summaries,
     capture_session_with_commands, connect_and_discover, drive_session,
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
@@ -607,19 +607,13 @@ async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput)
     if !args.target.probes().is_empty() {
         bail!("capture-aero --reconnect-attempts does not replay explicit --probe commands yet");
     }
-    if !matches!(output, CaptureOutput::Text) {
-        bail!(
-            "capture-aero --reconnect-attempts with --pevcap-output needs summary metadata wiring"
-        );
-    }
-
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
     let read_only_jsonl = args.target.read_only_jsonl();
     let mut host =
         BtleplugReconnectHost::new(args.target.into_target(), Duration::from_secs(seconds));
-    let capture = match profile {
+    let reconnecting_capture = match profile {
         SelectedSessionProfile::Aero => {
-            capture_reconnecting_session(
+            capture_reconnecting_session_with_summaries(
                 &mut host,
                 &mut ReadOnlySession::<NosfetAeroModel, false>::default(),
                 VETERAN_DATA_CHANNEL,
@@ -630,7 +624,7 @@ async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput)
             .await?
         }
         SelectedSessionProfile::Falcon => {
-            capture_reconnecting_session(
+            capture_reconnecting_session_with_summaries(
                 &mut host,
                 &mut ReadOnlySession::<BegodeFalconModel, true>::default(),
                 BEGODE_DATA_CHANNEL,
@@ -641,7 +635,48 @@ async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput)
             .await?
         }
     };
-    print_capture(capture, diagnostics_jsonl, read_only_jsonl)
+    let summary = merge_reconnect_summaries(&reconnecting_capture.summaries)
+        .ok_or(BtleError::NoPeripheralMatched)?;
+    write_or_print_capture(
+        reconnecting_capture.capture,
+        &summary,
+        &output,
+        profile,
+        diagnostics_jsonl,
+        read_only_jsonl,
+    )
+}
+
+fn merge_reconnect_summaries(
+    summaries: &[cutout_btle::ConnectionSummary],
+) -> Option<cutout_btle::ConnectionSummary> {
+    let mut merged = summaries.first().cloned()?;
+    for summary in &summaries[1..] {
+        for service in &summary.observation.advertised_services {
+            if !merged.observation.advertised_services.contains(service) {
+                merged.observation.advertised_services.push(*service);
+            }
+        }
+        for service in &summary.services {
+            if let Some(existing) = merged
+                .services
+                .iter_mut()
+                .find(|existing| existing.uuid == service.uuid)
+            {
+                for characteristic in &service.characteristics {
+                    if !existing.characteristics.iter().any(|existing| {
+                        existing.uuid == characteristic.uuid
+                            && existing.service_uuid == characteristic.service_uuid
+                    }) {
+                        existing.characteristics.push(characteristic.clone());
+                    }
+                }
+            } else {
+                merged.services.push(service.clone());
+            }
+        }
+    }
+    Some(merged)
 }
 
 fn capture_annotations(args: &CaptureAeroArgs) -> Vec<String> {
@@ -1660,35 +1695,84 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn reconnect_capture_rejects_pevcap_until_summary_metadata_is_wired() {
-        let cli = Cli::try_parse_from([
-            "cutout",
-            "capture-aero",
-            "--name-contains",
-            "NF2557",
-            "--reconnect-attempts",
-            "2",
-            "--pevcap-output",
-            "session.pevcap",
-        ])
-        .expect("parser accepts reconnect PEVCAP request");
-        let Command::CaptureAero(args) = cli.command else {
-            panic!("expected capture-aero command");
+    #[test]
+    fn reconnect_summary_merge_preserves_later_gatt_evidence() {
+        let ffe0 = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+        let ffe1 = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+        let ffe2 = Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
+        let battery = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
+        let battery_level = Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb);
+        let first = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "first-link".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: Some(-67),
+                advertised_services: vec![ffe0],
+                manufacturer_data: Vec::new(),
+            },
+            services: vec![ServiceSummary {
+                uuid: ffe0,
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: ffe1,
+                    service_uuid: ffe0,
+                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
+                }],
+            }],
+        };
+        let second = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "second-link".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: Some(-70),
+                advertised_services: vec![ffe0, battery],
+                manufacturer_data: Vec::new(),
+            },
+            services: vec![
+                ServiceSummary {
+                    uuid: ffe0,
+                    primary: true,
+                    characteristics: vec![cutout_btle::CharacteristicSummary {
+                        uuid: ffe2,
+                        service_uuid: ffe0,
+                        properties: CharPropFlags::READ,
+                    }],
+                },
+                ServiceSummary {
+                    uuid: battery,
+                    primary: true,
+                    characteristics: vec![cutout_btle::CharacteristicSummary {
+                        uuid: battery_level,
+                        service_uuid: battery,
+                        properties: CharPropFlags::READ,
+                    }],
+                },
+            ],
         };
 
-        let err = capture_aero_reconnecting(
-            args,
-            CaptureOutput::Pevcap {
-                path: "session.pevcap".into(),
-                format: PevcapFormat::Jsonl,
-                annotations: Vec::new(),
-            },
-        )
-        .await
-        .expect_err("multi-link PEVCAP needs summary metadata");
+        let merged = merge_reconnect_summaries(&[first, second]).expect("summaries merge");
 
-        assert!(err.to_string().contains("needs summary metadata wiring"));
+        assert_eq!(merged.observation.identifier, "first-link");
+        assert_eq!(merged.observation.advertised_services, vec![ffe0, battery]);
+        assert_eq!(merged.services.len(), 2);
+        assert_eq!(
+            merged
+                .services
+                .iter()
+                .find(|service| service.uuid == ffe0)
+                .expect("ffe0 service")
+                .characteristics
+                .len(),
+            2
+        );
+        assert!(
+            merged
+                .services
+                .iter()
+                .any(|service| service.uuid == battery)
+        );
     }
 
     #[test]
