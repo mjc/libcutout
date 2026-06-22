@@ -2511,15 +2511,13 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
-        assert!(
-            state.logs.iter().any(|entry| {
-                entry.level == "info"
-                    && entry
-                        .message
-                        .contains("read-only battery selector=3 kind=temperature")
-                    && entry.message.contains("temps_c=17,17,17,18,19,19")
-            })
-        );
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info"
+                && entry
+                    .message
+                    .contains("read-only battery selector=3 kind=temperature")
+                && entry.message.contains("temps_c=17,17,17,18,19,19")
+        }));
         assert!(
             state
                 .logs

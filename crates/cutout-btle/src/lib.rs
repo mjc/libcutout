@@ -510,6 +510,15 @@ pub enum SessionBridgeEvent {
         delta: TelemetryDelta,
     },
 
+    /// Read-only response emitted by the protocol session.
+    ReadOnlyResponse {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Read-only response emitted by the protocol session.
+        response: ReadOnlyResponse,
+    },
+
     /// Parser diagnostics emitted by the protocol session.
     Diagnostics {
         /// Relative monotonic timestamp in milliseconds.
@@ -1970,6 +1979,10 @@ fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, mo
         DeviceEvent::ReadOnlyResponse(response) => {
             report.read_only_responses += 1;
             report.read_only_response_events.push(response);
+            report.events.push(SessionBridgeEvent::ReadOnlyResponse {
+                monotonic_ms,
+                response,
+            });
             match response {
                 ReadOnlyResponse::Firmware(firmware) => {
                     report.firmware = Some(firmware);
@@ -3018,6 +3031,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn drive_session_relays_notifications_back_into_session() {
         let peripheral = RecordingPeripheral::with_notification(ValueNotification {
@@ -3087,6 +3101,7 @@ mod tests {
             matches!(
                 event,
                 crate::SessionBridgeEvent::ProcessedTelemetry { .. }
+                    | crate::SessionBridgeEvent::ReadOnlyResponse { .. }
                     | crate::SessionBridgeEvent::Diagnostics { .. }
                     | crate::SessionBridgeEvent::DiagnosticError { .. }
                     | crate::SessionBridgeEvent::LinkDown { .. }
@@ -3105,6 +3120,20 @@ mod tests {
                 monotonic_ms: 2,
                 diagnostics,
             } if diagnostics.malformed_frames == 1
+        )));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::ReadOnlyResponse {
+                monotonic_ms: 2,
+                response: ReadOnlyResponse::Firmware(firmware),
+            } if firmware.firmware_major == Some(Measured::reported(43))
+        )));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::ReadOnlyResponse {
+                monotonic_ms: 2,
+                response: ReadOnlyResponse::Settings(settings),
+            } if settings.entries[0].is_some()
         )));
         assert!(report.events.iter().any(|event| matches!(
             event,
