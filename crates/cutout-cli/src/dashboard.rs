@@ -46,6 +46,8 @@ pub(crate) enum DashboardSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeviceSnapshot {
+    pub(crate) make: String,
+    pub(crate) model: String,
     pub(crate) name: String,
     pub(crate) address: String,
     pub(crate) identifier: String,
@@ -424,6 +426,8 @@ impl DashboardState {
             active_tab: 0,
             provenance: None,
             device: DeviceSnapshot {
+                make: "unknown".to_owned(),
+                model: "unknown".to_owned(),
                 name: "unknown".to_owned(),
                 address: "unknown".to_owned(),
                 identifier: "unknown".to_owned(),
@@ -469,6 +473,9 @@ impl DashboardState {
     #[cfg(test)]
     pub(crate) fn live_target(device: String) -> Self {
         let mut state = Self::empty();
+        let identity = classify_device_identity(&device);
+        identity.make.clone_into(&mut state.device.make);
+        identity.model.clone_into(&mut state.device.model);
         state.device.name.clone_from(&device);
         "target selected".clone_into(&mut state.device.connection_state);
         state.scan_browser.filters.name_contains = Some(device);
@@ -484,11 +491,15 @@ impl DashboardState {
         };
 
         let observation = &summary.observation;
+        let device_name = observation
+            .name
+            .clone()
+            .unwrap_or_else(|| "unknown".to_owned());
+        let identity = classify_device_identity(&device_name);
         state.device = DeviceSnapshot {
-            name: observation
-                .name
-                .clone()
-                .unwrap_or_else(|| "unknown".to_owned()),
+            make: identity.make,
+            model: identity.model,
+            name: device_name,
             address: observation
                 .address
                 .clone()
@@ -579,15 +590,7 @@ impl DashboardState {
                 identifier,
                 firmware,
                 connection_state,
-            } => {
-                self.device = DeviceSnapshot {
-                    name: name.to_owned(),
-                    address: address.to_owned(),
-                    identifier: identifier.to_owned(),
-                    firmware: firmware.to_owned(),
-                    connection_state: connection_state.to_owned(),
-                };
-            }
+            } => self.apply_device_snapshot(name, address, identifier, firmware, connection_state),
             FixtureEvent::ScanFilters {
                 address,
                 identifier,
@@ -689,6 +692,26 @@ impl DashboardState {
             TAB_COUNT - 1
         } else {
             self.active_tab - 1
+        };
+    }
+
+    fn apply_device_snapshot(
+        &mut self,
+        name: &str,
+        address: &str,
+        identifier: &str,
+        firmware: &str,
+        connection_state: &str,
+    ) {
+        let identity = classify_device_identity(name);
+        self.device = DeviceSnapshot {
+            make: identity.make,
+            model: identity.model,
+            name: name.to_owned(),
+            address: address.to_owned(),
+            identifier: identifier.to_owned(),
+            firmware: firmware.to_owned(),
+            connection_state: connection_state.to_owned(),
         };
     }
 
@@ -885,6 +908,26 @@ fn permille_to_percent(value: i16) -> i64 {
 
 fn u64_to_i64(value: u64) -> Option<i64> {
     i64::try_from(value).ok()
+}
+
+struct DeviceIdentity {
+    make: String,
+    model: String,
+}
+
+fn classify_device_identity(name: &str) -> DeviceIdentity {
+    let normalized = name.to_ascii_lowercase();
+    if normalized.contains("aero") || normalized.starts_with("nf") {
+        return DeviceIdentity {
+            make: "NOSFET".to_owned(),
+            model: "Aero".to_owned(),
+        };
+    }
+
+    DeviceIdentity {
+        make: "unknown".to_owned(),
+        model: "unknown".to_owned(),
+    }
 }
 
 fn format_mapped_telemetry_event(snapshot: TelemetrySnapshot) -> String {
@@ -1101,7 +1144,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(5),
+            Constraint::Length(8),
             Constraint::Length(3),
             Constraint::Fill(1),
         ])
@@ -1109,6 +1152,14 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 
     let device = &state.device;
     let summary = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("make ", Style::new().fg(Color::Gray)),
+            Span::raw(device.make.as_str()),
+        ]),
+        Line::from(vec![
+            Span::styled("model ", Style::new().fg(Color::Gray)),
+            Span::raw(device.model.as_str()),
+        ]),
         Line::from(vec![
             Span::styled("device ", Style::new().fg(Color::Gray)),
             Span::raw(device.name.as_str()),
@@ -1566,6 +1617,8 @@ mod tests {
             state.provenance,
             Some("fixture/demo replay: aero-nf2557.v1")
         );
+        assert_eq!(state.device.make, "NOSFET");
+        assert_eq!(state.device.model, "Aero");
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.scan_browser.selected, 0);
         assert_eq!(state.scan_browser.observations.len(), 3);
@@ -1614,6 +1667,8 @@ mod tests {
         let state = DashboardState::live_target("NF2557".to_owned());
 
         assert_eq!(state.source, DashboardSource::Live);
+        assert_eq!(state.device.make, "NOSFET");
+        assert_eq!(state.device.model, "Aero");
         assert_eq!(state.device.name, "NF2557");
         assert_eq!(state.device.connection_state, "target selected");
         assert_eq!(
@@ -1647,6 +1702,8 @@ mod tests {
         let state = DashboardState::live_connected(&target, &summary);
 
         assert_eq!(state.source, DashboardSource::Live);
+        assert_eq!(state.device.make, "NOSFET");
+        assert_eq!(state.device.model, "Aero");
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.device.address, "AA:BB:CC:DD:EE:FF");
         assert_eq!(state.device.connection_state, "connected");
