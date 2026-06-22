@@ -1599,6 +1599,12 @@ where
                     },
                     outputs,
                 );
+                let notification_accepted = outputs.iter().any(|output| {
+                    matches!(
+                        output,
+                        SessionOutput::Event(DeviceEvent::NotificationReceived { .. })
+                    )
+                });
                 process_session_outputs(
                     SessionOutputContext {
                         peripheral: context.peripheral,
@@ -1614,15 +1620,15 @@ where
                     *monotonic_ms,
                 )
                 .await?;
-                if notification_produced_no_semantic_events(context.report, event_count_before) {
-                    debug!(
-                        uuid = %notification.uuid,
-                        service = %notification.service_uuid,
-                        len = notification.value.len(),
-                        channel = ?context.channel,
-                        "session notification produced no semantic events"
-                    );
-                }
+                log_notification_decode_outcome(
+                    notification_decode_outcome(
+                        context.report,
+                        event_count_before,
+                        notification_accepted,
+                    ),
+                    &notification,
+                    context.channel,
+                );
                 context.report.notifications += 1;
                 context.report.notification_bytes += notification.value.len();
                 context.report.latest_notification_len = Some(notification.value.len());
@@ -1647,11 +1653,51 @@ where
     Ok(())
 }
 
-fn notification_produced_no_semantic_events(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NotificationDecodeOutcome {
+    SemanticEvents,
+    AcceptedWithoutSemanticEvents,
+    Ignored,
+}
+
+fn notification_decode_outcome(
     report: &SessionBridgeReport,
     event_count_before: usize,
-) -> bool {
-    report.events.len() == event_count_before
+    notification_accepted: bool,
+) -> NotificationDecodeOutcome {
+    if report.events.len() != event_count_before {
+        return NotificationDecodeOutcome::SemanticEvents;
+    }
+    if notification_accepted {
+        return NotificationDecodeOutcome::AcceptedWithoutSemanticEvents;
+    }
+    NotificationDecodeOutcome::Ignored
+}
+
+fn log_notification_decode_outcome(
+    outcome: NotificationDecodeOutcome,
+    notification: &ValueNotification,
+    channel: GattChannel,
+) {
+    match outcome {
+        NotificationDecodeOutcome::SemanticEvents => {}
+        NotificationDecodeOutcome::AcceptedWithoutSemanticEvents => {
+            debug!(
+                len = notification.value.len(),
+                channel = ?channel,
+                "session notification accepted by protocol decoder without completed frame"
+            );
+        }
+        NotificationDecodeOutcome::Ignored => {
+            debug!(
+                uuid = %notification.uuid,
+                service = %notification.service_uuid,
+                len = notification.value.len(),
+                channel = ?channel,
+                "session notification ignored by protocol session"
+            );
+        }
+    }
 }
 
 const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Characteristic {
@@ -3171,21 +3217,89 @@ mod tests {
                 },
             });
 
-        assert!(!crate::notification_produced_no_semantic_events(
-            &report,
-            event_count_before
-        ));
+        assert_eq!(
+            crate::notification_decode_outcome(&report, event_count_before, true),
+            crate::NotificationDecodeOutcome::SemanticEvents
+        );
     }
 
     #[test]
-    fn unmapped_notifications_remain_eligible_for_debug_transport_logging() {
+    fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
         let report = crate::SessionBridgeReport::default();
         let event_count_before = report.events.len();
 
-        assert!(crate::notification_produced_no_semantic_events(
-            &report,
-            event_count_before
-        ));
+        assert_eq!(
+            crate::notification_decode_outcome(&report, event_count_before, true),
+            crate::NotificationDecodeOutcome::AcceptedWithoutSemanticEvents
+        );
+    }
+
+    #[test]
+    fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
+        let report = crate::SessionBridgeReport::default();
+        let event_count_before = report.events.len();
+
+        assert_eq!(
+            crate::notification_decode_outcome(&report, event_count_before, false),
+            crate::NotificationDecodeOutcome::Ignored
+        );
+    }
+
+    #[test]
+    fn drive_session_reports_fragment_notifications_as_accepted_without_semantics() {
+        let mut report = crate::SessionBridgeReport::default();
+        let event_count_before = report.events.len();
+        let output = [SessionOutput::Event(DeviceEvent::NotificationReceived {
+            channel: GattChannel::from_bytes([0xA1; 16]),
+            monotonic_ms: 3,
+            len: 20,
+        })];
+        let notification_accepted = output.iter().any(|output| {
+            matches!(
+                output,
+                SessionOutput::Event(DeviceEvent::NotificationReceived { .. })
+            )
+        });
+
+        for output in output {
+            if let SessionOutput::Event(event) = output {
+                crate::process_device_event(&mut report, event, 3);
+            }
+        }
+
+        assert_eq!(
+            crate::notification_decode_outcome(&report, event_count_before, notification_accepted),
+            crate::NotificationDecodeOutcome::AcceptedWithoutSemanticEvents
+        );
+    }
+
+    #[test]
+    fn semantic_notifications_suppress_transport_logging_even_after_notification_received_event() {
+        let mut report = crate::SessionBridgeReport::default();
+        let event_count_before = report.events.len();
+
+        crate::process_device_event(
+            &mut report,
+            DeviceEvent::NotificationReceived {
+                channel: GattChannel::from_bytes([0xA1; 16]),
+                monotonic_ms: 3,
+                len: 20,
+            },
+            3,
+        );
+        crate::process_device_event(
+            &mut report,
+            DeviceEvent::Telemetry(TelemetryDelta {
+                voltage_mv: Some(Measured::reported(126_000)),
+                ..TelemetryDelta::empty(0)
+            }),
+            3,
+        );
+
+        assert_eq!(
+            crate::notification_decode_outcome(&report, event_count_before, true),
+            crate::NotificationDecodeOutcome::SemanticEvents
+        );
     }
 
     #[tokio::test]
