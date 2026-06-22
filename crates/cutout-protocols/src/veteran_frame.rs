@@ -1,0 +1,459 @@
+use arrayvec::ArrayVec;
+use thiserror::Error;
+
+/// Maximum complete Veteran/LeaperKim/NOSFET frame length.
+pub const MAX_VETERAN_FRAME_LEN: usize = 259;
+
+const VETERAN_MAGIC: [u8; 3] = [0xdc, 0x5a, 0x5c];
+const VETERAN_SHORT_FRAME_MAX_LEN: u8 = 38;
+
+/// Complete Veteran/LeaperKim/NOSFET frame reassembled from BLE notifications.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VeteranFrame {
+    bytes: ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+}
+
+impl VeteranFrame {
+    /// Builds a frame from already-reassembled bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranReassemblyError::InvalidFrame`] when the bytes do not
+    /// contain the Veteran magic, length byte, and declared frame length.
+    pub fn try_from_slice(bytes: &[u8]) -> Result<Self, VeteranReassemblyError> {
+        if !bytes.starts_with(&VETERAN_MAGIC) {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        }
+        let Some(len) = bytes.get(3) else {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        };
+        if bytes.len() != usize::from(*len) + 4 {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        }
+        let Ok(bytes) = ArrayVec::try_from(bytes) else {
+            return Err(VeteranReassemblyError::InvalidFrame);
+        };
+        Ok(Self { bytes })
+    }
+
+    /// Returns the complete frame bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        self.bytes.as_slice()
+    }
+}
+
+/// Error emitted while reassembling Veteran/LeaperKim/NOSFET frames.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum VeteranReassemblyError {
+    /// A complete long frame failed CRC32 validation.
+    #[error("Veteran frame CRC mismatch")]
+    CrcMismatch,
+
+    /// A complete frame was structurally invalid.
+    #[error("invalid Veteran frame")]
+    InvalidFrame,
+}
+
+/// Sync reassembler for Veteran/LeaperKim/NOSFET `dc5a5c` notification streams.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VeteranFrameReassembler {
+    buffer: ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+    state: VeteranFrameParseState,
+}
+
+impl Default for VeteranFrameReassembler {
+    fn default() -> Self {
+        Self {
+            buffer: ArrayVec::new(),
+            state: VeteranFrameParseState::default(),
+        }
+    }
+}
+
+impl VeteranFrameReassembler {
+    /// Feeds one notification byte into the reassembler.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VeteranReassemblyError::CrcMismatch`] when a long frame's
+    /// CRC32 trailer does not match the frame contents.
+    pub fn feed_byte(&mut self, byte: u8) -> Result<Option<VeteranFrame>, VeteranReassemblyError> {
+        let (state, frame) = self.state.feed_byte(byte, &mut self.buffer)?;
+        self.state = state;
+        Ok(frame)
+    }
+
+    /// Resets parser state and drops any partial frame bytes.
+    pub fn reset(&mut self) {
+        self.buffer.clear();
+        self.state = VeteranFrameParseState::default();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum VeteranFrameParseState {
+    #[default]
+    SeekingMagic0,
+    SeekingMagic1,
+    SeekingMagic2,
+    Collecting,
+}
+
+impl VeteranFrameParseState {
+    fn feed_byte(
+        self,
+        byte: u8,
+        buffer: &mut ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+    ) -> Result<(Self, Option<VeteranFrame>), VeteranReassemblyError> {
+        match self {
+            Self::SeekingMagic0 => Ok(if byte == VETERAN_MAGIC[0] {
+                buffer.clear();
+                debug_assert!(buffer.try_push(byte).is_ok());
+                (Self::SeekingMagic1, None)
+            } else {
+                (Self::SeekingMagic0, None)
+            }),
+            Self::SeekingMagic1 => Ok(match byte {
+                0x5a => {
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    (Self::SeekingMagic2, None)
+                }
+                0xdc => {
+                    buffer.clear();
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    (Self::SeekingMagic1, None)
+                }
+                _ => {
+                    buffer.clear();
+                    (Self::SeekingMagic0, None)
+                }
+            }),
+            Self::SeekingMagic2 => {
+                if byte == VETERAN_MAGIC[2] {
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    let frame = Self::try_finish(buffer)?;
+                    Ok((
+                        if frame.is_some() {
+                            Self::SeekingMagic0
+                        } else {
+                            Self::Collecting
+                        },
+                        frame,
+                    ))
+                } else if byte == VETERAN_MAGIC[0] {
+                    buffer.clear();
+                    debug_assert!(buffer.try_push(byte).is_ok());
+                    Ok((Self::SeekingMagic1, None))
+                } else {
+                    buffer.clear();
+                    Ok((Self::SeekingMagic0, None))
+                }
+            }
+            Self::Collecting => {
+                debug_assert!(buffer.try_push(byte).is_ok());
+                let frame = Self::try_finish(buffer)?;
+                Ok((
+                    if frame.is_some() {
+                        Self::SeekingMagic0
+                    } else {
+                        Self::Collecting
+                    },
+                    frame,
+                ))
+            }
+        }
+    }
+
+    fn try_finish(
+        buffer: &mut ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+    ) -> Result<Option<VeteranFrame>, VeteranReassemblyError> {
+        let Some(expected_len) = veteran_expected_len(buffer.as_slice()) else {
+            return Ok(None);
+        };
+        if buffer.len() < expected_len {
+            return Ok(None);
+        }
+
+        if veteran_uses_crc(buffer.as_slice()) && !veteran_crc_matches(buffer.as_slice()) {
+            buffer.clear();
+            return Err(VeteranReassemblyError::CrcMismatch);
+        }
+
+        let frame = VeteranFrame::try_from_slice(buffer.as_slice())?;
+        buffer.clear();
+        Ok(Some(frame))
+    }
+}
+
+fn veteran_expected_len(bytes: &[u8]) -> Option<usize> {
+    bytes.get(3).map(|len| usize::from(*len) + 4)
+}
+
+fn veteran_uses_crc(bytes: &[u8]) -> bool {
+    bytes
+        .get(3)
+        .is_some_and(|len| *len > VETERAN_SHORT_FRAME_MAX_LEN)
+}
+
+fn veteran_crc_matches(bytes: &[u8]) -> bool {
+    let Some(declared_len) = bytes.get(3).copied().map(usize::from) else {
+        return false;
+    };
+    let Some(expected_crc) = read_be_u32(bytes, declared_len) else {
+        return false;
+    };
+    let Some(crc_bytes) = bytes.get(..declared_len) else {
+        return false;
+    };
+    crc32fast::hash(crc_bytes) == expected_crc
+}
+
+fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let b0 = *bytes.get(offset)?;
+    let b1 = *bytes.get(offset + 1)?;
+    let b2 = *bytes.get(offset + 2)?;
+    let b3 = *bytes.get(offset + 3)?;
+    Some(u32::from_be_bytes([b0, b1, b2, b3]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn feed_chunk(reassembler: &mut VeteranFrameReassembler, bytes: &[u8]) -> Vec<VeteranFrame> {
+        feed_chunk_result(reassembler, bytes).expect("chunk reassembles without protocol error")
+    }
+
+    fn feed_chunk_result(
+        reassembler: &mut VeteranFrameReassembler,
+        bytes: &[u8],
+    ) -> Result<Vec<VeteranFrame>, VeteranReassemblyError> {
+        let mut frames = Vec::new();
+        for byte in bytes {
+            if let Some(frame) = reassembler.feed_byte(*byte)? {
+                frames.push(frame);
+            }
+        }
+        Ok(frames)
+    }
+
+    fn long_veteran_frame() -> Vec<u8> {
+        let mut frame = vec![0xdc, 0x5a, 0x5c, 39];
+        frame.extend(0_u8..35);
+        let crc = crc32fast::hash(&frame);
+        frame.extend(crc.to_be_bytes());
+        frame
+    }
+
+    fn fixture_stream() -> Vec<u8> {
+        [
+            &hex_literal::hex!("dc5a5c532a7c000000000000ab41001700000cff")[..],
+            &hex_literal::hex!("000000000226021ca8f607801afa000080c80000")[..],
+            &hex_literal::hex!("808080808080022880803080800e310e310e2f0e")[..],
+            &hex_literal::hex!("2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e")[..],
+            &hex_literal::hex!("310e2e9e05e3ad")[..],
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn veteran_frame_rejects_malformed_bytes() {
+        assert_eq!(
+            VeteranFrame::try_from_slice(b"\x00\x5a\x5c\x01\xaa"),
+            Err(VeteranReassemblyError::InvalidFrame)
+        );
+        assert_eq!(
+            VeteranFrame::try_from_slice(b"\xdc\x5a\x5c\x02\xaa"),
+            Err(VeteranReassemblyError::InvalidFrame)
+        );
+    }
+
+    #[test]
+    fn veteran_frame_exposes_complete_frame_bytes() {
+        let frame = VeteranFrame::try_from_slice(b"\xdc\x5a\x5c\x04\x01\x02\x03\x04")
+            .expect("fixture frame fits");
+
+        assert_eq!(frame.as_slice(), b"\xdc\x5a\x5c\x04\x01\x02\x03\x04");
+    }
+
+    #[test]
+    fn reassembler_reassembles_fragmented_short_frame() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let mut frames = Vec::new();
+
+        frames.extend(feed_chunk(&mut reassembler, b"\xdc\x5a\x5c\x04\x01"));
+        frames.extend(feed_chunk(&mut reassembler, b"\x02\x03\x04"));
+
+        assert_eq!(
+            frames,
+            vec![
+                VeteranFrame::try_from_slice(b"\xdc\x5a\x5c\x04\x01\x02\x03\x04")
+                    .expect("fixture frame fits")
+            ]
+        );
+    }
+
+    #[test]
+    fn reassembler_resyncs_before_magic() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        let frames = feed_chunk(
+            &mut reassembler,
+            b"\x00\xff\xdc\x5a\x00\xdc\x5a\x5c\x04\x01\x02\x03\x04",
+        );
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].as_slice(), b"\xdc\x5a\x5c\x04\x01\x02\x03\x04");
+    }
+
+    #[test]
+    fn reassembler_recovers_overlapping_magic_prefixes() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        let frames = feed_chunk(&mut reassembler, b"\xdc\xdc\x5a\x5c\x01\xaa");
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].as_slice(), b"\xdc\x5a\x5c\x01\xaa");
+    }
+
+    #[test]
+    fn reassembler_recovers_when_third_magic_byte_restarts_magic() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        let frames = feed_chunk(&mut reassembler, b"\xdc\x5a\xdc\x5a\x5c\x01\xaa");
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].as_slice(), b"\xdc\x5a\x5c\x01\xaa");
+    }
+
+    #[test]
+    fn reassembler_returns_multiple_frames_from_one_stream() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        let frames = feed_chunk(
+            &mut reassembler,
+            b"\xdc\x5a\x5c\x01\xaa\xdc\x5a\x5c\x02\xbb\xcc",
+        );
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].as_slice(), b"\xdc\x5a\x5c\x01\xaa");
+        assert_eq!(frames[1].as_slice(), b"\xdc\x5a\x5c\x02\xbb\xcc");
+    }
+
+    #[test]
+    fn reassembler_waits_for_complete_header_before_using_length() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        assert_eq!(reassembler.feed_byte(0xdc), Ok(None));
+        assert_eq!(reassembler.feed_byte(0x5a), Ok(None));
+        assert_eq!(reassembler.feed_byte(0x5c), Ok(None));
+        assert_eq!(reassembler.feed_byte(0x01), Ok(None));
+        assert_eq!(
+            reassembler.feed_byte(0xaa),
+            Ok(Some(
+                VeteranFrame::try_from_slice(b"\xdc\x5a\x5c\x01\xaa").expect("fixture frame fits")
+            ))
+        );
+    }
+
+    #[test]
+    fn reset_drops_partial_frame_state() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        assert_eq!(reassembler.feed_byte(0xdc), Ok(None));
+        assert_eq!(reassembler.feed_byte(0x5a), Ok(None));
+        reassembler.reset();
+        let frames = feed_chunk(&mut reassembler, b"\x5c\x01\xaa");
+
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn reassembler_rejects_long_frame_with_bad_crc() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let mut frame = long_veteran_frame();
+        let last = frame.last_mut().expect("fixture has a CRC trailer");
+        *last ^= 0xff;
+
+        let error = feed_chunk_result(&mut reassembler, &frame)
+            .expect_err("bad CRC should reject the long frame");
+
+        assert_eq!(error, VeteranReassemblyError::CrcMismatch);
+    }
+
+    #[test]
+    fn reassembler_accepts_long_frame_with_valid_crc() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let frame = long_veteran_frame();
+
+        let frames = feed_chunk_result(&mut reassembler, &frame).expect("valid CRC is accepted");
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].as_slice(), frame.as_slice());
+    }
+
+    #[test]
+    fn short_frame_at_crc_threshold_does_not_require_crc() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let mut frame = vec![0xdc, 0x5a, 0x5c, VETERAN_SHORT_FRAME_MAX_LEN];
+        frame.extend(std::iter::repeat_n(
+            0xa5,
+            usize::from(VETERAN_SHORT_FRAME_MAX_LEN),
+        ));
+
+        let frames = feed_chunk_result(&mut reassembler, &frame)
+            .expect("threshold short frame should not require CRC");
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].as_slice(), frame.as_slice());
+    }
+
+    #[test]
+    fn reassembler_consumes_live_aero_fixture_bytes() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let frames = feed_chunk(&mut reassembler, &fixture_stream());
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(
+            frames[0].as_slice().get(..4),
+            Some(&[0xdc, 0x5a, 0x5c, 0x53][..])
+        );
+    }
+
+    #[test]
+    fn reassembler_reports_crc_mismatch_at_max_declared_length() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let mut frame = vec![0xdc, 0x5a, 0x5c, 0xff];
+        frame.extend(std::iter::repeat_n(0x80, 260));
+
+        let error = feed_chunk_result(&mut reassembler, &frame)
+            .expect_err("max-length frame without valid CRC should be rejected");
+
+        assert_eq!(error, VeteranReassemblyError::CrcMismatch);
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_fragmentation_matches_whole_frame(chunk_sizes in proptest::collection::vec(1usize..16, 1..16)) {
+            let frame = long_veteran_frame();
+            let mut whole = VeteranFrameReassembler::default();
+            let whole_frames = feed_chunk(&mut whole, &frame);
+            let mut fragmented = VeteranFrameReassembler::default();
+            let mut fragmented_frames = Vec::new();
+            let mut offset = 0usize;
+            let mut size_index = 0usize;
+
+            while offset < frame.len() {
+                let size = chunk_sizes[size_index % chunk_sizes.len()];
+                let end = offset.saturating_add(size).min(frame.len());
+                fragmented_frames.extend(feed_chunk(&mut fragmented, &frame[offset..end]));
+                offset = end;
+                size_index += 1;
+            }
+
+            prop_assert_eq!(fragmented_frames, whole_frames);
+        }
+    }
+}

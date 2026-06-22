@@ -20,18 +20,28 @@ pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod request_encoder;
 mod session;
 mod veteran_bms;
+mod veteran_frame;
+mod veteran_telemetry;
 pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
 };
 pub use session::{
     BegodeFalconModel, BenignControlOperation, DangerousActuationOperation, Manufacturer,
-    NosfetAeroModel, ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyOperation,
-    ReadOnlySession, SettingsWriteOperation, SupportsBenignControls, SupportsDangerousActuation,
-    SupportsReadRequests, SupportsSettingsWrites,
+    NoopNotificationDecoder, NosfetAeroModel, ProtocolModelSpec, ProtocolOperation,
+    ReadOnlyModelSpec, ReadOnlyNotificationDecoder, ReadOnlyOperation, ReadOnlySession,
+    SettingsWriteOperation, SupportsBenignControls, SupportsDangerousActuation,
+    SupportsReadRequests, SupportsSettingsWrites, VeteranNotificationDecoder,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_PER_PAGE, VeteranBmsPageError, classify_veteran_bms_selector,
     decode_veteran_bms_page,
+};
+pub use veteran_frame::{
+    MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
+};
+pub use veteran_telemetry::{
+    NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV, VeteranTelemetry,
+    VeteranTelemetryError, estimate_nosfet_aero_battery_percent,
 };
 
 /// Returns the crate name used by setup smoke tests.

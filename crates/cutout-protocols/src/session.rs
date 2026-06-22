@@ -1,10 +1,14 @@
 use core::marker::PhantomData;
 use cutout_core::{
-    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, ProtocolFamily,
-    ProtocolSession, SafetyClass, SessionInput, SessionOutput, TransportAction,
+    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, MonotonicMillis,
+    ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession, SafetyClass, SessionInput,
+    SessionOutput, TransportAction,
 };
 
-use crate::{FALCON_WRITE_CHANNEL, VETERAN_DATA_CHANNEL};
+use crate::{
+    FALCON_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VeteranFrame, VeteranFrameReassembler,
+    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+};
 
 /// Static manufacturer identifier for a supported model spec.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -82,6 +86,98 @@ pub trait SupportsReadRequests: ProtocolModelSpec {
 
     /// GATT characteristic to subscribe to after link-up.
     const SUBSCRIBE_CHANNEL: GattChannel;
+
+    /// Stateful decoder for accepted notifications from this model.
+    type NotificationDecoder: ReadOnlyNotificationDecoder + Default;
+}
+
+/// Decoder hook for read-only model notification streams.
+pub trait ReadOnlyNotificationDecoder {
+    /// Resets model-specific parser state.
+    fn reset(&mut self);
+
+    /// Handles an accepted notification payload.
+    fn handle_notification(
+        &mut self,
+        bytes: &[u8],
+        monotonic_ms: MonotonicMillis,
+        output: &mut Vec<SessionOutput>,
+    );
+}
+
+/// No-op notification decoder for models without typed notification decoding yet.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NoopNotificationDecoder;
+
+impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
+    fn reset(&mut self) {}
+
+    fn handle_notification(
+        &mut self,
+        _bytes: &[u8],
+        _monotonic_ms: MonotonicMillis,
+        _output: &mut Vec<SessionOutput>,
+    ) {
+    }
+}
+
+/// Veteran/LeaperKim/NOSFET notification decoder for NOSFET Aero telemetry.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct VeteranNotificationDecoder {
+    reassembler: VeteranFrameReassembler,
+}
+
+impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
+    fn reset(&mut self) {
+        self.reassembler.reset();
+    }
+
+    fn handle_notification(
+        &mut self,
+        bytes: &[u8],
+        monotonic_ms: MonotonicMillis,
+        output: &mut Vec<SessionOutput>,
+    ) {
+        for byte in bytes {
+            match self.reassembler.feed_byte(*byte) {
+                Ok(Some(frame)) => push_veteran_frame(&frame, monotonic_ms, output),
+                Ok(None) => {}
+                Err(VeteranReassemblyError::CrcMismatch) => {
+                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                        diagnostics_for(ParserError::BadChecksum),
+                    )));
+                }
+                Err(VeteranReassemblyError::InvalidFrame) => {
+                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                        diagnostics_for(ParserError::MalformedFrame),
+                    )));
+                }
+            }
+        }
+    }
+}
+
+fn push_veteran_frame(
+    frame: &VeteranFrame,
+    monotonic_ms: MonotonicMillis,
+    output: &mut Vec<SessionOutput>,
+) {
+    match VeteranTelemetry::decode(frame) {
+        Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+            telemetry.to_delta(monotonic_ms),
+        ))),
+        Err(VeteranTelemetryError::FrameTooShort) => {
+            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+                diagnostics_for(ParserError::MalformedFrame),
+            )));
+        }
+    }
+}
+
+fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
+    let mut diagnostics = ParserDiagnostics::default();
+    diagnostics.record_error(error);
+    diagnostics
 }
 
 /// Type-level settings-write capability.
@@ -146,6 +242,7 @@ impl SupportsReadRequests for NosfetAeroModel {
         CommandKind::RequestDiagnostics,
     ]);
     const SUBSCRIBE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
+    type NotificationDecoder = VeteranNotificationDecoder;
 }
 
 /// Begode Falcon read-only model spec.
@@ -166,16 +263,19 @@ impl SupportsReadRequests for BegodeFalconModel {
         CommandKind::RequestBatteryInfo,
     ]);
     const SUBSCRIBE_CHANNEL: GattChannel = FALCON_WRITE_CHANNEL;
+    type NotificationDecoder = NoopNotificationDecoder;
 }
 
 fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>(
     connected: &mut bool,
+    decoder: &mut M::NotificationDecoder,
     input: SessionInput<'_>,
     output: &mut Vec<SessionOutput>,
 ) {
     match input {
         SessionInput::LinkUp(info) => {
             *connected = true;
+            decoder.reset();
             output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
             output.push(SessionOutput::Transport(TransportAction::Subscribe {
                 channel: M::SUBSCRIBE_CHANNEL,
@@ -183,6 +283,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
         }
         SessionInput::LinkDown => {
             *connected = false;
+            decoder.reset();
             output.push(SessionOutput::Event(DeviceEvent::LinkDown));
         }
         SessionInput::Tick { monotonic_ms } => {
@@ -199,6 +300,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                     monotonic_ms,
                     len: bytes.len(),
                 }));
+                decoder.handle_notification(bytes, monotonic_ms, output);
             }
         }
         SessionInput::Command(command) => match gate_read_only_command::<M>(command) {
@@ -209,17 +311,19 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
 
 /// Generic read-only session shell for one statically-known model.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReadOnlySession<M, const ACCEPT_ANY_NOTIFICATION: bool> {
+pub struct ReadOnlySession<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> {
     connected: bool,
+    decoder: M::NotificationDecoder,
     model: PhantomData<fn() -> M>,
 }
 
-impl<M, const ACCEPT_ANY_NOTIFICATION: bool> Default
+impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> Default
     for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
 {
     fn default() -> Self {
         Self {
             connected: false,
+            decoder: M::NotificationDecoder::default(),
             model: PhantomData,
         }
     }
@@ -257,7 +361,12 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
     for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
 {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
-        handle_read_only_session::<M, ACCEPT_ANY_NOTIFICATION>(&mut self.connected, input, output);
+        handle_read_only_session::<M, ACCEPT_ANY_NOTIFICATION>(
+            &mut self.connected,
+            &mut self.decoder,
+            input,
+            output,
+        );
     }
 }
 
@@ -265,7 +374,7 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
 mod tests {
     use super::*;
     use core::mem::size_of;
-    use cutout_core::{LinkInfo, TransportAction};
+    use cutout_core::{LinkInfo, Measured, TelemetryDelta, TransportAction};
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
 
@@ -281,15 +390,38 @@ mod tests {
         const READ_CAPABILITIES: Capabilities =
             Capabilities::from_supported_commands([CommandKind::RequestTelemetry]);
         const SUBSCRIBE_CHANNEL: GattChannel = TEST_CHANNEL;
+        type NotificationDecoder = NoopNotificationDecoder;
+    }
+
+    fn live_aero_frame() -> [u8; 87] {
+        hex_literal::hex!(
+            "dc5a5c532a7c000000000000ab41001700000cff\
+             000000000226021ca8f607801afa000080c80000\
+             808080808080022880803080800e310e310e2f0e\
+             2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e\
+             310e2e9e05e3ad"
+        )
+    }
+
+    fn telemetry_events(output: &[SessionOutput]) -> Vec<TelemetryDelta> {
+        output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::Telemetry(delta)) => Some(*delta),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
     fn shared_read_only_session_link_up_subscribes_profile_channel() {
         let mut connected = false;
+        let mut decoder = NoopNotificationDecoder;
         let mut output = Vec::new();
 
         handle_read_only_session::<TestModel, false>(
             &mut connected,
+            &mut decoder,
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: 7,
                 max_write_len: Some(185),
@@ -307,10 +439,12 @@ mod tests {
     #[test]
     fn shared_read_only_session_accepts_matching_notifications_when_connected() {
         let mut connected = true;
+        let mut decoder = NoopNotificationDecoder;
         let mut output = Vec::new();
 
         handle_read_only_session::<TestModel, false>(
             &mut connected,
+            &mut decoder,
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
@@ -329,10 +463,12 @@ mod tests {
     #[test]
     fn shared_read_only_session_ignores_notifications_when_disconnected() {
         let mut connected = false;
+        let mut decoder = NoopNotificationDecoder;
         let mut output = Vec::new();
 
         handle_read_only_session::<TestModel, false>(
             &mut connected,
+            &mut decoder,
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
@@ -346,8 +482,61 @@ mod tests {
 
     #[test]
     fn read_only_session_shells_remain_small() {
-        assert_eq!(size_of::<ReadOnlySession<NosfetAeroModel, false>>(), 1);
         assert_eq!(size_of::<ReadOnlySession<BegodeFalconModel, true>>(), 1);
+        assert!(size_of::<ReadOnlySession<NosfetAeroModel, false>>() <= 272);
+    }
+
+    #[test]
+    fn nosfet_aero_session_emits_voltage_from_live_fixture_notification() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: &live_aero_frame(),
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        let telemetry = telemetry_events(&output);
+        assert_eq!(telemetry[0].voltage_mv, Some(Measured::reported(108_760)));
+    }
+
+    #[test]
+    fn nosfet_aero_session_emits_estimated_battery_percent_from_live_fixture_notification() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes: &live_aero_frame(),
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        let telemetry = telemetry_events(&output);
+        assert_eq!(
+            telemetry[0].battery_percent_estimated,
+            Some(Measured::estimated(39))
+        );
     }
 
     #[test]
