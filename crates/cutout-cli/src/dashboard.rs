@@ -897,7 +897,12 @@ fn format_distance_m(value: u64) -> String {
     }
 
     let km_tenths = value.saturating_mul(10).saturating_add(500) / 1_000;
-    format!("{} km", format_tenths(km_tenths))
+    let mi_tenths = value.saturating_mul(10_000).saturating_add(804_672) / 1_609_344;
+    format!(
+        "{} km / {} mi",
+        format_tenths(km_tenths),
+        format_tenths(mi_tenths)
+    )
 }
 
 fn format_tenths(value: u64) -> String {
@@ -1979,8 +1984,12 @@ mod tests {
     #[test]
     fn distance_formatter_uses_odometer_scale_for_large_distances() {
         assert_eq!(format_distance_m(999), "999 m");
-        assert_eq!(format_distance_mm(1_551_169_000), "1551.2 km");
-        assert_eq!(format_optional_distance_m(Some(1_551_169)), "1551.2 km");
+        assert_eq!(format_distance_mm(1_551_169_000), "1551.2 km / 963.9 mi");
+        assert_eq!(
+            format_optional_distance_m(Some(1_551_169)),
+            "1551.2 km / 963.9 mi"
+        );
+        assert_eq!(format_distance_m(1_550_438), "1550.4 km / 963.4 mi");
         assert_eq!(format_optional_distance_m(None), "unknown");
     }
 
@@ -2657,11 +2666,11 @@ mod tests {
         assert!(text.contains("0 A"));
         assert!(text.contains("33 C"));
         assert!(text.contains("-100%"));
-        assert!(text.contains("1551.2 km"));
+        assert!(text.contains("1551.2 km / 963.9 mi"));
         assert!(!text.contains("1551169 m"));
         assert!(text.contains("69 deg"));
         assert!(text.contains("telemetry mapped"));
-        assert!(text.contains("distance=1551.2 km"));
+        assert!(text.contains("distance=1551.2 km / 963.9 mi"));
         assert!(text.contains("current=0A"));
         assert!(!text.contains("telemetry unmapped notifications=1"));
     }
