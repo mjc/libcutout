@@ -15,9 +15,10 @@ use crate::{
     FalconProbe, FalconRequestEncoder, RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL,
     VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply,
     VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry,
-    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
-    VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
-    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence,
+    VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
+    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
+    decode_veteran_bms_page,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -539,6 +540,11 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
             .ok()
             .map(veteran_bms_temperature_payload);
     }
+    if evidence.kind == BatteryPageKind::Metadata {
+        return VeteranBmsMetadataPage::from_body(evidence.selector, evidence.body)
+            .ok()
+            .map(veteran_bms_metadata_payload);
+    }
 
     let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
         .map_or(0, |page| {
@@ -566,6 +572,17 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
         BatteryPageMetadata::temperature(page.selector, VerificationStatus::HardwareVerified),
         battery,
         temperatures,
+    )
+}
+
+fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
+    let battery = BatteryInfo {
+        current_ma: Some(Measured::reported(page.current_0_ma)),
+        ..BatteryInfo::default()
+    };
+    BatteryPagePayload::from_page(
+        BatteryPageMetadata::metadata(page.selector, VerificationStatus::HardwareVerified),
+        battery,
     )
 }
 
@@ -981,6 +998,15 @@ mod tests {
              808080808080030689065706a20686067c06f700\
              00000000000000000000000e0e0e0200000000a5\
              11000053f401c50000000000bffffaf33f9782"
+        )
+    }
+
+    fn live_aero_selector_0_frame() -> [u8; 77] {
+        hex_literal::hex!(
+            "dc5a5c492a6a000000000000ab41001700000d1b\
+             007d00000226021ca8f607801b0a000080c80000\
+             808080808080000003f8ffffffffff3211ffae09\
+             760dfe0195000000000002000242d923fb"
         )
     }
 
@@ -1723,6 +1749,20 @@ mod tests {
                 if payload.page().selector == 2
                     && payload.page().kind == BatteryPageKind::CellVoltage
                     && payload.page().verification == VerificationStatus::HardwareVerified
+        )));
+    }
+
+    #[test]
+    fn nosfet_aero_session_emits_metadata_bms_current_response() {
+        let responses = read_only_responses_for_notification(&live_aero_selector_0_frame());
+
+        assert!(responses.iter().any(|response| matches!(
+            response,
+            ReadOnlyResponse::Battery(payload)
+                if payload.page().selector == 0
+                    && payload.page().kind == BatteryPageKind::Metadata
+                    && payload.page().verification == VerificationStatus::HardwareVerified
+                    && payload.battery().current_ma == Some(Measured::reported(20))
         )));
     }
 

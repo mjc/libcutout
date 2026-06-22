@@ -205,6 +205,7 @@ impl ReadOnlyDashboardState {
                     self.unknown_raw_pages = self.unknown_raw_pages.saturating_add(1);
                 }
                 let temperature_summary = bms_temperature_summary(payload);
+                let current_summary = bms_current_summary(payload);
                 if let Some(summary) = temperature_summary.as_ref() {
                     self.latest_bms_temperature = Some(format!(
                         "selector={} verification={}{}",
@@ -216,11 +217,12 @@ impl ReadOnlyDashboardState {
                 push_bounded(
                     &mut self.bms_pages,
                     format!(
-                        "selector={} kind={} verification={}{}",
+                        "selector={} kind={} verification={}{}{}",
                         page.selector,
                         battery_page_kind_name(page.kind),
                         verification_name(page.verification),
-                        temperature_summary.as_deref().unwrap_or("")
+                        temperature_summary.as_deref().unwrap_or(""),
+                        current_summary.as_deref().unwrap_or("")
                     ),
                 );
             }
@@ -855,6 +857,13 @@ fn bms_temperature_summary(payload: cutout_core::BatteryPagePayload) -> Option<S
     wrote.then_some(summary)
 }
 
+fn bms_current_summary(payload: cutout_core::BatteryPagePayload) -> Option<String> {
+    payload
+        .battery()
+        .current_ma
+        .map(|current| format!(" current={}A", milliamps_to_amps(current.value)))
+}
+
 const fn quality_name(quality: cutout_core::ValueQuality) -> &'static str {
     match quality {
         cutout_core::ValueQuality::Known => "known",
@@ -1078,6 +1087,9 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
             );
             if let Some(temperature_summary) = bms_temperature_summary(payload) {
                 summary.push_str(&temperature_summary);
+            }
+            if let Some(current_summary) = bms_current_summary(payload) {
+                summary.push_str(&current_summary);
             }
             summary
         }
@@ -2542,6 +2554,41 @@ mod tests {
                 .all(|entry| !entry.message.contains("telemetry unmapped"))
         );
         assert!(text.contains("read-only battery selector=3 kind=temperature"));
+    }
+
+    #[test]
+    fn read_only_metadata_current_renders_as_parsed_aero_event() {
+        let mut state = DashboardState::empty();
+        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+            BatteryPageMetadata::metadata(0, VerificationStatus::HardwareVerified),
+            BatteryInfo {
+                current_ma: Some(Measured::reported(2_010)),
+                ..BatteryInfo::default()
+            },
+        ));
+        let report = SessionBridgeReport {
+            read_only_responses: 1,
+            read_only_response_events: vec![read_only_response],
+            events: vec![SessionBridgeEvent::ReadOnlyResponse {
+                monotonic_ms: 7,
+                response: read_only_response,
+            }],
+            ..empty_session_bridge_report()
+        };
+
+        state.apply_session_report(&report);
+        state.active_tab = 3;
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info"
+                && entry
+                    .message
+                    .contains("read-only battery selector=0 kind=metadata")
+                && entry.message.contains("current=2A")
+        }));
+        assert!(text.contains("current=2A"));
     }
 
     #[test]
