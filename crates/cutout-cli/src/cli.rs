@@ -166,6 +166,10 @@ pub(crate) struct TargetedScanArgs {
     /// Emit aggregate session diagnostics as JSONL records.
     #[arg(long = "diagnostics-jsonl")]
     pub(crate) diagnostics_jsonl: bool,
+
+    /// Emit read-only response DTOs as JSONL records.
+    #[arg(long = "read-only-jsonl")]
+    pub(crate) read_only_jsonl: bool,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -228,6 +232,10 @@ impl TargetedScanArgs {
 
     pub(crate) const fn diagnostics_jsonl(&self) -> bool {
         self.diagnostics_jsonl
+    }
+
+    pub(crate) const fn read_only_jsonl(&self) -> bool {
+        self.read_only_jsonl
     }
 }
 
@@ -301,6 +309,10 @@ pub(crate) struct PevcapReplayArgs {
     /// Emit diagnostic snapshots as JSONL records after the replay summary.
     #[arg(long = "diagnostics-jsonl")]
     pub(crate) diagnostics_jsonl: bool,
+
+    /// Emit read-only response DTOs as JSONL records after the replay summary.
+    #[arg(long = "read-only-jsonl")]
+    pub(crate) read_only_jsonl: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -441,6 +453,7 @@ mod tests {
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
                 diagnostics_jsonl: false,
+                read_only_jsonl: false,
             })
         );
     }
@@ -471,6 +484,7 @@ mod tests {
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
                 diagnostics_jsonl: false,
+                read_only_jsonl: false,
             })
         );
     }
@@ -500,6 +514,37 @@ mod tests {
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
                 diagnostics_jsonl: true,
+                read_only_jsonl: false,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_connect_command_with_read_only_jsonl() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "connect",
+            "--name-contains",
+            "NF2557",
+            "--read-only-jsonl",
+        ])
+        .expect("parser accepts connect read-only JSONL flag");
+
+        assert_eq!(
+            cli.command,
+            Command::Connect(TargetedScanArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: None,
+                    name_contains: Some("NF2557".to_owned()),
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS
+                },
+                profile: SessionProfile::Auto,
+                probes: Vec::new(),
+                diagnostics_jsonl: false,
+                read_only_jsonl: true,
             })
         );
     }
@@ -528,6 +573,7 @@ mod tests {
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
                 diagnostics_jsonl: false,
+                read_only_jsonl: false,
             })
         );
     }
@@ -551,6 +597,7 @@ mod tests {
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
                 diagnostics_jsonl: false,
+                read_only_jsonl: false,
             })
         );
     }
@@ -574,6 +621,7 @@ mod tests {
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
                 diagnostics_jsonl: false,
+                read_only_jsonl: false,
             })
         );
     }
@@ -665,6 +713,7 @@ mod tests {
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -692,6 +741,7 @@ mod tests {
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -726,6 +776,7 @@ mod tests {
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -760,6 +811,7 @@ mod tests {
                     profile: SessionProfile::Falcon,
                     probes: Vec::new(),
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -798,6 +850,7 @@ mod tests {
                     profile: SessionProfile::Falcon,
                     probes: vec![ReadProbe::Identity, ReadProbe::Firmware],
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -834,6 +887,7 @@ mod tests {
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 },
                 pevcap_output: Some(PathBuf::from("session.pevcap")),
                 pevcap_format: PevcapFormat::Binary,
@@ -867,6 +921,7 @@ mod tests {
                     profile: SessionProfile::Auto,
                     probes: Vec::new(),
                     diagnostics_jsonl: true,
+                    read_only_jsonl: false,
                 },
                 pevcap_output: None,
                 pevcap_format: PevcapFormat::Jsonl,
@@ -989,6 +1044,7 @@ mod tests {
                     input_format: PevcapFormat::Binary,
                     profile: SessionProfile::Falcon,
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 })
             })
         );
@@ -1015,6 +1071,7 @@ mod tests {
                     input_format: PevcapFormat::Binary,
                     profile: SessionProfile::Auto,
                     diagnostics_jsonl: false,
+                    read_only_jsonl: false,
                 })
             })
         );
@@ -1042,6 +1099,35 @@ mod tests {
                     input_format: PevcapFormat::Jsonl,
                     profile: SessionProfile::Auto,
                     diagnostics_jsonl: true,
+                    read_only_jsonl: false,
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn parses_pevcap_replay_command_with_read_only_jsonl() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            "session.pevcap",
+            "--input-format",
+            "jsonl",
+            "--read-only-jsonl",
+        ])
+        .expect("parser accepts read-only JSONL replay flag");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Replay(PevcapReplayArgs {
+                    input: PathBuf::from("session.pevcap"),
+                    input_format: PevcapFormat::Jsonl,
+                    profile: SessionProfile::Auto,
+                    diagnostics_jsonl: false,
+                    read_only_jsonl: true,
                 })
             })
         );
@@ -1092,6 +1178,7 @@ mod tests {
                 profile: SessionProfile::Auto,
                 probes: Vec::new(),
                 diagnostics_jsonl: false,
+                read_only_jsonl: false,
             })
         );
     }
@@ -1120,6 +1207,7 @@ mod tests {
             profile: SessionProfile::Auto,
             probes: Vec::new(),
             diagnostics_jsonl: false,
+            read_only_jsonl: false,
         };
 
         assert_eq!(args.seconds(), 30);

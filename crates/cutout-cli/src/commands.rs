@@ -13,10 +13,11 @@ use cutout_btle::{
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    DeviceCommand, DeviceEvent, DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot,
-    FirmwareInfo, GattChannel, HostSession, Measured, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ReplayChunkComparison, SessionOutput,
-    SettingsReadback, TelemetrySnapshot, VerificationStatus, VerifiedValue,
+    BatteryInfo, BatteryPageKind, BatteryPagePayload, DeviceCommand, DeviceEvent, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
+    PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
+    ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput, SettingsReadback,
+    TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel, NosfetAeroModel,
@@ -103,6 +104,11 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
         selected_pevcap_replay_profile(&capture, args.profile)?,
     );
     println!("{}", render_pevcap_replay_report(&report));
+    if args.read_only_jsonl {
+        for line in render_read_only_responses_jsonl(&report.read_only_response_events)? {
+            println!("{line}");
+        }
+    }
     if args.diagnostics_jsonl {
         for line in render_diagnostic_snapshots_jsonl(&report.diagnostic_snapshots)? {
             println!("{line}");
@@ -134,6 +140,7 @@ struct PevcapReplayReport {
     firmware: Option<FirmwareInfo>,
     diagnostic_snapshots: Vec<DiagnosticSnapshot>,
     diagnostic_errors: Vec<DiagnosticError>,
+    read_only_response_events: Vec<ReadOnlyResponse>,
 }
 
 fn replay_pevcap_capture(
@@ -188,6 +195,7 @@ fn summarize_pevcap_replay(
         firmware: None,
         diagnostic_snapshots: Vec::new(),
         diagnostic_errors: Vec::new(),
+        read_only_response_events: Vec::new(),
     };
 
     for output in outputs {
@@ -201,7 +209,8 @@ fn summarize_pevcap_replay(
             }
             DeviceEvent::ReadOnlyResponse(response) => {
                 report.read_only_responses += 1;
-                if let cutout_core::ReadOnlyResponse::Firmware(firmware) = response {
+                report.read_only_response_events.push(*response);
+                if let ReadOnlyResponse::Firmware(firmware) = response {
                     report.firmware = Some(*firmware);
                 }
             }
@@ -520,6 +529,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let profile = selected_session_profile(args.profile());
     let commands = read_probe_commands(args.probes());
     let diagnostics_jsonl = args.diagnostics_jsonl();
+    let read_only_jsonl = args.read_only_jsonl();
     let connection =
         connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
 
@@ -534,6 +544,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
                 commands: &commands,
                 window: Duration::from_secs(seconds),
                 diagnostics_jsonl,
+                read_only_jsonl,
             },
         )
         .await?;
@@ -572,6 +583,7 @@ struct SessionRunOptions<'a> {
     commands: &'a [DeviceCommand],
     window: Duration,
     diagnostics_jsonl: bool,
+    read_only_jsonl: bool,
 }
 
 impl SessionMode {
@@ -634,6 +646,7 @@ impl SessionMode {
                 )
                 .await?;
                 print_session_report(&report);
+                print_session_read_only_jsonl(&report, options.read_only_jsonl)?;
                 print_session_diagnostics_jsonl(&report, options.diagnostics_jsonl)?;
             }
             Self::Capture { output } => {
@@ -653,6 +666,7 @@ impl SessionMode {
                     &output,
                     binding.profile,
                     options.diagnostics_jsonl,
+                    options.read_only_jsonl,
                 )?;
             }
         }
@@ -755,11 +769,16 @@ fn print_session_endpoints(endpoints: SessionEndpoints<'_>) {
     );
 }
 
-fn print_capture(capture: SessionCapture, diagnostics_jsonl: bool) -> Result<()> {
+fn print_capture(
+    capture: SessionCapture,
+    diagnostics_jsonl: bool,
+    read_only_jsonl: bool,
+) -> Result<()> {
     for record in capture.records {
         println!("{record}");
     }
     print_session_report(&capture.report);
+    print_session_read_only_jsonl(&capture.report, read_only_jsonl)?;
     print_session_diagnostics_jsonl(&capture.report, diagnostics_jsonl)?;
     Ok(())
 }
@@ -770,10 +789,11 @@ fn write_or_print_capture(
     output: &CaptureOutput,
     profile: SelectedSessionProfile,
     diagnostics_jsonl: bool,
+    read_only_jsonl: bool,
 ) -> Result<()> {
     match output {
         CaptureOutput::Text => {
-            print_capture(capture, diagnostics_jsonl)?;
+            print_capture(capture, diagnostics_jsonl, read_only_jsonl)?;
             Ok(())
         }
         CaptureOutput::Pevcap { path, format } => {
@@ -788,6 +808,7 @@ fn write_or_print_capture(
             fs::write(path, bytes)?;
             println!("wrote pevcap {} ({format:?})", path.display());
             print_session_report(&report);
+            print_session_read_only_jsonl(&report, read_only_jsonl)?;
             print_session_diagnostics_jsonl(&report, diagnostics_jsonl)?;
             Ok(())
         }
@@ -905,6 +926,18 @@ fn print_session_diagnostics_jsonl(
     Ok(())
 }
 
+fn print_session_read_only_jsonl(
+    report: &SessionBridgeReport,
+    enabled: bool,
+) -> Result<(), serde_json::Error> {
+    if enabled {
+        for line in render_read_only_responses_jsonl(&report.read_only_response_events)? {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
 fn render_session_diagnostics_jsonl(
     report: &SessionBridgeReport,
 ) -> Result<String, serde_json::Error> {
@@ -912,6 +945,213 @@ fn render_session_diagnostics_jsonl(
         0,
         DiagnosticSnapshot::from_parser_diagnostics(report.diagnostics_snapshot),
     )
+}
+
+fn render_read_only_responses_jsonl(
+    responses: &[ReadOnlyResponse],
+) -> Result<Vec<String>, serde_json::Error> {
+    responses
+        .iter()
+        .enumerate()
+        .map(|(sequence, response)| render_read_only_response_jsonl(sequence, *response))
+        .collect()
+}
+
+fn render_read_only_response_jsonl(
+    sequence: usize,
+    response: ReadOnlyResponse,
+) -> Result<String, serde_json::Error> {
+    match response {
+        ReadOnlyResponse::Battery(payload) => render_battery_response_jsonl(sequence, payload),
+        ReadOnlyResponse::Firmware(firmware) => serde_json::to_string(&serde_json::json!({
+            "type": "read_only_response",
+            "sequence": sequence,
+            "command_kind": command_kind_name(response.command_kind()),
+            "response": "firmware",
+            "firmware_major": measured_u16_json(firmware.firmware_major),
+            "firmware_minor": measured_u16_json(firmware.firmware_minor),
+            "firmware_patch": measured_u16_json(firmware.firmware_patch),
+            "protocol_version": measured_u16_json(firmware.protocol_version),
+            "build_id": raw_field_json(firmware.build_id),
+        })),
+        ReadOnlyResponse::Settings(settings) => serde_json::to_string(&serde_json::json!({
+            "type": "read_only_response",
+            "sequence": sequence,
+            "command_kind": command_kind_name(response.command_kind()),
+            "response": "settings",
+            "entries": settings.entries.into_iter().flatten().map(settings_entry_json).collect::<Vec<_>>(),
+        })),
+        ReadOnlyResponse::Diagnostics(diagnostics) => serde_json::to_string(&serde_json::json!({
+            "type": "read_only_response",
+            "sequence": sequence,
+            "command_kind": command_kind_name(response.command_kind()),
+            "response": "diagnostics",
+            "details": diagnostics.details.into_iter().flatten().map(diagnostic_detail_json).collect::<Vec<_>>(),
+        })),
+    }
+}
+
+fn render_battery_response_jsonl(
+    sequence: usize,
+    payload: BatteryPagePayload,
+) -> Result<String, serde_json::Error> {
+    let page = payload.page();
+    serde_json::to_string(&serde_json::json!({
+        "type": "read_only_response",
+        "sequence": sequence,
+        "command_kind": command_kind_name(ReadOnlyResponse::Battery(payload).command_kind()),
+        "response": "battery",
+        "page": {
+            "selector": page.selector,
+            "kind": battery_page_kind_name(page.kind),
+            "verification": verification_status_name(page.verification),
+        },
+        "battery": battery_info_json(payload.battery()),
+    }))
+}
+
+fn battery_info_json(battery: BatteryInfo) -> serde_json::Value {
+    serde_json::json!({
+        "voltage_mv": measured_i32_json(battery.voltage_mv),
+        "current_ma": measured_i32_json(battery.current_ma),
+        "percent_reported": measured_u8_json(battery.percent_reported),
+        "percent_estimated": measured_u8_json(battery.percent_estimated),
+        "temperature_mc": measured_i32_json(battery.temperature_mc),
+        "raw_state": raw_field_json(battery.raw_state),
+    })
+}
+
+fn measured_i32_json(measured: Option<Measured<i32>>) -> serde_json::Value {
+    measured.map_or(serde_json::Value::Null, |measured| {
+        serde_json::json!(measured_json_parts(
+            i64::from(measured.value),
+            measured.source,
+            measured.quality,
+            measured.verification
+        ))
+    })
+}
+
+fn measured_u8_json(measured: Option<Measured<u8>>) -> serde_json::Value {
+    measured.map_or(serde_json::Value::Null, |measured| {
+        serde_json::json!(measured_json_parts(
+            u64::from(measured.value),
+            measured.source,
+            measured.quality,
+            measured.verification
+        ))
+    })
+}
+
+fn measured_u16_json(measured: Option<Measured<u16>>) -> serde_json::Value {
+    measured.map_or(serde_json::Value::Null, |measured| {
+        serde_json::json!(measured_json_parts(
+            u64::from(measured.value),
+            measured.source,
+            measured.quality,
+            measured.verification
+        ))
+    })
+}
+
+fn measured_json_parts<T>(
+    value: T,
+    source: ValueSource,
+    quality: ValueQuality,
+    verification: VerificationStatus,
+) -> serde_json::Value
+where
+    T: Into<serde_json::Value>,
+{
+    serde_json::json!({
+        "value": value.into(),
+        "source": value_source_name(source),
+        "quality": value_quality_name(quality),
+        "verification": verification_status_name(verification),
+    })
+}
+
+fn raw_field_json(field: Option<cutout_core::RawFieldValue>) -> serde_json::Value {
+    field.map_or(serde_json::Value::Null, |field| {
+        serde_json::json!({
+            "id": field.id,
+            "value": field.value,
+        })
+    })
+}
+
+fn settings_entry_json(entry: cutout_core::SettingsEntry) -> serde_json::Value {
+    serde_json::json!({
+        "field": raw_field_json(Some(entry.field)),
+        "source": value_source_name(entry.source),
+        "quality": value_quality_name(entry.quality),
+        "verification": verification_status_name(entry.verification),
+    })
+}
+
+fn diagnostic_detail_json(detail: cutout_core::DiagnosticDetail) -> serde_json::Value {
+    serde_json::json!({
+        "field": raw_field_json(Some(detail.field)),
+        "severity": diagnostic_severity_name(detail.severity),
+        "quality": value_quality_name(detail.quality),
+        "verification": verification_status_name(detail.verification),
+    })
+}
+
+const fn command_kind_name(kind: cutout_core::CommandKind) -> &'static str {
+    match kind {
+        cutout_core::CommandKind::RequestIdentity => "request_identity",
+        cutout_core::CommandKind::RequestTelemetry => "request_telemetry",
+        cutout_core::CommandKind::RequestFirmwareInfo => "request_firmware_info",
+        cutout_core::CommandKind::RequestBatteryInfo => "request_battery_info",
+        cutout_core::CommandKind::RequestDiagnostics => "request_diagnostics",
+        cutout_core::CommandKind::RequestSettings => "request_settings",
+        cutout_core::CommandKind::SetLights => "set_lights",
+        cutout_core::CommandKind::SoundHorn => "sound_horn",
+        cutout_core::CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
+    }
+}
+
+const fn battery_page_kind_name(kind: BatteryPageKind) -> &'static str {
+    match kind {
+        BatteryPageKind::Metadata => "metadata",
+        BatteryPageKind::CellVoltage => "cell_voltage",
+        BatteryPageKind::Temperature => "temperature",
+        BatteryPageKind::Raw => "raw",
+    }
+}
+
+const fn value_source_name(source: ValueSource) -> &'static str {
+    match source {
+        ValueSource::Reported => "reported",
+        ValueSource::Calculated => "calculated",
+        ValueSource::Estimated => "estimated",
+    }
+}
+
+const fn value_quality_name(quality: ValueQuality) -> &'static str {
+    match quality {
+        ValueQuality::Known => "known",
+        ValueQuality::Inferred => "inferred",
+    }
+}
+
+const fn verification_status_name(verification: VerificationStatus) -> &'static str {
+    match verification {
+        VerificationStatus::Unverified => "unverified",
+        VerificationStatus::Inferred => "inferred",
+        VerificationStatus::SourceVerified => "source_verified",
+        VerificationStatus::HardwareVerified => "hardware_verified",
+        VerificationStatus::SourceAndHardwareVerified => "source_and_hardware_verified",
+    }
+}
+
+const fn diagnostic_severity_name(severity: cutout_core::DiagnosticSeverity) -> &'static str {
+    match severity {
+        cutout_core::DiagnosticSeverity::Info => "info",
+        cutout_core::DiagnosticSeverity::Warning => "warning",
+        cutout_core::DiagnosticSeverity::Error => "error",
+    }
 }
 
 fn render_identity(report: &SessionBridgeReport) -> Option<String> {
@@ -1330,6 +1570,7 @@ mod tests {
             firmware: None,
             diagnostic_snapshots: Vec::new(),
             diagnostic_errors: Vec::new(),
+            read_only_response_events: Vec::new(),
         };
 
         assert_eq!(
@@ -1365,6 +1606,77 @@ mod tests {
         assert_eq!(value["oversized_frames"], 8);
         assert_eq!(value["malformed_frames"], 13);
         assert_eq!(value["unmatched_replies"], 21);
+    }
+
+    #[test]
+    fn read_only_battery_jsonl_preserves_page_metadata_and_measured_values() {
+        let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+            cutout_core::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            BatteryInfo {
+                voltage_mv: Some(Measured::reported(80_000)),
+                current_ma: Some(Measured::reported(-10_000)),
+                percent_reported: None,
+                percent_estimated: Some(Measured::estimated(61)),
+                temperature_mc: Some(Measured::reported(25_000)),
+                raw_state: Some(cutout_core::RawFieldValue::new(0x0008, 0x55aa)),
+            },
+        ));
+
+        let line = render_read_only_response_jsonl(2, response)
+            .expect("read-only battery response serializes");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("read-only response JSONL is JSON");
+        assert_eq!(value["type"], "read_only_response");
+        assert_eq!(value["sequence"], 2);
+        assert_eq!(value["command_kind"], "request_battery_info");
+        assert_eq!(value["response"], "battery");
+        assert_eq!(value["page"]["selector"], 8);
+        assert_eq!(value["page"]["kind"], "raw");
+        assert_eq!(value["page"]["verification"], "source_verified");
+        assert_eq!(value["battery"]["voltage_mv"]["value"], 80_000);
+        assert_eq!(value["battery"]["voltage_mv"]["source"], "reported");
+        assert_eq!(value["battery"]["voltage_mv"]["quality"], "known");
+        assert_eq!(
+            value["battery"]["voltage_mv"]["verification"],
+            "hardware_verified"
+        );
+        assert_eq!(value["battery"]["current_ma"]["value"], -10_000);
+        assert_eq!(
+            value["battery"]["percent_reported"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["battery"]["percent_estimated"]["value"], 61);
+        assert_eq!(value["battery"]["percent_estimated"]["source"], "estimated");
+        assert_eq!(value["battery"]["temperature_mc"]["value"], 25_000);
+        assert_eq!(value["battery"]["raw_state"]["id"], 8);
+        assert_eq!(value["battery"]["raw_state"]["value"], 0x55aa);
+    }
+
+    #[test]
+    fn pevcap_replay_summary_collects_read_only_response_events() {
+        let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+            cutout_core::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            BatteryInfo::default(),
+        ));
+        let outputs = [SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            response,
+        ))];
+
+        let report = summarize_pevcap_replay(
+            1,
+            1,
+            &outputs,
+            ReplayChunkComparison {
+                whole_semantic_events: 1,
+                one_byte_semantic_events: 1,
+                arbitrary_semantic_events: 1,
+                one_byte_matches: true,
+                arbitrary_matches: true,
+            },
+        );
+
+        assert_eq!(report.read_only_response_events, vec![response]);
     }
 
     #[test]
@@ -1705,8 +2017,8 @@ mod tests {
     fn settings_renderer_includes_fixed_header_raw_fields() {
         let entry = |id, value| cutout_core::SettingsEntry {
             field: cutout_core::RawFieldValue::new(id, value),
-            source: cutout_core::ValueSource::Reported,
-            quality: cutout_core::ValueQuality::Known,
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
         };
         let settings = SettingsReadback {

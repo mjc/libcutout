@@ -444,6 +444,9 @@ pub struct SessionBridgeReport {
     /// Semantic read-only response events emitted by the session.
     pub read_only_responses: usize,
 
+    /// Full read-only response payloads emitted by the session.
+    pub read_only_response_events: Vec<ReadOnlyResponse>,
+
     /// Latest firmware readback emitted by the session.
     pub firmware: Option<FirmwareInfo>,
 
@@ -1563,6 +1566,7 @@ fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, mo
         }
         DeviceEvent::ReadOnlyResponse(response) => {
             report.read_only_responses += 1;
+            report.read_only_response_events.push(response);
             match response {
                 ReadOnlyResponse::Firmware(firmware) => {
                     report.firmware = Some(firmware);
