@@ -1131,6 +1131,58 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_replay_corpus_auto_selects_and_matches_chunk_modes() {
+        for case in PEVCAP_REPLAY_CORPUS {
+            let capture = PevcapCapture::decode(case.jsonl.as_bytes(), PevcapEncoding::Jsonl)
+                .unwrap_or_else(|error| panic!("{} should decode: {error}", case.name));
+            let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+                .unwrap_or_else(|error| panic!("{} should auto-select: {error}", case.name));
+            let report = replay_pevcap_capture(&capture, profile);
+
+            assert_eq!(profile, case.profile, "{} profile", case.name);
+            assert!(report.replay_records >= 2, "{} replay records", case.name);
+            assert!(
+                report.chunk_one_byte_matches,
+                "{} one-byte chunks",
+                case.name
+            );
+            assert!(
+                report.chunk_arbitrary_matches,
+                "{} arbitrary chunks",
+                case.name
+            );
+            assert!(
+                report.arbitrary_chunk_plan_len >= case.minimum_chunk_plan_len,
+                "{} chunk plan length",
+                case.name
+            );
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct PevcapReplayCorpusCase {
+        name: &'static str,
+        jsonl: &'static str,
+        profile: SelectedSessionProfile,
+        minimum_chunk_plan_len: usize,
+    }
+
+    const PEVCAP_REPLAY_CORPUS: &[PevcapReplayCorpusCase] = &[
+        PevcapReplayCorpusCase {
+            name: "aero-veteran-live",
+            jsonl: include_str!("../fixtures/pevcap/aero-veteran-live.jsonl"),
+            profile: SelectedSessionProfile::Aero,
+            minimum_chunk_plan_len: 5,
+        },
+        PevcapReplayCorpusCase {
+            name: "falcon-begode-banner",
+            jsonl: include_str!("../fixtures/pevcap/falcon-begode-banner.jsonl"),
+            profile: SelectedSessionProfile::Falcon,
+            minimum_chunk_plan_len: 4,
+        },
+    ];
+
+    #[test]
     fn telemetry_snapshot_renderer_includes_present_fields() {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(cutout_core::TelemetryDelta {
