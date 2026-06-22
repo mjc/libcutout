@@ -558,6 +558,68 @@ pub struct GattFingerprint {
     pub verification: VerificationStatus,
 }
 
+/// Platform namespace for an installed-device identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstalledDevicePlatform {
+    /// Apple `CoreBluetooth` peripheral identifier.
+    CoreBluetooth,
+
+    /// Android Bluetooth stack identifier.
+    Android,
+
+    /// Other host platform namespace.
+    Other,
+}
+
+/// Opaque platform-scoped identifier for a remembered device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstalledDevicePlatformId<'a> {
+    /// Platform namespace for this identifier.
+    pub platform: InstalledDevicePlatform,
+
+    /// Opaque identifier value as reported by the platform.
+    pub value: &'a str,
+}
+
+/// Protocol-reported device serial number.
+pub type ProtocolSerial<'a> = VerifiedValue<&'a str>;
+
+/// Resolved installed-device model identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstalledDeviceModel<'a> {
+    /// Resolved manufacturer or brand.
+    pub manufacturer: &'a str,
+
+    /// Resolved model name.
+    pub model: &'a str,
+
+    /// Resolved protocol family.
+    pub protocol_family: ProtocolFamily,
+
+    /// Verification status for this model resolution.
+    pub verification: VerificationStatus,
+}
+
+/// Persistable installed-device identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstalledDeviceIdentity<'a> {
+    /// Platform-scoped primary identifier. This is opaque and must not be
+    /// assumed to be a stable public Bluetooth MAC address.
+    pub platform_id: InstalledDevicePlatformId<'a>,
+
+    /// Optional protocol-reported serial number.
+    pub protocol_serial: Option<ProtocolSerial<'a>>,
+
+    /// Optional user-facing alias.
+    pub user_alias: Option<&'a str>,
+
+    /// Optional resolved model identity.
+    pub resolved_model: Option<InstalledDeviceModel<'a>>,
+
+    /// Observed model/GATT fingerprints.
+    pub gatt_fingerprints: &'a [GattFingerprint],
+}
+
 /// Data-only model registry entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelRegistryEntry {
@@ -3755,6 +3817,100 @@ mod tests {
         assert_eq!(
             layout.selectors[2].verification,
             VerificationStatus::SourceVerified
+        );
+    }
+
+    #[test]
+    fn installed_device_identity_uses_core_bluetooth_id_as_opaque_primary_key() {
+        const GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
+            service: GattChannel::from_bytes([
+                0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+                0x34, 0xfb,
+            ]),
+            characteristic: GattChannel::from_bytes([
+                0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+                0x34, 0xfb,
+            ]),
+            roles: crate::GattRoles::empty()
+                .with_write_without_response()
+                .with_notify(),
+            verification: VerificationStatus::HardwareVerified,
+        }];
+        let identity = crate::InstalledDeviceIdentity {
+            platform_id: crate::InstalledDevicePlatformId {
+                platform: crate::InstalledDevicePlatform::CoreBluetooth,
+                value: "8de871ff-6aa1-a767-34dd-608e584b610e",
+            },
+            protocol_serial: Some(crate::VerifiedValue {
+                value: "NF2557",
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            user_alias: Some("shop Aero"),
+            resolved_model: Some(crate::InstalledDeviceModel {
+                manufacturer: "NOSFET",
+                model: "Aero",
+                protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            gatt_fingerprints: &GATT,
+        };
+
+        assert_eq!(
+            identity.platform_id.platform,
+            crate::InstalledDevicePlatform::CoreBluetooth
+        );
+        assert_eq!(
+            identity.platform_id.value,
+            "8de871ff-6aa1-a767-34dd-608e584b610e"
+        );
+        assert_eq!(
+            identity.protocol_serial.map(|serial| serial.value),
+            Some("NF2557")
+        );
+        assert_eq!(identity.user_alias, Some("shop Aero"));
+        assert_eq!(
+            identity
+                .resolved_model
+                .map(|model| (model.manufacturer, model.model)),
+            Some(("NOSFET", "Aero"))
+        );
+        assert!(identity.gatt_fingerprints[0].roles.supports_notify());
+    }
+
+    #[test]
+    fn installed_device_identity_treats_android_identifier_as_platform_scoped_opaque_value() {
+        let identity = crate::InstalledDeviceIdentity {
+            platform_id: crate::InstalledDevicePlatformId {
+                platform: crate::InstalledDevicePlatform::Android,
+                value: "00:00:00:00:00:00",
+            },
+            protocol_serial: None,
+            user_alias: None,
+            resolved_model: Some(crate::InstalledDeviceModel {
+                manufacturer: "Begode",
+                model: "Falcon",
+                protocol_family: crate::ProtocolFamily::BegodeGotway,
+                verification: VerificationStatus::Inferred,
+            }),
+            gatt_fingerprints: &[],
+        };
+
+        assert_eq!(
+            identity.platform_id.platform,
+            crate::InstalledDevicePlatform::Android
+        );
+        assert_eq!(identity.platform_id.value, "00:00:00:00:00:00");
+        assert_eq!(identity.protocol_serial, None);
+        assert_eq!(identity.user_alias, None);
+        assert_eq!(identity.gatt_fingerprints, &[]);
+        assert_eq!(
+            identity
+                .resolved_model
+                .map(|model| (model.protocol_family, model.verification)),
+            Some((
+                crate::ProtocolFamily::BegodeGotway,
+                VerificationStatus::Inferred
+            ))
         );
     }
 
