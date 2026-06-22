@@ -338,6 +338,7 @@ dependencies = [
  "cutout-btle",
  "cutout-core",
  "cutout-protocols",
+ "hex-literal",
  "ratatui",
  "tokio",
  "tracing",
