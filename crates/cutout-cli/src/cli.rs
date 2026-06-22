@@ -16,7 +16,7 @@ Examples:
   cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
   cutout capture-aero --name-contains NF2557 --seconds 20
   cutout validation
-  cutout dashboard
+  cutout dashboard --demo --device \"Aero NF2557\"
 
 Target selection:
   --address matches the Bluetooth address reported by the platform.
@@ -50,6 +50,8 @@ const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
 selection, telemetry samples, and recent events while the profile model grows.
+Use --demo for fixture-backed data and --device to focus the view on a specific
+device name.
 
 This command does not modify the device. It is a visualization and monitoring
 surface for the data Cutout already knows how to collect.";
@@ -87,7 +89,7 @@ pub(crate) enum Command {
 
     /// Open the interactive read-only dashboard.
     #[command(long_about = DASHBOARD_LONG_ABOUT)]
-    Dashboard,
+    Dashboard(DashboardArgs),
 }
 
 #[derive(Clone, Copy, Debug, Args, PartialEq, Eq)]
@@ -120,6 +122,17 @@ impl TargetedScanArgs {
     pub(crate) const fn seconds(&self) -> u64 {
         self.scan.seconds()
     }
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct DashboardArgs {
+    /// Use checked-in fixture data instead of a live session.
+    #[arg(long)]
+    pub(crate) demo: bool,
+
+    /// Focus the dashboard on a specific device name.
+    #[arg(long = "device", value_name = "NAME")]
+    pub(crate) device: Option<String>,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -396,7 +409,27 @@ mod tests {
     fn parses_dashboard_command() {
         let cli = Cli::try_parse_from(["cutout", "dashboard"]).expect("parser accepts dashboard");
 
-        assert_eq!(cli.command, Command::Dashboard);
+        assert_eq!(
+            cli.command,
+            Command::Dashboard(DashboardArgs {
+                demo: false,
+                device: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_dashboard_command_with_demo_and_device() {
+        let cli = Cli::try_parse_from(["cutout", "dashboard", "--demo", "--device", "Aero NF2557"])
+            .expect("parser accepts dashboard options");
+
+        assert_eq!(
+            cli.command,
+            Command::Dashboard(DashboardArgs {
+                demo: true,
+                device: Some("Aero NF2557".to_owned()),
+            })
+        );
     }
 
     #[test]
