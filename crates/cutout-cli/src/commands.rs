@@ -2377,6 +2377,23 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_replay_does_not_treat_falcon_capacity_as_voltage_evidence() {
+        let capture =
+            sample_falcon_live_a_replay_capture(&["nominal_capacity_mah=10000", "reported_wh=672"]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+
+        let error = replay_pevcap_capture(&capture, profile)
+            .expect_err("capacity evidence alone should not select voltage profile");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires explicit Falcon battery voltage evidence")
+        );
+    }
+
+    #[test]
     fn pevcap_replay_rejects_conflicting_falcon_battery_evidence() {
         let capture =
             sample_falcon_live_a_replay_capture(&["battery=84v", "app_voltage_class=100v"]);

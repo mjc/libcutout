@@ -137,6 +137,29 @@ pub enum BegodeVoltageProfileSelection {
     Selected(BegodePackVoltageProfile),
 }
 
+/// Explicit Begode pack capacity evidence from capture/app/pack labels.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeCapacityEvidence {
+    /// Nominal pack capacity in milliamp-hours, when explicitly reported.
+    pub nominal_capacity_mah: Option<u32>,
+
+    /// Pack energy in watt-hours, when explicitly reported.
+    pub reported_wh: Option<u32>,
+}
+
+/// Result of selecting Begode pack capacity evidence from explicit inputs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodeCapacitySelection {
+    /// No explicit capacity evidence was present.
+    Missing,
+
+    /// Evidence contained conflicting capacity values.
+    Conflicting,
+
+    /// Evidence selected a non-conflicting capacity record.
+    Selected(BegodeCapacityEvidence),
+}
+
 impl BegodePackVoltageProfile {
     const fn scaler_milli(self) -> i32 {
         match self {
@@ -217,6 +240,26 @@ where
         )
 }
 
+/// Selects Begode pack capacity evidence from capture/app annotations.
+#[must_use]
+pub fn select_begode_pack_capacity_from_annotations<I, A>(annotations: I) -> BegodeCapacitySelection
+where
+    I: IntoIterator<Item = A>,
+    A: AsRef<str>,
+{
+    annotations
+        .into_iter()
+        .filter_map(|annotation| capacity_evidence_from_annotation(annotation.as_ref()))
+        .try_fold(BegodeCapacityEvidence::default(), merge_capacity_evidence)
+        .map_or(BegodeCapacitySelection::Conflicting, |evidence| {
+            if evidence.nominal_capacity_mah.is_some() || evidence.reported_wh.is_some() {
+                BegodeCapacitySelection::Selected(evidence)
+            } else {
+                BegodeCapacitySelection::Missing
+            }
+        })
+}
+
 fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvidence> {
     let (key, value) = annotation.split_once('=')?;
     match key.trim() {
@@ -226,6 +269,24 @@ fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvi
         "charger_voltage_mv" | "observed_pack_voltage_mv" | "bms_voltage_mv" | "app_voltage_mv" => {
             parse_mv_evidence(value)
         }
+        _ => None,
+    }
+}
+
+fn capacity_evidence_from_annotation(annotation: &str) -> Option<BegodeCapacityEvidence> {
+    let (key, value) = annotation.split_once('=')?;
+    let parsed = value.trim().parse::<u32>().ok()?;
+    match key.trim() {
+        "nominal_capacity_mah" | "capacity_mah" | "pack_capacity_mah" => {
+            Some(BegodeCapacityEvidence {
+                nominal_capacity_mah: Some(parsed),
+                reported_wh: None,
+            })
+        }
+        "reported_wh" | "pack_wh" => Some(BegodeCapacityEvidence {
+            nominal_capacity_mah: None,
+            reported_wh: Some(parsed),
+        }),
         _ => None,
     }
 }
@@ -292,6 +353,28 @@ fn merge_profile_selection(
         Some(previous) if previous != candidate => Err(()),
         Some(previous) => Ok(Some(previous)),
         None => Ok(Some(candidate)),
+    }
+}
+
+fn merge_capacity_evidence(
+    selected: BegodeCapacityEvidence,
+    evidence: BegodeCapacityEvidence,
+) -> Result<BegodeCapacityEvidence, ()> {
+    Ok(BegodeCapacityEvidence {
+        nominal_capacity_mah: merge_optional_u32(
+            selected.nominal_capacity_mah,
+            evidence.nominal_capacity_mah,
+        )?,
+        reported_wh: merge_optional_u32(selected.reported_wh, evidence.reported_wh)?,
+    })
+}
+
+const fn merge_optional_u32(left: Option<u32>, right: Option<u32>) -> Result<Option<u32>, ()> {
+    match (left, right) {
+        (None, None) => Ok(None),
+        (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
+        (Some(left), Some(right)) if left == right => Ok(Some(left)),
+        (Some(_), Some(_)) => Err(()),
     }
 }
 
@@ -744,8 +827,9 @@ fn percent_from_i32(percent: i32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BegodeVoltageEvidence, BegodeVoltageProfileSelection, select_begode_pack_voltage_profile,
-        select_begode_pack_voltage_profile_from_annotations,
+        BegodeCapacityEvidence, BegodeCapacitySelection, BegodeVoltageEvidence,
+        BegodeVoltageProfileSelection, select_begode_pack_capacity_from_annotations,
+        select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
     };
     use crate::{
         BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -1126,6 +1210,58 @@ mod tests {
                 "observed_pack_voltage_mv=80000",
             ]),
             BegodeVoltageProfileSelection::Missing
+        );
+    }
+
+    #[test]
+    fn capacity_evidence_from_annotations_requires_explicit_capacity_value() {
+        assert_eq!(
+            select_begode_pack_capacity_from_annotations([
+                "battery=84v",
+                "cell_model=Samsung 50S",
+                "series_cells=20",
+            ]),
+            BegodeCapacitySelection::Missing
+        );
+
+        assert_eq!(
+            select_begode_pack_capacity_from_annotations([
+                "battery=84v",
+                "nominal_capacity_mah=10000",
+            ]),
+            BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                nominal_capacity_mah: Some(10_000),
+                reported_wh: None,
+            })
+        );
+    }
+
+    #[test]
+    fn capacity_evidence_from_annotations_preserves_reported_wh_separately() {
+        assert_eq!(
+            select_begode_pack_capacity_from_annotations([
+                "reported_wh=900",
+                "nominal_capacity_mah=9000",
+            ]),
+            BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                nominal_capacity_mah: Some(9_000),
+                reported_wh: Some(900),
+            })
+        );
+    }
+
+    #[test]
+    fn capacity_evidence_from_annotations_rejects_conflicting_values() {
+        assert_eq!(
+            select_begode_pack_capacity_from_annotations([
+                "nominal_capacity_mah=10000",
+                "nominal_capacity_mah=9000",
+            ]),
+            BegodeCapacitySelection::Conflicting
+        );
+        assert_eq!(
+            select_begode_pack_capacity_from_annotations(["reported_wh=672", "reported_wh=900",]),
+            BegodeCapacitySelection::Conflicting
         );
     }
 
