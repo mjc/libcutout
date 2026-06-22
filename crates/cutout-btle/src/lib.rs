@@ -811,6 +811,44 @@ pub trait ReconnectingSessionHost: Send {
     async fn connect(&mut self) -> Result<(Self::Peripheral, ConnectionSummary), BtleError>;
 }
 
+/// Production reconnect host backed by btleplug target scanning and discovery.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BtleplugReconnectHost {
+    target: ConnectionTarget,
+    scan_for: Duration,
+}
+
+impl BtleplugReconnectHost {
+    /// Creates a reconnect host that reuses the same target and scan duration
+    /// for every link attempt.
+    #[must_use]
+    pub const fn new(target: ConnectionTarget, scan_for: Duration) -> Self {
+        Self { target, scan_for }
+    }
+
+    /// Returns the target reused for each reconnect attempt.
+    #[must_use]
+    pub const fn target(&self) -> &ConnectionTarget {
+        &self.target
+    }
+
+    /// Returns the scan duration reused for each reconnect attempt.
+    #[must_use]
+    pub const fn scan_for(&self) -> Duration {
+        self.scan_for
+    }
+}
+
+#[async_trait]
+impl ReconnectingSessionHost for BtleplugReconnectHost {
+    type Peripheral = btleplug::platform::Peripheral;
+
+    async fn connect(&mut self) -> Result<(Self::Peripheral, ConnectionSummary), BtleError> {
+        let connected = connect_and_discover(&self.target, self.scan_for).await?;
+        Ok((connected.peripheral, connected.summary))
+    }
+}
+
 fn join_uuids(values: &[Uuid]) -> String {
     values
         .iter()
@@ -1960,6 +1998,20 @@ mod tests {
         };
 
         assert!(target.matches(&observation));
+    }
+
+    #[test]
+    fn btleplug_reconnect_host_reuses_target_and_scan_duration() {
+        let target = crate::ConnectionTarget {
+            address: None,
+            identifier: Some("corebluetooth-id".to_owned()),
+            name_contains: Some("NF2557".to_owned()),
+        };
+
+        let host = crate::BtleplugReconnectHost::new(target.clone(), Duration::from_secs(7));
+
+        assert_eq!(host.target(), &target);
+        assert_eq!(host.scan_for(), Duration::from_secs(7));
     }
 
     #[tokio::test]
