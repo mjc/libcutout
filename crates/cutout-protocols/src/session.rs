@@ -140,6 +140,7 @@ impl ProtocolSession for FalconReadOnlySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::size_of;
     use cutout_core::{LinkInfo, TransportAction};
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
@@ -215,5 +216,11 @@ mod tests {
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn read_only_session_shells_remain_small() {
+        assert_eq!(size_of::<AeroReadOnlySession>(), 1);
+        assert_eq!(size_of::<FalconReadOnlySession>(), 1);
     }
 }

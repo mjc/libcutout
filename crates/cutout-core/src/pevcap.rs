@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn pevcap_header_rejects_oversized_annotations() {
-        let annotations = vec!["note"; PEVCAP_MAX_ANNOTATIONS + 1];
+        let annotations = ["note"; PEVCAP_MAX_ANNOTATIONS + 1];
         let error = PevcapHeader::new(
             0,
             "linux",
@@ -434,12 +434,12 @@ mod tests {
         assert_eq!(write.characteristic, characteristic);
         assert_eq!(write.service, None);
         assert_eq!(write.write_mode, Some(WriteMode::WithoutResponse));
-        assert_eq!(write.bytes, vec![0x01, 0x23, 0xab]);
+        assert_eq!(write.bytes.as_slice(), &[0x01, 0x23, 0xab]);
         assert_eq!(notification.direction, PevcapDirection::Inbound);
         assert_eq!(notification.characteristic, characteristic);
         assert_eq!(notification.service, Some(service));
         assert_eq!(notification.write_mode, None);
-        assert_eq!(notification.bytes, vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(notification.bytes.as_slice(), &[0xde, 0xad, 0xbe, 0xef]);
     }
 
     #[test]

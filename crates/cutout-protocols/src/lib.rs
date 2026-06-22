@@ -19,7 +19,9 @@ mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod request_encoder;
 mod session;
-pub use request_encoder::{AeroRequestEncoder, EncodedRequest, FalconRequestEncoder};
+pub use request_encoder::{
+    AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
+};
 pub use session::{AeroReadOnlySession, FalconReadOnlySession};
 
 /// Returns the crate name used by setup smoke tests.
@@ -101,7 +103,7 @@ mod tests {
 
     #[test]
     fn aero_request_fixture_rejects_oversized_payload() {
-        let bytes = vec![0; cutout_core::MAX_TRANSPORT_WRITE_LEN + 1];
+        let bytes = [0; cutout_core::MAX_TRANSPORT_WRITE_LEN + 1];
 
         assert!(matches!(
             crate::RequestFixture::new(

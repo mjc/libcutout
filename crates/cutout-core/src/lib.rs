@@ -15,6 +15,8 @@ use thiserror::Error;
 
 mod pevcap;
 pub use pevcap::*;
+mod battery_page;
+pub use battery_page::*;
 
 /// Monotonic timestamp in milliseconds, supplied by the host.
 pub type MonotonicMillis = u64;
@@ -1472,7 +1474,7 @@ pub enum ReadOnlyResponse {
     Firmware(FirmwareInfo),
 
     /// Battery or BMS response.
-    Battery(BatteryInfo),
+    Battery(BatteryPagePayload),
 
     /// Diagnostic response.
     Diagnostics(DiagnosticReadback),
@@ -2104,8 +2106,9 @@ mod tests {
     use crate::{
         DeviceCommand, DeviceEvent, GattChannel, LinkInfo, Measured, ProtocolSession, SessionInput,
         SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, UnsupportedReason,
-        ValueQuality, ValueSource, WriteMode, WritePayload,
+        ValueQuality, ValueSource, VerificationStatus, WriteMode, WritePayload,
     };
+    use core::mem::size_of;
     use proptest::prelude::*;
 
     #[test]
@@ -2132,6 +2135,38 @@ mod tests {
                 max: crate::MAX_TRANSPORT_WRITE_LEN,
             })
         );
+    }
+
+    #[test]
+    fn battery_page_types_remain_small() {
+        assert_eq!(size_of::<crate::BatteryPageKind>(), 1);
+        assert_eq!(size_of::<crate::BatteryPageMetadata>(), 3);
+        assert!(size_of::<crate::BatteryInfo>() <= 64);
+        assert!(size_of::<crate::BatteryPagePayload>() <= 128);
+        assert!(size_of::<crate::ReadOnlyResponse>() <= 104);
+        assert!(size_of::<SessionOutput>() <= 536);
+        assert!(size_of::<TransportAction>() <= 536);
+    }
+
+    #[test]
+    fn request_hot_path_types_remain_small() {
+        assert!(size_of::<crate::RequestKey>() <= 16);
+        assert!(size_of::<crate::RequestPolicy>() <= 24);
+        assert!(size_of::<crate::QueuedRequest>() <= 32);
+        assert!(size_of::<crate::RequestTracker>() <= 56);
+        assert!(size_of::<crate::PollRequest>() <= 32);
+        assert!(size_of::<crate::RequestQueue<3>>() <= 104);
+        assert!(size_of::<crate::PollingPlan<4>>() <= 128);
+    }
+
+    #[test]
+    fn parser_hot_path_types_remain_small() {
+        assert_eq!(size_of::<crate::ParserDiagnostics>(), 56);
+        assert_eq!(size_of::<crate::DiagnosticSnapshot>(), 56);
+        assert!(size_of::<crate::DiagnosticError>() <= 80);
+        assert!(size_of::<TelemetrySnapshot>() <= 256);
+        assert!(size_of::<crate::CaptureRecord>() <= 48);
+        assert!(size_of::<crate::HostSession<EchoSession>>() <= 352);
     }
 
     #[derive(Default)]
@@ -2384,7 +2419,7 @@ mod tests {
 
     #[test]
     fn battery_response_distinguishes_reported_estimated_and_unknown_percent() {
-        let response = crate::BatteryInfo {
+        let battery = crate::BatteryInfo {
             voltage_mv: Some(Measured::reported(80_400)),
             current_ma: Some(Measured::reported(0)),
             percent_reported: Some(Measured::reported(0)),
@@ -2396,10 +2431,21 @@ mod tests {
             temperature_mc: None,
             raw_state: None,
         };
+        let response = crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
+            crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            battery,
+        ));
 
-        assert_eq!(response.current_ma, Some(Measured::reported(0)));
-        assert_eq!(response.percent_reported, Some(Measured::reported(0)));
-        assert_eq!(response.temperature_mc, None);
+        assert_eq!(
+            response.page(),
+            crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified)
+        );
+        assert_eq!(response.battery().current_ma, Some(Measured::reported(0)));
+        assert_eq!(
+            response.battery().percent_reported,
+            Some(Measured::reported(0))
+        );
+        assert_eq!(response.battery().temperature_mc, None);
     }
 
     #[test]
@@ -2447,7 +2493,7 @@ mod tests {
                 .with_write()
                 .with_write_without_response()
                 .with_notify(),
-            verification: crate::VerificationStatus::HardwareVerified,
+            verification: VerificationStatus::HardwareVerified,
         }];
         let entry = crate::ModelRegistryEntry {
             manufacturer: "NOSFET",
@@ -2456,12 +2502,12 @@ mod tests {
             advertised_name_hints: &["NF2557"],
             wire_model_id: Some(crate::VerifiedValue {
                 value: 43_u16,
-                verification: crate::VerificationStatus::HardwareVerified,
+                verification: VerificationStatus::HardwareVerified,
             }),
             battery: Some(crate::BatterySpec {
                 series_cells: 30,
                 voltage_range_mv: 99_180..=123_370,
-                verification: crate::VerificationStatus::SourceAndHardwareVerified,
+                verification: VerificationStatus::SourceAndHardwareVerified,
             }),
             gatt: &AERO_GATT,
             capabilities: crate::Capabilities::from_supported_commands([
@@ -2471,7 +2517,7 @@ mod tests {
                 crate::CommandKind::RequestBatteryInfo,
                 crate::CommandKind::RequestDiagnostics,
             ]),
-            verification: crate::VerificationStatus::HardwareVerified,
+            verification: VerificationStatus::HardwareVerified,
         };
 
         assert_eq!(entry.manufacturer, "NOSFET");
@@ -2500,7 +2546,12 @@ mod tests {
     #[test]
     fn read_only_response_reports_matching_command_kind() {
         let firmware = crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo::default());
-        let battery = crate::ReadOnlyResponse::Battery(crate::BatteryInfo::default());
+        let battery = crate::ReadOnlyResponse::Battery(crate::BatteryPagePayload::Raw(
+            crate::BatteryRawPage::new(
+                crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+                crate::BatteryInfo::default(),
+            ),
+        ));
         let diagnostics = crate::ReadOnlyResponse::Diagnostics(crate::DiagnosticReadback {
             details: [None, None, None, None],
         });

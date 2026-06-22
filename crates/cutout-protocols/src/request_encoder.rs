@@ -21,6 +21,22 @@ pub struct EncodedRequest<P> {
     pub mode: WriteMode,
 }
 
+/// Explicit disposition for a family-specific request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RequestDisposition<P> {
+    /// A probe that does not require a transport write.
+    Passive {
+        /// Family-specific probe represented by this request.
+        probe: P,
+
+        /// Generic command kind used for scheduler and response correlation.
+        command: CommandKind,
+    },
+
+    /// A probe encoded as a bounded transport write.
+    Write(EncodedRequest<P>),
+}
+
 /// Request encoder for NOSFET Aero/Veteran-family probes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AeroRequestEncoder;
@@ -28,14 +44,16 @@ pub struct AeroRequestEncoder;
 impl AeroRequestEncoder {
     /// Encodes a supported Aero/Veteran-family probe.
     #[must_use]
-    pub const fn encode(probe: AeroProbe) -> Option<EncodedRequest<AeroProbe>> {
-        let _ = probe;
-        None
+    pub const fn encode(probe: AeroProbe) -> Option<RequestDisposition<AeroProbe>> {
+        Some(RequestDisposition::Passive {
+            command: probe.command_kind(),
+            probe,
+        })
     }
 
     /// Encodes a generic command if it belongs to the Aero/Veteran probe family.
     #[must_use]
-    pub fn encode_command(kind: CommandKind) -> Option<EncodedRequest<AeroProbe>> {
+    pub fn encode_command(kind: CommandKind) -> Option<RequestDisposition<AeroProbe>> {
         Self::encode(AeroProbe::from_command_kind(kind)?)
     }
 }
@@ -47,24 +65,24 @@ pub struct FalconRequestEncoder;
 impl FalconRequestEncoder {
     /// Encodes a supported Begode/Falcon-family probe.
     #[must_use]
-    pub fn encode(probe: FalconProbe) -> Option<EncodedRequest<FalconProbe>> {
+    pub fn encode(probe: FalconProbe) -> Option<RequestDisposition<FalconProbe>> {
         let payload = match probe {
             FalconProbe::Identity => Some(b"N".as_slice()),
             FalconProbe::FirmwareInfo => Some(b"V".as_slice()),
             FalconProbe::Telemetry | FalconProbe::BatteryInfo => None,
         }?;
 
-        Some(EncodedRequest {
+        Some(RequestDisposition::Write(EncodedRequest {
             probe,
             command: probe.command_kind(),
             payload: request_payload(payload),
             mode: WriteMode::WithoutResponse,
-        })
+        }))
     }
 
     /// Encodes a generic command if it belongs to the Begode/Falcon probe family.
     #[must_use]
-    pub fn encode_command(kind: CommandKind) -> Option<EncodedRequest<FalconProbe>> {
+    pub fn encode_command(kind: CommandKind) -> Option<RequestDisposition<FalconProbe>> {
         FalconProbe::from_command_kind(kind).and_then(Self::encode)
     }
 }
@@ -81,6 +99,7 @@ fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_REQUEST_LEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::mem::size_of;
 
     #[test]
     fn falcon_encoder_uses_expected_request_bytes() {
@@ -89,18 +108,67 @@ mod tests {
         let firmware = FalconRequestEncoder::encode(FalconProbe::FirmwareInfo)
             .expect("firmware request is supported");
 
-        assert_eq!(identity.payload.as_slice(), b"N");
-        assert_eq!(identity.command, CommandKind::RequestIdentity);
-        assert_eq!(identity.mode, WriteMode::WithoutResponse);
-        assert_eq!(firmware.payload.as_slice(), b"V");
+        assert!(matches!(
+            identity,
+            RequestDisposition::Write(EncodedRequest {
+                command: CommandKind::RequestIdentity,
+                mode: WriteMode::WithoutResponse,
+                ..
+            })
+        ));
+        assert!(matches!(
+            firmware,
+            RequestDisposition::Write(EncodedRequest {
+                command: CommandKind::RequestFirmwareInfo,
+                mode: WriteMode::WithoutResponse,
+                ..
+            })
+        ));
+        assert_eq!(
+            match identity {
+                RequestDisposition::Write(request) => request.payload,
+                RequestDisposition::Passive { .. } => unreachable!(),
+            }
+            .as_slice(),
+            b"N"
+        );
+        assert_eq!(
+            match firmware {
+                RequestDisposition::Write(request) => request.payload,
+                RequestDisposition::Passive { .. } => unreachable!(),
+            }
+            .as_slice(),
+            b"V"
+        );
     }
 
     #[test]
-    fn passive_aero_encoder_remains_write_free() {
-        assert_eq!(AeroRequestEncoder::encode(AeroProbe::Identity), None);
+    fn passive_aero_encoder_is_explicitly_passive() {
+        assert_eq!(
+            AeroRequestEncoder::encode(AeroProbe::Identity),
+            Some(RequestDisposition::Passive {
+                probe: AeroProbe::Identity,
+                command: CommandKind::RequestIdentity,
+            })
+        );
         assert_eq!(
             AeroRequestEncoder::encode_command(CommandKind::RequestTelemetry),
-            None
+            Some(RequestDisposition::Passive {
+                probe: AeroProbe::Telemetry,
+                command: CommandKind::RequestTelemetry,
+            })
+        );
+    }
+
+    #[test]
+    fn request_encoder_types_remain_bounded_in_size() {
+        assert_eq!(size_of::<AeroRequestEncoder>(), 0);
+        assert!(
+            size_of::<RequestDisposition<AeroProbe>>() <= size_of::<EncodedRequest<AeroProbe>>()
+        );
+        assert!(
+            size_of::<RequestDisposition<FalconProbe>>()
+                <= size_of::<EncodedRequest<FalconProbe>>()
         );
     }
 }
