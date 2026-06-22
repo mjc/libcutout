@@ -2534,10 +2534,6 @@ pub enum DeviceEvent {
 
 /// Output emitted by a protocol session for the host to drain.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(
-    clippy::large_enum_variant,
-    reason = "transport write payloads stay inline to avoid per-write heap allocation"
-)]
 pub enum SessionOutput {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportAction),
