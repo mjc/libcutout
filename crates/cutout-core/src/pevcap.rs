@@ -251,6 +251,12 @@ pub enum PevcapEncoding {
 /// Direction of a captured transport record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PevcapDirection {
+    /// Link became available to the host.
+    LinkUp,
+
+    /// Link became unavailable to the host.
+    LinkDown,
+
     /// Data flowed from the peripheral to the host.
     Inbound,
 
@@ -438,11 +444,42 @@ pub struct PevcapRecord {
     /// Write mode, when the record is an outbound write.
     pub write_mode: Option<WriteMode>,
 
+    /// Negotiated maximum write length, when this is a link-up record.
+    pub link_max_write_len: Option<u16>,
+
     /// Exact bytes captured for the record.
     pub bytes: Vec<u8>,
 }
 
 impl PevcapRecord {
+    /// Creates a link-up lifecycle record.
+    #[must_use]
+    pub fn link_up(monotonic_ms: MonotonicMillis, max_write_len: Option<u16>) -> Self {
+        Self {
+            monotonic_ms,
+            direction: PevcapDirection::LinkUp,
+            characteristic: GattChannel::from_bytes([0; 16]),
+            service: None,
+            write_mode: None,
+            link_max_write_len: max_write_len,
+            bytes: Vec::new(),
+        }
+    }
+
+    /// Creates a link-down lifecycle record.
+    #[must_use]
+    pub fn link_down(monotonic_ms: MonotonicMillis) -> Self {
+        Self {
+            monotonic_ms,
+            direction: PevcapDirection::LinkDown,
+            characteristic: GattChannel::from_bytes([0; 16]),
+            service: None,
+            write_mode: None,
+            link_max_write_len: None,
+            bytes: Vec::new(),
+        }
+    }
+
     /// Creates an outbound write record.
     #[must_use]
     pub fn outbound_write(
@@ -457,6 +494,7 @@ impl PevcapRecord {
             characteristic,
             service: None,
             write_mode: Some(write_mode),
+            link_max_write_len: None,
             bytes,
         }
     }
@@ -475,6 +513,7 @@ impl PevcapRecord {
             characteristic,
             service: Some(service),
             write_mode: None,
+            link_max_write_len: None,
             bytes,
         }
     }
@@ -512,11 +551,21 @@ impl PevcapCapture {
     /// drives host commands rather than low-level transport writes.
     #[must_use]
     pub fn replay_records(&self) -> Vec<CaptureRecord> {
-        let mut records = Vec::with_capacity(self.records.len().saturating_add(1));
-        records.push(CaptureRecord::LinkUp(LinkInfo {
-            monotonic_ms: 0,
-            max_write_len: self.header.write_limit,
-        }));
+        let has_explicit_link_up = self
+            .records
+            .iter()
+            .any(|record| record.direction == PevcapDirection::LinkUp);
+        let mut records = Vec::with_capacity(
+            self.records
+                .len()
+                .saturating_add(usize::from(!has_explicit_link_up)),
+        );
+        if !has_explicit_link_up {
+            records.push(CaptureRecord::LinkUp(LinkInfo {
+                monotonic_ms: 0,
+                max_write_len: self.header.write_limit,
+            }));
+        }
         records.extend(
             self.records
                 .iter()
@@ -776,6 +825,11 @@ impl PevcapCapture {
 impl PevcapRecord {
     fn to_replay_record(&self) -> Option<CaptureRecord> {
         match self.direction {
+            PevcapDirection::LinkUp => Some(CaptureRecord::LinkUp(LinkInfo {
+                monotonic_ms: self.monotonic_ms,
+                max_write_len: self.link_max_write_len,
+            })),
+            PevcapDirection::LinkDown => Some(CaptureRecord::LinkDown),
             PevcapDirection::Inbound => Some(CaptureRecord::notification(
                 self.characteristic,
                 self.bytes.clone(),
@@ -1313,6 +1367,8 @@ struct PevcapRecordJson {
     characteristic: [u8; 16],
     service: Option<[u8; 16]>,
     write_mode: Option<WriteModeJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    link_max_write_len: Option<u16>,
     bytes: Vec<u8>,
 }
 
@@ -1325,6 +1381,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             characteristic: record.characteristic.as_bytes(),
             service: record.service.map(GattChannel::as_bytes),
             write_mode: record.write_mode.map(WriteModeJson::from),
+            link_max_write_len: record.link_max_write_len,
             bytes: record.bytes.clone(),
         }
     }
@@ -1339,6 +1396,7 @@ impl PevcapRecordJson {
             characteristic: GattChannel::from_bytes(self.characteristic),
             service: self.service.map(GattChannel::from_bytes),
             write_mode: self.write_mode.map(WriteModeJson::into_mode),
+            link_max_write_len: self.link_max_write_len,
             bytes: self.bytes,
         }
     }
@@ -1347,6 +1405,8 @@ impl PevcapRecordJson {
 #[cfg(feature = "serde")]
 #[derive(Clone, Copy, Deserialize, Serialize)]
 enum PevcapDirectionJson {
+    LinkUp,
+    LinkDown,
     Inbound,
     Outbound,
 }
@@ -1355,6 +1415,8 @@ enum PevcapDirectionJson {
 impl From<PevcapDirection> for PevcapDirectionJson {
     fn from(direction: PevcapDirection) -> Self {
         match direction {
+            PevcapDirection::LinkUp => Self::LinkUp,
+            PevcapDirection::LinkDown => Self::LinkDown,
             PevcapDirection::Inbound => Self::Inbound,
             PevcapDirection::Outbound => Self::Outbound,
         }
@@ -1365,6 +1427,8 @@ impl From<PevcapDirection> for PevcapDirectionJson {
 impl PevcapDirectionJson {
     const fn into_direction(self) -> PevcapDirection {
         match self {
+            Self::LinkUp => PevcapDirection::LinkUp,
+            Self::LinkDown => PevcapDirection::LinkDown,
             Self::Inbound => PevcapDirection::Inbound,
             Self::Outbound => PevcapDirection::Outbound,
         }
@@ -1709,6 +1773,56 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_capture_preserves_explicit_link_lifecycle_replay_order() {
+        let service = GattChannel::from_bytes([0x44; 16]);
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(
+            1,
+            "darwin",
+            Some(23),
+            &[service],
+            &[],
+            None,
+            "0.1.0",
+            [0x11; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::link_up(5, Some(23)),
+                PevcapRecord::inbound_notification(
+                    9,
+                    characteristic,
+                    service,
+                    b"NAME=Falcon".to_vec(),
+                ),
+                PevcapRecord::link_down(12),
+                PevcapRecord::link_up(20, Some(23)),
+                PevcapRecord::inbound_notification(21, characteristic, service, b"55aa".to_vec()),
+            ],
+        );
+
+        assert_eq!(
+            capture.replay_records(),
+            vec![
+                CaptureRecord::LinkUp(LinkInfo {
+                    monotonic_ms: 5,
+                    max_write_len: Some(23),
+                }),
+                CaptureRecord::notification(characteristic, b"NAME=Falcon".to_vec(), 9),
+                CaptureRecord::LinkDown,
+                CaptureRecord::LinkUp(LinkInfo {
+                    monotonic_ms: 20,
+                    max_write_len: Some(23),
+                }),
+                CaptureRecord::notification(characteristic, b"55aa".to_vec(), 21),
+            ]
+        );
+    }
+
+    #[test]
     fn pevcap_capture_without_inbound_records_has_only_link_replay_input() {
         let characteristic = GattChannel::from_bytes([0x55; 16]);
         let header = PevcapHeader::new(1, "darwin", None, &[], &[], None, "0.1.0", [0; 32], &[])
@@ -1915,6 +2029,37 @@ mod tests {
 
         assert_eq!(decoded, capture);
         assert_eq!(jsonl.lines().count(), 3);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_jsonl_round_trips_link_lifecycle_records() {
+        let header = PevcapHeader::new(
+            1,
+            "darwin",
+            Some(23),
+            &[],
+            &[],
+            None,
+            "0.1.0",
+            [0x42; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::link_up(5, Some(23)),
+                PevcapRecord::link_down(12),
+            ],
+        );
+
+        let jsonl = capture.to_jsonl().expect("capture serializes");
+        let decoded = PevcapCapture::from_jsonl(&jsonl).expect("capture deserializes");
+
+        assert_eq!(decoded, capture);
+        assert!(jsonl.contains(r#""direction":"LinkUp""#));
+        assert!(jsonl.contains(r#""direction":"LinkDown""#));
     }
 
     #[cfg(feature = "serde")]

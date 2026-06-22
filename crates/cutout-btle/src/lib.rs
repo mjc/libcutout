@@ -1333,6 +1333,13 @@ const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
 
 fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<PevcapRecord> {
     match record {
+        SessionCaptureRecord::Link {
+            monotonic_ms,
+            max_write_len,
+        } => Some(PevcapRecord::link_up(*monotonic_ms, *max_write_len)),
+        SessionCaptureRecord::LinkDown { monotonic_ms } => {
+            Some(PevcapRecord::link_down(*monotonic_ms))
+        }
         SessionCaptureRecord::Write {
             monotonic_ms,
             characteristic,
@@ -1356,9 +1363,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             gatt_channel_from_uuid(*service),
             bytes.clone(),
         )),
-        SessionCaptureRecord::Link { .. }
-        | SessionCaptureRecord::LinkDown { .. }
-        | SessionCaptureRecord::Subscribe { .. } => None,
+        SessionCaptureRecord::Subscribe { .. } => None,
     }
 }
 
@@ -2259,6 +2264,7 @@ mod tests {
                     service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                     bytes: b"NAME=NF2557".to_vec(),
                 },
+                crate::SessionCaptureRecord::LinkDown { monotonic_ms: 4 },
             ],
             report: crate::SessionBridgeReport::default(),
         };
@@ -2297,19 +2303,24 @@ mod tests {
                 .and_then(|identity| identity.model.as_ref().map(|model| model.value.as_str())),
             Some("NOSFET Aero")
         );
-        assert_eq!(pevcap.records.len(), 2);
-        assert_eq!(pevcap.records[0].direction, PevcapDirection::Outbound);
+        assert_eq!(pevcap.records.len(), 4);
+        assert_eq!(pevcap.records[0].direction, PevcapDirection::LinkUp);
+        assert_eq!(pevcap.records[0].monotonic_ms, 0);
+        assert_eq!(pevcap.records[0].link_max_write_len, Some(23));
+        assert_eq!(pevcap.records[1].direction, PevcapDirection::Outbound);
         assert_eq!(
-            pevcap.records[0].write_mode,
+            pevcap.records[1].write_mode,
             Some(WriteMode::WithoutResponse)
         );
-        assert_eq!(pevcap.records[0].bytes, b"N");
-        assert_eq!(pevcap.records[1].direction, PevcapDirection::Inbound);
+        assert_eq!(pevcap.records[1].bytes, b"N");
+        assert_eq!(pevcap.records[2].direction, PevcapDirection::Inbound);
         assert_eq!(
-            pevcap.records[1].service,
+            pevcap.records[2].service,
             pevcap.header.advertised_services.first().copied()
         );
-        assert_eq!(pevcap.records[1].bytes, b"NAME=NF2557");
+        assert_eq!(pevcap.records[2].bytes, b"NAME=NF2557");
+        assert_eq!(pevcap.records[3].direction, PevcapDirection::LinkDown);
+        assert_eq!(pevcap.records[3].monotonic_ms, 4);
     }
 
     #[test]
@@ -2361,9 +2372,10 @@ mod tests {
             .expect("session capture converts to PEVCAP");
 
         assert_eq!(pevcap.header.write_limit, None);
-        assert_eq!(pevcap.records.len(), 1);
-        assert_eq!(pevcap.records[0].write_mode, Some(WriteMode::WithResponse));
-        assert_eq!(pevcap.records[0].bytes, [0x01, 0x02]);
+        assert_eq!(pevcap.records.len(), 2);
+        assert_eq!(pevcap.records[0].direction, PevcapDirection::LinkUp);
+        assert_eq!(pevcap.records[1].write_mode, Some(WriteMode::WithResponse));
+        assert_eq!(pevcap.records[1].bytes, [0x01, 0x02]);
     }
 
     #[test]
