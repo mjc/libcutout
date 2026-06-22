@@ -544,6 +544,92 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
     }
 }
 
+/// Feature-gated dangerous-control shell.
+#[cfg(feature = "dangerous-controls")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DangerousControlSession<M: SupportsDangerousActuation> {
+    policy: cutout_core::DangerousActuationPolicy,
+    arm: Option<cutout_core::DangerousActuationArm>,
+    monotonic_ms: MonotonicMillis,
+    model: PhantomData<fn() -> M>,
+}
+
+#[cfg(feature = "dangerous-controls")]
+impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
+    /// Creates a dangerous-control shell with a model-specific policy.
+    #[must_use]
+    pub const fn new(policy: cutout_core::DangerousActuationPolicy) -> Self {
+        Self {
+            policy,
+            arm: None,
+            monotonic_ms: 0,
+            model: PhantomData,
+        }
+    }
+
+    /// Installs an explicit arming token.
+    pub const fn arm(&mut self, arm: cutout_core::DangerousActuationArm) {
+        self.arm = Some(arm);
+    }
+
+    fn push_refusal(
+        output: &mut Vec<SessionOutput>,
+        command: CommandKind,
+        safety_class: SafetyClass,
+        reason: cutout_core::ControlRefusalReason,
+    ) {
+        output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+            cutout_core::ControlRefusal {
+                command,
+                safety_class,
+                reason,
+            },
+        )));
+    }
+}
+
+#[cfg(feature = "dangerous-controls")]
+impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<M> {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::Tick { monotonic_ms } => {
+                self.monotonic_ms = monotonic_ms;
+            }
+            SessionInput::Command(command) => {
+                let kind = command.kind();
+                let safety_class = command.safety_class();
+                if !M::ACTUATION_CAPABILITIES.supports_command_kind(kind) {
+                    Self::push_refusal(
+                        output,
+                        kind,
+                        safety_class,
+                        cutout_core::ControlRefusalReason::UnsupportedCommand,
+                    );
+                    return;
+                }
+
+                match self.policy.authorize(command, self.monotonic_ms, self.arm) {
+                    Ok(metadata) => Self::push_refusal(
+                        output,
+                        metadata.kind,
+                        metadata.safety_class,
+                        cutout_core::ControlRefusalReason::UnsupportedCommand,
+                    ),
+                    Err(reason) => Self::push_refusal(
+                        output,
+                        kind,
+                        safety_class,
+                        cutout_core::ControlRefusalReason::from(reason),
+                    ),
+                }
+            }
+            SessionInput::LinkUp(_)
+            | SessionInput::LinkDown
+            | SessionInput::Notification { .. } => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,6 +660,12 @@ mod tests {
         fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
             AeroRequestEncoder::encode_command(kind)
         }
+    }
+
+    #[cfg(feature = "dangerous-controls")]
+    impl SupportsDangerousActuation for TestModel {
+        const ACTUATION_CAPABILITIES: Capabilities =
+            Capabilities::from_supported_commands([CommandKind::SetRawMotorCurrent]);
     }
 
     fn live_aero_frame() -> [u8; 87] {
@@ -1257,6 +1349,78 @@ mod tests {
             output
                 .iter()
                 .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+    }
+
+    #[cfg(feature = "dangerous-controls")]
+    #[test]
+    fn dangerous_control_session_refuses_missing_arm_without_transport() {
+        let mut session =
+            DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
+                model: TestModel::MODEL,
+                max_current_ma: 5_000,
+                arm_duration_ms: 1_000,
+            });
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
+                cutout_core::ControlRefusal {
+                    command: CommandKind::SetRawMotorCurrent,
+                    safety_class: SafetyClass::Actuation,
+                    reason: cutout_core::ControlRefusalReason::MissingArm,
+                }
+            ))]
+        );
+    }
+
+    #[cfg(feature = "dangerous-controls")]
+    #[test]
+    fn dangerous_control_session_refuses_expired_arm_without_transport() {
+        let policy = cutout_core::DangerousActuationPolicy {
+            model: TestModel::MODEL,
+            max_current_ma: 5_000,
+            arm_duration_ms: 1_000,
+        };
+        let mut session = DangerousControlSession::<TestModel>::new(policy);
+        let mut output = Vec::new();
+
+        session.arm(policy.arm(10));
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: 1_011,
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert!(
+            output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
+                cutout_core::ControlRefusal {
+                    command: CommandKind::SetRawMotorCurrent,
+                    safety_class: SafetyClass::Actuation,
+                    reason: cutout_core::ControlRefusalReason::ExpiredArm,
+                }
+            )))
         );
     }
 }

@@ -54,6 +54,8 @@ mod veteran_telemetry;
 pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
 };
+#[cfg(feature = "dangerous-controls")]
+pub use session::DangerousControlSession;
 pub use session::{
     BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,

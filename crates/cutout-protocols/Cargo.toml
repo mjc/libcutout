@@ -23,3 +23,7 @@ thiserror.workspace = true
 [dev-dependencies]
 hex-literal.workspace = true
 proptest.workspace = true
+
+[features]
+default = []
+dangerous-controls = []

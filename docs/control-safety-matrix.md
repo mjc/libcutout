@@ -30,8 +30,10 @@ behavior.
 Each model-specific control issue must provide capture-backed request bytes,
 capability tests, refusal tests for unsupported states, and hardware evidence
 for the exact device/firmware variant. Dangerous actuation also needs a
-non-default feature and the core `DangerousActuationPolicy` /
-`DangerousActuationArm` gate before any transport write can be produced. The
-policy checks model binding, token expiry, command safety class, and absolute
-raw-current limit; protocol crates still need a separate dangerous-control
-session shell before this can reach a transport.
+non-default `dangerous-controls` feature and the core
+`DangerousActuationPolicy` / `DangerousActuationArm` gate before any transport
+write can be produced. The policy checks model binding, token expiry, command
+safety class, and absolute raw-current limit. The feature-gated
+`DangerousControlSession` emits typed refusal events and still has no
+model-specific encoder, so even authorized commands cannot reach a transport
+until a capture-backed control issue adds that path.

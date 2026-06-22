@@ -307,6 +307,53 @@ pub enum DangerousActuationRefusal {
     CurrentLimitExceeded,
 }
 
+/// Host-facing control refusal details.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlRefusal {
+    /// Command that was refused.
+    pub command: CommandKind,
+
+    /// Safety class of the refused command.
+    pub safety_class: SafetyClass,
+
+    /// Refusal reason.
+    pub reason: ControlRefusalReason,
+}
+
+/// Reason a control command was refused before transport writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlRefusalReason {
+    /// Command is not classified for this control shell.
+    WrongSafetyClass,
+
+    /// No required arming token was supplied.
+    MissingArm,
+
+    /// Arming token was issued for another model.
+    WrongModel,
+
+    /// Arming token has expired.
+    ExpiredArm,
+
+    /// Requested value exceeds the configured current limit.
+    CurrentLimitExceeded,
+
+    /// Command is not supported by this model/session.
+    UnsupportedCommand,
+}
+
+impl From<DangerousActuationRefusal> for ControlRefusalReason {
+    fn from(value: DangerousActuationRefusal) -> Self {
+        match value {
+            DangerousActuationRefusal::WrongSafetyClass => Self::WrongSafetyClass,
+            DangerousActuationRefusal::MissingArm => Self::MissingArm,
+            DangerousActuationRefusal::WrongModel => Self::WrongModel,
+            DangerousActuationRefusal::ExpiredArm => Self::ExpiredArm,
+            DangerousActuationRefusal::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+        }
+    }
+}
+
 const fn str_eq(left: &str, right: &str) -> bool {
     let left = left.as_bytes();
     let right = right.as_bytes();
@@ -1048,6 +1095,7 @@ impl DiagnosticSnapshot {
             | DeviceEvent::Tick { .. }
             | DeviceEvent::Telemetry(_)
             | DeviceEvent::ReadOnlyResponse(_)
+            | DeviceEvent::ControlRefusal(_)
             | DeviceEvent::DiagnosticError(_) => None,
         }
     }
@@ -2474,6 +2522,9 @@ pub enum DeviceEvent {
     /// Read-only response emitted by a protocol session.
     ReadOnlyResponse(ReadOnlyResponse),
 
+    /// Control command refused before transport writes.
+    ControlRefusal(ControlRefusal),
+
     /// Parser diagnostics emitted by a protocol session.
     Diagnostics(ParserDiagnostics),
 
@@ -2619,6 +2670,7 @@ where
                         self.diagnostics.merge(*diagnostics);
                     }
                     DeviceEvent::ReadOnlyResponse(_)
+                    | DeviceEvent::ControlRefusal(_)
                     | DeviceEvent::DiagnosticError(_)
                     | DeviceEvent::LinkUp(_)
                     | DeviceEvent::LinkDown

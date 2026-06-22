@@ -1555,7 +1555,8 @@ fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, mo
         DeviceEvent::NotificationReceived { .. }
         | DeviceEvent::LinkUp(_)
         | DeviceEvent::LinkDown
-        | DeviceEvent::Tick { .. } => {}
+        | DeviceEvent::Tick { .. }
+        | DeviceEvent::ControlRefusal(_) => {}
         DeviceEvent::Telemetry(delta) => {
             report.telemetry += 1;
             report.telemetry_snapshot.apply_delta(delta);

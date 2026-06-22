@@ -226,7 +226,8 @@ fn summarize_pevcap_replay(
             DeviceEvent::LinkUp(_)
             | DeviceEvent::LinkDown
             | DeviceEvent::NotificationReceived { .. }
-            | DeviceEvent::Tick { .. } => {}
+            | DeviceEvent::Tick { .. }
+            | DeviceEvent::ControlRefusal(_) => {}
         }
     }
 
