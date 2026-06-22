@@ -231,7 +231,10 @@ fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvi
 }
 
 fn voltage_class_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
-    let value = value.trim();
+    let value = value
+        .trim()
+        .split_once('-')
+        .map_or(value.trim(), |(head, _)| head);
     if eq_ignore_ascii_case(value, "84v")
         || eq_ignore_ascii_case(value, "84.0v")
         || eq_ignore_ascii_case(value, "20s")
@@ -1066,6 +1069,16 @@ mod tests {
             select_begode_pack_voltage_profile_from_annotations([
                 "capture_label=powered_on_stationary",
                 "battery=84v",
+            ]),
+            BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
+        );
+    }
+
+    #[test]
+    fn voltage_evidence_from_annotations_accepts_84v_label_with_provenance_suffix() {
+        assert_eq!(
+            select_begode_pack_voltage_profile_from_annotations([
+                "battery=84v-user-confirmed-target"
             ]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
         );

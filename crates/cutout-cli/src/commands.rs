@@ -106,7 +106,7 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
     let report = replay_pevcap_capture(
         &capture,
         selected_pevcap_replay_profile(&capture, args.profile)?,
-    );
+    )?;
     println!("{}", render_pevcap_replay_report(&report));
     if args.read_only_jsonl {
         for line in render_read_only_responses_jsonl(&report.read_only_response_events)? {
@@ -150,27 +150,33 @@ struct PevcapReplayReport {
 fn replay_pevcap_capture(
     capture: &PevcapCapture,
     profile: SelectedSessionProfile,
-) -> PevcapReplayReport {
+) -> Result<PevcapReplayReport> {
     match profile {
-        SelectedSessionProfile::Aero => replay_pevcap_with_session(
+        SelectedSessionProfile::Aero => Ok(replay_pevcap_with_session(
             capture,
             ReadOnlySession::<NosfetAeroModel, false>::default(),
-        ),
-        SelectedSessionProfile::Falcon => {
-            replay_pevcap_with_session(capture, falcon_replay_session(capture))
-        }
+        )),
+        SelectedSessionProfile::Falcon => Ok(replay_pevcap_with_session(
+            capture,
+            falcon_replay_session(capture)?,
+        )),
     }
 }
 
-fn falcon_replay_session(capture: &PevcapCapture) -> ReadOnlySession<BegodeFalconModel, true> {
+fn falcon_replay_session(
+    capture: &PevcapCapture,
+) -> Result<ReadOnlySession<BegodeFalconModel, true>> {
     match select_begode_pack_voltage_profile_from_annotations(capture.header.annotations.iter()) {
         BegodeVoltageProfileSelection::Selected(profile) => {
-            ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
+            Ok(ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
                 BegodeNotificationDecoder::with_pack_voltage_profile(profile),
-            )
+            ))
         }
-        BegodeVoltageProfileSelection::Missing | BegodeVoltageProfileSelection::Conflicting => {
-            ReadOnlySession::<BegodeFalconModel, true>::default()
+        BegodeVoltageProfileSelection::Missing => {
+            bail!("Falcon PEVCAP replay requires explicit Falcon battery voltage evidence")
+        }
+        BegodeVoltageProfileSelection::Conflicting => {
+            bail!("Falcon PEVCAP replay has conflicting Falcon battery voltage evidence")
         }
     }
 }
@@ -2212,7 +2218,8 @@ mod tests {
     fn pevcap_replay_drives_selected_aero_session() {
         let capture = sample_aero_replay_capture();
 
-        let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero);
+        let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero)
+            .expect("Aero replay does not require Falcon battery evidence");
 
         assert_eq!(report.replay_records, 2);
         assert!(report.arbitrary_chunk_plan_len > 3);
@@ -2293,7 +2300,7 @@ mod tests {
 
         let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
             .expect("Falcon identity selects replay profile");
-        let report = replay_pevcap_capture(&capture, profile);
+        let report = replay_pevcap_capture(&capture, profile).expect("battery evidence is present");
 
         assert_eq!(
             report
@@ -2305,13 +2312,47 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_replay_rejects_missing_falcon_battery_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&["capture_label=powered_on_stationary"]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+
+        let error = replay_pevcap_capture(&capture, profile)
+            .expect_err("missing Falcon battery evidence should not replay");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires explicit Falcon battery voltage evidence")
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_rejects_conflicting_falcon_battery_evidence() {
+        let capture =
+            sample_falcon_live_a_replay_capture(&["battery=84v", "app_voltage_class=100v"]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+
+        let error = replay_pevcap_capture(&capture, profile)
+            .expect_err("conflicting Falcon battery evidence should not replay");
+
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting Falcon battery voltage evidence")
+        );
+    }
+
+    #[test]
     fn pevcap_replay_corpus_auto_selects_and_matches_chunk_modes() {
         for case in PEVCAP_REPLAY_CORPUS {
             let capture = PevcapCapture::decode(case.jsonl.as_bytes(), PevcapEncoding::Jsonl)
                 .unwrap_or_else(|error| panic!("{} should decode: {error}", case.name));
             let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
                 .unwrap_or_else(|error| panic!("{} should auto-select: {error}", case.name));
-            let report = replay_pevcap_capture(&capture, profile);
+            let report = replay_pevcap_capture(&capture, profile)
+                .unwrap_or_else(|error| panic!("{} should replay: {error}", case.name));
 
             assert_eq!(profile, case.profile, "{} profile", case.name);
             assert!(report.replay_records >= 2, "{} replay records", case.name);
