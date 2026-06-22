@@ -1,16 +1,23 @@
-use std::time::Duration;
+use std::{sync::mpsc, thread, time::Duration};
 
 use anyhow::Result;
 use cutout_btle::{
-    BtleError, ConnectedPeripheral, SessionBridgeReport, SessionCapture, SessionEndpoints,
-    capture_session, connect_and_discover, drive_session, scan_peripherals,
+    BtleError, ConnectedPeripheral, ConnectionTarget, SessionBridgeReport, SessionCapture,
+    SessionEndpoints, capture_session, connect_and_discover, drive_session, read_battery_level,
+    scan_peripherals,
 };
 use cutout_core::{FirmwareInfo, Measured, SettingsReadback, TelemetrySnapshot};
 use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
+use tracing::info;
 
-use crate::cli::{Cli, Command, TargetedScanArgs};
-use crate::dashboard::run_dashboard;
+use crate::cli::{Cli, Command, DashboardArgs, TargetedScanArgs};
+use crate::dashboard::{
+    DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
+};
 use crate::validation::render_validation_report;
+
+const DASHBOARD_LIVE_WINDOW: Duration = Duration::from_millis(500);
+const DASHBOARD_BATTERY_REFRESH_EVERY: u64 = 10;
 
 /// Executes a parsed CLI invocation.
 ///
@@ -24,10 +31,152 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
         Command::CaptureAero(args) => connect(args, SessionMode::Capture).await?,
         Command::Validation => print!("{}", render_validation_report()),
-        Command::Dashboard => run_dashboard()?,
+        Command::Dashboard(args) => dashboard(args).await?,
     }
 
     Ok(())
+}
+
+async fn dashboard(args: DashboardArgs) -> Result<()> {
+    if args.demo {
+        return run_dashboard(DashboardState::demo(args.device.as_deref()));
+    }
+
+    let target = dashboard_live_target(&args)?;
+    info!(
+        device = target.name_contains.as_deref().unwrap_or("<none>"),
+        seconds = args.seconds(),
+        "scanning for dashboard device"
+    );
+    let connection = connect_and_discover(&target, Duration::from_secs(args.seconds())).await?;
+    info!(
+        observation = %connection.summary.observation,
+        "connected dashboard device"
+    );
+    let mut state = DashboardState::live_connected(&target, &connection.summary);
+    match read_battery_level(&connection.peripheral, &connection.summary).await? {
+        Some(percent) => {
+            info!(percent, "read dashboard battery level");
+            state.apply_battery_percent(percent);
+        }
+        None => {
+            info!("dashboard battery level unavailable from standard BLE characteristic");
+        }
+    }
+    let updates = spawn_dashboard_live_updates(connection);
+    run_dashboard_with_updates(state, &updates)
+}
+
+fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
+    let Some(device) = args.device.clone() else {
+        anyhow::bail!("dashboard requires --demo or --device to start");
+    };
+
+    Ok(ConnectionTarget {
+        address: None,
+        identifier: None,
+        name_contains: Some(device),
+    })
+}
+
+fn spawn_dashboard_live_updates(
+    connection: ConnectedPeripheral,
+) -> mpsc::Receiver<DashboardUpdate> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = tx.send(DashboardUpdate::Log {
+                    level: "error".to_owned(),
+                    message: format!("dashboard update runtime failed: {error}"),
+                });
+                return;
+            }
+        };
+
+        runtime.block_on(run_dashboard_live_updates(connection, tx));
+    });
+    rx
+}
+
+async fn run_dashboard_live_updates(
+    connection: ConnectedPeripheral,
+    tx: mpsc::Sender<DashboardUpdate>,
+) {
+    if connection.summary.select_session_endpoints().is_none() {
+        let _ = tx.send(DashboardUpdate::Log {
+            level: "warn".to_owned(),
+            message: "dashboard session endpoints unavailable".to_owned(),
+        });
+        return;
+    }
+
+    let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+    let mut iteration = 0_u64;
+
+    loop {
+        if iteration % DASHBOARD_BATTERY_REFRESH_EVERY == 0 {
+            match read_battery_level(&connection.peripheral, &connection.summary).await {
+                Ok(Some(percent)) => {
+                    if tx.send(DashboardUpdate::BatteryPercent(percent)).is_err() {
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    if tx
+                        .send(DashboardUpdate::Log {
+                            level: "warn".to_owned(),
+                            message: format!("dashboard battery refresh failed: {error}"),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+
+        let Some(endpoints) = connection.summary.select_session_endpoints() else {
+            return;
+        };
+        match drive_session(
+            &connection.peripheral,
+            &mut session,
+            VETERAN_DATA_CHANNEL,
+            endpoints,
+            DASHBOARD_LIVE_WINDOW,
+        )
+        .await
+        {
+            Ok(report) => {
+                if tx
+                    .send(DashboardUpdate::SessionReport(Box::new(report)))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(error) => {
+                if tx
+                    .send(DashboardUpdate::Log {
+                        level: "warn".to_owned(),
+                        message: format!("dashboard session update failed, retrying: {error}"),
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                tokio::time::sleep(DASHBOARD_LIVE_WINDOW).await;
+            }
+        }
+
+        iteration = iteration.wrapping_add(1);
+    }
 }
 
 async fn scan(seconds: u64) -> Result<(), BtleError> {
@@ -263,7 +412,18 @@ fn push_measured_u16(
 
 #[cfg(test)]
 mod tests {
+    use cutout_btle::ConnectionTarget;
+
     use super::*;
+    use crate::cli::ScanArgs;
+
+    fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
+        DashboardArgs {
+            demo,
+            device: device.map(ToOwned::to_owned),
+            scan: ScanArgs { seconds: 5 },
+        }
+    }
 
     #[test]
     fn telemetry_snapshot_renderer_includes_present_fields() {
@@ -339,6 +499,32 @@ mod tests {
                 "settings raw_0014=0 raw_0016=0 raw_0018=550 raw_001a=540",
                 "settings raw_001e=1920",
             ]
+        );
+    }
+
+    #[test]
+    fn dashboard_live_target_requires_device_outside_demo_mode() {
+        let error = dashboard_live_target(&dashboard_args(false, None))
+            .expect_err("live dashboard requires an explicit device");
+
+        assert_eq!(
+            error.to_string(),
+            "dashboard requires --demo or --device to start"
+        );
+    }
+
+    #[test]
+    fn dashboard_live_target_maps_device_to_name_filter() {
+        let target = dashboard_live_target(&dashboard_args(false, Some("NF2557")))
+            .expect("device becomes a live target");
+
+        assert_eq!(
+            target,
+            ConnectionTarget {
+                address: None,
+                identifier: None,
+                name_contains: Some("NF2557".to_owned()),
+            }
         );
     }
 }

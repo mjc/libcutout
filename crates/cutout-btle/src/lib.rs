@@ -19,8 +19,9 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceEvent, FirmwareInfo, GattChannel, LinkInfo, ProtocolSession, ReadOnlyResponse,
-    SessionInput, SessionOutput, SettingsReadback, TelemetrySnapshot, TransportAction, WriteMode,
+    DeviceEvent, FirmwareInfo, GattChannel, LinkInfo, ParserDiagnostics, ProtocolSession,
+    ReadOnlyResponse, SessionInput, SessionOutput, SettingsReadback, TelemetryDelta,
+    TelemetrySnapshot, TransportAction, WriteMode,
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
@@ -29,6 +30,7 @@ use uuid::Uuid;
 const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
 const BATTERY_LEVEL_UUID: Uuid = Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb);
 const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Returns the crate name used by setup smoke tests.
 #[must_use]
@@ -317,6 +319,12 @@ pub struct SessionBridgeReport {
     /// Notification payloads relayed into the session.
     pub notifications: usize,
 
+    /// Total notification payload bytes relayed into the session.
+    pub notification_bytes: usize,
+
+    /// Length of the latest notification payload, if any were observed.
+    pub latest_notification_len: Option<usize>,
+
     /// Semantic telemetry events emitted by the session.
     pub telemetry: usize,
 
@@ -335,8 +343,51 @@ pub struct SessionBridgeReport {
     /// Parser diagnostics events emitted by the session.
     pub diagnostics: usize,
 
+    /// Aggregated parser diagnostic counters emitted by the session.
+    pub diagnostics_snapshot: ParserDiagnostics,
+
+    /// Timestamped raw and processed telemetry events observed during the run.
+    pub events: Vec<SessionBridgeEvent>,
+
     /// Transport disconnect operations executed through the bridge.
     pub disconnects: usize,
+}
+
+/// Timestamped raw or processed telemetry event emitted by the bridge.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SessionBridgeEvent {
+    /// Raw notification payload received from BTLE.
+    RawNotification {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Characteristic that emitted the notification.
+        characteristic: Uuid,
+
+        /// Service associated with the notification.
+        service: Uuid,
+
+        /// Notification payload length.
+        len: usize,
+    },
+
+    /// Decoded telemetry emitted by the protocol session.
+    ProcessedTelemetry {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Telemetry delta emitted by the protocol session.
+        delta: TelemetryDelta,
+    },
+
+    /// Parser diagnostics emitted by the protocol session.
+    Diagnostics {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Parser diagnostic counters emitted at this timestamp.
+        diagnostics: ParserDiagnostics,
+    },
 }
 
 /// Captured bridge records suitable for live BTLE evidence files.
@@ -526,6 +577,16 @@ pub enum BtleError {
     #[error(transparent)]
     Backend(#[from] btleplug::Error),
 
+    /// The underlying BTLE stack did not finish an operation in time.
+    #[error("bluetooth operation timed out: {operation} after {after:?}")]
+    OperationTimedOut {
+        /// Operation that timed out.
+        operation: &'static str,
+
+        /// Timeout duration.
+        after: Duration,
+    },
+
     /// Error reported by the session bridge.
     #[error(transparent)]
     Bridge(#[from] SessionBridgeError),
@@ -539,10 +600,10 @@ pub enum BtleError {
 /// adapters, or [`BtleError::Backend`] when the BTLE backend reports a failure.
 pub async fn scan_peripherals(scan_for: Duration) -> Result<Vec<PeripheralObservation>, BtleError> {
     let adapter = first_adapter().await?;
-    adapter.start_scan(ScanFilter::default()).await?;
+    backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
     tokio::time::sleep(scan_for).await;
     let observations = collect_observations(&adapter).await?;
-    let _ = adapter.stop_scan().await;
+    let _ = backend_call("stop scan", adapter.stop_scan()).await;
     Ok(observations)
 }
 
@@ -558,17 +619,17 @@ pub async fn connect_and_discover(
     scan_for: Duration,
 ) -> Result<ConnectedPeripheral, BtleError> {
     let adapter = first_adapter().await?;
-    adapter.start_scan(ScanFilter::default()).await?;
+    backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
 
     let peripheral = wait_for_scan_match(scan_for, TARGETED_SCAN_POLL_INTERVAL, || {
         find_peripheral(&adapter, target)
     })
     .await;
-    let _ = adapter.stop_scan().await;
+    let _ = backend_call("stop scan", adapter.stop_scan()).await;
     let peripheral = peripheral?;
 
-    peripheral.connect().await?;
-    peripheral.discover_services().await?;
+    backend_call("connect peripheral", peripheral.connect()).await?;
+    backend_call("discover services", peripheral.discover_services()).await?;
 
     let observation = observation_from_peripheral(&peripheral).await?;
     let services = peripheral
@@ -602,9 +663,11 @@ pub async fn read_battery_level(
         return Ok(None);
     };
 
-    let value = peripheral
-        .read(&characteristic_from_summary(characteristic))
-        .await?;
+    let value = backend_call(
+        "read battery level",
+        peripheral.read(&characteristic_from_summary(characteristic)),
+    )
+    .await?;
     Ok(value.first().copied().map(|percent| percent.min(100)))
 }
 
@@ -755,6 +818,7 @@ where
                         bytes: notification.value.clone(),
                     });
                 }
+                record_raw_notification(&mut report, monotonic_ms, &notification);
                 session.handle(
                     SessionInput::Notification {
                         channel: gatt_channel_from_uuid(notification.uuid),
@@ -778,6 +842,8 @@ where
                 )
                 .await?;
                 report.notifications += 1;
+                report.notification_bytes += notification.value.len();
+                report.latest_notification_len = Some(notification.value.len());
             }
             Ok(None) | Err(_) => break,
         }
@@ -797,6 +863,19 @@ const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Charact
 
 const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
     GattChannel::from_bytes(*uuid.as_bytes())
+}
+
+fn record_raw_notification(
+    report: &mut SessionBridgeReport,
+    monotonic_ms: u64,
+    notification: &ValueNotification,
+) {
+    report.events.push(SessionBridgeEvent::RawNotification {
+        monotonic_ms,
+        characteristic: notification.uuid,
+        service: notification.service_uuid,
+        len: notification.value.len(),
+    });
 }
 
 struct SessionOutputContext<'a, P: ?Sized> {
@@ -877,34 +956,49 @@ where
                 context.peripheral.disconnect().await?;
                 context.report.disconnects += 1;
             }
-            SessionOutput::Event(
-                DeviceEvent::NotificationReceived { .. }
-                | DeviceEvent::LinkUp(_)
-                | DeviceEvent::LinkDown
-                | DeviceEvent::Tick { .. },
-            ) => {}
-            SessionOutput::Event(DeviceEvent::Telemetry(delta)) => {
-                context.report.telemetry += 1;
-                context.report.telemetry_snapshot.apply_delta(delta);
-            }
-            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                context.report.read_only_responses += 1;
-                match response {
-                    ReadOnlyResponse::Firmware(firmware) => {
-                        context.report.firmware = Some(firmware);
-                    }
-                    ReadOnlyResponse::Settings(settings) => {
-                        context.report.settings.push(settings);
-                    }
-                    ReadOnlyResponse::Battery(_) | ReadOnlyResponse::Diagnostics(_) => {}
-                }
-            }
-            SessionOutput::Event(DeviceEvent::Diagnostics(_)) => {
-                context.report.diagnostics += 1;
+            SessionOutput::Event(event) => {
+                process_device_event(context.report, event, monotonic_ms);
             }
         }
     }
     Ok(())
+}
+
+fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, monotonic_ms: u64) {
+    match event {
+        DeviceEvent::NotificationReceived { .. }
+        | DeviceEvent::LinkUp(_)
+        | DeviceEvent::LinkDown
+        | DeviceEvent::Tick { .. } => {}
+        DeviceEvent::Telemetry(delta) => {
+            report.telemetry += 1;
+            report.telemetry_snapshot.apply_delta(delta);
+            report.events.push(SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms,
+                delta,
+            });
+        }
+        DeviceEvent::ReadOnlyResponse(response) => {
+            report.read_only_responses += 1;
+            match response {
+                ReadOnlyResponse::Firmware(firmware) => {
+                    report.firmware = Some(firmware);
+                }
+                ReadOnlyResponse::Settings(settings) => {
+                    report.settings.push(settings);
+                }
+                ReadOnlyResponse::Battery(_) | ReadOnlyResponse::Diagnostics(_) => {}
+            }
+        }
+        DeviceEvent::Diagnostics(diagnostics) => {
+            report.diagnostics += 1;
+            report.diagnostics_snapshot.merge(diagnostics);
+            report.events.push(SessionBridgeEvent::Diagnostics {
+                monotonic_ms,
+                diagnostics,
+            });
+        }
+    }
 }
 
 fn format_write_type(mode: WriteType) -> &'static str {
@@ -964,14 +1058,16 @@ impl SessionPeripheral for btleplug::platform::Peripheral {
 
 async fn first_adapter() -> Result<Adapter, BtleError> {
     let manager = Manager::new().await?;
-    let mut adapters = manager.adapters().await?;
+    let mut adapters = backend_call("list adapters", manager.adapters()).await?;
     adapters.pop().ok_or(BtleError::NoAdapterAvailable)
 }
 
 async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObservation>, BtleError> {
     let mut observations = Vec::new();
-    for peripheral in adapter.peripherals().await? {
-        if let Some(properties) = peripheral.properties().await? {
+    for peripheral in backend_call("list peripherals", adapter.peripherals()).await? {
+        if let Some(properties) =
+            backend_call("read peripheral properties", peripheral.properties()).await?
+        {
             observations.push(PeripheralObservation::from_peripheral(
                 &peripheral,
                 &properties,
@@ -984,7 +1080,9 @@ async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObserva
 async fn observation_from_peripheral(
     peripheral: &btleplug::platform::Peripheral,
 ) -> Result<PeripheralObservation, BtleError> {
-    let Some(properties) = peripheral.properties().await? else {
+    let Some(properties) =
+        backend_call("read peripheral properties", peripheral.properties()).await?
+    else {
         return Ok(PeripheralObservation {
             identifier: peripheral.id().to_string(),
             address: None,
@@ -1003,8 +1101,10 @@ async fn find_peripheral(
     adapter: &Adapter,
     target: &ConnectionTarget,
 ) -> Result<btleplug::platform::Peripheral, BtleError> {
-    for peripheral in adapter.peripherals().await? {
-        let Some(properties) = peripheral.properties().await? else {
+    for peripheral in backend_call("list peripherals", adapter.peripherals()).await? {
+        let Some(properties) =
+            backend_call("read peripheral properties", peripheral.properties()).await?
+        else {
             continue;
         };
         let observation = PeripheralObservation::from_peripheral(&peripheral, &properties);
@@ -1037,6 +1137,19 @@ where
             Err(error) => return Err(error),
         }
     }
+}
+
+async fn backend_call<T, F>(operation: &'static str, future: F) -> Result<T, BtleError>
+where
+    F: Future<Output = Result<T, btleplug::Error>>,
+{
+    tokio::time::timeout(BACKEND_OPERATION_TIMEOUT, future)
+        .await
+        .map_err(|_| BtleError::OperationTimedOut {
+            operation,
+            after: BACKEND_OPERATION_TIMEOUT,
+        })?
+        .map_err(BtleError::Backend)
 }
 
 #[cfg(test)]
@@ -1178,6 +1291,19 @@ mod tests {
         };
 
         assert!(target.matches(&observation));
+    }
+
+    #[test]
+    fn operation_timeout_error_names_the_backend_operation() {
+        let error = crate::BtleError::OperationTimedOut {
+            operation: "start scan",
+            after: Duration::from_secs(10),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "bluetooth operation timed out: start scan after 10s"
+        );
     }
 
     #[test]
@@ -1470,6 +1596,8 @@ mod tests {
         .expect("bridge consumes notifications");
 
         assert_eq!(report.notifications, 1);
+        assert_eq!(report.notification_bytes, 2);
+        assert_eq!(report.latest_notification_len, Some(2));
         assert_eq!(report.telemetry, 1);
         assert_eq!(report.read_only_responses, 2);
         assert_eq!(
@@ -1495,6 +1623,29 @@ mod tests {
             RawFieldValue::new(0x0014, 30)
         );
         assert_eq!(report.diagnostics, 1);
+        assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::RawNotification {
+                monotonic_ms: 2,
+                len: 2,
+                ..
+            }
+        )));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: 2,
+                ..
+            }
+        )));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::Diagnostics {
+                monotonic_ms: 2,
+                diagnostics,
+            } if diagnostics.malformed_frames == 1
+        )));
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
     }
 
