@@ -8,7 +8,13 @@
 
 //! Bluetooth transport adapter scaffolding for Cutout.
 
-use std::{collections::BTreeSet, fmt, future::Future, pin::Pin, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    future::Future,
+    pin::Pin,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use btleplug::{
@@ -35,6 +41,7 @@ use uuid::Uuid;
 
 const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
 const BATTERY_LEVEL_UUID: Uuid = Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb);
+const SHARED_FFE0_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
 const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -61,6 +68,19 @@ pub struct PeripheralObservation {
 
     /// Advertised service UUIDs, if the peripheral exposed them.
     pub advertised_services: Vec<Uuid>,
+
+    /// Manufacturer data company ids and payload lengths advertised by the peripheral.
+    pub manufacturer_data: Vec<ManufacturerDataSummary>,
+}
+
+/// Summary of advertised manufacturer data without retaining opaque payload bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ManufacturerDataSummary {
+    /// Bluetooth SIG company identifier.
+    pub company_id: u16,
+
+    /// Payload length in bytes.
+    pub len: usize,
 }
 
 impl PeripheralObservation {
@@ -74,7 +94,12 @@ impl PeripheralObservation {
             name: properties.local_name.clone(),
             rssi: properties.rssi,
             advertised_services: properties.services.clone(),
+            manufacturer_data: manufacturer_data_summary(&properties.manufacturer_data),
         }
+    }
+
+    fn family_hints(&self) -> Vec<&'static str> {
+        scan_family_hints(self.name.as_deref(), &self.advertised_services)
     }
 }
 
@@ -89,8 +114,52 @@ impl fmt::Display for PeripheralObservation {
         if let Some(rssi) = self.rssi {
             write!(f, " rssi={rssi}")?;
         }
-        write!(f, " services=[{}]", join_uuids(&self.advertised_services))
+        write!(f, " services=[{}]", join_uuids(&self.advertised_services))?;
+        write!(
+            f,
+            " manufacturer_data=[{}]",
+            join_manufacturer_data(&self.manufacturer_data)
+        )?;
+        write!(f, " family_hints=[{}]", self.family_hints().join(","))
     }
+}
+
+fn manufacturer_data_summary(
+    manufacturer_data: &std::collections::HashMap<u16, Vec<u8>>,
+) -> Vec<ManufacturerDataSummary> {
+    manufacturer_data
+        .iter()
+        .map(|(&company_id, bytes)| (company_id, bytes.len()))
+        .collect::<BTreeMap<_, _>>()
+        .into_iter()
+        .map(|(company_id, len)| ManufacturerDataSummary { company_id, len })
+        .collect()
+}
+
+fn join_manufacturer_data(values: &[ManufacturerDataSummary]) -> String {
+    values
+        .iter()
+        .map(|value| format!("{:04x}:{}b", value.company_id, value.len))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn scan_family_hints(name: Option<&str>, advertised_services: &[Uuid]) -> Vec<&'static str> {
+    let mut hints = Vec::new();
+    if advertised_services.contains(&SHARED_FFE0_SERVICE_UUID) {
+        hints.push("shared-ffe0-ffe1");
+    }
+    if name.is_some_and(|name| {
+        name.contains("Aero") || name.contains("NOSFET") || name.starts_with("NF")
+    }) {
+        hints.push("name-nosfet-aero");
+    }
+    if name.is_some_and(|name| {
+        name.contains("Falcon") || name.contains("Begode") || name.contains("Gotway")
+    }) {
+        hints.push("name-begode-falcon");
+    }
+    hints
 }
 
 /// Target used to select a peripheral from scan results.
@@ -1591,6 +1660,7 @@ async fn observation_from_peripheral(
             name: None,
             rssi: None,
             advertised_services: Vec::new(),
+            manufacturer_data: Vec::new(),
         });
     };
     Ok(PeripheralObservation::from_peripheral(
@@ -1698,6 +1768,7 @@ mod tests {
             name: Some("NOSFET Aero".to_owned()),
             rssi: Some(-42),
             advertised_services: vec![],
+            manufacturer_data: Vec::new(),
         };
 
         assert!(target.matches(&observation));
@@ -1792,9 +1863,53 @@ mod tests {
             name: Some("NF2557".to_owned()),
             rssi: Some(-42),
             advertised_services: vec![],
+            manufacturer_data: Vec::new(),
         };
 
         assert!(target.matches(&observation));
+    }
+
+    #[test]
+    fn peripheral_observation_renders_manufacturer_data_without_payload_bytes() {
+        let observation = crate::PeripheralObservation {
+            identifier: "peripheral-id".to_owned(),
+            address: None,
+            name: Some("Generic".to_owned()),
+            rssi: Some(-60),
+            advertised_services: vec![],
+            manufacturer_data: vec![
+                crate::ManufacturerDataSummary {
+                    company_id: 0x004c,
+                    len: 6,
+                },
+                crate::ManufacturerDataSummary {
+                    company_id: 0x000f,
+                    len: 2,
+                },
+            ],
+        };
+
+        assert_eq!(
+            observation.to_string(),
+            "id=peripheral-id name=Generic rssi=-60 services=[] manufacturer_data=[004c:6b,000f:2b] family_hints=[]"
+        );
+    }
+
+    #[test]
+    fn peripheral_observation_renders_family_hints_as_non_final_evidence() {
+        let observation = crate::PeripheralObservation {
+            identifier: "peripheral-id".to_owned(),
+            address: None,
+            name: Some("NF2557".to_owned()),
+            rssi: None,
+            advertised_services: vec![Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb)],
+            manufacturer_data: Vec::new(),
+        };
+
+        assert_eq!(
+            observation.to_string(),
+            "id=peripheral-id name=NF2557 services=[0000ffe0-0000-1000-8000-00805f9b34fb] manufacturer_data=[] family_hints=[shared-ffe0-ffe1,name-nosfet-aero]"
+        );
     }
 
     #[test]
@@ -1819,6 +1934,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -1847,6 +1963,7 @@ mod tests {
                 name: Some("Raw device".to_owned()),
                 rssi: None,
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -1884,6 +2001,7 @@ mod tests {
                 name: Some("Raw device".to_owned()),
                 rssi: None,
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -1964,6 +2082,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb),
@@ -1993,6 +2112,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![],
         };
@@ -2043,6 +2163,7 @@ mod tests {
                 advertised_services: vec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
                 )],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2139,6 +2260,7 @@ mod tests {
                 name: Some("Begode_Falcon".to_owned()),
                 rssi: None,
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![],
         };
@@ -2192,6 +2314,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2224,6 +2347,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2360,6 +2484,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2428,6 +2553,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2529,6 +2655,7 @@ mod tests {
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2806,6 +2933,7 @@ mod tests {
                 advertised_services: vec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
                 )],
+                manufacturer_data: Vec::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),

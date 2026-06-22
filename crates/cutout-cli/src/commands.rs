@@ -1074,6 +1074,7 @@ mod tests {
                 advertised_services: vec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
                 )],
+                manufacturer_data: Vec::new(),
             },
             services: vec![ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -1153,6 +1154,7 @@ mod tests {
                 name: Some("Unknown PEV".to_owned()),
                 rssi: Some(-67),
                 advertised_services: vec![service],
+                manufacturer_data: Vec::new(),
             },
             services: vec![ServiceSummary {
                 uuid: service,

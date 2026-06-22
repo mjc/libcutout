@@ -31,7 +31,9 @@ Target selection:
 const SCAN_LONG_ABOUT: &str = "\
 Scan for nearby Bluetooth Low Energy peripherals and print one observation per
 line. Output includes the platform identifier or address, advertised name,
-RSSI when available, and advertised service UUIDs.";
+RSSI when available, advertised service UUIDs, manufacturer-data summaries,
+and candidate family hints. Names and advertised services are hints only, not
+final device identification.";
 const CONNECT_LONG_ABOUT: &str = "\
 Scan for a peripheral, connect to it, discover its GATT services, and print a
 summary of the discovered service/characteristic tree.
@@ -1193,6 +1195,9 @@ mod tests {
                 "one observation per",
                 "platform identifier or address",
                 "advertised service UUIDs",
+                "manufacturer-data summaries",
+                "candidate family hints",
+                "hints only",
                 "RSSI",
                 "--seconds <SECONDS>",
             ],

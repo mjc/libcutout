@@ -1831,6 +1831,7 @@ mod tests {
                 name: Some("Aero NF2557".to_owned()),
                 rssi: Some(-61),
                 advertised_services: vec![],
+                manufacturer_data: Vec::new(),
             },
             services: Vec::new(),
         };
