@@ -455,5 +455,33 @@ mod tests {
 
             prop_assert_eq!(fragmented_frames, whole_frames);
         }
+
+        #[test]
+        fn notification_boundary_cases_match_whole_frame_reassembly(
+            chunk_sizes in proptest::collection::vec(1usize..16, 1..16),
+        ) {
+            let frame = long_veteran_frame();
+            let channel = cutout_core::GattChannel::from_bytes([0x5c; 16]);
+            let cases = cutout_core::notification_boundary_replay_cases(
+                channel,
+                &[frame.as_slice()],
+                1,
+                &chunk_sizes,
+            );
+            let expected = feed_chunk(&mut VeteranFrameReassembler::default(), &frame);
+
+            for case in cases {
+                let mut reassembler = VeteranFrameReassembler::default();
+                let mut observed = Vec::new();
+                for record in case.records {
+                    let cutout_core::CaptureRecord::Notification { bytes, .. } = record else {
+                        continue;
+                    };
+                    observed.extend(feed_chunk(&mut reassembler, &bytes));
+                }
+
+                prop_assert_eq!(&observed, &expected, "case {}", case.name);
+            }
+        }
     }
 }

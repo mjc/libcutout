@@ -2839,6 +2839,27 @@ pub struct ReplayChunkComparison {
     pub arbitrary_matches: bool,
 }
 
+/// Named replay case for testing parser behavior across notification
+/// boundaries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NotificationBoundaryReplayCase {
+    /// Stable case name for assertion diagnostics.
+    pub name: &'static str,
+
+    /// Replay records for this notification boundary layout.
+    pub records: Vec<CaptureRecord>,
+}
+
+/// Named replay case for malformed or lossy notification streams.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NotificationImpairmentReplayCase {
+    /// Stable case name for assertion diagnostics.
+    pub name: &'static str,
+
+    /// Replay records for this impaired notification stream.
+    pub records: Vec<CaptureRecord>,
+}
+
 /// Replays a capture and returns semantic events only.
 ///
 /// Raw [`DeviceEvent::NotificationReceived`] metadata is intentionally
@@ -2923,6 +2944,179 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<usize> {
         covered += next;
     }
     lengths
+}
+
+/// Builds reusable replay cases for parser tests from protocol frames.
+///
+/// The returned cases cover one frame per notification, one byte per
+/// notification, caller-supplied arbitrary chunk lengths, and all frames
+/// coalesced into one notification. Parser tests can state canonical protocol
+/// frames once, then compare expected semantic events across these boundary
+/// layouts.
+#[must_use]
+pub fn notification_boundary_replay_cases(
+    channel: GattChannel,
+    frames: &[&[u8]],
+    monotonic_ms: MonotonicMillis,
+    arbitrary_lengths: &[usize],
+) -> Vec<NotificationBoundaryReplayCase> {
+    let whole_records = notification_records(channel, frames, monotonic_ms);
+    let one_byte_records = split_capture_notifications_by_len(&whole_records, 1);
+    let arbitrary_records =
+        split_capture_notifications_by_lengths(&whole_records, arbitrary_lengths);
+    let coalesced_records = coalesced_notification_record(channel, frames, monotonic_ms);
+
+    vec![
+        NotificationBoundaryReplayCase {
+            name: "whole",
+            records: whole_records,
+        },
+        NotificationBoundaryReplayCase {
+            name: "one-byte",
+            records: one_byte_records,
+        },
+        NotificationBoundaryReplayCase {
+            name: "arbitrary",
+            records: arbitrary_records,
+        },
+        NotificationBoundaryReplayCase {
+            name: "coalesced",
+            records: coalesced_records,
+        },
+    ]
+}
+
+/// Builds reusable replay cases for parser tests that exercise malformed
+/// streams.
+///
+/// The returned cases include garbage before a valid frame, duplicate first
+/// chunks, missing final bytes, and a timeout tick after a partial frame.
+/// Parser tests should state the expected behavior for each named case because
+/// some protocols recover while others intentionally reject or wait.
+#[must_use]
+pub fn notification_impairment_replay_cases(
+    channel: GattChannel,
+    frame: &[u8],
+    monotonic_ms: MonotonicMillis,
+    garbage_prefix: &[u8],
+    timeout_ms: MonotonicMillis,
+) -> Vec<NotificationImpairmentReplayCase> {
+    vec![
+        NotificationImpairmentReplayCase {
+            name: "garbage-prefix",
+            records: vec![CaptureRecord::notification(
+                channel,
+                prefixed_bytes(garbage_prefix, frame),
+                monotonic_ms,
+            )],
+        },
+        NotificationImpairmentReplayCase {
+            name: "duplicate-first-chunk",
+            records: duplicate_first_chunk_records(channel, frame, monotonic_ms),
+        },
+        NotificationImpairmentReplayCase {
+            name: "missing-final-byte",
+            records: missing_final_byte_record(channel, frame, monotonic_ms),
+        },
+        NotificationImpairmentReplayCase {
+            name: "timeout-after-partial",
+            records: timeout_after_partial_records(channel, frame, monotonic_ms, timeout_ms),
+        },
+    ]
+}
+
+fn notification_records(
+    channel: GattChannel,
+    frames: &[&[u8]],
+    monotonic_ms: MonotonicMillis,
+) -> Vec<CaptureRecord> {
+    frames
+        .iter()
+        .map(|frame| CaptureRecord::notification(channel, (*frame).to_vec(), monotonic_ms))
+        .collect()
+}
+
+fn coalesced_notification_record(
+    channel: GattChannel,
+    frames: &[&[u8]],
+    monotonic_ms: MonotonicMillis,
+) -> Vec<CaptureRecord> {
+    let len = frames.iter().map(|frame| frame.len()).sum();
+    let mut bytes = Vec::with_capacity(len);
+    for frame in frames {
+        bytes.extend_from_slice(frame);
+    }
+
+    if bytes.is_empty() {
+        Vec::new()
+    } else {
+        vec![CaptureRecord::notification(channel, bytes, monotonic_ms)]
+    }
+}
+
+fn prefixed_bytes(prefix: &[u8], bytes: &[u8]) -> Vec<u8> {
+    let mut prefixed = Vec::with_capacity(prefix.len().saturating_add(bytes.len()));
+    prefixed.extend_from_slice(prefix);
+    prefixed.extend_from_slice(bytes);
+    prefixed
+}
+
+fn duplicate_first_chunk_records(
+    channel: GattChannel,
+    frame: &[u8],
+    monotonic_ms: MonotonicMillis,
+) -> Vec<CaptureRecord> {
+    if frame.is_empty() {
+        return Vec::new();
+    }
+
+    let split = frame.len().clamp(1, 4);
+    let first = frame[..split].to_vec();
+    let mut records = vec![
+        CaptureRecord::notification(channel, first.clone(), monotonic_ms),
+        CaptureRecord::notification(channel, first, monotonic_ms),
+    ];
+
+    if split < frame.len() {
+        records.push(CaptureRecord::notification(
+            channel,
+            frame[split..].to_vec(),
+            monotonic_ms,
+        ));
+    }
+
+    records
+}
+
+fn missing_final_byte_record(
+    channel: GattChannel,
+    frame: &[u8],
+    monotonic_ms: MonotonicMillis,
+) -> Vec<CaptureRecord> {
+    let Some(truncated_len) = frame.len().checked_sub(1) else {
+        return Vec::new();
+    };
+
+    vec![CaptureRecord::notification(
+        channel,
+        frame[..truncated_len].to_vec(),
+        monotonic_ms,
+    )]
+}
+
+fn timeout_after_partial_records(
+    channel: GattChannel,
+    frame: &[u8],
+    monotonic_ms: MonotonicMillis,
+    timeout_ms: MonotonicMillis,
+) -> Vec<CaptureRecord> {
+    let split = frame.len().saturating_sub(1);
+    vec![
+        CaptureRecord::notification(channel, frame[..split].to_vec(), monotonic_ms),
+        CaptureRecord::Tick {
+            monotonic_ms: timeout_ms,
+        },
+    ]
 }
 
 fn split_capture_notifications_by_len(
@@ -5222,6 +5416,63 @@ mod tests {
                 monotonic_ms: 1
             }]),
             Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn notification_boundary_cases_cover_whole_bytewise_arbitrary_and_coalesced_replay() {
+        let channel = GattChannel::from_bytes([0x79; 16]);
+        let frame_a = [0xaa, 0xbb, 0xcc];
+        let frame_b = [0xdd, 0xee];
+
+        let cases = crate::notification_boundary_replay_cases(
+            channel,
+            &[frame_a.as_slice(), frame_b.as_slice()],
+            10,
+            &[2],
+        );
+
+        assert_eq!(
+            cases.iter().map(|case| case.name).collect::<Vec<_>>(),
+            vec!["whole", "one-byte", "arbitrary", "coalesced"]
+        );
+        assert_eq!(
+            cases
+                .iter()
+                .map(|case| case.records.len())
+                .collect::<Vec<_>>(),
+            vec![2, 5, 3, 1]
+        );
+    }
+
+    #[test]
+    fn notification_impairment_cases_cover_noisy_duplicate_missing_and_timeout_replay() {
+        let channel = GattChannel::from_bytes([0x7a; 16]);
+        let frame = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
+
+        let cases = crate::notification_impairment_replay_cases(
+            channel,
+            frame.as_slice(),
+            10,
+            &[0x00, 0x01],
+            99,
+        );
+
+        assert_eq!(
+            cases.iter().map(|case| case.name).collect::<Vec<_>>(),
+            vec![
+                "garbage-prefix",
+                "duplicate-first-chunk",
+                "missing-final-byte",
+                "timeout-after-partial",
+            ]
+        );
+        assert_eq!(
+            cases
+                .iter()
+                .map(|case| case.records.len())
+                .collect::<Vec<_>>(),
+            vec![1, 3, 1, 2]
         );
     }
 
