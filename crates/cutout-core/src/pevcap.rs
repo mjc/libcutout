@@ -8,7 +8,8 @@ use crate::GattRoles;
 #[cfg(feature = "serde")]
 use crate::VerificationStatus;
 use crate::{
-    GattChannel, GattFingerprint, MonotonicMillis, ProtocolFamily, VerifiedValue, WriteMode,
+    CaptureRecord, GattChannel, GattFingerprint, LinkInfo, MonotonicMillis, ProtocolFamily,
+    VerifiedValue, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -321,6 +322,27 @@ impl PevcapCapture {
         }
     }
 
+    /// Converts inbound PEVCAP transport records into deterministic replay
+    /// inputs.
+    ///
+    /// Outbound writes are preserved in the PEVCAP record stream for audit, but
+    /// are not converted into replay inputs because the core replay facade
+    /// drives host commands rather than low-level transport writes.
+    #[must_use]
+    pub fn replay_records(&self) -> Vec<CaptureRecord> {
+        let mut records = Vec::with_capacity(self.records.len().saturating_add(1));
+        records.push(CaptureRecord::LinkUp(LinkInfo {
+            monotonic_ms: 0,
+            max_write_len: self.header.write_limit,
+        }));
+        records.extend(
+            self.records
+                .iter()
+                .filter_map(PevcapRecord::to_replay_record),
+        );
+        records
+    }
+
     /// Serializes this capture as line-delimited JSON for review tooling.
     ///
     /// The first line is a PEVCAP header line, followed by one transport
@@ -537,6 +559,19 @@ impl PevcapCapture {
         match encoding {
             PevcapEncoding::Jsonl => Ok(Self::from_jsonl(std::str::from_utf8(input)?)?),
             PevcapEncoding::Binary => Ok(Self::from_binary(input)?),
+        }
+    }
+}
+
+impl PevcapRecord {
+    fn to_replay_record(&self) -> Option<CaptureRecord> {
+        match self.direction {
+            PevcapDirection::Inbound => Some(CaptureRecord::notification(
+                self.characteristic,
+                self.bytes.clone(),
+                self.monotonic_ms,
+            )),
+            PevcapDirection::Outbound => None,
         }
     }
 }
@@ -1317,6 +1352,78 @@ mod tests {
         assert_eq!(capture.version, PevcapFormatVersion::current());
         assert_eq!(capture.header, header);
         assert_eq!(capture.records, records);
+    }
+
+    #[test]
+    fn pevcap_capture_converts_inbound_notifications_to_replay_records() {
+        let service = GattChannel::from_bytes([0x44; 16]);
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(
+            1,
+            "darwin",
+            Some(23),
+            &[service],
+            &[],
+            None,
+            "0.1.0",
+            [0x11; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::outbound_write(
+                    7,
+                    characteristic,
+                    WriteMode::WithoutResponse,
+                    b"N".to_vec(),
+                ),
+                PevcapRecord::inbound_notification(
+                    9,
+                    characteristic,
+                    service,
+                    b"NAME=Falcon".to_vec(),
+                ),
+                PevcapRecord::inbound_notification(11, characteristic, service, b"55aa".to_vec()),
+            ],
+        );
+
+        assert_eq!(
+            capture.replay_records(),
+            vec![
+                CaptureRecord::LinkUp(LinkInfo {
+                    monotonic_ms: 0,
+                    max_write_len: Some(23),
+                }),
+                CaptureRecord::notification(characteristic, b"NAME=Falcon".to_vec(), 9),
+                CaptureRecord::notification(characteristic, b"55aa".to_vec(), 11),
+            ]
+        );
+    }
+
+    #[test]
+    fn pevcap_capture_without_inbound_records_has_only_link_replay_input() {
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(1, "darwin", None, &[], &[], None, "0.1.0", [0; 32], &[])
+            .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::outbound_write(
+                7,
+                characteristic,
+                WriteMode::WithoutResponse,
+                b"N".to_vec(),
+            )],
+        );
+
+        assert_eq!(
+            capture.replay_records(),
+            vec![CaptureRecord::LinkUp(LinkInfo {
+                monotonic_ms: 0,
+                max_write_len: None,
+            })]
+        );
     }
 
     #[cfg(feature = "serde")]

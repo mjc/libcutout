@@ -7,8 +7,8 @@ use cutout_btle::{
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    DeviceCommand, FirmwareInfo, Measured, PevcapCapture, PevcapEncoding, SettingsReadback,
-    TelemetrySnapshot,
+    DeviceCommand, DeviceEvent, FirmwareInfo, HostSession, Measured, PevcapCapture, PevcapEncoding,
+    SessionOutput, SettingsReadback, TelemetrySnapshot,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
@@ -49,6 +49,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 fn pevcap(args: PevcapArgs) -> Result<()> {
     match args.command {
         PevcapCommand::Convert(args) => pevcap_convert(&args)?,
+        PevcapCommand::Replay(args) => pevcap_replay(&args)?,
     }
 
     Ok(())
@@ -82,6 +83,107 @@ const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
         PevcapFormat::Jsonl => PevcapEncoding::Jsonl,
         PevcapFormat::Binary => PevcapEncoding::Binary,
     }
+}
+
+fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
+    let input = fs::read(&args.input)?;
+    let capture = PevcapCapture::decode(&input, pevcap_encoding(args.input_format))?;
+    let report = replay_pevcap_capture(&capture, selected_session_profile(args.profile));
+    println!("{}", render_pevcap_replay_report(&report));
+    if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
+        println!("{telemetry}");
+    }
+    if let Some(firmware) = render_firmware_info(report.firmware) {
+        println!("{firmware}");
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PevcapReplayReport {
+    replay_records: usize,
+    outputs: usize,
+    telemetry: usize,
+    read_only_responses: usize,
+    diagnostics: usize,
+    telemetry_snapshot: TelemetrySnapshot,
+    firmware: Option<FirmwareInfo>,
+}
+
+fn replay_pevcap_capture(
+    capture: &PevcapCapture,
+    profile: SelectedSessionProfile,
+) -> PevcapReplayReport {
+    match profile {
+        SelectedSessionProfile::Aero => replay_pevcap_with_session(
+            capture,
+            ReadOnlySession::<NosfetAeroModel, false>::default(),
+        ),
+        SelectedSessionProfile::Falcon => replay_pevcap_with_session(
+            capture,
+            ReadOnlySession::<BegodeFalconModel, true>::default(),
+        ),
+    }
+}
+
+fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapReplayReport
+where
+    S: cutout_core::ProtocolSession,
+{
+    let records = capture.replay_records();
+    let mut host = HostSession::new(session);
+    let outputs = cutout_core::replay_capture(&mut host, &records);
+    summarize_pevcap_replay(records.len(), &outputs)
+}
+
+fn summarize_pevcap_replay(replay_records: usize, outputs: &[SessionOutput]) -> PevcapReplayReport {
+    let mut report = PevcapReplayReport {
+        replay_records,
+        outputs: outputs.len(),
+        telemetry: 0,
+        read_only_responses: 0,
+        diagnostics: 0,
+        telemetry_snapshot: TelemetrySnapshot::default(),
+        firmware: None,
+    };
+
+    for output in outputs {
+        let SessionOutput::Event(event) = output else {
+            continue;
+        };
+        match event {
+            DeviceEvent::Telemetry(delta) => {
+                report.telemetry += 1;
+                report.telemetry_snapshot.apply_delta(*delta);
+            }
+            DeviceEvent::ReadOnlyResponse(response) => {
+                report.read_only_responses += 1;
+                if let cutout_core::ReadOnlyResponse::Firmware(firmware) = response {
+                    report.firmware = Some(*firmware);
+                }
+            }
+            DeviceEvent::Diagnostics(_) => {
+                report.diagnostics += 1;
+            }
+            DeviceEvent::LinkUp(_)
+            | DeviceEvent::LinkDown
+            | DeviceEvent::NotificationReceived { .. }
+            | DeviceEvent::Tick { .. } => {}
+        }
+    }
+
+    report
+}
+
+fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
+    format!(
+        "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={}",
+        report.replay_records,
+        report.outputs,
+        report.telemetry,
+        report.read_only_responses,
+        report.diagnostics
+    )
 }
 
 async fn dashboard(args: DashboardArgs) -> Result<()> {
@@ -617,6 +719,37 @@ mod tests {
         )
     }
 
+    fn sample_aero_replay_capture() -> PevcapCapture {
+        let header = PevcapHeader::new(
+            1_725_000_123_456,
+            "darwin",
+            Some(23),
+            &[VETERAN_DATA_CHANNEL],
+            &[],
+            None,
+            "0.1.0",
+            [0x24; 32],
+            &["aero replay"],
+        )
+        .expect("header should validate");
+        PevcapCapture::new(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                42,
+                VETERAN_DATA_CHANNEL,
+                VETERAN_DATA_CHANNEL,
+                hex_literal::hex!(
+                    "dc5a5c5f2a09000000170000ab6c001700000bea\
+                     045c00000226021ca8f607801b1f000080c80000\
+                     808080808080030689065706a20686067c06f700\
+                     00000000000000000000000e0e0e0200000000a5\
+                     11000053f401c50000000000bffffaf33f9782"
+                )
+                .to_vec(),
+            )],
+        )
+    }
+
     #[test]
     fn pevcap_converter_turns_jsonl_into_binary_container() {
         let capture = sample_pevcap_capture();
@@ -642,6 +775,48 @@ mod tests {
                 .expect("JSONL decodes");
 
         assert_eq!(decoded, capture);
+    }
+
+    #[test]
+    fn pevcap_replay_report_renders_counts() {
+        let report = PevcapReplayReport {
+            replay_records: 2,
+            outputs: 3,
+            telemetry: 1,
+            read_only_responses: 1,
+            diagnostics: 1,
+            telemetry_snapshot: TelemetrySnapshot::default(),
+            firmware: None,
+        };
+
+        assert_eq!(
+            render_pevcap_replay_report(&report),
+            "pevcap replay records=2 outputs=3 telemetry=1 read_only_responses=1 diagnostics=1"
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_drives_selected_aero_session() {
+        let capture = sample_aero_replay_capture();
+
+        let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero);
+
+        assert_eq!(report.replay_records, 2);
+        assert!(report.telemetry >= 1);
+        assert!(report.read_only_responses >= 1);
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .voltage_mv
+                .map(|voltage| voltage.value),
+            Some(107_610)
+        );
+        assert_eq!(
+            report
+                .firmware
+                .and_then(|firmware| firmware.firmware_major.map(|major| major.value)),
+            Some(43)
+        );
     }
 
     #[test]

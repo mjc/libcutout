@@ -60,6 +60,12 @@ Convert a PEVCAP capture between JSONL and binary container formats.
 The command decodes the input through the canonical cutout-core PEVCAP model
 before writing the output, so malformed magic, unsupported versions, truncated
 records, and header bound violations fail before a converted file is written.";
+const PEVCAP_REPLAY_LONG_ABOUT: &str = "\
+Replay a PEVCAP capture into a selected read-only protocol session without
+connecting to Bluetooth hardware.
+
+This command currently requires an explicit profile. Auto-detection from
+persisted identity and GATT evidence is tracked separately.";
 const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
@@ -187,6 +193,10 @@ pub(crate) enum PevcapCommand {
     /// Convert a capture between JSONL and binary PEVCAP formats.
     #[command(long_about = PEVCAP_CONVERT_LONG_ABOUT)]
     Convert(PevcapConvertArgs),
+
+    /// Replay a capture through a selected read-only session.
+    #[command(long_about = PEVCAP_REPLAY_LONG_ABOUT)]
+    Replay(PevcapReplayArgs),
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -206,6 +216,21 @@ pub(crate) struct PevcapConvertArgs {
     /// Output capture format.
     #[arg(long = "output-format", value_enum)]
     pub(crate) output_format: PevcapFormat,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct PevcapReplayArgs {
+    /// Input capture path.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) input: PathBuf,
+
+    /// Input capture format.
+    #[arg(long = "input-format", value_enum)]
+    pub(crate) input_format: PevcapFormat,
+
+    /// Read-only protocol profile used for replay.
+    #[arg(long, value_enum)]
+    pub(crate) profile: SessionProfile,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -267,8 +292,8 @@ mod tests {
 
     use super::{
         Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs, PevcapCommand,
-        PevcapConvertArgs, PevcapFormat, ReadProbe, ScanArgs, SessionProfile, TargetArgs,
-        TargetedScanArgs,
+        PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, ReadProbe, ScanArgs, SessionProfile,
+        TargetArgs, TargetedScanArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -675,6 +700,33 @@ mod tests {
                     input_format: PevcapFormat::Jsonl,
                     output: PathBuf::from("session.pevcap"),
                     output_format: PevcapFormat::Binary,
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn parses_pevcap_replay_command() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            "session.pevcap",
+            "--input-format",
+            "binary",
+            "--profile",
+            "falcon",
+        ])
+        .expect("parser accepts PEVCAP replay");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Replay(PevcapReplayArgs {
+                    input: PathBuf::from("session.pevcap"),
+                    input_format: PevcapFormat::Binary,
+                    profile: SessionProfile::Falcon,
                 })
             })
         );
