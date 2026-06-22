@@ -1905,7 +1905,9 @@ fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, mo
                 ReadOnlyResponse::Settings(settings) => {
                     report.settings.push(settings);
                 }
-                ReadOnlyResponse::Battery(_) | ReadOnlyResponse::Diagnostics(_) => {}
+                ReadOnlyResponse::Battery(_)
+                | ReadOnlyResponse::Diagnostics(_)
+                | ReadOnlyResponse::RawTelemetry(_) => {}
             }
         }
         DeviceEvent::Diagnostics(diagnostics) => {

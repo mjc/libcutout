@@ -2282,6 +2282,13 @@ pub struct DiagnosticReadback {
     pub details: [Option<DiagnosticDetail>; 4],
 }
 
+/// Bounded protocol-native raw telemetry readback.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RawTelemetryReadback {
+    /// Raw telemetry field slots.
+    pub fields: [Option<RawFieldValue>; 4],
+}
+
 /// Generic read-only settings entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettingsEntry {
@@ -2317,6 +2324,9 @@ pub enum ReadOnlyResponse {
     /// Diagnostic response.
     Diagnostics(DiagnosticReadback),
 
+    /// Protocol-native raw telemetry response.
+    RawTelemetry(RawTelemetryReadback),
+
     /// Settings readback response.
     Settings(SettingsReadback),
 }
@@ -2329,6 +2339,7 @@ impl ReadOnlyResponse {
             Self::Firmware(_) => CommandKind::RequestFirmwareInfo,
             Self::Battery(_) => CommandKind::RequestBatteryInfo,
             Self::Diagnostics(_) => CommandKind::RequestDiagnostics,
+            Self::RawTelemetry(_) => CommandKind::RequestTelemetry,
             Self::Settings(_) => CommandKind::RequestSettings,
         }
     }
@@ -3360,6 +3371,7 @@ mod tests {
         assert_eq!(size_of::<crate::BatteryPageMetadata>(), 3);
         assert!(size_of::<crate::BatteryInfo>() <= 64);
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
+        assert!(size_of::<crate::RawTelemetryReadback>() <= 96);
         assert!(size_of::<crate::ReadOnlyResponse>() <= 104);
         assert_eq!(size_of::<SessionOutput>(), 128);
         assert_eq!(size_of::<TransportAction>(), 64);
@@ -3372,6 +3384,31 @@ mod tests {
         assert_eq!(size_of::<WritePayload>(), 40);
         assert_eq!(size_of::<TransportAction>(), 64);
         assert_eq!(size_of::<SessionOutput>(), 128);
+    }
+
+    #[test]
+    fn raw_telemetry_response_preserves_protocol_native_fields() {
+        let response = crate::ReadOnlyResponse::RawTelemetry(crate::RawTelemetryReadback {
+            fields: [
+                Some(crate::RawFieldValue::new(0x8001, 989)),
+                Some(crate::RawFieldValue::new(0x8002, -21_973)),
+                Some(crate::RawFieldValue::new(0x8003, 20)),
+                Some(crate::RawFieldValue::new(0x8004, 0)),
+            ],
+        });
+
+        assert_eq!(
+            response.command_kind(),
+            crate::CommandKind::RequestTelemetry
+        );
+        let crate::ReadOnlyResponse::RawTelemetry(raw) = response else {
+            panic!("expected raw telemetry");
+        };
+        assert_eq!(raw.fields[0], Some(crate::RawFieldValue::new(0x8001, 989)));
+        assert_eq!(
+            raw.fields[1],
+            Some(crate::RawFieldValue::new(0x8002, -21_973))
+        );
     }
 
     #[test]

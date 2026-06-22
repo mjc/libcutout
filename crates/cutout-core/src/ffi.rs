@@ -2,8 +2,8 @@ use crate::{
     BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, CommandKind,
     ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail,
     DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
-    LightState, Measured, ParserDiagnostics, RawFieldValue, ReadOnlyResponse, SafetyClass,
-    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta,
+    LightState, Measured, ParserDiagnostics, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    SafetyClass, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta,
     TelemetrySnapshot, TransportAction, ValueQuality, ValueSource, VerificationStatus, WriteMode,
 };
 
@@ -40,6 +40,9 @@ pub enum ReadOnlyResponsePayloadDto {
 
     /// Diagnostic readback response.
     Diagnostics(DiagnosticReadbackDto),
+
+    /// Protocol-native raw telemetry response.
+    RawTelemetry(RawTelemetryReadbackDto),
 }
 
 impl From<ReadOnlyResponse> for ReadOnlyResponsePayloadDto {
@@ -49,6 +52,7 @@ impl From<ReadOnlyResponse> for ReadOnlyResponsePayloadDto {
             ReadOnlyResponse::Battery(battery) => Self::Battery(battery.into()),
             ReadOnlyResponse::Settings(settings) => Self::Settings(settings.into()),
             ReadOnlyResponse::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics.into()),
+            ReadOnlyResponse::RawTelemetry(raw) => Self::RawTelemetry(raw.into()),
         }
     }
 }
@@ -696,6 +700,21 @@ impl From<DiagnosticReadback> for DiagnosticReadbackDto {
                 .flatten()
                 .map(Into::into)
                 .collect(),
+        }
+    }
+}
+
+/// UniFFI-ready raw telemetry readback DTO.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawTelemetryReadbackDto {
+    /// Present raw telemetry fields.
+    pub fields: Vec<RawFieldValueDto>,
+}
+
+impl From<RawTelemetryReadback> for RawTelemetryReadbackDto {
+    fn from(raw: RawTelemetryReadback) -> Self {
+        Self {
+            fields: raw.fields.into_iter().flatten().map(Into::into).collect(),
         }
     }
 }
@@ -1423,6 +1442,30 @@ mod tests {
             diagnostics.details[0].verification,
             VerificationStatusDto::SourceVerified
         );
+    }
+
+    #[test]
+    fn read_only_raw_telemetry_dto_owns_present_fields_only() {
+        let response = ReadOnlyResponse::RawTelemetry(RawTelemetryReadback {
+            fields: [
+                Some(RawFieldValue::new(0x8001, 989)),
+                None,
+                Some(RawFieldValue::new(0x8002, -21_973)),
+                None,
+            ],
+        });
+
+        let dto = ReadOnlyResponseDto::from(response);
+
+        assert_eq!(dto.command_kind, CommandKindDto::RequestTelemetry);
+        let ReadOnlyResponsePayloadDto::RawTelemetry(raw) = dto.payload else {
+            panic!("expected raw telemetry DTO");
+        };
+        assert_eq!(raw.fields.len(), 2);
+        assert_eq!(raw.fields[0].id, 0x8001);
+        assert_eq!(raw.fields[0].value, 989);
+        assert_eq!(raw.fields[1].id, 0x8002);
+        assert_eq!(raw.fields[1].value, -21_973);
     }
 
     #[test]

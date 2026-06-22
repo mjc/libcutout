@@ -3,8 +3,8 @@ use cutout_core::{
     BatteryInfo, Capabilities, CommandKind, DeviceCommand, DeviceEvent, DiagnosticDetail,
     DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
     ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession, RawFieldValue,
-    ReadOnlyResponse, SafetyClass, SessionInput, SessionOutput, TransportAction, ValueQuality,
-    VerificationStatus, WritePayload,
+    RawTelemetryReadback, ReadOnlyResponse, SafetyClass, SessionInput, SessionOutput,
+    TransportAction, ValueQuality, VerificationStatus, WritePayload,
 };
 
 use crate::{
@@ -323,7 +323,7 @@ fn push_vesc_reply(
                 vesc_values_to_delta(*values, monotonic_ms),
             )));
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Diagnostics(vesc_values_to_diagnostics(*values)),
+                ReadOnlyResponse::RawTelemetry(vesc_values_to_raw_telemetry(*values)),
             )));
         }
         VescReadOnlyReply::Stats(stats) => {
@@ -346,22 +346,22 @@ fn vesc_values_to_delta(
     }
 }
 
-fn vesc_values_to_diagnostics(values: VescValuesTelemetry) -> DiagnosticReadback {
-    DiagnosticReadback {
-        details: [
-            Some(vesc_diagnostic_detail(
+fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryReadback {
+    RawTelemetryReadback {
+        fields: [
+            Some(RawFieldValue::new(
                 VESC_RAW_ERPM_FIELD_ID,
                 i64::from(values.rpm_erpm),
             )),
-            Some(vesc_diagnostic_detail(
+            Some(RawFieldValue::new(
                 VESC_RAW_TACHOMETER_FIELD_ID,
                 i64::from(values.tachometer),
             )),
-            Some(vesc_diagnostic_detail(
+            Some(RawFieldValue::new(
                 VESC_RAW_CONTROLLER_ID_FIELD_ID,
                 i64::from(values.controller_id),
             )),
-            Some(vesc_diagnostic_detail(
+            Some(RawFieldValue::new(
                 VESC_RAW_FAULT_CODE_FIELD_ID,
                 i64::from(vesc_fault_code_raw(values.fault_code)),
             )),
@@ -1373,25 +1373,25 @@ mod tests {
         assert_eq!(delta.speed_mm_s, None);
 
         let responses = read_only_response_events(&output);
-        let ReadOnlyResponse::Diagnostics(diagnostics) =
-            responses.last().expect("VESC values diagnostics")
+        let ReadOnlyResponse::RawTelemetry(raw) =
+            responses.last().expect("VESC values raw telemetry")
         else {
-            panic!("expected diagnostics response");
+            panic!("expected raw telemetry response");
         };
         assert_eq!(
-            diagnostics.details[0].expect("erpm").field,
+            raw.fields[0].expect("erpm"),
             RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 989)
         );
         assert_eq!(
-            diagnostics.details[1].expect("tachometer").field,
+            raw.fields[1].expect("tachometer"),
             RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -21_973)
         );
         assert_eq!(
-            diagnostics.details[2].expect("controller id").field,
+            raw.fields[2].expect("controller id"),
             RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 20)
         );
         assert_eq!(
-            diagnostics.details[3].expect("fault").field,
+            raw.fields[3].expect("fault"),
             RawFieldValue::new(VESC_RAW_FAULT_CODE_FIELD_ID, 0)
         );
     }

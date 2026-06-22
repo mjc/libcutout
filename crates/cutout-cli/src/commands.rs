@@ -1348,6 +1348,13 @@ fn render_read_only_response_jsonl(
             "response": "diagnostics",
             "details": diagnostics.details.into_iter().flatten().map(diagnostic_detail_json).collect::<Vec<_>>(),
         })),
+        ReadOnlyResponse::RawTelemetry(raw) => serde_json::to_string(&serde_json::json!({
+            "type": "read_only_response",
+            "sequence": sequence,
+            "command_kind": command_kind_name(response.command_kind()),
+            "response": "raw_telemetry",
+            "fields": raw.fields.into_iter().flatten().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
+        })),
     }
 }
 
