@@ -1356,7 +1356,25 @@ mod tests {
     use super::*;
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
     use cutout_core::{Measured, TelemetrySnapshot};
+    use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+    fn live_aero_telemetry_snapshot() -> TelemetrySnapshot {
+        let frame = VeteranFrame::try_from_slice(&hex_literal::hex!(
+            "dc5a5c532a7c000000000000ab41001700000cff\
+             000000000226021ca8f607801afa000080c80000\
+             808080808080022880803080800e310e310e2f0e\
+             2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e\
+             310e2e9e05e3ad"
+        ))
+        .expect("fixture frame is valid");
+        let delta = VeteranTelemetry::decode(&frame)
+            .expect("fixture telemetry decodes")
+            .to_delta(42);
+        let mut snapshot = TelemetrySnapshot::default();
+        snapshot.apply_delta(delta);
+        snapshot
+    }
 
     fn render_buffer(state: &DashboardState, width: u16, height: u16) -> Buffer {
         let backend = TestBackend::new(width, height);
@@ -1585,18 +1603,14 @@ mod tests {
             notification_bytes: 20,
             latest_notification_len: Some(20),
             telemetry: 1,
-            telemetry_snapshot: TelemetrySnapshot {
-                voltage_mv: Some(Measured::reported(108_760)),
-                battery_percent_estimated: Some(Measured::estimated(39)),
-                ..TelemetrySnapshot::default()
-            },
+            telemetry_snapshot: live_aero_telemetry_snapshot(),
             diagnostics: 0,
             disconnects: 0,
         };
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.telemetry.battery_pct, Some(39));
+        assert_eq!(state.telemetry.battery_pct, Some(47));
         assert_eq!(
             state.telemetry.battery_source,
             BatterySource::TelemetryEstimated
@@ -1606,7 +1620,7 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("Battery estimated"));
-        assert!(text.contains("39%"));
+        assert!(text.contains("47%"));
         assert!(text.contains("Voltage"));
     }
 
