@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::mpsc, thread, time::Duration};
 
 use anyhow::Result;
 use cutout_btle::{
@@ -11,10 +11,13 @@ use cutout_protocols::{NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL};
 use tracing::info;
 
 use crate::cli::{Cli, Command, DashboardArgs, TargetedScanArgs};
-use crate::dashboard::{DashboardState, run_dashboard};
+use crate::dashboard::{
+    DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
+};
 use crate::validation::render_validation_report;
 
-const DASHBOARD_PROBE_WINDOW: Duration = Duration::from_secs(2);
+const DASHBOARD_LIVE_WINDOW: Duration = Duration::from_millis(500);
+const DASHBOARD_BATTERY_REFRESH_EVERY: u64 = 10;
 
 /// Executes a parsed CLI invocation.
 ///
@@ -60,23 +63,8 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    if let Some(endpoints) = connection.summary.select_session_endpoints() {
-        info!(
-            seconds = DASHBOARD_PROBE_WINDOW.as_secs(),
-            "probing dashboard session"
-        );
-        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
-        let report = drive_session(
-            &connection.peripheral,
-            &mut session,
-            VETERAN_DATA_CHANNEL,
-            endpoints,
-            DASHBOARD_PROBE_WINDOW,
-        )
-        .await?;
-        state.apply_session_report(&report);
-    }
-    run_dashboard(state)
+    let updates = spawn_dashboard_live_updates(connection);
+    run_dashboard_with_updates(state, &updates)
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -89,6 +77,106 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
         identifier: None,
         name_contains: Some(device),
     })
+}
+
+fn spawn_dashboard_live_updates(
+    connection: ConnectedPeripheral,
+) -> mpsc::Receiver<DashboardUpdate> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                let _ = tx.send(DashboardUpdate::Log {
+                    level: "error".to_owned(),
+                    message: format!("dashboard update runtime failed: {error}"),
+                });
+                return;
+            }
+        };
+
+        runtime.block_on(run_dashboard_live_updates(connection, tx));
+    });
+    rx
+}
+
+async fn run_dashboard_live_updates(
+    connection: ConnectedPeripheral,
+    tx: mpsc::Sender<DashboardUpdate>,
+) {
+    if connection.summary.select_session_endpoints().is_none() {
+        let _ = tx.send(DashboardUpdate::Log {
+            level: "warn".to_owned(),
+            message: "dashboard session endpoints unavailable".to_owned(),
+        });
+        return;
+    }
+
+    let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+    let mut iteration = 0_u64;
+
+    loop {
+        if iteration % DASHBOARD_BATTERY_REFRESH_EVERY == 0 {
+            match read_battery_level(&connection.peripheral, &connection.summary).await {
+                Ok(Some(percent)) => {
+                    if tx.send(DashboardUpdate::BatteryPercent(percent)).is_err() {
+                        return;
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    if tx
+                        .send(DashboardUpdate::Log {
+                            level: "warn".to_owned(),
+                            message: format!("dashboard battery refresh failed: {error}"),
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+
+        let Some(endpoints) = connection.summary.select_session_endpoints() else {
+            return;
+        };
+        match drive_session(
+            &connection.peripheral,
+            &mut session,
+            VETERAN_DATA_CHANNEL,
+            endpoints,
+            DASHBOARD_LIVE_WINDOW,
+        )
+        .await
+        {
+            Ok(report) => {
+                if tx
+                    .send(DashboardUpdate::SessionReport(Box::new(report)))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(error) => {
+                if tx
+                    .send(DashboardUpdate::Log {
+                        level: "warn".to_owned(),
+                        message: format!("dashboard session update failed, retrying: {error}"),
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                tokio::time::sleep(DASHBOARD_LIVE_WINDOW).await;
+            }
+        }
+
+        iteration = iteration.wrapping_add(1);
+    }
 }
 
 async fn scan(seconds: u64) -> Result<(), BtleError> {

@@ -178,6 +178,13 @@ pub(crate) struct LogEntry {
     pub(crate) message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DashboardUpdate {
+    BatteryPercent(u8),
+    SessionReport(Box<SessionBridgeReport>),
+    Log { level: String, message: String },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TelemetryWindow {
     pub(crate) battery_pct: Option<u64>,
@@ -539,14 +546,23 @@ impl DashboardState {
     }
 
     pub(crate) fn apply_session_report(&mut self, report: &SessionBridgeReport) {
-        self.counters.subscriptions = usize_to_u64(report.subscribes);
-        self.counters.notifications = usize_to_u64(report.notifications);
-        self.counters.notification_bytes = usize_to_u64(report.notification_bytes);
+        self.counters.subscriptions = self
+            .counters
+            .subscriptions
+            .saturating_add(usize_to_u64(report.subscribes));
+        self.counters.notifications = self
+            .counters
+            .notifications
+            .saturating_add(usize_to_u64(report.notifications));
+        self.counters.notification_bytes = self
+            .counters
+            .notification_bytes
+            .saturating_add(usize_to_u64(report.notification_bytes));
         self.counters.latest_notification_len = report.latest_notification_len.map(usize_to_u64);
         self.push_log(
             "info",
             &format!(
-                "session probe writes={} subscribes={} notifications={} bytes={}",
+                "session update writes={} subscribes={} notifications={} bytes={}",
                 report.writes, report.subscribes, report.notifications, report.notification_bytes
             ),
         );
@@ -581,6 +597,14 @@ impl DashboardState {
         self.telemetry.battery_pct = Some(u64::from(percent));
         self.telemetry.battery_source = BatterySource::StandardBle;
         self.push_log("info", &format!("battery level {percent}%"));
+    }
+
+    pub(crate) fn apply_update(&mut self, update: DashboardUpdate) {
+        match update {
+            DashboardUpdate::BatteryPercent(percent) => self.apply_battery_percent(percent),
+            DashboardUpdate::SessionReport(report) => self.apply_session_report(&report),
+            DashboardUpdate::Log { level, message } => self.push_log(&level, &message),
+        }
     }
 
     pub(crate) fn apply_fixture_event(&mut self, event: FixtureEvent) {
@@ -1096,7 +1120,21 @@ fn services_summary(summary: &ConnectionSummary) -> String {
         .join(", ")
 }
 
-pub(crate) fn run_dashboard(mut state: DashboardState) -> Result<()> {
+pub(crate) fn run_dashboard(state: DashboardState) -> Result<()> {
+    run_dashboard_loop(state, None)
+}
+
+pub(crate) fn run_dashboard_with_updates(
+    state: DashboardState,
+    updates: &mpsc::Receiver<DashboardUpdate>,
+) -> Result<()> {
+    run_dashboard_loop(state, Some(updates))
+}
+
+fn run_dashboard_loop(
+    mut state: DashboardState,
+    updates: Option<&mpsc::Receiver<DashboardUpdate>>,
+) -> Result<()> {
     let (tx, rx) = mpsc::channel::<DashboardInput>();
     let _input_thread = spawn_input_thread(tx);
 
@@ -1111,6 +1149,8 @@ pub(crate) fn run_dashboard(mut state: DashboardState) -> Result<()> {
     let mut last_tick = Instant::now();
 
     'dashboard: loop {
+        drain_dashboard_updates(&mut state, updates);
+
         terminal.draw(|frame| {
             frame.render_widget(Clear, frame.area());
             render_dashboard(frame, &state);
@@ -1133,6 +1173,19 @@ pub(crate) fn run_dashboard(mut state: DashboardState) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn drain_dashboard_updates(
+    state: &mut DashboardState,
+    updates: Option<&mpsc::Receiver<DashboardUpdate>>,
+) {
+    let Some(updates) = updates else {
+        return;
+    };
+
+    while let Ok(update) = updates.try_recv() {
+        state.apply_update(update);
+    }
 }
 
 fn spawn_input_thread(tx: mpsc::Sender<DashboardInput>) -> thread::JoinHandle<()> {
@@ -1957,6 +2010,49 @@ mod tests {
                 .iter()
                 .any(|entry| entry.message == "battery level 100%")
         );
+    }
+
+    #[test]
+    fn live_dashboard_update_applies_battery_and_log_events() {
+        let mut state = DashboardState::live_target("NF2557".to_owned());
+
+        state.apply_update(DashboardUpdate::BatteryPercent(45));
+        state.apply_update(DashboardUpdate::Log {
+            level: "info".to_owned(),
+            message: "live dashboard update received".to_owned(),
+        });
+
+        assert_eq!(state.telemetry.battery_pct, Some(45));
+        assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info" && entry.message == "live dashboard update received"
+        }));
+    }
+
+    #[test]
+    fn live_session_reports_accumulate_transport_counters() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            writes: 0,
+            subscribes: 1,
+            notifications: 2,
+            notification_bytes: 40,
+            latest_notification_len: Some(20),
+            telemetry: 0,
+            telemetry_snapshot: TelemetrySnapshot::default(),
+            diagnostics: 0,
+            diagnostics_snapshot: ParserDiagnostics::default(),
+            events: Vec::new(),
+            disconnects: 0,
+        };
+
+        state.apply_session_report(&report);
+        state.apply_session_report(&report);
+
+        assert_eq!(state.counters.subscriptions, 2);
+        assert_eq!(state.counters.notifications, 4);
+        assert_eq!(state.counters.notification_bytes, 80);
+        assert_eq!(state.counters.latest_notification_len, Some(20));
     }
 
     #[test]
