@@ -7,8 +7,8 @@ use std::{
 };
 
 use anyhow::Result;
-use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeReport};
-use cutout_core::{ParserDiagnostics, TelemetrySnapshot};
+use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeEvent, SessionBridgeReport};
+use cutout_core::{ParserDiagnostics, TelemetryDelta, TelemetrySnapshot};
 use ratatui::termina::{PlatformTerminal, Terminal as _};
 use ratatui::{
     Frame, Terminal,
@@ -570,6 +570,10 @@ impl DashboardState {
             self.telemetry.apply_snapshot(snapshot);
         }
         self.push_log("trace", &format_unmapped_telemetry_event(report));
+        for event in &report.events {
+            let (level, message) = format_bridge_event(event);
+            self.push_log(level, &message);
+        }
     }
 
     pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
@@ -973,6 +977,85 @@ fn format_mapped_telemetry_event(snapshot: TelemetrySnapshot) -> String {
         "telemetry mapped none".to_owned()
     } else {
         format!("telemetry mapped {}", fields.join(" "))
+    }
+}
+
+fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
+    match event {
+        SessionBridgeEvent::RawNotification {
+            monotonic_ms,
+            characteristic,
+            service,
+            len,
+        } => (
+            "trace",
+            format!(
+                "t={monotonic_ms}ms raw notification len={len} characteristic={characteristic} service={service}"
+            ),
+        ),
+        SessionBridgeEvent::ProcessedTelemetry {
+            monotonic_ms,
+            delta,
+        } => (
+            "info",
+            format!(
+                "t={monotonic_ms}ms processed telemetry {}",
+                format_telemetry_delta(*delta)
+            ),
+        ),
+        SessionBridgeEvent::Diagnostics {
+            monotonic_ms,
+            diagnostics,
+        } => (
+            "warn",
+            format!(
+                "t={monotonic_ms}ms telemetry diagnostics {}",
+                format_parser_diagnostics(*diagnostics)
+            ),
+        ),
+    }
+}
+
+fn format_telemetry_delta(delta: TelemetryDelta) -> String {
+    let mut fields = Vec::new();
+    if let Some(speed) = delta.speed_mm_s {
+        fields.push(format!("speed={}mph", mm_s_to_mph(speed.value)));
+    }
+    if let Some(voltage) = delta.voltage_mv {
+        fields.push(format!("voltage={}V", millivolts_to_volts(voltage.value)));
+    }
+    if let Some(percent) = delta
+        .battery_percent_reported
+        .or(delta.battery_percent_estimated)
+    {
+        fields.push(format!("battery={}%", percent.value));
+    }
+    if let Some(current) = delta.battery_current_ma.or(delta.motor_current_ma) {
+        fields.push(format!("current={}A", milliamps_to_amps(current.value)));
+    }
+    if let Some(temperature) = delta
+        .controller_temperature_mc
+        .or(delta.motor_temperature_mc)
+        .or(delta.battery_temperature_mc)
+    {
+        fields.push(format!(
+            "temperature={}C",
+            millicelsius_to_celsius_signed(temperature.value)
+        ));
+    }
+    if let Some(pwm) = delta.pwm_permille {
+        fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
+    }
+    if let Some(distance) = delta.distance_mm {
+        fields.push(format!("distance={}m", distance.value / 1_000));
+    }
+    if let Some(pitch) = delta.pitch_mdeg {
+        fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
+    }
+    if fields.is_empty() {
+        "unmapped".to_owned()
+    } else {
+        fields.join(" ")
     }
 }
 
@@ -1733,6 +1816,24 @@ mod tests {
                 unmatched_replies: 1,
                 ..ParserDiagnostics::default()
             },
+            events: vec![
+                SessionBridgeEvent::RawNotification {
+                    monotonic_ms: 17,
+                    characteristic: uuid::Uuid::from_u128(
+                        0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb,
+                    ),
+                    service: uuid::Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    len: 100,
+                },
+                SessionBridgeEvent::Diagnostics {
+                    monotonic_ms: 18,
+                    diagnostics: ParserDiagnostics {
+                        malformed_frames: 2,
+                        unmatched_replies: 1,
+                        ..ParserDiagnostics::default()
+                    },
+                },
+            ],
             disconnects: 0,
         };
 
@@ -1756,6 +1857,16 @@ mod tests {
                 && entry.message.contains("malformed=2")
                 && entry.message.contains("unmatched=1")
         }));
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "trace"
+                && entry.message.contains("t=17ms raw notification")
+                && entry.message.contains("len=100")
+        }));
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "warn"
+                && entry.message.contains("t=18ms telemetry diagnostics")
+                && entry.message.contains("malformed=2")
+        }));
     }
 
     #[test]
@@ -1778,6 +1889,17 @@ mod tests {
             },
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            events: vec![SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: 42,
+                delta: TelemetryDelta {
+                    speed_mm_s: Some(Measured::reported(4_470)),
+                    voltage_mv: Some(Measured::reported(84_400)),
+                    battery_current_ma: Some(Measured::reported(-12_400)),
+                    controller_temperature_mc: Some(Measured::reported(36_600)),
+                    battery_percent_reported: Some(Measured::reported(77)),
+                    ..TelemetryDelta::empty(42)
+                },
+            }],
             disconnects: 0,
         };
 
@@ -1802,6 +1924,11 @@ mod tests {
                 && entry.message.contains("speed=10mph")
                 && entry.message.contains("battery=77%")
                 && entry.message.contains("current=-12A")
+        }));
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info"
+                && entry.message.contains("t=42ms processed telemetry")
+                && entry.message.contains("voltage=84V")
         }));
     }
 
@@ -1845,6 +1972,20 @@ mod tests {
             telemetry_snapshot: live_aero_telemetry_snapshot(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            events: vec![SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: 42,
+                delta: TelemetryDelta {
+                    speed_mm_s: Some(Measured::reported(0)),
+                    voltage_mv: Some(Measured::reported(108_760)),
+                    motor_current_ma: Some(Measured::reported(0)),
+                    controller_temperature_mc: Some(Measured::reported(33_270)),
+                    pwm_permille: Some(Measured::reported(-1_000)),
+                    distance_mm: Some(Measured::reported(1_551_169_000)),
+                    pitch_mdeg: Some(Measured::reported(69_060)),
+                    battery_percent_estimated: Some(Measured::estimated(47)),
+                    ..TelemetryDelta::empty(42)
+                },
+            }],
             disconnects: 0,
         };
 
