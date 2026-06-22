@@ -29,7 +29,7 @@ use ratatui::{
     },
 };
 
-const LOG_LIMIT: usize = 10;
+const LOG_LIMIT: usize = 16;
 const HISTORY_LIMIT: usize = 32;
 const READ_ONLY_SUMMARY_LIMIT: usize = 16;
 const TAB_COUNT: usize = 4;
@@ -1365,10 +1365,10 @@ pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
 
     render_header(frame, areas[0], state);
     if active_tab == 3 {
-        render_logs(frame, areas[1], state);
+        render_logs(frame, areas[1], state, true);
     } else {
         render_body(frame, areas[1], state);
-        render_logs(frame, areas[2], state);
+        render_logs(frame, areas[2], state, false);
     }
 }
 
@@ -1391,7 +1391,7 @@ fn render_body(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         0 => render_overview_tab(frame, area, state),
         1 => render_telemetry(frame, area, state),
         2 => render_profiles(frame, area, state),
-        3 => render_logs(frame, area, state),
+        3 => render_logs(frame, area, state, true),
         _ => unreachable!("active tab is clamped to known dashboard tabs"),
     }
 }
@@ -1708,7 +1708,7 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
     if read_only.settings.is_empty() {
         lines.push(Line::from(vec![Span::raw("none observed")]));
     } else {
-        for setting in read_only.settings.iter().rev().take(2) {
+        for setting in read_only.settings.iter().rev().take(4) {
             lines.push(Line::from(vec![Span::raw(setting.as_str())]));
         }
     }
@@ -1717,7 +1717,7 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         "bms pages",
         Style::new().fg(Color::Gray),
     )]));
-    for page in read_only.bms_pages.iter().rev().take(2) {
+    for page in read_only.bms_pages.iter().rev().take(4) {
         lines.push(Line::from(vec![Span::raw(page.as_str())]));
     }
 
@@ -1939,7 +1939,7 @@ fn render_sparkline(frame: &mut Frame<'_>, area: Rect, title: &str, samples: &[u
     frame.render_widget(spark, area);
 }
 
-fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState, full_page: bool) {
     let lines = state
         .logs
         .iter()
@@ -1954,9 +1954,10 @@ fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         })
         .collect::<Vec<_>>();
 
-    let log_panel = Paragraph::new(lines)
-        .block(panel_block("Recent events"))
-        .wrap(ratatui::widgets::Wrap { trim: true });
+    let mut log_panel = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true });
+    if !full_page {
+        log_panel = log_panel.block(panel_block("Recent events"));
+    }
     frame.render_widget(log_panel, area);
 }
 
@@ -3189,7 +3190,7 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
-        assert_eq!(text.matches("Recent events").count(), 1);
+        assert_eq!(text.matches("Recent events").count(), 0);
         assert!(text.contains("demo state loaded from demo state: aero-nf2557.v1"));
         assert!(text.contains("dashboard booted in read-only mode"));
     }
