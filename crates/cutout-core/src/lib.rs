@@ -1879,10 +1879,10 @@ where
 {
     /// Creates a host session around a protocol session.
     #[must_use]
-    pub const fn new(session: S) -> Self {
+    pub fn new(session: S) -> Self {
         Self {
             session,
-            output: Vec::new(),
+            output: Vec::with_capacity(4),
             snapshot: TelemetrySnapshot {
                 at_ms: None,
                 speed_mm_s: None,
@@ -2193,6 +2193,9 @@ mod tests {
 
     #[test]
     fn parser_hot_path_types_remain_small() {
+        assert!(size_of::<Measured<u16>>() <= 8);
+        assert!(size_of::<Measured<i32>>() <= 16);
+        assert!(size_of::<Measured<u64>>() <= 24);
         assert_eq!(size_of::<crate::ParserDiagnostics>(), 56);
         assert_eq!(size_of::<crate::DiagnosticSnapshot>(), 56);
         assert!(size_of::<crate::DiagnosticError>() <= 80);
@@ -2272,8 +2275,8 @@ mod tests {
 
         assert!(session.link_is_up);
         assert_eq!(
-            output,
-            vec![SessionOutput::Event(DeviceEvent::LinkUp(link))]
+            output.as_slice(),
+            &[SessionOutput::Event(DeviceEvent::LinkUp(link))]
         );
     }
 
@@ -2294,8 +2297,8 @@ mod tests {
 
         assert_eq!(session.last_notification_len, 3);
         assert_eq!(
-            output,
-            vec![SessionOutput::Event(DeviceEvent::NotificationReceived {
+            output.as_slice(),
+            &[SessionOutput::Event(DeviceEvent::NotificationReceived {
                 channel,
                 monotonic_ms: 20,
                 len: 3
@@ -2316,8 +2319,8 @@ mod tests {
 
         assert!(output.is_empty());
         assert_eq!(
-            drained,
-            vec![SessionOutput::Transport(TransportAction::Write {
+            drained.as_slice(),
+            &[SessionOutput::Transport(TransportAction::Write {
                 channel: GattChannel::from_bytes([1; 16]),
                 bytes: WritePayload::try_from_slice(b"telemetry").expect("test write payload fits"),
                 mode: WriteMode::WithResponse,
@@ -3471,8 +3474,8 @@ mod tests {
         let drained = host.drain_outputs();
 
         assert_eq!(
-            drained,
-            vec![SessionOutput::Event(DeviceEvent::LinkUp(link))]
+            drained.as_slice(),
+            &[SessionOutput::Event(DeviceEvent::LinkUp(link))]
         );
         assert!(host.drain_outputs().is_empty());
     }
@@ -3485,8 +3488,8 @@ mod tests {
         host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], 20);
 
         assert_eq!(
-            host.drain_outputs(),
-            vec![SessionOutput::Event(DeviceEvent::NotificationReceived {
+            host.drain_outputs().as_slice(),
+            &[SessionOutput::Event(DeviceEvent::NotificationReceived {
                 channel,
                 monotonic_ms: 20,
                 len: 3,
@@ -3501,8 +3504,8 @@ mod tests {
         host.issue_command(DeviceCommand::RequestTelemetry);
 
         assert_eq!(
-            host.drain_outputs(),
-            vec![SessionOutput::Transport(TransportAction::Write {
+            host.drain_outputs().as_slice(),
+            &[SessionOutput::Transport(TransportAction::Write {
                 channel: GattChannel::from_bytes([1; 16]),
                 bytes: WritePayload::try_from_slice(b"telemetry").expect("test write payload fits"),
                 mode: WriteMode::WithResponse,
@@ -3667,8 +3670,8 @@ mod tests {
         ];
 
         assert_eq!(
-            replay_events(&records),
-            vec![
+            replay_events(&records).as_slice(),
+            &[
                 DeviceEvent::LinkUp(link),
                 DeviceEvent::Tick { monotonic_ms: 2 },
                 DeviceEvent::Diagnostics(crate::ParserDiagnostics {
@@ -3699,18 +3702,21 @@ mod tests {
         assert_eq!(replay_events(&one_byte), replay_events(&whole));
     }
 
-    #[test]
-    fn arbitrary_chunk_notification_replay_matches_whole_notification_replay() {
-        let channel = GattChannel::from_bytes([0x44; 16]);
-        let whole = [crate::CaptureRecord::notification(
-            channel,
-            vec![5, 8, 13, 0xff],
-            20,
-        )];
-        let chunks = crate::CaptureRecord::notification(channel, vec![5, 8, 13, 0xff], 20)
-            .split_notification_by_lengths(&[2, 1, 8]);
+    proptest! {
+        #[test]
+        fn arbitrary_chunk_notification_replay_matches_whole_notification_replay(
+            payload_prefix in proptest::collection::vec(0u8..0xff, 0..16),
+            lengths in proptest::collection::vec(0usize..6, 0..8),
+        ) {
+            let channel = GattChannel::from_bytes([0x44; 16]);
+            let mut payload = payload_prefix;
+            payload.push(0xff);
+            let whole = [crate::CaptureRecord::notification(channel, payload.clone(), 20)];
+            let chunks = crate::CaptureRecord::notification(channel, payload, 20)
+                .split_notification_by_lengths(&lengths);
 
-        assert_eq!(replay_events(&chunks), replay_events(&whole));
+            prop_assert_eq!(replay_events(&chunks), replay_events(&whole));
+        }
     }
 
     #[test]
@@ -3724,8 +3730,8 @@ mod tests {
         let mut host = crate::HostSession::new(FramedCaptureSession::default());
 
         assert_eq!(
-            crate::replay_capture(&mut host, &records),
-            vec![
+            crate::replay_capture(&mut host, &records).as_slice(),
+            &[
                 SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 1 }),
                 SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
                     at_ms: 90,
