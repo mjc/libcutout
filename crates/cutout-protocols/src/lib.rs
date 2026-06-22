@@ -62,7 +62,7 @@ mod veteran_bms;
 mod veteran_frame;
 mod veteran_telemetry;
 pub use request_encoder::{
-    AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition,
+    AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition, VescCanTarget,
     VescRequestEncoder,
 };
 #[cfg(feature = "dangerous-controls")]

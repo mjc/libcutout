@@ -1,7 +1,10 @@
 use arrayvec::ArrayVec;
 use cutout_core::{CommandKind, WriteMode};
 
-use crate::{AeroProbe, FalconProbe, VESC_MAX_FRAME_LEN, VescReadOnlyCodec, VescReadOnlyRequest};
+use crate::{
+    AeroProbe, FalconProbe, VESC_MAX_FRAME_LEN, VescCanReadOnlyRequest, VescReadOnlyCodec,
+    VescReadOnlyRequest,
+};
 
 const MAX_REQUEST_LEN: usize = VESC_MAX_FRAME_LEN;
 
@@ -128,6 +131,62 @@ impl VescRequestEncoder {
     }
 }
 
+/// Read-only target for a VESC controller reachable through CAN forwarding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VescCanTarget {
+    controller_id: u8,
+}
+
+impl VescCanTarget {
+    /// Creates a CAN forwarding target for a controller id.
+    #[must_use]
+    pub const fn new(controller_id: u8) -> Self {
+        Self { controller_id }
+    }
+
+    /// Returns the CAN controller id.
+    #[must_use]
+    pub const fn controller_id(self) -> u8 {
+        self.controller_id
+    }
+
+    /// Encodes a supported read-only command through VESC CAN forwarding.
+    #[must_use]
+    pub fn encode_command(
+        self,
+        kind: CommandKind,
+    ) -> Option<RequestDisposition<VescReadOnlyRequest>> {
+        let request = match kind {
+            CommandKind::RequestFirmwareInfo => VescCanReadOnlyRequest::FirmwareInfo,
+            CommandKind::RequestTelemetry => VescCanReadOnlyRequest::Values,
+            CommandKind::RequestDiagnostics => VescCanReadOnlyRequest::Stats(
+                crate::VescStatsMask::SPEED_AVG
+                    | crate::VescStatsMask::POWER_AVG
+                    | crate::VescStatsMask::CURRENT_AVG
+                    | crate::VescStatsMask::COUNT_TIME,
+            ),
+            CommandKind::RequestIdentity
+            | CommandKind::RequestBatteryInfo
+            | CommandKind::RequestSettings
+            | CommandKind::SetLights
+            | CommandKind::SoundHorn
+            | CommandKind::SetRawMotorCurrent => return None,
+        };
+        let request = VescReadOnlyRequest::ForwardCan {
+            controller_id: self.controller_id,
+            request,
+        };
+        let mut payload = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
+        Some(RequestDisposition::Write(EncodedRequest {
+            probe: request,
+            command: kind,
+            payload,
+            mode: WriteMode::WithoutResponse,
+        }))
+    }
+}
+
 fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_REQUEST_LEN> {
     let mut payload = ArrayVec::new();
     for byte in bytes {
@@ -226,6 +285,59 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn vesc_can_target_encodes_read_only_telemetry_for_controller_id() {
+        let target = VescCanTarget::new(7);
+        assert_eq!(target.controller_id(), 7);
+
+        let request = target
+            .encode_command(CommandKind::RequestTelemetry)
+            .expect("telemetry can be forwarded");
+
+        let RequestDisposition::Write(encoded) = request else {
+            panic!("CAN telemetry should be write-backed");
+        };
+        assert_eq!(
+            encoded.probe,
+            VescReadOnlyRequest::ForwardCan {
+                controller_id: 7,
+                request: VescCanReadOnlyRequest::Values,
+            }
+        );
+        assert_eq!(encoded.command, CommandKind::RequestTelemetry);
+        assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+        assert!(!encoded.payload.is_empty());
+    }
+
+    #[test]
+    fn vesc_can_target_encodes_diagnostics_with_read_only_stats_mask() {
+        let request = VescCanTarget::new(3)
+            .encode_command(CommandKind::RequestDiagnostics)
+            .expect("diagnostics can be forwarded");
+
+        let RequestDisposition::Write(encoded) = request else {
+            panic!("CAN diagnostics should be write-backed");
+        };
+        assert!(matches!(
+            encoded.probe,
+            VescReadOnlyRequest::ForwardCan {
+                controller_id: 3,
+                request: VescCanReadOnlyRequest::Stats(_),
+            }
+        ));
+        assert_eq!(encoded.command, CommandKind::RequestDiagnostics);
+    }
+
+    #[test]
+    fn vesc_can_target_refuses_non_read_only_and_unsupported_commands() {
+        let target = VescCanTarget::new(7);
+
+        assert_eq!(target.encode_command(CommandKind::SetRawMotorCurrent), None);
+        assert_eq!(target.encode_command(CommandKind::SetLights), None);
+        assert_eq!(target.encode_command(CommandKind::SoundHorn), None);
+        assert_eq!(target.encode_command(CommandKind::RequestBatteryInfo), None);
     }
 
     #[test]
