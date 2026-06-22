@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeReport};
+use cutout_core::TelemetrySnapshot;
 use ratatui::termina::{PlatformTerminal, Terminal as _};
 use ratatui::{
     Frame, Terminal,
@@ -23,8 +24,6 @@ use ratatui::{
 const LOG_LIMIT: usize = 10;
 const HISTORY_LIMIT: usize = 32;
 const TAB_COUNT: usize = 4;
-const DASHBOARD_BG: Color = Color::Rgb(15, 18, 22);
-const PANEL_BG: Color = Color::Rgb(22, 26, 32);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DashboardState {
@@ -511,6 +510,10 @@ impl DashboardState {
         if report.diagnostics > 0 {
             self.push_log("warn", &format!("diagnostics={}", report.diagnostics));
         }
+
+        if report.telemetry > 0 {
+            self.telemetry.apply_snapshot(report.telemetry_snapshot);
+        }
     }
 
     pub(crate) fn apply_fixture_event(&mut self, event: FixtureEvent) {
@@ -713,6 +716,35 @@ impl TelemetryWindow {
                 .push((index_to_f64(index), to_f64(*value)));
         }
     }
+
+    fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
+        if let Some(percent) = snapshot
+            .battery_percent_reported
+            .or(snapshot.battery_percent_estimated)
+        {
+            self.battery_pct = u64::from(percent.value);
+        }
+        if let Some(speed) = snapshot.speed_mm_s {
+            push_sample(&mut self.speed_mph, mm_s_to_mph(speed.value));
+        }
+        if let Some(voltage) = snapshot.voltage_mv {
+            push_sample(&mut self.voltage_v, millivolts_to_volts(voltage.value));
+        }
+        if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
+            push_sample(&mut self.current_a, milliamps_to_amps_abs(current.value));
+        }
+        if let Some(temperature) = snapshot
+            .controller_temperature_mc
+            .or(snapshot.motor_temperature_mc)
+            .or(snapshot.battery_temperature_mc)
+        {
+            push_sample(
+                &mut self.temperature_c,
+                millicelsius_to_celsius(temperature.value),
+            );
+        }
+        self.sync_points();
+    }
 }
 
 fn push_sample(series: &mut Vec<u64>, value: u64) {
@@ -720,6 +752,23 @@ fn push_sample(series: &mut Vec<u64>, value: u64) {
         series.remove(0);
     }
     series.push(value);
+}
+
+fn mm_s_to_mph(value: i32) -> u64 {
+    let numerator = u64::from(value.unsigned_abs()) * 1_000;
+    numerator.saturating_add(223_694) / 447_388
+}
+
+fn millivolts_to_volts(value: i32) -> u64 {
+    u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
+}
+
+fn milliamps_to_amps_abs(value: i32) -> u64 {
+    u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
+}
+
+fn millicelsius_to_celsius(value: i32) -> u64 {
+    u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
 }
 
 fn services_summary(summary: &ConnectionSummary) -> String {
@@ -814,11 +863,6 @@ fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInp
 }
 
 pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
-    frame.render_widget(
-        Block::default().style(Style::new().bg(DASHBOARD_BG).fg(Color::White)),
-        frame.area(),
-    );
-
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -841,7 +885,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         Line::from("Logs"),
     ])
     .select(state.active_tab.min(3))
-    .block(panel_block("Cutout dashboard"))
+    .block(Block::bordered().title("Cutout dashboard"))
     .highlight_style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     frame.render_widget(tabs, area);
@@ -898,7 +942,6 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             Span::raw(state.provenance.unwrap_or("live")),
         ]),
     ])
-    .style(panel_style())
     .block(panel_block("Target"));
     frame.render_widget(summary, chunks[0]);
 
@@ -909,14 +952,12 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 
     let battery = Gauge::default()
         .block(Block::bordered().title("Battery"))
-        .style(panel_style())
         .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
         .ratio(percent_ratio(state.telemetry.battery_pct));
     frame.render_widget(battery, gauges[0]);
 
     let signal = Gauge::default()
         .block(Block::bordered().title("Signal"))
-        .style(panel_style())
         .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
         .ratio(percent_ratio(state.telemetry.signal_pct));
     frame.render_widget(signal, gauges[1]);
@@ -948,7 +989,6 @@ fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     )
     .header(Row::new(vec!["Profile", "Source", "Status", "Family"]).style(Style::new().bold()))
     .block(panel_block("Profiles"))
-    .style(panel_style())
     .column_spacing(1);
     frame.render_widget(table, area);
 }
@@ -996,7 +1036,6 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             .data(state.telemetry.temperature_points.as_slice()),
     ])
     .block(panel_block("Trend"))
-    .style(panel_style())
     .x_axis(Axis::default().title("samples").bounds([
         0.0,
         f64::from(u32::try_from(HISTORY_LIMIT).unwrap_or(u32::MAX)),
@@ -1022,9 +1061,7 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
         ]),
     ];
 
-    let panel = Paragraph::new(lines)
-        .style(panel_style())
-        .block(panel_block("Session"));
+    let panel = Paragraph::new(lines).block(panel_block("Session"));
     frame.render_widget(panel, area);
 }
 
@@ -1099,7 +1136,6 @@ fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardSta
     }
 
     let panel = Paragraph::new(lines)
-        .style(panel_style())
         .block(panel_block("Device browser"))
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(panel, area);
@@ -1108,7 +1144,7 @@ fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardSta
 fn render_sparkline(frame: &mut Frame<'_>, area: Rect, title: &str, samples: &[u64], color: Color) {
     let spark = Sparkline::default()
         .block(panel_block(title))
-        .style(Style::new().fg(color).bg(PANEL_BG))
+        .style(Style::new().fg(color))
         .data(samples)
         .max(100);
     frame.render_widget(spark, area);
@@ -1130,18 +1166,13 @@ fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .collect::<Vec<_>>();
 
     let log_panel = Paragraph::new(lines)
-        .style(panel_style())
         .block(panel_block("Recent events"))
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(log_panel, area);
 }
 
 fn panel_block(title: &str) -> Block<'_> {
-    Block::bordered().title(title).style(panel_style())
-}
-
-const fn panel_style() -> Style {
-    Style::new().bg(PANEL_BG).fg(Color::White)
+    Block::bordered().title(title)
 }
 
 fn percent_ratio(value: u64) -> f64 {
@@ -1166,6 +1197,7 @@ mod tests {
 
     use super::*;
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
+    use cutout_core::{Measured, TelemetrySnapshot};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     fn render_buffer(state: &DashboardState, width: u16, height: u16) -> Buffer {
@@ -1298,6 +1330,7 @@ mod tests {
             subscribes: 1,
             notifications: 184,
             telemetry: 0,
+            telemetry_snapshot: TelemetrySnapshot::default(),
             diagnostics: 0,
             disconnects: 0,
         };
@@ -1312,6 +1345,35 @@ mod tests {
                 .iter()
                 .any(|entry| entry.message.contains("notifications=184"))
         );
+    }
+
+    #[test]
+    fn live_session_report_applies_telemetry_snapshot() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            writes: 0,
+            subscribes: 1,
+            notifications: 2,
+            telemetry: 1,
+            telemetry_snapshot: TelemetrySnapshot {
+                speed_mm_s: Some(Measured::reported(4_470)),
+                voltage_mv: Some(Measured::reported(84_400)),
+                battery_current_ma: Some(Measured::reported(-12_400)),
+                controller_temperature_mc: Some(Measured::reported(36_600)),
+                battery_percent_reported: Some(Measured::reported(77)),
+                ..TelemetrySnapshot::default()
+            },
+            diagnostics: 0,
+            disconnects: 0,
+        };
+
+        state.apply_session_report(&report);
+
+        assert_eq!(state.telemetry.battery_pct, 77);
+        assert_eq!(state.telemetry.speed_mph, vec![10]);
+        assert_eq!(state.telemetry.voltage_v, vec![84]);
+        assert_eq!(state.telemetry.current_a, vec![12]);
+        assert_eq!(state.telemetry.temperature_c, vec![37]);
     }
 
     #[test]
@@ -1364,10 +1426,10 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_render_paints_background_cells() {
+    fn dashboard_render_leaves_background_transparent() {
         let buffer = render_buffer(&DashboardState::empty(), 80, 24);
 
-        assert_ne!(buffer[(79, 23)].bg, Color::Reset);
+        assert_eq!(buffer[(79, 23)].bg, Color::Reset);
     }
 
     #[test]
