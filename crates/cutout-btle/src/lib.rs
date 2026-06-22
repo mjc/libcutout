@@ -247,7 +247,9 @@ impl fmt::Display for ConnectionSummary {
 }
 
 impl ConnectionSummary {
-    fn gatt_fingerprints(&self) -> Vec<GattFingerprint> {
+    /// Returns observed GATT fingerprints for PEVCAP and registry evidence.
+    #[must_use]
+    pub fn gatt_fingerprints(&self) -> Vec<GattFingerprint> {
         self.services
             .iter()
             .flat_map(|service| service.characteristics.iter())

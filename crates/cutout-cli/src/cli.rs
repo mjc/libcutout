@@ -185,13 +185,17 @@ pub(crate) struct RawSubscribeArgs {
     /// Notify/indicate characteristic UUID to subscribe to.
     #[arg(long, value_name = "UUID")]
     pub(crate) characteristic: Option<Uuid>,
+
+    /// Optional PEVCAP output path for the raw notification capture.
+    #[arg(long = "pevcap-output", value_name = "PATH")]
+    pub(crate) pevcap_output: Option<PathBuf>,
+
+    /// PEVCAP output format when --pevcap-output is supplied.
+    #[arg(long = "pevcap-format", value_enum, default_value_t = PevcapFormat::Jsonl)]
+    pub(crate) pevcap_format: PevcapFormat,
 }
 
 impl RawSubscribeArgs {
-    pub(crate) fn into_target(self) -> ConnectionTarget {
-        self.target.into()
-    }
-
     pub(crate) const fn seconds(&self) -> u64 {
         self.scan.seconds()
     }
@@ -548,6 +552,40 @@ mod tests {
                 },
                 scan: ScanArgs { seconds: 7 },
                 characteristic: Some(Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb)),
+                pevcap_output: None,
+                pevcap_format: PevcapFormat::Jsonl,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_subscribe_raw_command_with_pevcap_output() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "subscribe-raw",
+            "--name-contains",
+            "NF2557",
+            "--pevcap-output",
+            "raw.pevcap",
+            "--pevcap-format",
+            "binary",
+        ])
+        .expect("parser accepts raw PEVCAP output");
+
+        assert_eq!(
+            cli.command,
+            Command::SubscribeRaw(RawSubscribeArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: None,
+                    name_contains: Some("NF2557".to_owned()),
+                },
+                scan: ScanArgs {
+                    seconds: DEFAULT_SCAN_SECONDS
+                },
+                characteristic: None,
+                pevcap_output: Some(PathBuf::from("raw.pevcap")),
+                pevcap_format: PevcapFormat::Binary,
             })
         );
     }

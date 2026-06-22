@@ -7,15 +7,16 @@ use std::{
 
 use anyhow::{Result, bail};
 use cutout_btle::{
-    BtleError, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata, SessionBridgeReport,
-    SessionCapture, SessionEndpoints, capture_raw_notifications, capture_session_with_commands,
-    connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
-    scan_peripherals,
+    BtleError, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata, RawNotificationRecord,
+    SessionBridgeReport, SessionCapture, SessionEndpoints, SessionPeripheral,
+    capture_raw_notifications, capture_session_with_commands, connect_and_discover, drive_session,
+    drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    DeviceCommand, DeviceEvent, FirmwareInfo, HostSession, Measured, PevcapCapture, PevcapEncoding,
-    PevcapResolvedIdentity, ProtocolFamily, ReplayChunkComparison, SessionOutput, SettingsReadback,
-    TelemetrySnapshot, VerificationStatus, VerifiedValue,
+    DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, HostSession, Measured, PevcapCapture,
+    PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily,
+    ReplayChunkComparison, SessionOutput, SettingsReadback, TelemetrySnapshot, VerificationStatus,
+    VerifiedValue,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel, NosfetAeroModel,
@@ -372,8 +373,14 @@ async fn scan(seconds: u64) -> Result<(), BtleError> {
 async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
     let seconds = args.seconds();
     let requested = args.characteristic;
-    let connection =
-        connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
+    let RawSubscribeArgs {
+        target,
+        pevcap_output,
+        pevcap_format,
+        ..
+    } = args;
+    let output = pevcap_output.map(|path| (path, pevcap_format));
+    let connection = connect_and_discover(&target.into(), Duration::from_secs(seconds)).await?;
     println!("{}", connection.summary);
     let Some(characteristic) = connection.summary.select_notify_characteristic(requested) else {
         if let Some(uuid) = requested {
@@ -391,14 +398,29 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
         Duration::from_secs(seconds),
     )
     .await?;
-    for record in records {
-        println!(
-            "raw-notification t_ms={} characteristic={} service={} bytes={}",
-            record.monotonic_ms,
-            record.characteristic,
-            record.service,
-            encode_hex(&record.bytes)
-        );
+    match output {
+        Some((path, format)) => {
+            let bytes = encode_raw_capture_pevcap(
+                &records,
+                &connection.summary,
+                Some(connection.peripheral.mtu()),
+                format,
+                capture_wall_clock_unix_ms(),
+            )?;
+            fs::write(&path, bytes)?;
+            println!("wrote raw pevcap {} ({format:?})", path.display());
+        }
+        None => {
+            for record in records {
+                println!(
+                    "raw-notification t_ms={} characteristic={} service={} bytes={}",
+                    record.monotonic_ms,
+                    record.characteristic,
+                    record.service,
+                    encode_hex(&record.bytes)
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -566,12 +588,12 @@ enum SelectedSessionProfile {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SessionBinding {
-    channel: cutout_core::GattChannel,
+    channel: GattChannel,
     profile: SelectedSessionProfile,
 }
 
 impl SessionBinding {
-    const fn new(channel: cutout_core::GattChannel, profile: SelectedSessionProfile) -> Self {
+    const fn new(channel: GattChannel, profile: SelectedSessionProfile) -> Self {
         Self { channel, profile }
     }
 }
@@ -693,6 +715,50 @@ fn encode_session_capture_pevcap(
         },
     )?;
     Ok(pevcap.encode(pevcap_encoding(format))?)
+}
+
+fn encode_raw_capture_pevcap(
+    records: &[RawNotificationRecord],
+    summary: &cutout_btle::ConnectionSummary,
+    write_limit: Option<u16>,
+    format: PevcapFormat,
+    wall_clock_start_unix_ms: u64,
+) -> Result<Vec<u8>> {
+    let advertised_services = summary
+        .observation
+        .advertised_services
+        .iter()
+        .copied()
+        .map(gatt_channel_from_uuid)
+        .collect::<Vec<_>>();
+    let gatt_fingerprints = summary.gatt_fingerprints();
+    let pevcap_records = records
+        .iter()
+        .map(|record| {
+            PevcapRecord::inbound_notification(
+                record.monotonic_ms,
+                gatt_channel_from_uuid(record.characteristic),
+                gatt_channel_from_uuid(record.service),
+                record.bytes.clone(),
+            )
+        })
+        .collect();
+    let header = PevcapHeader::new(
+        wall_clock_start_unix_ms,
+        std::env::consts::OS,
+        write_limit,
+        &advertised_services,
+        &gatt_fingerprints,
+        None,
+        env!("CARGO_PKG_VERSION"),
+        cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
+        &["cutout-cli subscribe-raw"],
+    )?;
+    Ok(PevcapCapture::new(header, pevcap_records).encode(pevcap_encoding(format))?)
+}
+
+fn gatt_channel_from_uuid(uuid: uuid::Uuid) -> GattChannel {
+    GattChannel::from_bytes(*uuid.as_bytes())
 }
 
 fn capture_wall_clock_unix_ms() -> u64 {
@@ -874,7 +940,7 @@ mod tests {
     use btleplug::api::{CharPropFlags, WriteType};
     use cutout_btle::{
         BridgeIdentityResolution, ConnectionSummary, ConnectionTarget, PeripheralObservation,
-        ServiceSummary, SessionCaptureRecord,
+        RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
         GattChannel, PevcapHeader, PevcapRecord, ProtocolFamily, VerificationStatus, VerifiedValue,
@@ -1074,6 +1140,57 @@ mod tests {
             Some(WriteMode::WithoutResponse)
         );
         assert_eq!(decoded.records[1].bytes, b"NAME=NF2557");
+    }
+
+    #[test]
+    fn cli_encodes_raw_notifications_to_pevcap_bytes() {
+        let service = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+        let characteristic = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+        let summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "cb-uuid".to_owned(),
+                address: None,
+                name: Some("Unknown PEV".to_owned()),
+                rssi: Some(-67),
+                advertised_services: vec![service],
+            },
+            services: vec![ServiceSummary {
+                uuid: service,
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: characteristic,
+                    service_uuid: service,
+                    properties: CharPropFlags::NOTIFY,
+                }],
+            }],
+        };
+        let records = [RawNotificationRecord {
+            monotonic_ms: 7,
+            characteristic,
+            service,
+            bytes: vec![0xde, 0xad, 0xbe, 0xef],
+        }];
+
+        let bytes =
+            encode_raw_capture_pevcap(&records, &summary, Some(185), PevcapFormat::Binary, 99)
+                .expect("raw capture encodes");
+        let decoded =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
+
+        assert_eq!(decoded.header.wall_clock_start_unix_ms, 99);
+        assert_eq!(decoded.header.write_limit, Some(185));
+        assert_eq!(
+            decoded.header.advertised_services.as_slice(),
+            &[gatt_channel_from_uuid(service)]
+        );
+        assert_eq!(decoded.header.gatt_fingerprints.len(), 1);
+        assert_eq!(decoded.header.resolved_identity, None);
+        assert_eq!(
+            decoded.header.annotations.as_slice(),
+            &["cutout-cli subscribe-raw".to_owned()]
+        );
+        assert_eq!(decoded.records.len(), 1);
+        assert_eq!(decoded.records[0].bytes, [0xde, 0xad, 0xbe, 0xef]);
     }
 
     #[test]
