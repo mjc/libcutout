@@ -562,8 +562,12 @@ impl DashboardState {
         self.push_log(
             "info",
             &format!(
-                "session update writes={} subscribes={} notifications={} bytes={}",
-                report.writes, report.subscribes, report.notifications, report.notification_bytes
+                "session update protocol_writes={} writes={} subscribes={} notifications={} bytes={}",
+                report.protocol_writes,
+                report.writes,
+                report.subscribes,
+                report.notifications,
+                report.notification_bytes
             ),
         );
 
@@ -1870,6 +1874,7 @@ mod tests {
     fn live_session_report_updates_real_counters_and_logs() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
+            protocol_writes: 0,
             writes: 0,
             subscribes: 1,
             notifications: 184,
@@ -1952,6 +1957,7 @@ mod tests {
     fn live_session_report_applies_telemetry_snapshot() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
+            protocol_writes: 0,
             writes: 0,
             subscribes: 1,
             notifications: 2,
@@ -2065,6 +2071,7 @@ mod tests {
     fn live_session_reports_accumulate_transport_counters() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
+            protocol_writes: 0,
             writes: 0,
             subscribes: 1,
             notifications: 2,
@@ -2097,6 +2104,7 @@ mod tests {
     fn live_session_report_uses_estimated_battery_from_voltage_telemetry() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
+            protocol_writes: 0,
             writes: 0,
             subscribes: 1,
             notifications: 1,

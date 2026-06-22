@@ -420,6 +420,9 @@ pub struct SessionEndpoints<'a> {
 /// Report produced by a protocol bridge run.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SessionBridgeReport {
+    /// Protocol write actions emitted by the session before transport chunking.
+    pub protocol_writes: usize,
+
     /// Transport writes executed through the bridge.
     pub writes: usize,
 
@@ -1624,6 +1627,7 @@ const fn session_record_monotonic_ms(record: &SessionCaptureRecord) -> u64 {
 }
 
 fn merge_session_report(into: &mut SessionBridgeReport, report: SessionBridgeReport) {
+    into.protocol_writes += report.protocol_writes;
     into.writes += report.writes;
     into.subscribes += report.subscribes;
     into.notifications += report.notifications;
@@ -1836,6 +1840,7 @@ where
                     WriteMode::WithResponse => WriteType::WithResponse,
                     WriteMode::WithoutResponse => WriteType::WithoutResponse,
                 };
+                context.report.protocol_writes += 1;
                 let write_limit = usize::from(context.peripheral.mtu()).max(1);
                 for chunk in bytes.as_slice().chunks(write_limit) {
                     context
@@ -3157,6 +3162,7 @@ mod tests {
         .await
         .expect("capture chunks oversized bridge writes");
 
+        assert_eq!(capture.report.protocol_writes, 1);
         assert_eq!(capture.report.writes, 3);
         assert_eq!(
             peripheral.writes.lock().expect("write log").as_slice(),

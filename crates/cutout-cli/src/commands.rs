@@ -1050,7 +1050,8 @@ fn capture_wall_clock_unix_ms() -> u64 {
 
 fn print_session_report(report: &SessionBridgeReport) {
     println!(
-        "session writes={} subscribes={} notifications={} telemetry={} read_only_responses={} diagnostics={} disconnects={}",
+        "session protocol_writes={} writes={} subscribes={} notifications={} telemetry={} read_only_responses={} diagnostics={} disconnects={}",
+        report.protocol_writes,
         report.writes,
         report.subscribes,
         report.notifications,
@@ -1113,10 +1114,20 @@ fn print_session_read_only_jsonl(
 fn render_session_diagnostics_jsonl(
     report: &SessionBridgeReport,
 ) -> Result<String, serde_json::Error> {
-    render_diagnostic_snapshot_jsonl(
-        0,
-        DiagnosticSnapshot::from_parser_diagnostics(report.diagnostics_snapshot),
-    )
+    let diagnostics = DiagnosticSnapshot::from_parser_diagnostics(report.diagnostics_snapshot);
+    serde_json::to_string(&serde_json::json!({
+        "type": "diagnostic_snapshot",
+        "sequence": 0,
+        "protocol_writes": report.protocol_writes,
+        "writes": report.writes,
+        "dropped_bytes": diagnostics.dropped_bytes,
+        "resyncs": diagnostics.resyncs,
+        "bad_checksums": diagnostics.bad_checksums,
+        "timeouts": diagnostics.timeouts,
+        "oversized_frames": diagnostics.oversized_frames,
+        "malformed_frames": diagnostics.malformed_frames,
+        "unmatched_replies": diagnostics.unmatched_replies,
+    }))
 }
 
 fn render_reconnect_attempt_diagnostics_jsonl(
@@ -1130,6 +1141,7 @@ fn render_reconnect_attempt_diagnostics_jsonl(
         "identifier": attempt.summary.observation.identifier,
         "name": attempt.summary.observation.name,
         "rssi": attempt.summary.observation.rssi,
+        "protocol_writes": attempt.report.protocol_writes,
         "writes": attempt.report.writes,
         "subscribes": attempt.report.subscribes,
         "notifications": attempt.report.notifications,
@@ -2012,6 +2024,8 @@ mod tests {
     #[test]
     fn live_session_diagnostics_jsonl_uses_aggregate_report_snapshot() {
         let report = SessionBridgeReport {
+            protocol_writes: 1,
+            writes: 3,
             diagnostics_snapshot: cutout_core::ParserDiagnostics {
                 dropped_bytes: 1,
                 resyncs: 2,
@@ -2034,6 +2048,8 @@ mod tests {
             serde_json::from_str(&line).expect("session diagnostics JSONL is JSON");
         assert_eq!(value["type"], "diagnostic_snapshot");
         assert_eq!(value["sequence"], 0);
+        assert_eq!(value["protocol_writes"], 1);
+        assert_eq!(value["writes"], 3);
         assert_eq!(value["dropped_bytes"], 1);
         assert_eq!(value["resyncs"], 2);
         assert_eq!(value["bad_checksums"], 3);
@@ -2066,6 +2082,7 @@ mod tests {
                 services: Vec::new(),
             },
             report: SessionBridgeReport {
+                protocol_writes: 2,
                 writes: 3,
                 subscribes: 1,
                 notifications: 8,
@@ -2091,6 +2108,7 @@ mod tests {
         assert_eq!(value["type"], "reconnect_attempt");
         assert_eq!(value["attempt"], 2);
         assert_eq!(value["identifier"], "NF2557");
+        assert_eq!(value["protocol_writes"], 2);
         assert_eq!(value["writes"], 3);
         assert_eq!(value["subscribes"], 1);
         assert_eq!(value["notifications"], 8);
