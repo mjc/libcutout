@@ -19,8 +19,8 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceEvent, GattChannel, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
-    TelemetrySnapshot, TransportAction, WriteMode,
+    DeviceEvent, GattChannel, LinkInfo, ParserDiagnostics, ProtocolSession, SessionInput,
+    SessionOutput, TelemetrySnapshot, TransportAction, WriteMode,
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
@@ -332,6 +332,9 @@ pub struct SessionBridgeReport {
 
     /// Parser diagnostics events emitted by the session.
     pub diagnostics: usize,
+
+    /// Aggregated parser diagnostic counters emitted by the session.
+    pub diagnostics_snapshot: ParserDiagnostics,
 
     /// Transport disconnect operations executed through the bridge.
     pub disconnects: usize,
@@ -899,8 +902,9 @@ where
                 context.report.telemetry += 1;
                 context.report.telemetry_snapshot.apply_delta(delta);
             }
-            SessionOutput::Event(DeviceEvent::Diagnostics(_)) => {
+            SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => {
                 context.report.diagnostics += 1;
+                context.report.diagnostics_snapshot.merge(diagnostics);
             }
         }
     }
@@ -1516,6 +1520,7 @@ mod tests {
             Some(Measured::estimated(61))
         );
         assert_eq!(report.diagnostics, 1);
+        assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
     }
 
