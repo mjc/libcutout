@@ -24,6 +24,7 @@ cutout-btle = { path = "../cutout-btle", version = "0.1.0" }
 cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 ratatui.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

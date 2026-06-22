@@ -76,7 +76,9 @@ Replay a PEVCAP capture into a selected read-only protocol session without
 connecting to Bluetooth hardware.
 
 By default the command auto-selects the replay profile from persisted PEVCAP
-identity metadata. Use --profile to override that metadata for verification.";
+identity metadata. Use --profile to override that metadata for verification.
+Use --diagnostics-jsonl to emit stable diagnostic snapshot records for replay
+tooling.";
 const DASHBOARD_LONG_ABOUT: &str = "\
 Open a read-only Ratatui dashboard backed by the Termina terminal backend.
 The dashboard is intended as a live inspection surface for discovery, device
@@ -287,6 +289,10 @@ pub(crate) struct PevcapReplayArgs {
     /// Read-only protocol profile used for replay.
     #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
     pub(crate) profile: SessionProfile,
+
+    /// Emit diagnostic snapshots as JSONL records after the replay summary.
+    #[arg(long = "diagnostics-jsonl")]
+    pub(crate) diagnostics_jsonl: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -901,6 +907,7 @@ mod tests {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Binary,
                     profile: SessionProfile::Falcon,
+                    diagnostics_jsonl: false,
                 })
             })
         );
@@ -926,6 +933,34 @@ mod tests {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Binary,
                     profile: SessionProfile::Auto,
+                    diagnostics_jsonl: false,
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn parses_pevcap_replay_command_with_diagnostics_jsonl() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            "session.pevcap",
+            "--input-format",
+            "jsonl",
+            "--diagnostics-jsonl",
+        ])
+        .expect("parser accepts diagnostic JSONL replay flag");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Replay(PevcapReplayArgs {
+                    input: PathBuf::from("session.pevcap"),
+                    input_format: PevcapFormat::Jsonl,
+                    profile: SessionProfile::Auto,
+                    diagnostics_jsonl: true,
                 })
             })
         );

@@ -341,6 +341,7 @@ dependencies = [
  "cutout-protocols",
  "hex-literal",
  "ratatui",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

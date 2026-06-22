@@ -13,10 +13,10 @@ use cutout_btle::{
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, HostSession, Measured, PevcapCapture,
-    PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily,
-    ReplayChunkComparison, SessionOutput, SettingsReadback, TelemetrySnapshot, VerificationStatus,
-    VerifiedValue,
+    DeviceCommand, DeviceEvent, DiagnosticError, DiagnosticErrorKind, DiagnosticSnapshot,
+    FirmwareInfo, GattChannel, HostSession, Measured, PevcapCapture, PevcapEncoding, PevcapHeader,
+    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ReplayChunkComparison, SessionOutput,
+    SettingsReadback, TelemetrySnapshot, VerificationStatus, VerifiedValue,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel, NosfetAeroModel,
@@ -103,6 +103,14 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
         selected_pevcap_replay_profile(&capture, args.profile)?,
     );
     println!("{}", render_pevcap_replay_report(&report));
+    if args.diagnostics_jsonl {
+        for line in render_diagnostic_snapshots_jsonl(&report.diagnostic_snapshots)? {
+            println!("{line}");
+        }
+        for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors)? {
+            println!("{line}");
+        }
+    }
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
         println!("{telemetry}");
     }
@@ -124,6 +132,8 @@ struct PevcapReplayReport {
     chunk_arbitrary_matches: bool,
     telemetry_snapshot: TelemetrySnapshot,
     firmware: Option<FirmwareInfo>,
+    diagnostic_snapshots: Vec<DiagnosticSnapshot>,
+    diagnostic_errors: Vec<DiagnosticError>,
 }
 
 fn replay_pevcap_capture(
@@ -176,6 +186,8 @@ fn summarize_pevcap_replay(
         chunk_arbitrary_matches: chunk_comparison.arbitrary_matches,
         telemetry_snapshot: TelemetrySnapshot::default(),
         firmware: None,
+        diagnostic_snapshots: Vec::new(),
+        diagnostic_errors: Vec::new(),
     };
 
     for output in outputs {
@@ -193,8 +205,11 @@ fn summarize_pevcap_replay(
                     report.firmware = Some(*firmware);
                 }
             }
-            DeviceEvent::Diagnostics(_) => {
+            DeviceEvent::Diagnostics(diagnostics) => {
                 report.diagnostics += 1;
+                report
+                    .diagnostic_snapshots
+                    .push(DiagnosticSnapshot::from_parser_diagnostics(*diagnostics));
             }
             DeviceEvent::LinkUp(_)
             | DeviceEvent::LinkDown
@@ -204,6 +219,68 @@ fn summarize_pevcap_replay(
     }
 
     report
+}
+
+fn render_diagnostic_snapshots_jsonl(
+    snapshots: &[DiagnosticSnapshot],
+) -> Result<Vec<String>, serde_json::Error> {
+    snapshots
+        .iter()
+        .enumerate()
+        .map(|(sequence, snapshot)| render_diagnostic_snapshot_jsonl(sequence, *snapshot))
+        .collect()
+}
+
+fn render_diagnostic_errors_jsonl(
+    errors: &[DiagnosticError],
+) -> Result<Vec<String>, serde_json::Error> {
+    errors
+        .iter()
+        .enumerate()
+        .map(|(sequence, error)| render_diagnostic_error_jsonl(sequence, *error))
+        .collect()
+}
+
+fn render_diagnostic_snapshot_jsonl(
+    sequence: usize,
+    snapshot: DiagnosticSnapshot,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&serde_json::json!({
+        "type": "diagnostic_snapshot",
+        "sequence": sequence,
+        "dropped_bytes": snapshot.dropped_bytes,
+        "resyncs": snapshot.resyncs,
+        "bad_checksums": snapshot.bad_checksums,
+        "timeouts": snapshot.timeouts,
+        "oversized_frames": snapshot.oversized_frames,
+        "malformed_frames": snapshot.malformed_frames,
+        "unmatched_replies": snapshot.unmatched_replies,
+    }))
+}
+
+fn render_diagnostic_error_jsonl(
+    sequence: usize,
+    error: DiagnosticError,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&serde_json::json!({
+        "type": "diagnostic_error",
+        "sequence": sequence,
+        "kind": diagnostic_error_kind_name(error.kind),
+        "claimed_len": error.claimed_len,
+        "max_len": error.max_len,
+        "elapsed_ms": error.elapsed_ms,
+        "timeout_ms": error.timeout_ms,
+    }))
+}
+
+const fn diagnostic_error_kind_name(kind: DiagnosticErrorKind) -> &'static str {
+    match kind {
+        DiagnosticErrorKind::OversizedFrame => "oversized_frame",
+        DiagnosticErrorKind::BadChecksum => "bad_checksum",
+        DiagnosticErrorKind::MalformedFrame => "malformed_frame",
+        DiagnosticErrorKind::Timeout => "timeout",
+        DiagnosticErrorKind::UnmatchedReply => "unmatched_reply",
+    }
 }
 
 fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
@@ -1208,12 +1285,63 @@ mod tests {
             chunk_arbitrary_matches: true,
             telemetry_snapshot: TelemetrySnapshot::default(),
             firmware: None,
+            diagnostic_snapshots: Vec::new(),
+            diagnostic_errors: Vec::new(),
         };
 
         assert_eq!(
             render_pevcap_replay_report(&report),
             "pevcap replay records=2 outputs=3 telemetry=1 read_only_responses=1 diagnostics=1 arbitrary_chunk_plan_len=3 chunk_one_byte_matches=true chunk_arbitrary_matches=true"
         );
+    }
+
+    #[test]
+    fn diagnostic_snapshot_jsonl_uses_stable_snake_case_fields() {
+        let line = render_diagnostic_snapshot_jsonl(
+            7,
+            DiagnosticSnapshot {
+                dropped_bytes: 11,
+                resyncs: 2,
+                bad_checksums: 3,
+                timeouts: 5,
+                oversized_frames: 8,
+                malformed_frames: 13,
+                unmatched_replies: 21,
+            },
+        )
+        .expect("diagnostic snapshot serializes");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("diagnostic JSONL is JSON");
+        assert_eq!(value["type"], "diagnostic_snapshot");
+        assert_eq!(value["sequence"], 7);
+        assert_eq!(value["dropped_bytes"], 11);
+        assert_eq!(value["resyncs"], 2);
+        assert_eq!(value["bad_checksums"], 3);
+        assert_eq!(value["timeouts"], 5);
+        assert_eq!(value["oversized_frames"], 8);
+        assert_eq!(value["malformed_frames"], 13);
+        assert_eq!(value["unmatched_replies"], 21);
+    }
+
+    #[test]
+    fn diagnostic_error_jsonl_preserves_kind_and_fixed_unit_details() {
+        let error = DiagnosticError::from_parser_error(cutout_core::ParserError::Timeout {
+            elapsed_ms: 1_234,
+            timeout_ms: 5_000,
+        });
+
+        let line = render_diagnostic_error_jsonl(3, error).expect("diagnostic error serializes");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("diagnostic error JSONL is JSON");
+        assert_eq!(value["type"], "diagnostic_error");
+        assert_eq!(value["sequence"], 3);
+        assert_eq!(value["kind"], "timeout");
+        assert_eq!(value["claimed_len"], serde_json::Value::Null);
+        assert_eq!(value["max_len"], serde_json::Value::Null);
+        assert_eq!(value["elapsed_ms"], 1_234);
+        assert_eq!(value["timeout_ms"], 5_000);
     }
 
     #[test]
