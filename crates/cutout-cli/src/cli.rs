@@ -243,7 +243,7 @@ pub(crate) struct PevcapReplayArgs {
     pub(crate) input_format: PevcapFormat,
 
     /// Read-only protocol profile used for replay.
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
     pub(crate) profile: SessionProfile,
 }
 
@@ -796,6 +796,31 @@ mod tests {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Binary,
                     profile: SessionProfile::Falcon,
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn parses_pevcap_replay_command_with_auto_profile() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            "session.pevcap",
+            "--input-format",
+            "binary",
+        ])
+        .expect("parser accepts PEVCAP replay without explicit profile");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Replay(PevcapReplayArgs {
+                    input: PathBuf::from("session.pevcap"),
+                    input_format: PevcapFormat::Binary,
+                    profile: SessionProfile::Auto,
                 })
             })
         );

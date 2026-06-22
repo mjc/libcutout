@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use cutout_btle::{
     BtleError, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata, SessionBridgeReport,
     SessionCapture, SessionEndpoints, capture_session_with_commands, connect_and_discover,
@@ -13,7 +13,8 @@ use cutout_btle::{
 };
 use cutout_core::{
     DeviceCommand, DeviceEvent, FirmwareInfo, HostSession, Measured, PevcapCapture, PevcapEncoding,
-    ReplayChunkComparison, SessionOutput, SettingsReadback, TelemetrySnapshot,
+    PevcapResolvedIdentity, ProtocolFamily, ReplayChunkComparison, SessionOutput, SettingsReadback,
+    TelemetrySnapshot, VerificationStatus, VerifiedValue,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeFalconModel, NosfetAeroModel,
@@ -94,7 +95,10 @@ const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
 fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
     let input = fs::read(&args.input)?;
     let capture = PevcapCapture::decode(&input, pevcap_encoding(args.input_format))?;
-    let report = replay_pevcap_capture(&capture, selected_session_profile(args.profile));
+    let report = replay_pevcap_capture(
+        &capture,
+        selected_pevcap_replay_profile(&capture, args.profile)?,
+    );
     println!("{}", render_pevcap_replay_report(&report));
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
         println!("{telemetry}");
@@ -422,22 +426,26 @@ impl SessionMode {
     ) -> Result<()> {
         match profile {
             SelectedSessionProfile::Aero => {
+                let binding =
+                    SessionBinding::new(VETERAN_DATA_CHANNEL, SelectedSessionProfile::Aero);
                 self.run_with_session(
                     connection,
                     endpoints,
                     ReadOnlySession::<NosfetAeroModel, false>::default(),
-                    VETERAN_DATA_CHANNEL,
+                    binding,
                     commands,
                     window,
                 )
                 .await
             }
             SelectedSessionProfile::Falcon => {
+                let binding =
+                    SessionBinding::new(BEGODE_DATA_CHANNEL, SelectedSessionProfile::Falcon);
                 self.run_with_session(
                     connection,
                     endpoints,
                     ReadOnlySession::<BegodeFalconModel, true>::default(),
-                    BEGODE_DATA_CHANNEL,
+                    binding,
                     commands,
                     window,
                 )
@@ -451,7 +459,7 @@ impl SessionMode {
         connection: &ConnectedPeripheral,
         endpoints: SessionEndpoints<'_>,
         mut session: S,
-        channel: cutout_core::GattChannel,
+        binding: SessionBinding,
         commands: &[DeviceCommand],
         window: Duration,
     ) -> Result<()>
@@ -463,7 +471,7 @@ impl SessionMode {
                 let report = drive_session_with_commands(
                     &connection.peripheral,
                     &mut session,
-                    channel,
+                    binding.channel,
                     &connection.summary,
                     endpoints,
                     window,
@@ -476,14 +484,14 @@ impl SessionMode {
                 let capture = capture_session_with_commands(
                     &connection.peripheral,
                     &mut session,
-                    channel,
+                    binding.channel,
                     &connection.summary,
                     endpoints,
                     window,
                     commands,
                 )
                 .await?;
-                write_or_print_capture(capture, &connection.summary, &output)?;
+                write_or_print_capture(capture, &connection.summary, &output, binding.profile)?;
             }
         }
         Ok(())
@@ -510,10 +518,68 @@ enum SelectedSessionProfile {
     Falcon,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SessionBinding {
+    channel: cutout_core::GattChannel,
+    profile: SelectedSessionProfile,
+}
+
+impl SessionBinding {
+    const fn new(channel: cutout_core::GattChannel, profile: SelectedSessionProfile) -> Self {
+        Self { channel, profile }
+    }
+}
+
 const fn selected_session_profile(profile: SessionProfile) -> SelectedSessionProfile {
     match profile {
         SessionProfile::Auto | SessionProfile::Aero => SelectedSessionProfile::Aero,
         SessionProfile::Falcon => SelectedSessionProfile::Falcon,
+    }
+}
+
+fn selected_pevcap_replay_profile(
+    capture: &PevcapCapture,
+    profile: SessionProfile,
+) -> Result<SelectedSessionProfile> {
+    match profile {
+        SessionProfile::Aero | SessionProfile::Falcon => Ok(selected_session_profile(profile)),
+        SessionProfile::Auto => auto_pevcap_replay_profile(capture),
+    }
+}
+
+fn auto_pevcap_replay_profile(capture: &PevcapCapture) -> Result<SelectedSessionProfile> {
+    match capture
+        .header
+        .resolved_identity
+        .as_ref()
+        .and_then(|identity| identity.protocol_family)
+    {
+        Some(ProtocolFamily::VeteranLeaperkimNosfet) => Ok(SelectedSessionProfile::Aero),
+        Some(ProtocolFamily::BegodeGotway) => Ok(SelectedSessionProfile::Falcon),
+        None | Some(ProtocolFamily::Vesc) => {
+            bail!("PEVCAP replay --profile auto requires resolved Aero or Falcon identity metadata")
+        }
+    }
+}
+
+fn pevcap_identity_for_profile(profile: SelectedSessionProfile) -> PevcapResolvedIdentity {
+    match profile {
+        SelectedSessionProfile::Aero => PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+            model: Some(VerifiedValue {
+                value: "NOSFET Aero".to_owned(),
+                verification: VerificationStatus::Inferred,
+            }),
+            firmware: None,
+        },
+        SelectedSessionProfile::Falcon => PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::BegodeGotway),
+            model: Some(VerifiedValue {
+                value: "Begode Falcon".to_owned(),
+                verification: VerificationStatus::Inferred,
+            }),
+            firmware: None,
+        },
     }
 }
 
@@ -538,6 +604,7 @@ fn write_or_print_capture(
     capture: SessionCapture,
     summary: &cutout_btle::ConnectionSummary,
     output: &CaptureOutput,
+    profile: SelectedSessionProfile,
 ) -> Result<()> {
     match output {
         CaptureOutput::Text => {
@@ -551,6 +618,7 @@ fn write_or_print_capture(
                 summary,
                 *format,
                 capture_wall_clock_unix_ms(),
+                profile,
             )?;
             fs::write(path, bytes)?;
             println!("wrote pevcap {} ({format:?})", path.display());
@@ -565,6 +633,7 @@ fn encode_session_capture_pevcap(
     summary: &cutout_btle::ConnectionSummary,
     format: PevcapFormat,
     wall_clock_start_unix_ms: u64,
+    profile: SelectedSessionProfile,
 ) -> Result<Vec<u8>> {
     let pevcap = capture.to_pevcap(
         summary,
@@ -573,6 +642,7 @@ fn encode_session_capture_pevcap(
             platform_id: std::env::consts::OS,
             library_version: env!("CARGO_PKG_VERSION"),
             registry_hash: cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
+            resolved_identity: Some(pevcap_identity_for_profile(profile)),
             annotations: &["cutout-cli capture-aero"],
         },
     )?;
@@ -790,7 +860,7 @@ mod tests {
             Some(182),
             &[service],
             &[],
-            Some(cutout_core::PevcapResolvedIdentity {
+            Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::BegodeGotway),
                 model: Some(VerifiedValue {
                     value: "Begode Falcon".to_owned(),
@@ -926,8 +996,14 @@ mod tests {
             report: SessionBridgeReport::default(),
         };
 
-        let bytes = encode_session_capture_pevcap(&capture, &summary, PevcapFormat::Binary, 42)
-            .expect("capture encodes");
+        let bytes = encode_session_capture_pevcap(
+            &capture,
+            &summary,
+            PevcapFormat::Binary,
+            42,
+            SelectedSessionProfile::Aero,
+        )
+        .expect("capture encodes");
         let decoded =
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
@@ -938,6 +1014,14 @@ mod tests {
             cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY])
         );
         assert_ne!(decoded.header.registry_hash, [0; 32]);
+        assert_eq!(
+            decoded
+                .header
+                .resolved_identity
+                .as_ref()
+                .and_then(|identity| identity.protocol_family),
+            Some(ProtocolFamily::VeteranLeaperkimNosfet)
+        );
         assert_eq!(decoded.records.len(), 2);
         assert_eq!(
             decoded.records[0].write_mode,
@@ -992,6 +1076,58 @@ mod tests {
                 .and_then(|firmware| firmware.firmware_major.map(|major| major.value)),
             Some(43)
         );
+    }
+
+    #[test]
+    fn pevcap_replay_auto_selects_falcon_from_resolved_identity() {
+        let capture = sample_pevcap_capture();
+
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects Falcon replay");
+
+        assert_eq!(profile, SelectedSessionProfile::Falcon);
+    }
+
+    #[test]
+    fn pevcap_replay_auto_selects_aero_from_resolved_identity() {
+        let mut capture = sample_aero_replay_capture();
+        capture.header.resolved_identity = Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+            model: Some(VerifiedValue {
+                value: "NOSFET Aero".to_owned(),
+                verification: VerificationStatus::Inferred,
+            }),
+            firmware: None,
+        });
+
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Aero identity selects Aero replay");
+
+        assert_eq!(profile, SelectedSessionProfile::Aero);
+    }
+
+    #[test]
+    fn pevcap_replay_auto_rejects_missing_identity() {
+        let capture = sample_aero_replay_capture();
+
+        let error = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect_err("missing identity should not guess a replay profile");
+
+        assert!(
+            error
+                .to_string()
+                .contains("requires resolved Aero or Falcon")
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_explicit_profile_overrides_missing_identity() {
+        let capture = sample_aero_replay_capture();
+
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Falcon)
+            .expect("explicit profile does not require metadata");
+
+        assert_eq!(profile, SelectedSessionProfile::Falcon);
     }
 
     #[test]

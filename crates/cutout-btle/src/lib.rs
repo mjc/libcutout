@@ -543,7 +543,7 @@ pub struct SessionCapture {
 
 /// Caller-supplied metadata for converting a live BTLE session capture into
 /// PEVCAP.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapSessionMetadata<'a> {
     /// Wall-clock capture start time in Unix milliseconds.
     pub wall_clock_start_unix_ms: u64,
@@ -556,6 +556,9 @@ pub struct PevcapSessionMetadata<'a> {
 
     /// Registry hash used while producing the capture.
     pub registry_hash: [u8; 32],
+
+    /// Resolved identity used while producing the capture, when known.
+    pub resolved_identity: Option<cutout_core::PevcapResolvedIdentity>,
 
     /// Human annotations attached to the capture.
     pub annotations: &'a [&'a str],
@@ -597,7 +600,7 @@ impl SessionCapture {
             write_limit,
             &advertised_services,
             &gatt_fingerprints,
-            None,
+            metadata.resolved_identity,
             metadata.library_version,
             metadata.registry_hash,
             metadata.annotations,
@@ -1583,9 +1586,10 @@ mod tests {
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
     use cutout_core::{
         DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, Measured, ParserDiagnostics,
-        PevcapDirection, ProtocolSession, RawFieldValue, ReadOnlyResponse, SessionInput,
-        SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction,
-        ValueQuality, ValueSource, VerificationStatus, WriteMode,
+        PevcapDirection, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, RawFieldValue,
+        ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
+        TelemetryDelta, TransportAction, ValueQuality, ValueSource, VerificationStatus,
+        VerifiedValue, WriteMode,
     };
     use cutout_protocols::IdentityConfidence;
     use futures_util::stream;
@@ -1888,6 +1892,14 @@ mod tests {
                     platform_id: "darwin",
                     library_version: "0.1.0",
                     registry_hash: [0x42; 32],
+                    resolved_identity: Some(PevcapResolvedIdentity {
+                        protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+                        model: Some(VerifiedValue {
+                            value: "NOSFET Aero".to_owned(),
+                            verification: VerificationStatus::Inferred,
+                        }),
+                        firmware: None,
+                    }),
                     annotations: &["live aero"],
                 },
             )
@@ -1898,6 +1910,14 @@ mod tests {
         assert_eq!(pevcap.header.write_limit, Some(23));
         assert_eq!(pevcap.header.advertised_services.len(), 1);
         assert_eq!(pevcap.header.gatt_fingerprints.len(), 1);
+        assert_eq!(
+            pevcap
+                .header
+                .resolved_identity
+                .as_ref()
+                .and_then(|identity| identity.model.as_ref().map(|model| model.value.as_str())),
+            Some("NOSFET Aero")
+        );
         assert_eq!(pevcap.records.len(), 2);
         assert_eq!(pevcap.records[0].direction, PevcapDirection::Outbound);
         assert_eq!(
@@ -1954,6 +1974,7 @@ mod tests {
                     platform_id: "test",
                     library_version: "0.1.0",
                     registry_hash: [0; 32],
+                    resolved_identity: None,
                     annotations: &[],
                 },
             )
