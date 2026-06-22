@@ -98,4 +98,10 @@ mod tests {
         assert!(!capabilities.supports_command_kind(CommandKind::RequestDiagnostics));
         assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
     }
+
+    #[test]
+    fn begode_falcon_registry_entry_passes_core_validation() {
+        cutout_core::validate_registry_entries(&[&BEGODE_FALCON_REGISTRY_ENTRY])
+            .expect("Falcon registry entry is structurally valid");
+    }
 }

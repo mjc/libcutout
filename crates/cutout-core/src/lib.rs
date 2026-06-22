@@ -654,6 +654,67 @@ pub struct ModelRegistryEntry {
     pub verification: VerificationStatus,
 }
 
+/// Registry data validation error.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum RegistryValidationError {
+    /// Registry entry has an empty manufacturer.
+    #[error("registry entry at index {index} has an empty manufacturer")]
+    EmptyManufacturer {
+        /// Entry index in the validated slice.
+        index: usize,
+    },
+
+    /// Registry entry has an empty model.
+    #[error("registry entry at index {index} has an empty model")]
+    EmptyModel {
+        /// Entry index in the validated slice.
+        index: usize,
+    },
+
+    /// Registry entry duplicates an earlier manufacturer/model key.
+    #[error("registry entry at index {index} duplicates entry at index {first_index}")]
+    DuplicateModel {
+        /// Duplicate entry index.
+        index: usize,
+
+        /// First entry index with the same manufacturer/model key.
+        first_index: usize,
+    },
+
+    /// Registry entry has no observed GATT fingerprints.
+    #[error("registry entry at index {index} has no GATT fingerprints")]
+    MissingGattFingerprint {
+        /// Entry index in the validated slice.
+        index: usize,
+    },
+
+    /// Registry entry exposes no supported commands.
+    #[error("registry entry at index {index} exposes no command capabilities")]
+    EmptyCapabilities {
+        /// Entry index in the validated slice.
+        index: usize,
+    },
+}
+
+/// Validates registry entries as data before they are bundled, hashed, or used
+/// for model identification.
+///
+/// # Errors
+///
+/// Returns [`RegistryValidationError`] for the first structural inconsistency
+/// found in the supplied entries.
+pub fn validate_registry_entries(
+    entries: &[&ModelRegistryEntry],
+) -> Result<(), RegistryValidationError> {
+    for (index, entry) in entries.iter().enumerate() {
+        validate_registry_entry(index, entry)?;
+        if let Some(first_index) = first_duplicate_model_index(entries, index, entry) {
+            return Err(RegistryValidationError::DuplicateModel { index, first_index });
+        }
+    }
+    Ok(())
+}
+
 /// Deterministic fingerprint for a registry snapshot.
 ///
 /// This is intended for capture provenance and replay compatibility checks. It
@@ -667,6 +728,41 @@ pub fn registry_entries_hash(entries: &[&ModelRegistryEntry]) -> [u8; 32] {
         hasher.write_registry_entry(entry);
     }
     hasher.finish()
+}
+
+fn validate_registry_entry(
+    index: usize,
+    entry: &ModelRegistryEntry,
+) -> Result<(), RegistryValidationError> {
+    if entry.manufacturer.is_empty() {
+        return Err(RegistryValidationError::EmptyManufacturer { index });
+    }
+    if entry.model.is_empty() {
+        return Err(RegistryValidationError::EmptyModel { index });
+    }
+    if entry.gatt.is_empty() {
+        return Err(RegistryValidationError::MissingGattFingerprint { index });
+    }
+    if capabilities_are_empty(entry.capabilities) {
+        return Err(RegistryValidationError::EmptyCapabilities { index });
+    }
+    Ok(())
+}
+
+fn first_duplicate_model_index(
+    entries: &[&ModelRegistryEntry],
+    index: usize,
+    entry: &ModelRegistryEntry,
+) -> Option<usize> {
+    entries[..index].iter().position(|candidate| {
+        candidate.manufacturer == entry.manufacturer && candidate.model == entry.model
+    })
+}
+
+fn capabilities_are_empty(capabilities: Capabilities) -> bool {
+    ALL_COMMAND_KINDS
+        .iter()
+        .all(|command| !capabilities.supports_command_kind(*command))
 }
 
 struct RegistryHashBuilder {
@@ -3775,6 +3871,65 @@ mod tests {
         assert_ne!(
             crate::registry_entries_hash(&[&without_bms]),
             crate::registry_entries_hash(&[&with_bms])
+        );
+    }
+
+    #[test]
+    fn registry_validation_accepts_well_formed_entries() {
+        let aero = sample_registry_entry("NOSFET", "Aero");
+        let falcon = sample_registry_entry("Begode", "Falcon");
+
+        assert_eq!(crate::validate_registry_entries(&[&aero, &falcon]), Ok(()));
+    }
+
+    #[test]
+    fn registry_validation_rejects_empty_manufacturer_or_model() {
+        let empty_manufacturer = sample_registry_entry("", "Aero");
+        let empty_model = sample_registry_entry("NOSFET", "");
+
+        assert_eq!(
+            crate::validate_registry_entries(&[&empty_manufacturer]),
+            Err(crate::RegistryValidationError::EmptyManufacturer { index: 0 })
+        );
+        assert_eq!(
+            crate::validate_registry_entries(&[&empty_model]),
+            Err(crate::RegistryValidationError::EmptyModel { index: 0 })
+        );
+    }
+
+    #[test]
+    fn registry_validation_rejects_duplicate_model_keys() {
+        let first = sample_registry_entry("NOSFET", "Aero");
+        let duplicate = sample_registry_entry("NOSFET", "Aero");
+
+        assert_eq!(
+            crate::validate_registry_entries(&[&first, &duplicate]),
+            Err(crate::RegistryValidationError::DuplicateModel {
+                index: 1,
+                first_index: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn registry_validation_rejects_missing_gatt_fingerprint() {
+        let mut entry = sample_registry_entry("NOSFET", "Aero");
+        entry.gatt = &[];
+
+        assert_eq!(
+            crate::validate_registry_entries(&[&entry]),
+            Err(crate::RegistryValidationError::MissingGattFingerprint { index: 0 })
+        );
+    }
+
+    #[test]
+    fn registry_validation_rejects_empty_capabilities() {
+        let mut entry = sample_registry_entry("NOSFET", "Aero");
+        entry.capabilities = crate::Capabilities::default();
+
+        assert_eq!(
+            crate::validate_registry_entries(&[&entry]),
+            Err(crate::RegistryValidationError::EmptyCapabilities { index: 0 })
         );
     }
 
