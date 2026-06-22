@@ -2082,6 +2082,12 @@ mod tests {
                 .iter()
                 .all(|entry| !entry.message.contains("telemetry unmapped notifications=1"))
         );
+
+        state.active_tab = 3;
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+        assert!(text.contains("processed telemetry voltage=118V battery=78%"));
+        assert!(!text.contains("raw notification len=99"));
+        assert!(!text.contains("telemetry unmapped notifications=1"));
     }
 
     #[test]
