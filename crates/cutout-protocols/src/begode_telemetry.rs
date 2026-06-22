@@ -209,6 +209,19 @@ pub enum BegodePackLayoutSelection {
     Selected(BegodePackLayoutEvidence),
 }
 
+/// Result of cross-checking explicit Begode pack evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodePackEvidenceConsistency {
+    /// Evidence is self-consistent.
+    Consistent,
+
+    /// More explicit evidence is required before consistency can be proven.
+    Incomplete,
+
+    /// Evidence contradicts another explicit field.
+    Inconsistent,
+}
+
 impl BegodePackVoltageProfile {
     const fn scaler_milli(self) -> i32 {
         match self {
@@ -339,6 +352,92 @@ where
                 BegodePackLayoutSelection::Missing
             }
         })
+}
+
+/// Cross-checks selected Begode pack evidence for internal consistency.
+#[must_use]
+pub const fn validate_begode_pack_evidence(
+    profile: BegodeVoltageProfileSelection,
+    capacity: BegodeCapacitySelection,
+    layout: BegodePackLayoutSelection,
+) -> BegodePackEvidenceConsistency {
+    match (profile, capacity, layout) {
+        (BegodeVoltageProfileSelection::Conflicting, _, _)
+        | (_, BegodeCapacitySelection::Conflicting, _)
+        | (_, _, BegodePackLayoutSelection::Conflicting) => {
+            BegodePackEvidenceConsistency::Inconsistent
+        }
+        (
+            BegodeVoltageProfileSelection::Selected(profile),
+            capacity,
+            BegodePackLayoutSelection::Selected(layout),
+        ) => validate_selected_begode_pack_evidence(profile, capacity, layout),
+        (BegodeVoltageProfileSelection::Missing, _, _)
+        | (_, _, BegodePackLayoutSelection::Missing) => BegodePackEvidenceConsistency::Incomplete,
+    }
+}
+
+const fn validate_selected_begode_pack_evidence(
+    profile: BegodePackVoltageProfile,
+    capacity: BegodeCapacitySelection,
+    layout: BegodePackLayoutEvidence,
+) -> BegodePackEvidenceConsistency {
+    if let Some(series_cells) = layout.series_cells
+        && series_cells != profile.series_cells()
+    {
+        return BegodePackEvidenceConsistency::Inconsistent;
+    }
+
+    match capacity {
+        BegodeCapacitySelection::Missing => BegodePackEvidenceConsistency::Consistent,
+        BegodeCapacitySelection::Conflicting => BegodePackEvidenceConsistency::Inconsistent,
+        BegodeCapacitySelection::Selected(capacity) => {
+            validate_selected_begode_pack_capacity(capacity, layout)
+        }
+    }
+}
+
+const fn validate_selected_begode_pack_capacity(
+    capacity: BegodeCapacityEvidence,
+    layout: BegodePackLayoutEvidence,
+) -> BegodePackEvidenceConsistency {
+    match (
+        layout.cell_model,
+        layout.series_cells,
+        layout.parallel_count,
+    ) {
+        (Some(BegodeCellModel::Samsung50S), Some(series_cells), Some(parallel_count)) => {
+            validate_samsung_50s_capacity(capacity, series_cells, parallel_count)
+        }
+        _ => BegodePackEvidenceConsistency::Incomplete,
+    }
+}
+
+const fn validate_samsung_50s_capacity(
+    capacity: BegodeCapacityEvidence,
+    series_cells: u8,
+    parallel_count: u8,
+) -> BegodePackEvidenceConsistency {
+    let expected_mah = parallel_count as u32 * 5_000;
+    if let Some(nominal_capacity_mah) = capacity.nominal_capacity_mah
+        && nominal_capacity_mah != expected_mah
+    {
+        return BegodePackEvidenceConsistency::Inconsistent;
+    }
+
+    if let Some(reported_wh) = capacity.reported_wh {
+        let expected_wh = series_cells as u32 * parallel_count as u32 * 18;
+        if !within_percent(reported_wh, expected_wh, 5) {
+            return BegodePackEvidenceConsistency::Inconsistent;
+        }
+    }
+
+    BegodePackEvidenceConsistency::Consistent
+}
+
+const fn within_percent(value: u32, expected: u32, percent: u32) -> bool {
+    let delta = value.abs_diff(expected);
+    delta * 100 <= expected * percent
 }
 
 fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvidence> {
@@ -992,8 +1091,9 @@ mod tests {
         BEGODE_FIELD_ALERT_FLAGS, BEGODE_FIELD_LED_AND_LIGHT_MODE,
         BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, BEGODE_FIELD_SETTINGS_BITS,
         BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeFrame, BegodeLiveATelemetry,
-        BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext,
-        BegodeTelemetryError, BegodeUnitMode, estimate_begode_battery_percent,
+        BegodeLiveBTelemetry, BegodePackEvidenceConsistency, BegodePackVoltageProfile,
+        BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
+        estimate_begode_battery_percent, validate_begode_pack_evidence,
     };
     use cutout_core::{
         DiagnosticSeverity, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
@@ -1494,6 +1594,105 @@ mod tests {
         assert_eq!(
             select_begode_pack_capacity_from_annotations(annotations),
             BegodeCapacitySelection::Missing
+        );
+    }
+
+    #[test]
+    fn pack_evidence_consistency_rejects_profile_series_mismatch() {
+        assert_eq!(
+            validate_begode_pack_evidence(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ),
+                BegodeCapacitySelection::Missing,
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: None,
+                    series_cells: Some(24),
+                    parallel_count: None,
+                }),
+            ),
+            BegodePackEvidenceConsistency::Inconsistent
+        );
+    }
+
+    #[test]
+    fn pack_evidence_consistency_accepts_matching_profile_series() {
+        assert_eq!(
+            validate_begode_pack_evidence(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ),
+                BegodeCapacitySelection::Missing,
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: None,
+                    series_cells: Some(20),
+                    parallel_count: None,
+                }),
+            ),
+            BegodePackEvidenceConsistency::Consistent
+        );
+    }
+
+    #[test]
+    fn pack_evidence_consistency_rejects_84v_20s_2p_50s_as_900wh() {
+        assert_eq!(
+            validate_begode_pack_evidence(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ),
+                BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                    nominal_capacity_mah: None,
+                    reported_wh: Some(900),
+                }),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: Some(20),
+                    parallel_count: Some(2),
+                }),
+            ),
+            BegodePackEvidenceConsistency::Inconsistent
+        );
+    }
+
+    #[test]
+    fn pack_evidence_consistency_accepts_100v_24s_2p_50s_as_900wh() {
+        assert_eq!(
+            validate_begode_pack_evidence(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode100VFullCharge,
+                ),
+                BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                    nominal_capacity_mah: Some(10_000),
+                    reported_wh: Some(900),
+                }),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: Some(24),
+                    parallel_count: Some(2),
+                }),
+            ),
+            BegodePackEvidenceConsistency::Consistent
+        );
+    }
+
+    #[test]
+    fn pack_evidence_consistency_keeps_underconstrained_capacity_incomplete() {
+        assert_eq!(
+            validate_begode_pack_evidence(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ),
+                BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                    nominal_capacity_mah: None,
+                    reported_wh: Some(900),
+                }),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: Some(20),
+                    parallel_count: None,
+                }),
+            ),
+            BegodePackEvidenceConsistency::Incomplete
         );
     }
 

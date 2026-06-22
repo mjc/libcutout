@@ -26,10 +26,11 @@ use cutout_core::{
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeBmsSummary, BegodeCapacityEvidence,
     BegodeCapacitySelection, BegodeFalconModel, BegodeFrame, BegodeNotificationDecoder,
-    BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeVoltageEvidence,
-    BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession, VETERAN_DATA_CHANNEL,
-    select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
-    select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
+    BegodePackEvidenceConsistency, BegodePackLayoutEvidence, BegodePackLayoutSelection,
+    BegodeVoltageEvidence, BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession,
+    VETERAN_DATA_CHANNEL, select_begode_pack_capacity_from_annotations,
+    select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
+    select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
 };
 use tracing::info;
 
@@ -148,6 +149,7 @@ struct PevcapReplayReport {
     firmware: Option<FirmwareInfo>,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
+    pack_evidence_consistency: Option<BegodePackEvidenceConsistency>,
     diagnostic_snapshots: Vec<DiagnosticSnapshot>,
     diagnostic_errors: Vec<DiagnosticError>,
     read_only_response_events: Vec<ReadOnlyResponse>,
@@ -169,6 +171,13 @@ fn replay_pevcap_capture(
     report.capacity =
         select_begode_pack_capacity_from_annotations(capture.header.annotations.iter());
     report.layout = select_begode_pack_layout_from_annotations(capture.header.annotations.iter());
+    if profile == SelectedSessionProfile::Falcon {
+        report.pack_evidence_consistency = Some(validate_begode_pack_evidence(
+            select_falcon_replay_voltage_profile(capture),
+            report.capacity,
+            report.layout,
+        ));
+    }
     Ok(report)
 }
 
@@ -269,6 +278,7 @@ fn summarize_pevcap_replay(
         firmware: None,
         capacity: BegodeCapacitySelection::Missing,
         layout: BegodePackLayoutSelection::Missing,
+        pack_evidence_consistency: None,
         diagnostic_snapshots: Vec::new(),
         diagnostic_errors: Vec::new(),
         read_only_response_events: Vec::new(),
@@ -386,7 +396,23 @@ fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
     );
     append_capacity_evidence(&mut rendered, report.capacity);
     append_layout_evidence(&mut rendered, report.layout);
+    append_pack_evidence_consistency(&mut rendered, report.pack_evidence_consistency);
     rendered
+}
+
+fn append_pack_evidence_consistency(
+    rendered: &mut String,
+    consistency: Option<BegodePackEvidenceConsistency>,
+) {
+    match consistency {
+        None | Some(BegodePackEvidenceConsistency::Consistent) => {}
+        Some(BegodePackEvidenceConsistency::Incomplete) => {
+            rendered.push_str(" pack_evidence_incomplete=true");
+        }
+        Some(BegodePackEvidenceConsistency::Inconsistent) => {
+            rendered.push_str(" pack_evidence_inconsistent=true");
+        }
+    }
 }
 
 fn append_capacity_evidence(rendered: &mut String, capacity: BegodeCapacitySelection) {
@@ -2070,6 +2096,7 @@ mod tests {
             firmware: None,
             capacity: BegodeCapacitySelection::Missing,
             layout: BegodePackLayoutSelection::Missing,
+            pack_evidence_consistency: None,
             diagnostic_snapshots: Vec::new(),
             diagnostic_errors: Vec::new(),
             read_only_response_events: Vec::new(),
@@ -2515,6 +2542,37 @@ mod tests {
             .expect("layout conflict does not block replay");
 
         assert!(render_pevcap_replay_report(&report).contains("layout_conflict=true"));
+    }
+
+    #[test]
+    fn pevcap_replay_report_renders_inconsistent_falcon_pack_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&[
+            "battery=84v",
+            "reported_wh=900",
+            "cell_model=Samsung 50S",
+            "series_cells=20",
+            "parallel_count=2",
+        ]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile).expect("voltage evidence is present");
+
+        assert!(render_pevcap_replay_report(&report).contains("pack_evidence_inconsistent=true"));
+    }
+
+    #[test]
+    fn pevcap_replay_report_renders_incomplete_falcon_pack_evidence() {
+        let capture = sample_falcon_live_a_replay_capture(&[
+            "battery=84v",
+            "reported_wh=900",
+            "cell_model=Samsung 50S",
+            "series_cells=20",
+        ]);
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile).expect("voltage evidence is present");
+
+        assert!(render_pevcap_replay_report(&report).contains("pack_evidence_incomplete=true"));
     }
 
     #[test]
