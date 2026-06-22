@@ -7,9 +7,10 @@ use std::{
 
 use anyhow::{Result, bail};
 use cutout_btle::{
-    BtleError, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata, RawNotificationRecord,
-    SessionBridgeReport, SessionCapture, SessionEndpoints, SessionPeripheral,
-    capture_raw_notifications, capture_session_with_commands, connect_and_discover, drive_session,
+    BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata,
+    RawNotificationRecord, SessionBridgeReport, SessionCapture, SessionEndpoints,
+    SessionPeripheral, capture_raw_notifications, capture_reconnecting_session,
+    capture_session_with_commands, connect_and_discover, drive_session,
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
@@ -580,14 +581,67 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
 
 async fn capture_aero(args: CaptureAeroArgs) -> Result<()> {
     let annotations = capture_annotations(&args);
-    let output = args
-        .pevcap_output
-        .map_or(CaptureOutput::Text, |path| CaptureOutput::Pevcap {
-            path,
-            format: args.pevcap_format,
-            annotations,
-        });
+    if args.reconnect_attempts > 1 {
+        let output = capture_output(args.pevcap_output.clone(), args.pevcap_format, annotations);
+        return capture_aero_reconnecting(args, output).await;
+    }
+    let output = capture_output(args.pevcap_output, args.pevcap_format, annotations);
     connect(args.target, SessionMode::Capture { output }).await
+}
+
+fn capture_output(
+    pevcap_output: Option<std::path::PathBuf>,
+    pevcap_format: PevcapFormat,
+    annotations: Vec<String>,
+) -> CaptureOutput {
+    pevcap_output.map_or(CaptureOutput::Text, |path| CaptureOutput::Pevcap {
+        path,
+        format: pevcap_format,
+        annotations,
+    })
+}
+
+async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput) -> Result<()> {
+    let seconds = args.target.seconds();
+    let profile = selected_session_profile(args.target.profile());
+    if !args.target.probes().is_empty() {
+        bail!("capture-aero --reconnect-attempts does not replay explicit --probe commands yet");
+    }
+    if !matches!(output, CaptureOutput::Text) {
+        bail!(
+            "capture-aero --reconnect-attempts with --pevcap-output needs summary metadata wiring"
+        );
+    }
+
+    let diagnostics_jsonl = args.target.diagnostics_jsonl();
+    let read_only_jsonl = args.target.read_only_jsonl();
+    let mut host =
+        BtleplugReconnectHost::new(args.target.into_target(), Duration::from_secs(seconds));
+    let capture = match profile {
+        SelectedSessionProfile::Aero => {
+            capture_reconnecting_session(
+                &mut host,
+                &mut ReadOnlySession::<NosfetAeroModel, false>::default(),
+                VETERAN_DATA_CHANNEL,
+                Duration::from_secs(seconds),
+                args.reconnect_attempts,
+                false,
+            )
+            .await?
+        }
+        SelectedSessionProfile::Falcon => {
+            capture_reconnecting_session(
+                &mut host,
+                &mut ReadOnlySession::<BegodeFalconModel, true>::default(),
+                BEGODE_DATA_CHANNEL,
+                Duration::from_secs(seconds),
+                args.reconnect_attempts,
+                false,
+            )
+            .await?
+        }
+    };
+    print_capture(capture, diagnostics_jsonl, read_only_jsonl)
 }
 
 fn capture_annotations(args: &CaptureAeroArgs) -> Vec<String> {
@@ -1360,6 +1414,7 @@ fn push_measured_u16(
 #[cfg(test)]
 mod tests {
     use btleplug::api::{CharPropFlags, WriteType};
+    use clap::Parser;
     use cutout_btle::{
         BridgeIdentityResolution, ConnectionSummary, ConnectionTarget, PeripheralObservation,
         RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
@@ -1566,12 +1621,74 @@ mod tests {
                 .and_then(|identity| identity.protocol_family),
             Some(ProtocolFamily::VeteranLeaperkimNosfet)
         );
-        assert_eq!(decoded.records.len(), 2);
+        assert_eq!(decoded.records.len(), 3);
         assert_eq!(
-            decoded.records[0].write_mode,
+            decoded.records[0].direction,
+            cutout_core::PevcapDirection::LinkUp
+        );
+        assert_eq!(
+            decoded.records[1].write_mode,
             Some(WriteMode::WithoutResponse)
         );
-        assert_eq!(decoded.records[1].bytes, b"NAME=NF2557");
+        assert_eq!(decoded.records[2].bytes, b"NAME=NF2557");
+    }
+
+    #[tokio::test]
+    async fn reconnect_capture_rejects_probe_replay_until_policy_exists() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "NF2557",
+            "--reconnect-attempts",
+            "2",
+            "--probe",
+            "identity",
+        ])
+        .expect("parser accepts reconnect probe request");
+        let Command::CaptureAero(args) = cli.command else {
+            panic!("expected capture-aero command");
+        };
+
+        let err = capture_aero_reconnecting(args, CaptureOutput::Text)
+            .await
+            .expect_err("probe replay policy is not defined");
+
+        assert!(
+            err.to_string()
+                .contains("does not replay explicit --probe commands yet")
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_capture_rejects_pevcap_until_summary_metadata_is_wired() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "capture-aero",
+            "--name-contains",
+            "NF2557",
+            "--reconnect-attempts",
+            "2",
+            "--pevcap-output",
+            "session.pevcap",
+        ])
+        .expect("parser accepts reconnect PEVCAP request");
+        let Command::CaptureAero(args) = cli.command else {
+            panic!("expected capture-aero command");
+        };
+
+        let err = capture_aero_reconnecting(
+            args,
+            CaptureOutput::Pevcap {
+                path: "session.pevcap".into(),
+                format: PevcapFormat::Jsonl,
+                annotations: Vec::new(),
+            },
+        )
+        .await
+        .expect_err("multi-link PEVCAP needs summary metadata");
+
+        assert!(err.to_string().contains("needs summary metadata wiring"));
     }
 
     #[test]
