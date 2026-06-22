@@ -30,6 +30,7 @@ pub fn init_logging(dashboard_mode: bool) -> Option<WorkerGuard> {
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
         let layer = fmt::layer()
             .compact()
+            .with_ansi(false)
             .with_target(true)
             .with_writer(non_blocking);
         let subscriber = registry().with(filter).with(DashboardLogLayer).with(layer);
@@ -69,6 +70,14 @@ pub(crate) fn install_dashboard_log_sink(
 
 fn dashboard_log_sink() -> &'static Mutex<Option<mpsc::Sender<DashboardUpdate>>> {
     DASHBOARD_LOG_SINK.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn dashboard_log_sink_installed() -> bool {
+    let sink = dashboard_log_sink();
+    let guard = sink
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard.is_some()
 }
 
 pub(crate) struct DashboardLogSinkGuard;
@@ -219,9 +228,52 @@ fn directive_requests_debug_file(directive: &str) -> bool {
     )
 }
 
+pub(crate) const DASHBOARD_RECENT_EVENT_TARGET: &str = "cutout_cli::dashboard_recent_events";
+
+pub(crate) fn log_dashboard_recent_event(level: &str, message: &str) {
+    match level {
+        "trace" => tracing::trace!(target: DASHBOARD_RECENT_EVENT_TARGET, "{message}"),
+        "debug" => tracing::debug!(target: DASHBOARD_RECENT_EVENT_TARGET, "{message}"),
+        "warn" => tracing::warn!(target: DASHBOARD_RECENT_EVENT_TARGET, "{message}"),
+        "error" => tracing::error!(target: DASHBOARD_RECENT_EVENT_TARGET, "{message}"),
+        _ => tracing::info!(target: DASHBOARD_RECENT_EVENT_TARGET, "{message}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
+
+    struct SharedBufferWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'writer> MakeWriter<'writer> for SharedBuffer {
+        type Writer = SharedBufferWriter;
+
+        fn make_writer(&'writer self) -> Self::Writer {
+            SharedBufferWriter(self.0.clone())
+        }
+    }
+
+    impl Write for SharedBufferWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let mut output = self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            output.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn debug_log_path_defaults_to_working_directory_file() {
@@ -256,5 +308,50 @@ mod tests {
     fn strip_quotes_removes_matching_delimiters_only() {
         assert_eq!(strip_quotes("\"quoted\"".to_owned()), "quoted");
         assert_eq!(strip_quotes("not quoted".to_owned()), "not quoted");
+    }
+
+    #[test]
+    fn debug_log_formatter_does_not_emit_ansi_escape_codes() {
+        let output = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let writer = SharedBuffer(output.clone());
+        let subscriber = registry().with(
+            fmt::layer()
+                .compact()
+                .with_ansi(false)
+                .with_target(true)
+                .with_writer(writer),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: "cutout_cli::logging", iteration = 7, "dashboard update");
+        });
+
+        let output = output
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            !output.contains(&0x1b),
+            "debug log output should not contain escape bytes: {}",
+            String::from_utf8_lossy(&output)
+        );
+    }
+
+    #[test]
+    fn dashboard_recent_events_flow_from_tracing_to_dashboard_sink() {
+        let (sender, receiver) = mpsc::channel();
+        let _guard = install_dashboard_log_sink(sender);
+        let subscriber = registry().with(DashboardLogLayer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_dashboard_recent_event("info", "dashboard update");
+        });
+
+        assert_eq!(
+            receiver.try_recv(),
+            Ok(DashboardUpdate::Log {
+                level: "info".to_owned(),
+                message: "dashboard update".to_owned()
+            })
+        );
     }
 }

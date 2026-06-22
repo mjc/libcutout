@@ -29,6 +29,8 @@ use ratatui::{
     },
 };
 
+use crate::logging::{dashboard_log_sink_installed, log_dashboard_recent_event};
+
 const LOG_LIMIT: usize = 1_024;
 const HISTORY_LIMIT: usize = 32;
 const READ_ONLY_SUMMARY_LIMIT: usize = 16;
@@ -580,7 +582,7 @@ impl DashboardState {
         match update {
             DashboardUpdate::BatteryPercent(percent) => self.apply_battery_percent(percent),
             DashboardUpdate::SessionReport(report) => self.apply_session_report(&report),
-            DashboardUpdate::Log { level, message } => self.push_log(&level, &message),
+            DashboardUpdate::Log { level, message } => self.push_log_from_tracing(&level, &message),
         }
     }
 
@@ -628,6 +630,17 @@ impl DashboardState {
     }
 
     fn push_log(&mut self, level: &str, message: &str) {
+        log_dashboard_recent_event(level, message);
+        if !dashboard_log_sink_installed() {
+            self.push_log_entry(level, message);
+        }
+    }
+
+    fn push_log_from_tracing(&mut self, level: &str, message: &str) {
+        self.push_log_entry(level, message);
+    }
+
+    fn push_log_entry(&mut self, level: &str, message: &str) {
         if self.logs.len() == LOG_LIMIT {
             self.logs.pop_front();
         }
