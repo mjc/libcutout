@@ -2904,6 +2904,15 @@ pub enum CaptureRecord {
 
     /// Captured host command.
     Command(DeviceCommand),
+
+    /// Captured host command with target metadata for correlation.
+    TargetedCommand {
+        /// Captured command.
+        command: DeviceCommand,
+
+        /// Captured request target.
+        target: RequestTarget,
+    },
 }
 
 impl CaptureRecord {
@@ -2919,6 +2928,12 @@ impl CaptureRecord {
             bytes,
             monotonic_ms,
         }
+    }
+
+    /// Creates a captured host command with explicit target metadata.
+    #[must_use]
+    pub const fn targeted_command(command: DeviceCommand, target: RequestTarget) -> Self {
+        Self::TargetedCommand { command, target }
     }
 
     /// Splits a notification record into chunks no larger than `chunk_len`.
@@ -3003,7 +3018,9 @@ where
                 monotonic_ms,
             } => host.ingest_notification_owned(*channel, bytes.clone(), *monotonic_ms),
             CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
-            CaptureRecord::Command(command) => host.issue_command(*command),
+            CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
+                host.issue_command(*command);
+            }
         }
         outputs.extend(host.drain_outputs());
     }
@@ -3120,7 +3137,8 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<usize> {
             CaptureRecord::LinkUp(_)
             | CaptureRecord::LinkDown
             | CaptureRecord::Tick { .. }
-            | CaptureRecord::Command(_) => None,
+            | CaptureRecord::Command(_)
+            | CaptureRecord::TargetedCommand { .. } => None,
         })
         .max()
         .unwrap_or_default();
@@ -5720,6 +5738,21 @@ mod tests {
     }
 
     #[test]
+    fn capture_record_preserves_targeted_command_metadata() {
+        let target = crate::RequestTarget::VescCanController { controller_id: 7 };
+        let record =
+            crate::CaptureRecord::targeted_command(DeviceCommand::RequestTelemetry, target);
+
+        assert_eq!(
+            record,
+            crate::CaptureRecord::TargetedCommand {
+                command: DeviceCommand::RequestTelemetry,
+                target,
+            }
+        );
+    }
+
+    #[test]
     fn replay_capture_drives_link_tick_command_and_notification_records() {
         let channel = GattChannel::from_bytes([0x22; 16]);
         let link = LinkInfo {
@@ -5750,6 +5783,39 @@ mod tests {
                 }),
                 DeviceEvent::LinkDown,
             ]
+        );
+    }
+
+    #[test]
+    fn replay_capture_drives_targeted_command_as_underlying_command() {
+        let target = crate::RequestTarget::VescCanController { controller_id: 7 };
+        let records = [crate::CaptureRecord::targeted_command(
+            DeviceCommand::RequestTelemetry,
+            target,
+        )];
+
+        assert_eq!(
+            replay_events(&records).as_slice(),
+            &[DeviceEvent::Diagnostics(crate::ParserDiagnostics {
+                unmatched_replies: crate::CommandKind::RequestTelemetry as u64,
+                ..crate::ParserDiagnostics::default()
+            })]
+        );
+    }
+
+    #[test]
+    fn targeted_command_survives_notification_chunking_helpers() {
+        let target = crate::RequestTarget::VescCanController { controller_id: 7 };
+        let record =
+            crate::CaptureRecord::targeted_command(DeviceCommand::RequestTelemetry, target);
+
+        assert_eq!(
+            record.clone().split_notification_bytes(1),
+            vec![record.clone()]
+        );
+        assert_eq!(
+            record.clone().split_notification_by_lengths(&[1, 2]),
+            vec![record]
         );
     }
 
