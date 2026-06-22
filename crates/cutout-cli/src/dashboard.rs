@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
-use cutout_btle::{ConnectionSummary, ConnectionTarget};
+use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeReport};
 use ratatui::termina::{PlatformTerminal, Terminal as _};
 use ratatui::{
     Frame, Terminal,
@@ -23,6 +23,8 @@ use ratatui::{
 const LOG_LIMIT: usize = 10;
 const HISTORY_LIMIT: usize = 32;
 const TAB_COUNT: usize = 4;
+const DASHBOARD_BG: Color = Color::Rgb(15, 18, 22);
+const PANEL_BG: Color = Color::Rgb(22, 26, 32);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DashboardState {
@@ -486,6 +488,31 @@ impl DashboardState {
         state
     }
 
+    pub(crate) fn apply_session_report(&mut self, report: &SessionBridgeReport) {
+        self.counters.subscriptions = usize_to_u64(report.subscribes);
+        self.counters.notifications = usize_to_u64(report.notifications);
+        self.push_log(
+            "info",
+            &format!(
+                "session probe writes={} subscribes={} notifications={}",
+                report.writes, report.subscribes, report.notifications
+            ),
+        );
+
+        if report.telemetry == 0 {
+            self.push_log(
+                "warn",
+                "notifications received but telemetry decoder produced no samples",
+            );
+        } else {
+            self.push_log("info", &format!("telemetry samples={}", report.telemetry));
+        }
+
+        if report.diagnostics > 0 {
+            self.push_log("warn", &format!("diagnostics={}", report.diagnostics));
+        }
+    }
+
     pub(crate) fn apply_fixture_event(&mut self, event: FixtureEvent) {
         match event {
             FixtureEvent::Provenance { source } => {
@@ -787,6 +814,11 @@ fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInp
 }
 
 pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
+    frame.render_widget(
+        Block::default().style(Style::new().bg(DASHBOARD_BG).fg(Color::White)),
+        frame.area(),
+    );
+
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -809,7 +841,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         Line::from("Logs"),
     ])
     .select(state.active_tab.min(3))
-    .block(Block::bordered().title("Cutout dashboard"))
+    .block(panel_block("Cutout dashboard"))
     .highlight_style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     frame.render_widget(tabs, area);
@@ -866,7 +898,8 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             Span::raw(state.provenance.unwrap_or("live")),
         ]),
     ])
-    .block(Block::bordered().title("Target"));
+    .style(panel_style())
+    .block(panel_block("Target"));
     frame.render_widget(summary, chunks[0]);
 
     let gauges = Layout::default()
@@ -876,12 +909,14 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 
     let battery = Gauge::default()
         .block(Block::bordered().title("Battery"))
+        .style(panel_style())
         .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
         .ratio(percent_ratio(state.telemetry.battery_pct));
     frame.render_widget(battery, gauges[0]);
 
     let signal = Gauge::default()
         .block(Block::bordered().title("Signal"))
+        .style(panel_style())
         .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
         .ratio(percent_ratio(state.telemetry.signal_pct));
     frame.render_widget(signal, gauges[1]);
@@ -912,7 +947,8 @@ fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         ],
     )
     .header(Row::new(vec!["Profile", "Source", "Status", "Family"]).style(Style::new().bold()))
-    .block(Block::bordered().title("Profiles"))
+    .block(panel_block("Profiles"))
+    .style(panel_style())
     .column_spacing(1);
     frame.render_widget(table, area);
 }
@@ -922,6 +958,7 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(10),
+            Constraint::Length(4),
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Fill(1),
@@ -929,17 +966,18 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .split(area);
 
     render_device_browser(frame, chunks[0], state);
+    render_session_summary(frame, chunks[1], state);
 
     render_sparkline(
         frame,
-        chunks[1],
+        chunks[2],
         "Speed",
         &state.telemetry.speed_mph,
         Color::Yellow,
     );
     render_sparkline(
         frame,
-        chunks[2],
+        chunks[3],
         "Voltage",
         &state.telemetry.voltage_v,
         Color::Magenta,
@@ -957,13 +995,37 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             .style(Style::new().fg(Color::Red))
             .data(state.telemetry.temperature_points.as_slice()),
     ])
-    .block(Block::bordered().title("Trend"))
+    .block(panel_block("Trend"))
+    .style(panel_style())
     .x_axis(Axis::default().title("samples").bounds([
         0.0,
         f64::from(u32::try_from(HISTORY_LIMIT).unwrap_or(u32::MAX)),
     ]))
     .y_axis(Axis::default().title("value").bounds([0.0, 100.0]));
-    frame.render_widget(counters, chunks[3]);
+    frame.render_widget(counters, chunks[4]);
+}
+
+fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let counters = &state.counters;
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("devices ", Style::new().fg(Color::Gray)),
+            Span::raw(counters.discovered.to_string()),
+            Span::styled(" connected ", Style::new().fg(Color::Gray)),
+            Span::raw(counters.connected.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("subscriptions ", Style::new().fg(Color::Gray)),
+            Span::raw(counters.subscriptions.to_string()),
+            Span::styled(" notifications ", Style::new().fg(Color::Gray)),
+            Span::raw(counters.notifications.to_string()),
+        ]),
+    ];
+
+    let panel = Paragraph::new(lines)
+        .style(panel_style())
+        .block(panel_block("Session"));
+    frame.render_widget(panel, area);
 }
 
 fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1037,15 +1099,16 @@ fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardSta
     }
 
     let panel = Paragraph::new(lines)
-        .block(Block::bordered().title("Device browser"))
+        .style(panel_style())
+        .block(panel_block("Device browser"))
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(panel, area);
 }
 
 fn render_sparkline(frame: &mut Frame<'_>, area: Rect, title: &str, samples: &[u64], color: Color) {
     let spark = Sparkline::default()
-        .block(Block::bordered().title(title))
-        .style(Style::new().fg(color))
+        .block(panel_block(title))
+        .style(Style::new().fg(color).bg(PANEL_BG))
         .data(samples)
         .max(100);
     frame.render_widget(spark, area);
@@ -1067,9 +1130,18 @@ fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .collect::<Vec<_>>();
 
     let log_panel = Paragraph::new(lines)
-        .block(Block::bordered().title("Recent events"))
+        .style(panel_style())
+        .block(panel_block("Recent events"))
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(log_panel, area);
+}
+
+fn panel_block(title: &str) -> Block<'_> {
+    Block::bordered().title(title).style(panel_style())
+}
+
+const fn panel_style() -> Style {
+    Style::new().bg(PANEL_BG).fg(Color::White)
 }
 
 fn percent_ratio(value: u64) -> f64 {
@@ -1082,6 +1154,10 @@ fn to_f64(value: u64) -> f64 {
 
 fn index_to_f64(value: usize) -> f64 {
     f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -1215,6 +1291,30 @@ mod tests {
     }
 
     #[test]
+    fn live_session_report_updates_real_counters_and_logs() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            writes: 0,
+            subscribes: 1,
+            notifications: 184,
+            telemetry: 0,
+            diagnostics: 0,
+            disconnects: 0,
+        };
+
+        state.apply_session_report(&report);
+
+        assert_eq!(state.counters.subscriptions, 1);
+        assert_eq!(state.counters.notifications, 184);
+        assert!(
+            state
+                .logs
+                .iter()
+                .any(|entry| entry.message.contains("notifications=184"))
+        );
+    }
+
+    #[test]
     fn live_target_advance_does_not_emit_fixture_heartbeat() {
         let mut state = DashboardState::live_target("NF2557".to_owned());
 
@@ -1257,8 +1357,17 @@ mod tests {
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert!(text.contains("Device browser"));
+        assert!(text.contains("Session"));
+        assert!(text.contains("notifications"));
         assert!(text.contains("Speed"));
         assert!(text.contains("Voltage"));
+    }
+
+    #[test]
+    fn dashboard_render_paints_background_cells() {
+        let buffer = render_buffer(&DashboardState::empty(), 80, 24);
+
+        assert_ne!(buffer[(79, 23)].bg, Color::Reset);
     }
 
     #[test]
@@ -1287,13 +1396,11 @@ mod tests {
             "Signal",
             "Device browser",
             "selected Aero NF2557",
-            "Begode X",
             "observations",
             "Profiles",
             "Aero/Veteran",
             "Speed",
             "Voltage",
-            "Trend",
             "Recent events",
             "Aero NF2557",
             "fixture replay loaded from fixture/demo replay: aero-nf2557.v1",
@@ -1319,9 +1426,13 @@ mod tests {
     #[test]
     fn device_browser_shows_multiple_scan_observations() {
         let state = DashboardState::sample();
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal creates");
+        terminal
+            .draw(|frame| render_device_browser(frame, frame.area(), &state))
+            .expect("device browser renders");
 
-        let buffer = render_buffer(&state, 120, 36);
-        let text = buffer_text(&buffer);
+        let text = buffer_text(terminal.backend().buffer());
 
         assert!(text.contains("Begode X"));
         assert!(text.contains("-77 dBm"));

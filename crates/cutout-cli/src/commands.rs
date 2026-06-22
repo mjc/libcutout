@@ -13,6 +13,8 @@ use crate::cli::{Cli, Command, DashboardArgs, TargetedScanArgs};
 use crate::dashboard::{DashboardState, run_dashboard};
 use crate::validation::render_validation_report;
 
+const DASHBOARD_PROBE_WINDOW: Duration = Duration::from_secs(2);
+
 /// Executes a parsed CLI invocation.
 ///
 /// # Errors
@@ -47,7 +49,23 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
         observation = %connection.summary.observation,
         "connected dashboard device"
     );
-    let state = DashboardState::live_connected(&target, &connection.summary);
+    let mut state = DashboardState::live_connected(&target, &connection.summary);
+    if let Some(endpoints) = connection.summary.select_session_endpoints() {
+        info!(
+            seconds = DASHBOARD_PROBE_WINDOW.as_secs(),
+            "probing dashboard session"
+        );
+        let mut session = AeroReadOnlySession::default();
+        let report = drive_session(
+            &connection.peripheral,
+            &mut session,
+            VETERAN_DATA_CHANNEL,
+            endpoints,
+            DASHBOARD_PROBE_WINDOW,
+        )
+        .await?;
+        state.apply_session_report(&report);
+    }
     run_dashboard(state)
 }
 
