@@ -1,13 +1,15 @@
 use core::marker::PhantomData;
 use cutout_core::{
-    Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel, MonotonicMillis,
-    ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession, SafetyClass, SessionInput,
-    SessionOutput, TransportAction,
+    BatteryInfo, Capabilities, CommandKind, DeviceCommand, DeviceEvent, GattChannel,
+    MonotonicMillis, ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession,
+    ReadOnlyResponse, SafetyClass, SessionInput, SessionOutput, TransportAction,
+    VerificationStatus,
 };
 
 use crate::{
-    FALCON_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VeteranFrame, VeteranFrameReassembler,
-    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    FALCON_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VeteranBmsPageEvidence, VeteranFrame,
+    VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    decode_veteran_bms_page,
 };
 
 /// Static manufacturer identifier for a supported model spec.
@@ -174,6 +176,19 @@ fn push_veteran_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     response,
                 )));
+            }
+            if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
+                let response = decode_veteran_bms_page(
+                    evidence.selector,
+                    0,
+                    BatteryInfo::default(),
+                    VerificationStatus::HardwareVerified,
+                );
+                if let Ok(payload) = response {
+                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                        ReadOnlyResponse::Battery(payload),
+                    )));
+                }
             }
         }
         Err(VeteranTelemetryError::FrameTooShort) => {
@@ -385,7 +400,8 @@ mod tests {
     use super::*;
     use core::mem::size_of;
     use cutout_core::{
-        LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta, TransportAction,
+        BatteryPageKind, LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
+        TransportAction, VerificationStatus,
     };
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
@@ -415,6 +431,25 @@ mod tests {
         )
     }
 
+    fn live_aero_selector_3_frame() -> [u8; 99] {
+        hex_literal::hex!(
+            "dc5a5c5f2a09000000170000ab6c001700000bea\
+             045c00000226021ca8f607801b1f000080c80000\
+             808080808080030689065706a20686067c06f700\
+             00000000000000000000000e0e0e0200000000a5\
+             11000053f401c50000000000bffffaf33f9782"
+        )
+    }
+
+    fn live_aero_selector_8_frame() -> [u8; 75] {
+        hex_literal::hex!(
+            "dc5a5c4729f2000000170000ab6c001700000be9\
+             045a00000226021ca8f607801b25000080c80000\
+             808080808080080000803200364f371e00000100\
+             808028062e7964800080801540e23a"
+        )
+    }
+
     fn telemetry_events(output: &[SessionOutput]) -> Vec<TelemetryDelta> {
         output
             .iter()
@@ -433,6 +468,29 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn read_only_responses_for_notification(bytes: &[u8]) -> Vec<ReadOnlyResponse> {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VETERAN_DATA_CHANNEL,
+                bytes,
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        read_only_response_events(&output)
     }
 
     fn live_aero_telemetry() -> TelemetryDelta {
@@ -610,6 +668,32 @@ mod tests {
             .map(|entry| entry.field)
             .collect();
         assert!(fields.contains(&RawFieldValue::new(crate::VETERAN_FIELD_PEDALS_MODE, 1_920,)));
+    }
+
+    #[test]
+    fn nosfet_aero_session_emits_raw_bms_page_response() {
+        let responses = read_only_responses_for_notification(&live_aero_selector_3_frame());
+
+        assert!(responses.iter().any(|response| matches!(
+            response,
+            ReadOnlyResponse::Battery(payload)
+                if payload.page().selector == 3
+                    && payload.page().kind == BatteryPageKind::Raw
+                    && payload.page().verification == VerificationStatus::HardwareVerified
+        )));
+    }
+
+    #[test]
+    fn nosfet_aero_session_keeps_reserved_bms_page_raw() {
+        let responses = read_only_responses_for_notification(&live_aero_selector_8_frame());
+
+        assert!(responses.iter().any(|response| matches!(
+            response,
+            ReadOnlyResponse::Battery(payload)
+                if payload.page().selector == 8
+                    && payload.page().kind == BatteryPageKind::Raw
+                    && payload.page().verification == VerificationStatus::HardwareVerified
+        )));
     }
 
     #[test]
