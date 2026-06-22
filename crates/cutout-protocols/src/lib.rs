@@ -33,8 +33,8 @@ pub use session::{
     SupportsReadRequests, SupportsSettingsWrites, VeteranNotificationDecoder,
 };
 pub use veteran_bms::{
-    VETERAN_BMS_CELL_VALUES_PER_PAGE, VeteranBmsPageError, classify_veteran_bms_selector,
-    decode_veteran_bms_page,
+    VETERAN_BMS_CELL_VALUES_PER_PAGE, VeteranBmsPageError, VeteranBmsPageEvidence,
+    classify_veteran_bms_selector, decode_veteran_bms_page,
 };
 pub use veteran_frame::{
     MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
