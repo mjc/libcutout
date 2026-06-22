@@ -152,6 +152,24 @@ impl From<DeviceCommand> for DeviceCommandDto {
     }
 }
 
+impl From<DeviceCommandDto> for DeviceCommand {
+    fn from(command: DeviceCommandDto) -> Self {
+        match command {
+            DeviceCommandDto::RequestIdentity => Self::RequestIdentity,
+            DeviceCommandDto::RequestTelemetry => Self::RequestTelemetry,
+            DeviceCommandDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
+            DeviceCommandDto::RequestBatteryInfo => Self::RequestBatteryInfo,
+            DeviceCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
+            DeviceCommandDto::RequestSettings => Self::RequestSettings,
+            DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
+            DeviceCommandDto::SoundHorn => Self::SoundHorn,
+            DeviceCommandDto::SetRawMotorCurrent { current_ma } => {
+                Self::SetRawMotorCurrent { current_ma }
+            }
+        }
+    }
+}
+
 /// UniFFI-ready light state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LightStateDto {
@@ -167,6 +185,15 @@ impl From<LightState> for LightStateDto {
         match state {
             LightState::Off => Self::Off,
             LightState::On => Self::On,
+        }
+    }
+}
+
+impl From<LightStateDto> for LightState {
+    fn from(state: LightStateDto) -> Self {
+        match state {
+            LightStateDto::Off => Self::Off,
+            LightStateDto::On => Self::On,
         }
     }
 }
@@ -760,6 +787,36 @@ impl From<SessionInput<'_>> for SessionInputDto {
     }
 }
 
+impl SessionInputDto {
+    /// Borrows this owned DTO as a core session input for immediate reactor use.
+    #[must_use]
+    pub fn as_session_input(&self) -> SessionInput<'_> {
+        match self {
+            Self::LinkUp {
+                monotonic_ms,
+                max_write_len,
+            } => SessionInput::LinkUp(crate::LinkInfo {
+                monotonic_ms: *monotonic_ms,
+                max_write_len: *max_write_len,
+            }),
+            Self::LinkDown => SessionInput::LinkDown,
+            Self::Notification {
+                channel,
+                bytes,
+                monotonic_ms,
+            } => SessionInput::Notification {
+                channel: crate::GattChannel::from_bytes(*channel),
+                bytes: bytes.as_slice(),
+                monotonic_ms: *monotonic_ms,
+            },
+            Self::Tick { monotonic_ms } => SessionInput::Tick {
+                monotonic_ms: *monotonic_ms,
+            },
+            Self::Command(command) => SessionInput::Command((*command).into()),
+        }
+    }
+}
+
 /// UniFFI-ready session output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionOutputDto {
@@ -1320,6 +1377,38 @@ mod tests {
         assert_eq!(
             command,
             SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current_ma: -1_500 })
+        );
+    }
+
+    #[test]
+    fn session_input_dto_borrows_core_notification_input() {
+        let dto = SessionInputDto::Notification {
+            channel: [0xA1; 16],
+            bytes: vec![0xde, 0xad, 0xbe, 0xef],
+            monotonic_ms: 42,
+        };
+
+        assert_eq!(
+            dto.as_session_input(),
+            SessionInput::Notification {
+                channel: GattChannel::from_bytes([0xA1; 16]),
+                bytes: &[0xde, 0xad, 0xbe, 0xef],
+                monotonic_ms: 42,
+            }
+        );
+    }
+
+    #[test]
+    fn session_input_dto_maps_commands_back_to_core() {
+        assert_eq!(
+            SessionInputDto::Command(DeviceCommandDto::SetLights(LightStateDto::On))
+                .as_session_input(),
+            SessionInput::Command(DeviceCommand::SetLights(LightState::On))
+        );
+        assert_eq!(
+            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current_ma: -1_500 })
+                .as_session_input(),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: -1_500 })
         );
     }
 
