@@ -29,6 +29,9 @@ pub const PEVCAP_MAX_GATT_FINGERPRINTS: usize = 8;
 /// Maximum annotations stored in the PEVCAP header.
 pub const PEVCAP_MAX_ANNOTATIONS: usize = 8;
 
+#[cfg(feature = "serde")]
+const PEVCAP_BINARY_LENGTH_PREFIX_BYTES: usize = 4;
+
 /// Current PEVCAP format version.
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -397,6 +400,106 @@ impl PevcapCapture {
             records,
         })
     }
+
+    /// Serializes this capture as a binary PEVCAP container.
+    ///
+    /// The container starts with PEVCAP magic and version bytes, followed by a
+    /// length-prefixed header payload and ordered length-prefixed record
+    /// payloads.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapBinaryError::Serialize`] when payload serialization
+    /// fails, or [`PevcapBinaryError::LengthTooLarge`] when a payload cannot be
+    /// represented by the v1 length prefix.
+    #[cfg(feature = "serde")]
+    pub fn to_binary(&self) -> Result<Vec<u8>, PevcapBinaryError> {
+        let header = serde_json::to_vec(&PevcapHeaderJson::from(&self.header))
+            .map_err(PevcapBinaryError::Serialize)?;
+
+        let mut output = Vec::new();
+        output.extend_from_slice(&PEVCAP_MAGIC);
+        write_u16_le(&mut output, self.version.major);
+        write_u16_le(&mut output, self.version.minor);
+        write_len_prefixed(&mut output, PevcapBinarySection::Header, &header)?;
+        write_u32_le(
+            &mut output,
+            u32::try_from(self.records.len()).map_err(|_| PevcapBinaryError::LengthTooLarge {
+                section: PevcapBinarySection::RecordCount,
+                len: self.records.len(),
+            })?,
+        );
+
+        for record in &self.records {
+            let payload = serde_json::to_vec(&PevcapRecordJson::from(record))
+                .map_err(PevcapBinaryError::Serialize)?;
+            write_len_prefixed(&mut output, PevcapBinarySection::Record, &payload)?;
+        }
+
+        Ok(output)
+    }
+
+    /// Deserializes a capture from a binary PEVCAP container.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapBinaryError`] when the container is malformed, has the
+    /// wrong magic/version, is truncated, has trailing bytes, or violates PEVCAP
+    /// header bounds.
+    #[cfg(feature = "serde")]
+    pub fn from_binary(input: &[u8]) -> Result<Self, PevcapBinaryError> {
+        let mut remaining = input;
+        let magic = read_exact(
+            &mut remaining,
+            PEVCAP_MAGIC.len(),
+            PevcapBinarySection::Magic,
+        )?;
+        if magic != PEVCAP_MAGIC {
+            return Err(PevcapBinaryError::InvalidMagic);
+        }
+
+        let version = PevcapFormatVersion {
+            major: read_u16_le(&mut remaining, PevcapBinarySection::Version)?,
+            minor: read_u16_le(&mut remaining, PevcapBinarySection::Version)?,
+        };
+        if version != PevcapFormatVersion::current() {
+            return Err(PevcapBinaryError::UnsupportedVersion { version });
+        }
+
+        let header = read_len_prefixed(&mut remaining, PevcapBinarySection::Header)?;
+        let header = serde_json::from_slice::<PevcapHeaderJson>(header)
+            .map_err(|source| PevcapBinaryError::Deserialize {
+                section: PevcapBinarySection::Header,
+                source,
+            })?
+            .try_into_header()?;
+
+        let record_count = read_u32_le(&mut remaining, PevcapBinarySection::RecordCount)?;
+        let mut records = Vec::with_capacity(record_count as usize);
+        for _ in 0..record_count {
+            let payload = read_len_prefixed(&mut remaining, PevcapBinarySection::Record)?;
+            records.push(
+                serde_json::from_slice::<PevcapRecordJson>(payload)
+                    .map_err(|source| PevcapBinaryError::Deserialize {
+                        section: PevcapBinarySection::Record,
+                        source,
+                    })?
+                    .into_record(),
+            );
+        }
+
+        if !remaining.is_empty() {
+            return Err(PevcapBinaryError::TrailingBytes {
+                len: remaining.len(),
+            });
+        }
+
+        Ok(Self {
+            version,
+            header,
+            records,
+        })
+    }
 }
 
 /// JSONL PEVCAP import/export error.
@@ -448,6 +551,150 @@ pub enum PevcapJsonlError {
     /// Header metadata violated bounded PEVCAP limits.
     #[error(transparent)]
     Header(#[from] PevcapHeaderError),
+}
+
+/// PEVCAP binary container import/export error.
+#[cfg(feature = "serde")]
+#[derive(Debug, Error)]
+pub enum PevcapBinaryError {
+    /// Payload serialization failed.
+    #[error("failed to serialize PEVCAP binary payload: {0}")]
+    Serialize(serde_json::Error),
+
+    /// Payload deserialization failed.
+    #[error("failed to deserialize PEVCAP binary {section:?} payload: {source}")]
+    Deserialize {
+        /// Container section being decoded.
+        section: PevcapBinarySection,
+
+        /// Underlying JSON payload error.
+        source: serde_json::Error,
+    },
+
+    /// Header magic bytes did not match PEVCAP.
+    #[error("invalid PEVCAP binary magic")]
+    InvalidMagic,
+
+    /// Header version is not supported by this reader.
+    #[error("unsupported PEVCAP binary version {version:?}")]
+    UnsupportedVersion {
+        /// Decoded version.
+        version: PevcapFormatVersion,
+    },
+
+    /// The container ended before a section could be read completely.
+    #[error("truncated PEVCAP binary {section:?} section")]
+    Truncated {
+        /// Container section being decoded.
+        section: PevcapBinarySection,
+    },
+
+    /// The container had bytes after the expected final record.
+    #[error("PEVCAP binary has {len} trailing bytes")]
+    TrailingBytes {
+        /// Number of unexpected trailing bytes.
+        len: usize,
+    },
+
+    /// A payload length cannot be represented by the v1 framing prefix.
+    #[error("PEVCAP binary {section:?} payload length {len} is too large")]
+    LengthTooLarge {
+        /// Container section being encoded.
+        section: PevcapBinarySection,
+
+        /// Payload length.
+        len: usize,
+    },
+
+    /// Header metadata violated bounded PEVCAP limits.
+    #[error(transparent)]
+    Header(#[from] PevcapHeaderError),
+}
+
+/// PEVCAP binary container section identifier for error reporting.
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PevcapBinarySection {
+    /// Magic bytes at the start of the container.
+    Magic,
+
+    /// Format version fields.
+    Version,
+
+    /// Capture header payload.
+    Header,
+
+    /// Number of ordered records in the container.
+    RecordCount,
+
+    /// Capture record payload.
+    Record,
+}
+
+#[cfg(feature = "serde")]
+fn write_u16_le(output: &mut Vec<u8>, value: u16) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(feature = "serde")]
+fn write_u32_le(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(feature = "serde")]
+fn write_len_prefixed(
+    output: &mut Vec<u8>,
+    section: PevcapBinarySection,
+    payload: &[u8],
+) -> Result<(), PevcapBinaryError> {
+    write_u32_le(
+        output,
+        u32::try_from(payload.len()).map_err(|_| PevcapBinaryError::LengthTooLarge {
+            section,
+            len: payload.len(),
+        })?,
+    );
+    output.extend_from_slice(payload);
+    Ok(())
+}
+
+#[cfg(feature = "serde")]
+fn read_exact<'input>(
+    input: &mut &'input [u8],
+    len: usize,
+    section: PevcapBinarySection,
+) -> Result<&'input [u8], PevcapBinaryError> {
+    if input.len() < len {
+        return Err(PevcapBinaryError::Truncated { section });
+    }
+    let (head, tail) = input.split_at(len);
+    *input = tail;
+    Ok(head)
+}
+
+#[cfg(feature = "serde")]
+fn read_u16_le(input: &mut &[u8], section: PevcapBinarySection) -> Result<u16, PevcapBinaryError> {
+    let bytes = read_exact(input, 2, section)?;
+    let array =
+        <[u8; 2]>::try_from(bytes).map_err(|_err| PevcapBinaryError::Truncated { section })?;
+    Ok(u16::from_le_bytes(array))
+}
+
+#[cfg(feature = "serde")]
+fn read_u32_le(input: &mut &[u8], section: PevcapBinarySection) -> Result<u32, PevcapBinaryError> {
+    let bytes = read_exact(input, PEVCAP_BINARY_LENGTH_PREFIX_BYTES, section)?;
+    let array = <[u8; PEVCAP_BINARY_LENGTH_PREFIX_BYTES]>::try_from(bytes)
+        .map_err(|_err| PevcapBinaryError::Truncated { section })?;
+    Ok(u32::from_le_bytes(array))
+}
+
+#[cfg(feature = "serde")]
+fn read_len_prefixed<'input>(
+    input: &mut &'input [u8],
+    section: PevcapBinarySection,
+) -> Result<&'input [u8], PevcapBinaryError> {
+    let len = read_u32_le(input, section)? as usize;
+    read_exact(input, len, section)
 }
 
 #[cfg(feature = "serde")]
@@ -1081,5 +1328,192 @@ mod tests {
         .expect_err("record before header is invalid");
 
         assert!(matches!(err, PevcapJsonlError::MissingHeader));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_round_trips_header_and_ordered_records() {
+        let capture = sample_pevcap_capture();
+
+        let binary = capture.to_binary().expect("capture serializes");
+        let decoded = PevcapCapture::from_binary(&binary).expect("capture deserializes");
+
+        assert!(binary.starts_with(&PEVCAP_MAGIC));
+        assert_eq!(decoded, capture);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_rejects_bad_magic() {
+        let mut binary = sample_pevcap_capture()
+            .to_binary()
+            .expect("capture serializes");
+        if let Some(first) = binary.first_mut() {
+            *first = b'X';
+        }
+
+        let error = PevcapCapture::from_binary(&binary).expect_err("magic should be rejected");
+
+        assert!(matches!(error, PevcapBinaryError::InvalidMagic));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_rejects_unsupported_version() {
+        let mut binary = sample_pevcap_capture()
+            .to_binary()
+            .expect("capture serializes");
+        let major_start = PEVCAP_MAGIC.len();
+        let major_end = major_start + 2;
+        binary
+            .splice(major_start..major_end, 2_u16.to_le_bytes())
+            .for_each(drop);
+
+        let error = PevcapCapture::from_binary(&binary).expect_err("version should be rejected");
+
+        assert!(matches!(
+            error,
+            PevcapBinaryError::UnsupportedVersion {
+                version: PevcapFormatVersion { major: 2, minor: 0 }
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_rejects_truncated_header() {
+        let mut binary = sample_pevcap_capture()
+            .to_binary()
+            .expect("capture serializes");
+        let header_len_start = PEVCAP_MAGIC.len() + 4;
+        let header_len_end = header_len_start + PEVCAP_BINARY_LENGTH_PREFIX_BYTES;
+        binary
+            .splice(header_len_start..header_len_end, 4_u32.to_le_bytes())
+            .for_each(drop);
+        binary.truncate(header_len_end + 2);
+
+        let error = PevcapCapture::from_binary(&binary).expect_err("header should be truncated");
+
+        assert!(matches!(
+            error,
+            PevcapBinaryError::Truncated {
+                section: PevcapBinarySection::Header
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_rejects_truncated_record() {
+        let mut binary = sample_pevcap_capture()
+            .to_binary()
+            .expect("capture serializes");
+        let _last = binary.pop();
+
+        let error = PevcapCapture::from_binary(&binary).expect_err("record should be truncated");
+
+        assert!(matches!(
+            error,
+            PevcapBinaryError::Truncated {
+                section: PevcapBinarySection::Record
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_rejects_trailing_bytes() {
+        let mut binary = sample_pevcap_capture()
+            .to_binary()
+            .expect("capture serializes");
+        binary.push(0xAA);
+
+        let error = PevcapCapture::from_binary(&binary).expect_err("trailing byte should fail");
+
+        assert!(matches!(error, PevcapBinaryError::TrailingBytes { len: 1 }));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_rejects_oversized_bounded_header_data() {
+        let mut output = Vec::new();
+        output.extend_from_slice(&PEVCAP_MAGIC);
+        write_u16_le(&mut output, PEVCAP_VERSION_MAJOR);
+        write_u16_le(&mut output, PEVCAP_VERSION_MINOR);
+        let header = PevcapHeaderJson {
+            wall_clock_start_unix_ms: 1,
+            platform_id: "darwin".to_owned(),
+            write_limit: None,
+            advertised_services: Vec::new(),
+            gatt_fingerprints: Vec::new(),
+            resolved_identity: None,
+            library_version: "0.1.0".to_owned(),
+            registry_hash: [0x00; 32],
+            annotations: vec!["note".to_owned(); PEVCAP_MAX_ANNOTATIONS + 1],
+        };
+        let payload = serde_json::to_vec(&header).expect("header serializes");
+        write_len_prefixed(&mut output, PevcapBinarySection::Header, &payload)
+            .expect("length should fit");
+        write_u32_le(&mut output, 0);
+
+        let error = PevcapCapture::from_binary(&output).expect_err("header bounds should fail");
+
+        assert!(matches!(
+            error,
+            PevcapBinaryError::Header(PevcapHeaderError::TooManyItems {
+                field: PevcapHeaderField::Annotations,
+                len,
+                max: PEVCAP_MAX_ANNOTATIONS
+            }) if len == PEVCAP_MAX_ANNOTATIONS + 1
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    fn sample_pevcap_capture() -> PevcapCapture {
+        let service = GattChannel::from_bytes([0xFE; 16]);
+        let characteristic = GattChannel::from_bytes([0xE1; 16]);
+        let header = PevcapHeader::new(
+            1_725_000_123_456,
+            "darwin",
+            Some(182),
+            &[service],
+            &[GattFingerprint {
+                service,
+                characteristic,
+                roles: GattRoles::empty()
+                    .with_write_without_response()
+                    .with_notify(),
+                verification: VerificationStatus::HardwareVerified,
+            }],
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::BegodeGotway),
+                model: Some(VerifiedValue {
+                    value: "Begode Falcon".to_owned(),
+                    verification: VerificationStatus::Inferred,
+                }),
+                firmware: None,
+            }),
+            "0.1.0",
+            [0x42; 32],
+            &["identity_confidence=Model", "battery=84v"],
+        )
+        .expect("header should validate");
+        PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::outbound_write(
+                    7,
+                    characteristic,
+                    WriteMode::WithoutResponse,
+                    b"N".to_vec(),
+                ),
+                PevcapRecord::inbound_notification(
+                    9,
+                    characteristic,
+                    service,
+                    b"NAME=Falcon".to_vec(),
+                ),
+            ],
+        )
     }
 }
