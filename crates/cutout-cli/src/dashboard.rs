@@ -1475,6 +1475,16 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+
+    render_profile_table(frame, chunks[0], state);
+    render_read_only_summary(frame, chunks[1], state);
+}
+
+fn render_profile_table(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let rows = state
         .profiles
         .iter()
@@ -1574,6 +1584,45 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         render_pending_telemetry_detail(frame, chunks[3], state);
         render_pending_telemetry_wait(frame, chunks[4]);
     }
+}
+
+fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let read_only = &state.read_only;
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("firmware ", Style::new().fg(Color::Gray)),
+        Span::raw(read_only.firmware.as_deref().unwrap_or("unknown")),
+    ]));
+
+    match read_only.settings.back() {
+        Some(setting) => lines.push(Line::from(vec![
+            Span::styled("settings ", Style::new().fg(Color::Gray)),
+            Span::raw(setting.as_str()),
+        ])),
+        None => lines.push(Line::from(vec![
+            Span::styled("settings ", Style::new().fg(Color::Gray)),
+            Span::raw("none observed"),
+        ])),
+    }
+
+    for page in read_only.bms_pages.iter().rev().take(2) {
+        lines.push(Line::from(vec![
+            Span::styled("bms ", Style::new().fg(Color::Gray)),
+            Span::raw(page.as_str()),
+        ]));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("raw/unverified pages ", Style::new().fg(Color::Gray)),
+        Span::raw(read_only.unknown_raw_pages.to_string()),
+        Span::styled(" diagnostic responses ", Style::new().fg(Color::Gray)),
+        Span::raw(read_only.diagnostics.to_string()),
+        Span::styled(" raw telemetry ", Style::new().fg(Color::Gray)),
+        Span::raw(read_only.raw_telemetry.to_string()),
+    ]));
+
+    let panel = Paragraph::new(lines).block(panel_block("Read-only responses"));
+    frame.render_widget(panel, area);
 }
 
 fn render_telemetry_trend(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -2565,6 +2614,39 @@ mod tests {
         assert!(text.contains("notifications"));
         assert!(text.contains("Speed"));
         assert!(text.contains("Voltage"));
+    }
+
+    #[test]
+    fn profiles_tab_renders_read_only_aero_state() {
+        let mut state = DashboardState::empty();
+        state.active_tab = 2;
+        state
+            .telemetry
+            .apply_snapshot(live_aero_telemetry_snapshot());
+        state.read_only.firmware = Some("43.2.54".to_owned());
+        state.read_only.settings.push_back(
+            "field=36 value=1920 quality=known verification=hardware_verified".to_owned(),
+        );
+        state
+            .read_only
+            .bms_pages
+            .push_back("selector=2 kind=cell_voltage verification=hardware_verified".to_owned());
+        state
+            .read_only
+            .bms_pages
+            .push_back("selector=8 kind=raw verification=hardware_verified".to_owned());
+        state.read_only.unknown_raw_pages = 1;
+        state.read_only.diagnostics = 1;
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(text.contains("Read-only responses"));
+        assert!(text.contains("firmware 43.2.54"));
+        assert!(text.contains("settings field=36 value=1920"));
+        assert!(text.contains("bms selector=2 kind=cell_voltage"));
+        assert!(text.contains("bms selector=8 kind=raw"));
+        assert!(text.contains("raw/unverified pages 1"));
+        assert!(text.contains("diagnostic responses 1"));
     }
 
     #[test]
