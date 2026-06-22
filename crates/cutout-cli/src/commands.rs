@@ -33,7 +33,7 @@ use cutout_protocols::{
 use tracing::info;
 
 use crate::cli::{
-    CaptureAeroArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
+    CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
     PevcapFormat, RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs,
 };
 use crate::dashboard::{
@@ -55,7 +55,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Scan(args) => scan(args.seconds()).await?,
         Command::Connect(args) => connect(args, SessionMode::Drive).await?,
         Command::SubscribeRaw(args) => subscribe_raw(args).await?,
-        Command::CaptureAero(args) => capture_aero(args).await?,
+        Command::Capture(args) => capture(args).await?,
         Command::Validation => print!("{}", render_validation_report()),
         Command::Pevcap(args) => pevcap(args)?,
         Command::Dashboard(args) => dashboard(args).await?,
@@ -672,11 +672,11 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     Ok(())
 }
 
-async fn capture_aero(args: CaptureAeroArgs) -> Result<()> {
+async fn capture(args: CaptureArgs) -> Result<()> {
     let annotations = capture_annotations(&args);
     if args.reconnect_attempts > 1 {
         let output = capture_output(args.pevcap_output.clone(), args.pevcap_format, annotations);
-        return capture_aero_reconnecting(args, output).await;
+        return capture_reconnecting(args, output).await;
     }
     let output = capture_output(args.pevcap_output, args.pevcap_format, annotations);
     connect(args.target, SessionMode::Capture { output }).await
@@ -694,7 +694,7 @@ fn capture_output(
     })
 }
 
-async fn capture_aero_reconnecting(args: CaptureAeroArgs, output: CaptureOutput) -> Result<()> {
+async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Result<()> {
     let seconds = args.target.seconds();
     let profile = selected_session_profile(args.target.profile());
     let commands = read_probe_commands(args.target.probes());
@@ -780,7 +780,7 @@ fn merge_reconnect_summaries<'a>(
     Some(merged)
 }
 
-fn capture_annotations(args: &CaptureAeroArgs) -> Vec<String> {
+fn capture_annotations(args: &CaptureArgs) -> Vec<String> {
     [
         args.capture_label
             .map(CaptureSessionLabel::from)
@@ -1068,7 +1068,7 @@ fn encode_session_capture_pevcap(
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
-    capture_annotations.push("cutout-cli capture-aero");
+    capture_annotations.push("cutout-cli capture");
     capture_annotations.extend_from_slice(annotations);
     let pevcap = capture.to_pevcap(
         summary,
@@ -1830,7 +1830,7 @@ mod tests {
         assert_eq!(
             decoded.header.annotations.as_slice(),
             &[
-                "cutout-cli capture-aero".to_owned(),
+                "cutout-cli capture".to_owned(),
                 "capture_label=charging".to_owned(),
                 "capture_privacy=private".to_owned(),
             ]
@@ -1861,7 +1861,7 @@ mod tests {
     fn reconnect_capture_maps_probe_commands_for_first_link_policy() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "NF2557",
             "--reconnect-attempts",
@@ -1870,8 +1870,8 @@ mod tests {
             "identity",
         ])
         .expect("parser accepts reconnect probe request");
-        let Command::CaptureAero(args) = cli.command else {
-            panic!("expected capture-aero command");
+        let Command::Capture(args) = cli.command else {
+            panic!("expected capture command");
         };
 
         assert_eq!(

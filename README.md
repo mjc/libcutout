@@ -5,20 +5,21 @@ Rust library and CLI for BTLE communication with PEVs, starting with balance PEV
 ## CLI
 
 `cutout` is the hardware-facing command-line tool. It is currently focused on
-Bluetooth discovery, GATT endpoint inspection, and read-only Aero/Veteran-family
-fixture capture.
+Bluetooth discovery, GATT endpoint inspection, and read-only protocol fixture
+capture.
 
 ```console
 cutout scan --seconds 10
 cutout connect --name-contains Aero
 cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
-cutout capture-aero --name-contains NF2557 --seconds 20
+cutout capture --name-contains NF2557 --seconds 20
+cutout capture --name-contains Falcon --profile falcon --probe identity --probe firmware
 ```
 
 Target selection can use `--address`, `--name-contains`, or neither. When no
 target filter is supplied, the first matching peripheral from the scan results
 is used.
 
-`capture-aero` prints raw protocol evidence for fixture work. Review capture
+`capture` prints raw protocol evidence for fixture work. Review capture
 logs before sharing them, because they may contain device identifiers and raw
 notification payloads.

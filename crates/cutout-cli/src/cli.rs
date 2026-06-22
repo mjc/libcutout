@@ -19,7 +19,7 @@ Examples:
   cutout connect --name-contains Aero
   cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8
   cutout subscribe-raw --name-contains NF2557 --characteristic 0000ffe1-0000-1000-8000-00805f9b34fb
-  cutout capture-aero --name-contains NF2557 --seconds 20
+  cutout capture --name-contains NF2557 --seconds 20
   cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
   cutout dashboard --demo --device \"Aero NF2557\"
@@ -51,10 +51,10 @@ characteristic, and print raw notification chunks with timestamps.
 This command is protocol-agnostic. Use --characteristic to select a specific
 notify/indicate characteristic UUID; otherwise the first notify-capable
 characteristic in the discovered GATT tree is used.";
-const CAPTURE_AERO_LONG_ABOUT: &str = "\
-Connect to an Aero/Veteran-family device and print capture records suitable for
-fixture work. Records include link metadata, subscribe/write actions, inbound
-notifications, provisional write bytes, and bridge counters. For explicit
+const CAPTURE_LONG_ABOUT: &str = "\
+Connect to a selected read-only protocol profile and print capture records
+suitable for fixture work. Records include link metadata, subscribe/write
+actions, inbound notifications, provisional write bytes, and bridge counters. For explicit
 Falcon verification, use --profile falcon with --probe identity --probe
 firmware. Profile auto currently keeps the existing Aero/Veteran path.
 
@@ -122,9 +122,9 @@ pub(crate) enum Command {
     #[command(long_about = SUBSCRIBE_RAW_LONG_ABOUT)]
     SubscribeRaw(RawSubscribeArgs),
 
-    /// Capture read-only Aero/Veteran protocol evidence.
-    #[command(long_about = CAPTURE_AERO_LONG_ABOUT)]
-    CaptureAero(CaptureAeroArgs),
+    /// Capture read-only protocol evidence.
+    #[command(long_about = CAPTURE_LONG_ABOUT)]
+    Capture(CaptureArgs),
 
     /// Print the generated hardware validation matrix.
     #[command(long_about = VALIDATION_LONG_ABOUT)]
@@ -178,7 +178,7 @@ pub(crate) struct TargetedScanArgs {
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
-pub(crate) struct CaptureAeroArgs {
+pub(crate) struct CaptureArgs {
     #[command(flatten)]
     pub(crate) target: TargetedScanArgs,
 
@@ -495,7 +495,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        CaptureAeroArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
+        CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
         CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
         PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, RawSubscribeArgs,
         ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
@@ -851,20 +851,20 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_name_target() {
+    fn parses_capture_command_with_name_target() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "NF2557",
             "--seconds",
             "3",
         ])
-        .expect("parser accepts capture-aero");
+        .expect("parser accepts capture");
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(CaptureAeroArgs {
+            Command::Capture(CaptureArgs {
                 target: TargetedScanArgs {
                     target: TargetArgs {
                         address: None,
@@ -889,10 +889,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_reconnect_attempts() {
+    fn parses_capture_command_with_reconnect_attempts() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "NF2557",
             "--reconnect-attempts",
@@ -900,21 +900,21 @@ mod tests {
         ])
         .expect("parser accepts reconnect attempts");
 
-        let Command::CaptureAero(args) = cli.command else {
-            panic!("expected capture-aero command");
+        let Command::Capture(args) = cli.command else {
+            panic!("expected capture command");
         };
 
         assert_eq!(args.reconnect_attempts, 3);
     }
 
     #[test]
-    fn parses_capture_aero_command_with_address_target() {
-        let cli = Cli::try_parse_from(["cutout", "capture-aero", "--address", "AA:BB:CC:DD:EE:FF"])
-            .expect("parser accepts capture-aero by address");
+    fn parses_capture_command_with_address_target() {
+        let cli = Cli::try_parse_from(["cutout", "capture", "--address", "AA:BB:CC:DD:EE:FF"])
+            .expect("parser accepts capture by address");
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(CaptureAeroArgs {
+            Command::Capture(CaptureArgs {
                 target: TargetedScanArgs {
                     target: TargetArgs {
                         address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
@@ -941,10 +941,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_both_target_filters() {
+    fn parses_capture_command_with_both_target_filters() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--address",
             "AA:BB:CC:DD:EE:FF",
             "--name-contains",
@@ -952,11 +952,11 @@ mod tests {
             "--seconds",
             "21",
         ])
-        .expect("parser accepts capture-aero with both filters");
+        .expect("parser accepts capture with both filters");
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(CaptureAeroArgs {
+            Command::Capture(CaptureArgs {
                 target: TargetedScanArgs {
                     target: TargetArgs {
                         address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
@@ -981,10 +981,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_falcon_profile() {
+    fn parses_capture_command_with_falcon_profile() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "Falcon",
             "--profile",
@@ -994,7 +994,7 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(CaptureAeroArgs {
+            Command::Capture(CaptureArgs {
                 target: TargetedScanArgs {
                     target: TargetArgs {
                         address: None,
@@ -1021,10 +1021,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_falcon_profile_and_read_probes() {
+    fn parses_capture_command_with_falcon_profile_and_read_probes() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "Falcon",
             "--profile",
@@ -1038,7 +1038,7 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(CaptureAeroArgs {
+            Command::Capture(CaptureArgs {
                 target: TargetedScanArgs {
                     target: TargetArgs {
                         address: None,
@@ -1065,10 +1065,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_pevcap_output() {
+    fn parses_capture_command_with_pevcap_output() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "NF2557",
             "--pevcap-output",
@@ -1080,7 +1080,7 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(CaptureAeroArgs {
+            Command::Capture(CaptureArgs {
                 target: TargetedScanArgs {
                     target: TargetArgs {
                         address: None,
@@ -1107,10 +1107,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_capture_annotations() {
+    fn parses_capture_command_with_capture_annotations() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "NF2557",
             "--capture-label",
@@ -1124,8 +1124,8 @@ mod tests {
         ])
         .expect("parser accepts capture provenance annotations");
 
-        let Command::CaptureAero(args) = cli.command else {
-            panic!("expected capture-aero command");
+        let Command::Capture(args) = cli.command else {
+            panic!("expected capture command");
         };
 
         assert_eq!(args.capture_label, Some(CaptureLabelArg::Charging));
@@ -1141,10 +1141,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_capture_aero_command_with_diagnostics_jsonl() {
+    fn parses_capture_command_with_diagnostics_jsonl() {
         let cli = Cli::try_parse_from([
             "cutout",
-            "capture-aero",
+            "capture",
             "--name-contains",
             "NF2557",
             "--diagnostics-jsonl",
@@ -1153,7 +1153,7 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::CaptureAero(CaptureAeroArgs {
+            Command::Capture(CaptureArgs {
                 target: TargetedScanArgs {
                     target: TargetArgs {
                         address: None,
@@ -1485,6 +1485,14 @@ mod tests {
     }
 
     #[test]
+    fn rejects_old_aero_specific_capture_command_name() {
+        let error = Cli::try_parse_from(["cutout", "capture-aero", "--name-contains", "NF2557"])
+            .expect_err("profile-neutral capture command replaced capture-aero");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
     fn rejects_negative_duration() {
         let error = Cli::try_parse_from(["cutout", "scan", "--seconds", "-1"])
             .expect_err("duration must be unsigned");
@@ -1526,8 +1534,8 @@ mod tests {
 
     #[test]
     fn rejects_unknown_capture_option() {
-        let error = Cli::try_parse_from(["cutout", "capture-aero", "--write"])
-            .expect_err("capture-aero rejects unsupported write flag");
+        let error = Cli::try_parse_from(["cutout", "capture", "--write"])
+            .expect_err("capture rejects unsupported write flag");
 
         assert_eq!(error.kind(), ErrorKind::UnknownArgument);
     }
@@ -1548,7 +1556,7 @@ mod tests {
                 "Usage: cutout <COMMAND>",
                 "scan",
                 "connect",
-                "capture-aero",
+                "capture",
                 "pevcap",
                 "validation",
                 "dashboard",
@@ -1566,7 +1574,7 @@ mod tests {
                 "read-only",
                 "Commands may connect to hardware",
                 "Examples:",
-                "cutout capture-aero --name-contains NF2557 --seconds 20",
+                "cutout capture --name-contains NF2557 --seconds 20",
                 "--name-contains matches a case-sensitive substring",
             ],
         );
@@ -1597,7 +1605,7 @@ mod tests {
                 "cutout connect --name-contains Aero",
                 "cutout connect --address AA:BB:CC:DD:EE:FF --seconds 8",
                 "cutout subscribe-raw --name-contains NF2557",
-                "cutout capture-aero --name-contains NF2557 --seconds 20",
+                "cutout capture --name-contains NF2557 --seconds 20",
                 "cutout pevcap convert --input session.pevcap.jsonl",
                 "cutout validation",
                 "cutout dashboard",
@@ -1619,7 +1627,7 @@ mod tests {
                 "scan",
                 "connect",
                 "subscribe-raw",
-                "capture-aero",
+                "capture",
                 "validation",
                 "pevcap",
                 "dashboard"
@@ -1722,14 +1730,14 @@ mod tests {
     }
 
     #[test]
-    fn capture_aero_short_help_lists_capture_options() {
-        let help = short_help_for("capture-aero");
+    fn capture_short_help_lists_capture_options() {
+        let help = short_help_for("capture");
 
         assert_contains_all(
             &help,
             &[
-                "Capture read-only Aero/Veteran protocol evidence",
-                "Usage: capture-aero [OPTIONS]",
+                "Capture read-only protocol evidence",
+                "Usage: capture [OPTIONS]",
                 "--address <ADDR>",
                 "--name-contains <TEXT>",
                 "--seconds <SECONDS>",
@@ -1738,8 +1746,8 @@ mod tests {
     }
 
     #[test]
-    fn capture_aero_long_help_documents_explicit_falcon_verification_path() {
-        let help = long_help_for("capture-aero");
+    fn capture_long_help_documents_explicit_falcon_verification_path() {
+        let help = long_help_for("capture");
 
         assert_contains_all(
             &help,
@@ -1756,8 +1764,8 @@ mod tests {
     }
 
     #[test]
-    fn capture_aero_long_help_warns_about_raw_capture_contents() {
-        let help = long_help_for("capture-aero");
+    fn capture_long_help_warns_about_raw_capture_contents() {
+        let help = long_help_for("capture");
 
         assert_contains_all(
             &help,
@@ -1772,13 +1780,13 @@ mod tests {
     }
 
     #[test]
-    fn capture_aero_help_emphasizes_read_only_scope() {
-        let help = long_help_for("capture-aero");
+    fn capture_help_emphasizes_read_only_scope() {
+        let help = long_help_for("capture");
 
         assert_contains_all(
             &help,
             &[
-                "Aero/Veteran-family",
+                "selected read-only protocol profile",
                 "Capture output",
                 "device identifiers",
             ],
