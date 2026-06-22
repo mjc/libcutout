@@ -1156,17 +1156,19 @@ fn encode_raw_capture_pevcap(
         .map(gatt_channel_from_uuid)
         .collect::<Vec<_>>();
     let gatt_fingerprints = summary.gatt_fingerprints();
-    let pevcap_records = records
-        .iter()
-        .map(|record| {
-            PevcapRecord::inbound_notification(
-                record.monotonic_ms,
-                gatt_channel_from_uuid(record.characteristic),
-                gatt_channel_from_uuid(record.service),
-                record.bytes.clone(),
-            )
-        })
-        .collect();
+    let mut pevcap_records = Vec::with_capacity(records.len().saturating_add(2));
+    pevcap_records.push(PevcapRecord::link_up(0, write_limit));
+    pevcap_records.extend(records.iter().map(|record| {
+        PevcapRecord::inbound_notification(
+            record.monotonic_ms,
+            gatt_channel_from_uuid(record.characteristic),
+            gatt_channel_from_uuid(record.service),
+            record.bytes.clone(),
+        )
+    }));
+    pevcap_records.push(PevcapRecord::link_down(
+        records.last().map_or(0, |record| record.monotonic_ms),
+    ));
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
     capture_annotations.push("cutout-cli subscribe-raw");
     capture_annotations.extend_from_slice(annotations);
@@ -1671,8 +1673,8 @@ mod tests {
         RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        GattChannel, PevcapHeader, PevcapRecord, ProtocolFamily, VerificationStatus, VerifiedValue,
-        WriteMode,
+        CaptureRecord, GattChannel, LinkInfo, PevcapHeader, PevcapRecord, ProtocolFamily,
+        VerificationStatus, VerifiedValue, WriteMode,
     };
     use cutout_protocols::{
         BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, DeviceFamily, IdentityConfidence,
@@ -2084,8 +2086,24 @@ mod tests {
                 "capture_privacy=private".to_owned(),
             ]
         );
-        assert_eq!(decoded.records.len(), 1);
-        assert_eq!(decoded.records[0].bytes, [0xde, 0xad, 0xbe, 0xef]);
+        let replay = decoded.replay_records();
+        assert_eq!(replay.len(), 3);
+        assert!(matches!(
+            replay[0],
+            CaptureRecord::LinkUp(LinkInfo {
+                monotonic_ms: 0,
+                max_write_len: Some(185),
+            })
+        ));
+        assert!(matches!(
+            &replay[1],
+            CaptureRecord::Notification {
+                monotonic_ms: 7,
+                bytes,
+                ..
+            } if bytes.as_slice() == [0xde, 0xad, 0xbe, 0xef]
+        ));
+        assert_eq!(replay[2], CaptureRecord::LinkDown);
     }
 
     #[test]
