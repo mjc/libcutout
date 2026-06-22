@@ -160,6 +160,7 @@ pub(crate) struct ReadOnlyDashboardState {
     pub(crate) firmware: Option<String>,
     pub(crate) settings: VecDeque<String>,
     pub(crate) bms_pages: VecDeque<String>,
+    pub(crate) latest_bms_temperature: Option<String>,
     pub(crate) diagnostics: u64,
     pub(crate) raw_telemetry: u64,
     pub(crate) unknown_raw_pages: u64,
@@ -193,13 +194,23 @@ impl ReadOnlyDashboardState {
                 ) {
                     self.unknown_raw_pages = self.unknown_raw_pages.saturating_add(1);
                 }
+                let temperature_summary = bms_temperature_summary(payload);
+                if let Some(summary) = temperature_summary.as_ref() {
+                    self.latest_bms_temperature = Some(format!(
+                        "selector={} verification={}{}",
+                        page.selector,
+                        verification_name(page.verification),
+                        summary
+                    ));
+                }
                 push_bounded(
                     &mut self.bms_pages,
                     format!(
-                        "selector={} kind={} verification={}",
+                        "selector={} kind={} verification={}{}",
                         page.selector,
                         battery_page_kind_name(page.kind),
-                        verification_name(page.verification)
+                        verification_name(page.verification),
+                        temperature_summary.as_deref().unwrap_or("")
                     ),
                 );
             }
@@ -538,8 +549,15 @@ impl DashboardState {
                 &format!("read-only responses={}", report.read_only_responses),
             );
         }
-        self.push_log("trace", &format_unmapped_telemetry_event(report));
+        if report_has_no_parsed_events(report) {
+            self.push_log("trace", &format_unmapped_telemetry_event(report));
+        }
         for event in &report.events {
+            if matches!(event, SessionBridgeEvent::RawNotification { .. })
+                && !report_has_no_parsed_events(report)
+            {
+                continue;
+            }
             let (level, message) = format_bridge_event(event);
             self.push_log(level, &message);
         }
@@ -790,6 +808,25 @@ const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static 
     }
 }
 
+fn bms_temperature_summary(payload: cutout_core::BatteryPagePayload) -> Option<String> {
+    let temperatures = payload.temperatures_mc();
+    if !matches!(payload, cutout_core::BatteryPagePayload::Temperature(_)) {
+        return None;
+    }
+
+    let mut summary = String::from(" temps_c=");
+    let mut wrote = false;
+    for temperature in temperatures.into_iter().flatten() {
+        if wrote {
+            summary.push(',');
+        }
+        wrote = true;
+        summary.push_str(&millicelsius_to_celsius_signed(temperature.value).to_string());
+    }
+
+    wrote.then_some(summary)
+}
+
 const fn quality_name(quality: cutout_core::ValueQuality) -> &'static str {
     match quality {
         cutout_core::ValueQuality::Known => "known",
@@ -961,6 +998,13 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
     }
 }
 
+fn report_has_no_parsed_events(report: &SessionBridgeReport) -> bool {
+    report.telemetry == 0
+        && report.read_only_responses == 0
+        && report.diagnostics == 0
+        && report.diagnostic_errors.is_empty()
+}
+
 fn format_telemetry_delta(delta: TelemetryDelta) -> String {
     let mut fields = Vec::new();
     if let Some(speed) = delta.speed_mm_s {
@@ -1039,10 +1083,6 @@ fn services_summary(summary: &ConnectionSummary) -> String {
         .map(|service| format!("{}:{} chars", service.uuid, service.characteristics.len()))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-pub(crate) fn run_dashboard(state: DashboardState) -> Result<()> {
-    run_dashboard_loop(state, None)
 }
 
 pub(crate) fn run_dashboard_with_updates(
@@ -1397,6 +1437,12 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
             Span::raw(page.as_str()),
         ]));
     }
+    if let Some(temperature) = read_only.latest_bms_temperature.as_deref() {
+        lines.push(Line::from(vec![
+            Span::styled("bms temp ", Style::new().fg(Color::Gray)),
+            Span::raw(temperature),
+        ]));
+    }
 
     lines.push(Line::from(vec![
         Span::styled("raw/unverified pages ", Style::new().fg(Color::Gray)),
@@ -1717,6 +1763,10 @@ mod tests {
         text
     }
 
+    fn empty_session_bridge_report() -> SessionBridgeReport {
+        SessionBridgeReport::default()
+    }
+
     #[test]
     fn sample_state_has_device_profiles_and_logs() {
         let state = DashboardState::sample();
@@ -1885,19 +1935,17 @@ mod tests {
                 .iter()
                 .any(|entry| entry.message.contains("notifications=184"))
         );
-        assert!(state.logs.iter().any(|entry| {
-            entry.level == "trace"
-                && entry
-                    .message
-                    .contains("telemetry unmapped notifications=184")
-                && entry.message.contains("malformed=2")
-                && entry.message.contains("unmatched=1")
+        assert!(state.logs.iter().all(|entry| {
+            !entry
+                .message
+                .contains("telemetry unmapped notifications=184")
         }));
-        assert!(state.logs.iter().any(|entry| {
-            entry.level == "trace"
-                && entry.message.contains("t=17ms raw notification")
-                && entry.message.contains("len=100")
-        }));
+        assert!(
+            state
+                .logs
+                .iter()
+                .all(|entry| !entry.message.contains("t=17ms raw notification"))
+        );
         assert!(state.logs.iter().any(|entry| {
             entry.level == "warn"
                 && entry.message.contains("t=18ms telemetry diagnostics")
@@ -1981,6 +2029,62 @@ mod tests {
     }
 
     #[test]
+    fn parsed_session_report_suppresses_raw_notification_log_spam() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            notifications: 1,
+            notification_bytes: 99,
+            latest_notification_len: Some(99),
+            telemetry: 1,
+            telemetry_snapshot: TelemetrySnapshot {
+                voltage_mv: Some(Measured::reported(117_600)),
+                battery_percent_estimated: Some(Measured::estimated(78)),
+                ..TelemetrySnapshot::default()
+            },
+            events: vec![
+                SessionBridgeEvent::RawNotification {
+                    monotonic_ms: 7,
+                    characteristic: uuid::Uuid::from_u128(
+                        0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb,
+                    ),
+                    service: uuid::Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    len: 99,
+                },
+                SessionBridgeEvent::ProcessedTelemetry {
+                    monotonic_ms: 7,
+                    delta: TelemetryDelta {
+                        voltage_mv: Some(Measured::reported(117_600)),
+                        battery_percent_estimated: Some(Measured::estimated(78)),
+                        ..TelemetryDelta::empty(7)
+                    },
+                },
+            ],
+            ..empty_session_bridge_report()
+        };
+
+        state.apply_session_report(&report);
+
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "info"
+                && entry
+                    .message
+                    .contains("processed telemetry voltage=118V battery=78%")
+        }));
+        assert!(
+            state
+                .logs
+                .iter()
+                .all(|entry| !entry.message.contains("raw notification len=99"))
+        );
+        assert!(
+            state
+                .logs
+                .iter()
+                .all(|entry| !entry.message.contains("telemetry unmapped notifications=1"))
+        );
+    }
+
+    #[test]
     fn live_session_report_summarizes_read_only_responses() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
@@ -2017,6 +2121,21 @@ mod tests {
                     BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
+                ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+                    BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+                    BatteryInfo {
+                        temperature_mc: Some(Measured::reported(16_730)),
+                        ..BatteryInfo::default()
+                    },
+                    [
+                        Some(Measured::reported(16_730)),
+                        Some(Measured::reported(17_840)),
+                        Some(Measured::reported(18_100)),
+                        Some(Measured::reported(17_800)),
+                        Some(Measured::reported(17_700)),
+                        Some(Measured::reported(19_100)),
+                    ],
+                )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
@@ -2042,9 +2161,16 @@ mod tests {
                 && state.read_only.settings[0].contains("value=540")
                 && state.read_only.settings[0].contains("hardware_verified")
         );
-        assert_eq!(state.read_only.bms_pages.len(), 2);
+        assert_eq!(state.read_only.bms_pages.len(), 3);
         assert!(state.read_only.bms_pages[0].contains("selector=2 kind=cell_voltage"));
-        assert!(state.read_only.bms_pages[1].contains("selector=8 kind=raw"));
+        assert!(state.read_only.bms_pages[1].contains(
+            "selector=3 kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
+        ));
+        assert!(state.read_only.bms_pages[2].contains("selector=8 kind=raw"));
+        assert_eq!(
+            state.read_only.latest_bms_temperature.as_deref(),
+            Some("selector=3 verification=hardware_verified temps_c=16,17,18,17,17,19")
+        );
         assert_eq!(state.read_only.unknown_raw_pages, 1);
         assert_eq!(state.read_only.raw_telemetry, 1);
         assert!(
@@ -2196,6 +2322,55 @@ mod tests {
     }
 
     #[test]
+    fn read_only_temperature_summary_survives_later_bms_pages() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            read_only_responses: 4,
+            read_only_response_events: vec![
+                ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+                    BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+                    BatteryInfo {
+                        temperature_mc: Some(Measured::reported(17_600)),
+                        ..BatteryInfo::default()
+                    },
+                    [
+                        Some(Measured::reported(17_600)),
+                        Some(Measured::reported(17_100)),
+                        Some(Measured::reported(17_700)),
+                        Some(Measured::reported(18_500)),
+                        Some(Measured::reported(19_000)),
+                        Some(Measured::reported(19_100)),
+                    ],
+                )),
+                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                )),
+                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                    BatteryPageMetadata::metadata(0, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                )),
+                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryInfo::default(),
+                )),
+            ],
+            ..empty_session_bridge_report()
+        };
+
+        state.apply_session_report(&report);
+        state.active_tab = 2;
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert_eq!(
+            state.read_only.latest_bms_temperature.as_deref(),
+            Some("selector=3 verification=hardware_verified temps_c=17,17,17,18,19,19")
+        );
+        assert!(text.contains("bms temp"));
+        assert!(text.contains("temps_c=17,17,17,18,19,19"));
+    }
+
+    #[test]
     fn live_battery_level_updates_battery_gauge_from_real_reading() {
         let mut state = DashboardState::empty();
 
@@ -2340,7 +2515,7 @@ mod tests {
         assert!(text.contains("69 deg"));
         assert!(text.contains("telemetry mapped"));
         assert!(text.contains("current=0A"));
-        assert!(text.contains("telemetry unmapped notifications=1"));
+        assert!(!text.contains("telemetry unmapped notifications=1"));
     }
 
     #[test]

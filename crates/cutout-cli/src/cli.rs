@@ -139,6 +139,13 @@ pub(crate) enum Command {
     Dashboard(DashboardArgs),
 }
 
+impl Cli {
+    #[must_use]
+    pub fn is_dashboard_mode(&self) -> bool {
+        matches!(self.command, Command::Dashboard(_))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Args, PartialEq, Eq)]
 pub(crate) struct ScanArgs {
     /// Seconds to listen for advertisements before continuing.

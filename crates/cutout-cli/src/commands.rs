@@ -39,9 +39,8 @@ use crate::cli::{
     CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
     PevcapFormat, RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs,
 };
-use crate::dashboard::{
-    DashboardState, DashboardUpdate, run_dashboard, run_dashboard_with_updates,
-};
+use crate::dashboard::{DashboardState, DashboardUpdate, run_dashboard_with_updates};
+use crate::logging::install_dashboard_log_sink;
 use crate::validation::render_validation_report;
 
 const DASHBOARD_LIVE_WINDOW: Duration = Duration::from_millis(500);
@@ -80,12 +79,12 @@ fn pevcap_convert(args: &PevcapConvertArgs) -> Result<()> {
     let input = fs::read(&args.input)?;
     let output = convert_pevcap_bytes(&input, args.input_format, args.output_format)?;
     fs::write(&args.output, output)?;
-    println!(
-        "converted {} ({:?}) -> {} ({:?})",
-        args.input.display(),
-        args.input_format,
-        args.output.display(),
-        args.output_format
+    info!(
+        input = %args.input.display(),
+        input_format = ?args.input_format,
+        output = %args.output.display(),
+        output_format = ?args.output_format,
+        "converted pevcap"
     );
     Ok(())
 }
@@ -113,25 +112,25 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
         &capture,
         selected_pevcap_replay_profile(&capture, args.profile)?,
     )?;
-    println!("{}", render_pevcap_replay_report(&report));
+    info!("{}", render_pevcap_replay_report(&report));
     if args.read_only_jsonl {
         for line in render_read_only_responses_jsonl(&report.read_only_response_events)? {
-            println!("{line}");
+            info!("{line}");
         }
     }
     if args.diagnostics_jsonl {
         for line in render_diagnostic_snapshots_jsonl(&report.diagnostic_snapshots)? {
-            println!("{line}");
+            info!("{line}");
         }
         for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors)? {
-            println!("{line}");
+            info!("{line}");
         }
     }
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
-        println!("{telemetry}");
+        info!("{telemetry}");
     }
     if let Some(firmware) = render_firmware_info(report.firmware) {
-        println!("{firmware}");
+        info!("{firmware}");
     }
     Ok(())
 }
@@ -558,14 +557,17 @@ fn append_selected_layout_evidence(rendered: &mut String, evidence: BegodePackLa
 }
 
 async fn dashboard(args: DashboardArgs) -> Result<()> {
+    let (tx, rx) = mpsc::channel();
+    let _log_guard = install_dashboard_log_sink(tx.clone());
+
     if args.demo {
-        return run_dashboard(DashboardState::demo(args.device.as_deref()));
+        return run_dashboard_with_updates(DashboardState::demo(args.device.as_deref()), &rx);
     }
 
     if let Some(path) = args.pevcap.as_ref() {
         let input = fs::read(path)?;
         let capture = PevcapCapture::decode(&input, pevcap_encoding(args.pevcap_format))?;
-        return run_dashboard(dashboard_state_from_aero_pevcap(&capture)?);
+        return run_dashboard_with_updates(dashboard_state_from_aero_pevcap(&capture)?, &rx);
     }
 
     let target = dashboard_live_target(&args)?;
@@ -589,7 +591,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    run_live_dashboard(state, connection)
+    run_live_dashboard(state, connection, tx, rx)
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -604,13 +606,20 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
     })
 }
 
-fn run_live_dashboard(state: DashboardState, connection: ConnectedPeripheral) -> Result<()> {
+fn run_live_dashboard(
+    state: DashboardState,
+    connection: ConnectedPeripheral,
+    tx: mpsc::Sender<DashboardUpdate>,
+    rx: mpsc::Receiver<DashboardUpdate>,
+) -> Result<()> {
     info!(
         observation = %connection.summary.observation,
         "starting dashboard live runner"
     );
     run_live_dashboard_with(
         state,
+        tx,
+        rx,
         move |tx| run_dashboard_live_updates(connection, tx),
         |state, rx| run_dashboard_with_updates(state, &rx),
     )
@@ -618,6 +627,8 @@ fn run_live_dashboard(state: DashboardState, connection: ConnectedPeripheral) ->
 
 fn run_live_dashboard_with<Start, Fut, Run>(
     state: DashboardState,
+    tx: mpsc::Sender<DashboardUpdate>,
+    rx: mpsc::Receiver<DashboardUpdate>,
     start_live_updates: Start,
     run_terminal: Run,
 ) -> Result<()>
@@ -626,7 +637,6 @@ where
     Fut: Future<Output = ()> + Send + 'static,
     Run: FnOnce(DashboardState, mpsc::Receiver<DashboardUpdate>) -> Result<()> + Send + 'static,
 {
-    let (tx, rx) = mpsc::channel();
     let live_thread = start_dashboard_live_thread(start_live_updates, tx)?;
 
     info!("running dashboard terminal while live update thread is active");
@@ -867,7 +877,7 @@ async fn refresh_dashboard_battery(
 
 async fn scan(seconds: u64) -> Result<(), BtleError> {
     for observation in scan_peripherals(Duration::from_secs(seconds)).await? {
-        println!("{observation}");
+        info!("{observation}");
     }
     Ok(())
 }
@@ -884,16 +894,18 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
     } = args;
     let output = pevcap_output.map(|path| (path, pevcap_format));
     let connection = connect_and_discover(&target.into(), Duration::from_secs(seconds)).await?;
-    println!("{}", connection.summary);
+    info!("{}", connection.summary);
     let Some(characteristic) = connection.summary.select_notify_characteristic(requested) else {
         if let Some(uuid) = requested {
             bail!("no notify/indicate characteristic matched {uuid}");
         }
         bail!("no notify/indicate characteristics discovered");
     };
-    println!(
-        "raw subscribe characteristic={} service={} window={}s",
-        characteristic.uuid, characteristic.service_uuid, seconds
+    info!(
+        characteristic = %characteristic.uuid,
+        service = %characteristic.service_uuid,
+        window_seconds = seconds,
+        "raw subscribe"
     );
     let records = capture_raw_notifications(
         &connection.peripheral,
@@ -913,16 +925,16 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
                 annotation_refs.as_slice(),
             )?;
             fs::write(&path, bytes)?;
-            println!("wrote raw pevcap {} ({format:?})", path.display());
+            info!(path = %path.display(), format = ?format, "wrote raw pevcap");
         }
         None => {
             for record in records {
-                println!(
-                    "raw-notification t_ms={} characteristic={} service={} bytes={}",
-                    record.monotonic_ms,
-                    record.characteristic,
-                    record.service,
-                    encode_hex(&record.bytes)
+                info!(
+                    t_ms = record.monotonic_ms,
+                    characteristic = %record.characteristic,
+                    service = %record.service,
+                    bytes = %encode_hex(&record.bytes),
+                    "raw-notification"
                 );
             }
         }
@@ -969,7 +981,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let connection =
         connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
 
-    println!("{}", connection.summary);
+    info!("{}", connection.summary);
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
         print_session_endpoints(endpoints);
         mode.run(
@@ -1315,12 +1327,12 @@ fn pevcap_identity_for_profile(profile: SelectedSessionProfile) -> PevcapResolve
 }
 
 fn print_session_endpoints(endpoints: SessionEndpoints<'_>) {
-    println!(
-        "session write={} notify={}",
-        endpoints.write.uuid,
-        endpoints
+    info!(
+        write = %endpoints.write.uuid,
+        notify = %endpoints
             .notify
-            .map_or_else(|| "<none>".to_owned(), |notify| notify.uuid.to_string())
+            .map_or_else(|| "<none>".to_owned(), |notify| notify.uuid.to_string()),
+        "session endpoints"
     );
 }
 
@@ -1330,7 +1342,7 @@ fn print_capture(
     read_only_jsonl: bool,
 ) -> Result<()> {
     for record in capture.records {
-        println!("{record}");
+        info!("{record}");
     }
     print_session_report(&capture.report);
     print_session_read_only_jsonl(&capture.report, read_only_jsonl)?;
@@ -1367,7 +1379,7 @@ fn write_or_print_capture(
                 annotation_refs.as_slice(),
             )?;
             fs::write(path, bytes)?;
-            println!("wrote pevcap {} ({format:?})", path.display());
+            info!(path = %path.display(), format = ?format, "wrote pevcap");
             print_session_report(&report);
             print_session_read_only_jsonl(&report, read_only_jsonl)?;
             print_session_diagnostics_jsonl(&report, diagnostics_jsonl)?;
@@ -1460,28 +1472,28 @@ fn capture_wall_clock_unix_ms() -> u64 {
 }
 
 fn print_session_report(report: &SessionBridgeReport) {
-    println!(
-        "session protocol_writes={} writes={} subscribes={} notifications={} telemetry={} read_only_responses={} diagnostics={} disconnects={}",
-        report.protocol_writes,
-        report.writes,
-        report.subscribes,
-        report.notifications,
-        report.telemetry,
-        report.read_only_responses,
-        report.diagnostics,
-        report.disconnects
+    info!(
+        protocol_writes = report.protocol_writes,
+        writes = report.writes,
+        subscribes = report.subscribes,
+        notifications = report.notifications,
+        telemetry = report.telemetry,
+        read_only_responses = report.read_only_responses,
+        diagnostics = report.diagnostics,
+        disconnects = report.disconnects,
+        "session report"
     );
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
-        println!("{telemetry}");
+        info!("{telemetry}");
     }
     if let Some(firmware) = render_firmware_info(report.firmware) {
-        println!("{firmware}");
+        info!("{firmware}");
     }
     if let Some(identity) = render_identity(report) {
-        println!("{identity}");
+        info!("{identity}");
     }
     for settings in render_settings_readbacks(&report.settings) {
-        println!("{settings}");
+        info!("{settings}");
     }
 }
 
@@ -1490,9 +1502,9 @@ fn print_session_diagnostics_jsonl(
     enabled: bool,
 ) -> Result<(), serde_json::Error> {
     if enabled {
-        println!("{}", render_session_diagnostics_jsonl(report)?);
+        info!("{}", render_session_diagnostics_jsonl(report)?);
         for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors)? {
-            println!("{line}");
+            info!("{line}");
         }
     }
     Ok(())
@@ -1504,7 +1516,7 @@ fn print_reconnect_attempt_diagnostics_jsonl(
 ) -> Result<(), serde_json::Error> {
     if enabled {
         for attempt in attempts {
-            println!("{}", render_reconnect_attempt_diagnostics_jsonl(attempt)?);
+            info!("{}", render_reconnect_attempt_diagnostics_jsonl(attempt)?);
         }
     }
     Ok(())
@@ -1516,7 +1528,7 @@ fn print_session_read_only_jsonl(
 ) -> Result<(), serde_json::Error> {
     if enabled {
         for line in render_read_only_responses_jsonl(&report.read_only_response_events)? {
-            println!("{line}");
+            info!("{line}");
         }
     }
     Ok(())
@@ -1637,7 +1649,21 @@ fn render_battery_response_jsonl(
             "verification": verification_status_name(page.verification),
         },
         "battery": battery_info_json(payload.battery()),
+        "temperatures_mc": battery_temperature_values_json(payload),
     }))
+}
+
+fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::Value {
+    match payload {
+        BatteryPagePayload::Temperature(_) => serde_json::json!(
+            payload
+                .temperatures_mc()
+                .into_iter()
+                .map(measured_i32_json)
+                .collect::<Vec<_>>()
+        ),
+        BatteryPagePayload::CellVoltage(_) | BatteryPagePayload::Raw(_) => serde_json::Value::Null,
+    }
 }
 
 fn battery_info_json(battery: BatteryInfo) -> serde_json::Value {
@@ -2478,6 +2504,41 @@ mod tests {
         assert_eq!(value["battery"]["temperature_mc"]["value"], 25_000);
         assert_eq!(value["battery"]["raw_state"]["id"], 8);
         assert_eq!(value["battery"]["raw_state"]["value"], 0x55aa);
+        assert_eq!(value["temperatures_mc"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn read_only_battery_jsonl_preserves_temperature_page_values() {
+        let temperatures = [
+            Some(Measured::reported(16_730)),
+            Some(Measured::reported(17_030)),
+            Some(Measured::reported(17_330)),
+            Some(Measured::reported(17_060)),
+            Some(Measured::reported(17_080)),
+            Some(Measured::reported(17_830)),
+        ];
+        let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+            cutout_core::BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+            BatteryInfo {
+                temperature_mc: temperatures[0],
+                ..BatteryInfo::default()
+            },
+            temperatures,
+        ));
+
+        let line = render_read_only_response_jsonl(3, response)
+            .expect("read-only temperature battery response serializes");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("read-only response JSONL is JSON");
+        assert_eq!(value["type"], "read_only_response");
+        assert_eq!(value["sequence"], 3);
+        assert_eq!(value["page"]["selector"], 3);
+        assert_eq!(value["page"]["kind"], "temperature");
+        assert_eq!(value["page"]["verification"], "hardware_verified");
+        assert_eq!(value["battery"]["temperature_mc"]["value"], 16_730);
+        assert_eq!(value["temperatures_mc"][0]["value"], 16_730);
+        assert_eq!(value["temperatures_mc"][5]["value"], 17_830);
     }
 
     #[test]
@@ -2706,9 +2767,9 @@ mod tests {
                 .read_only
                 .bms_pages
                 .iter()
-                .any(|page| page.contains("selector=3 kind=raw"))
+                .any(|page| page.contains("selector=3 kind=temperature"))
         );
-        assert_eq!(state.read_only.unknown_raw_pages, 1);
+        assert_eq!(state.read_only.unknown_raw_pages, 0);
     }
 
     #[test]
@@ -3241,9 +3302,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_starts_live_updates_before_terminal() {
         let (order_tx, order_rx) = mpsc::channel();
+        let (log_tx, log_rx) = mpsc::channel();
 
         let result = run_live_dashboard_with(
             DashboardState::empty(),
+            log_tx,
+            log_rx,
             {
                 let order_tx = order_tx.clone();
                 move |tx| async move {
@@ -3282,8 +3346,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_polls_updates_while_terminal_waits() {
+        let (log_tx, log_rx) = mpsc::channel();
         let result = run_live_dashboard_with(
             DashboardState::empty(),
+            log_tx,
+            log_rx,
             |tx| async move {
                 tx.send(DashboardUpdate::Log {
                     level: "debug".to_owned(),
@@ -3311,8 +3378,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_delivers_multiple_updates_while_terminal_waits() {
+        let (log_tx, log_rx) = mpsc::channel();
         let result = run_live_dashboard_with(
             DashboardState::empty(),
+            log_tx,
+            log_rx,
             |tx| async move {
                 for index in 0..3 {
                     tx.send(DashboardUpdate::Log {
@@ -3357,9 +3427,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_constructs_aero_session_before_terminal_exits() {
         let (constructed_tx, constructed_rx) = mpsc::channel();
+        let (log_tx, log_rx) = mpsc::channel();
 
         let result = run_live_dashboard_with(
             DashboardState::empty(),
+            log_tx,
+            log_rx,
             move |_tx| async move {
                 let _session = ReadOnlySession::<NosfetAeroModel, false>::default();
                 constructed_tx
@@ -3377,8 +3450,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_returns_terminal_errors() {
+        let (log_tx, log_rx) = mpsc::channel();
         let result = run_live_dashboard_with(
             DashboardState::empty(),
+            log_tx,
+            log_rx,
             |_tx| async {},
             |_state, _rx| anyhow::bail!("terminal failed"),
         );
@@ -3392,9 +3468,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_aborts_live_updates_after_terminal_exit() {
         let (dropped_tx, dropped_rx) = mpsc::channel();
+        let (log_tx, log_rx) = mpsc::channel();
 
         let result = run_live_dashboard_with(
             DashboardState::empty(),
+            log_tx,
+            log_rx,
             move |_tx| async move {
                 let _signal = DropSignal(dropped_tx);
                 std::future::pending::<()>().await;
@@ -3411,9 +3490,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_polls_updates_while_terminal_blocks_independently() {
         let (polled_tx, polled_rx) = mpsc::channel();
+        let (log_tx, log_rx) = mpsc::channel();
 
         let result = run_live_dashboard_with(
             DashboardState::empty(),
+            log_tx,
+            log_rx,
             move |_tx| async move {
                 polled_tx
                     .send(())

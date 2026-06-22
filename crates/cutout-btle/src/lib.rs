@@ -1605,7 +1605,7 @@ where
                 );
                 session.handle(
                     SessionInput::Notification {
-                        channel: gatt_channel_from_uuid(notification.uuid),
+                        channel: context.channel,
                         bytes: &notification.value,
                         monotonic_ms: *monotonic_ms,
                     },
@@ -3073,6 +3073,13 @@ mod tests {
         assert_eq!(report.notifications, 1);
         assert_eq!(report.notification_bytes, 2);
         assert_eq!(report.latest_notification_len, Some(2));
+        assert_eq!(
+            *session
+                .last_notification_channel
+                .lock()
+                .expect("notification channel"),
+            Some(GattChannel::from_bytes([0xA1; 16]))
+        );
         assert_eq!(report.telemetry, 1);
         assert_eq!(report.read_only_responses, 2);
         assert_eq!(
@@ -3499,6 +3506,7 @@ mod tests {
     #[derive(Default)]
     struct BridgeSession {
         notification_count: Arc<Mutex<usize>>,
+        last_notification_channel: Arc<Mutex<Option<GattChannel>>>,
     }
 
     struct SubscribeOnlySession;
@@ -3698,11 +3706,15 @@ mod tests {
                         mode: WriteMode::WithResponse,
                     }));
                 }
-                SessionInput::Notification { .. } => {
+                SessionInput::Notification { channel, .. } => {
                     *self
                         .notification_count
                         .lock()
                         .expect("notification counter") += 1;
+                    *self
+                        .last_notification_channel
+                        .lock()
+                        .expect("notification channel") = Some(channel);
                     output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
                         channel: GattChannel::from_bytes([0xA1; 16]),
                         monotonic_ms: 0,
