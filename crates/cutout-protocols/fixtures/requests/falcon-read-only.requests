@@ -1,0 +1,4 @@
+# Source-backed Begode Falcon read-only request bytes.
+# Format: whitespace separated key=value records.
+family=begode-falcon probe=falcon.identity command=request-identity mode=without-response bytes=4e provenance=vendor-documentation verification=unverified
+family=begode-falcon probe=falcon.firmware-info command=request-firmware-info mode=without-response bytes=56 provenance=vendor-documentation verification=unverified
