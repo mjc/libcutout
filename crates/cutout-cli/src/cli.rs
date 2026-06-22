@@ -40,8 +40,10 @@ Scan for a peripheral, connect to it, discover its GATT services, and print a
 summary of the discovered service/characteristic tree.
 
 If writable and notification-capable endpoints are discovered, Cutout also
-runs the read-only Aero probe session against the selected endpoints and prints
-bridge counters.";
+runs a read-only probe session against the selected endpoints and prints bridge
+counters. Profile auto currently keeps the existing Aero/Veteran path; use
+--profile falcon with --probe identity --probe firmware for explicit Falcon
+verification.";
 const SUBSCRIBE_RAW_LONG_ABOUT: &str = "\
 Scan for a peripheral, connect, discover GATT, subscribe to a notify/indicate
 characteristic, and print raw notification chunks with timestamps.
@@ -52,7 +54,9 @@ characteristic in the discovered GATT tree is used.";
 const CAPTURE_AERO_LONG_ABOUT: &str = "\
 Connect to an Aero/Veteran-family device and print capture records suitable for
 fixture work. Records include link metadata, subscribe/write actions, inbound
-notifications, provisional write bytes, and bridge counters.
+notifications, provisional write bytes, and bridge counters. For explicit
+Falcon verification, use --profile falcon with --probe identity --probe
+firmware. Profile auto currently keeps the existing Aero/Veteran path.
 
 Capture output may include device identifiers and raw notification payloads.
 Review it before sharing logs publicly.";
@@ -1691,8 +1695,12 @@ mod tests {
             &[
                 "discover its GATT services",
                 "service/characteristic tree",
-                "read-only Aero probe session",
-                "bridge counters",
+                "--profile falcon",
+                "--probe identity",
+                "--probe firmware",
+                "auto currently keeps the existing Aero/Veteran path",
+                "prints bridge",
+                "counters",
                 "--address <ADDR>",
                 "--name-contains <TEXT>",
             ],
@@ -1725,6 +1733,24 @@ mod tests {
                 "--address <ADDR>",
                 "--name-contains <TEXT>",
                 "--seconds <SECONDS>",
+            ],
+        );
+    }
+
+    #[test]
+    fn capture_aero_long_help_documents_explicit_falcon_verification_path() {
+        let help = long_help_for("capture-aero");
+
+        assert_contains_all(
+            &help,
+            &[
+                "explicit",
+                "Falcon verification",
+                "--profile falcon",
+                "--probe identity",
+                "--probe",
+                "firmware",
+                "auto currently keeps the existing Aero/Veteran path",
             ],
         );
     }
