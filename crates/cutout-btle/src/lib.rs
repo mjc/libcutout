@@ -469,7 +469,7 @@ pub struct SessionBridgeReport {
     /// Staged identity resolution from non-actuating evidence.
     pub identity: Option<BridgeIdentityResolution>,
 
-    /// Timestamped raw and processed telemetry events observed during the run.
+    /// Timestamped semantic events observed during the run.
     pub events: Vec<SessionBridgeEvent>,
 
     /// Transport disconnect operations executed through the bridge.
@@ -492,28 +492,13 @@ pub struct BridgeIdentityResolution {
     pub evidence: IdentityEvidence,
 }
 
-/// Timestamped raw or processed telemetry event emitted by the bridge.
+/// Timestamped semantic event emitted by the bridge.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionBridgeEvent {
     /// Link-down event emitted by the protocol session after transport disconnect.
     LinkDown {
         /// Relative monotonic timestamp in milliseconds.
         monotonic_ms: u64,
-    },
-
-    /// Raw notification payload received from BTLE.
-    RawNotification {
-        /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
-
-        /// Characteristic that emitted the notification.
-        characteristic: Uuid,
-
-        /// Service associated with the notification.
-        service: Uuid,
-
-        /// Notification payload length.
-        len: usize,
     },
 
     /// Decoded telemetry emitted by the protocol session.
@@ -1596,7 +1581,6 @@ where
                         bytes: notification.value.clone(),
                     });
                 }
-                record_raw_notification(context.report, *monotonic_ms, &notification);
                 context.identity_state.observe(&notification.value);
                 update_identity_report(
                     context.report,
@@ -1846,19 +1830,6 @@ fn bridge_identity_resolution(
             evidence: resolution.evidence,
         }
     })
-}
-
-fn record_raw_notification(
-    report: &mut SessionBridgeReport,
-    monotonic_ms: u64,
-    notification: &ValueNotification,
-) {
-    report.events.push(SessionBridgeEvent::RawNotification {
-        monotonic_ms,
-        characteristic: notification.uuid,
-        service: notification.service_uuid,
-        len: notification.value.len(),
-    });
 }
 
 struct SessionOutputContext<'a, P: ?Sized> {
@@ -3112,14 +3083,15 @@ mod tests {
                 cutout_core::ParserError::MalformedFrame
             )]
         );
-        assert!(report.events.iter().any(|event| matches!(
-            event,
-            crate::SessionBridgeEvent::RawNotification {
-                monotonic_ms: 2,
-                len: 2,
-                ..
-            }
-        )));
+        assert!(report.events.iter().all(|event| {
+            matches!(
+                event,
+                crate::SessionBridgeEvent::ProcessedTelemetry { .. }
+                    | crate::SessionBridgeEvent::Diagnostics { .. }
+                    | crate::SessionBridgeEvent::DiagnosticError { .. }
+                    | crate::SessionBridgeEvent::LinkDown { .. }
+            )
+        }));
         assert!(report.events.iter().any(|event| matches!(
             event,
             crate::SessionBridgeEvent::ProcessedTelemetry {

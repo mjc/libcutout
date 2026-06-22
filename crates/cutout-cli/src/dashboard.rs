@@ -553,11 +553,6 @@ impl DashboardState {
             self.push_log("trace", &format_unmapped_telemetry_event(report));
         }
         for event in &report.events {
-            if matches!(event, SessionBridgeEvent::RawNotification { .. })
-                && !report_has_no_parsed_events(report)
-            {
-                continue;
-            }
             let (level, message) = format_bridge_event(event);
             self.push_log(level, &message);
         }
@@ -954,17 +949,6 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
         SessionBridgeEvent::LinkDown { monotonic_ms } => {
             ("warn", format!("t={monotonic_ms}ms link down"))
         }
-        SessionBridgeEvent::RawNotification {
-            monotonic_ms,
-            characteristic,
-            service,
-            len,
-        } => (
-            "trace",
-            format!(
-                "t={monotonic_ms}ms raw notification len={len} characteristic={characteristic} service={service}"
-            ),
-        ),
         SessionBridgeEvent::ProcessedTelemetry {
             monotonic_ms,
             delta,
@@ -1483,7 +1467,7 @@ fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
     let text = Paragraph::new(vec![
         Line::from("decoded telemetry samples: 0"),
         Line::from(vec![
-            Span::styled("raw notifications ", Style::new().fg(Color::Gray)),
+            Span::styled("transport notifications ", Style::new().fg(Color::Gray)),
             Span::raw(state.counters.notifications.to_string()),
             Span::styled(" bytes ", Style::new().fg(Color::Gray)),
             Span::raw(state.counters.notification_bytes.to_string()),
@@ -1505,14 +1489,14 @@ fn render_pending_telemetry_detail(frame: &mut Frame<'_>, area: Rect, state: &Da
             Span::raw(latest),
         ]),
     ])
-    .block(panel_block("Raw stream"));
+    .block(panel_block("Decoder input"));
     frame.render_widget(text, area);
 }
 
 fn render_pending_telemetry_wait(frame: &mut Frame<'_>, area: Rect) {
     let text = Paragraph::new(vec![
         Line::from("waiting for protocol decoder output"),
-        Line::from("raw notifications are arriving from the connected device"),
+        Line::from("transport notifications are arriving from the connected device"),
         Line::from("decoded speed, voltage, current, and temperature will fill in here"),
     ])
     .block(panel_block("Decoder"));
@@ -1902,14 +1886,6 @@ mod tests {
             diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![
-                SessionBridgeEvent::RawNotification {
-                    monotonic_ms: 17,
-                    characteristic: uuid::Uuid::from_u128(
-                        0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb,
-                    ),
-                    service: uuid::Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                    len: 100,
-                },
                 SessionBridgeEvent::Diagnostics {
                     monotonic_ms: 18,
                     diagnostics: ParserDiagnostics {
@@ -1940,12 +1916,6 @@ mod tests {
                 .message
                 .contains("telemetry unmapped notifications=184")
         }));
-        assert!(
-            state
-                .logs
-                .iter()
-                .all(|entry| !entry.message.contains("t=17ms raw notification"))
-        );
         assert!(state.logs.iter().any(|entry| {
             entry.level == "warn"
                 && entry.message.contains("t=18ms telemetry diagnostics")
@@ -2041,24 +2011,14 @@ mod tests {
                 battery_percent_estimated: Some(Measured::estimated(78)),
                 ..TelemetrySnapshot::default()
             },
-            events: vec![
-                SessionBridgeEvent::RawNotification {
-                    monotonic_ms: 7,
-                    characteristic: uuid::Uuid::from_u128(
-                        0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb,
-                    ),
-                    service: uuid::Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                    len: 99,
+            events: vec![SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: 7,
+                delta: TelemetryDelta {
+                    voltage_mv: Some(Measured::reported(117_600)),
+                    battery_percent_estimated: Some(Measured::estimated(78)),
+                    ..TelemetryDelta::empty(7)
                 },
-                SessionBridgeEvent::ProcessedTelemetry {
-                    monotonic_ms: 7,
-                    delta: TelemetryDelta {
-                        voltage_mv: Some(Measured::reported(117_600)),
-                        battery_percent_estimated: Some(Measured::estimated(78)),
-                        ..TelemetryDelta::empty(7)
-                    },
-                },
-            ],
+            }],
             ..empty_session_bridge_report()
         };
 
@@ -2088,6 +2048,38 @@ mod tests {
         assert!(text.contains("processed telemetry voltage=118V battery=78%"));
         assert!(!text.contains("raw notification len=99"));
         assert!(!text.contains("telemetry unmapped notifications=1"));
+    }
+
+    #[test]
+    fn unparsed_session_report_summarizes_transport_without_raw_event_spam() {
+        let mut state = DashboardState::empty();
+        let report = SessionBridgeReport {
+            notifications: 3,
+            notification_bytes: 57,
+            latest_notification_len: Some(20),
+            events: Vec::new(),
+            ..empty_session_bridge_report()
+        };
+
+        state.apply_session_report(&report);
+
+        assert!(state.logs.iter().any(|entry| {
+            entry.level == "trace"
+                && entry.message.contains("telemetry unmapped notifications=3")
+                && entry.message.contains("bytes=57")
+                && entry.message.contains("latest_len=20")
+        }));
+        assert!(
+            state
+                .logs
+                .iter()
+                .all(|entry| !entry.message.contains("raw notification"))
+        );
+
+        state.active_tab = 3;
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+        assert!(text.contains("telemetry unmapped notifications=3"));
+        assert!(!text.contains("raw notification"));
     }
 
     #[test]
@@ -2617,7 +2609,7 @@ mod tests {
     }
 
     #[test]
-    fn live_telemetry_tab_renders_raw_stream_when_decoder_has_no_samples() {
+    fn live_telemetry_tab_renders_decoder_input_when_decoder_has_no_samples() {
         let mut state = DashboardState::empty();
         state.active_tab = 1;
         state.counters.notifications = 47;
@@ -2627,7 +2619,7 @@ mod tests {
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert!(text.contains("Decoded telemetry"));
-        assert!(text.contains("raw notifications"));
+        assert!(text.contains("transport notifications"));
         assert!(text.contains("47"));
         assert!(text.contains("bytes"));
         assert!(text.contains("4700"));
