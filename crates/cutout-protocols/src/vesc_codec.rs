@@ -7,6 +7,9 @@ pub const VESC_MAX_FRAME_LEN: usize = 64;
 /// Maximum firmware hash string length carried by the private VESC adapter.
 pub const VESC_MAX_HASH_LEN: usize = 47;
 
+/// Maximum replies returned from one VESC stream feed.
+pub const VESC_MAX_STREAM_REPLIES: usize = 4;
+
 /// Owned VESC selective values mask.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescValuesMask(u32);
@@ -245,23 +248,76 @@ impl VescReadOnlyCodec {
     pub fn decode_reply(bytes: &[u8]) -> Result<VescReadOnlyReply, VescCodecError> {
         let (_consumed, reply) =
             vesc::decode(bytes).map_err(|_err| VescCodecError::DecodeFailed)?;
-        match reply {
-            vesc::CommandReply::FwInfo(info) => Ok(VescReadOnlyReply::FirmwareInfo {
-                major: info.major,
-                minor: info.minor,
-                test_version_number: info.test_version_number,
-                commit_hash: bounded_string(info.commit_hash().unwrap_or_default()),
-                user_commit_hash: bounded_string(info.user_commit_hash().unwrap_or_default()),
-            }),
-            vesc::CommandReply::GetValues(values)
-            | vesc::CommandReply::GetValuesSelective(values) => {
-                Ok(VescReadOnlyReply::Values(values.into()))
-            }
-            vesc::CommandReply::GetStats(stats) => Ok(VescReadOnlyReply::Stats(stats.into())),
-            vesc::CommandReply::FwVersion(_)
-            | vesc::CommandReply::GetValuesSetupSelective(_)
-            | vesc::CommandReply::ResetStats => Err(VescCodecError::UnsupportedReply),
+        map_command_reply(reply)
+    }
+}
+
+/// Bounded streaming VESC decoder with libcutout-owned output types.
+#[derive(Debug)]
+pub struct VescReadOnlyStreamDecoder {
+    inner: vesc::Decoder<VESC_MAX_FRAME_LEN>,
+}
+
+impl Default for VescReadOnlyStreamDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VescReadOnlyStreamDecoder {
+    /// Creates an empty VESC stream decoder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: vesc::Decoder::new(),
         }
+    }
+
+    /// Feeds bytes into the stream decoder and returns any complete replies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VescCodecError`] if the private decoder rejects the input,
+    /// produces an unsupported reply, or yields more replies than the bounded
+    /// result can hold.
+    pub fn feed(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<ArrayVec<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>, VescCodecError> {
+        let consumed = self
+            .inner
+            .feed(bytes)
+            .map_err(|_err| VescCodecError::DecodeFailed)?;
+        if consumed != bytes.len() {
+            return Err(VescCodecError::DecodeFailed);
+        }
+
+        let mut replies = ArrayVec::new();
+        for reply in self.inner.by_ref() {
+            replies
+                .try_push(map_command_reply(reply)?)
+                .map_err(|_reply| VescCodecError::DecodeFailed)?;
+        }
+        Ok(replies)
+    }
+}
+
+fn map_command_reply(reply: vesc::CommandReply) -> Result<VescReadOnlyReply, VescCodecError> {
+    match reply {
+        vesc::CommandReply::FwInfo(info) => Ok(VescReadOnlyReply::FirmwareInfo {
+            major: info.major,
+            minor: info.minor,
+            test_version_number: info.test_version_number,
+            commit_hash: bounded_string(info.commit_hash().unwrap_or_default()),
+            user_commit_hash: bounded_string(info.user_commit_hash().unwrap_or_default()),
+        }),
+        vesc::CommandReply::GetValues(values) | vesc::CommandReply::GetValuesSelective(values) => {
+            Ok(VescReadOnlyReply::Values(values.into()))
+        }
+        vesc::CommandReply::GetStats(stats) => Ok(VescReadOnlyReply::Stats(stats.into())),
+        vesc::CommandReply::FwVersion(_)
+        | vesc::CommandReply::GetValuesSetupSelective(_)
+        | vesc::CommandReply::ResetStats => Err(VescCodecError::UnsupportedReply),
     }
 }
 
@@ -547,5 +603,77 @@ mod tests {
         assert_eq!(stats.current_avg_ma, 5_000);
         assert_eq!(stats.current_max_ma, 6_000);
         assert_eq!(stats.count_time_ms, 11_000);
+    }
+
+    #[test]
+    fn stream_decoder_decodes_whole_frame_like_complete_frame_decoder() {
+        let frame = selective_values_frame();
+        let expected = VescReadOnlyCodec::decode_reply(&frame).expect("fixture decodes");
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+
+        let replies = decoder.feed(&frame).expect("stream feed succeeds");
+
+        assert_eq!(replies.as_slice(), &[expected]);
+    }
+
+    #[test]
+    fn stream_decoder_decodes_one_byte_at_a_time_like_complete_frame_decoder() {
+        let frame = selective_values_frame();
+        let expected = VescReadOnlyCodec::decode_reply(&frame).expect("fixture decodes");
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+        let mut replies = ArrayVec::<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>::new();
+
+        for byte in frame {
+            let feed_replies = decoder.feed(&[byte]).expect("single-byte feed succeeds");
+            for reply in feed_replies {
+                replies.try_push(reply).expect("fixture emits one reply");
+            }
+        }
+
+        assert_eq!(replies.as_slice(), &[expected]);
+    }
+
+    #[test]
+    fn stream_decoder_decodes_arbitrary_chunks_and_multiple_replies() {
+        let values_frame = selective_values_frame();
+        let stats_frame = stats_frame();
+        let expected_values =
+            VescReadOnlyCodec::decode_reply(&values_frame).expect("values decode");
+        let expected_stats = VescReadOnlyCodec::decode_reply(&stats_frame).expect("stats decode");
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+        let mut input = ArrayVec::<u8, 128>::new();
+        input
+            .try_extend_from_slice(&values_frame)
+            .expect("values fit");
+        input
+            .try_extend_from_slice(&stats_frame)
+            .expect("stats fit");
+        let mut replies = ArrayVec::<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>::new();
+
+        for chunk in input.chunks(7) {
+            let feed_replies = decoder.feed(chunk).expect("chunk feed succeeds");
+            for reply in feed_replies {
+                replies
+                    .try_push(reply)
+                    .expect("fixture emits bounded replies");
+            }
+        }
+
+        assert_eq!(replies.as_slice(), &[expected_values, expected_stats]);
+    }
+
+    fn selective_values_frame() -> [u8; 28] {
+        [
+            2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43,
+            0, 20, 45, 58, 3,
+        ]
+    }
+
+    fn stats_frame() -> [u8; 54] {
+        [
+            2, 49, 128, 0, 0, 7, 255, 63, 128, 0, 0, 64, 0, 0, 0, 64, 64, 0, 0, 64, 128, 0, 0, 64,
+            160, 0, 0, 64, 192, 0, 0, 64, 224, 0, 0, 65, 0, 0, 0, 65, 16, 0, 0, 65, 32, 0, 0, 65,
+            48, 0, 0, 213, 206, 3,
+        ]
     }
 }
