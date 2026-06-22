@@ -37,6 +37,7 @@ use cutout_protocols::{
 };
 use futures_util::{StreamExt, stream::Stream};
 use thiserror::Error;
+use tracing::debug;
 use uuid::Uuid;
 
 const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
@@ -1511,12 +1512,23 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
+    debug!(
+        window_ms = notification_window.as_millis(),
+        "session notification window starting"
+    );
     let mut notifications = context.peripheral.notifications().await?;
+    debug!("session notification stream acquired");
     let deadline = tokio::time::Instant::now() + notification_window;
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match tokio::time::timeout(remaining, notifications.next()).await {
             Ok(Some(notification)) => {
+                debug!(
+                    uuid = %notification.uuid,
+                    service = %notification.service_uuid,
+                    len = notification.value.len(),
+                    "session notification received"
+                );
                 *monotonic_ms += 1;
                 if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Notification {
@@ -1560,9 +1572,22 @@ where
                 context.report.notification_bytes += notification.value.len();
                 context.report.latest_notification_len = Some(notification.value.len());
             }
-            Ok(None) | Err(_) => break,
+            Ok(None) => {
+                debug!("session notification stream ended");
+                break;
+            }
+            Err(_) => {
+                debug!("session notification window elapsed");
+                break;
+            }
         }
     }
+    debug!(
+        notifications = context.report.notifications,
+        notification_bytes = context.report.notification_bytes,
+        latest_notification_len = ?context.report.latest_notification_len,
+        "session notification window completed"
+    );
 
     Ok(())
 }
@@ -1815,7 +1840,19 @@ where
                     }
                     .into());
                 };
+                debug!(
+                    characteristic = %notify_characteristic.uuid,
+                    service = %notify_characteristic.service_uuid,
+                    monotonic_ms,
+                    "session subscribing to notifications"
+                );
                 context.peripheral.subscribe(notify_characteristic).await?;
+                debug!(
+                    characteristic = %notify_characteristic.uuid,
+                    service = %notify_characteristic.service_uuid,
+                    monotonic_ms,
+                    "session subscribed to notifications"
+                );
                 if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Subscribe {
                         monotonic_ms,

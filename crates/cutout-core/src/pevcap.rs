@@ -25,7 +25,7 @@ pub const PEVCAP_VERSION_MINOR: u16 = 0;
 pub const PEVCAP_MAX_ADVERTISED_SERVICES: usize = 8;
 
 /// Maximum GATT fingerprints stored in the PEVCAP header.
-pub const PEVCAP_MAX_GATT_FINGERPRINTS: usize = 8;
+pub const PEVCAP_MAX_GATT_FINGERPRINTS: usize = 16;
 
 /// Maximum annotations stored in the PEVCAP header.
 pub const PEVCAP_MAX_ANNOTATIONS: usize = 8;
@@ -1697,6 +1697,42 @@ mod tests {
             header.annotations.as_slice(),
             &["capture".to_owned(), "demo".to_owned()]
         );
+    }
+
+    #[test]
+    fn pevcap_header_accepts_live_aero_gatt_inventory_size() {
+        let service = GattChannel::from_bytes([0xFE; 16]);
+        let mut gatt = Vec::new();
+        for index in 0_u8..10 {
+            gatt.push(GattFingerprint {
+                service,
+                characteristic: GattChannel::from_bytes([index; 16]),
+                roles: GattRoles::empty().with_read(),
+                verification: VerificationStatus::HardwareVerified,
+            });
+        }
+
+        let header = PevcapHeader::new(
+            1_725_000_000_000,
+            "8de871ff-6aa1-a767-34dd-608e584b610e",
+            Some(185),
+            &[service],
+            &gatt,
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+                model: Some(VerifiedValue {
+                    value: "NF2557".to_owned(),
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                firmware: None,
+            }),
+            "0.1.0",
+            [0xAB; 32],
+            &["capture_label=powered_on_stationary"],
+        )
+        .expect("live Aero GATT inventory should fit in PEVCAP");
+
+        assert_eq!(header.gatt_fingerprints.len(), 10);
     }
 
     #[test]

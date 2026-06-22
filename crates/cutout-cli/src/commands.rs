@@ -32,7 +32,7 @@ use cutout_protocols::{
     select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
     select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::cli::{
     CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
@@ -588,8 +588,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
             info!("dashboard battery level unavailable from standard BLE characteristic");
         }
     }
-    let updates = spawn_dashboard_live_updates(connection);
-    run_dashboard_with_updates(state, &updates)
+    run_live_dashboard(state, connection).await
 }
 
 fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
@@ -604,71 +603,76 @@ fn dashboard_live_target(args: &DashboardArgs) -> Result<ConnectionTarget> {
     })
 }
 
-fn spawn_dashboard_live_updates(
-    connection: ConnectedPeripheral,
-) -> mpsc::Receiver<DashboardUpdate> {
+async fn run_live_dashboard(state: DashboardState, connection: ConnectedPeripheral) -> Result<()> {
     let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                let _ = tx.send(DashboardUpdate::Log {
-                    level: "error".to_owned(),
-                    message: format!("dashboard update runtime failed: {error}"),
-                });
-                return;
-            }
-        };
-
-        runtime.block_on(run_dashboard_live_updates(connection, tx));
-    });
-    rx
+    info!(
+        observation = %connection.summary.observation,
+        "spawning dashboard terminal thread"
+    );
+    let dashboard_thread = thread::spawn(move || run_dashboard_with_updates(state, &rx));
+    info!("dashboard terminal thread spawned; entering live update loop");
+    let live_updates = run_dashboard_live_updates(connection, tx);
+    info!("dashboard live update future created");
+    live_updates.await;
+    info!("dashboard live update future completed");
+    match dashboard_thread.join() {
+        Ok(result) => result,
+        Err(_) => bail!("dashboard terminal thread panicked"),
+    }
 }
 
 async fn run_dashboard_live_updates(
     connection: ConnectedPeripheral,
     tx: mpsc::Sender<DashboardUpdate>,
 ) {
+    info!("dashboard live update task entered");
+    info!("dashboard live update checking session endpoints");
     if connection.summary.select_session_endpoints().is_none() {
+        debug!("dashboard live update aborted: no session endpoints");
         let _ = tx.send(DashboardUpdate::Log {
             level: "warn".to_owned(),
             message: "dashboard session endpoints unavailable".to_owned(),
         });
         return;
     }
+    info!("dashboard live update session endpoints available");
 
+    info!("dashboard live update constructing Aero read-only session");
     let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+    info!("dashboard live update constructed Aero read-only session");
     let mut iteration = 0_u64;
+    let refresh_battery = connection.summary.battery_level_characteristic().is_some();
+    info!(
+        refresh_battery,
+        "dashboard live update battery refresh policy"
+    );
 
     loop {
-        if iteration % DASHBOARD_BATTERY_REFRESH_EVERY == 0 {
-            match read_battery_level(&connection.peripheral, &connection.summary).await {
-                Ok(Some(percent)) => {
-                    if tx.send(DashboardUpdate::BatteryPercent(percent)).is_err() {
-                        return;
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    if tx
-                        .send(DashboardUpdate::Log {
-                            level: "warn".to_owned(),
-                            message: format!("dashboard battery refresh failed: {error}"),
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
+        info!(iteration, "dashboard live update loop tick");
+        if refresh_battery && iteration % DASHBOARD_BATTERY_REFRESH_EVERY == 0 {
+            if !refresh_dashboard_battery(&connection, &tx, iteration).await {
+                return;
             }
+        } else if !refresh_battery && iteration == 0 {
+            debug!("dashboard battery refresh skipped: no standard battery characteristic");
         }
 
         let Some(endpoints) = connection.summary.select_session_endpoints() else {
+            debug!(
+                iteration,
+                "dashboard live update stopped: session endpoints disappeared"
+            );
             return;
         };
+        debug!(
+            iteration,
+            write = %endpoints.write.uuid,
+            notify = ?endpoints
+                .notify
+                .map(|characteristic| characteristic.uuid.to_string()),
+            window_ms = DASHBOARD_LIVE_WINDOW.as_millis(),
+            "dashboard drive_session starting"
+        );
         match drive_session(
             &connection.peripheral,
             &mut session,
@@ -680,14 +684,27 @@ async fn run_dashboard_live_updates(
         .await
         {
             Ok(report) => {
+                debug!(
+                    iteration,
+                    subscribes = report.subscribes,
+                    notifications = report.notifications,
+                    notification_bytes = report.notification_bytes,
+                    telemetry = report.telemetry,
+                    read_only_responses = report.read_only_responses,
+                    diagnostics = report.diagnostics,
+                    latest_notification_len = ?report.latest_notification_len,
+                    "dashboard drive_session completed"
+                );
                 if tx
                     .send(DashboardUpdate::SessionReport(Box::new(report)))
                     .is_err()
                 {
+                    debug!(iteration, "dashboard receiver closed after session report");
                     return;
                 }
             }
             Err(error) => {
+                debug!(iteration, %error, "dashboard drive_session failed");
                 if tx
                     .send(DashboardUpdate::Log {
                         level: "warn".to_owned(),
@@ -702,6 +719,32 @@ async fn run_dashboard_live_updates(
         }
 
         iteration = iteration.wrapping_add(1);
+    }
+}
+
+async fn refresh_dashboard_battery(
+    connection: &ConnectedPeripheral,
+    tx: &mpsc::Sender<DashboardUpdate>,
+    iteration: u64,
+) -> bool {
+    debug!(iteration, "dashboard battery refresh starting");
+    match read_battery_level(&connection.peripheral, &connection.summary).await {
+        Ok(Some(percent)) => {
+            debug!(iteration, percent, "dashboard battery refresh succeeded");
+            tx.send(DashboardUpdate::BatteryPercent(percent)).is_ok()
+        }
+        Ok(None) => {
+            debug!(iteration, "dashboard battery refresh unavailable");
+            true
+        }
+        Err(error) => {
+            debug!(iteration, %error, "dashboard battery refresh failed");
+            tx.send(DashboardUpdate::Log {
+                level: "warn".to_owned(),
+                message: format!("dashboard battery refresh failed: {error}"),
+            })
+            .is_ok()
+        }
     }
 }
 

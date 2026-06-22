@@ -424,6 +424,7 @@ dependencies = [
  "futures-util",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

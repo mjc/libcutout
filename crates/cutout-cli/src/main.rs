@@ -1,4 +1,10 @@
-use std::process::ExitCode;
+use std::{
+    ffi::OsString,
+    fs::OpenOptions,
+    io::{self, Write},
+    path::PathBuf,
+    process::ExitCode,
+};
 
 use clap::Parser;
 use cutout_cli::{Cli, run};
@@ -31,18 +37,73 @@ fn init_logging() {
         Err(_) => EnvFilter::new("cutout_cli=info"),
     };
 
+    if let Some(path) = debug_log_path(std::env::var_os("CUTOUT_DEBUG_LOG")) {
+        match OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(_) => {
+                let log_path = path.clone();
+                let subscriber = fmt()
+                    .compact()
+                    .with_target(true)
+                    .with_env_filter(filter)
+                    .with_writer(move || DebugLogWriter {
+                        path: log_path.clone(),
+                    })
+                    .finish();
+                let _ = tracing::subscriber::set_global_default(subscriber);
+                return;
+            }
+            Err(error) => {
+                eprintln!(
+                    "failed to open CUTOUT_DEBUG_LOG {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+
     let subscriber = fmt()
         .compact()
         .without_time()
         .with_target(false)
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+        .with_writer(io::stderr)
         .finish();
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
+#[derive(Debug)]
+struct DebugLogWriter {
+    path: PathBuf,
+}
+
+impl Write for DebugLogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        file.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn debug_log_path(value: Option<OsString>) -> Option<PathBuf> {
+    value.and_then(|value| {
+        if value.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{ffi::OsString, path::PathBuf};
+
     use std::time::Duration;
 
     #[test]
@@ -63,5 +124,18 @@ mod tests {
         let error = anyhow::anyhow!("usage failed");
 
         assert_eq!(super::render_error(&error), "usage failed");
+    }
+
+    #[test]
+    fn empty_debug_log_env_keeps_stderr_logging() {
+        assert_eq!(super::debug_log_path(Some(OsString::new())), None);
+    }
+
+    #[test]
+    fn debug_log_env_selects_file_logging_path() {
+        assert_eq!(
+            super::debug_log_path(Some(OsString::from("target/cutout-debug.log"))),
+            Some(PathBuf::from("target/cutout-debug.log"))
+        );
     }
 }
