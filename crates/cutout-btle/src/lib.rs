@@ -25,9 +25,9 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, GattFingerprint, GattRoles, LinkInfo,
-    ParserDiagnostics, PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord,
-    ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput, SettingsReadback,
+    DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, GattFingerprint,
+    GattRoles, LinkInfo, ParserDiagnostics, PevcapCapture, PevcapHeader, PevcapHeaderError,
+    PevcapRecord, ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput, SettingsReadback,
     TelemetryDelta, TelemetrySnapshot, TransportAction, VerificationStatus, WriteMode,
 };
 use cutout_protocols::{
@@ -456,6 +456,9 @@ pub struct SessionBridgeReport {
     /// Aggregated parser diagnostic counters emitted by the session.
     pub diagnostics_snapshot: ParserDiagnostics,
 
+    /// Detailed parser diagnostic errors emitted by the session.
+    pub diagnostic_errors: Vec<DiagnosticError>,
+
     /// Staged identity resolution from non-actuating evidence.
     pub identity: Option<BridgeIdentityResolution>,
 
@@ -516,6 +519,15 @@ pub enum SessionBridgeEvent {
 
         /// Parser diagnostic counters emitted at this timestamp.
         diagnostics: ParserDiagnostics,
+    },
+
+    /// Detailed parser diagnostic error emitted by the protocol session.
+    DiagnosticError {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Detailed parser error emitted at this timestamp.
+        error: DiagnosticError,
     },
 }
 
@@ -1569,6 +1581,13 @@ fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, mo
                 diagnostics,
             });
         }
+        DeviceEvent::DiagnosticError(error) => {
+            report.diagnostic_errors.push(error);
+            report.events.push(SessionBridgeEvent::DiagnosticError {
+                monotonic_ms,
+                error,
+            });
+        }
     }
 }
 
@@ -2546,32 +2565,7 @@ mod tests {
             value: vec![0x13, 0x37],
         });
         let mut session = BridgeSession::default();
-        let summary = crate::ConnectionSummary {
-            observation: crate::PeripheralObservation {
-                identifier: "peripheral-id".to_owned(),
-                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
-                name: Some("NOSFET Aero".to_owned()),
-                rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
-            },
-            services: vec![crate::ServiceSummary {
-                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                primary: true,
-                characteristics: vec![
-                    crate::CharacteristicSummary {
-                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                        properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
-                    },
-                    crate::CharacteristicSummary {
-                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
-                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                        properties: CharPropFlags::NOTIFY,
-                    },
-                ],
-            }],
-        };
+        let summary = shared_write_notify_summary("NOSFET Aero");
 
         let report = crate::drive_session(
             &peripheral,
@@ -2615,6 +2609,12 @@ mod tests {
         );
         assert_eq!(report.diagnostics, 1);
         assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
+        assert_eq!(
+            report.diagnostic_errors.as_slice(),
+            &[cutout_core::DiagnosticError::from_parser_error(
+                cutout_core::ParserError::MalformedFrame
+            )]
+        );
         assert!(report.events.iter().any(|event| matches!(
             event,
             crate::SessionBridgeEvent::RawNotification {
@@ -2637,6 +2637,13 @@ mod tests {
                 diagnostics,
             } if diagnostics.malformed_frames == 1
         )));
+        assert!(report.events.iter().any(|event| matches!(
+            event,
+            crate::SessionBridgeEvent::DiagnosticError {
+                monotonic_ms: 2,
+                error,
+            } if error.kind == cutout_core::DiagnosticErrorKind::MalformedFrame
+        )));
         assert_eq!(*session.notification_count.lock().expect("count"), 1);
     }
 
@@ -2648,32 +2655,7 @@ mod tests {
             value: vec![0x13, 0x37],
         });
         let mut session = BridgeSession::default();
-        let summary = crate::ConnectionSummary {
-            observation: crate::PeripheralObservation {
-                identifier: "peripheral-id".to_owned(),
-                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
-                name: Some("NOSFET Aero".to_owned()),
-                rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
-            },
-            services: vec![crate::ServiceSummary {
-                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                primary: true,
-                characteristics: vec![
-                    crate::CharacteristicSummary {
-                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                        properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
-                    },
-                    crate::CharacteristicSummary {
-                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
-                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                        properties: CharPropFlags::NOTIFY,
-                    },
-                ],
-            }],
-        };
+        let summary = shared_write_notify_summary("NOSFET Aero");
 
         let capture = crate::capture_session(
             &peripheral,
@@ -2881,6 +2863,11 @@ mod tests {
                             ],
                         }),
                     )));
+                    output.push(SessionOutput::Event(DeviceEvent::DiagnosticError(
+                        cutout_core::DiagnosticError::from_parser_error(
+                            cutout_core::ParserError::MalformedFrame,
+                        ),
+                    )));
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         ParserDiagnostics {
                             malformed_frames: 1,
@@ -2943,6 +2930,35 @@ mod tests {
                     service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                     properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
                 }],
+            }],
+        }
+    }
+
+    fn shared_write_notify_summary(name: &str) -> crate::ConnectionSummary {
+        crate::ConnectionSummary {
+            observation: crate::PeripheralObservation {
+                identifier: "peripheral-id".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                name: Some(name.to_owned()),
+                rssi: Some(-42),
+                advertised_services: Vec::new(),
+                manufacturer_data: Vec::new(),
+            },
+            services: vec![crate::ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
+                    },
+                    crate::CharacteristicSummary {
+                        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+                        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                        properties: CharPropFlags::NOTIFY,
+                    },
+                ],
             }],
         }
     }

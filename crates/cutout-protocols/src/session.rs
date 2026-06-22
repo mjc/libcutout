@@ -154,14 +154,10 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                 Ok(Some(frame)) => push_veteran_frame(&frame, monotonic_ms, output),
                 Ok(None) => {}
                 Err(VeteranReassemblyError::CrcMismatch) => {
-                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
-                        diagnostics_for(ParserError::BadChecksum),
-                    )));
+                    push_parser_error(ParserError::BadChecksum, output);
                 }
                 Err(VeteranReassemblyError::InvalidFrame) => {
-                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
-                        diagnostics_for(ParserError::MalformedFrame),
-                    )));
+                    push_parser_error(ParserError::MalformedFrame, output);
                 }
             }
         }
@@ -194,9 +190,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 }
                 Ok(None) => {}
                 Err(BegodeFrameError::InvalidFrame) => {
-                    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
-                        diagnostics_for(ParserError::MalformedFrame),
-                    )));
+                    push_parser_error(ParserError::MalformedFrame, output);
                 }
             }
         }
@@ -211,7 +205,8 @@ fn push_begode_frame(
 ) {
     match frame.tag() {
         0x00 => {
-            match BegodeLiveATelemetry::decode(frame, BegodePackVoltageProfile::Falcon84VNominal) {
+            match BegodeLiveATelemetry::decode(frame, BegodePackVoltageProfile::Falcon84VFullCharge)
+            {
                 Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
                 ))),
@@ -257,9 +252,7 @@ fn push_begode_frame(
             Err(error) => push_begode_telemetry_error(error, output),
         },
         _ => {
-            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
-                diagnostics_for(ParserError::MalformedFrame),
-            )));
+            push_parser_error(ParserError::MalformedFrame, output);
         }
     }
 }
@@ -267,9 +260,7 @@ fn push_begode_frame(
 fn push_begode_telemetry_error(error: BegodeTelemetryError, output: &mut Vec<SessionOutput>) {
     match error {
         BegodeTelemetryError::UnexpectedFrameTag { .. } => {
-            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
-                diagnostics_for(ParserError::MalformedFrame),
-            )));
+            push_parser_error(ParserError::MalformedFrame, output);
         }
     }
 }
@@ -277,9 +268,7 @@ fn push_begode_telemetry_error(error: BegodeTelemetryError, output: &mut Vec<Ses
 fn push_begode_bms_error(error: BegodeBmsPageError, output: &mut Vec<SessionOutput>) {
     match error {
         BegodeBmsPageError::UnexpectedFrameTag { .. } => {
-            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
-                diagnostics_for(ParserError::MalformedFrame),
-            )));
+            push_parser_error(ParserError::MalformedFrame, output);
         }
     }
 }
@@ -317,9 +306,7 @@ fn push_veteran_frame(
             }
         }
         Err(VeteranTelemetryError::FrameTooShort) => {
-            output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
-                diagnostics_for(ParserError::MalformedFrame),
-            )));
+            push_parser_error(ParserError::MalformedFrame, output);
         }
     }
 }
@@ -328,6 +315,15 @@ fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
     let mut diagnostics = ParserDiagnostics::default();
     diagnostics.record_error(error);
     diagnostics
+}
+
+fn push_parser_error(error: ParserError, output: &mut Vec<SessionOutput>) {
+    output.push(SessionOutput::Event(DeviceEvent::DiagnosticError(
+        cutout_core::DiagnosticError::from_parser_error(error),
+    )));
+    output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
+        diagnostics_for(error),
+    )));
 }
 
 /// Type-level settings-write capability.
@@ -639,6 +635,26 @@ mod tests {
             .collect()
     }
 
+    fn diagnostic_error_events(output: &[SessionOutput]) -> Vec<cutout_core::DiagnosticError> {
+        output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::DiagnosticError(error)) => Some(*error),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn diagnostic_counter_events(output: &[SessionOutput]) -> Vec<ParserDiagnostics> {
+        output
+            .iter()
+            .filter_map(|item| match item {
+                SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => Some(*diagnostics),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn falcon_telemetry_for_notifications(notifications: &[&[u8]]) -> Vec<TelemetryDelta> {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
@@ -737,6 +753,43 @@ mod tests {
     }
 
     #[test]
+    fn begode_malformed_frame_emits_detailed_and_aggregate_diagnostics() {
+        let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+
+        let mut malformed = live_begode_a_frame();
+        malformed[20] = 0;
+        session.handle(
+            SessionInput::Notification {
+                channel: BEGODE_DATA_CHANNEL,
+                bytes: &malformed,
+                monotonic_ms: 42,
+            },
+            &mut output,
+        );
+
+        assert_eq!(
+            diagnostic_error_events(&output),
+            vec![cutout_core::DiagnosticError::from_parser_error(
+                ParserError::MalformedFrame
+            )]
+        );
+        assert_eq!(
+            diagnostic_counter_events(&output)
+                .last()
+                .map(|diagnostics| diagnostics.malformed_frames),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn shared_read_only_session_accepts_matching_notifications_when_connected() {
         let mut connected = true;
         let mut decoder = NoopNotificationDecoder;
@@ -794,7 +847,7 @@ mod tests {
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
             telemetry[0].voltage_mv.map(|value| value.value),
-            Some(90_075)
+            Some(75_063)
         );
         assert_eq!(
             telemetry[0].speed_mm_s.map(|value| value.value),

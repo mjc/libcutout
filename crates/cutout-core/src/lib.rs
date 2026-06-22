@@ -871,7 +871,8 @@ impl DiagnosticSnapshot {
             | DeviceEvent::NotificationReceived { .. }
             | DeviceEvent::Tick { .. }
             | DeviceEvent::Telemetry(_)
-            | DeviceEvent::ReadOnlyResponse(_) => None,
+            | DeviceEvent::ReadOnlyResponse(_)
+            | DeviceEvent::DiagnosticError(_) => None,
         }
     }
 }
@@ -2299,6 +2300,9 @@ pub enum DeviceEvent {
 
     /// Parser diagnostics emitted by a protocol session.
     Diagnostics(ParserDiagnostics),
+
+    /// Detailed parser diagnostic error emitted by a protocol session.
+    DiagnosticError(DiagnosticError),
 }
 
 /// Output emitted by a protocol session for the host to drain.
@@ -2439,6 +2443,7 @@ where
                         self.diagnostics.merge(*diagnostics);
                     }
                     DeviceEvent::ReadOnlyResponse(_)
+                    | DeviceEvent::DiagnosticError(_)
                     | DeviceEvent::LinkUp(_)
                     | DeviceEvent::LinkDown
                     | DeviceEvent::NotificationReceived { .. }
@@ -3564,6 +3569,25 @@ mod tests {
                 bad_checksums: 2,
                 resyncs: 1,
                 ..crate::ParserDiagnostics::default()
+            })
+        );
+    }
+
+    #[test]
+    fn diagnostic_error_can_be_emitted_as_device_event() {
+        let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
+            elapsed_ms: 1_500,
+            timeout_ms: 1_000,
+        });
+
+        assert_eq!(
+            DeviceEvent::DiagnosticError(error),
+            DeviceEvent::DiagnosticError(crate::DiagnosticError {
+                kind: crate::DiagnosticErrorKind::Timeout,
+                claimed_len: None,
+                max_len: None,
+                elapsed_ms: Some(1_500),
+                timeout_ms: Some(1_000),
             })
         );
     }

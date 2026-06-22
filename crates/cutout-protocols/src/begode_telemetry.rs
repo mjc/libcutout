@@ -104,14 +104,14 @@ impl BegodeTelemetryContext {
 /// Begode/Gotway pack voltage profile used to scale raw 67.2 V-equivalent telemetry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BegodePackVoltageProfile {
-    /// Falcon 84 V nominal / 100.8 V charge profile.
-    Falcon84VNominal,
+    /// Falcon 84 V full-charge profile.
+    Falcon84VFullCharge,
 }
 
 impl BegodePackVoltageProfile {
     const fn scaler_milli(self) -> i32 {
         match self {
-            Self::Falcon84VNominal => 1_500,
+            Self::Falcon84VFullCharge => 1_250,
         }
     }
 
@@ -119,7 +119,7 @@ impl BegodePackVoltageProfile {
     #[must_use]
     pub const fn series_cells(self) -> u8 {
         match self {
-            Self::Falcon84VNominal => 24,
+            Self::Falcon84VFullCharge => 20,
         }
     }
 
@@ -127,7 +127,7 @@ impl BegodePackVoltageProfile {
     #[must_use]
     pub const fn nominal_capacity_mah(self) -> Option<u32> {
         match self {
-            Self::Falcon84VNominal => Some(10_000),
+            Self::Falcon84VFullCharge => Some(10_000),
         }
     }
 
@@ -135,7 +135,7 @@ impl BegodePackVoltageProfile {
     #[must_use]
     pub fn voltage_range_mv(self) -> RangeInclusive<u32> {
         match self {
-            Self::Falcon84VNominal => 72_000..=100_800,
+            Self::Falcon84VFullCharge => 60_000..=84_000,
         }
     }
 }
@@ -608,14 +608,14 @@ mod tests {
     const EXTRA: [u8; 24] = hex_literal::hex!("55aaff9c0000002affd8000000000000000007185a5a5a5a");
 
     #[test]
-    fn live_a_decodes_source_backed_primary_fields_for_falcon_84v_nominal() {
+    fn live_a_decodes_source_backed_primary_fields_for_falcon_84v_full_charge() {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
         let telemetry =
-            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Falcon84VNominal)
+            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Falcon84VFullCharge)
                 .expect("live A frame decodes");
 
         assert_eq!(telemetry.raw_voltage_centivolts, 6005);
-        assert_eq!(telemetry.voltage_mv, 90_075);
+        assert_eq!(telemetry.voltage_mv, 75_063);
         assert_eq!(telemetry.speed_milli_kmh, 48_096);
         assert_eq!(telemetry.trip_distance_m, 0x0076_02ee);
         assert_eq!(telemetry.trip_distance_low_m, 750);
@@ -653,7 +653,7 @@ mod tests {
     fn live_a_maps_source_backed_fields_to_canonical_delta() {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
         let telemetry =
-            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Falcon84VNominal)
+            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Falcon84VFullCharge)
                 .expect("live A frame decodes");
 
         let delta = telemetry.to_delta(42);
@@ -663,10 +663,10 @@ mod tests {
             TelemetryDelta {
                 at_ms: 42,
                 speed_mm_s: Some(source_reported(13_360)),
-                voltage_mv: Some(source_reported(90_075)),
+                voltage_mv: Some(source_reported(75_063)),
                 battery_current_ma: None,
                 motor_current_ma: Some(source_reported(-11_800)),
-                power_mw: Some(source_calculated(-1_062_885)),
+                power_mw: Some(source_calculated(-885_743)),
                 controller_temperature_mc: Some(source_reported(27_930)),
                 motor_temperature_mc: None,
                 battery_temperature_mc: None,
@@ -732,7 +732,7 @@ mod tests {
         let mut context = BegodeTelemetryContext::default();
         context.observe_live_b(BegodeLiveBTelemetry::decode(&live_b).expect("live B decodes"));
         let telemetry =
-            BegodeLiveATelemetry::decode(&live_a, BegodePackVoltageProfile::Falcon84VNominal)
+            BegodeLiveATelemetry::decode(&live_a, BegodePackVoltageProfile::Falcon84VFullCharge)
                 .expect("live A decodes");
 
         let delta = context.live_a_to_delta(telemetry, 42);
@@ -808,7 +808,7 @@ mod tests {
         let live_b = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
 
         assert_eq!(
-            BegodeLiveATelemetry::decode(&live_b, BegodePackVoltageProfile::Falcon84VNominal),
+            BegodeLiveATelemetry::decode(&live_b, BegodePackVoltageProfile::Falcon84VFullCharge),
             Err(BegodeTelemetryError::UnexpectedFrameTag {
                 expected: 0,
                 actual: 4
@@ -817,31 +817,31 @@ mod tests {
     }
 
     #[test]
-    fn falcon_84v_nominal_battery_percent_uses_better_begode_curve() {
+    fn falcon_84v_full_charge_battery_percent_uses_better_begode_curve() {
         assert_eq!(
-            estimate_begode_battery_percent(90_000, BegodePackVoltageProfile::Falcon84VNominal),
+            estimate_begode_battery_percent(75_000, BegodePackVoltageProfile::Falcon84VFullCharge),
             50
         );
     }
 
     #[test]
-    fn falcon_84v_nominal_profile_exposes_pack_geometry_and_capacity() {
-        let profile = BegodePackVoltageProfile::Falcon84VNominal;
+    fn falcon_84v_full_charge_profile_exposes_pack_geometry_and_capacity() {
+        let profile = BegodePackVoltageProfile::Falcon84VFullCharge;
 
-        assert_eq!(profile.series_cells(), 24);
-        assert_eq!(profile.voltage_range_mv(), 72_000..=100_800);
+        assert_eq!(profile.series_cells(), 20);
+        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
         assert_eq!(profile.nominal_capacity_mah(), Some(10_000));
     }
 
     proptest! {
         #[test]
-        fn falcon_battery_percent_is_monotonic(first_mv in 72_000i32..=100_800, second_mv in 72_000i32..=100_800) {
+        fn falcon_battery_percent_is_monotonic(first_mv in 60_000i32..=84_000, second_mv in 60_000i32..=84_000) {
             let low = first_mv.min(second_mv);
             let high = first_mv.max(second_mv);
 
             prop_assert!(
-                estimate_begode_battery_percent(low, BegodePackVoltageProfile::Falcon84VNominal)
-                    <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Falcon84VNominal)
+                estimate_begode_battery_percent(low, BegodePackVoltageProfile::Falcon84VFullCharge)
+                    <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Falcon84VFullCharge)
             );
         }
 

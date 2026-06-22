@@ -211,6 +211,9 @@ fn summarize_pevcap_replay(
                     .diagnostic_snapshots
                     .push(DiagnosticSnapshot::from_parser_diagnostics(*diagnostics));
             }
+            DeviceEvent::DiagnosticError(error) => {
+                report.diagnostic_errors.push(*error);
+            }
             DeviceEvent::LinkUp(_)
             | DeviceEvent::LinkDown
             | DeviceEvent::NotificationReceived { .. }
@@ -895,6 +898,9 @@ fn print_session_diagnostics_jsonl(
 ) -> Result<(), serde_json::Error> {
     if enabled {
         println!("{}", render_session_diagnostics_jsonl(report)?);
+        for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors)? {
+            println!("{line}");
+        }
     }
     Ok(())
 }
@@ -1373,6 +1379,9 @@ mod tests {
                 malformed_frames: 6,
                 unmatched_replies: 7,
             },
+            diagnostic_errors: vec![DiagnosticError::from_parser_error(
+                cutout_core::ParserError::MalformedFrame,
+            )],
             ..SessionBridgeReport::default()
         };
 
@@ -1390,6 +1399,13 @@ mod tests {
         assert_eq!(value["oversized_frames"], 5);
         assert_eq!(value["malformed_frames"], 6);
         assert_eq!(value["unmatched_replies"], 7);
+
+        let error_lines = render_diagnostic_errors_jsonl(&report.diagnostic_errors)
+            .expect("session diagnostic errors JSONL serializes");
+        let error: serde_json::Value =
+            serde_json::from_str(&error_lines[0]).expect("diagnostic error JSONL is JSON");
+        assert_eq!(error["type"], "diagnostic_error");
+        assert_eq!(error["kind"], "malformed_frame");
     }
 
     #[test]
@@ -1410,6 +1426,31 @@ mod tests {
         assert_eq!(value["max_len"], serde_json::Value::Null);
         assert_eq!(value["elapsed_ms"], 1_234);
         assert_eq!(value["timeout_ms"], 5_000);
+    }
+
+    #[test]
+    fn pevcap_replay_summary_collects_diagnostic_error_events() {
+        let error = DiagnosticError::from_parser_error(cutout_core::ParserError::OversizedFrame {
+            claimed: 33,
+            max: 24,
+        });
+        let outputs = [SessionOutput::Event(DeviceEvent::DiagnosticError(error))];
+
+        let report = summarize_pevcap_replay(
+            1,
+            1,
+            &outputs,
+            ReplayChunkComparison {
+                whole_semantic_events: 1,
+                one_byte_semantic_events: 1,
+                arbitrary_semantic_events: 1,
+                one_byte_matches: true,
+                arbitrary_matches: true,
+            },
+        );
+
+        assert_eq!(report.diagnostic_errors, vec![error]);
+        assert!(report.diagnostic_snapshots.is_empty());
     }
 
     #[test]

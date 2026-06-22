@@ -1037,6 +1037,16 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
                 format_parser_diagnostics(*diagnostics)
             ),
         ),
+        SessionBridgeEvent::DiagnosticError {
+            monotonic_ms,
+            error,
+        } => (
+            "warn",
+            format!(
+                "t={monotonic_ms}ms telemetry diagnostic_error {:?}",
+                error.kind
+            ),
+        ),
     }
 }
 
@@ -1873,6 +1883,7 @@ mod tests {
                 unmatched_replies: 1,
                 ..ParserDiagnostics::default()
             },
+            diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![
                 SessionBridgeEvent::RawNotification {
@@ -1950,6 +1961,7 @@ mod tests {
             settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: 42,
@@ -2054,6 +2066,7 @@ mod tests {
             settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            diagnostic_errors: Vec::new(),
             identity: None,
             events: Vec::new(),
             disconnects: 0,
@@ -2084,6 +2097,7 @@ mod tests {
             settings: Vec::new(),
             diagnostics: 0,
             diagnostics_snapshot: ParserDiagnostics::default(),
+            diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: 42,

@@ -257,15 +257,17 @@ mod tests {
         let live_frame = BegodeFrame::try_from_slice(&LIVE_A).expect("live frame is valid");
         let bms_frame = BegodeFrame::try_from_slice(&SUMMARY).expect("summary frame is valid");
 
-        let live_delta =
-            BegodeLiveATelemetry::decode(&live_frame, BegodePackVoltageProfile::Falcon84VNominal)
-                .expect("live A decodes")
-                .to_delta(1);
+        let live_delta = BegodeLiveATelemetry::decode(
+            &live_frame,
+            BegodePackVoltageProfile::Falcon84VFullCharge,
+        )
+        .expect("live A decodes")
+        .to_delta(1);
         let bms_delta = BegodeBmsSummary::decode(&bms_frame)
             .expect("summary decodes")
             .to_delta(2);
 
-        assert_eq!(live_delta.voltage_mv, Some(source_reported(90_075)));
+        assert_eq!(live_delta.voltage_mv, Some(source_reported(75_063)));
         assert_eq!(bms_delta.voltage_mv, Some(source_reported(80_000)));
     }
 
