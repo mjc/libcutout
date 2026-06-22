@@ -998,6 +998,16 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
                 format_telemetry_delta(*delta)
             ),
         ),
+        SessionBridgeEvent::ReadOnlyResponse {
+            monotonic_ms,
+            response,
+        } => (
+            "info",
+            format!(
+                "t={monotonic_ms}ms {}",
+                format_read_only_response(*response)
+            ),
+        ),
         SessionBridgeEvent::Diagnostics {
             monotonic_ms,
             diagnostics,
@@ -1021,11 +1031,58 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
     }
 }
 
+fn format_read_only_response(response: ReadOnlyResponse) -> String {
+    match response {
+        ReadOnlyResponse::Firmware(firmware) => {
+            format!("read-only firmware {}", format_firmware_summary(firmware))
+        }
+        ReadOnlyResponse::Settings(settings) => {
+            let mut entries = Vec::new();
+            for entry in settings.entries.into_iter().flatten() {
+                entries.push(format!(
+                    "field={} value={} quality={} verification={}",
+                    entry.field.id,
+                    entry.field.value,
+                    quality_name(entry.quality),
+                    verification_name(entry.verification)
+                ));
+            }
+            if entries.is_empty() {
+                "read-only settings none observed".to_owned()
+            } else {
+                format!("read-only settings {}", entries.join(" "))
+            }
+        }
+        ReadOnlyResponse::Battery(payload) => {
+            let page = payload.page();
+            let mut summary = format!(
+                "read-only battery selector={} kind={} verification={}",
+                page.selector,
+                battery_page_kind_name(page.kind),
+                verification_name(page.verification)
+            );
+            if let Some(temperature_summary) = bms_temperature_summary(payload) {
+                summary.push_str(&temperature_summary);
+            }
+            summary
+        }
+        ReadOnlyResponse::Diagnostics(diagnostics) => {
+            let populated = diagnostics.details.into_iter().flatten().count();
+            format!("read-only diagnostics details={populated}")
+        }
+        ReadOnlyResponse::RawTelemetry(raw) => {
+            let populated = raw.fields.into_iter().flatten().count();
+            format!("read-only raw telemetry fields={populated}")
+        }
+    }
+}
+
 fn report_has_no_parsed_events(report: &SessionBridgeReport) -> bool {
     report.telemetry == 0
         && report.read_only_responses == 0
         && report.diagnostics == 0
         && report.diagnostic_errors.is_empty()
+        && report.read_only_response_events.is_empty()
 }
 
 fn format_telemetry_delta(delta: TelemetryDelta) -> String {
@@ -1289,18 +1346,30 @@ fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInp
 }
 
 pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
-    let areas = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(22),
-            Constraint::Fill(1),
-        ])
-        .split(frame.area());
+    let active_tab = state.active_tab.min(TAB_COUNT - 1);
+    let areas = if active_tab == 3 {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Fill(1)])
+            .split(frame.area())
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(22),
+                Constraint::Fill(1),
+            ])
+            .split(frame.area())
+    };
 
     render_header(frame, areas[0], state);
-    render_body(frame, areas[1], state);
-    render_logs(frame, areas[2], state);
+    if active_tab == 3 {
+        render_logs(frame, areas[1], state);
+    } else {
+        render_body(frame, areas[1], state);
+        render_logs(frame, areas[2], state);
+    }
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1616,23 +1685,6 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         Span::raw(read_only.firmware.as_deref().unwrap_or("unknown")),
     ]));
 
-    match read_only.settings.back() {
-        Some(setting) => lines.push(Line::from(vec![
-            Span::styled("settings ", Style::new().fg(Color::Gray)),
-            Span::raw(setting.as_str()),
-        ])),
-        None => lines.push(Line::from(vec![
-            Span::styled("settings ", Style::new().fg(Color::Gray)),
-            Span::raw("none observed"),
-        ])),
-    }
-
-    for page in read_only.bms_pages.iter().rev().take(2) {
-        lines.push(Line::from(vec![
-            Span::styled("bms ", Style::new().fg(Color::Gray)),
-            Span::raw(page.as_str()),
-        ]));
-    }
     if let Some(temperature) = read_only.latest_bms_temperature.as_deref() {
         lines.push(Line::from(vec![
             Span::styled("bms temp ", Style::new().fg(Color::Gray)),
@@ -1648,6 +1700,26 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         Span::styled(" raw telemetry ", Style::new().fg(Color::Gray)),
         Span::raw(read_only.raw_telemetry.to_string()),
     ]));
+
+    lines.push(Line::from(vec![Span::styled(
+        "settings",
+        Style::new().fg(Color::Gray),
+    )]));
+    if read_only.settings.is_empty() {
+        lines.push(Line::from(vec![Span::raw("none observed")]));
+    } else {
+        for setting in read_only.settings.iter().rev().take(2) {
+            lines.push(Line::from(vec![Span::raw(setting.as_str())]));
+        }
+    }
+
+    lines.push(Line::from(vec![Span::styled(
+        "bms pages",
+        Style::new().fg(Color::Gray),
+    )]));
+    for page in read_only.bms_pages.iter().rev().take(2) {
+        lines.push(Line::from(vec![Span::raw(page.as_str())]));
+    }
 
     let panel = Paragraph::new(lines).block(panel_block("Read-only responses"));
     frame.render_widget(panel, area);
@@ -2299,7 +2371,13 @@ mod tests {
         assert_eq!(state.telemetry.latest_temperature_c, Some(36));
         assert_eq!(state.telemetry.speed_mph, vec![10]);
         assert_eq!(state.telemetry.voltage_v.len(), HISTORY_LIMIT);
-        assert!(state.telemetry.voltage_v.iter().all(|voltage| *voltage == 84));
+        assert!(
+            state
+                .telemetry
+                .voltage_v
+                .iter()
+                .all(|voltage| *voltage == 84)
+        );
         assert_eq!(state.telemetry.current_a, vec![12]);
         assert_eq!(state.telemetry.temperature_c, vec![37]);
         assert!(state.logs.iter().any(|entry| {
@@ -2398,6 +2476,57 @@ mod tests {
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("telemetry unmapped notifications=3"));
         assert!(!text.contains("raw notification"));
+    }
+
+    #[test]
+    fn read_only_response_events_render_as_parsed_aero_events() {
+        let mut state = DashboardState::empty();
+        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+            BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+            BatteryInfo {
+                temperature_mc: Some(Measured::reported(17_600)),
+                ..BatteryInfo::default()
+            },
+            [
+                Some(Measured::reported(17_600)),
+                Some(Measured::reported(17_100)),
+                Some(Measured::reported(17_700)),
+                Some(Measured::reported(18_500)),
+                Some(Measured::reported(19_000)),
+                Some(Measured::reported(19_100)),
+            ],
+        ));
+        let report = SessionBridgeReport {
+            read_only_responses: 1,
+            read_only_response_events: vec![read_only_response],
+            events: vec![SessionBridgeEvent::ReadOnlyResponse {
+                monotonic_ms: 7,
+                response: read_only_response,
+            }],
+            ..empty_session_bridge_report()
+        };
+
+        state.apply_session_report(&report);
+        state.active_tab = 3;
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(
+            state.logs.iter().any(|entry| {
+                entry.level == "info"
+                    && entry
+                        .message
+                        .contains("read-only battery selector=3 kind=temperature")
+                    && entry.message.contains("temps_c=17,17,17,18,19,19")
+            })
+        );
+        assert!(
+            state
+                .logs
+                .iter()
+                .all(|entry| !entry.message.contains("telemetry unmapped"))
+        );
+        assert!(text.contains("read-only battery selector=3 kind=temperature"));
     }
 
     #[test]
@@ -2859,7 +2988,13 @@ mod tests {
         assert_eq!(state.telemetry.latest_pitch_deg, Some(69));
         assert_eq!(state.telemetry.latest_pwm_pct, Some(-100));
         assert_eq!(state.telemetry.voltage_v.len(), HISTORY_LIMIT);
-        assert!(state.telemetry.voltage_v.iter().all(|voltage| *voltage == 109));
+        assert!(
+            state
+                .telemetry
+                .voltage_v
+                .iter()
+                .all(|voltage| *voltage == 109)
+        );
 
         let overview_text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(overview_text.contains("47%"));
@@ -2951,6 +3086,9 @@ mod tests {
         state.read_only.settings.push_back(
             "field=36 value=1920 quality=known verification=hardware_verified".to_owned(),
         );
+        state.read_only.settings.push_back(
+            "field=37 value=1940 quality=known verification=hardware_verified".to_owned(),
+        );
         state
             .read_only
             .bms_pages
@@ -2959,6 +3097,10 @@ mod tests {
             .read_only
             .bms_pages
             .push_back("selector=8 kind=raw verification=hardware_verified".to_owned());
+        state
+            .read_only
+            .bms_pages
+            .push_back("selector=47 kind=temperature verification=hardware_verified".to_owned());
         state.read_only.unknown_raw_pages = 1;
         state.read_only.diagnostics = 1;
 
@@ -2966,9 +3108,12 @@ mod tests {
 
         assert!(text.contains("Read-only responses"));
         assert!(text.contains("firmware 43.2.54"));
-        assert!(text.contains("settings field=36 value=1920"));
-        assert!(text.contains("bms selector=2 kind=cell_voltage"));
-        assert!(text.contains("bms selector=8 kind=raw"));
+        assert!(text.contains("settings"));
+        assert!(text.contains("field=37 value=1940"));
+        assert!(text.contains("field=36 value=1920"));
+        assert!(text.contains("bms pages"));
+        assert!(text.contains("selector=47 kind=temperature"));
+        assert!(text.contains("selector=8 kind=raw"));
         assert!(text.contains("raw/unverified pages 1"));
         assert!(text.contains("diagnostic responses 1"));
     }
@@ -3037,6 +3182,18 @@ mod tests {
         ] {
             assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
         }
+    }
+
+    #[test]
+    fn logs_tab_uses_recent_events_as_the_primary_panel() {
+        let mut state = DashboardState::sample();
+        state.active_tab = 3;
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert_eq!(text.matches("Recent events").count(), 1);
+        assert!(text.contains("demo state loaded from demo state: aero-nf2557.v1"));
+        assert!(text.contains("dashboard booted in read-only mode"));
     }
 
     #[test]
