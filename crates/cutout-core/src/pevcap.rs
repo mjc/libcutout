@@ -30,8 +30,94 @@ pub const PEVCAP_MAX_GATT_FINGERPRINTS: usize = 8;
 /// Maximum annotations stored in the PEVCAP header.
 pub const PEVCAP_MAX_ANNOTATIONS: usize = 8;
 
+/// Stable annotation key used for labeled capture sessions.
+pub const PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY: &str = "capture_label";
+
 #[cfg(feature = "serde")]
 const PEVCAP_BINARY_LENGTH_PREFIX_BYTES: usize = 4;
+
+/// Standard hardware capture session labels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureSessionLabel {
+    /// Device powered on and stationary.
+    PoweredOnStationary,
+
+    /// Device rolling forward.
+    RollingForward,
+
+    /// Device rolling backward.
+    RollingBackward,
+
+    /// Wheel lifted safely off the ground.
+    LiftedWheel,
+
+    /// Device connected to a charger.
+    Charging,
+
+    /// Headlight toggled during capture.
+    HeadlightToggled,
+
+    /// Horn or alert sound triggered during capture.
+    Horn,
+
+    /// Ride mode changed during capture.
+    RideModeChange,
+
+    /// Alarm threshold changed during capture.
+    AlarmChange,
+
+    /// BMS screen or app BMS view observed during capture.
+    BmsScreen,
+
+    /// Disconnect and reconnect path observed.
+    DisconnectReconnect,
+
+    /// Device power-cycled around the capture.
+    PowerCycle,
+}
+
+impl CaptureSessionLabel {
+    /// All standard capture labels in stable taxonomy order.
+    pub const ALL: [Self; 12] = [
+        Self::PoweredOnStationary,
+        Self::RollingForward,
+        Self::RollingBackward,
+        Self::LiftedWheel,
+        Self::Charging,
+        Self::HeadlightToggled,
+        Self::Horn,
+        Self::RideModeChange,
+        Self::AlarmChange,
+        Self::BmsScreen,
+        Self::DisconnectReconnect,
+        Self::PowerCycle,
+    ];
+
+    /// Stable lowercase slug used in PEVCAP annotations and Beads issue notes.
+    #[must_use]
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Self::PoweredOnStationary => "powered_on_stationary",
+            Self::RollingForward => "rolling_forward",
+            Self::RollingBackward => "rolling_backward",
+            Self::LiftedWheel => "lifted_wheel",
+            Self::Charging => "charging",
+            Self::HeadlightToggled => "headlight_toggled",
+            Self::Horn => "horn",
+            Self::RideModeChange => "ride_mode_change",
+            Self::AlarmChange => "alarm_change",
+            Self::BmsScreen => "bms_screen",
+            Self::DisconnectReconnect => "disconnect_reconnect",
+            Self::PowerCycle => "power_cycle",
+        }
+    }
+
+    /// Stable PEVCAP annotation string for this label.
+    #[must_use]
+    pub fn annotation(self) -> String {
+        format!("{}={}", PEVCAP_CAPTURE_LABEL_ANNOTATION_KEY, self.slug())
+    }
+}
 
 /// Current PEVCAP format version.
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -1229,6 +1315,47 @@ mod tests {
             PevcapFormatVersion::current(),
             PevcapFormatVersion { major: 1, minor: 0 }
         );
+    }
+
+    #[test]
+    fn capture_session_labels_match_hardware_corpus_taxonomy() {
+        assert_eq!(
+            CaptureSessionLabel::ALL.map(CaptureSessionLabel::slug),
+            [
+                "powered_on_stationary",
+                "rolling_forward",
+                "rolling_backward",
+                "lifted_wheel",
+                "charging",
+                "headlight_toggled",
+                "horn",
+                "ride_mode_change",
+                "alarm_change",
+                "bms_screen",
+                "disconnect_reconnect",
+                "power_cycle",
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_session_label_annotations_are_stable_pevcap_metadata() {
+        let label = CaptureSessionLabel::Charging.annotation();
+        let header = PevcapHeader::new(
+            1_725_000_000_000,
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            "0.1.0",
+            [0; 32],
+            &[label.as_str()],
+        )
+        .expect("header should validate");
+
+        assert_eq!(label, "capture_label=charging");
+        assert_eq!(header.annotations.as_slice(), &[label]);
     }
 
     #[test]
