@@ -1,9 +1,9 @@
 use cutout_core::{
-    BatterySpec, Capabilities, CommandKind, GattFingerprint, GattRoles, ModelRegistryEntry,
-    ProtocolFamily, VerificationStatus,
+    Capabilities, CommandKind, GattFingerprint, GattRoles, ModelRegistryEntry, ProtocolFamily,
+    VerificationStatus,
 };
 
-use crate::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodePackVoltageProfile};
+use crate::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL};
 
 const BEGODE_FALCON_GATT: [GattFingerprint; 1] = [GattFingerprint {
     service: BEGODE_SERVICE_CHANNEL,
@@ -21,12 +21,7 @@ pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry 
     protocol_family: ProtocolFamily::BegodeGotway,
     advertised_name_hints: &["Falcon", "Begode", "Gotway"],
     wire_model_id: None,
-    battery: Some(BatterySpec {
-        series_cells: BegodePackVoltageProfile::Begode84VFullCharge.series_cells(),
-        nominal_capacity_mah: BegodePackVoltageProfile::Begode84VFullCharge.nominal_capacity_mah(),
-        voltage_range_mv: 60_000..=84_000,
-        verification: VerificationStatus::Inferred,
-    }),
+    battery: None,
     bms: None,
     gatt: &BEGODE_FALCON_GATT,
     capabilities: Capabilities::from_supported_commands([
@@ -42,18 +37,23 @@ pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry 
 mod tests {
     use cutout_core::{CommandKind, ProtocolFamily, VerificationStatus};
 
-    use crate::{BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL};
+    use crate::{
+        BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL,
+        BegodePackVoltageProfile,
+    };
 
     #[test]
-    fn begode_falcon_registry_entry_records_user_confirmed_84v_battery_profile() {
-        let battery = BEGODE_FALCON_REGISTRY_ENTRY
-            .battery
-            .expect("Falcon registry entry should include an initial battery profile");
+    fn begode_falcon_registry_entry_does_not_infer_battery_variant_from_name() {
+        assert_eq!(BEGODE_FALCON_REGISTRY_ENTRY.battery, None);
+    }
 
-        assert_eq!(battery.series_cells, 20);
-        assert_eq!(battery.voltage_range_mv, 60_000..=84_000);
-        assert_eq!(battery.nominal_capacity_mah, None);
-        assert_eq!(battery.verification, VerificationStatus::Inferred);
+    #[test]
+    fn begode_falcon_84v_profile_remains_available_for_confirmed_variant() {
+        let profile = BegodePackVoltageProfile::Begode84VFullCharge;
+
+        assert_eq!(profile.series_cells(), 20);
+        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
+        assert_eq!(profile.nominal_capacity_mah(), None);
     }
 
     #[test]

@@ -106,12 +106,16 @@ impl BegodeTelemetryContext {
 pub enum BegodePackVoltageProfile {
     /// Generic 84 V full-charge profile for 20S Begode-family packs.
     Begode84VFullCharge,
+
+    /// Generic 100.8 V full-charge profile for 24S Begode-family packs.
+    Begode100VFullCharge,
 }
 
 impl BegodePackVoltageProfile {
     const fn scaler_milli(self) -> i32 {
         match self {
             Self::Begode84VFullCharge => 1_250,
+            Self::Begode100VFullCharge => 1_500,
         }
     }
 
@@ -120,6 +124,7 @@ impl BegodePackVoltageProfile {
     pub const fn series_cells(self) -> u8 {
         match self {
             Self::Begode84VFullCharge => 20,
+            Self::Begode100VFullCharge => 24,
         }
     }
 
@@ -127,7 +132,7 @@ impl BegodePackVoltageProfile {
     #[must_use]
     pub const fn nominal_capacity_mah(self) -> Option<u32> {
         match self {
-            Self::Begode84VFullCharge => None,
+            Self::Begode84VFullCharge | Self::Begode100VFullCharge => None,
         }
     }
 
@@ -136,6 +141,7 @@ impl BegodePackVoltageProfile {
     pub fn voltage_range_mv(self) -> RangeInclusive<u32> {
         match self {
             Self::Begode84VFullCharge => 60_000..=84_000,
+            Self::Begode100VFullCharge => 72_000..=100_800,
         }
     }
 }
@@ -842,6 +848,15 @@ mod tests {
         assert_eq!(profile.nominal_capacity_mah(), None);
     }
 
+    #[test]
+    fn begode_100v_profile_records_public_falcon_variant_evidence() {
+        let profile = BegodePackVoltageProfile::Begode100VFullCharge;
+
+        assert_eq!(profile.series_cells(), 24);
+        assert_eq!(profile.voltage_range_mv(), 72_000..=100_800);
+        assert_eq!(profile.nominal_capacity_mah(), None);
+    }
+
     proptest! {
         #[test]
         fn falcon_battery_percent_is_monotonic(first_mv in 60_000i32..=84_000, second_mv in 60_000i32..=84_000) {
@@ -851,6 +866,17 @@ mod tests {
             prop_assert!(
                 estimate_begode_battery_percent(low, BegodePackVoltageProfile::Begode84VFullCharge)
                     <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Begode84VFullCharge)
+            );
+        }
+
+        #[test]
+        fn begode_100v_battery_percent_is_monotonic(first_mv in 72_000i32..=100_800, second_mv in 72_000i32..=100_800) {
+            let low = first_mv.min(second_mv);
+            let high = first_mv.max(second_mv);
+
+            prop_assert!(
+                estimate_begode_battery_percent(low, BegodePackVoltageProfile::Begode100VFullCharge)
+                    <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Begode100VFullCharge)
             );
         }
 
