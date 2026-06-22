@@ -29,7 +29,7 @@ use ratatui::{
     },
 };
 
-const LOG_LIMIT: usize = 16;
+const LOG_LIMIT: usize = 64;
 const HISTORY_LIMIT: usize = 32;
 const READ_ONLY_SUMMARY_LIMIT: usize = 16;
 const TAB_COUNT: usize = 4;
@@ -1365,10 +1365,10 @@ pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
 
     render_header(frame, areas[0], state);
     if active_tab == 3 {
-        render_logs(frame, areas[1], state, true);
+        render_logs(frame, areas[1], state);
     } else {
         render_body(frame, areas[1], state);
-        render_logs(frame, areas[2], state, false);
+        render_logs(frame, areas[2], state);
     }
 }
 
@@ -1391,7 +1391,7 @@ fn render_body(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         0 => render_overview_tab(frame, area, state),
         1 => render_telemetry(frame, area, state),
         2 => render_profiles(frame, area, state),
-        3 => render_logs(frame, area, state, true),
+        3 => render_logs(frame, area, state),
         _ => unreachable!("active tab is clamped to known dashboard tabs"),
     }
 }
@@ -1939,7 +1939,7 @@ fn render_sparkline(frame: &mut Frame<'_>, area: Rect, title: &str, samples: &[u
     frame.render_widget(spark, area);
 }
 
-fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState, full_page: bool) {
+fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let lines = state
         .logs
         .iter()
@@ -1954,10 +1954,9 @@ fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState, full_p
         })
         .collect::<Vec<_>>();
 
-    let mut log_panel = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true });
-    if !full_page {
-        log_panel = log_panel.block(panel_block("Recent events"));
-    }
+    let log_panel = Paragraph::new(lines)
+        .block(panel_block("Recent events"))
+        .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(log_panel, area);
 }
 
@@ -3190,9 +3189,28 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
-        assert_eq!(text.matches("Recent events").count(), 0);
+        assert_eq!(text.matches("Recent events").count(), 1);
         assert!(text.contains("demo state loaded from demo state: aero-nf2557.v1"));
         assert!(text.contains("dashboard booted in read-only mode"));
+    }
+
+    #[test]
+    fn taller_logs_tab_reveals_more_retained_events() {
+        let mut state = DashboardState::empty();
+        state.active_tab = 3;
+        for index in 0..20 {
+            state.push_log("info", &format!("event-{index:02}"));
+        }
+
+        let short_text = buffer_text(&render_buffer(&state, 80, 12));
+        let tall_text = buffer_text(&render_buffer(&state, 80, 30));
+
+        assert!(short_text.contains("Recent events"));
+        assert!(tall_text.contains("Recent events"));
+        assert!(short_text.contains("event-19"));
+        assert!(tall_text.contains("event-19"));
+        assert!(!short_text.contains("event-08"));
+        assert!(tall_text.contains("event-08"));
     }
 
     #[test]
