@@ -34,12 +34,12 @@ const VALIDATION_ROWS: &[ValidationRow] = &[
         firmware: "unknown",
         variant_scope: "84V target hardware; registry selection gated on app/BMS voltage evidence",
         capture_id: "pending capture",
-        bms_status: "source-backed 0x01/0x02/0x03 decoder; concrete Falcon layout unverified",
-        tested_fields: "identity probe, firmware probe",
-        inferred_fields: "telemetry family",
-        unverified_fields: "battery, controls, frame mapping",
+        bms_status: "source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified",
+        tested_fields: "identity probe, firmware probe, typed capacity/layout annotations",
+        inferred_fields: "telemetry family; nominal_capacity_mah/reported_wh and cell_model/series_cells/parallel_count only when annotated",
+        unverified_fields: "registry battery, concrete Falcon BMS layout, controls, frame mapping",
         controls: "read-only probe only",
-        minimum_evidence: "capture advertisement, GATT, PEVCAP replay, and protocol frames",
+        minimum_evidence: "capture advertisement, GATT, PEVCAP replay, protocol frames, app/BMS/label/Bluetooth evidence",
         acceptance: "inferred",
     },
     ValidationRow {
@@ -135,5 +135,19 @@ mod tests {
         assert!(report.contains("30s/2p Veteran smart-BMS"));
         assert!(report.contains("84V target hardware; registry selection gated"));
         assert!(report.contains("capture advertisement, GATT, PEVCAP replay, and protocol frames"));
+    }
+
+    #[test]
+    fn validation_report_tracks_falcon_capacity_and_layout_evidence_boundaries() {
+        let report = render_validation_report();
+
+        assert!(report.contains("typed capacity/layout annotations"));
+        assert!(report.contains("nominal_capacity_mah/reported_wh"));
+        assert!(report.contains("cell_model/series_cells/parallel_count"));
+        assert!(report.contains("concrete Falcon BMS layout unverified"));
+        assert!(report.contains("app/BMS/label/Bluetooth evidence"));
+        assert!(report.contains("Begode Falcon | unknown | 84V target hardware"));
+        assert!(report.contains("Begode Falcon | unknown | 84V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified"));
+        assert!(!report.contains("Begode Falcon | unknown | 84V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified | identity probe, firmware probe | telemetry family | battery, controls, frame mapping | read-only probe only | capture advertisement, GATT, PEVCAP replay, and protocol frames | hardware-tested"));
     }
 }
