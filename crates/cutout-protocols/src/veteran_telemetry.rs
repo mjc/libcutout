@@ -103,12 +103,15 @@ impl VeteranTelemetry {
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+        let motor_current_ma = i32::from(self.phase_current_deci_a) * 100;
         TelemetryDelta {
             speed_mm_s: Some(Measured::reported(deci_kmh_to_mm_s(self.speed_deci_kmh))),
             voltage_mv: Some(Measured::reported(self.voltage_mv)),
-            motor_current_ma: Some(Measured::reported(
-                i32::from(self.phase_current_deci_a) * 100,
-            )),
+            motor_current_ma: Some(Measured::reported(motor_current_ma)),
+            power_mw: Some(Measured::calculated(veteran_power_mw(
+                self.voltage_mv,
+                motor_current_ma,
+            ))),
             controller_temperature_mc: Some(Measured::reported(self.mosfet_temperature_mc)),
             pwm_permille: Some(Measured::reported(veteran_pwm_permille(
                 self.hardware_pwm_raw,
@@ -194,6 +197,10 @@ fn read_veteran_swapped_u32(bytes: &[u8], offset: usize) -> Option<u32> {
 
 fn deci_kmh_to_mm_s(value: i16) -> i32 {
     i32::from(value) * 250 / 9
+}
+
+fn veteran_power_mw(voltage_mv: i32, current_ma: i32) -> i64 {
+    i64::from(voltage_mv) * i64::from(current_ma) / 1_000
 }
 
 fn veteran_pwm_permille(raw_pwm: u16) -> i16 {
@@ -291,6 +298,7 @@ mod tests {
             delta.controller_temperature_mc,
             Some(Measured::reported(33_270))
         );
+        assert_eq!(delta.power_mw, Some(Measured::calculated(0)));
         assert_eq!(delta.pwm_permille, Some(Measured::reported(-1_000)));
         assert_eq!(delta.distance_mm, Some(Measured::reported(1_551_169_000)));
         assert_eq!(delta.pitch_mdeg, Some(Measured::reported(69_060)));
@@ -311,6 +319,7 @@ mod tests {
 
         assert_eq!(delta.speed_mm_s, Some(Measured::reported(1_000)));
         assert_eq!(delta.motor_current_ma, Some(Measured::reported(-1_700)));
+        assert_eq!(delta.power_mw, Some(Measured::calculated(-184_892)));
     }
 
     #[test]
@@ -324,6 +333,11 @@ mod tests {
     #[test]
     fn veteran_speed_conversion_scales_nonzero_deci_kmh() {
         assert_eq!(deci_kmh_to_mm_s(36), 1_000);
+    }
+
+    #[test]
+    fn veteran_power_conversion_uses_millivolts_and_milliamps() {
+        assert_eq!(veteran_power_mw(108_760, -1_700), -184_892);
     }
 
     #[test]

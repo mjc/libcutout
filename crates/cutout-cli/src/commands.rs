@@ -228,6 +228,7 @@ mod tests {
             speed_mm_s: Some(Measured::reported(1_200)),
             voltage_mv: Some(Measured::reported(108_760)),
             motor_current_ma: Some(Measured::reported(-1_700)),
+            power_mw: Some(Measured::calculated(-184_892)),
             controller_temperature_mc: Some(Measured::reported(33_270)),
             pwm_permille: Some(Measured::reported(-1_000)),
             distance_mm: Some(Measured::reported(1_551_169_000)),
@@ -239,7 +240,7 @@ mod tests {
         assert_eq!(
             render_telemetry_snapshot(&snapshot).as_deref(),
             Some(
-                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=39"
+                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=39"
             )
         );
     }

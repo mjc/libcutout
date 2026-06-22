@@ -534,6 +534,7 @@ mod tests {
 
         assert_eq!(telemetry.speed_mm_s, Some(Measured::reported(0)));
         assert_eq!(telemetry.motor_current_ma, Some(Measured::reported(0)));
+        assert_eq!(telemetry.power_mw, Some(Measured::calculated(0)));
         assert_eq!(
             telemetry.controller_temperature_mc,
             Some(Measured::reported(33_270))
