@@ -289,6 +289,12 @@ impl MaxReconnectLinks {
     pub(crate) fn attempts(self) -> impl Iterator<Item = ReconnectAttempt> {
         (1..=self.0.get()).map(ReconnectAttempt)
     }
+
+    /// Returns true when more than one connected-link attempt is allowed.
+    #[must_use]
+    pub const fn has_multiple_links(self) -> bool {
+        self.0.get() > 1
+    }
 }
 
 impl From<NonZeroUsize> for MaxReconnectLinks {

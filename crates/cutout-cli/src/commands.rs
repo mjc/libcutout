@@ -10,14 +10,13 @@ use std::{
 use anyhow::{Result, bail};
 use cutout_btle::{
     BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, DiagnosticEventCount,
-    DisconnectCount, MaxReconnectLinks, MonotonicMs, NotificationByteTotal, NotificationCount,
-    NotificationWindow, PevcapSessionMetadata, ProtocolWriteCount, RawNotificationRecord,
-    ReadOnlyResponseCount, ReconnectAttemptReport, ScanWindow, SessionBridgeEvent,
-    SessionBridgeReport, SessionCapture, SessionEndpoints, SessionPeripheral, SubscribeCount,
-    TelemetryEventCount, TransportWriteCount, WriteProvenance, capture_raw_notifications,
-    capture_reconnecting_session_with_commands, capture_session_with_commands,
-    connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
-    scan_peripherals,
+    DisconnectCount, MonotonicMs, NotificationByteTotal, NotificationCount, NotificationWindow,
+    PevcapSessionMetadata, ProtocolWriteCount, RawNotificationRecord, ReadOnlyResponseCount,
+    ReconnectAttemptReport, ScanWindow, SessionBridgeEvent, SessionBridgeReport, SessionCapture,
+    SessionEndpoints, SessionPeripheral, SubscribeCount, TelemetryEventCount, TransportWriteCount,
+    WriteProvenance, capture_raw_notifications, capture_reconnecting_session_with_commands,
+    capture_session_with_commands, connect_and_discover, drive_session,
+    drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
     BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
@@ -1133,7 +1132,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
 
 async fn capture(args: CaptureArgs) -> Result<()> {
     let annotations = capture_annotations(&args);
-    if args.reconnect_attempts > 1 {
+    if args.reconnect_attempts.has_multiple_links() {
         let output = capture_output(args.pevcap_output.clone(), args.pevcap_format, annotations);
         return capture_reconnecting(args, output).await;
     }
@@ -1168,7 +1167,7 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
                 &mut ReadOnlySession::<NosfetAeroModel, false>::default(),
                 VETERAN_DATA_CHANNEL,
                 NotificationWindow::from_secs(seconds),
-                MaxReconnectLinks::at_least_one(args.reconnect_attempts),
+                args.reconnect_attempts,
                 WriteProvenance::Stable,
                 &commands,
             )
@@ -1180,7 +1179,7 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
                 &mut ReadOnlySession::<BegodeFalconModel, true>::default(),
                 BEGODE_DATA_CHANNEL,
                 NotificationWindow::from_secs(seconds),
-                MaxReconnectLinks::at_least_one(args.reconnect_attempts),
+                args.reconnect_attempts,
                 WriteProvenance::Stable,
                 &commands,
             )
