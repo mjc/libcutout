@@ -1963,13 +1963,14 @@ fn render_firmware_info(firmware: Option<FirmwareInfo>) -> Option<String> {
         .then(|| FirmwareLine(firmware).to_string())
 }
 
-fn render_settings_readbacks(settings: &[SettingsReadback]) -> Vec<String> {
+fn render_settings_readbacks(
+    settings: &[SettingsReadback],
+) -> impl Iterator<Item = SettingsLine> + '_ {
     settings
         .iter()
         .copied()
         .filter(|settings| SettingsLine(*settings).has_fields())
-        .map(|settings| SettingsLine(settings).to_string())
-        .collect()
+        .map(SettingsLine)
 }
 
 struct TelemetrySnapshotLine(TelemetrySnapshot);
@@ -2049,6 +2050,7 @@ impl fmt::Display for FirmwareLine {
     }
 }
 
+#[derive(Clone, Copy)]
 struct SettingsLine(SettingsReadback);
 
 impl SettingsLine {
@@ -3604,9 +3606,12 @@ mod tests {
         let more_settings = SettingsReadback {
             entries: [Some(entry(0x001e, 1_920)), None, None, None],
         };
+        let rendered = render_settings_readbacks(&[settings, more_settings])
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
 
         assert_eq!(
-            render_settings_readbacks(&[settings, more_settings]),
+            rendered,
             vec![
                 "settings raw_0014=0 raw_0016=0 raw_0018=550 raw_001a=540",
                 "settings raw_001e=1920",
