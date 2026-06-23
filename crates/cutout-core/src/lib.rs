@@ -792,6 +792,295 @@ impl ModelRuntimeRegistration {
     }
 }
 
+/// Type-state marker for a missing required model-authoring field.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MissingAuthoringField;
+
+/// Type-state marker for a present required model-authoring field.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PresentAuthoringField;
+
+/// Type-state model authoring helper for static registry/catalog data.
+///
+/// This keeps the scalable model path as compile-time Rust data while making
+/// the required fields explicit in the type signature. Optional metadata can be
+/// layered in functionally, and only a fully-authored model can produce registry
+/// and catalog entries.
+#[derive(Clone, Debug)]
+pub struct ModelAuthoring<
+    Manufacturer = MissingAuthoringField,
+    Model = MissingAuthoringField,
+    Family = MissingAuthoringField,
+    Gatt = MissingAuthoringField,
+    CapabilitiesState = MissingAuthoringField,
+    Runtime = MissingAuthoringField,
+> {
+    manufacturer: ManufacturerKey,
+    model: ModelKey,
+    family: FamilyKey,
+    advertised_name_hints: &'static [&'static str],
+    wire_model_id: Option<VerifiedValue<u16>>,
+    battery: Option<BatterySpec>,
+    bms: Option<BmsLayoutSpec>,
+    gatt: &'static [GattFingerprint],
+    capabilities: Capabilities,
+    verification: VerificationStatus,
+    runtime: ModelRuntimeRegistration,
+    _state: PhantomData<(
+        Manufacturer,
+        Model,
+        Family,
+        Gatt,
+        CapabilitiesState,
+        Runtime,
+    )>,
+}
+
+/// Fully-authored model state that can emit registry and catalog entries.
+pub type CompleteModelAuthoring = ModelAuthoring<
+    PresentAuthoringField,
+    PresentAuthoringField,
+    PresentAuthoringField,
+    PresentAuthoringField,
+    PresentAuthoringField,
+    PresentAuthoringField,
+>;
+
+impl ModelAuthoring {
+    /// Starts authoring a static model definition.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            manufacturer: ManufacturerKey::new(""),
+            model: ModelKey::new(""),
+            family: FamilyKey::new(ProtocolFamily::VeteranLeaperkimNosfet),
+            advertised_name_hints: &[],
+            wire_model_id: None,
+            battery: None,
+            bms: None,
+            gatt: &[],
+            capabilities: Capabilities::from_supported_commands([]),
+            verification: VerificationStatus::Unverified,
+            runtime: ModelRuntimeRegistration {
+                parser: None,
+                session: None,
+            },
+            _state: PhantomData,
+        }
+    }
+}
+
+impl Default for ModelAuthoring {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<M, N, F, G, C, R> ModelAuthoring<M, N, F, G, C, R> {
+    /// Sets the manufacturer key.
+    #[must_use]
+    pub const fn manufacturer(
+        self,
+        manufacturer: ManufacturerKey,
+    ) -> ModelAuthoring<PresentAuthoringField, N, F, G, C, R> {
+        ModelAuthoring {
+            manufacturer,
+            model: self.model,
+            family: self.family,
+            advertised_name_hints: self.advertised_name_hints,
+            wire_model_id: self.wire_model_id,
+            battery: self.battery,
+            bms: self.bms,
+            gatt: self.gatt,
+            capabilities: self.capabilities,
+            verification: self.verification,
+            runtime: self.runtime,
+            _state: PhantomData,
+        }
+    }
+
+    /// Sets the model key.
+    #[must_use]
+    pub const fn model(
+        self,
+        model: ModelKey,
+    ) -> ModelAuthoring<M, PresentAuthoringField, F, G, C, R> {
+        ModelAuthoring {
+            manufacturer: self.manufacturer,
+            model,
+            family: self.family,
+            advertised_name_hints: self.advertised_name_hints,
+            wire_model_id: self.wire_model_id,
+            battery: self.battery,
+            bms: self.bms,
+            gatt: self.gatt,
+            capabilities: self.capabilities,
+            verification: self.verification,
+            runtime: self.runtime,
+            _state: PhantomData,
+        }
+    }
+
+    /// Sets the protocol family key.
+    #[must_use]
+    pub const fn family(
+        self,
+        family: FamilyKey,
+    ) -> ModelAuthoring<M, N, PresentAuthoringField, G, C, R> {
+        ModelAuthoring {
+            manufacturer: self.manufacturer,
+            model: self.model,
+            family,
+            advertised_name_hints: self.advertised_name_hints,
+            wire_model_id: self.wire_model_id,
+            battery: self.battery,
+            bms: self.bms,
+            gatt: self.gatt,
+            capabilities: self.capabilities,
+            verification: self.verification,
+            runtime: self.runtime,
+            _state: PhantomData,
+        }
+    }
+
+    /// Sets advertised-name hints. These remain hints, not identity truth.
+    #[must_use]
+    pub const fn advertised_name_hints(self, hints: &'static [&'static str]) -> Self {
+        Self {
+            advertised_name_hints: hints,
+            ..self
+        }
+    }
+
+    /// Sets the passive wire model id.
+    #[must_use]
+    pub const fn wire_model_id(self, wire_model_id: VerifiedValue<u16>) -> Self {
+        Self {
+            wire_model_id: Some(wire_model_id),
+            ..self
+        }
+    }
+
+    /// Sets battery metadata.
+    #[must_use]
+    pub const fn battery(self, battery: BatterySpec) -> Self {
+        Self {
+            battery: Some(battery),
+            ..self
+        }
+    }
+
+    /// Sets BMS layout metadata.
+    #[must_use]
+    pub const fn bms(self, bms: BmsLayoutSpec) -> Self {
+        Self {
+            bms: Some(bms),
+            ..self
+        }
+    }
+
+    /// Sets observed GATT fingerprints.
+    #[must_use]
+    pub const fn gatt(
+        self,
+        gatt: &'static [GattFingerprint],
+    ) -> ModelAuthoring<M, N, F, PresentAuthoringField, C, R> {
+        ModelAuthoring {
+            manufacturer: self.manufacturer,
+            model: self.model,
+            family: self.family,
+            advertised_name_hints: self.advertised_name_hints,
+            wire_model_id: self.wire_model_id,
+            battery: self.battery,
+            bms: self.bms,
+            gatt,
+            capabilities: self.capabilities,
+            verification: self.verification,
+            runtime: self.runtime,
+            _state: PhantomData,
+        }
+    }
+
+    /// Sets supported command capabilities.
+    #[must_use]
+    pub const fn capabilities(
+        self,
+        capabilities: Capabilities,
+    ) -> ModelAuthoring<M, N, F, G, PresentAuthoringField, R> {
+        ModelAuthoring {
+            manufacturer: self.manufacturer,
+            model: self.model,
+            family: self.family,
+            advertised_name_hints: self.advertised_name_hints,
+            wire_model_id: self.wire_model_id,
+            battery: self.battery,
+            bms: self.bms,
+            gatt: self.gatt,
+            capabilities,
+            verification: self.verification,
+            runtime: self.runtime,
+            _state: PhantomData,
+        }
+    }
+
+    /// Sets the overall verification status.
+    #[must_use]
+    pub const fn verification(self, verification: VerificationStatus) -> Self {
+        Self {
+            verification,
+            ..self
+        }
+    }
+
+    /// Sets active parser and session runtime registrations.
+    #[must_use]
+    pub const fn active_runtime(
+        self,
+        parser: ParserKey,
+        session: SessionKey,
+    ) -> ModelAuthoring<M, N, F, G, C, PresentAuthoringField> {
+        ModelAuthoring {
+            manufacturer: self.manufacturer,
+            model: self.model,
+            family: self.family,
+            advertised_name_hints: self.advertised_name_hints,
+            wire_model_id: self.wire_model_id,
+            battery: self.battery,
+            bms: self.bms,
+            gatt: self.gatt,
+            capabilities: self.capabilities,
+            verification: self.verification,
+            runtime: ModelRuntimeRegistration::active(parser, session),
+            _state: PhantomData,
+        }
+    }
+}
+
+impl CompleteModelAuthoring {
+    /// Builds a data-only registry entry from a fully-authored model.
+    #[must_use]
+    pub const fn registry_entry(self) -> ModelRegistryEntry {
+        ModelRegistryEntry {
+            manufacturer: self.manufacturer.as_str(),
+            model: self.model.as_str(),
+            protocol_family: self.family.protocol_family(),
+            advertised_name_hints: self.advertised_name_hints,
+            wire_model_id: self.wire_model_id,
+            battery: self.battery,
+            bms: self.bms,
+            gatt: self.gatt,
+            capabilities: self.capabilities,
+            verification: self.verification,
+        }
+    }
+
+    /// Builds a catalog entry from a fully-authored model and static registry entry.
+    #[must_use]
+    pub const fn catalog_entry(self, registry: &'static ModelRegistryEntry) -> ModelCatalogEntry {
+        ModelCatalogEntry::new(registry, self.runtime)
+    }
+}
+
 /// Static catalog entry combining data-only metadata with runtime registration.
 #[derive(Clone, Copy, Debug)]
 pub struct ModelCatalogEntry {
@@ -5030,6 +5319,40 @@ mod tests {
         assert_eq!(
             crate::validate_registry_entries(&[&entry]),
             Err(crate::RegistryValidationError::EmptyCapabilities { index: 0 })
+        );
+    }
+
+    #[test]
+    fn model_authoring_emits_static_registry_and_catalog_entries() {
+        const AUTHORING: crate::CompleteModelAuthoring = crate::ModelAuthoring::new()
+            .manufacturer(crate::ManufacturerKey::new("TypedCo"))
+            .model(crate::ModelKey::new("Typed Model"))
+            .family(crate::FamilyKey::new(
+                crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            ))
+            .advertised_name_hints(&["TypedHint"])
+            .gatt(&STATIC_SAMPLE_GATT)
+            .capabilities(crate::Capabilities::from_supported_commands([
+                crate::CommandKind::RequestIdentity,
+                crate::CommandKind::RequestTelemetry,
+            ]))
+            .verification(VerificationStatus::Inferred)
+            .active_runtime(
+                crate::ParserKey::new("typed-parser"),
+                crate::SessionKey::new("typed-session"),
+            );
+        static AUTHORED_MODEL: crate::ModelRegistryEntry = AUTHORING.registry_entry();
+        const CATALOG: [crate::ModelCatalogEntry; 1] = [AUTHORING.catalog_entry(&AUTHORED_MODEL)];
+
+        assert_eq!(crate::validate_model_catalog(&CATALOG), Ok(()));
+        assert_eq!(
+            crate::ModelCatalog::new(&CATALOG)
+                .find_model(
+                    crate::ManufacturerKey::new("TypedCo"),
+                    crate::ModelKey::new("Typed Model")
+                )
+                .map(|entry| entry.registration.parser),
+            Some(Some(crate::ParserKey::new("typed-parser")))
         );
     }
 

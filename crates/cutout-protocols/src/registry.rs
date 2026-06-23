@@ -134,9 +134,10 @@ pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegi
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, GattFingerprint, GattRoles, ManufacturerKey, ModelCatalog, ModelCatalogEntry,
-        ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey, ProtocolFamily,
-        RegistryValidationError, SessionKey, VerificationStatus,
+        CommandKind, CompleteModelAuthoring, GattFingerprint, GattRoles, ManufacturerKey,
+        ModelAuthoring, ModelCatalog, ModelCatalogEntry, ModelKey, ModelRegistryEntry,
+        ModelRuntimeRegistration, ParserKey, ProtocolFamily, RegistryValidationError, SessionKey,
+        VerificationStatus,
     };
 
     use crate::{
@@ -261,6 +262,43 @@ mod tests {
                 .find_model(ManufacturerKey::new("NOSFET"), ModelKey::new("NOSFET Aero"))
                 .map(|entry| entry.registration.session),
             Some(Some(NOSFET_AERO_SESSION_KEY))
+        );
+    }
+
+    #[test]
+    fn typed_model_authoring_builds_catalog_without_raw_field_literals() {
+        const FAKE_PARSER_KEY: ParserKey = ParserKey::new("typed-fake-parser");
+        const FAKE_SESSION_KEY: SessionKey = SessionKey::new("typed-fake-read-only");
+        const FAKE_GATT: [GattFingerprint; 1] = [GattFingerprint {
+            service: BEGODE_SERVICE_CHANNEL,
+            characteristic: BEGODE_DATA_CHANNEL,
+            roles: GattRoles::empty()
+                .with_write_without_response()
+                .with_notify(),
+            verification: VerificationStatus::Inferred,
+        }];
+        const FAKE_AUTHORING: CompleteModelAuthoring = ModelAuthoring::new()
+            .manufacturer(ManufacturerKey::new("TypedFakeCo"))
+            .model(ModelKey::new("Typed Fixture Wheel"))
+            .family(cutout_core::FamilyKey::new(ProtocolFamily::BegodeGotway))
+            .advertised_name_hints(&["TypedFixture"])
+            .gatt(&FAKE_GATT)
+            .capabilities(cutout_core::Capabilities::from_supported_commands([
+                CommandKind::RequestIdentity,
+                CommandKind::RequestTelemetry,
+            ]))
+            .verification(VerificationStatus::Inferred)
+            .active_runtime(FAKE_PARSER_KEY, FAKE_SESSION_KEY);
+        static FAKE_MODEL: ModelRegistryEntry = FAKE_AUTHORING.registry_entry();
+        const FAKE_CATALOG_ENTRY: ModelCatalogEntry = FAKE_AUTHORING.catalog_entry(&FAKE_MODEL);
+        let catalog = [MODEL_CATALOG[0], MODEL_CATALOG[1], FAKE_CATALOG_ENTRY];
+
+        assert_eq!(cutout_core::validate_model_catalog(&catalog), Ok(()));
+        assert_eq!(
+            ModelCatalog::new(&catalog)
+                .find_session(FAKE_SESSION_KEY)
+                .map(|entry| entry.registry.model),
+            Some("Typed Fixture Wheel")
         );
     }
 
