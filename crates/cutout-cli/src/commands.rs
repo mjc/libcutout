@@ -118,16 +118,16 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
     )?;
     info!("{}", render_pevcap_replay_report(&report));
     if args.read_only_jsonl {
-        for line in render_read_only_responses_jsonl(&report.read_only_response_events)? {
-            info!("{line}");
+        for line in render_read_only_responses_jsonl(&report.read_only_response_events) {
+            info!("{}", line?);
         }
     }
     if args.diagnostics_jsonl {
-        for line in render_diagnostic_snapshots_jsonl(&report.diagnostic_snapshots)? {
-            info!("{line}");
+        for line in render_diagnostic_snapshots_jsonl(&report.diagnostic_snapshots) {
+            info!("{}", line?);
         }
-        for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors)? {
-            info!("{line}");
+        for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors) {
+            info!("{}", line?);
         }
     }
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
@@ -512,22 +512,20 @@ fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<Notificatio
 
 fn render_diagnostic_snapshots_jsonl(
     snapshots: &[DiagnosticSnapshot],
-) -> Result<Vec<String>, serde_json::Error> {
+) -> impl Iterator<Item = Result<String, serde_json::Error>> + '_ {
     snapshots
         .iter()
         .enumerate()
         .map(|(sequence, snapshot)| render_diagnostic_snapshot_jsonl(sequence, *snapshot))
-        .collect()
 }
 
 fn render_diagnostic_errors_jsonl(
     errors: &[DiagnosticError],
-) -> Result<Vec<String>, serde_json::Error> {
+) -> impl Iterator<Item = Result<String, serde_json::Error>> + '_ {
     errors
         .iter()
         .enumerate()
         .map(|(sequence, error)| render_diagnostic_error_jsonl(sequence, *error))
-        .collect()
 }
 
 fn render_diagnostic_snapshot_jsonl(
@@ -1606,8 +1604,8 @@ fn print_session_diagnostics_jsonl(
 ) -> Result<(), serde_json::Error> {
     if enabled {
         info!("{}", render_session_diagnostics_jsonl(report)?);
-        for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors)? {
-            info!("{line}");
+        for line in render_diagnostic_errors_jsonl(&report.diagnostic_errors) {
+            info!("{}", line?);
         }
     }
     Ok(())
@@ -1630,8 +1628,8 @@ fn print_session_read_only_jsonl(
     enabled: bool,
 ) -> Result<(), serde_json::Error> {
     if enabled {
-        for line in render_read_only_responses_jsonl(&report.read_only_response_events)? {
-            info!("{line}");
+        for line in render_read_only_responses_jsonl(&report.read_only_response_events) {
+            info!("{}", line?);
         }
     }
     Ok(())
@@ -1687,12 +1685,11 @@ fn render_reconnect_attempt_diagnostics_jsonl(
 
 fn render_read_only_responses_jsonl(
     responses: &[ReadOnlyResponse],
-) -> Result<Vec<String>, serde_json::Error> {
+) -> impl Iterator<Item = Result<String, serde_json::Error>> + '_ {
     responses
         .iter()
         .enumerate()
         .map(|(sequence, response)| render_read_only_response_jsonl(sequence, *response))
-        .collect()
 }
 
 fn render_read_only_response_jsonl(
@@ -2918,6 +2915,7 @@ mod tests {
         assert_eq!(value["unmatched_replies"], 7);
 
         let error_lines = render_diagnostic_errors_jsonl(&report.diagnostic_errors)
+            .collect::<Result<Vec<_>, _>>()
             .expect("session diagnostic errors JSONL serializes");
         let error: serde_json::Value =
             serde_json::from_str(&error_lines[0]).expect("diagnostic error JSONL is JSON");
