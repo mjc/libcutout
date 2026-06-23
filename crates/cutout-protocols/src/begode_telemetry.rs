@@ -807,16 +807,16 @@ impl BegodeLiveATelemetry {
     ) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x00)?;
         let cursor = ByteCursor::new(frame.as_slice());
-        let raw_voltage_centivolts = be_u16(cursor, 2);
+        let raw_voltage_centivolts = be_u16(cursor, ByteOffset::new(2));
         Ok(Self {
             raw_voltage_centivolts,
             voltage_mv: scaled_voltage_mv(raw_voltage_centivolts, profile),
-            speed_milli_kmh: raw_speed_to_milli_kmh(be_i16(cursor, 4)),
-            trip_distance_m: be_u32(cursor, 6),
-            trip_distance_low_m: be_u16(cursor, 8),
-            phase_current_ma: i32::from(be_i16(cursor, 10)) * 10,
-            imu_temperature_mc: mpu6050_temperature_mc(be_i16(cursor, 12)),
-            hardware_pwm_raw: be_i16(cursor, 14),
+            speed_milli_kmh: raw_speed_to_milli_kmh(be_i16(cursor, ByteOffset::new(4))),
+            trip_distance_m: be_u32(cursor, ByteOffset::new(6)),
+            trip_distance_low_m: be_u16(cursor, ByteOffset::new(8)),
+            phase_current_ma: i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
+            imu_temperature_mc: mpu6050_temperature_mc(be_i16(cursor, ByteOffset::new(12))),
+            hardware_pwm_raw: be_i16(cursor, ByteOffset::new(14)),
             battery_percent_estimated: estimate_begode_battery_percent(
                 scaled_voltage_mv(raw_voltage_centivolts, profile),
                 profile,
@@ -894,13 +894,13 @@ impl BegodeLiveBTelemetry {
         require_tag(frame, 0x04)?;
         let cursor = ByteCursor::new(frame.as_slice());
         Ok(Self {
-            total_distance_m: be_u32(cursor, 2),
-            settings_bits: be_u16(cursor, 6),
-            power_off_timer_minutes: be_u16(cursor, 8),
-            tiltback_speed_kmh: be_u16(cursor, 10),
-            led_mode: byte(cursor, 13),
-            alert_flags: byte(cursor, 14),
-            light_mode: byte(cursor, 15) & 0x03,
+            total_distance_m: be_u32(cursor, ByteOffset::new(2)),
+            settings_bits: be_u16(cursor, ByteOffset::new(6)),
+            power_off_timer_minutes: be_u16(cursor, ByteOffset::new(8)),
+            tiltback_speed_kmh: be_u16(cursor, ByteOffset::new(10)),
+            led_mode: byte(cursor, ByteOffset::new(13)),
+            alert_flags: byte(cursor, ByteOffset::new(14)),
+            light_mode: byte(cursor, ByteOffset::new(15)) & 0x03,
         })
     }
 
@@ -1008,9 +1008,9 @@ impl BegodeExtraTelemetry {
         require_tag(frame, 0x07)?;
         let cursor = ByteCursor::new(frame.as_slice());
         Ok(Self {
-            battery_current_ma: i32::from(be_i16(cursor, 2)) * 10,
-            motor_temperature_mc: i32::from(be_i16(cursor, 6)) * 1_000,
-            true_pwm_raw: be_i16(cursor, 8),
+            battery_current_ma: i32::from(be_i16(cursor, ByteOffset::new(2))) * 10,
+            motor_temperature_mc: i32::from(be_i16(cursor, ByteOffset::new(6))) * 1_000,
+            true_pwm_raw: be_i16(cursor, ByteOffset::new(8)),
         })
     }
 
@@ -1147,20 +1147,20 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
     }
 }
 
-fn byte(cursor: ByteCursor<'_>, offset: usize) -> u8 {
-    cursor.byte(ByteOffset::new(offset)).unwrap_or_default()
+fn byte(cursor: ByteCursor<'_>, offset: ByteOffset) -> u8 {
+    cursor.byte(offset).unwrap_or_default()
 }
 
-fn be_u16(cursor: ByteCursor<'_>, offset: usize) -> u16 {
-    cursor.be_u16(ByteOffset::new(offset)).unwrap_or_default()
+fn be_u16(cursor: ByteCursor<'_>, offset: ByteOffset) -> u16 {
+    cursor.be_u16(offset).unwrap_or_default()
 }
 
-fn be_i16(cursor: ByteCursor<'_>, offset: usize) -> i16 {
-    cursor.be_i16(ByteOffset::new(offset)).unwrap_or_default()
+fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
+    cursor.be_i16(offset).unwrap_or_default()
 }
 
-fn be_u32(cursor: ByteCursor<'_>, offset: usize) -> u32 {
-    cursor.be_u32(ByteOffset::new(offset)).unwrap_or_default()
+fn be_u32(cursor: ByteCursor<'_>, offset: ByteOffset) -> u32 {
+    cursor.be_u32(offset).unwrap_or_default()
 }
 
 const fn div_round(numerator: i32, denominator: i32) -> i32 {

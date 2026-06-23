@@ -63,12 +63,12 @@ impl BegodeBmsSummary {
             sub_index,
             bms_index: u8::from(sub_index_value >= 2),
             half_index: sub_index_value & 1,
-            pwm_limit_centi_percent: be_u16(cursor, 2),
-            pack_voltage_mv: i32::from(be_u16(cursor, 6)) * 100,
-            current_ma: i32::from(be_i16(cursor, 8)) * 100,
-            temperature_0_mc: i32::from(be_i16(cursor, 10)) * 1_000,
-            temperature_1_mc: i32::from(be_i16(cursor, 12)) * 1_000,
-            half_pack_voltage_mv: i32::from(be_i16(cursor, 14)) * 100,
+            pwm_limit_centi_percent: be_u16(cursor, ByteOffset::new(2)),
+            pack_voltage_mv: i32::from(be_u16(cursor, ByteOffset::new(6))) * 100,
+            current_ma: i32::from(be_i16(cursor, ByteOffset::new(8))) * 100,
+            temperature_0_mc: i32::from(be_i16(cursor, ByteOffset::new(10))) * 1_000,
+            temperature_1_mc: i32::from(be_i16(cursor, ByteOffset::new(12))) * 1_000,
+            half_pack_voltage_mv: i32::from(be_i16(cursor, ByteOffset::new(14))) * 100,
         })
     }
 
@@ -136,7 +136,7 @@ impl BegodeBmsCellPage {
         let cursor = ByteCursor::new(frame.as_slice());
         let page_index = frame.sub_index();
         let mut cell_mv = ArrayVec::new();
-        for offset in (2..18).step_by(2) {
+        for offset in (2..18).step_by(2).map(ByteOffset::new) {
             cell_mv.push(be_u16(cursor, offset));
         }
 
@@ -189,12 +189,12 @@ fn tag_byte(tag: ProtocolTag) -> u8 {
     u8::try_from(tag.get()).unwrap_or_default()
 }
 
-fn be_u16(cursor: ByteCursor<'_>, offset: usize) -> u16 {
-    cursor.be_u16(ByteOffset::new(offset)).unwrap_or_default()
+fn be_u16(cursor: ByteCursor<'_>, offset: ByteOffset) -> u16 {
+    cursor.be_u16(offset).unwrap_or_default()
 }
 
-fn be_i16(cursor: ByteCursor<'_>, offset: usize) -> i16 {
-    cursor.be_i16(ByteOffset::new(offset)).unwrap_or_default()
+fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
+    cursor.be_i16(offset).unwrap_or_default()
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {
