@@ -24,18 +24,21 @@ use cutout_core::{
     CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError, DiagnosticErrorKind,
     DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured, NotificationByteLen,
     ParserDiagnostics, PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput,
-    SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
-    VerifiedValue,
+    PevcapResolvedIdentity, ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey,
+    SessionOutput, SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource,
+    VerificationStatus, VerifiedValue,
 };
+#[cfg(test)]
+use cutout_protocols::VETERAN_DATA_CHANNEL;
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BegodeBmsSummary, BegodeCapacityEvidence,
-    BegodeCapacitySelection, BegodeFalconModel, BegodeFrame, BegodeNotificationDecoder,
-    BegodePackEvidenceConsistency, BegodePackLayoutEvidence, BegodePackLayoutSelection,
-    BegodeVoltageEvidence, BegodeVoltageProfileSelection, NosfetAeroModel, ReadOnlySession,
-    VETERAN_DATA_CHANNEL, select_begode_pack_capacity_from_annotations,
-    select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
-    select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
+    BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BegodeBmsSummary,
+    BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFalconModel, BegodeFrame,
+    BegodeNotificationDecoder, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
+    BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection,
+    NOSFET_AERO_SESSION_KEY, ReadOnlySession, RegisteredReadOnlySession, find_session_registration,
+    select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
+    select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
+    validate_begode_pack_evidence,
 };
 use tracing::{debug, info};
 
@@ -238,10 +241,9 @@ fn replay_pevcap_capture(
     profile: SelectedSessionProfile,
 ) -> Result<PevcapReplayReport> {
     let mut report = match profile {
-        SelectedSessionProfile::Aero => replay_pevcap_with_session(
-            capture,
-            ReadOnlySession::<NosfetAeroModel, false>::default(),
-        ),
+        SelectedSessionProfile::Aero => {
+            replay_pevcap_with_session(capture, profile.session_registration()?.construct())
+        }
         SelectedSessionProfile::Falcon => {
             replay_pevcap_with_session(capture, falcon_replay_session(capture)?)
         }
@@ -868,9 +870,19 @@ async fn run_dashboard_live_updates(
     }
     info!("dashboard live update selected session endpoints");
 
-    info!("dashboard live update constructing Aero read-only session");
-    let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
-    info!("dashboard live update constructed Aero read-only session");
+    info!("dashboard live update constructing registered Aero read-only session");
+    let registration = match SelectedSessionProfile::Aero.session_registration() {
+        Ok(registration) => registration,
+        Err(error) => {
+            let _ = tx.send(DashboardUpdate::Log {
+                level: "error".to_owned(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+    let mut session = registration.construct();
+    info!("dashboard live update constructed registered Aero read-only session");
     let mut iteration = 0_u64;
     debug!("dashboard live update checking battery refresh capability");
     let refresh_battery = connection.summary.battery_level_characteristic().is_some();
@@ -880,8 +892,15 @@ async fn run_dashboard_live_updates(
     );
 
     loop {
-        if !run_dashboard_live_iteration(&connection, &tx, &mut session, iteration, refresh_battery)
-            .await
+        if !run_dashboard_live_iteration(
+            &connection,
+            &tx,
+            &mut session,
+            registration.data_channel,
+            iteration,
+            refresh_battery,
+        )
+        .await
         {
             return;
         }
@@ -893,7 +912,8 @@ async fn run_dashboard_live_updates(
 async fn run_dashboard_live_iteration(
     connection: &ConnectedPeripheral,
     tx: &mpsc::Sender<DashboardUpdate>,
-    session: &mut ReadOnlySession<NosfetAeroModel, false>,
+    session: &mut RegisteredReadOnlySession,
+    data_channel: GattChannel,
     iteration: u64,
     refresh_battery: bool,
 ) -> bool {
@@ -924,7 +944,7 @@ async fn run_dashboard_live_iteration(
     match drive_session(
         &connection.peripheral,
         session,
-        VETERAN_DATA_CHANNEL,
+        data_channel,
         &connection.summary,
         endpoints,
         DASHBOARD_LIVE_WINDOW.into(),
@@ -1170,37 +1190,23 @@ fn capture_output(
 async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Result<()> {
     let seconds = args.target.seconds();
     let profile = selected_session_profile(args.target.profile());
+    let registration = profile.session_registration()?;
     let commands = read_probe_commands(args.target.probes());
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
     let read_only_jsonl = args.target.read_only_jsonl();
     let mut host =
         BtleplugReconnectHost::new(args.target.into_target(), ScanWindow::from_secs(seconds));
-    let reconnecting_capture = match profile {
-        SelectedSessionProfile::Aero => {
-            capture_reconnecting_session_with_commands(
-                &mut host,
-                &mut ReadOnlySession::<NosfetAeroModel, false>::default(),
-                VETERAN_DATA_CHANNEL,
-                NotificationWindow::from_secs(seconds),
-                args.reconnect_attempts,
-                WriteProvenance::Stable,
-                &commands,
-            )
-            .await?
-        }
-        SelectedSessionProfile::Falcon => {
-            capture_reconnecting_session_with_commands(
-                &mut host,
-                &mut ReadOnlySession::<BegodeFalconModel, true>::default(),
-                BEGODE_DATA_CHANNEL,
-                NotificationWindow::from_secs(seconds),
-                args.reconnect_attempts,
-                WriteProvenance::Stable,
-                &commands,
-            )
-            .await?
-        }
-    };
+    let mut session = registration.construct();
+    let reconnecting_capture = capture_reconnecting_session_with_commands(
+        &mut host,
+        &mut session,
+        registration.data_channel,
+        NotificationWindow::from_secs(seconds),
+        args.reconnect_attempts,
+        WriteProvenance::Stable,
+        &commands,
+    )
+    .await?;
     let summary = merge_reconnect_summaries(
         reconnecting_capture
             .attempts
@@ -1305,32 +1311,16 @@ impl SessionMode {
         profile: SelectedSessionProfile,
         options: SessionRunOptions<'_>,
     ) -> Result<()> {
-        match profile {
-            SelectedSessionProfile::Aero => {
-                let binding =
-                    SessionBinding::new(VETERAN_DATA_CHANNEL, SelectedSessionProfile::Aero);
-                self.run_with_session(
-                    connection,
-                    endpoints,
-                    ReadOnlySession::<NosfetAeroModel, false>::default(),
-                    binding,
-                    options,
-                )
-                .await
-            }
-            SelectedSessionProfile::Falcon => {
-                let binding =
-                    SessionBinding::new(BEGODE_DATA_CHANNEL, SelectedSessionProfile::Falcon);
-                self.run_with_session(
-                    connection,
-                    endpoints,
-                    ReadOnlySession::<BegodeFalconModel, true>::default(),
-                    binding,
-                    options,
-                )
-                .await
-            }
-        }
+        let registration = profile.session_registration()?;
+        let binding = SessionBinding::new(registration.data_channel, profile);
+        self.run_with_session(
+            connection,
+            endpoints,
+            registration.construct(),
+            binding,
+            options,
+        )
+        .await
     }
 
     async fn run_with_session<S>(
@@ -1403,6 +1393,27 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
 enum SelectedSessionProfile {
     Aero,
     Falcon,
+}
+
+impl SelectedSessionProfile {
+    const fn session_key(self) -> SessionKey {
+        match self {
+            Self::Aero => NOSFET_AERO_SESSION_KEY,
+            Self::Falcon => BEGODE_FALCON_SESSION_KEY,
+        }
+    }
+
+    fn session_registration(self) -> Result<&'static cutout_protocols::SessionRegistration> {
+        session_registration_by_key(self.session_key())
+    }
+}
+
+fn session_registration_by_key(
+    key: SessionKey,
+) -> Result<&'static cutout_protocols::SessionRegistration> {
+    find_session_registration(key).ok_or_else(|| {
+        anyhow::anyhow!("selected session registration is missing: {}", key.as_str())
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2939,7 +2950,12 @@ mod tests {
     fn aero_replay_ingest_outcomes(
         records: &[CaptureRecord],
     ) -> Vec<cutout_core::NotificationIngestOutcome> {
-        let mut host = HostSession::new(ReadOnlySession::<NosfetAeroModel, false>::default());
+        let mut host = HostSession::new(
+            SelectedSessionProfile::Aero
+                .session_registration()
+                .expect("registered Aero session exists")
+                .construct(),
+        );
         cutout_core::replay_capture(&mut host, records)
             .into_iter()
             .filter_map(|output| match output {
@@ -3641,21 +3657,45 @@ mod tests {
 
     #[test]
     fn selected_session_profile_keeps_auto_on_existing_aero_path() {
+        let auto = selected_session_profile(SessionProfile::Auto);
+        let aero = selected_session_profile(SessionProfile::Aero);
+
+        assert_eq!(auto, SelectedSessionProfile::Aero);
+        assert_eq!(auto.session_key(), NOSFET_AERO_SESSION_KEY);
         assert_eq!(
-            selected_session_profile(SessionProfile::Auto),
-            SelectedSessionProfile::Aero
+            auto.session_registration()
+                .expect("Aero registration exists")
+                .data_channel,
+            VETERAN_DATA_CHANNEL
         );
-        assert_eq!(
-            selected_session_profile(SessionProfile::Aero),
-            SelectedSessionProfile::Aero
-        );
+        assert_eq!(aero, SelectedSessionProfile::Aero);
+        assert_eq!(aero.session_key(), NOSFET_AERO_SESSION_KEY);
     }
 
     #[test]
     fn selected_session_profile_allows_explicit_falcon_verification_path() {
+        let falcon = selected_session_profile(SessionProfile::Falcon);
+
+        assert_eq!(falcon, SelectedSessionProfile::Falcon);
+        assert_eq!(falcon.session_key(), BEGODE_FALCON_SESSION_KEY);
         assert_eq!(
-            selected_session_profile(SessionProfile::Falcon),
-            SelectedSessionProfile::Falcon
+            falcon
+                .session_registration()
+                .expect("Falcon registration exists")
+                .data_channel,
+            BEGODE_DATA_CHANNEL
+        );
+    }
+
+    #[test]
+    fn selected_session_registration_reports_missing_key() {
+        let error = session_registration_by_key(SessionKey::new("missing-session"))
+            .expect_err("missing session key should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("selected session registration is missing: missing-session")
         );
     }
 
@@ -3863,7 +3903,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn live_dashboard_runner_constructs_aero_session_before_terminal_exits() {
+    async fn live_dashboard_runner_constructs_registered_aero_session_before_terminal_exits() {
         let (constructed_tx, constructed_rx) = mpsc::channel();
         let (log_tx, log_rx) = mpsc::channel();
 
@@ -3872,18 +3912,24 @@ mod tests {
             log_tx,
             log_rx,
             move |_tx| async move {
-                let _session = ReadOnlySession::<NosfetAeroModel, false>::default();
+                let session = SelectedSessionProfile::Aero
+                    .session_registration()
+                    .expect("registered Aero session exists")
+                    .construct();
                 constructed_tx
-                    .send(())
-                    .expect("test receiver waits for Aero session construction");
+                    .send(session)
+                    .expect("test receiver waits for registered Aero session construction");
             },
             |_state, _rx| Ok(()),
         );
 
         result.expect("dashboard runner exits after terminal exits");
-        constructed_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("Aero session construction should not block the live update runner");
+        assert!(matches!(
+            constructed_rx.recv_timeout(Duration::from_secs(1)).expect(
+                "registered Aero session construction should not block the live update runner"
+            ),
+            RegisteredReadOnlySession::NosfetAero(_)
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
