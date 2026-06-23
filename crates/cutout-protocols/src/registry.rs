@@ -1,8 +1,12 @@
 use cutout_core::{
-    ModelCatalogEntry, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey, SessionKey,
+    GattChannel, ModelCatalogEntry, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
+    ProtocolSession, SessionInput, SessionKey, SessionOutput,
 };
 
-use crate::{BegodeFalconModel, NosfetAeroModel, RegisteredModelSpec};
+use crate::{
+    BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, RegisteredModelSpec,
+    VETERAN_DATA_CHANNEL,
+};
 
 /// Parser registration key for Veteran/LeaperKim/NOSFET notifications.
 pub const VETERAN_PARSER_KEY: ParserKey = ParserKey::new("veteran");
@@ -46,17 +50,94 @@ pub const MODEL_CATALOG: [ModelCatalogEntry; 2] = [
     },
 ];
 
+/// Session constructor registered for a model catalog entry.
+#[derive(Clone, Copy, Debug)]
+pub struct SessionRegistration {
+    /// Stable registration key referenced by the model catalog.
+    pub key: SessionKey,
+
+    /// Registry entry this constructor supports.
+    pub model: &'static ModelRegistryEntry,
+
+    /// Notification data channel expected by the constructed session.
+    pub data_channel: GattChannel,
+
+    construct: fn() -> RegisteredReadOnlySession,
+}
+
+impl SessionRegistration {
+    /// Constructs the registered read-only session.
+    #[must_use]
+    pub fn construct(self) -> RegisteredReadOnlySession {
+        (self.construct)()
+    }
+}
+
+/// Allocation-free read-only session sum type for statically registered models.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug)]
+pub enum RegisteredReadOnlySession {
+    /// NOSFET Aero read-only protocol session.
+    NosfetAero(ReadOnlySession<NosfetAeroModel, false>),
+
+    /// Begode Falcon read-only protocol session.
+    BegodeFalcon(ReadOnlySession<BegodeFalconModel, true>),
+}
+
+impl ProtocolSession for RegisteredReadOnlySession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match self {
+            Self::NosfetAero(session) => session.handle(input, output),
+            Self::BegodeFalcon(session) => session.handle(input, output),
+        }
+    }
+}
+
+fn nosfet_aero_read_only_session() -> RegisteredReadOnlySession {
+    RegisteredReadOnlySession::NosfetAero(ReadOnlySession::<NosfetAeroModel, false>::default())
+}
+
+fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
+    RegisteredReadOnlySession::BegodeFalcon(ReadOnlySession::<BegodeFalconModel, true>::default())
+}
+
+/// Read-only session registrations available from this protocol crate.
+pub const SESSION_REGISTRATIONS: [SessionRegistration; 2] = [
+    SessionRegistration {
+        key: NOSFET_AERO_SESSION_KEY,
+        model: &NOSFET_AERO_REGISTRY_ENTRY,
+        data_channel: VETERAN_DATA_CHANNEL,
+        construct: nosfet_aero_read_only_session,
+    },
+    SessionRegistration {
+        key: BEGODE_FALCON_SESSION_KEY,
+        model: &BEGODE_FALCON_REGISTRY_ENTRY,
+        data_channel: BEGODE_DATA_CHANNEL,
+        construct: begode_falcon_read_only_session,
+    },
+];
+
+/// Finds a session registration by typed key without allocating.
+#[must_use]
+pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegistration> {
+    SESSION_REGISTRATIONS
+        .iter()
+        .find(|registration| registration.key == key)
+}
+
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, ManufacturerKey, ModelCatalog, ModelKey, ProtocolFamily, VerificationStatus,
+        CommandKind, ManufacturerKey, ModelCatalog, ModelKey, ProtocolFamily, SessionKey,
+        VerificationStatus,
     };
 
     use crate::{
-        BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL,
-        BegodeFalconModel, BegodePackVoltageProfile, MODEL_CATALOG, MODEL_REGISTRY,
-        NOSFET_AERO_REGISTRY_ENTRY, NosfetAeroModel, RegisteredModelSpec, VETERAN_DATA_CHANNEL,
-        begode_falcon_target_voltage_profile,
+        BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY,
+        BEGODE_SERVICE_CHANNEL, BegodeFalconModel, BegodePackVoltageProfile, MODEL_CATALOG,
+        MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, NosfetAeroModel,
+        RegisteredModelSpec, RegisteredReadOnlySession, VETERAN_DATA_CHANNEL,
+        begode_falcon_target_voltage_profile, find_session_registration,
     };
 
     #[test]
@@ -80,6 +161,28 @@ mod tests {
                 .map(|entry| entry.registry.protocol_family),
             Some(ProtocolFamily::BegodeGotway)
         );
+    }
+
+    #[test]
+    fn session_registration_constructs_model_sessions_by_typed_key() {
+        let aero = find_session_registration(NOSFET_AERO_SESSION_KEY)
+            .expect("Aero session registration exists");
+        let falcon = find_session_registration(BEGODE_FALCON_SESSION_KEY)
+            .expect("Falcon session registration exists");
+
+        assert_eq!(aero.model.model, "NOSFET Aero");
+        assert_eq!(aero.data_channel, VETERAN_DATA_CHANNEL);
+        assert!(matches!(
+            aero.construct(),
+            RegisteredReadOnlySession::NosfetAero(_)
+        ));
+        assert_eq!(falcon.model.model, "Falcon");
+        assert_eq!(falcon.data_channel, BEGODE_DATA_CHANNEL);
+        assert!(matches!(
+            falcon.construct(),
+            RegisteredReadOnlySession::BegodeFalcon(_)
+        ));
+        assert!(find_session_registration(SessionKey::new("missing")).is_none());
     }
 
     #[test]

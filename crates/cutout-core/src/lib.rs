@@ -842,6 +842,22 @@ impl<'a> ModelCatalog<'a> {
             .find(|entry| entry.manufacturer_key() == manufacturer && entry.model_key() == model)
     }
 
+    /// Finds the first catalog entry registered for a parser key.
+    #[must_use]
+    pub fn find_parser(self, parser: ParserKey) -> Option<&'a ModelCatalogEntry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.registration.parser == Some(parser))
+    }
+
+    /// Finds the first catalog entry registered for a session key.
+    #[must_use]
+    pub fn find_session(self, session: SessionKey) -> Option<&'a ModelCatalogEntry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.registration.session == Some(session))
+    }
+
     /// Iterates entries for a protocol family without allocating.
     pub fn family_entries(
         self,
@@ -4968,6 +4984,41 @@ mod tests {
                 ))
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn catalog_lookup_finds_registered_parser_and_session_keys() {
+        const CATALOG: [crate::ModelCatalogEntry; 1] = [crate::ModelCatalogEntry {
+            registry: &STATIC_AERO_REGISTRY_ENTRY,
+            registration: crate::ModelRuntimeRegistration {
+                parser: Some(crate::ParserKey::new("test-parser")),
+                session: Some(crate::SessionKey::new("test-session")),
+            },
+        }];
+        let catalog = crate::ModelCatalog::new(&CATALOG);
+
+        assert_eq!(
+            catalog
+                .find_parser(crate::ParserKey::new("test-parser"))
+                .map(|entry| entry.model_key()),
+            Some(crate::ModelKey::new("Aero"))
+        );
+        assert_eq!(
+            catalog
+                .find_session(crate::SessionKey::new("test-session"))
+                .map(|entry| entry.model_key()),
+            Some(crate::ModelKey::new("Aero"))
+        );
+        assert!(
+            catalog
+                .find_parser(crate::ParserKey::new("missing"))
+                .is_none()
+        );
+        assert!(
+            catalog
+                .find_session(crate::SessionKey::new("missing"))
+                .is_none()
         );
     }
 

@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
-    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ProtocolFamily,
-    ProtocolSession, RequestKey, RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency,
-    SessionInput, SessionOutput, VerificationStatus,
+    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
+    ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue, RequestScheduler,
+    RequestUrgency, SessionInput, SessionKey, SessionOutput, VerificationStatus,
 };
 
 struct CountingAllocator;
@@ -40,8 +40,8 @@ static CATALOG_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
 static CATALOG_ENTRIES: [ModelCatalogEntry; 1] = [ModelCatalogEntry {
     registry: &CATALOG_REGISTRY_ENTRY,
     registration: ModelRuntimeRegistration {
-        parser: None,
-        session: None,
+        parser: Some(ParserKey::new("veteran")),
+        session: Some(SessionKey::new("nosfet-aero-read-only")),
     },
 }];
 
@@ -206,6 +206,19 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
             .expect("static catalog entry exists");
 
         assert_eq!(entry.registry.model, "Aero");
+    });
+
+    assert_no_allocations("model catalog registration lookup", || {
+        let catalog = ModelCatalog::new(&CATALOG_ENTRIES);
+        let parser_entry = catalog
+            .find_parser(ParserKey::new("veteran"))
+            .expect("static parser registration exists");
+        let session_entry = catalog
+            .find_session(SessionKey::new("nosfet-aero-read-only"))
+            .expect("static session registration exists");
+
+        assert_eq!(parser_entry.model_key(), ModelKey::new("Aero"));
+        assert_eq!(session_entry.model_key(), ModelKey::new("Aero"));
     });
 
     let mut replay_host = HostSession::new(NoOpSession);
