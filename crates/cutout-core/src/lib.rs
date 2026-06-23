@@ -8,7 +8,7 @@
 
 //! Core types and setup scaffolding for Cutout.
 
-use std::ops::RangeInclusive;
+use std::{fmt, marker::PhantomData, ops::RangeInclusive};
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
@@ -1339,6 +1339,81 @@ impl DiagnosticError {
     }
 }
 
+enum NotificationByteLenUnit {}
+enum PayloadBodyLenUnit {}
+enum SemanticEventCountUnit {}
+enum ProtocolSelectorUnit {}
+enum ProtocolTagUnit {}
+
+macro_rules! typed_protocol_value {
+    ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name {
+            value: $inner,
+            _unit: PhantomData<fn() -> $unit>,
+        }
+
+        impl $name {
+            /// Creates the typed protocol value.
+            #[must_use]
+            pub const fn new(value: $inner) -> Self {
+                Self {
+                    value,
+                    _unit: PhantomData,
+                }
+            }
+
+            /// Returns the underlying primitive value for FFI/rendering edges.
+            #[must_use]
+            pub const fn get(self) -> $inner {
+                self.value
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_tuple(stringify!($name)).field(&self.value).finish()
+            }
+        }
+    };
+}
+
+typed_protocol_value!(
+    NotificationByteLen,
+    NotificationByteLenUnit,
+    usize,
+    "Length of one transport notification payload after capture/parser admission."
+);
+
+typed_protocol_value!(
+    PayloadBodyLen,
+    PayloadBodyLenUnit,
+    usize,
+    "Length of a protocol payload body after selector/tag framing bytes are removed."
+);
+
+typed_protocol_value!(
+    SemanticEventCount,
+    SemanticEventCountUnit,
+    usize,
+    "Number of semantic events emitted from one protocol ingest operation."
+);
+
+typed_protocol_value!(
+    ProtocolSelector,
+    ProtocolSelectorUnit,
+    u8,
+    "Protocol selector or page identifier carried by a parsed family payload."
+);
+
+typed_protocol_value!(
+    ProtocolTag,
+    ProtocolTagUnit,
+    u16,
+    "Protocol tag or opcode carried by a parsed family payload."
+);
+
 /// Bounded notification evidence shared by protocol ingest outcomes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NotificationEvidence {
@@ -1352,7 +1427,7 @@ pub struct NotificationEvidence {
     pub monotonic_ms: MonotonicMillis,
 
     /// Number of notification bytes observed.
-    pub len: usize,
+    pub len: NotificationByteLen,
 }
 
 impl NotificationEvidence {
@@ -1361,7 +1436,7 @@ impl NotificationEvidence {
     pub const fn new(
         family: Option<ProtocolFamily>,
         channel: GattChannel,
-        len: usize,
+        len: NotificationByteLen,
         monotonic_ms: MonotonicMillis,
     ) -> Self {
         Self {
@@ -1378,13 +1453,13 @@ impl NotificationEvidence {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReservedPayloadEvidence {
     /// Protocol selector/page id, when the family has one.
-    pub selector: Option<u8>,
+    pub selector: Option<ProtocolSelector>,
 
     /// Protocol tag/opcode, when observed.
-    pub tag: Option<u16>,
+    pub tag: Option<ProtocolTag>,
 
     /// Length of the classified body, without retaining raw bytes.
-    pub body_len: usize,
+    pub body_len: PayloadBodyLen,
 
     /// Verification status for this reserved-payload classification.
     pub verification: VerificationStatus,
@@ -1395,13 +1470,13 @@ pub struct ReservedPayloadEvidence {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParserGapEvidence {
     /// Protocol tag/opcode, when observed.
-    pub tag: Option<u16>,
+    pub tag: Option<ProtocolTag>,
 
     /// Protocol selector/page id, when observed.
-    pub selector: Option<u8>,
+    pub selector: Option<ProtocolSelector>,
 
     /// Length of the unparsed body, without retaining raw bytes.
-    pub body_len: usize,
+    pub body_len: PayloadBodyLen,
 }
 
 /// Typed result of feeding one transport notification into a protocol decoder.
@@ -1413,7 +1488,7 @@ pub enum NotificationIngestOutcome {
         notification: NotificationEvidence,
 
         /// Number of semantic events produced by this ingest step.
-        event_count: usize,
+        event_count: SemanticEventCount,
     },
 
     /// The protocol accepted the bytes but is still waiting for a complete
@@ -1459,9 +1534,9 @@ impl NotificationIngestOutcome {
     pub const fn semantic_events(
         family: ProtocolFamily,
         channel: GattChannel,
-        len: usize,
+        len: NotificationByteLen,
         monotonic_ms: MonotonicMillis,
-        event_count: usize,
+        event_count: SemanticEventCount,
     ) -> Self {
         Self::SemanticEvents {
             notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
@@ -1474,7 +1549,7 @@ impl NotificationIngestOutcome {
     pub const fn buffered_fragment(
         family: ProtocolFamily,
         channel: GattChannel,
-        len: usize,
+        len: NotificationByteLen,
         monotonic_ms: MonotonicMillis,
     ) -> Self {
         Self::BufferedFragment(NotificationEvidence::new(
@@ -1490,7 +1565,7 @@ impl NotificationIngestOutcome {
     pub const fn parser_diagnostic(
         family: ProtocolFamily,
         channel: GattChannel,
-        len: usize,
+        len: NotificationByteLen,
         monotonic_ms: MonotonicMillis,
         error: ParserError,
     ) -> Self {
@@ -1505,7 +1580,7 @@ impl NotificationIngestOutcome {
     pub const fn known_reserved(
         family: ProtocolFamily,
         channel: GattChannel,
-        len: usize,
+        len: NotificationByteLen,
         monotonic_ms: MonotonicMillis,
         payload: ReservedPayloadEvidence,
     ) -> Self {
@@ -1520,7 +1595,7 @@ impl NotificationIngestOutcome {
     pub const fn parser_gap(
         family: ProtocolFamily,
         channel: GattChannel,
-        len: usize,
+        len: NotificationByteLen,
         monotonic_ms: MonotonicMillis,
         gap: ParserGapEvidence,
     ) -> Self {
@@ -1534,7 +1609,7 @@ impl NotificationIngestOutcome {
     #[must_use]
     pub const fn ignored_wrong_channel(
         channel: GattChannel,
-        len: usize,
+        len: NotificationByteLen,
         monotonic_ms: MonotonicMillis,
     ) -> Self {
         Self::Ignored(NotificationEvidence::new(None, channel, len, monotonic_ms))
@@ -3671,6 +3746,11 @@ mod tests {
         assert!(size_of::<Measured<u16>>() <= 8);
         assert!(size_of::<Measured<i32>>() <= 16);
         assert!(size_of::<Measured<u64>>() <= 24);
+        assert_eq!(size_of::<crate::NotificationByteLen>(), size_of::<usize>());
+        assert_eq!(size_of::<crate::PayloadBodyLen>(), size_of::<usize>());
+        assert_eq!(size_of::<crate::SemanticEventCount>(), size_of::<usize>());
+        assert_eq!(size_of::<crate::ProtocolSelector>(), size_of::<u8>());
+        assert_eq!(size_of::<crate::ProtocolTag>(), size_of::<u16>());
         assert_eq!(size_of::<crate::ParserDiagnostics>(), 56);
         assert_eq!(size_of::<crate::DiagnosticSnapshot>(), 56);
         assert!(size_of::<crate::DiagnosticError>() <= 80);
@@ -3683,21 +3763,40 @@ mod tests {
     }
 
     #[test]
+    fn notification_ingest_evidence_uses_distinct_typed_protocol_values() {
+        let notification_len = crate::NotificationByteLen::new(77);
+        let body_len = crate::PayloadBodyLen::new(24);
+        let event_count = crate::SemanticEventCount::new(3);
+        let selector = crate::ProtocolSelector::new(8);
+        let tag = crate::ProtocolTag::new(0x5c);
+
+        assert_eq!(notification_len.get(), 77);
+        assert_eq!(body_len.get(), 24);
+        assert_eq!(event_count.get(), 3);
+        assert_eq!(selector.get(), 8);
+        assert_eq!(tag.get(), 0x5c);
+    }
+
+    #[test]
     fn notification_ingest_outcome_distinguishes_buffered_fragments_from_ignored_traffic() {
         let buffered = crate::NotificationIngestOutcome::buffered_fragment(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            20,
+            crate::NotificationByteLen::new(20),
             7,
         );
-        let ignored = crate::NotificationIngestOutcome::ignored_wrong_channel(TEST_CHANNEL, 20, 7);
+        let ignored = crate::NotificationIngestOutcome::ignored_wrong_channel(
+            TEST_CHANNEL,
+            crate::NotificationByteLen::new(20),
+            7,
+        );
 
         assert!(matches!(
             buffered,
             crate::NotificationIngestOutcome::BufferedFragment(evidence)
                 if evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                     && evidence.channel == TEST_CHANNEL
-                    && evidence.len == 20
+                    && evidence.len == crate::NotificationByteLen::new(20)
                     && evidence.monotonic_ms == 7
         ));
         assert!(matches!(
@@ -3705,7 +3804,7 @@ mod tests {
             crate::NotificationIngestOutcome::Ignored(evidence)
                 if evidence.family.is_none()
                     && evidence.channel == TEST_CHANNEL
-                    && evidence.len == 20
+                    && evidence.len == crate::NotificationByteLen::new(20)
                     && evidence.monotonic_ms == 7
         ));
     }
@@ -3715,12 +3814,12 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::known_reserved(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            75,
+            crate::NotificationByteLen::new(75),
             12,
             crate::ReservedPayloadEvidence {
-                selector: Some(8),
-                tag: Some(0x42),
-                body_len: 68,
+                selector: Some(crate::ProtocolSelector::new(8)),
+                tag: Some(crate::ProtocolTag::new(0x42)),
+                body_len: crate::PayloadBodyLen::new(68),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -3732,10 +3831,10 @@ mod tests {
                 payload,
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
-                && notification.len == 75
+                && notification.len == crate::NotificationByteLen::new(75)
                 && notification.monotonic_ms == 12
-                && payload.selector == Some(8)
-                && payload.body_len == 68
+                && payload.selector == Some(crate::ProtocolSelector::new(8))
+                && payload.body_len == crate::PayloadBodyLen::new(68)
                 && payload.verification == VerificationStatus::HardwareVerified
         ));
     }
@@ -3745,20 +3844,21 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::semantic_events(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            77,
+            crate::NotificationByteLen::new(77),
             21,
-            3,
+            crate::SemanticEventCount::new(3),
         );
 
         assert!(matches!(
             outcome,
             crate::NotificationIngestOutcome::SemanticEvents {
                 notification,
-                event_count: 3,
+                event_count,
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
-                && notification.len == 77
+                && notification.len == crate::NotificationByteLen::new(77)
                 && notification.monotonic_ms == 21
+                && event_count == crate::SemanticEventCount::new(3)
         ));
     }
 
@@ -3767,7 +3867,7 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::parser_diagnostic(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            77,
+            crate::NotificationByteLen::new(77),
             22,
             crate::ParserError::BadChecksum,
         );
@@ -3787,18 +3887,18 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::parser_gap(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            77,
+            crate::NotificationByteLen::new(77),
             15,
             crate::ParserGapEvidence {
-                tag: Some(0x5c),
-                selector: Some(8),
-                body_len: 70,
+                tag: Some(crate::ProtocolTag::new(0x5c)),
+                selector: Some(crate::ProtocolSelector::new(8)),
+                body_len: crate::PayloadBodyLen::new(70),
             },
         );
         let debug = format!("{outcome:?}");
 
         assert!(debug.contains("ParserGap"));
-        assert!(debug.contains("body_len: 70"));
+        assert!(debug.contains("body_len: PayloadBodyLen(70)"));
         assert!(!debug.contains("dc5a5c"));
         assert!(!debug.contains("bytes"));
     }
@@ -3829,7 +3929,7 @@ mod tests {
                     output.push(SessionOutput::NotificationIngest(
                         crate::NotificationIngestOutcome::ignored_wrong_channel(
                             channel,
-                            bytes.len(),
+                            crate::NotificationByteLen::new(bytes.len()),
                             monotonic_ms,
                         ),
                     ));
@@ -3900,7 +4000,11 @@ mod tests {
         assert_eq!(
             output.as_slice(),
             &[SessionOutput::NotificationIngest(
-                crate::NotificationIngestOutcome::ignored_wrong_channel(channel, 3, 20)
+                crate::NotificationIngestOutcome::ignored_wrong_channel(
+                    channel,
+                    crate::NotificationByteLen::new(3),
+                    20
+                )
             )]
         );
     }
@@ -5867,7 +5971,11 @@ mod tests {
         assert_eq!(
             host.drain_outputs().as_slice(),
             &[SessionOutput::NotificationIngest(
-                crate::NotificationIngestOutcome::ignored_wrong_channel(channel, 3, 20)
+                crate::NotificationIngestOutcome::ignored_wrong_channel(
+                    channel,
+                    crate::NotificationByteLen::new(3),
+                    20
+                )
             )]
         );
     }
@@ -5887,7 +5995,11 @@ mod tests {
         assert_eq!(
             host.drain_outputs().as_slice(),
             &[SessionOutput::NotificationIngest(
-                crate::NotificationIngestOutcome::ignored_wrong_channel(channel, 4, 42)
+                crate::NotificationIngestOutcome::ignored_wrong_channel(
+                    channel,
+                    crate::NotificationByteLen::new(4),
+                    42
+                )
             )]
         );
     }

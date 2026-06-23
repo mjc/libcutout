@@ -1982,8 +1982,9 @@ mod tests {
         RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        CaptureRecord, GattChannel, LinkInfo, PevcapHeader, PevcapRecord, ProtocolFamily,
-        VerificationStatus, VerifiedValue, WriteMode,
+        CaptureRecord, GattChannel, LinkInfo, NotificationByteLen, PayloadBodyLen, PevcapHeader,
+        PevcapRecord, ProtocolFamily, ProtocolSelector, VerificationStatus, VerifiedValue,
+        WriteMode,
     };
     use cutout_protocols::{
         BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, DeviceFamily, IdentityConfidence,
@@ -2623,12 +2624,12 @@ mod tests {
         let outcome = cutout_core::NotificationIngestOutcome::known_reserved(
             ProtocolFamily::VeteranLeaperkimNosfet,
             VETERAN_DATA_CHANNEL,
-            75,
+            NotificationByteLen::new(75),
             42,
             cutout_core::ReservedPayloadEvidence {
-                selector: Some(8),
+                selector: Some(ProtocolSelector::new(8)),
                 tag: None,
-                body_len: 24,
+                body_len: PayloadBodyLen::new(24),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -2689,7 +2690,7 @@ mod tests {
         assert!(matches!(
             whole.as_slice(),
             [cutout_core::NotificationIngestOutcome::KnownReserved { payload, .. }]
-                if payload.selector == Some(8)
+                if payload.selector == Some(ProtocolSelector::new(8))
         ));
     }
 

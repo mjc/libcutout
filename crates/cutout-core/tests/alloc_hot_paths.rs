@@ -63,7 +63,7 @@ impl ProtocolSession for NoOpSession {
                 output.push(SessionOutput::NotificationIngest(
                     cutout_core::NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
-                        bytes.len(),
+                        cutout_core::NotificationByteLen::new(bytes.len()),
                         monotonic_ms,
                     ),
                 ));

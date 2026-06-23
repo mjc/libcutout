@@ -928,7 +928,7 @@ impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
                 event_count,
             } => Self::SemanticEvents {
                 notification: notification.into(),
-                event_count,
+                event_count: event_count.get(),
             },
             NotificationIngestOutcome::BufferedFragment(notification) => {
                 Self::BufferedFragment(notification.into())
@@ -977,7 +977,7 @@ impl From<NotificationEvidence> for NotificationEvidenceDto {
         Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.as_bytes(),
-            len: evidence.len,
+            len: evidence.len.get(),
             monotonic_ms: evidence.monotonic_ms,
         }
     }
@@ -1074,9 +1074,9 @@ pub struct ReservedPayloadEvidenceDto {
 impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
     fn from(evidence: ReservedPayloadEvidence) -> Self {
         Self {
-            selector: evidence.selector,
-            tag: evidence.tag,
-            body_len: evidence.body_len,
+            selector: evidence.selector.map(super::ProtocolSelector::get),
+            tag: evidence.tag.map(super::ProtocolTag::get),
+            body_len: evidence.body_len.get(),
             verification: evidence.verification.into(),
         }
     }
@@ -1098,9 +1098,9 @@ pub struct ParserGapEvidenceDto {
 impl From<ParserGapEvidence> for ParserGapEvidenceDto {
     fn from(evidence: ParserGapEvidence) -> Self {
         Self {
-            selector: evidence.selector,
-            tag: evidence.tag,
-            body_len: evidence.body_len,
+            selector: evidence.selector.map(super::ProtocolSelector::get),
+            tag: evidence.tag.map(super::ProtocolTag::get),
+            body_len: evidence.body_len.get(),
         }
     }
 }

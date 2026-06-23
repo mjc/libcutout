@@ -2309,9 +2309,10 @@ mod tests {
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
     use cutout_core::{
         DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
-        NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence,
-        PevcapDirection, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, RawFieldValue,
-        ReadOnlyResponse, ReservedPayloadEvidence, SessionInput, SessionOutput, SettingsEntry,
+        NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
+        ParserGapEvidence, PayloadBodyLen, PevcapDirection, PevcapResolvedIdentity, ProtocolFamily,
+        ProtocolSelector, ProtocolSession, RawFieldValue, ReadOnlyResponse,
+        ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
         SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
         VerificationStatus, VerifiedValue, WriteMode,
     };
@@ -3286,9 +3287,9 @@ mod tests {
             NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 GattChannel::from_bytes([0xA1; 16]),
-                77,
+                NotificationByteLen::new(77),
                 7,
-                5,
+                SemanticEventCount::new(5),
             ),
         )];
 
@@ -3304,7 +3305,7 @@ mod tests {
             NotificationIngestOutcome::buffered_fragment(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 GattChannel::from_bytes([0xA1; 16]),
-                20,
+                NotificationByteLen::new(20),
                 3,
             ),
         )];
@@ -3320,7 +3321,7 @@ mod tests {
         let outputs = [SessionOutput::NotificationIngest(
             NotificationIngestOutcome::ignored_wrong_channel(
                 GattChannel::from_bytes([0xA1; 16]),
-                20,
+                NotificationByteLen::new(20),
                 3,
             ),
         )];
@@ -3337,7 +3338,7 @@ mod tests {
         let outcome = NotificationIngestOutcome::buffered_fragment(
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
-            20,
+            NotificationByteLen::new(20),
             3,
         );
 
@@ -3358,9 +3359,9 @@ mod tests {
             SessionOutput::NotificationIngest(NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 GattChannel::from_bytes([0xA1; 16]),
-                77,
+                NotificationByteLen::new(77),
                 3,
-                5,
+                SemanticEventCount::new(5),
             )),
             SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
                 voltage_mv: Some(Measured::reported(126_000)),
@@ -3381,12 +3382,12 @@ mod tests {
             NotificationIngestOutcome::known_reserved(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
-                75,
+                NotificationByteLen::new(75),
                 4,
                 ReservedPayloadEvidence {
-                    selector: Some(8),
+                    selector: Some(ProtocolSelector::new(8)),
                     tag: None,
-                    body_len: 24,
+                    body_len: PayloadBodyLen::new(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
             ),
@@ -3395,12 +3396,12 @@ mod tests {
             NotificationIngestOutcome::parser_gap(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
-                77,
+                NotificationByteLen::new(77),
                 5,
                 ParserGapEvidence {
-                    selector: Some(9),
+                    selector: Some(ProtocolSelector::new(9)),
                     tag: None,
-                    body_len: 26,
+                    body_len: PayloadBodyLen::new(26),
                 },
             ),
         )];
@@ -3408,7 +3409,7 @@ mod tests {
             NotificationIngestOutcome::parser_diagnostic(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
-                77,
+                NotificationByteLen::new(77),
                 6,
                 ParserError::BadChecksum,
             ),
@@ -4003,9 +4004,9 @@ mod tests {
                         NotificationIngestOutcome::semantic_events(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             GattChannel::from_bytes([0xA1; 16]),
-                            2,
+                            NotificationByteLen::new(2),
                             0,
-                            1,
+                            SemanticEventCount::new(1),
                         ),
                     ));
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(

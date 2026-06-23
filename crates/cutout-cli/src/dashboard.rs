@@ -1075,8 +1075,8 @@ fn format_notification_ingest_event(
             format!(
                 "t={monotonic_ms}ms protocol semantic events family={} events={} len={}",
                 family_name(notification.family),
-                event_count,
-                notification.len
+                event_count.get(),
+                notification.len.get()
             ),
         ),
         NotificationIngestOutcome::BufferedFragment(notification) => (
@@ -1084,7 +1084,7 @@ fn format_notification_ingest_event(
             format!(
                 "t={monotonic_ms}ms protocol buffered fragment family={} len={}",
                 family_name(notification.family),
-                notification.len
+                notification.len.get()
             ),
         ),
         NotificationIngestOutcome::ParserDiagnostic {
@@ -1095,7 +1095,7 @@ fn format_notification_ingest_event(
             format!(
                 "t={monotonic_ms}ms protocol parser diagnostic family={} len={} error={error:?}",
                 family_name(notification.family),
-                notification.len
+                notification.len.get()
             ),
         ),
         NotificationIngestOutcome::KnownReserved {
@@ -1106,11 +1106,11 @@ fn format_notification_ingest_event(
             format!(
                 "t={monotonic_ms}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
                 family_name(notification.family),
-                optional_u8(payload.selector),
-                optional_u16(payload.tag),
-                payload.body_len,
+                optional_u8(payload.selector.map(cutout_core::ProtocolSelector::get)),
+                optional_u16(payload.tag.map(cutout_core::ProtocolTag::get)),
+                payload.body_len.get(),
                 verification_name(payload.verification),
-                notification.len
+                notification.len.get()
             ),
         ),
         NotificationIngestOutcome::ParserGap { notification, gap } => (
@@ -1118,10 +1118,10 @@ fn format_notification_ingest_event(
             format!(
                 "t={monotonic_ms}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
                 family_name(notification.family),
-                optional_u8(gap.selector),
-                optional_u16(gap.tag),
-                gap.body_len,
-                notification.len
+                optional_u8(gap.selector.map(cutout_core::ProtocolSelector::get)),
+                optional_u16(gap.tag.map(cutout_core::ProtocolTag::get)),
+                gap.body_len.get(),
+                notification.len.get()
             ),
         ),
         NotificationIngestOutcome::Ignored(notification) => (
@@ -1129,7 +1129,7 @@ fn format_notification_ingest_event(
             format!(
                 "t={monotonic_ms}ms protocol ignored notification family={} len={}",
                 family_name(notification.family),
-                notification.len
+                notification.len.get()
             ),
         ),
     }
@@ -2114,10 +2114,10 @@ mod tests {
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
     use cutout_core::{
         BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback, FirmwareInfo,
-        GattChannel, Measured, NotificationIngestOutcome, ParserError, ParserGapEvidence,
-        ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-        ReservedPayloadEvidence, SettingsEntry, SettingsReadback, TelemetrySnapshot, ValueQuality,
-        ValueSource, VerificationStatus,
+        GattChannel, Measured, NotificationByteLen, NotificationIngestOutcome, ParserError,
+        ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue,
+        RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
+        SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -2620,7 +2620,7 @@ mod tests {
                     outcome: NotificationIngestOutcome::buffered_fragment(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        20,
+                        NotificationByteLen::new(20),
                         3,
                     ),
                 },
@@ -2629,12 +2629,12 @@ mod tests {
                     outcome: NotificationIngestOutcome::known_reserved(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        75,
+                        NotificationByteLen::new(75),
                         4,
                         ReservedPayloadEvidence {
-                            selector: Some(8),
+                            selector: Some(ProtocolSelector::new(8)),
                             tag: None,
-                            body_len: 24,
+                            body_len: PayloadBodyLen::new(24),
                             verification: VerificationStatus::HardwareVerified,
                         },
                     ),
@@ -2644,12 +2644,12 @@ mod tests {
                     outcome: NotificationIngestOutcome::parser_gap(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        77,
+                        NotificationByteLen::new(77),
                         5,
                         ParserGapEvidence {
-                            selector: Some(9),
+                            selector: Some(ProtocolSelector::new(9)),
                             tag: None,
-                            body_len: 26,
+                            body_len: PayloadBodyLen::new(26),
                         },
                     ),
                 },
@@ -2658,14 +2658,18 @@ mod tests {
                     outcome: NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        77,
+                        NotificationByteLen::new(77),
                         6,
                         ParserError::BadChecksum,
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
                     monotonic_ms: 7,
-                    outcome: NotificationIngestOutcome::ignored_wrong_channel(channel, 20, 7),
+                    outcome: NotificationIngestOutcome::ignored_wrong_channel(
+                        channel,
+                        NotificationByteLen::new(20),
+                        7,
+                    ),
                 },
             ],
             ..empty_session_bridge_report()
