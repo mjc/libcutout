@@ -8,8 +8,8 @@ use crate::GattRoles;
 #[cfg(feature = "serde")]
 use crate::VerificationStatus;
 use crate::{
-    CaptureRecord, GattChannel, GattFingerprint, LinkInfo, MonotonicMillis, ProtocolFamily,
-    RequestTarget, VerifiedValue, WriteMode,
+    CaptureRecord, GattChannel, GattFingerprint, LinkInfo, MonotonicMillis, NotificationChunkLen,
+    ProtocolFamily, RequestTarget, VerifiedValue, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -603,7 +603,7 @@ impl PevcapCapture {
     #[must_use]
     pub fn replay_records_with_notification_chunk_len(
         &self,
-        chunk_len: usize,
+        chunk_len: NotificationChunkLen,
     ) -> Vec<CaptureRecord> {
         self.replay_records()
             .into_iter()
@@ -1983,7 +1983,7 @@ mod tests {
         );
 
         assert_eq!(
-            capture.replay_records_with_notification_chunk_len(1),
+            capture.replay_records_with_notification_chunk_len(NotificationChunkLen::new(1)),
             vec![
                 CaptureRecord::LinkUp(LinkInfo {
                     monotonic_ms: 0,

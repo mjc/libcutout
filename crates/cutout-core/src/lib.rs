@@ -1356,6 +1356,7 @@ impl DiagnosticError {
 }
 
 enum NotificationByteLenUnit {}
+enum NotificationChunkLenUnit {}
 enum PayloadBodyLenUnit {}
 enum SemanticEventCountUnit {}
 enum ProtocolSelectorUnit {}
@@ -1407,6 +1408,21 @@ typed_protocol_value!(
     usize,
     "Length of one transport notification payload after capture/parser admission."
 );
+
+typed_protocol_value!(
+    NotificationChunkLen,
+    NotificationChunkLenUnit,
+    usize,
+    "Replay split length for one notification chunk; zero preserves whole-notification replay."
+);
+
+impl NotificationChunkLen {
+    /// Returns true when replay should preserve whole notifications.
+    #[must_use]
+    pub const fn is_whole(self) -> bool {
+        self.value == 0
+    }
+}
 
 typed_protocol_value!(
     PayloadBodyLen,
@@ -3300,7 +3316,7 @@ impl CaptureRecord {
     /// Non-notification records are returned unchanged. A zero `chunk_len`
     /// leaves the record unchanged.
     #[must_use]
-    pub fn split_notification_bytes(self, chunk_len: usize) -> Vec<Self> {
+    pub fn split_notification_bytes(self, chunk_len: NotificationChunkLen) -> Vec<Self> {
         let Self::Notification {
             channel,
             bytes,
@@ -3310,12 +3326,12 @@ impl CaptureRecord {
             return vec![self];
         };
 
-        if chunk_len == 0 {
+        if chunk_len.is_whole() {
             return vec![Self::notification(channel, bytes, monotonic_ms)];
         }
 
         bytes
-            .chunks(chunk_len)
+            .chunks(chunk_len.get())
             .map(|chunk| Self::notification(channel, chunk.to_vec(), monotonic_ms))
             .collect()
     }
@@ -3479,7 +3495,8 @@ where
     F: FnMut() -> S,
 {
     let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
-    let one_byte_records = split_capture_notifications_by_len(records, 1);
+    let one_byte_records =
+        split_capture_notifications_by_len(records, NotificationChunkLen::new(1));
     let one_byte =
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
     let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
@@ -3545,7 +3562,8 @@ pub fn notification_boundary_replay_cases(
     arbitrary_lengths: &[usize],
 ) -> Vec<NotificationBoundaryReplayCase> {
     let whole_records = notification_records(channel, frames, monotonic_ms);
-    let one_byte_records = split_capture_notifications_by_len(&whole_records, 1);
+    let one_byte_records =
+        split_capture_notifications_by_len(&whole_records, NotificationChunkLen::new(1));
     let arbitrary_records =
         split_capture_notifications_by_lengths(&whole_records, arbitrary_lengths);
     let coalesced_records = coalesced_notification_record(channel, frames, monotonic_ms);
@@ -3705,7 +3723,7 @@ fn timeout_after_partial_records(
 
 fn split_capture_notifications_by_len(
     records: &[CaptureRecord],
-    chunk_len: usize,
+    chunk_len: NotificationChunkLen,
 ) -> Vec<CaptureRecord> {
     records
         .iter()
@@ -3855,6 +3873,7 @@ mod tests {
         assert!(size_of::<Measured<i32>>() <= 16);
         assert!(size_of::<Measured<u64>>() <= 24);
         assert_eq!(size_of::<crate::NotificationByteLen>(), size_of::<usize>());
+        assert_eq!(size_of::<crate::NotificationChunkLen>(), size_of::<usize>());
         assert_eq!(size_of::<crate::PayloadBodyLen>(), size_of::<usize>());
         assert_eq!(size_of::<crate::SemanticEventCount>(), size_of::<usize>());
         assert_eq!(size_of::<crate::ProtocolSelector>(), size_of::<u8>());
@@ -6351,7 +6370,9 @@ mod tests {
             crate::CaptureRecord::targeted_command(DeviceCommand::RequestTelemetry, target);
 
         assert_eq!(
-            record.clone().split_notification_bytes(1),
+            record
+                .clone()
+                .split_notification_bytes(crate::NotificationChunkLen::new(1)),
             vec![record.clone()]
         );
         assert_eq!(
@@ -6369,7 +6390,7 @@ mod tests {
             10,
         )];
         let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], 10)
-            .split_notification_bytes(1);
+            .split_notification_bytes(crate::NotificationChunkLen::new(1));
 
         assert_eq!(replay_events(&one_byte), replay_events(&whole));
     }

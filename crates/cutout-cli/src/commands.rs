@@ -2901,7 +2901,8 @@ mod tests {
     fn pevcap_replay_chunk_modes_preserve_final_typed_ingest_outcomes() {
         let capture = sample_aero_reserved_replay_capture();
         let records = capture.replay_records();
-        let one_byte_records = capture.replay_records_with_notification_chunk_len(1);
+        let one_byte_records = capture
+            .replay_records_with_notification_chunk_len(cutout_core::NotificationChunkLen::new(1));
         let arbitrary_records = capture.replay_records_with_notification_chunks(
             &cutout_core::replay_arbitrary_chunk_lengths(&records),
         );
