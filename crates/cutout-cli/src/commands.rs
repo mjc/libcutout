@@ -19,8 +19,8 @@ use cutout_btle::{
 use cutout_core::{
     BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
     CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError, DiagnosticErrorKind,
-    DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured, ParserDiagnostics,
-    PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
+    DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured, NotificationByteLen,
+    ParserDiagnostics, PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
     PevcapResolvedIdentity, ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput,
     SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     VerifiedValue,
@@ -429,13 +429,13 @@ fn replay_notification_bytes(capture: &PevcapCapture) -> usize {
         .sum()
 }
 
-fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<usize> {
+fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<NotificationByteLen> {
     capture
         .records
         .iter()
         .rev()
         .find(|record| record.direction == PevcapDirection::Inbound)
-        .map(|record| record.bytes.len())
+        .map(|record| NotificationByteLen::new(record.bytes.len()))
 }
 
 fn render_diagnostic_snapshots_jsonl(

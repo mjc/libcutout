@@ -502,7 +502,9 @@ impl DashboardState {
             .counters
             .notification_bytes
             .saturating_add(usize_to_u64(report.notification_bytes));
-        self.counters.latest_notification_len = report.latest_notification_len.map(usize_to_u64);
+        self.counters.latest_notification_len = report
+            .latest_notification_len
+            .map(|len| usize_to_u64(len.get()));
         self.push_log(
             "info",
             &format!(
@@ -2718,7 +2720,7 @@ mod tests {
             subscribes: 1,
             notifications: 184,
             notification_bytes: 18_400,
-            latest_notification_len: Some(100),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
             read_only_responses: 0,
@@ -2787,7 +2789,7 @@ mod tests {
             subscribes: 1,
             notifications: 2,
             notification_bytes: 200,
-            latest_notification_len: Some(100),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
             telemetry: 1,
             telemetry_snapshot: TelemetrySnapshot {
                 speed_mm_s: Some(Measured::reported(4_470)),
@@ -2861,7 +2863,7 @@ mod tests {
         let report = SessionBridgeReport {
             notifications: 1,
             notification_bytes: 99,
-            latest_notification_len: Some(99),
+            latest_notification_len: Some(NotificationByteLen::new(99)),
             telemetry: 1,
             telemetry_snapshot: TelemetrySnapshot {
                 voltage_mv: Some(Measured::reported(117_600)),
@@ -2913,7 +2915,7 @@ mod tests {
         let report = SessionBridgeReport {
             notifications: 3,
             notification_bytes: 57,
-            latest_notification_len: Some(20),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
             events: Vec::new(),
             ..empty_session_bridge_report()
         };
@@ -3123,7 +3125,7 @@ mod tests {
         let report = SessionBridgeReport {
             notifications: 5,
             notification_bytes: 269,
-            latest_notification_len: Some(77),
+            latest_notification_len: Some(NotificationByteLen::new(77)),
             events: vec![
                 SessionBridgeEvent::NotificationIngest {
                     monotonic_ms: cutout_btle::MonotonicMs::new(3),
@@ -3302,7 +3304,7 @@ mod tests {
             subscribes: 1,
             notifications: 1,
             notification_bytes: 20,
-            latest_notification_len: Some(20),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
             telemetry: 1,
             telemetry_snapshot: live_aero_telemetry_snapshot(),
             read_only_responses: 0,
@@ -3346,7 +3348,7 @@ mod tests {
             subscribes: 1,
             notifications: 3,
             notification_bytes: 300,
-            latest_notification_len: Some(100),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
             read_only_responses: 5,
@@ -3450,7 +3452,7 @@ mod tests {
             subscribes: 1,
             notifications: 4,
             notification_bytes: 400,
-            latest_notification_len: Some(100),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
             telemetry: 1,
             telemetry_snapshot: {
                 let mut snapshot = TelemetrySnapshot::default();
@@ -3686,7 +3688,7 @@ mod tests {
             subscribes: 1,
             notifications: 2,
             notification_bytes: 40,
-            latest_notification_len: Some(20),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
             read_only_responses: 0,
@@ -3719,7 +3721,7 @@ mod tests {
             subscribes: 1,
             notifications: 1,
             notification_bytes: 20,
-            latest_notification_len: Some(20),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
             telemetry: 1,
             telemetry_snapshot: live_aero_telemetry_snapshot(),
             read_only_responses: 0,

@@ -1,7 +1,7 @@
 use btleplug::api::{Characteristic, ValueNotification};
 use cutout_core::{
-    DeviceCommand, GattChannel, LinkInfo, NotificationEvidence, NotificationIngestOutcome,
-    ProtocolSession, SessionInput, SessionOutput, TransportAction,
+    DeviceCommand, GattChannel, LinkInfo, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput, TransportAction,
 };
 use futures_util::StreamExt;
 use tracing::{debug, info};
@@ -431,7 +431,8 @@ where
                 log_notification_decode_outcome(decode_outcome, &notification, context.channel);
                 context.report.notifications += 1;
                 context.report.notification_bytes += notification.value.len();
-                context.report.latest_notification_len = Some(notification.value.len());
+                context.report.latest_notification_len =
+                    Some(NotificationByteLen::new(notification.value.len()));
             }
             Ok(None) => {
                 debug!("session notification stream ended");

@@ -1,6 +1,6 @@
 use cutout_core::{
-    DeviceEvent, DiagnosticError, FirmwareInfo, NotificationIngestOutcome, ParserDiagnostics,
-    ReadOnlyResponse, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
+    DeviceEvent, DiagnosticError, FirmwareInfo, NotificationByteLen, NotificationIngestOutcome,
+    ParserDiagnostics, ReadOnlyResponse, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
 };
 
 use crate::{BridgeIdentityResolution, MonotonicMs};
@@ -24,7 +24,7 @@ pub struct SessionBridgeReport {
     pub notification_bytes: usize,
 
     /// Length of the latest notification payload, if any were observed.
-    pub latest_notification_len: Option<usize>,
+    pub latest_notification_len: Option<NotificationByteLen>,
 
     /// Semantic telemetry events emitted by the session.
     pub telemetry: usize,

@@ -1007,7 +1007,10 @@ async fn drive_session_relays_notifications_back_into_session() {
 
     assert_eq!(report.notifications, 1);
     assert_eq!(report.notification_bytes, 2);
-    assert_eq!(report.latest_notification_len, Some(2));
+    assert_eq!(
+        report.latest_notification_len,
+        Some(NotificationByteLen::new(2))
+    );
     assert_eq!(
         *session
             .last_notification_channel
