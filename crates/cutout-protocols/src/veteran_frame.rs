@@ -9,6 +9,36 @@ pub const MAX_VETERAN_FRAME_LEN: usize = 259;
 const VETERAN_MAGIC: [u8; 3] = [0xdc, 0x5a, 0x5c];
 const VETERAN_SHORT_FRAME_MAX_LEN: u8 = 38;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct VeteranDeclaredLen(usize);
+
+impl VeteranDeclaredLen {
+    const fn from_wire(value: u8) -> Self {
+        Self(value as usize)
+    }
+
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    const fn complete_frame_len(self) -> VeteranCompleteFrameLen {
+        VeteranCompleteFrameLen(self.0 + 4)
+    }
+
+    fn crc_offset(self) -> ByteOffset {
+        ByteOffset::new(self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct VeteranCompleteFrameLen(usize);
+
+impl VeteranCompleteFrameLen {
+    const fn get(self) -> usize {
+        self.0
+    }
+}
+
 /// Complete Veteran/LeaperKim/NOSFET frame reassembled from BLE notifications.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranFrame {
@@ -29,7 +59,11 @@ impl VeteranFrame {
         let Some(len) = bytes.get(3) else {
             return Err(VeteranReassemblyError::InvalidFrame);
         };
-        if bytes.len() != usize::from(*len) + 4 {
+        if bytes.len()
+            != VeteranDeclaredLen::from_wire(*len)
+                .complete_frame_len()
+                .get()
+        {
             return Err(VeteranReassemblyError::InvalidFrame);
         }
         let Ok(bytes) = ArrayVec::try_from(bytes) else {
@@ -202,7 +236,7 @@ impl VeteranFrameParseState {
         let Some(expected_len) = veteran_expected_len(buffer.as_slice()) else {
             return Ok(None);
         };
-        if buffer.len() < expected_len {
+        if buffer.len() < expected_len.get() {
             return Ok(None);
         }
 
@@ -217,10 +251,11 @@ impl VeteranFrameParseState {
     }
 }
 
-fn veteran_expected_len(bytes: &[u8]) -> Option<usize> {
+fn veteran_expected_len(bytes: &[u8]) -> Option<VeteranCompleteFrameLen> {
     ByteCursor::new(bytes)
         .byte(ByteOffset::new(3))
-        .map(|len| usize::from(len) + 4)
+        .map(VeteranDeclaredLen::from_wire)
+        .map(VeteranDeclaredLen::complete_frame_len)
 }
 
 fn veteran_uses_crc(bytes: &[u8]) -> bool {
@@ -231,13 +266,16 @@ fn veteran_uses_crc(bytes: &[u8]) -> bool {
 
 fn veteran_crc_matches(bytes: &[u8]) -> bool {
     let cursor = ByteCursor::new(bytes);
-    let Some(declared_len) = cursor.byte(ByteOffset::new(3)).map(usize::from) else {
+    let Some(declared_len) = cursor
+        .byte(ByteOffset::new(3))
+        .map(VeteranDeclaredLen::from_wire)
+    else {
         return false;
     };
-    let Some(expected_crc) = cursor.be_u32(ByteOffset::new(declared_len)) else {
+    let Some(expected_crc) = cursor.be_u32(declared_len.crc_offset()) else {
         return false;
     };
-    let Some(crc_bytes) = bytes.get(..declared_len) else {
+    let Some(crc_bytes) = bytes.get(..declared_len.get()) else {
         return false;
     };
     crc32fast::hash(crc_bytes) == expected_crc
