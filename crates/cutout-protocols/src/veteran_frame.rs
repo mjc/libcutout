@@ -583,6 +583,10 @@ mod tests {
         ) {
             let frame = long_veteran_frame();
             let channel = cutout_core::GattChannel::from_bytes([0x5c; 16]);
+            let chunk_sizes = chunk_sizes
+                .into_iter()
+                .map(cutout_core::NotificationChunkLen::new)
+                .collect::<Vec<_>>();
             let cases = cutout_core::notification_boundary_replay_cases(
                 channel,
                 &[frame.as_slice()],

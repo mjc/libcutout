@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use bytes::Bytes;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -451,7 +452,7 @@ pub struct PevcapRecord {
     pub target: Option<RequestTarget>,
 
     /// Exact bytes captured for the record.
-    pub bytes: Vec<u8>,
+    pub bytes: Bytes,
 }
 
 impl PevcapRecord {
@@ -466,7 +467,7 @@ impl PevcapRecord {
             write_mode: None,
             link_max_write_len: max_write_len,
             target: None,
-            bytes: Vec::new(),
+            bytes: Bytes::new(),
         }
     }
 
@@ -481,7 +482,7 @@ impl PevcapRecord {
             write_mode: None,
             link_max_write_len: None,
             target: None,
-            bytes: Vec::new(),
+            bytes: Bytes::new(),
         }
     }
 
@@ -491,7 +492,7 @@ impl PevcapRecord {
         monotonic_ms: MonotonicMillis,
         characteristic: GattChannel,
         write_mode: WriteMode,
-        bytes: Vec<u8>,
+        bytes: impl Into<Bytes>,
     ) -> Self {
         Self {
             monotonic_ms,
@@ -501,7 +502,7 @@ impl PevcapRecord {
             write_mode: Some(write_mode),
             link_max_write_len: None,
             target: None,
-            bytes,
+            bytes: bytes.into(),
         }
     }
 
@@ -511,7 +512,7 @@ impl PevcapRecord {
         monotonic_ms: MonotonicMillis,
         characteristic: GattChannel,
         write_mode: WriteMode,
-        bytes: Vec<u8>,
+        bytes: impl Into<Bytes>,
         target: RequestTarget,
     ) -> Self {
         Self {
@@ -526,7 +527,7 @@ impl PevcapRecord {
         monotonic_ms: MonotonicMillis,
         characteristic: GattChannel,
         service: GattChannel,
-        bytes: Vec<u8>,
+        bytes: impl Into<Bytes>,
     ) -> Self {
         Self {
             monotonic_ms,
@@ -536,7 +537,7 @@ impl PevcapRecord {
             write_mode: None,
             link_max_write_len: None,
             target: None,
-            bytes,
+            bytes: bytes.into(),
         }
     }
 }
@@ -857,7 +858,7 @@ impl PevcapRecord {
             PevcapDirection::LinkDown => Some(CaptureRecord::LinkDown),
             PevcapDirection::Inbound => Some(CaptureRecord::notification(
                 self.characteristic,
-                self.bytes.clone(),
+                self.bytes.to_vec(),
                 self.monotonic_ms,
             )),
             PevcapDirection::Outbound => None,
@@ -1410,7 +1411,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             write_mode: record.write_mode.map(WriteModeJson::from),
             link_max_write_len: record.link_max_write_len,
             target: record.target.map(PevcapRequestTargetJson::from),
-            bytes: record.bytes.clone(),
+            bytes: record.bytes.to_vec(),
         }
     }
 }
@@ -1426,7 +1427,7 @@ impl PevcapRecordJson {
             write_mode: self.write_mode.map(WriteModeJson::into_mode),
             link_max_write_len: self.link_max_write_len,
             target: self.target.map(PevcapRequestTargetJson::into_target),
-            bytes: self.bytes,
+            bytes: self.bytes.into(),
         }
     }
 }
@@ -1785,12 +1786,12 @@ mod tests {
         assert_eq!(write.characteristic, characteristic);
         assert_eq!(write.service, None);
         assert_eq!(write.write_mode, Some(WriteMode::WithoutResponse));
-        assert_eq!(write.bytes.as_slice(), &[0x01, 0x23, 0xab]);
+        assert_eq!(write.bytes.as_ref(), &[0x01, 0x23, 0xab]);
         assert_eq!(notification.direction, PevcapDirection::Inbound);
         assert_eq!(notification.characteristic, characteristic);
         assert_eq!(notification.service, Some(service));
         assert_eq!(notification.write_mode, None);
-        assert_eq!(notification.bytes.as_slice(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(notification.bytes.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
     }
 
     #[test]

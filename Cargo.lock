@@ -465,6 +465,7 @@ dependencies = [
  "arrayvec",
  "async-trait",
  "btleplug",
+ "bytes",
  "cutout-core",
  "cutout-protocols",
  "futures-util",
@@ -481,6 +482,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "btleplug",
+ "bytes",
  "clap",
  "cutout-btle",
  "cutout-core",
@@ -501,6 +503,7 @@ name = "cutout-core"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "bytes",
  "proptest",
  "serde",
  "serde_json",

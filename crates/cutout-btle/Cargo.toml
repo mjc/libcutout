@@ -17,6 +17,7 @@ workspace = true
 async-trait.workspace = true
 arrayvec.workspace = true
 btleplug.workspace = true
+bytes.workspace = true
 cutout-core = { path = "../cutout-core", version = "0.1.0" }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 futures-util.workspace = true

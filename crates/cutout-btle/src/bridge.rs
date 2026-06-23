@@ -1,4 +1,5 @@
 use btleplug::api::{Characteristic, ValueNotification};
+use bytes::Bytes;
 use cutout_core::{
     DeviceCommand, GattChannel, LinkInfo, NotificationByteLen, NotificationEvidence,
     NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput, TransportAction,
@@ -7,8 +8,8 @@ use futures_util::StreamExt;
 use tracing::{debug, info};
 
 use crate::{
-    BtleError, ConnectionSummary, SessionBridgeError, SessionBridgeReport, SessionCapture,
-    SessionCaptureRecord, SessionEndpoints, SessionPeripheral,
+    BtleError, CapturedBtlePacket, ConnectionSummary, SessionBridgeError, SessionBridgeReport,
+    SessionCapture, SessionCaptureRecord, SessionEndpoints, SessionPeripheral,
     identity::{IdentityContext, IdentityState, update_identity_report},
     report::{process_device_event, process_notification_ingest_outcome},
     types::characteristic_from_summary,
@@ -395,7 +396,9 @@ where
                         monotonic_ms: *monotonic_ms,
                         characteristic: notification.uuid,
                         service: notification.service_uuid,
-                        bytes: notification.value.clone(),
+                        bytes: CapturedBtlePacket::from_raw_bytes(Bytes::copy_from_slice(
+                            &notification.value,
+                        )),
                     });
                 }
                 context.identity_state.observe(&notification.value);
@@ -663,7 +666,7 @@ where
                                 monotonic_ms,
                                 characteristic: context.write_characteristic.uuid,
                                 mode,
-                                bytes: chunk.to_vec(),
+                                bytes: Bytes::copy_from_slice(chunk).into(),
                                 provenance: context.write_provenance,
                             });
                         }

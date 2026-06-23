@@ -30,6 +30,7 @@ pub use bridge::{
 };
 /// Live capture records and raw notification capture utilities.
 pub use capture::{
+    BtleAttributeValue, CapturedBtlePacket, MalformedBtlePacket, MalformedBtlePacketReason,
     PevcapSessionMetadata, RawNotificationRecord, SessionCapture, SessionCaptureRecord,
     capture_raw_notifications,
 };

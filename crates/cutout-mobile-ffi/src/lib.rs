@@ -1392,7 +1392,7 @@ mod tests {
             ]
         );
         assert_eq!(capture.records.len(), 2);
-        assert_eq!(capture.records[1].bytes, [0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(capture.records[1].bytes.as_ref(), [0xde, 0xad, 0xbe, 0xef]);
     }
 
     #[test]

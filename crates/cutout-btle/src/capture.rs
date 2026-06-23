@@ -1,6 +1,9 @@
 use std::fmt::{self, Write as _};
 
-use cutout_core::{PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord, WriteMode};
+use bytes::Bytes;
+use cutout_core::{
+    NotificationByteLen, PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord, WriteMode,
+};
 use futures_util::StreamExt;
 use uuid::Uuid;
 
@@ -9,6 +12,155 @@ use crate::{
     NotificationWindow, SessionBridgeReport, SessionPeripheral, WriteProvenance,
     gatt::gatt_channel_from_uuid, types::characteristic_from_summary,
 };
+
+const MAX_BTLE_ATTRIBUTE_VALUE_LEN: usize = 512;
+
+/// Captured BTLE bytes tagged as either a valid attribute value or malformed input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CapturedBtlePacket {
+    /// Valid BTLE ATT attribute value.
+    AttributeValue(BtleAttributeValue),
+
+    /// Malformed BTLE bytes retained only for explicit capture/provenance.
+    Malformed(MalformedBtlePacket),
+}
+
+impl CapturedBtlePacket {
+    /// Classifies raw bytes from a BTLE attribute value while preserving them.
+    #[must_use]
+    pub fn from_raw_bytes(bytes: impl Into<Bytes>) -> Self {
+        Self::from_bytes(bytes.into())
+    }
+
+    #[must_use]
+    fn from_bytes(bytes: Bytes) -> Self {
+        match BtleAttributeValue::try_from_bytes(bytes) {
+            Ok(value) => Self::AttributeValue(value),
+            Err(malformed) => Self::Malformed(malformed),
+        }
+    }
+
+    /// Returns the original captured bytes for explicit capture/provenance edges.
+    #[must_use]
+    pub fn as_raw_bytes(&self) -> &[u8] {
+        match self {
+            Self::AttributeValue(value) => value.as_raw_bytes(),
+            Self::Malformed(packet) => packet.as_raw_bytes(),
+        }
+    }
+
+    /// Reconstructs the original raw byte buffer.
+    #[must_use]
+    pub fn into_raw_bytes(self) -> Bytes {
+        match self {
+            Self::AttributeValue(value) => value.into_raw_bytes(),
+            Self::Malformed(packet) => packet.into_raw_bytes(),
+        }
+    }
+
+    /// Returns the captured byte length.
+    #[must_use]
+    pub fn len(&self) -> NotificationByteLen {
+        NotificationByteLen::new(self.as_raw_bytes().len())
+    }
+
+    /// Returns true when no bytes were captured.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.as_raw_bytes().is_empty()
+    }
+
+    /// Returns true when the capture boundary classified the bytes as malformed.
+    #[must_use]
+    pub const fn is_malformed(&self) -> bool {
+        matches!(self, Self::Malformed(_))
+    }
+
+    /// Reconstructs the original raw bytes as a cheap shared buffer clone.
+    #[must_use]
+    pub fn to_raw_bytes(&self) -> Bytes {
+        match self {
+            Self::AttributeValue(value) => value.bytes.clone(),
+            Self::Malformed(packet) => packet.bytes.clone(),
+        }
+    }
+}
+
+impl From<Bytes> for CapturedBtlePacket {
+    fn from(bytes: Bytes) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// Valid BTLE ATT attribute-value bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BtleAttributeValue {
+    bytes: Bytes,
+}
+
+impl BtleAttributeValue {
+    fn try_from_bytes(bytes: Bytes) -> Result<Self, MalformedBtlePacket> {
+        if bytes.len() <= MAX_BTLE_ATTRIBUTE_VALUE_LEN {
+            Ok(Self { bytes })
+        } else {
+            Err(MalformedBtlePacket {
+                bytes,
+                reason: MalformedBtlePacketReason::OversizedAttributeValue {
+                    max: NotificationByteLen::new(MAX_BTLE_ATTRIBUTE_VALUE_LEN),
+                },
+            })
+        }
+    }
+
+    /// Returns the original captured bytes for explicit capture/provenance edges.
+    #[must_use]
+    pub fn as_raw_bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
+
+    /// Reconstructs the original raw byte buffer.
+    #[must_use]
+    pub fn into_raw_bytes(self) -> Bytes {
+        self.bytes
+    }
+}
+
+/// Malformed BTLE bytes retained only for explicit capture/provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MalformedBtlePacket {
+    bytes: Bytes,
+    reason: MalformedBtlePacketReason,
+}
+
+impl MalformedBtlePacket {
+    /// Returns why the bytes are not valid BTLE capture input.
+    #[must_use]
+    pub const fn reason(&self) -> MalformedBtlePacketReason {
+        self.reason
+    }
+
+    /// Returns the original captured bytes for explicit capture/provenance edges.
+    #[must_use]
+    pub fn as_raw_bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
+    }
+
+    /// Reconstructs the original raw byte buffer.
+    #[must_use]
+    pub fn into_raw_bytes(self) -> Bytes {
+        self.bytes
+    }
+}
+
+/// Malformed BTLE capture classifications.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MalformedBtlePacketReason {
+    /// Attribute value exceeded the BTLE ATT maximum of 512 bytes.
+    OversizedAttributeValue {
+        /// Maximum valid attribute value length.
+        max: NotificationByteLen,
+    },
+}
 
 /// Captured bridge records suitable for live BTLE evidence files.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,8 +200,8 @@ pub enum SessionCaptureRecord {
         /// Write mode requested by the protocol session.
         mode: WriteMode,
 
-        /// Exact bytes sent to the characteristic.
-        bytes: Vec<u8>,
+        /// Captured bytes sent to the characteristic.
+        bytes: CapturedBtlePacket,
 
         /// Whether the bytes come from provisional protocol encoders.
         provenance: WriteProvenance,
@@ -66,8 +218,8 @@ pub enum SessionCaptureRecord {
         /// Service associated with the notification.
         service: Uuid,
 
-        /// Exact bytes received from the device.
-        bytes: Vec<u8>,
+        /// Captured bytes received from the device.
+        bytes: CapturedBtlePacket,
     },
 }
 
@@ -104,7 +256,8 @@ impl fmt::Display for SessionCaptureRecord {
                     "write t_ms={monotonic_ms} characteristic={characteristic} mode={} bytes=",
                     format_write_mode(*mode),
                 )?;
-                write_hex(f, bytes)?;
+                write_hex(f, bytes.as_raw_bytes())?;
+                write_packet_status(f, bytes)?;
                 write!(f, " provisional={}", provenance.is_provisional())
             }
             Self::Notification {
@@ -117,7 +270,8 @@ impl fmt::Display for SessionCaptureRecord {
                     f,
                     "notification t_ms={monotonic_ms} characteristic={characteristic} service={service} bytes="
                 )?;
-                write_hex(f, bytes)
+                write_hex(f, bytes.as_raw_bytes())?;
+                write_packet_status(f, bytes)
             }
         }
     }
@@ -146,8 +300,8 @@ pub struct RawNotificationRecord {
     /// Service UUID associated with the notification.
     pub service: Uuid,
 
-    /// Exact notification bytes.
-    pub bytes: Vec<u8>,
+    /// Captured notification bytes.
+    pub bytes: CapturedBtlePacket,
 }
 
 /// Caller-supplied metadata for converting a live BTLE session capture into
@@ -207,7 +361,7 @@ where
                     ),
                     characteristic: notification.uuid,
                     service: notification.service_uuid,
-                    bytes: notification.value,
+                    bytes: CapturedBtlePacket::from_raw_bytes(notification.value),
                 });
             }
             Ok(Some(_)) => {}
@@ -302,7 +456,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             monotonic_ms.get(),
             gatt_channel_from_uuid(*characteristic),
             *mode,
-            bytes.clone(),
+            bytes.to_raw_bytes(),
         )),
         SessionCaptureRecord::Notification {
             monotonic_ms,
@@ -313,7 +467,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             monotonic_ms.get(),
             gatt_channel_from_uuid(*characteristic),
             gatt_channel_from_uuid(*service),
-            bytes.clone(),
+            bytes.to_raw_bytes(),
         )),
         SessionCaptureRecord::Subscribe { .. } => None,
     }
@@ -332,4 +486,15 @@ fn write_hex(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
         f.write_char(char::from(HEX[usize::from(byte >> 4)]))?;
         f.write_char(char::from(HEX[usize::from(byte & 0x0f)]))
     })
+}
+
+fn write_packet_status(f: &mut fmt::Formatter<'_>, packet: &CapturedBtlePacket) -> fmt::Result {
+    match packet {
+        CapturedBtlePacket::AttributeValue(_) => Ok(()),
+        CapturedBtlePacket::Malformed(malformed) => match malformed.reason() {
+            MalformedBtlePacketReason::OversizedAttributeValue { max } => {
+                write!(f, " btle=malformed_oversized_attribute_value max={max}")
+            }
+        },
+    }
 }

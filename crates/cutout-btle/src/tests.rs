@@ -6,6 +6,7 @@ use std::{
 };
 
 use btleplug::api::{CharPropFlags, Characteristic, ValueNotification};
+use bytes::Bytes;
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
@@ -25,6 +26,8 @@ use super::crate_name;
 type WriteRecord = (Uuid, Vec<u8>, WriteMode);
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
 type NotificationLog = Arc<Mutex<Vec<ValueNotification>>>;
+
+static OVERSIZED_BTLE_VALUE: [u8; 513] = [0; 513];
 
 const fn protocol_writes(value: usize) -> crate::ProtocolWriteCount {
     crate::ProtocolWriteCount::new(value)
@@ -528,7 +531,7 @@ async fn raw_notification_capture_subscribes_and_filters_selected_characteristic
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].characteristic, selected);
     assert_eq!(records[0].service, service);
-    assert_eq!(records[0].bytes, [0x01, 0x02, 0x03]);
+    assert_eq!(records[0].bytes.as_raw_bytes(), [0x01, 0x02, 0x03]);
 }
 
 #[test]
@@ -600,7 +603,7 @@ fn capture_record_formats_write_bytes_with_provenance() {
         monotonic_ms: crate::MonotonicMs::new(7),
         characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
         mode: WriteMode::WithoutResponse,
-        bytes: vec![0x01, 0x23, 0xab, 0xcd],
+        bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"\x01\x23\xab\xcd")),
         provenance: crate::WriteProvenance::Provisional,
     };
 
@@ -616,13 +619,52 @@ fn capture_record_formats_notification_bytes_with_service() {
         monotonic_ms: crate::MonotonicMs::new(11),
         characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
         service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-        bytes: vec![0xde, 0xad, 0xbe, 0xef],
+        bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"\xde\xad\xbe\xef")),
     };
 
     assert_eq!(
         record.to_string(),
         "notification t_ms=11 characteristic=0000ffe1-0000-1000-8000-00805f9b34fb service=0000ffe0-0000-1000-8000-00805f9b34fb bytes=deadbeef"
     );
+}
+
+#[test]
+fn captured_btle_packet_distinguishes_malformed_bytes_from_attribute_values() {
+    let valid = crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"\xde\xad"));
+
+    assert!(matches!(
+        valid,
+        crate::CapturedBtlePacket::AttributeValue(_)
+    ));
+    assert_eq!(valid.as_raw_bytes(), [0xde, 0xad]);
+    assert_eq!(valid.into_raw_bytes().as_ref(), [0xde, 0xad]);
+
+    let oversized =
+        crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(&OVERSIZED_BTLE_VALUE));
+    let crate::CapturedBtlePacket::Malformed(malformed) = oversized else {
+        panic!("oversized attribute value should be malformed");
+    };
+    assert_eq!(
+        malformed.reason(),
+        crate::MalformedBtlePacketReason::OversizedAttributeValue {
+            max: NotificationByteLen::new(512)
+        }
+    );
+    assert_eq!(malformed.as_raw_bytes().len(), 513);
+    assert_eq!(malformed.into_raw_bytes().len(), 513);
+}
+
+#[test]
+fn malformed_capture_records_render_the_btle_violation_tag() {
+    let record = crate::SessionCaptureRecord::Notification {
+        monotonic_ms: crate::MonotonicMs::new(11),
+        characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+        service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+        bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(&OVERSIZED_BTLE_VALUE)),
+    };
+
+    let rendered = record.to_string();
+    assert!(rendered.contains("btle=malformed_oversized_attribute_value max=512"));
 }
 
 #[test]
@@ -698,11 +740,11 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         pevcap.records[1].write_mode,
         Some(WriteMode::WithoutResponse)
     );
-    assert_eq!(pevcap.records[1].bytes, b"N");
+    assert_eq!(pevcap.records[1].bytes.as_ref(), b"N");
     assert_eq!(pevcap.records[2].direction, PevcapDirection::Inbound);
     let advertised_service = pevcap.header.advertised_services.first().copied();
     assert_eq!(pevcap.records[2].service, advertised_service);
-    assert_eq!(pevcap.records[2].bytes, b"NAME=NF2557");
+    assert_eq!(pevcap.records[2].bytes.as_ref(), b"NAME=NF2557");
     assert_eq!(pevcap.records[3].direction, PevcapDirection::LinkDown);
     assert_eq!(pevcap.records[3].monotonic_ms, 4);
 }
@@ -723,14 +765,14 @@ fn pevcap_conversion_capture_records() -> Vec<crate::SessionCaptureRecord> {
             monotonic_ms: crate::MonotonicMs::new(2),
             characteristic,
             mode: WriteMode::WithoutResponse,
-            bytes: b"N".to_vec(),
+            bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"N")),
             provenance: crate::WriteProvenance::Stable,
         },
         crate::SessionCaptureRecord::Notification {
             monotonic_ms: crate::MonotonicMs::new(3),
             characteristic,
             service,
-            bytes: b"NAME=NF2557".to_vec(),
+            bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"NAME=NF2557")),
         },
         crate::SessionCaptureRecord::LinkDown {
             monotonic_ms: crate::MonotonicMs::new(4),
@@ -765,7 +807,7 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
                 monotonic_ms: crate::MonotonicMs::new(2),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithResponse,
-                bytes: vec![0x01, 0x02],
+                bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"\x01\x02")),
                 provenance: crate::WriteProvenance::Provisional,
             },
         ],
@@ -790,7 +832,7 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
     assert_eq!(pevcap.records.len(), 2);
     assert_eq!(pevcap.records[0].direction, PevcapDirection::LinkUp);
     assert_eq!(pevcap.records[1].write_mode, Some(WriteMode::WithResponse));
-    assert_eq!(pevcap.records[1].bytes, [0x01, 0x02]);
+    assert_eq!(pevcap.records[1].bytes.as_ref(), [0x01, 0x02]);
 }
 
 #[test]
@@ -1378,14 +1420,16 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
                 monotonic_ms: crate::MonotonicMs::new(1),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithResponse,
-                bytes: b"bridge:write".to_vec(),
+                bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(
+                    b"bridge:write",
+                )),
                 provenance: crate::WriteProvenance::Provisional,
             },
             crate::SessionCaptureRecord::Notification {
                 monotonic_ms: crate::MonotonicMs::new(2),
                 characteristic: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
                 service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                bytes: vec![0x13, 0x37],
+                bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"\x13\x37")),
             },
         ]
     );
@@ -1432,14 +1476,14 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
                 monotonic_ms: crate::MonotonicMs::new(1),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithoutResponse,
-                bytes: b"N".to_vec(),
+                bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"N")),
                 provenance: crate::WriteProvenance::Stable,
             },
             crate::SessionCaptureRecord::Write {
                 monotonic_ms: crate::MonotonicMs::new(2),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithoutResponse,
-                bytes: b"V".to_vec(),
+                bytes: crate::CapturedBtlePacket::from_raw_bytes(Bytes::from_static(b"V")),
                 provenance: crate::WriteProvenance::Stable,
             },
         ]
@@ -1493,7 +1537,7 @@ async fn capture_session_chunks_writes_by_negotiated_write_limit() {
         .iter()
         .filter_map(|record| match record {
             crate::SessionCaptureRecord::Write { bytes, mode, .. } => {
-                Some((bytes.as_slice(), *mode))
+                Some((bytes.as_raw_bytes(), *mode))
             }
             crate::SessionCaptureRecord::Link { .. }
             | crate::SessionCaptureRecord::LinkDown { .. }

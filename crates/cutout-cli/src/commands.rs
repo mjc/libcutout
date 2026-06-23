@@ -310,7 +310,7 @@ fn falcon_replay_bms_voltage_evidence(
         {
             return None;
         }
-        let frame = BegodeFrame::try_from_slice(record.bytes.as_slice()).ok()?;
+        let frame = BegodeFrame::try_from_slice(record.bytes.as_ref()).ok()?;
         let summary = BegodeBmsSummary::decode(&frame).ok()?;
         u32::try_from(summary.pack_voltage_mv)
             .ok()
@@ -1077,7 +1077,7 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
                     t_ms = record.monotonic_ms.get(),
                     characteristic = %record.characteristic,
                     service = %record.service,
-                    bytes = %encode_hex(&record.bytes),
+                    bytes = %encode_hex(record.bytes.as_raw_bytes()),
                     "raw-notification"
                 );
             }
@@ -1578,7 +1578,7 @@ fn encode_raw_capture_pevcap(
             record.monotonic_ms.get(),
             gatt_channel_from_uuid(record.characteristic),
             gatt_channel_from_uuid(record.service),
-            record.bytes.clone(),
+            record.bytes.to_raw_bytes(),
         )
     }));
     pevcap_records.push(PevcapRecord::link_down(
@@ -2191,8 +2191,8 @@ mod tests {
     use btleplug::api::CharPropFlags;
     use clap::Parser;
     use cutout_btle::{
-        BridgeIdentityResolution, ConnectionSummary, ConnectionTarget, PeripheralObservation,
-        RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
+        BridgeIdentityResolution, CapturedBtlePacket, ConnectionSummary, ConnectionTarget,
+        PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
         CaptureRecord, GattChannel, LinkInfo, NotificationByteLen, PayloadBodyLen, PevcapHeader,
@@ -2431,14 +2431,16 @@ mod tests {
                     monotonic_ms: MonotonicMs::new(2),
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     mode: WriteMode::WithoutResponse,
-                    bytes: b"N".to_vec(),
+                    bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(b"N")),
                     provenance: WriteProvenance::Stable,
                 },
                 SessionCaptureRecord::Notification {
                     monotonic_ms: MonotonicMs::new(3),
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                    bytes: b"NAME=NF2557".to_vec(),
+                    bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(
+                        b"NAME=NF2557",
+                    )),
                 },
             ],
             report: SessionBridgeReport::default(),
@@ -2485,7 +2487,7 @@ mod tests {
             decoded.records[1].write_mode,
             Some(WriteMode::WithoutResponse)
         );
-        assert_eq!(decoded.records[2].bytes, b"NAME=NF2557");
+        assert_eq!(decoded.records[2].bytes.as_ref(), b"NAME=NF2557");
     }
 
     #[test]
@@ -2628,7 +2630,9 @@ mod tests {
             monotonic_ms: MonotonicMs::new(7),
             characteristic,
             service,
-            bytes: vec![0xde, 0xad, 0xbe, 0xef],
+            bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(&[
+                0xde, 0xad, 0xbe, 0xef,
+            ])),
         }];
 
         let bytes = encode_raw_capture_pevcap(
