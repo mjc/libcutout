@@ -19,6 +19,7 @@ btleplug.workspace = true
 cutout-core = { path = "../cutout-core", version = "0.1.0" }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 futures-util.workspace = true
+smallvec.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

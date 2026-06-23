@@ -8,28 +8,18 @@
 
 //! Bluetooth transport adapter scaffolding for Cutout.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
-    fmt,
-    future::Future,
-    pin::Pin,
-    time::Duration,
-};
+use std::{collections::VecDeque, fmt, future::Future, pin::Pin, time::Duration};
 
 use async_trait::async_trait;
 use btleplug::{
-    api::{
-        Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _,
-        PeripheralProperties, ScanFilter, Service, ValueNotification, WriteType,
-    },
+    api::{Central, Characteristic, Manager as _, Peripheral as _, ScanFilter, ValueNotification},
     platform::{Adapter, Manager},
 };
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, GattFingerprint,
-    GattRoles, LinkInfo, NotificationIngestOutcome, ParserDiagnostics, PevcapCapture, PevcapHeader,
+    LinkInfo, NotificationIngestOutcome, ParserDiagnostics, PevcapCapture, PevcapHeader,
     PevcapHeaderError, PevcapRecord, ProtocolSession, ReadOnlyResponse, SessionInput,
-    SessionOutput, SettingsReadback, TelemetryDelta, TelemetrySnapshot, TransportAction,
-    VerificationStatus, WriteMode,
+    SessionOutput, SettingsReadback, TelemetryDelta, TelemetrySnapshot, TransportAction, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, IdentityConfidence, IdentityEvidence,
@@ -41,9 +31,24 @@ use thiserror::Error;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-const BATTERY_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb);
-const BATTERY_LEVEL_UUID: Uuid = Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb);
-const SHARED_FFE0_SERVICE_UUID: Uuid = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+mod gatt;
+mod observation;
+mod types;
+
+use gatt::gatt_channel_from_uuid;
+use types::characteristic_from_summary;
+
+pub use gatt::{
+    GattUuid, KnownGattUuid, SharedFfe0Service, StandardBatteryLevelCharacteristic,
+    StandardBatteryService,
+};
+pub use types::{
+    AdvertisedServices, BluetoothAddress, CharacteristicSummary, ConnectedPeripheral,
+    ConnectionSummary, ConnectionTarget, ManufacturerDataSummaries, ManufacturerDataSummary,
+    NullBluetoothAddress, PeripheralIdentifier, PeripheralObservation, ServiceSummary,
+    SessionEndpoints,
+};
+
 const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -51,372 +56,6 @@ const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 #[must_use]
 pub const fn crate_name() -> &'static str {
     "cutout-btle"
-}
-
-/// A peripheral observation gathered from a scan or connection pass.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PeripheralObservation {
-    /// Platform-specific peripheral identifier.
-    pub identifier: String,
-
-    /// Bluetooth address when the platform exposes one.
-    pub address: Option<String>,
-
-    /// Peripheral local name, if one was advertised.
-    pub name: Option<String>,
-
-    /// Received signal strength, if the platform exposed it.
-    pub rssi: Option<i16>,
-
-    /// Advertised service UUIDs, if the peripheral exposed them.
-    pub advertised_services: Vec<Uuid>,
-
-    /// Manufacturer data company ids and payload lengths advertised by the peripheral.
-    pub manufacturer_data: Vec<ManufacturerDataSummary>,
-}
-
-/// Summary of advertised manufacturer data without retaining opaque payload bytes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ManufacturerDataSummary {
-    /// Bluetooth SIG company identifier.
-    pub company_id: u16,
-
-    /// Payload length in bytes.
-    pub len: usize,
-}
-
-impl PeripheralObservation {
-    fn from_peripheral(
-        peripheral: &btleplug::platform::Peripheral,
-        properties: &PeripheralProperties,
-    ) -> Self {
-        Self {
-            identifier: peripheral.id().to_string(),
-            address: normalize_address(properties.address.to_string()),
-            name: properties.local_name.clone(),
-            rssi: properties.rssi,
-            advertised_services: properties.services.clone(),
-            manufacturer_data: manufacturer_data_summary(&properties.manufacturer_data),
-        }
-    }
-
-    fn family_hints(&self) -> Vec<&'static str> {
-        scan_family_hints(self.name.as_deref(), &self.advertised_services)
-    }
-}
-
-impl fmt::Display for PeripheralObservation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(address) = &self.address {
-            write!(f, "{address}")?;
-        } else {
-            write!(f, "id={}", self.identifier)?;
-        }
-        write!(f, " name={}", self.name.as_deref().unwrap_or("<none>"))?;
-        if let Some(rssi) = self.rssi {
-            write!(f, " rssi={rssi}")?;
-        }
-        write!(f, " services=[{}]", join_uuids(&self.advertised_services))?;
-        write!(
-            f,
-            " manufacturer_data=[{}]",
-            join_manufacturer_data(&self.manufacturer_data)
-        )?;
-        write!(f, " family_hints=[{}]", self.family_hints().join(","))
-    }
-}
-
-fn manufacturer_data_summary(
-    manufacturer_data: &std::collections::HashMap<u16, Vec<u8>>,
-) -> Vec<ManufacturerDataSummary> {
-    manufacturer_data
-        .iter()
-        .map(|(&company_id, bytes)| (company_id, bytes.len()))
-        .collect::<BTreeMap<_, _>>()
-        .into_iter()
-        .map(|(company_id, len)| ManufacturerDataSummary { company_id, len })
-        .collect()
-}
-
-fn join_manufacturer_data(values: &[ManufacturerDataSummary]) -> String {
-    values
-        .iter()
-        .map(|value| format!("{:04x}:{}b", value.company_id, value.len))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-fn scan_family_hints(name: Option<&str>, advertised_services: &[Uuid]) -> Vec<&'static str> {
-    let mut hints = Vec::new();
-    if advertised_services.contains(&SHARED_FFE0_SERVICE_UUID) {
-        hints.push("shared-ffe0-ffe1");
-    }
-    if name.is_some_and(|name| {
-        name.contains("Aero") || name.contains("NOSFET") || name.starts_with("NF")
-    }) {
-        hints.push("name-nosfet-aero");
-    }
-    if name.is_some_and(|name| {
-        name.contains("Falcon") || name.contains("Begode") || name.contains("Gotway")
-    }) {
-        hints.push("name-begode-falcon");
-    }
-    hints
-}
-
-/// Target used to select a peripheral from scan results.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ConnectionTarget {
-    /// Match against the peripheral address, when provided.
-    pub address: Option<String>,
-
-    /// Match against the platform-specific peripheral identifier.
-    pub identifier: Option<String>,
-
-    /// Match against the peripheral local name, when provided.
-    pub name_contains: Option<String>,
-}
-
-impl ConnectionTarget {
-    /// Returns whether an observation matches this target.
-    #[must_use]
-    pub fn matches(&self, observation: &PeripheralObservation) -> bool {
-        let address_matches = self
-            .address
-            .as_ref()
-            .is_none_or(|address| observation.address.as_deref() == Some(address.as_str()));
-        let identifier_matches = self
-            .identifier
-            .as_ref()
-            .is_none_or(|identifier| observation.identifier == *identifier);
-        let name_matches = self.name_contains.as_ref().is_none_or(|needle| {
-            observation
-                .name
-                .as_deref()
-                .is_some_and(|name| name.contains(needle))
-        });
-
-        address_matches && identifier_matches && name_matches
-    }
-}
-
-/// Summary of a successful connection/discovery pass.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CharacteristicSummary {
-    /// Characteristic UUID.
-    pub uuid: Uuid,
-
-    /// Owning service UUID.
-    pub service_uuid: Uuid,
-
-    /// GATT characteristic properties.
-    pub properties: CharPropFlags,
-}
-
-impl CharacteristicSummary {
-    /// Returns whether this characteristic can accept a write.
-    #[must_use]
-    pub fn can_write(&self) -> bool {
-        self.properties
-            .intersects(CharPropFlags::WRITE | CharPropFlags::WRITE_WITHOUT_RESPONSE)
-    }
-
-    /// Returns whether this characteristic can be read.
-    #[must_use]
-    pub fn can_read(&self) -> bool {
-        self.properties.contains(CharPropFlags::READ)
-    }
-
-    /// Returns whether this characteristic can notify or indicate.
-    #[must_use]
-    pub fn can_notify(&self) -> bool {
-        self.properties
-            .intersects(CharPropFlags::NOTIFY | CharPropFlags::INDICATE)
-    }
-
-    fn gatt_fingerprint(&self) -> GattFingerprint {
-        GattFingerprint {
-            service: gatt_channel_from_uuid(self.service_uuid),
-            characteristic: gatt_channel_from_uuid(self.uuid),
-            roles: gatt_roles_from_flags(self.properties),
-            verification: VerificationStatus::HardwareVerified,
-        }
-    }
-}
-
-/// Service-level summary of a discovered peripheral.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ServiceSummary {
-    /// Service UUID.
-    pub uuid: Uuid,
-
-    /// Whether this is a primary service.
-    pub primary: bool,
-
-    /// Discovered characteristics for the service.
-    pub characteristics: Vec<CharacteristicSummary>,
-}
-
-impl ServiceSummary {
-    fn from_service(service: &Service) -> Self {
-        Self {
-            uuid: service.uuid,
-            primary: service.primary,
-            characteristics: service
-                .characteristics
-                .iter()
-                .map(CharacteristicSummary::from_characteristic)
-                .collect(),
-        }
-    }
-}
-
-impl CharacteristicSummary {
-    const fn from_characteristic(characteristic: &Characteristic) -> Self {
-        Self {
-            uuid: characteristic.uuid,
-            service_uuid: characteristic.service_uuid,
-            properties: characteristic.properties,
-        }
-    }
-}
-
-/// Summary of a successful connection/discovery pass.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConnectionSummary {
-    /// Selected peripheral observation.
-    pub observation: PeripheralObservation,
-
-    /// Discovered GATT services and characteristics.
-    pub services: Vec<ServiceSummary>,
-}
-
-impl fmt::Display for ConnectionSummary {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "connected {}", self.observation)?;
-        for service in &self.services {
-            writeln!(
-                f,
-                "service {} primary={} characteristics=[{}]",
-                service.uuid,
-                service.primary,
-                service
-                    .characteristics
-                    .iter()
-                    .map(|characteristic| {
-                        format!(
-                            "{} props={:?}",
-                            characteristic.uuid, characteristic.properties
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )?;
-        }
-        Ok(())
-    }
-}
-
-impl ConnectionSummary {
-    /// Returns observed GATT fingerprints for PEVCAP and registry evidence.
-    #[must_use]
-    pub fn gatt_fingerprints(&self) -> Vec<GattFingerprint> {
-        self.services
-            .iter()
-            .flat_map(|service| service.characteristics.iter())
-            .map(CharacteristicSummary::gatt_fingerprint)
-            .collect()
-    }
-
-    /// Selects the standard BLE Battery Level characteristic when present.
-    #[must_use]
-    pub fn battery_level_characteristic(&self) -> Option<&CharacteristicSummary> {
-        self.services
-            .iter()
-            .find(|service| service.uuid == BATTERY_SERVICE_UUID)
-            .and_then(|service| {
-                service.characteristics.iter().find(|characteristic| {
-                    characteristic.uuid == BATTERY_LEVEL_UUID && characteristic.can_read()
-                })
-            })
-    }
-
-    /// Returns characteristics that can accept writes.
-    #[must_use]
-    pub fn write_candidates(&self) -> Vec<&CharacteristicSummary> {
-        self.services
-            .iter()
-            .flat_map(|service| service.characteristics.iter())
-            .filter(|characteristic| characteristic.can_write())
-            .collect()
-    }
-
-    /// Returns characteristics that can notify or indicate.
-    #[must_use]
-    pub fn notify_candidates(&self) -> Vec<&CharacteristicSummary> {
-        self.services
-            .iter()
-            .flat_map(|service| service.characteristics.iter())
-            .filter(|characteristic| characteristic.can_notify())
-            .collect()
-    }
-
-    /// Selects a notify/indicate characteristic by UUID, or the first
-    /// notify-capable candidate when no UUID is requested.
-    #[must_use]
-    pub fn select_notify_characteristic(
-        &self,
-        requested: Option<Uuid>,
-    ) -> Option<&CharacteristicSummary> {
-        self.services
-            .iter()
-            .flat_map(|service| service.characteristics.iter())
-            .find(|characteristic| {
-                characteristic.can_notify()
-                    && requested.is_none_or(|uuid| characteristic.uuid == uuid)
-            })
-    }
-
-    /// Selects session endpoints from the discovered tree.
-    #[must_use]
-    pub fn select_session_endpoints(&self) -> Option<SessionEndpoints<'_>> {
-        let write = self.write_candidates().into_iter().next()?;
-        let notify = self
-            .services
-            .iter()
-            .flat_map(|service| service.characteristics.iter())
-            .find(|characteristic| {
-                characteristic.service_uuid == write.service_uuid && characteristic.can_notify()
-            })
-            .or_else(|| {
-                self.services
-                    .iter()
-                    .flat_map(|service| service.characteristics.iter())
-                    .find(|characteristic| characteristic.can_notify())
-            });
-
-        Some(SessionEndpoints { write, notify })
-    }
-}
-
-/// A connected peripheral paired with its discovered GATT tree.
-#[derive(Clone, Debug)]
-pub struct ConnectedPeripheral {
-    /// Connected peripheral handle that remains live for the bridge.
-    pub peripheral: btleplug::platform::Peripheral,
-
-    /// Discovered services and characteristics for the connected peripheral.
-    pub summary: ConnectionSummary,
-}
-
-/// Selected endpoints for a protocol session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SessionEndpoints<'a> {
-    /// Writable characteristic selected for request writes.
-    pub write: &'a CharacteristicSummary,
-
-    /// Notification-capable characteristic, if one was selected.
-    pub notify: Option<&'a CharacteristicSummary>,
 }
 
 /// Report produced by a protocol bridge run.
@@ -583,8 +222,8 @@ pub enum SessionCaptureRecord {
         /// Concrete characteristic written through BTLE.
         characteristic: Uuid,
 
-        /// BTLE write mode used by the bridge.
-        mode: WriteType,
+        /// Write mode requested by the protocol session.
+        mode: WriteMode,
 
         /// Exact bytes sent to the characteristic.
         bytes: Vec<u8>,
@@ -639,7 +278,7 @@ impl fmt::Display for SessionCaptureRecord {
             } => write!(
                 f,
                 "write t_ms={monotonic_ms} characteristic={characteristic} mode={} bytes={} provisional={provisional}",
-                format_write_type(*mode),
+                format_write_mode(*mode),
                 encode_hex(bytes)
             ),
             Self::Notification {
@@ -820,7 +459,7 @@ pub trait SessionPeripheral: Send + Sync {
         &self,
         characteristic: &Characteristic,
         bytes: &[u8],
-        mode: WriteType,
+        mode: WriteMode,
     ) -> Result<(), BtleError>;
 
     /// Returns the notification stream for the connected peripheral.
@@ -877,22 +516,6 @@ impl ReconnectingSessionHost for BtleplugReconnectHost {
     async fn connect(&mut self) -> Result<(Self::Peripheral, ConnectionSummary), BtleError> {
         let connected = connect_and_discover(&self.target, self.scan_for).await?;
         Ok((connected.peripheral, connected.summary))
-    }
-}
-
-fn join_uuids(values: &[Uuid]) -> String {
-    values
-        .iter()
-        .map(Uuid::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn normalize_address(address: String) -> Option<String> {
-    if address == "00:00:00:00:00:00" {
-        None
-    } else {
-        Some(address)
     }
 }
 
@@ -1765,19 +1388,6 @@ fn log_notification_decode_outcome(
     }
 }
 
-const fn characteristic_from_summary(summary: &CharacteristicSummary) -> Characteristic {
-    Characteristic {
-        uuid: summary.uuid,
-        service_uuid: summary.service_uuid,
-        properties: summary.properties,
-        descriptors: BTreeSet::new(),
-    }
-}
-
-const fn gatt_channel_from_uuid(uuid: Uuid) -> GattChannel {
-    GattChannel::from_bytes(*uuid.as_bytes())
-}
-
 fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<PevcapRecord> {
     match record {
         SessionCaptureRecord::Link {
@@ -1796,7 +1406,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
         } => Some(PevcapRecord::outbound_write(
             *monotonic_ms,
             gatt_channel_from_uuid(*characteristic),
-            write_mode_from_btle(*mode),
+            *mode,
             bytes.clone(),
         )),
         SessionCaptureRecord::Notification {
@@ -1850,33 +1460,6 @@ fn merge_session_report(into: &mut SessionBridgeReport, report: SessionBridgeRep
     }
     into.events.extend(report.events);
     into.disconnects += report.disconnects;
-}
-
-const fn write_mode_from_btle(mode: WriteType) -> WriteMode {
-    match mode {
-        WriteType::WithResponse => WriteMode::WithResponse,
-        WriteType::WithoutResponse => WriteMode::WithoutResponse,
-    }
-}
-
-fn gatt_roles_from_flags(flags: CharPropFlags) -> GattRoles {
-    let mut roles = GattRoles::empty();
-    if flags.contains(CharPropFlags::READ) {
-        roles = roles.with_read();
-    }
-    if flags.contains(CharPropFlags::WRITE) {
-        roles = roles.with_write();
-    }
-    if flags.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE) {
-        roles = roles.with_write_without_response();
-    }
-    if flags.contains(CharPropFlags::NOTIFY) {
-        roles = roles.with_notify();
-    }
-    if flags.contains(CharPropFlags::INDICATE) {
-        roles = roles.with_indicate();
-    }
-    roles
 }
 
 struct IdentityContext<'a> {
@@ -2039,22 +1622,18 @@ where
                     }
                     .into());
                 }
-                let write_type = match mode {
-                    WriteMode::WithResponse => WriteType::WithResponse,
-                    WriteMode::WithoutResponse => WriteType::WithoutResponse,
-                };
                 context.report.protocol_writes += 1;
                 let write_limit = usize::from(context.peripheral.mtu()).max(1);
                 for chunk in bytes.as_slice().chunks(write_limit) {
                     context
                         .peripheral
-                        .write(context.write_characteristic, chunk, write_type)
+                        .write(context.write_characteristic, chunk, mode)
                         .await?;
                     if let Some(records) = context.capture.as_deref_mut() {
                         records.push(SessionCaptureRecord::Write {
                             monotonic_ms,
                             characteristic: context.write_characteristic.uuid,
-                            mode: write_type,
+                            mode,
                             bytes: chunk.to_vec(),
                             provisional: context.provisional_writes,
                         });
@@ -2146,10 +1725,10 @@ fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, mo
     }
 }
 
-fn format_write_type(mode: WriteType) -> &'static str {
+fn format_write_mode(mode: WriteMode) -> &'static str {
     match mode {
-        WriteType::WithResponse => "with-response",
-        WriteType::WithoutResponse => "without-response",
+        WriteMode::WithResponse => "with-response",
+        WriteMode::WithoutResponse => "without-response",
     }
 }
 
@@ -2179,11 +1758,19 @@ impl SessionPeripheral for btleplug::platform::Peripheral {
         &self,
         characteristic: &Characteristic,
         bytes: &[u8],
-        mode: WriteType,
+        mode: WriteMode,
     ) -> Result<(), BtleError> {
-        btleplug::api::Peripheral::write(self, characteristic, bytes, mode)
-            .await
-            .map_err(BtleError::from)
+        btleplug::api::Peripheral::write(
+            self,
+            characteristic,
+            bytes,
+            match mode {
+                WriteMode::WithResponse => btleplug::api::WriteType::WithResponse,
+                WriteMode::WithoutResponse => btleplug::api::WriteType::WithoutResponse,
+            },
+        )
+        .await
+        .map_err(BtleError::from)
     }
 
     async fn notifications(
@@ -2215,7 +1802,7 @@ async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObserva
         {
             observations.push(PeripheralObservation::from_peripheral(
                 &peripheral,
-                &properties,
+                properties,
             ));
         }
     }
@@ -2233,13 +1820,12 @@ async fn observation_from_peripheral(
             address: None,
             name: None,
             rssi: None,
-            advertised_services: Vec::new(),
-            manufacturer_data: Vec::new(),
+            advertised_services: AdvertisedServices::new(),
+            manufacturer_data: ManufacturerDataSummaries::new(),
         });
     };
     Ok(PeripheralObservation::from_peripheral(
-        peripheral,
-        &properties,
+        peripheral, properties,
     ))
 }
 
@@ -2253,7 +1839,7 @@ async fn find_peripheral(
         else {
             continue;
         };
-        let observation = PeripheralObservation::from_peripheral(&peripheral, &properties);
+        let observation = PeripheralObservation::from_peripheral(&peripheral, properties);
         if target.matches(&observation) {
             return Ok(peripheral);
         }
@@ -2306,7 +1892,7 @@ mod tests {
         time::{Duration, Instant as StdInstant},
     };
 
-    use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
+    use btleplug::api::{CharPropFlags, Characteristic, ValueNotification};
     use cutout_core::{
         DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
         NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
@@ -2318,17 +1904,121 @@ mod tests {
     };
     use cutout_protocols::IdentityConfidence;
     use futures_util::stream;
+    use smallvec::smallvec;
     use uuid::Uuid;
 
     use super::crate_name;
 
-    type WriteRecord = (Uuid, Vec<u8>, WriteType);
+    type WriteRecord = (Uuid, Vec<u8>, WriteMode);
     type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
     type NotificationLog = Arc<Mutex<Vec<ValueNotification>>>;
 
     #[test]
     fn exposes_the_expected_name() {
         assert_eq!(crate_name(), "cutout-btle");
+    }
+
+    #[test]
+    fn peripheral_identifier_is_a_typed_backend_handle() {
+        let identifier = crate::PeripheralIdentifier::new("platform-id-7");
+
+        assert_eq!(identifier.as_str(), "platform-id-7");
+        assert_eq!(identifier.to_string(), "platform-id-7");
+        assert_eq!(identifier.into_inner(), "platform-id-7");
+    }
+
+    #[test]
+    fn bluetooth_address_filters_platform_null_placeholder() {
+        assert_eq!(crate::BluetoothAddress::new("00:00:00:00:00:00"), None);
+
+        let address = crate::BluetoothAddress::new("AA:BB:CC:DD:EE:FF").expect("valid address");
+        assert_eq!(address.as_str(), "AA:BB:CC:DD:EE:FF");
+        assert_eq!(address.to_string(), "AA:BB:CC:DD:EE:FF");
+    }
+
+    #[test]
+    fn known_uuid_fields_classify_to_zst_markers() {
+        let battery_service = crate::ServiceSummary {
+            uuid: <crate::StandardBatteryService as crate::KnownGattUuid>::UUID,
+            primary: true,
+            characteristics: Vec::new(),
+        };
+        let battery_level = crate::CharacteristicSummary {
+            uuid: <crate::StandardBatteryLevelCharacteristic as crate::KnownGattUuid>::UUID,
+            service_uuid: <crate::StandardBatteryService as crate::KnownGattUuid>::UUID,
+            properties: CharPropFlags::READ,
+        };
+
+        assert_eq!(
+            battery_service.gatt_uuid(),
+            crate::GattUuid::StandardBatteryService(crate::StandardBatteryService)
+        );
+        assert_eq!(
+            battery_level.gatt_uuid(),
+            crate::GattUuid::StandardBatteryLevelCharacteristic(
+                crate::StandardBatteryLevelCharacteristic
+            )
+        );
+        assert_eq!(
+            battery_level.service_gatt_uuid(),
+            crate::GattUuid::StandardBatteryService(crate::StandardBatteryService)
+        );
+    }
+
+    #[test]
+    fn peripheral_observation_exposes_typed_identity_views() {
+        let observation = crate::PeripheralObservation {
+            identifier: "backend-42".to_owned(),
+            address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+            name: None,
+            rssi: None,
+            advertised_services: crate::AdvertisedServices::new(),
+            manufacturer_data: crate::ManufacturerDataSummaries::new(),
+        };
+
+        let identifier = observation.platform_identifier();
+        assert_eq!(identifier.as_str(), "backend-42");
+        assert_eq!(
+            identifier.as_str().as_ptr(),
+            observation.identifier.as_ptr()
+        );
+
+        let address = observation
+            .bluetooth_address()
+            .expect("address is normalized");
+        assert_eq!(
+            address.as_str().as_ptr(),
+            observation.address.as_deref().expect("address").as_ptr()
+        );
+        assert_eq!(address.as_str(), "AA:BB:CC:DD:EE:FF");
+    }
+
+    #[test]
+    fn peripheral_observation_classifies_advertised_services() {
+        let unknown = Uuid::from_u128(0x6e40_0003_b5a3_f393_e0a9_e50e_24dc_ca9e);
+        let observation = crate::PeripheralObservation {
+            identifier: "backend-42".to_owned(),
+            address: None,
+            name: None,
+            rssi: None,
+            advertised_services: smallvec![
+                <crate::SharedFfe0Service as crate::KnownGattUuid>::UUID,
+                unknown,
+            ],
+            manufacturer_data: crate::ManufacturerDataSummaries::new(),
+        };
+
+        let services = observation.advertised_service_uuids().collect::<Vec<_>>();
+
+        assert_eq!(
+            services,
+            vec![
+                crate::GattUuid::SharedFfe0Service(crate::SharedFfe0Service),
+                crate::GattUuid::Other(unknown),
+            ]
+        );
+        assert!(observation.advertises::<crate::SharedFfe0Service>());
+        assert!(!observation.advertises::<crate::StandardBatteryService>());
     }
 
     #[test]
@@ -2343,8 +2033,8 @@ mod tests {
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
             rssi: Some(-42),
-            advertised_services: vec![],
-            manufacturer_data: Vec::new(),
+            advertised_services: smallvec![],
+            manufacturer_data: crate::ManufacturerDataSummaries::new(),
         };
 
         assert!(target.matches(&observation));
@@ -2452,8 +2142,8 @@ mod tests {
             address: None,
             name: Some("NF2557".to_owned()),
             rssi: Some(-42),
-            advertised_services: vec![],
-            manufacturer_data: Vec::new(),
+            advertised_services: smallvec![],
+            manufacturer_data: crate::ManufacturerDataSummaries::new(),
         };
 
         assert!(target.matches(&observation));
@@ -2466,8 +2156,8 @@ mod tests {
             address: None,
             name: Some("Generic".to_owned()),
             rssi: Some(-60),
-            advertised_services: vec![],
-            manufacturer_data: vec![
+            advertised_services: smallvec![],
+            manufacturer_data: smallvec![
                 crate::ManufacturerDataSummary {
                     company_id: 0x004c,
                     len: 6,
@@ -2492,8 +2182,10 @@ mod tests {
             address: None,
             name: Some("NF2557".to_owned()),
             rssi: None,
-            advertised_services: vec![Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb)],
-            manufacturer_data: Vec::new(),
+            advertised_services: smallvec![Uuid::from_u128(
+                0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb
+            )],
+            manufacturer_data: crate::ManufacturerDataSummaries::new(),
         };
 
         assert_eq!(
@@ -2554,8 +2246,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2583,8 +2275,8 @@ mod tests {
                 address: None,
                 name: Some("Raw device".to_owned()),
                 rssi: None,
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2621,8 +2313,8 @@ mod tests {
                 address: None,
                 name: Some("Raw device".to_owned()),
                 rssi: None,
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2702,8 +2394,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb),
@@ -2732,8 +2424,8 @@ mod tests {
                 address: None,
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![],
         };
@@ -2747,7 +2439,7 @@ mod tests {
         let record = crate::SessionCaptureRecord::Write {
             monotonic_ms: 7,
             characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-            mode: WriteType::WithoutResponse,
+            mode: WriteMode::WithoutResponse,
             bytes: vec![0x01, 0x23, 0xab, 0xcd],
             provisional: true,
         };
@@ -2781,10 +2473,10 @@ mod tests {
                 address: None,
                 name: Some("NF2557".to_owned()),
                 rssi: Some(-67),
-                advertised_services: vec![Uuid::from_u128(
+                advertised_services: smallvec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
                 )],
-                manufacturer_data: Vec::new(),
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2809,7 +2501,7 @@ mod tests {
                 crate::SessionCaptureRecord::Write {
                     monotonic_ms: 2,
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    mode: WriteType::WithoutResponse,
+                    mode: WriteMode::WithoutResponse,
                     bytes: b"N".to_vec(),
                     provisional: false,
                 },
@@ -2886,8 +2578,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("Begode_Falcon".to_owned()),
                 rssi: None,
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![],
         };
@@ -2904,7 +2596,7 @@ mod tests {
                 crate::SessionCaptureRecord::Write {
                     monotonic_ms: 2,
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    mode: WriteType::WithResponse,
+                    mode: WriteMode::WithResponse,
                     bytes: vec![0x01, 0x02],
                     provisional: true,
                 },
@@ -2941,8 +2633,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2962,8 +2654,8 @@ mod tests {
             }],
         };
 
-        assert_eq!(summary.write_candidates().len(), 1);
-        assert_eq!(summary.notify_candidates().len(), 1);
+        assert_eq!(summary.write_candidates().count(), 1);
+        assert_eq!(summary.notify_candidates().count(), 1);
     }
 
     #[test]
@@ -2974,8 +2666,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -3111,8 +2803,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NOSFET Aero".to_owned()),
                 rssi: Some(-42),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: smallvec![],
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -3161,7 +2853,7 @@ mod tests {
             &[(
                 Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 b"bridge:write".to_vec(),
-                WriteType::WithResponse,
+                WriteMode::WithResponse,
             )]
         );
     }
@@ -3468,7 +3160,7 @@ mod tests {
                 crate::SessionCaptureRecord::Write {
                     monotonic_ms: 1,
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    mode: WriteType::WithResponse,
+                    mode: WriteMode::WithResponse,
                     bytes: b"bridge:write".to_vec(),
                     provisional: true,
                 },
@@ -3522,14 +3214,14 @@ mod tests {
                 crate::SessionCaptureRecord::Write {
                     monotonic_ms: 1,
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    mode: WriteType::WithoutResponse,
+                    mode: WriteMode::WithoutResponse,
                     bytes: b"N".to_vec(),
                     provisional: false,
                 },
                 crate::SessionCaptureRecord::Write {
                     monotonic_ms: 2,
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    mode: WriteType::WithoutResponse,
+                    mode: WriteMode::WithoutResponse,
                     bytes: b"V".to_vec(),
                     provisional: false,
                 },
@@ -3565,17 +3257,17 @@ mod tests {
                 (
                     Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     b"0123".to_vec(),
-                    WriteType::WithoutResponse,
+                    WriteMode::WithoutResponse,
                 ),
                 (
                     Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     b"4567".to_vec(),
-                    WriteType::WithoutResponse,
+                    WriteMode::WithoutResponse,
                 ),
                 (
                     Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     b"89".to_vec(),
-                    WriteType::WithoutResponse,
+                    WriteMode::WithoutResponse,
                 ),
             ]
         );
@@ -3595,9 +3287,9 @@ mod tests {
         assert_eq!(
             writes,
             vec![
-                (b"0123".as_slice(), WriteType::WithoutResponse),
-                (b"4567".as_slice(), WriteType::WithoutResponse),
-                (b"89".as_slice(), WriteType::WithoutResponse),
+                (b"0123".as_slice(), WriteMode::WithoutResponse),
+                (b"4567".as_slice(), WriteMode::WithoutResponse),
+                (b"89".as_slice(), WriteMode::WithoutResponse),
             ]
         );
     }
@@ -3772,12 +3464,12 @@ mod tests {
                 (
                     Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     b"N".to_vec(),
-                    WriteType::WithoutResponse,
+                    WriteMode::WithoutResponse,
                 ),
                 (
                     Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     b"V".to_vec(),
-                    WriteType::WithoutResponse,
+                    WriteMode::WithoutResponse,
                 ),
             ]
         );
@@ -4101,10 +3793,10 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some(name.to_owned()),
                 rssi: Some(-42),
-                advertised_services: vec![Uuid::from_u128(
+                advertised_services: smallvec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
                 )],
-                manufacturer_data: Vec::new(),
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -4125,8 +3817,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some(name.to_owned()),
                 rssi: Some(-42),
-                advertised_services: Vec::new(),
-                manufacturer_data: Vec::new(),
+                advertised_services: crate::AdvertisedServices::new(),
+                manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
             services: vec![crate::ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -4165,7 +3857,7 @@ mod tests {
             &self,
             characteristic: &Characteristic,
             bytes: &[u8],
-            mode: WriteType,
+            mode: WriteMode,
         ) -> Result<(), crate::BtleError> {
             self.writes.lock().expect("write log").push((
                 characteristic.uuid,
