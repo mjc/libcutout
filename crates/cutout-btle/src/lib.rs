@@ -2009,6 +2009,7 @@ where
             SessionOutput::Event(event) => {
                 process_device_event(context.report, event, monotonic_ms);
             }
+            SessionOutput::NotificationIngest(_) => {}
         }
     }
     Ok(())

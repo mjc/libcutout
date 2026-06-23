@@ -2934,6 +2934,9 @@ pub enum SessionOutput {
 
     /// Semantic event to report to the application.
     Event(DeviceEvent),
+
+    /// Parser-level notification ingest outcome.
+    NotificationIngest(NotificationIngestOutcome),
 }
 
 /// Synchronous protocol reactor.
@@ -3289,7 +3292,8 @@ where
         .into_iter()
         .filter_map(|output| match output {
             SessionOutput::Event(DeviceEvent::NotificationReceived { .. })
-            | SessionOutput::Transport(_) => None,
+            | SessionOutput::Transport(_)
+            | SessionOutput::NotificationIngest(_) => None,
             SessionOutput::Event(event) => Some(event),
         })
         .collect()
@@ -6044,7 +6048,7 @@ mod tests {
             .into_iter()
             .filter_map(|output| match output {
                 SessionOutput::Event(event) => Some(event),
-                SessionOutput::Transport(_) => None,
+                SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
             })
             .collect()
     }

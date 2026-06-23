@@ -89,6 +89,12 @@ impl VeteranFrameReassembler {
         self.buffer.clear();
         self.state = VeteranFrameParseState::default();
     }
+
+    /// Returns whether the reassembler is holding a valid partial frame prefix.
+    #[must_use]
+    pub fn is_buffering(&self) -> bool {
+        !self.buffer.is_empty()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

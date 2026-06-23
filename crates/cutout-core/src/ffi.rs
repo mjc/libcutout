@@ -2,9 +2,11 @@ use crate::{
     BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, CommandKind,
     ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail,
     DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
-    LightState, Measured, ParserDiagnostics, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-    SafetyClass, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta,
-    TelemetrySnapshot, TransportAction, ValueQuality, ValueSource, VerificationStatus, WriteMode,
+    LightState, Measured, NotificationEvidence, NotificationIngestOutcome, ParserDiagnostics,
+    ParserError, ParserGapEvidence, ProtocolFamily, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput, SessionOutput,
+    SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot, TransportAction,
+    ValueQuality, ValueSource, VerificationStatus, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -857,6 +859,9 @@ pub enum SessionOutputDto {
 
     /// Semantic event to report to the application.
     Event(SessionEventDto),
+
+    /// Parser-level notification ingest outcome.
+    NotificationIngest(NotificationIngestOutcomeDto),
 }
 
 impl From<SessionOutput> for SessionOutputDto {
@@ -864,6 +869,238 @@ impl From<SessionOutput> for SessionOutputDto {
         match output {
             SessionOutput::Transport(action) => Self::Transport(action.into()),
             SessionOutput::Event(event) => Self::Event(event.into()),
+            SessionOutput::NotificationIngest(outcome) => Self::NotificationIngest(outcome.into()),
+        }
+    }
+}
+
+/// UniFFI-ready notification ingest outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NotificationIngestOutcomeDto {
+    /// Notification produced semantic protocol events.
+    SemanticEvents {
+        /// Notification evidence shared by ingest outcomes.
+        notification: NotificationEvidenceDto,
+
+        /// Number of semantic events emitted from this notification.
+        event_count: usize,
+    },
+
+    /// Notification bytes are a valid partial frame.
+    BufferedFragment(NotificationEvidenceDto),
+
+    /// Notification was recognized but failed parser validation.
+    ParserDiagnostic {
+        /// Notification evidence shared by ingest outcomes.
+        notification: NotificationEvidenceDto,
+
+        /// Parser error observed while ingesting the notification.
+        error: ParserErrorDto,
+    },
+
+    /// Notification carried a known reserved/opaque payload.
+    KnownReserved {
+        /// Notification evidence shared by ingest outcomes.
+        notification: NotificationEvidenceDto,
+
+        /// Reserved payload evidence.
+        payload: ReservedPayloadEvidenceDto,
+    },
+
+    /// Notification reached a known parser gap.
+    ParserGap {
+        /// Notification evidence shared by ingest outcomes.
+        notification: NotificationEvidenceDto,
+
+        /// Parser gap evidence.
+        gap: ParserGapEvidenceDto,
+    },
+
+    /// Notification was intentionally ignored.
+    Ignored(NotificationEvidenceDto),
+}
+
+impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
+    fn from(outcome: NotificationIngestOutcome) -> Self {
+        match outcome {
+            NotificationIngestOutcome::SemanticEvents {
+                notification,
+                event_count,
+            } => Self::SemanticEvents {
+                notification: notification.into(),
+                event_count,
+            },
+            NotificationIngestOutcome::BufferedFragment(notification) => {
+                Self::BufferedFragment(notification.into())
+            }
+            NotificationIngestOutcome::ParserDiagnostic {
+                notification,
+                error,
+            } => Self::ParserDiagnostic {
+                notification: notification.into(),
+                error: error.into(),
+            },
+            NotificationIngestOutcome::KnownReserved {
+                notification,
+                payload,
+            } => Self::KnownReserved {
+                notification: notification.into(),
+                payload: payload.into(),
+            },
+            NotificationIngestOutcome::ParserGap { notification, gap } => Self::ParserGap {
+                notification: notification.into(),
+                gap: gap.into(),
+            },
+            NotificationIngestOutcome::Ignored(notification) => Self::Ignored(notification.into()),
+        }
+    }
+}
+
+/// UniFFI-ready notification evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationEvidenceDto {
+    /// Protocol family if known.
+    pub family: Option<ProtocolFamilyDto>,
+
+    /// GATT channel UUID bytes.
+    pub channel: [u8; 16],
+
+    /// Notification payload length.
+    pub len: usize,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: u64,
+}
+
+impl From<NotificationEvidence> for NotificationEvidenceDto {
+    fn from(evidence: NotificationEvidence) -> Self {
+        Self {
+            family: evidence.family.map(Into::into),
+            channel: evidence.channel.as_bytes(),
+            len: evidence.len,
+            monotonic_ms: evidence.monotonic_ms,
+        }
+    }
+}
+
+/// UniFFI-ready protocol family identifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolFamilyDto {
+    /// Veteran/LeaperKim/NOSFET frame family.
+    VeteranLeaperkimNosfet,
+
+    /// Begode/Gotway frame family.
+    BegodeGotway,
+
+    /// VESC UART/CAN-derived family.
+    Vesc,
+}
+
+impl From<ProtocolFamily> for ProtocolFamilyDto {
+    fn from(family: ProtocolFamily) -> Self {
+        match family {
+            ProtocolFamily::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
+            ProtocolFamily::BegodeGotway => Self::BegodeGotway,
+            ProtocolFamily::Vesc => Self::Vesc,
+        }
+    }
+}
+
+/// UniFFI-ready parser error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParserErrorDto {
+    /// A frame claimed or accumulated more bytes than allowed.
+    OversizedFrame {
+        /// Claimed or observed frame length.
+        claimed: usize,
+
+        /// Configured maximum accepted frame length.
+        max: usize,
+    },
+
+    /// A frame checksum did not match its payload.
+    BadChecksum,
+
+    /// Input bytes could not form a valid frame.
+    MalformedFrame,
+
+    /// A parser deadline elapsed before the expected data arrived.
+    Timeout {
+        /// Elapsed monotonic milliseconds.
+        elapsed_ms: u64,
+
+        /// Timeout threshold in monotonic milliseconds.
+        timeout_ms: u64,
+    },
+
+    /// A reply could not be matched to an in-flight request.
+    UnmatchedReply,
+}
+
+impl From<ParserError> for ParserErrorDto {
+    fn from(error: ParserError) -> Self {
+        match error {
+            ParserError::OversizedFrame { claimed, max } => Self::OversizedFrame { claimed, max },
+            ParserError::BadChecksum => Self::BadChecksum,
+            ParserError::MalformedFrame => Self::MalformedFrame,
+            ParserError::Timeout {
+                elapsed_ms,
+                timeout_ms,
+            } => Self::Timeout {
+                elapsed_ms,
+                timeout_ms,
+            },
+            ParserError::UnmatchedReply => Self::UnmatchedReply,
+        }
+    }
+}
+
+/// UniFFI-ready reserved payload evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReservedPayloadEvidenceDto {
+    /// Selector byte when the family has one.
+    pub selector: Option<u8>,
+
+    /// Tag byte when the family has one.
+    pub tag: Option<u16>,
+
+    /// Reserved payload body length.
+    pub body_len: usize,
+
+    /// Evidence verification status.
+    pub verification: VerificationStatusDto,
+}
+
+impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
+    fn from(evidence: ReservedPayloadEvidence) -> Self {
+        Self {
+            selector: evidence.selector,
+            tag: evidence.tag,
+            body_len: evidence.body_len,
+            verification: evidence.verification.into(),
+        }
+    }
+}
+
+/// UniFFI-ready parser gap evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserGapEvidenceDto {
+    /// Selector byte when the family has one.
+    pub selector: Option<u8>,
+
+    /// Tag byte when the family has one.
+    pub tag: Option<u16>,
+
+    /// Unparsed body length.
+    pub body_len: usize,
+}
+
+impl From<ParserGapEvidence> for ParserGapEvidenceDto {
+    fn from(evidence: ParserGapEvidence) -> Self {
+        Self {
+            selector: evidence.selector,
+            tag: evidence.tag,
+            body_len: evidence.body_len,
         }
     }
 }
