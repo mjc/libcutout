@@ -2545,6 +2545,58 @@ pub struct FirmwareInfo {
     pub build_id: Option<RawFieldValue>,
 }
 
+/// BMS pack current in milliamps.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BmsPackCurrentMa(i32);
+
+impl BmsPackCurrentMa {
+    /// Creates a BMS pack current value in milliamps.
+    #[must_use]
+    pub const fn new(value: i32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the current value in milliamps.
+    #[must_use]
+    pub const fn get(self) -> i32 {
+        self.0
+    }
+}
+
+/// Paired page-specific BMS pack-current values with shared provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BmsPackCurrents {
+    /// First page-specific BMS pack current in milliamps.
+    pub current_0_ma: BmsPackCurrentMa,
+
+    /// Second page-specific BMS pack current in milliamps.
+    pub current_1_ma: BmsPackCurrentMa,
+
+    /// Source of the current values.
+    pub source: ValueSource,
+
+    /// Confidence in the current values.
+    pub quality: ValueQuality,
+
+    /// Verification state for the current values.
+    pub verification: VerificationStatus,
+}
+
+impl BmsPackCurrents {
+    /// Creates known BMS pack current values reported directly by the device.
+    #[must_use]
+    pub const fn reported(current_0_ma: i32, current_1_ma: i32) -> Self {
+        Self {
+            current_0_ma: BmsPackCurrentMa::new(current_0_ma),
+            current_1_ma: BmsPackCurrentMa::new(current_1_ma),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
+}
+
 /// Generic battery or BMS information.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatteryInfo {

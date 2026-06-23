@@ -17,10 +17,10 @@ use cutout_btle::{
     scan_peripherals,
 };
 use cutout_core::{
-    BatteryInfo, BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
-    CapturePrivacy, CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    ParserDiagnostics, PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
+    BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
+    CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError, DiagnosticErrorKind,
+    DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured, ParserDiagnostics,
+    PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
     PevcapResolvedIdentity, ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionOutput,
     SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     VerifiedValue,
@@ -1679,7 +1679,7 @@ fn render_battery_response_jsonl(
             "kind": battery_page_kind_name(page.kind),
             "verification": verification_status_name(page.verification),
         },
-        "battery": battery_info_json(payload.battery()),
+        "battery": battery_info_json(payload),
         "temperatures_mc": battery_temperature_values_json(payload),
     }))
 }
@@ -1697,14 +1697,37 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
     }
 }
 
-fn battery_info_json(battery: BatteryInfo) -> serde_json::Value {
+fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
+    let battery = payload.battery();
     serde_json::json!({
         "voltage_mv": measured_i32_json(battery.voltage_mv),
         "current_ma": measured_i32_json(battery.current_ma),
+        "bms_pack_current_0_ma": bms_pack_current_json(
+            payload.bms_pack_currents(),
+            |currents| currents.current_0_ma,
+        ),
+        "bms_pack_current_1_ma": bms_pack_current_json(
+            payload.bms_pack_currents(),
+            |currents| currents.current_1_ma,
+        ),
         "percent_reported": measured_u8_json(battery.percent_reported),
         "percent_estimated": measured_u8_json(battery.percent_estimated),
         "temperature_mc": measured_i32_json(battery.temperature_mc),
         "raw_state": raw_field_json(battery.raw_state),
+    })
+}
+
+fn bms_pack_current_json(
+    currents: Option<cutout_core::BmsPackCurrents>,
+    select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BmsPackCurrentMa,
+) -> serde_json::Value {
+    currents.map_or(serde_json::Value::Null, |currents| {
+        measured_json_parts(
+            i64::from(select(currents).get()),
+            currents.source,
+            currents.quality,
+            currents.verification,
+        )
     })
 }
 
@@ -2577,20 +2600,23 @@ mod tests {
 
     #[test]
     fn read_only_battery_jsonl_preserves_page_metadata_and_measured_values() {
-        let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            cutout_core::BatteryPageMetadata::raw(
-                ProtocolSelector::new(8),
-                VerificationStatus::SourceVerified,
-            ),
-            BatteryInfo {
-                voltage_mv: Some(Measured::reported(80_000)),
-                current_ma: Some(Measured::reported(-10_000)),
-                percent_reported: None,
-                percent_estimated: Some(Measured::estimated(61)),
-                temperature_mc: Some(Measured::reported(25_000)),
-                raw_state: Some(cutout_core::RawFieldValue::new(0x0008, 0x55aa)),
-            },
-        ));
+        let response = ReadOnlyResponse::Battery(
+            BatteryPagePayload::raw(
+                cutout_core::BatteryPageMetadata::raw(
+                    ProtocolSelector::new(8),
+                    VerificationStatus::SourceVerified,
+                ),
+                cutout_core::BatteryInfo {
+                    voltage_mv: Some(Measured::reported(80_000)),
+                    current_ma: Some(Measured::reported(-10_000)),
+                    percent_reported: None,
+                    percent_estimated: Some(Measured::estimated(61)),
+                    temperature_mc: Some(Measured::reported(25_000)),
+                    raw_state: Some(cutout_core::RawFieldValue::new(0x0008, 0x55aa)),
+                },
+            )
+            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+        );
 
         let line = render_read_only_response_jsonl(2, response)
             .expect("read-only battery response serializes");
@@ -2612,6 +2638,8 @@ mod tests {
             "hardware_verified"
         );
         assert_eq!(value["battery"]["current_ma"]["value"], -10_000);
+        assert_eq!(value["battery"]["bms_pack_current_0_ma"]["value"], -1_230);
+        assert_eq!(value["battery"]["bms_pack_current_1_ma"]["value"], 450);
         assert_eq!(
             value["battery"]["percent_reported"],
             serde_json::Value::Null
@@ -2639,9 +2667,9 @@ mod tests {
                 ProtocolSelector::new(3),
                 VerificationStatus::HardwareVerified,
             ),
-            BatteryInfo {
+            cutout_core::BatteryInfo {
                 temperature_mc: temperatures[0],
-                ..BatteryInfo::default()
+                ..cutout_core::BatteryInfo::default()
             },
             temperatures,
         ));
@@ -2668,7 +2696,7 @@ mod tests {
                 ProtocolSelector::new(8),
                 VerificationStatus::SourceVerified,
             ),
-            BatteryInfo::default(),
+            cutout_core::BatteryInfo::default(),
         ));
         let outputs = [SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
             response,

@@ -910,9 +910,19 @@ struct BmsCurrentSummary(BatteryPagePayload);
 
 impl fmt::Display for BmsCurrentSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.battery().current_ma.map_or(Ok(()), |current| {
-            write!(f, " current={}A", milliamps_to_amps(current.value))
-        })
+        let battery = self.0.battery();
+        if let Some(current) = battery.current_ma {
+            write!(f, " current={}A", milliamps_to_amps(current.value))?;
+        }
+        if let Some(currents) = self.0.bms_pack_currents() {
+            write!(
+                f,
+                " bms_current_0={}A bms_current_1={}A",
+                milliamps_to_amps(currents.current_0_ma.get()),
+                milliamps_to_amps(currents.current_1_ma.get())
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -3060,14 +3070,17 @@ mod tests {
         );
 
         assert_display_preserves_capacity(
-            BmsPageSummary(BatteryPagePayload::raw(
-                BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
-                BatteryInfo {
-                    current_ma: Some(Measured::reported(2_010)),
-                    ..BatteryInfo::default()
-                },
-            )),
-            "selector=0 kind=metadata verification=hardware_verified current=2A",
+            BmsPageSummary(
+                BatteryPagePayload::raw(
+                    BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
+                    BatteryInfo {
+                        current_ma: Some(Measured::reported(2_010)),
+                        ..BatteryInfo::default()
+                    },
+                )
+                .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+            ),
+            "selector=0 kind=metadata verification=hardware_verified current=2A bms_current_0=-1A bms_current_1=0A",
         );
     }
 
@@ -3209,13 +3222,16 @@ mod tests {
     #[test]
     fn read_only_metadata_current_renders_as_parsed_aero_event() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
-            BatteryInfo {
-                current_ma: Some(Measured::reported(2_010)),
-                ..BatteryInfo::default()
-            },
-        ));
+        let read_only_response = ReadOnlyResponse::Battery(
+            BatteryPagePayload::raw(
+                BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
+                BatteryInfo {
+                    current_ma: Some(Measured::reported(2_010)),
+                    ..BatteryInfo::default()
+                },
+            )
+            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+        );
         let report = SessionBridgeReport {
             read_only_responses: 1,
             read_only_response_events: vec![read_only_response],
@@ -3237,8 +3253,12 @@ mod tests {
                     .message
                     .contains("read-only battery selector=0 kind=metadata")
                 && entry.message.contains("current=2A")
+                && entry.message.contains("bms_current_0=-1A")
+                && entry.message.contains("bms_current_1=0A")
         }));
         assert!(text.contains("current=2A"));
+        assert!(text.contains("bms_current_0=-1A"));
+        assert!(text.contains("bms_current_1=0A"));
     }
 
     #[test]

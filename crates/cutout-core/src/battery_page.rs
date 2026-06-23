@@ -1,4 +1,4 @@
-use crate::{BatteryInfo, Measured, ProtocolSelector, VerificationStatus};
+use crate::{BatteryInfo, BmsPackCurrents, Measured, ProtocolSelector, VerificationStatus};
 
 /// Fixed number of temperature values carried by typed BMS temperature pages.
 pub const BATTERY_TEMPERATURE_VALUES_PER_PAGE: usize = 6;
@@ -156,13 +156,27 @@ pub struct BatteryRawPage {
 
     /// Generic battery measurements decoded from this page.
     pub battery: BatteryInfo,
+
+    /// Page-specific paired BMS pack currents.
+    pub bms_pack_currents: Option<BmsPackCurrents>,
 }
 
 impl BatteryRawPage {
     /// Creates a raw battery payload.
     #[must_use]
     pub const fn new(page: BatteryPageMetadata, battery: BatteryInfo) -> Self {
-        Self { page, battery }
+        Self {
+            page,
+            battery,
+            bms_pack_currents: None,
+        }
+    }
+
+    /// Adds paired BMS pack-current values to this page.
+    #[must_use]
+    pub const fn with_bms_pack_currents(mut self, currents: BmsPackCurrents) -> Self {
+        self.bms_pack_currents = Some(currents);
+        self
     }
 }
 
@@ -247,6 +261,16 @@ impl BatteryPagePayload {
         Self::Raw(BatteryRawPage::new(page, battery))
     }
 
+    /// Adds paired BMS pack-current values to a raw/metadata page payload.
+    #[must_use]
+    pub const fn with_bms_pack_currents(self, currents: BmsPackCurrents) -> Self {
+        match self {
+            Self::Raw(page) => Self::Raw(page.with_bms_pack_currents(currents)),
+            Self::CellVoltage(page) => Self::CellVoltage(page),
+            Self::Temperature(page) => Self::Temperature(page),
+        }
+    }
+
     /// Returns the page metadata for this payload.
     #[must_use]
     pub const fn page(self) -> BatteryPageMetadata {
@@ -264,6 +288,15 @@ impl BatteryPagePayload {
             Self::CellVoltage(page) => page.battery,
             Self::Temperature(page) => page.battery,
             Self::Raw(page) => page.battery,
+        }
+    }
+
+    /// Returns paired BMS pack-current values when present.
+    #[must_use]
+    pub const fn bms_pack_currents(self) -> Option<BmsPackCurrents> {
+        match self {
+            Self::Raw(page) => page.bms_pack_currents,
+            Self::CellVoltage(_) | Self::Temperature(_) => None,
         }
     }
 }
