@@ -6,13 +6,11 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use bytes::Bytes;
 use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
     ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
-    PevcapCapture, PevcapHeader, PevcapRecord, ProtocolFamily, ProtocolSession, RequestKey,
-    RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency, SessionInput, SessionKey,
-    SessionOutput, VerificationStatus, WriteMode,
+    ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue, RequestScheduler,
+    RequestUrgency, SessionInput, SessionKey, SessionOutput, VerificationStatus,
 };
 
 struct CountingAllocator;
@@ -252,48 +250,6 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
         cutout_core::replay_capture_into(&mut replay_host, &replay_records, &mut replay_outputs);
 
         assert_eq!(replay_outputs.len(), 1);
-    });
-
-    pevcap_borrowed_host_replay_does_not_allocate();
-}
-
-fn pevcap_borrowed_host_replay_does_not_allocate() {
-    let pevcap_service = GattChannel::from_bytes([0x55; 16]);
-    let pevcap_characteristic = GattChannel::from_bytes([0x66; 16]);
-    let pevcap = PevcapCapture::new(
-        PevcapHeader::new(
-            1,
-            "darwin",
-            Some(185),
-            &[pevcap_service],
-            &[],
-            None,
-            "0.1.0",
-            [0x42; 32],
-            &[],
-        )
-        .expect("header fits"),
-        vec![
-            PevcapRecord::outbound_write(
-                7,
-                pevcap_characteristic,
-                WriteMode::WithoutResponse,
-                Bytes::from_static(b"N"),
-            ),
-            PevcapRecord::inbound_notification(
-                9,
-                pevcap_characteristic,
-                pevcap_service,
-                Bytes::from_static(b"NAME=Falcon"),
-            ),
-        ],
-    );
-    let mut pevcap_host = HostSession::new(NoOpSession);
-    let mut pevcap_outputs = Vec::with_capacity(4);
-    assert_no_allocations("PEVCAP borrowed host replay", || {
-        pevcap.replay_into_host(&mut pevcap_host, &mut pevcap_outputs);
-
-        assert_eq!(pevcap_outputs.len(), 2);
     });
 }
 

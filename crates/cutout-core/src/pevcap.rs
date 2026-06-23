@@ -578,7 +578,7 @@ impl PevcapCapture {
     where
         S: ProtocolSession,
     {
-        self.replay_with_notification_chunks_into_host(host, outputs, None);
+        self.replay_mode_into_host(PevcapReplayMode::Whole, host, outputs);
     }
 
     /// Replays PEVCAP records directly through a host session, splitting each
@@ -590,11 +590,7 @@ impl PevcapCapture {
     ) where
         S: ProtocolSession,
     {
-        self.replay_with_notification_chunks_into_host(
-            host,
-            outputs,
-            Some(PevcapReplayChunks::OneByte),
-        );
+        self.replay_mode_into_host(PevcapReplayMode::OneByte, host, outputs);
     }
 
     /// Replays PEVCAP records directly through a host session, splitting each
@@ -607,11 +603,7 @@ impl PevcapCapture {
     ) where
         S: ProtocolSession,
     {
-        self.replay_with_notification_chunks_into_host(
-            host,
-            outputs,
-            Some(PevcapReplayChunks::Lengths(lengths)),
-        );
+        self.replay_mode_into_host(PevcapReplayMode::Lengths(lengths), host, outputs);
     }
 
     /// Counts host inputs represented by this capture's replay path.
@@ -671,14 +663,13 @@ impl PevcapCapture {
         S: ProtocolSession,
         F: FnMut() -> S,
     {
-        let whole = self.replay_semantic_events(HostSession::new(make_session()), None);
-        let one_byte = self.replay_semantic_events(
-            HostSession::new(make_session()),
-            Some(PevcapReplayChunks::OneByte),
-        );
+        let whole =
+            self.replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::Whole);
+        let one_byte = self
+            .replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::OneByte);
         let arbitrary = self.replay_semantic_events(
             HostSession::new(make_session()),
-            Some(PevcapReplayChunks::Lengths(arbitrary_lengths)),
+            PevcapReplayMode::Lengths(arbitrary_lengths),
         );
 
         ReplayChunkComparison {
@@ -693,13 +684,13 @@ impl PevcapCapture {
     fn replay_semantic_events<S>(
         &self,
         mut host: HostSession<S>,
-        chunks: Option<PevcapReplayChunks<'_>>,
+        mode: PevcapReplayMode<'_>,
     ) -> Vec<DeviceEvent>
     where
         S: ProtocolSession,
     {
         let mut outputs = Vec::new();
-        self.replay_with_notification_chunks_into_host(&mut host, &mut outputs, chunks);
+        self.replay_mode_into_host(mode, &mut host, &mut outputs);
         outputs
             .into_iter()
             .filter_map(|output| match output {
@@ -709,11 +700,11 @@ impl PevcapCapture {
             .collect()
     }
 
-    fn replay_with_notification_chunks_into_host<S>(
+    fn replay_mode_into_host<S>(
         &self,
+        mode: PevcapReplayMode<'_>,
         host: &mut HostSession<S>,
         outputs: &mut Vec<SessionOutput>,
-        chunks: Option<PevcapReplayChunks<'_>>,
     ) where
         S: ProtocolSession,
     {
@@ -739,7 +730,7 @@ impl PevcapCapture {
                 }
                 PevcapDirection::LinkDown => host.ingest_link_down(),
                 PevcapDirection::Inbound => {
-                    replay_pevcap_notification(record, chunks, host, outputs);
+                    replay_pevcap_notification(record, mode, host, outputs);
                     continue;
                 }
                 PevcapDirection::Outbound => {}
@@ -975,21 +966,22 @@ impl PevcapCapture {
 }
 
 #[derive(Clone, Copy)]
-enum PevcapReplayChunks<'a> {
+enum PevcapReplayMode<'a> {
+    Whole,
     OneByte,
     Lengths(&'a [NotificationChunkLen]),
 }
 
 fn replay_pevcap_notification<S>(
     record: &PevcapRecord,
-    chunks: Option<PevcapReplayChunks<'_>>,
+    mode: PevcapReplayMode<'_>,
     host: &mut HostSession<S>,
     outputs: &mut Vec<SessionOutput>,
 ) where
     S: ProtocolSession,
 {
-    match chunks {
-        None => {
+    match mode {
+        PevcapReplayMode::Whole => {
             host.ingest(SessionInput::Notification {
                 channel: record.characteristic,
                 bytes: record.bytes.as_ref(),
@@ -997,7 +989,7 @@ fn replay_pevcap_notification<S>(
             });
             host.drain_outputs_into(outputs);
         }
-        Some(PevcapReplayChunks::OneByte) => {
+        PevcapReplayMode::OneByte => {
             for chunk in record.bytes.as_ref().chunks(1) {
                 host.ingest(SessionInput::Notification {
                     channel: record.characteristic,
@@ -1007,7 +999,7 @@ fn replay_pevcap_notification<S>(
                 host.drain_outputs_into(outputs);
             }
         }
-        Some(PevcapReplayChunks::Lengths(lengths)) => {
+        PevcapReplayMode::Lengths(lengths) => {
             let mut offset = 0usize;
             for length in lengths.iter().copied().filter(|length| !length.is_whole()) {
                 if offset >= record.bytes.len() {
@@ -1831,43 +1823,20 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy)]
-    enum TestReplayMode<'a> {
-        Whole,
-        OneByte,
-        Chunks(&'a [NotificationChunkLen]),
-    }
-
-    fn replay_outputs(capture: &PevcapCapture, mode: TestReplayMode<'_>) -> Vec<SessionOutput> {
+    fn replay_outputs(capture: &PevcapCapture, mode: PevcapReplayMode<'_>) -> Vec<SessionOutput> {
         let recorder = RecordingSession::default();
         let mut host = HostSession::new(recorder);
         let mut outputs = Vec::new();
-        match mode {
-            TestReplayMode::Whole => capture.replay_into_host(&mut host, &mut outputs),
-            TestReplayMode::OneByte => {
-                capture.replay_one_byte_notifications_into_host(&mut host, &mut outputs);
-            }
-            TestReplayMode::Chunks(lengths) => {
-                capture.replay_notification_chunks_into_host(lengths, &mut host, &mut outputs);
-            }
-        }
+        capture.replay_mode_into_host(mode, &mut host, &mut outputs);
         outputs
     }
 
-    fn replayed_bytes(capture: &PevcapCapture, mode: TestReplayMode<'_>) -> Vec<u8> {
+    fn replayed_bytes(capture: &PevcapCapture, mode: PevcapReplayMode<'_>) -> Vec<u8> {
         let recorder = RecordingSession::default();
         let bytes = Rc::clone(&recorder.bytes);
         let mut host = HostSession::new(recorder);
         let mut outputs = Vec::new();
-        match mode {
-            TestReplayMode::Whole => capture.replay_into_host(&mut host, &mut outputs),
-            TestReplayMode::OneByte => {
-                capture.replay_one_byte_notifications_into_host(&mut host, &mut outputs);
-            }
-            TestReplayMode::Chunks(lengths) => {
-                capture.replay_notification_chunks_into_host(lengths, &mut host, &mut outputs);
-            }
-        }
+        capture.replay_mode_into_host(mode, &mut host, &mut outputs);
         bytes.borrow().clone()
     }
 
@@ -2222,7 +2191,7 @@ mod tests {
             ],
         );
 
-        let outputs = replay_outputs(&capture, TestReplayMode::Whole);
+        let outputs = replay_outputs(&capture, PevcapReplayMode::Whole);
         assert_eq!(capture.replay_input_count(), 3);
         assert!(matches!(
             outputs[0],
@@ -2242,7 +2211,7 @@ mod tests {
                 if evidence.monotonic_ms == 11
         ));
         assert_eq!(
-            replayed_bytes(&capture, TestReplayMode::Whole),
+            replayed_bytes(&capture, PevcapReplayMode::Whole),
             b"NAME=Falcon55aa"
         );
     }
@@ -2284,7 +2253,7 @@ mod tests {
             ],
         );
 
-        let outputs = replay_outputs(&capture, TestReplayMode::Whole);
+        let outputs = replay_outputs(&capture, PevcapReplayMode::Whole);
         assert_eq!(capture.replay_input_count(), 5);
         assert!(matches!(
             outputs[0],
@@ -2305,7 +2274,7 @@ mod tests {
             }))
         ));
         assert_eq!(
-            replayed_bytes(&capture, TestReplayMode::Whole),
+            replayed_bytes(&capture, PevcapReplayMode::Whole),
             b"NAME=Falcon55aa"
         );
     }
@@ -2325,7 +2294,7 @@ mod tests {
             )],
         );
 
-        let outputs = replay_outputs(&capture, TestReplayMode::Whole);
+        let outputs = replay_outputs(&capture, PevcapReplayMode::Whole);
         assert_eq!(capture.replay_input_count(), 1);
         assert!(matches!(
             outputs.as_slice(),
@@ -2361,9 +2330,9 @@ mod tests {
             )],
         );
 
-        let outputs = replay_outputs(&capture, TestReplayMode::OneByte);
+        let outputs = replay_outputs(&capture, PevcapReplayMode::OneByte);
         assert_eq!(outputs.len(), 4);
-        assert_eq!(replayed_bytes(&capture, TestReplayMode::OneByte), b"abc");
+        assert_eq!(replayed_bytes(&capture, PevcapReplayMode::OneByte), b"abc");
         assert!(outputs[1..].iter().all(|output| {
             matches!(
                 output,
@@ -2400,10 +2369,10 @@ mod tests {
         );
 
         let lengths = [NotificationChunkLen::new(2), NotificationChunkLen::new(1)];
-        let outputs = replay_outputs(&capture, TestReplayMode::Chunks(&lengths));
+        let outputs = replay_outputs(&capture, PevcapReplayMode::Lengths(&lengths));
         assert_eq!(outputs.len(), 4);
         assert_eq!(
-            replayed_bytes(&capture, TestReplayMode::Chunks(&lengths)),
+            replayed_bytes(&capture, PevcapReplayMode::Lengths(&lengths)),
             b"abcd"
         );
         assert!(matches!(
@@ -2448,7 +2417,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             prop_assert_eq!(
-                replayed_bytes(&capture, TestReplayMode::Chunks(&chunk_lengths)),
+                replayed_bytes(&capture, PevcapReplayMode::Lengths(&chunk_lengths)),
                 payload,
             );
         }
