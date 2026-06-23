@@ -1199,7 +1199,7 @@ struct TelemetryFieldWriter<'formatter, 'output> {
     output: &'formatter mut fmt::Formatter<'output>,
     prefix: Option<&'static str>,
     empty: &'static str,
-    fields: usize,
+    fields: FieldCount,
 }
 
 impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
@@ -1212,7 +1212,7 @@ impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
             output,
             prefix,
             empty,
-            fields: 0,
+            fields: FieldCount::empty(),
         }
     }
 
@@ -1227,7 +1227,7 @@ impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
     }
 
     fn write_prefix(&mut self, name: &str) -> fmt::Result {
-        if self.fields == 0 {
+        if self.fields.is_empty() {
             if let Some(prefix) = self.prefix {
                 write!(self.output, "{prefix} {name}=")?;
             } else {
@@ -1236,12 +1236,12 @@ impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
         } else {
             write!(self.output, " {name}=")?;
         }
-        self.fields += 1;
+        self.fields = self.fields.increment();
         Ok(())
     }
 
     fn finish(self) -> fmt::Result {
-        if self.fields == 0 {
+        if self.fields.is_empty() {
             if let Some(prefix) = self.prefix {
                 write!(self.output, "{prefix} {}", self.empty)
             } else {
@@ -1250,6 +1250,23 @@ impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
         } else {
             Ok(())
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct FieldCount(usize);
+
+impl FieldCount {
+    const fn empty() -> Self {
+        Self(0)
+    }
+
+    const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    const fn increment(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 

@@ -2099,7 +2099,7 @@ impl fmt::Display for SettingsLine {
 struct CommandFieldWriter<'formatter, 'output> {
     output: &'formatter mut fmt::Formatter<'output>,
     prefix: &'static str,
-    fields: usize,
+    fields: FieldCount,
 }
 
 impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
@@ -2107,7 +2107,7 @@ impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
         Self {
             output,
             prefix,
-            fields: 0,
+            fields: FieldCount::empty(),
         }
     }
 
@@ -2124,23 +2124,40 @@ impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
     }
 
     fn write_raw_field(&mut self, field: cutout_core::RawFieldValue) -> fmt::Result {
-        if self.fields == 0 {
+        if self.fields.is_empty() {
             write!(self.output, "{} ", self.prefix)?;
         } else {
             write!(self.output, " ")?;
         }
-        self.fields += 1;
+        self.fields = self.fields.increment();
         write!(self.output, "raw_{:04x}={}", field.id, field.value)
     }
 
     fn write_field_name(&mut self, name: &'static str) -> fmt::Result {
-        if self.fields == 0 {
+        if self.fields.is_empty() {
             write!(self.output, "{} {name}=", self.prefix)?;
         } else {
             write!(self.output, " {name}=")?;
         }
-        self.fields += 1;
+        self.fields = self.fields.increment();
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct FieldCount(usize);
+
+impl FieldCount {
+    const fn empty() -> Self {
+        Self(0)
+    }
+
+    const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    const fn increment(self) -> Self {
+        Self(self.0.saturating_add(1))
     }
 }
 
