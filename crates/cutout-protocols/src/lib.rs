@@ -95,7 +95,8 @@ pub use veteran_bms::{
     classify_veteran_bms_selector, decode_veteran_bms_page,
 };
 pub use veteran_frame::{
-    MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
+    MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
+    VeteranReassemblyError,
 };
 pub use veteran_telemetry::{
     NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV,

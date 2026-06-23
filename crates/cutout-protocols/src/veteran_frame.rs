@@ -57,6 +57,23 @@ pub enum VeteranReassemblyError {
     InvalidFrame,
 }
 
+/// Parser-owned result for one Veteran/LeaperKim/NOSFET stream byte.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "complete frames stay inline to keep parser hot paths allocation-free"
+)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VeteranFrameParseResult {
+    /// The parser has not accepted a frame prefix yet.
+    Seeking,
+
+    /// The parser accepted bytes into a bounded partial frame.
+    Buffered,
+
+    /// The parser completed and validated one frame.
+    Complete(VeteranFrame),
+}
+
 /// Sync reassembler for Veteran/LeaperKim/NOSFET `dc5a5c` notification streams.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranFrameReassembler {
@@ -74,28 +91,34 @@ impl Default for VeteranFrameReassembler {
 }
 
 impl VeteranFrameReassembler {
-    /// Feeds one notification byte into the reassembler.
+    /// Feeds one notification byte and returns a parser-owned typed result.
     ///
     /// # Errors
     ///
     /// Returns [`VeteranReassemblyError::CrcMismatch`] when a long frame's
     /// CRC32 trailer does not match the frame contents.
-    pub fn feed_byte(&mut self, byte: u8) -> Result<Option<VeteranFrame>, VeteranReassemblyError> {
+    pub fn feed_byte_result(
+        &mut self,
+        byte: u8,
+    ) -> Result<VeteranFrameParseResult, VeteranReassemblyError> {
         let (state, frame) = self.state.feed_byte(byte, &mut self.buffer)?;
         self.state = state;
-        Ok(frame)
+        Ok(frame.map_or_else(
+            || {
+                if self.buffer.is_empty() {
+                    VeteranFrameParseResult::Seeking
+                } else {
+                    VeteranFrameParseResult::Buffered
+                }
+            },
+            VeteranFrameParseResult::Complete,
+        ))
     }
 
     /// Resets parser state and drops any partial frame bytes.
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.state = VeteranFrameParseState::default();
-    }
-
-    /// Returns whether the reassembler is holding a valid partial frame prefix.
-    #[must_use]
-    pub fn is_buffering(&self) -> bool {
-        !self.buffer.is_empty()
     }
 }
 
@@ -235,8 +258,9 @@ mod tests {
     ) -> Result<Vec<VeteranFrame>, VeteranReassemblyError> {
         let mut frames = Vec::new();
         for byte in bytes {
-            if let Some(frame) = reassembler.feed_byte(*byte)? {
-                frames.push(frame);
+            match reassembler.feed_byte_result(*byte)? {
+                VeteranFrameParseResult::Complete(frame) => frames.push(frame),
+                VeteranFrameParseResult::Seeking | VeteranFrameParseResult::Buffered => {}
             }
         }
         Ok(frames)
@@ -349,15 +373,65 @@ mod tests {
     fn reassembler_waits_for_complete_header_before_using_length() {
         let mut reassembler = VeteranFrameReassembler::default();
 
-        assert_eq!(reassembler.feed_byte(0xdc), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x5a), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x5c), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x01), Ok(None));
         assert_eq!(
-            reassembler.feed_byte(0xaa),
-            Ok(Some(
+            reassembler.feed_byte_result(0xdc),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5a),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5c),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x01),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0xaa),
+            Ok(VeteranFrameParseResult::Complete(
                 VeteranFrame::try_from_slice(b"\xdc\x5a\x5c\x01\xaa").expect("fixture frame fits")
             ))
+        );
+    }
+
+    #[test]
+    fn reassembler_reports_typed_parser_progress() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        assert_eq!(
+            reassembler.feed_byte_result(0x00),
+            Ok(VeteranFrameParseResult::Seeking)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0xdc),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5a),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+    }
+
+    #[test]
+    fn reassembler_reports_typed_complete_frame() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let frame_bytes = hex_literal::hex!("dc5a5c0100");
+        let mut result = VeteranFrameParseResult::Seeking;
+
+        for byte in frame_bytes {
+            result = reassembler
+                .feed_byte_result(byte)
+                .expect("short frame parses");
+        }
+
+        assert_eq!(
+            result,
+            VeteranFrameParseResult::Complete(
+                VeteranFrame::try_from_slice(&frame_bytes).expect("fixture frame fits")
+            )
         );
     }
 
@@ -365,8 +439,14 @@ mod tests {
     fn reset_drops_partial_frame_state() {
         let mut reassembler = VeteranFrameReassembler::default();
 
-        assert_eq!(reassembler.feed_byte(0xdc), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x5a), Ok(None));
+        assert_eq!(
+            reassembler.feed_byte_result(0xdc),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5a),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
         reassembler.reset();
         let frames = feed_chunk(&mut reassembler, b"\x5c\x01\xaa");
 

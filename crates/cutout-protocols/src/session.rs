@@ -19,8 +19,9 @@ use crate::{
     VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
     VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry, VescValuesTelemetry,
     VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
-    VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
-    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
+    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
+    decode_veteran_bms_page,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -204,10 +205,12 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         output: &mut Vec<SessionOutput>,
     ) {
         let mut completed_frames = 0usize;
+        let mut buffered = false;
         for byte in bytes {
-            match self.reassembler.feed_byte(*byte) {
-                Ok(Some(frame)) => {
+            match self.reassembler.feed_byte_result(*byte) {
+                Ok(VeteranFrameParseResult::Complete(frame)) => {
                     completed_frames += 1;
+                    buffered = false;
                     let output_len_before = output.len();
                     push_veteran_frame(&frame, monotonic_ms, output);
                     push_veteran_ingest_outcome_for_frame(
@@ -218,7 +221,12 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                         output,
                     );
                 }
-                Ok(None) => {}
+                Ok(VeteranFrameParseResult::Buffered) => {
+                    buffered = true;
+                }
+                Ok(VeteranFrameParseResult::Seeking) => {
+                    buffered = false;
+                }
                 Err(VeteranReassemblyError::CrcMismatch) => {
                     push_parser_error(ParserError::BadChecksum, output);
                     output.push(SessionOutput::NotificationIngest(
@@ -249,22 +257,20 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         }
 
         if completed_frames == 0 {
-            output.push(SessionOutput::NotificationIngest(
-                if self.reassembler.is_buffering() {
-                    NotificationIngestOutcome::buffered_fragment(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::new(bytes.len()),
-                        monotonic_ms,
-                    )
-                } else {
-                    NotificationIngestOutcome::ignored_wrong_channel(
-                        channel,
-                        NotificationByteLen::new(bytes.len()),
-                        monotonic_ms,
-                    )
-                },
-            ));
+            output.push(SessionOutput::NotificationIngest(if buffered {
+                NotificationIngestOutcome::buffered_fragment(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    channel,
+                    NotificationByteLen::new(bytes.len()),
+                    monotonic_ms,
+                )
+            } else {
+                NotificationIngestOutcome::ignored_wrong_channel(
+                    channel,
+                    NotificationByteLen::new(bytes.len()),
+                    monotonic_ms,
+                )
+            }));
         }
     }
 }

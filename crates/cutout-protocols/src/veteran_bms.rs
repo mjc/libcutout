@@ -318,7 +318,7 @@ pub const fn decode_veteran_bms_page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::VeteranFrameReassembler;
+    use crate::{VeteranFrameParseResult, VeteranFrameReassembler};
     use proptest::prelude::*;
 
     const PAGE_8_BODY: [u8; 24] =
@@ -362,7 +362,15 @@ mod tests {
         let mut reassembler = VeteranFrameReassembler::default();
         fixture_bytes(input)
             .into_iter()
-            .filter_map(|byte| reassembler.feed_byte(byte).expect("fixture CRC is valid"))
+            .filter_map(|byte| {
+                match reassembler
+                    .feed_byte_result(byte)
+                    .expect("fixture CRC is valid")
+                {
+                    VeteranFrameParseResult::Complete(frame) => Some(frame),
+                    VeteranFrameParseResult::Seeking | VeteranFrameParseResult::Buffered => None,
+                }
+            })
             .collect()
     }
 
