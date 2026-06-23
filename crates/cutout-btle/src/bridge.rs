@@ -1,7 +1,7 @@
 use btleplug::api::{Characteristic, ValueNotification};
 use cutout_core::{
-    DeviceCommand, GattChannel, LinkInfo, NotificationIngestOutcome, ProtocolSession, SessionInput,
-    SessionOutput, TransportAction,
+    DeviceCommand, GattChannel, LinkInfo, NotificationEvidence, NotificationIngestOutcome,
+    ProtocolSession, SessionInput, SessionOutput, TransportAction,
 };
 use futures_util::StreamExt;
 use tracing::{debug, info};
@@ -453,8 +453,18 @@ where
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NotificationDecodeOutcome {
+    Ignored(NotificationEvidence),
+    BufferedFragment(NotificationEvidence),
+    ParserGap(NotificationEvidence),
+    KnownReserved(NotificationEvidence),
+    ParserDiagnostic(NotificationEvidence),
+    SemanticEvents(NotificationEvidence),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum NotificationDecodeKind {
     Ignored,
     BufferedFragment,
     ParserGap,
@@ -463,7 +473,9 @@ pub(crate) enum NotificationDecodeOutcome {
     SemanticEvents,
 }
 
-pub(crate) fn notification_decode_outcome(outputs: &[SessionOutput]) -> NotificationDecodeOutcome {
+pub(crate) fn notification_decode_outcome(
+    outputs: &[SessionOutput],
+) -> Option<NotificationDecodeOutcome> {
     outputs
         .iter()
         .filter_map(|output| match output {
@@ -471,67 +483,83 @@ pub(crate) fn notification_decode_outcome(outputs: &[SessionOutput]) -> Notifica
             SessionOutput::Transport(_) | SessionOutput::Event(_) => None,
         })
         .map(NotificationDecodeOutcome::from)
-        .max()
-        .unwrap_or(NotificationDecodeOutcome::Ignored)
+        .max_by_key(|outcome| outcome.kind())
 }
 
 impl From<&NotificationIngestOutcome> for NotificationDecodeOutcome {
     fn from(outcome: &NotificationIngestOutcome) -> Self {
         match outcome {
-            NotificationIngestOutcome::SemanticEvents { .. } => {
-                NotificationDecodeOutcome::SemanticEvents
+            NotificationIngestOutcome::SemanticEvents { notification, .. } => {
+                NotificationDecodeOutcome::SemanticEvents(*notification)
             }
-            NotificationIngestOutcome::ParserDiagnostic { .. } => {
-                NotificationDecodeOutcome::ParserDiagnostic
+            NotificationIngestOutcome::ParserDiagnostic { notification, .. } => {
+                NotificationDecodeOutcome::ParserDiagnostic(*notification)
             }
-            NotificationIngestOutcome::KnownReserved { .. } => {
-                NotificationDecodeOutcome::KnownReserved
+            NotificationIngestOutcome::KnownReserved { notification, .. } => {
+                NotificationDecodeOutcome::KnownReserved(*notification)
             }
-            NotificationIngestOutcome::ParserGap { .. } => NotificationDecodeOutcome::ParserGap,
-            NotificationIngestOutcome::BufferedFragment(_) => {
-                NotificationDecodeOutcome::BufferedFragment
+            NotificationIngestOutcome::ParserGap { notification, .. } => {
+                NotificationDecodeOutcome::ParserGap(*notification)
             }
-            NotificationIngestOutcome::Ignored(_) => NotificationDecodeOutcome::Ignored,
+            NotificationIngestOutcome::BufferedFragment(notification) => {
+                NotificationDecodeOutcome::BufferedFragment(*notification)
+            }
+            NotificationIngestOutcome::Ignored(notification) => {
+                NotificationDecodeOutcome::Ignored(*notification)
+            }
+        }
+    }
+}
+
+impl NotificationDecodeOutcome {
+    pub(crate) const fn kind(self) -> NotificationDecodeKind {
+        match self {
+            Self::Ignored(_) => NotificationDecodeKind::Ignored,
+            Self::BufferedFragment(_) => NotificationDecodeKind::BufferedFragment,
+            Self::ParserGap(_) => NotificationDecodeKind::ParserGap,
+            Self::KnownReserved(_) => NotificationDecodeKind::KnownReserved,
+            Self::ParserDiagnostic(_) => NotificationDecodeKind::ParserDiagnostic,
+            Self::SemanticEvents(_) => NotificationDecodeKind::SemanticEvents,
         }
     }
 }
 
 fn log_notification_decode_outcome(
-    outcome: NotificationDecodeOutcome,
+    outcome: Option<NotificationDecodeOutcome>,
     notification: &ValueNotification,
     channel: GattChannel,
 ) {
     match outcome {
-        NotificationDecodeOutcome::SemanticEvents => {}
-        NotificationDecodeOutcome::BufferedFragment => {
+        Some(NotificationDecodeOutcome::SemanticEvents(_)) => {}
+        Some(NotificationDecodeOutcome::BufferedFragment(evidence)) => {
             debug!(
-                len = notification.value.len(),
-                channel = ?channel,
+                len = evidence.len.get(),
+                channel = ?evidence.channel,
                 "session notification buffered by protocol decoder"
             );
         }
-        NotificationDecodeOutcome::ParserDiagnostic => {
+        Some(NotificationDecodeOutcome::ParserDiagnostic(evidence)) => {
             debug!(
-                len = notification.value.len(),
-                channel = ?channel,
+                len = evidence.len.get(),
+                channel = ?evidence.channel,
                 "session notification produced parser diagnostic"
             );
         }
-        NotificationDecodeOutcome::KnownReserved => {
+        Some(NotificationDecodeOutcome::KnownReserved(evidence)) => {
             debug!(
-                len = notification.value.len(),
-                channel = ?channel,
+                len = evidence.len.get(),
+                channel = ?evidence.channel,
                 "session notification produced known reserved protocol evidence"
             );
         }
-        NotificationDecodeOutcome::ParserGap => {
+        Some(NotificationDecodeOutcome::ParserGap(evidence)) => {
             debug!(
-                len = notification.value.len(),
-                channel = ?channel,
+                len = evidence.len.get(),
+                channel = ?evidence.channel,
                 "session notification produced parser gap evidence"
             );
         }
-        NotificationDecodeOutcome::Ignored => {
+        Some(NotificationDecodeOutcome::Ignored(_)) | None => {
             debug!(
                 uuid = %notification.uuid,
                 service = %notification.service_uuid,

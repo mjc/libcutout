@@ -25,6 +25,19 @@ type WriteRecord = (Uuid, Vec<u8>, WriteMode);
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
 type NotificationLog = Arc<Mutex<Vec<ValueNotification>>>;
 
+fn decode_outcome_evidence(
+    outcome: crate::bridge::NotificationDecodeOutcome,
+) -> cutout_core::NotificationEvidence {
+    match outcome {
+        crate::bridge::NotificationDecodeOutcome::Ignored(evidence)
+        | crate::bridge::NotificationDecodeOutcome::BufferedFragment(evidence)
+        | crate::bridge::NotificationDecodeOutcome::ParserGap(evidence)
+        | crate::bridge::NotificationDecodeOutcome::KnownReserved(evidence)
+        | crate::bridge::NotificationDecodeOutcome::ParserDiagnostic(evidence)
+        | crate::bridge::NotificationDecodeOutcome::SemanticEvents(evidence) => evidence,
+    }
+}
+
 #[test]
 fn exposes_the_expected_name() {
     assert_eq!(crate_name(), "cutout-btle");
@@ -1097,9 +1110,15 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
         ),
     )];
 
+    let outcome =
+        crate::bridge::notification_decode_outcome(&outputs).expect("semantic outcome present");
     assert_eq!(
-        crate::bridge::notification_decode_outcome(&outputs),
-        crate::bridge::NotificationDecodeOutcome::SemanticEvents
+        outcome.kind(),
+        crate::bridge::NotificationDecodeKind::SemanticEvents
+    );
+    assert_eq!(
+        decode_outcome_evidence(outcome).len,
+        NotificationByteLen::new(77)
     );
 }
 
@@ -1114,9 +1133,15 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
         ),
     )];
 
+    let outcome =
+        crate::bridge::notification_decode_outcome(&outputs).expect("buffered outcome present");
     assert_eq!(
-        crate::bridge::notification_decode_outcome(&outputs),
-        crate::bridge::NotificationDecodeOutcome::BufferedFragment
+        outcome.kind(),
+        crate::bridge::NotificationDecodeKind::BufferedFragment
+    );
+    assert_eq!(
+        decode_outcome_evidence(outcome).len,
+        NotificationByteLen::new(20)
     );
 }
 
@@ -1130,9 +1155,15 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
         ),
     )];
 
+    let outcome =
+        crate::bridge::notification_decode_outcome(&outputs).expect("ignored outcome present");
     assert_eq!(
-        crate::bridge::notification_decode_outcome(&outputs),
-        crate::bridge::NotificationDecodeOutcome::Ignored
+        outcome.kind(),
+        crate::bridge::NotificationDecodeKind::Ignored
+    );
+    assert_eq!(
+        decode_outcome_evidence(outcome).len,
+        NotificationByteLen::new(20)
     );
 }
 
@@ -1177,9 +1208,15 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
         })),
     ];
 
+    let outcome =
+        crate::bridge::notification_decode_outcome(&outputs).expect("semantic outcome present");
     assert_eq!(
-        crate::bridge::notification_decode_outcome(&outputs),
-        crate::bridge::NotificationDecodeOutcome::SemanticEvents
+        outcome.kind(),
+        crate::bridge::NotificationDecodeKind::SemanticEvents
+    );
+    assert_eq!(
+        decode_outcome_evidence(outcome).len,
+        NotificationByteLen::new(77)
     );
 }
 
@@ -1223,17 +1260,33 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         ),
     )];
 
+    let reserved =
+        crate::bridge::notification_decode_outcome(&reserved).expect("reserved outcome present");
     assert_eq!(
-        crate::bridge::notification_decode_outcome(&reserved),
-        crate::bridge::NotificationDecodeOutcome::KnownReserved
+        reserved.kind(),
+        crate::bridge::NotificationDecodeKind::KnownReserved
     );
     assert_eq!(
-        crate::bridge::notification_decode_outcome(&gap),
-        crate::bridge::NotificationDecodeOutcome::ParserGap
+        decode_outcome_evidence(reserved).len,
+        NotificationByteLen::new(75)
+    );
+
+    let gap = crate::bridge::notification_decode_outcome(&gap).expect("gap outcome present");
+    assert_eq!(gap.kind(), crate::bridge::NotificationDecodeKind::ParserGap);
+    assert_eq!(
+        decode_outcome_evidence(gap).len,
+        NotificationByteLen::new(77)
+    );
+
+    let diagnostic = crate::bridge::notification_decode_outcome(&diagnostic)
+        .expect("diagnostic outcome present");
+    assert_eq!(
+        diagnostic.kind(),
+        crate::bridge::NotificationDecodeKind::ParserDiagnostic
     );
     assert_eq!(
-        crate::bridge::notification_decode_outcome(&diagnostic),
-        crate::bridge::NotificationDecodeOutcome::ParserDiagnostic
+        decode_outcome_evidence(diagnostic).len,
+        NotificationByteLen::new(77)
     );
 }
 
