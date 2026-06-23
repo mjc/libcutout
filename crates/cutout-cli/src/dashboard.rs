@@ -14,8 +14,8 @@ use std::{
 use anyhow::Result;
 use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeEvent, SessionBridgeReport};
 use cutout_core::{
-    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, ReadOnlyResponse, TelemetryDelta,
-    TelemetrySnapshot,
+    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, ReadOnlyResponse,
+    SettingsReadback, TelemetryDelta, TelemetrySnapshot,
 };
 use cutout_protocols::VeteranModelProfile;
 use ratatui::termina::{
@@ -1259,23 +1259,7 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
         ReadOnlyResponse::Firmware(firmware) => {
             format!("read-only firmware {}", format_firmware_summary(firmware))
         }
-        ReadOnlyResponse::Settings(settings) => {
-            let mut entries = Vec::new();
-            for entry in settings.entries.into_iter().flatten() {
-                entries.push(format!(
-                    "field={} value={} quality={} verification={}",
-                    entry.field.id,
-                    entry.field.value,
-                    quality_name(entry.quality),
-                    verification_name(entry.verification)
-                ));
-            }
-            if entries.is_empty() {
-                "read-only settings none observed".to_owned()
-            } else {
-                format!("read-only settings {}", entries.join(" "))
-            }
-        }
+        ReadOnlyResponse::Settings(settings) => SettingsReadbackLog(settings).to_string(),
         ReadOnlyResponse::Battery(payload) => {
             let page = payload.page();
             let mut summary = format!(
@@ -1299,6 +1283,36 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
         ReadOnlyResponse::RawTelemetry(raw) => {
             let populated = raw.fields.into_iter().flatten().count();
             format!("read-only raw telemetry fields={populated}")
+        }
+    }
+}
+
+struct SettingsReadbackLog(SettingsReadback);
+
+impl fmt::Display for SettingsReadbackLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut wrote = false;
+        for entry in self.0.entries.into_iter().flatten() {
+            if wrote {
+                write!(f, " ")?;
+            } else {
+                write!(f, "read-only settings ")?;
+            }
+            wrote = true;
+            write!(
+                f,
+                "field={} value={} quality={} verification={}",
+                entry.field.id,
+                entry.field.value,
+                quality_name(entry.quality),
+                verification_name(entry.verification)
+            )?;
+        }
+
+        if wrote {
+            Ok(())
+        } else {
+            write!(f, "read-only settings none observed")
         }
     }
 }
@@ -2762,6 +2776,37 @@ mod tests {
         assert_eq!(
             MappedTelemetryLog(TelemetrySnapshot::default()).to_string(),
             "telemetry mapped none"
+        );
+    }
+
+    #[test]
+    fn settings_readback_log_streams_bounded_entries_at_render_edge() {
+        let settings = SettingsReadback {
+            entries: [
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x20, 540),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x21, -12),
+                    source: ValueSource::Estimated,
+                    quality: ValueQuality::Inferred,
+                    verification: VerificationStatus::Inferred,
+                }),
+                None,
+            ],
+        };
+
+        assert_eq!(
+            SettingsReadbackLog(settings).to_string(),
+            "read-only settings field=32 value=540 quality=known verification=hardware_verified field=33 value=-12 quality=inferred verification=inferred"
+        );
+        assert_eq!(
+            SettingsReadbackLog(SettingsReadback::default()).to_string(),
+            "read-only settings none observed"
         );
     }
 
