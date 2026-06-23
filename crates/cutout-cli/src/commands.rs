@@ -9,12 +9,13 @@ use std::{
 
 use anyhow::{Result, bail};
 use cutout_btle::{
-    BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, DiagnosticEventCount,
-    DisconnectCount, MonotonicMs, NotificationByteTotal, NotificationCount, NotificationWindow,
-    PevcapSessionMetadata, ProtocolWriteCount, RawNotificationRecord, ReadOnlyResponseCount,
-    ReconnectAttemptReport, ScanWindow, SessionBridgeEvent, SessionBridgeReport, SessionCapture,
-    SessionEndpoints, SessionPeripheral, SubscribeCount, TelemetryEventCount, TransportWriteCount,
-    WriteProvenance, capture_raw_notifications, capture_reconnecting_session_with_commands,
+    BridgeIdentityResolution, BtleError, BtleplugReconnectHost, ConnectedPeripheral,
+    ConnectionTarget, DiagnosticEventCount, DisconnectCount, MonotonicMs, NotificationByteTotal,
+    NotificationCount, NotificationWindow, PevcapSessionMetadata, ProtocolWriteCount,
+    RawNotificationRecord, ReadOnlyResponseCount, ReconnectAttemptReport, ScanWindow,
+    SessionBridgeEvent, SessionBridgeReport, SessionCapture, SessionEndpoints, SessionPeripheral,
+    SubscribeCount, TelemetryEventCount, TransportWriteCount, WriteProvenance,
+    capture_raw_notifications, capture_reconnecting_session_with_commands,
     capture_session_with_commands, connect_and_discover, drive_session,
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
@@ -1959,18 +1960,28 @@ const fn diagnostic_severity_name(severity: cutout_core::DiagnosticSeverity) -> 
     }
 }
 
-fn render_identity(report: &SessionBridgeReport) -> Option<String> {
+fn render_identity(report: &SessionBridgeReport) -> Option<IdentityLine<'_>> {
     let identity = report.identity.as_ref()?;
-    Some(format!(
-        "identity confidence={:?} manufacturer={} model={} advertised_name_hint={} gatt_hint={} passive_family={} banner_model={}",
-        identity.confidence,
-        identity.manufacturer.unwrap_or("<unknown>"),
-        identity.model.unwrap_or("<unknown>"),
-        identity.evidence.has_advertised_name_hint(),
-        identity.evidence.has_gatt_hint(),
-        identity.evidence.has_passive_family_match(),
-        identity.evidence.has_banner_model_match()
-    ))
+    Some(IdentityLine(identity))
+}
+
+struct IdentityLine<'a>(&'a BridgeIdentityResolution);
+
+impl fmt::Display for IdentityLine<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let identity = self.0;
+        write!(
+            f,
+            "identity confidence={:?} manufacturer={} model={} advertised_name_hint={} gatt_hint={} passive_family={} banner_model={}",
+            identity.confidence,
+            identity.manufacturer.unwrap_or("<unknown>"),
+            identity.model.unwrap_or("<unknown>"),
+            identity.evidence.has_advertised_name_hint(),
+            identity.evidence.has_gatt_hint(),
+            identity.evidence.has_passive_family_match(),
+            identity.evidence.has_banner_model_match()
+        )
+    }
 }
 
 fn render_telemetry_snapshot(snapshot: &TelemetrySnapshot) -> Option<TelemetrySnapshotLine> {
@@ -3582,9 +3593,9 @@ mod tests {
         };
 
         assert_eq!(
-            render_identity(&report).as_deref(),
+            render_identity(&report).map(|identity| identity.to_string()),
             Some(
-                "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true"
+                "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true".to_owned()
             )
         );
     }
