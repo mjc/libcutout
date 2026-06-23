@@ -3157,7 +3157,10 @@ mod tests {
                 .iter()
                 .any(|page| page.page().kind == BatteryPageKind::Temperature)
         );
-        assert_eq!(state.read_only.unknown_raw_pages, 0);
+        assert_eq!(
+            state.read_only.unknown_raw_pages,
+            crate::dashboard::RawReadOnlyPageCount::default()
+        );
     }
 
     #[test]

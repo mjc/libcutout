@@ -242,6 +242,45 @@ impl<Tag> fmt::Display for DashboardCount<Tag> {
     }
 }
 
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ReadOnlySummaryCount<Tag> {
+    value: u64,
+    tag: PhantomData<fn() -> Tag>,
+}
+
+impl<Tag> Clone for ReadOnlySummaryCount<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Tag> Copy for ReadOnlySummaryCount<Tag> {}
+
+impl<Tag> Default for ReadOnlySummaryCount<Tag> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl<Tag> ReadOnlySummaryCount<Tag> {
+    pub(crate) const fn new(value: u64) -> Self {
+        Self {
+            value,
+            tag: PhantomData,
+        }
+    }
+
+    const fn increment(self) -> Self {
+        Self::new(self.value.saturating_add(1))
+    }
+}
+
+impl<Tag> fmt::Display for ReadOnlySummaryCount<Tag> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct DiscoveredDeviceCountTag;
 
@@ -250,6 +289,20 @@ pub(crate) struct ConnectedDeviceCountTag;
 
 pub(crate) type DiscoveredDeviceCount = DashboardCount<DiscoveredDeviceCountTag>;
 pub(crate) type ConnectedDeviceCount = DashboardCount<ConnectedDeviceCountTag>;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct RawReadOnlyPageCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ReadOnlyDiagnosticResponseCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct RawTelemetryResponseCountTag;
+
+pub(crate) type RawReadOnlyPageCount = ReadOnlySummaryCount<RawReadOnlyPageCountTag>;
+pub(crate) type ReadOnlyDiagnosticResponseCount =
+    ReadOnlySummaryCount<ReadOnlyDiagnosticResponseCountTag>;
+pub(crate) type RawTelemetryResponseCount = ReadOnlySummaryCount<RawTelemetryResponseCountTag>;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SessionCounters {
@@ -273,9 +326,9 @@ pub(crate) struct ReadOnlyDashboardState {
     pub(crate) settings: VecDeque<SettingsEntry>,
     pub(crate) bms_pages: VecDeque<BatteryPagePayload>,
     pub(crate) latest_bms_temperature: Option<BatteryPagePayload>,
-    pub(crate) diagnostics: u64,
-    pub(crate) raw_telemetry: u64,
-    pub(crate) unknown_raw_pages: u64,
+    pub(crate) diagnostics: ReadOnlyDiagnosticResponseCount,
+    pub(crate) raw_telemetry: RawTelemetryResponseCount,
+    pub(crate) unknown_raw_pages: RawReadOnlyPageCount,
 }
 
 impl ReadOnlyDashboardState {
@@ -295,7 +348,7 @@ impl ReadOnlyDashboardState {
                     page.kind,
                     cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
                 ) {
-                    self.unknown_raw_pages = self.unknown_raw_pages.saturating_add(1);
+                    self.unknown_raw_pages = self.unknown_raw_pages.increment();
                 }
                 if BmsTemperatureValues(payload).has_values() {
                     self.latest_bms_temperature = Some(payload);
@@ -303,10 +356,10 @@ impl ReadOnlyDashboardState {
                 push_bounded(&mut self.bms_pages, payload);
             }
             ReadOnlyResponse::Diagnostics(_) => {
-                self.diagnostics = self.diagnostics.saturating_add(1);
+                self.diagnostics = self.diagnostics.increment();
             }
             ReadOnlyResponse::RawTelemetry(_) => {
-                self.raw_telemetry = self.raw_telemetry.saturating_add(1);
+                self.raw_telemetry = self.raw_telemetry.increment();
             }
         }
     }
@@ -3553,8 +3606,14 @@ mod tests {
                 .map(|summary| summary.to_string()),
             Some("selector=3 verification=hardware_verified temps_c=16,17,18,17,17,19".to_owned())
         );
-        assert_eq!(state.read_only.unknown_raw_pages, 1);
-        assert_eq!(state.read_only.raw_telemetry, 1);
+        assert_eq!(
+            state.read_only.unknown_raw_pages,
+            RawReadOnlyPageCount::new(1)
+        );
+        assert_eq!(
+            state.read_only.raw_telemetry,
+            RawTelemetryResponseCount::new(1)
+        );
         assert!(
             state
                 .logs
@@ -3678,8 +3737,14 @@ mod tests {
         assert_eq!(firmware_summary_text(&state), Some("43.2.54".to_owned()));
         assert_eq!(state.read_only.settings.len(), 1);
         assert_eq!(state.read_only.bms_pages.len(), 2);
-        assert_eq!(state.read_only.unknown_raw_pages, 1);
-        assert_eq!(state.read_only.diagnostics, 1);
+        assert_eq!(
+            state.read_only.unknown_raw_pages,
+            RawReadOnlyPageCount::new(1)
+        );
+        assert_eq!(
+            state.read_only.diagnostics,
+            ReadOnlyDiagnosticResponseCount::new(1)
+        );
         assert!(state.logs.iter().any(|entry| {
             entry.level == "info" && entry.message.contains("read-only responses=5")
         }));
@@ -3732,7 +3797,10 @@ mod tests {
                 .selector,
             sel(19)
         );
-        assert_eq!(state.read_only.unknown_raw_pages, 20);
+        assert_eq!(
+            state.read_only.unknown_raw_pages,
+            RawReadOnlyPageCount::new(20)
+        );
     }
 
     #[test]
@@ -4044,8 +4112,8 @@ mod tests {
                 BatteryPageMetadata::temperature(sel(47), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
             ));
-        state.read_only.unknown_raw_pages = 1;
-        state.read_only.diagnostics = 1;
+        state.read_only.unknown_raw_pages = RawReadOnlyPageCount::new(1);
+        state.read_only.diagnostics = ReadOnlyDiagnosticResponseCount::new(1);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
