@@ -449,7 +449,7 @@ pub struct BatterySpec {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsPageSelectorSpec {
     /// BMS page selector value.
-    pub selector: u8,
+    pub selector: ProtocolSelector,
 
     /// Current interpretation of the selector.
     pub kind: BatteryPageKind,
@@ -1592,7 +1592,7 @@ impl RegistryHashBuilder {
                 self.write_u8(bms.temperature_values_per_page);
                 self.write_usize(bms.selectors.len());
                 for selector in bms.selectors {
-                    self.write_u8(selector.selector);
+                    self.write_u8(selector.selector.get());
                     self.write_u8(battery_page_kind_code(selector.kind));
                     self.write_u8(verification_code(selector.verification));
                 }
@@ -5135,6 +5135,18 @@ mod tests {
                 .with_notify(),
             verification: VerificationStatus::HardwareVerified,
         }];
+        const AERO_BMS_SELECTORS: [crate::BmsPageSelectorSpec; 2] = [
+            crate::BmsPageSelectorSpec {
+                selector: crate::ProtocolSelector::new(0),
+                kind: crate::BatteryPageKind::Metadata,
+                verification: VerificationStatus::HardwareVerified,
+            },
+            crate::BmsPageSelectorSpec {
+                selector: crate::ProtocolSelector::new(1),
+                kind: crate::BatteryPageKind::CellVoltage,
+                verification: VerificationStatus::HardwareVerified,
+            },
+        ];
         let entry = crate::ModelRegistryEntry {
             manufacturer: "NOSFET",
             model: "Aero",
@@ -5155,18 +5167,7 @@ mod tests {
                 parallel_packs: 2,
                 cell_values_per_page: 15,
                 temperature_values_per_page: 6,
-                selectors: &[
-                    crate::BmsPageSelectorSpec {
-                        selector: 0,
-                        kind: crate::BatteryPageKind::Metadata,
-                        verification: VerificationStatus::HardwareVerified,
-                    },
-                    crate::BmsPageSelectorSpec {
-                        selector: 1,
-                        kind: crate::BatteryPageKind::CellVoltage,
-                        verification: VerificationStatus::HardwareVerified,
-                    },
-                ],
+                selectors: &AERO_BMS_SELECTORS,
                 verification: VerificationStatus::HardwareVerified,
             }),
             gatt: &AERO_GATT,
@@ -5674,22 +5675,22 @@ mod tests {
     fn bms_layout_spec_preserves_static_selector_map() {
         const SELECTORS: [crate::BmsPageSelectorSpec; 4] = [
             crate::BmsPageSelectorSpec {
-                selector: 0,
+                selector: crate::ProtocolSelector::new(0),
                 kind: crate::BatteryPageKind::Metadata,
                 verification: VerificationStatus::HardwareVerified,
             },
             crate::BmsPageSelectorSpec {
-                selector: 1,
+                selector: crate::ProtocolSelector::new(1),
                 kind: crate::BatteryPageKind::CellVoltage,
                 verification: VerificationStatus::HardwareVerified,
             },
             crate::BmsPageSelectorSpec {
-                selector: 3,
+                selector: crate::ProtocolSelector::new(3),
                 kind: crate::BatteryPageKind::Raw,
                 verification: VerificationStatus::SourceVerified,
             },
             crate::BmsPageSelectorSpec {
-                selector: 8,
+                selector: crate::ProtocolSelector::new(8),
                 kind: crate::BatteryPageKind::Raw,
                 verification: VerificationStatus::SourceVerified,
             },
@@ -5704,7 +5705,10 @@ mod tests {
         };
 
         assert_eq!(layout.selectors.len(), 4);
-        assert_eq!(layout.selectors[2].selector, 3);
+        assert_eq!(
+            layout.selectors[2].selector,
+            crate::ProtocolSelector::new(3)
+        );
         assert_eq!(layout.selectors[2].kind, crate::BatteryPageKind::Raw);
         assert_eq!(
             layout.selectors[2].verification,
@@ -5843,7 +5847,7 @@ mod tests {
         parallel_packs: u8,
     ) -> crate::ModelRegistryEntry {
         const SELECTORS: [crate::BmsPageSelectorSpec; 1] = [crate::BmsPageSelectorSpec {
-            selector: 1,
+            selector: crate::ProtocolSelector::new(1),
             kind: crate::BatteryPageKind::CellVoltage,
             verification: VerificationStatus::SourceVerified,
         }];

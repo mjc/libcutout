@@ -44,7 +44,7 @@ const VETERAN_BMS_42S_6P_LAYOUT: BmsLayoutSpec = veteran_bms_layout(42, 6);
 
 const fn bms_page_selector(selector: u8) -> BmsPageSelectorSpec {
     BmsPageSelectorSpec {
-        selector,
+        selector: ProtocolSelector::new(selector),
         kind: classify_veteran_bms_selector(ProtocolSelector::new(selector)),
         verification: VETERAN_BMS_SELECTOR_VERIFICATION,
     }
