@@ -12,7 +12,10 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeEvent, SessionBridgeReport};
-use cutout_core::{ParserDiagnostics, ReadOnlyResponse, TelemetryDelta, TelemetrySnapshot};
+use cutout_core::{
+    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, ReadOnlyResponse, TelemetryDelta,
+    TelemetrySnapshot,
+};
 use cutout_protocols::VeteranModelProfile;
 use ratatui::termina::{
     PlatformTerminal, Terminal as _,
@@ -1052,7 +1055,101 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
                 error.kind
             ),
         ),
+        SessionBridgeEvent::NotificationIngest {
+            monotonic_ms,
+            outcome,
+        } => format_notification_ingest_event(*monotonic_ms, *outcome),
     }
+}
+
+fn format_notification_ingest_event(
+    monotonic_ms: u64,
+    outcome: NotificationIngestOutcome,
+) -> (&'static str, String) {
+    match outcome {
+        NotificationIngestOutcome::SemanticEvents {
+            notification,
+            event_count,
+        } => (
+            "info",
+            format!(
+                "t={monotonic_ms}ms protocol semantic events family={} events={} len={}",
+                family_name(notification.family),
+                event_count,
+                notification.len
+            ),
+        ),
+        NotificationIngestOutcome::BufferedFragment(notification) => (
+            "trace",
+            format!(
+                "t={monotonic_ms}ms protocol buffered fragment family={} len={}",
+                family_name(notification.family),
+                notification.len
+            ),
+        ),
+        NotificationIngestOutcome::ParserDiagnostic {
+            notification,
+            error,
+        } => (
+            "warn",
+            format!(
+                "t={monotonic_ms}ms protocol parser diagnostic family={} len={} error={error:?}",
+                family_name(notification.family),
+                notification.len
+            ),
+        ),
+        NotificationIngestOutcome::KnownReserved {
+            notification,
+            payload,
+        } => (
+            "info",
+            format!(
+                "t={monotonic_ms}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
+                family_name(notification.family),
+                optional_u8(payload.selector),
+                optional_u16(payload.tag),
+                payload.body_len,
+                verification_name(payload.verification),
+                notification.len
+            ),
+        ),
+        NotificationIngestOutcome::ParserGap { notification, gap } => (
+            "warn",
+            format!(
+                "t={monotonic_ms}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
+                family_name(notification.family),
+                optional_u8(gap.selector),
+                optional_u16(gap.tag),
+                gap.body_len,
+                notification.len
+            ),
+        ),
+        NotificationIngestOutcome::Ignored(notification) => (
+            "trace",
+            format!(
+                "t={monotonic_ms}ms protocol ignored notification family={} len={}",
+                family_name(notification.family),
+                notification.len
+            ),
+        ),
+    }
+}
+
+fn family_name(family: Option<ProtocolFamily>) -> &'static str {
+    match family {
+        Some(ProtocolFamily::VeteranLeaperkimNosfet) => "VeteranLeaperkimNosfet",
+        Some(ProtocolFamily::BegodeGotway) => "BegodeGotway",
+        Some(ProtocolFamily::Vesc) => "Vesc",
+        None => "unknown",
+    }
+}
+
+fn optional_u8(value: Option<u8>) -> String {
+    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
+}
+
+fn optional_u16(value: Option<u16>) -> String {
+    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
 }
 
 fn format_read_only_response(response: ReadOnlyResponse) -> String {
@@ -2017,8 +2114,10 @@ mod tests {
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
     use cutout_core::{
         BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback, FirmwareInfo,
-        Measured, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry,
-        SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+        GattChannel, Measured, NotificationIngestOutcome, ParserError, ParserGapEvidence,
+        ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+        ReservedPayloadEvidence, SettingsEntry, SettingsReadback, TelemetrySnapshot, ValueQuality,
+        ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -2504,6 +2603,88 @@ mod tests {
         state.active_tab = 3;
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("telemetry unmapped notifications=3"));
+        assert!(!text.contains("raw notification"));
+    }
+
+    #[test]
+    fn ingest_outcome_events_render_each_typed_protocol_category() {
+        let mut state = DashboardState::empty();
+        let channel = GattChannel::from_bytes([0xA1; 16]);
+        let report = SessionBridgeReport {
+            notifications: 5,
+            notification_bytes: 269,
+            latest_notification_len: Some(77),
+            events: vec![
+                SessionBridgeEvent::NotificationIngest {
+                    monotonic_ms: 3,
+                    outcome: NotificationIngestOutcome::buffered_fragment(
+                        ProtocolFamily::VeteranLeaperkimNosfet,
+                        channel,
+                        20,
+                        3,
+                    ),
+                },
+                SessionBridgeEvent::NotificationIngest {
+                    monotonic_ms: 4,
+                    outcome: NotificationIngestOutcome::known_reserved(
+                        ProtocolFamily::VeteranLeaperkimNosfet,
+                        channel,
+                        75,
+                        4,
+                        ReservedPayloadEvidence {
+                            selector: Some(8),
+                            tag: None,
+                            body_len: 24,
+                            verification: VerificationStatus::HardwareVerified,
+                        },
+                    ),
+                },
+                SessionBridgeEvent::NotificationIngest {
+                    monotonic_ms: 5,
+                    outcome: NotificationIngestOutcome::parser_gap(
+                        ProtocolFamily::VeteranLeaperkimNosfet,
+                        channel,
+                        77,
+                        5,
+                        ParserGapEvidence {
+                            selector: Some(9),
+                            tag: None,
+                            body_len: 26,
+                        },
+                    ),
+                },
+                SessionBridgeEvent::NotificationIngest {
+                    monotonic_ms: 6,
+                    outcome: NotificationIngestOutcome::parser_diagnostic(
+                        ProtocolFamily::VeteranLeaperkimNosfet,
+                        channel,
+                        77,
+                        6,
+                        ParserError::BadChecksum,
+                    ),
+                },
+                SessionBridgeEvent::NotificationIngest {
+                    monotonic_ms: 7,
+                    outcome: NotificationIngestOutcome::ignored_wrong_channel(channel, 20, 7),
+                },
+            ],
+            ..empty_session_bridge_report()
+        };
+
+        state.apply_session_report(&report);
+        state.active_tab = 3;
+
+        let text = buffer_text(&render_buffer(&state, 140, 36));
+
+        assert!(text.contains("protocol buffered fragment"));
+        assert!(text.contains("protocol known reserved"));
+        assert!(text.contains("selector=8"));
+        assert!(text.contains("verification=hardware_verified"));
+        assert!(text.contains("protocol parser gap"));
+        assert!(text.contains("selector=9"));
+        assert!(text.contains("protocol parser diagnostic"));
+        assert!(text.contains("error=BadChecksum"));
+        assert!(text.contains("protocol ignored notification"));
         assert!(!text.contains("raw notification"));
     }
 

@@ -3,9 +3,10 @@ use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
     BatteryPagePayload, Capabilities, CommandKind, DeviceCommand, DeviceEvent, DiagnosticDetail,
     DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
-    NotificationIngestOutcome, ParserDiagnostics, ParserError, ProtocolFamily, ProtocolSession,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SessionInput, SessionOutput, TransportAction, ValueQuality, VerificationStatus, WritePayload,
+    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, ProtocolFamily,
+    ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, SafetyClass, SessionInput, SessionOutput, TransportAction,
+    ValueQuality, VerificationStatus, WritePayload,
 };
 
 use crate::{
@@ -266,22 +267,38 @@ fn push_veteran_ingest_outcome_for_frame(
 ) {
     let frame_len = frame.as_slice().len();
     if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
-        && evidence.selector == 8
+        && evidence.kind == BatteryPageKind::Raw
     {
-        output.push(SessionOutput::NotificationIngest(
-            NotificationIngestOutcome::known_reserved(
-                ProtocolFamily::VeteranLeaperkimNosfet,
-                channel,
-                frame_len,
-                monotonic_ms,
-                ReservedPayloadEvidence {
-                    selector: Some(evidence.selector),
-                    tag: None,
-                    body_len: evidence.body.len(),
-                    verification: VerificationStatus::HardwareVerified,
-                },
-            ),
-        ));
+        if evidence.selector == 8 {
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::known_reserved(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    channel,
+                    frame_len,
+                    monotonic_ms,
+                    ReservedPayloadEvidence {
+                        selector: Some(evidence.selector),
+                        tag: None,
+                        body_len: evidence.body.len(),
+                        verification: VerificationStatus::HardwareVerified,
+                    },
+                ),
+            ));
+        } else {
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::parser_gap(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    channel,
+                    frame_len,
+                    monotonic_ms,
+                    ParserGapEvidence {
+                        selector: Some(evidence.selector),
+                        tag: None,
+                        body_len: evidence.body.len(),
+                    },
+                ),
+            ));
+        }
         return;
     }
 
@@ -687,7 +704,9 @@ fn push_veteran_frame(
                 )));
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
-                if let Some(payload) = veteran_bms_payload(evidence) {
+                if evidence.kind != BatteryPageKind::Raw
+                    && let Some(payload) = veteran_bms_payload(evidence)
+                {
                     output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                         ReadOnlyResponse::Battery(payload),
                     )));
@@ -2000,16 +2019,16 @@ mod tests {
     }
 
     #[test]
-    fn nosfet_aero_session_keeps_reserved_bms_page_raw() {
+    fn nosfet_aero_session_does_not_emit_reserved_bms_page_as_raw_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_8_frame());
 
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == 8
-                    && payload.page().kind == BatteryPageKind::Raw
-                    && payload.page().verification == VerificationStatus::HardwareVerified
-        )));
+        assert!(responses.iter().all(|response| {
+            !matches!(
+                response,
+                ReadOnlyResponse::Battery(payload)
+                    if payload.page().selector == 8 && payload.page().kind == BatteryPageKind::Raw
+            )
+        }));
     }
 
     #[test]
@@ -2073,6 +2092,35 @@ mod tests {
             )]
         );
         assert!(!read_only_response_events(&output).is_empty());
+    }
+
+    #[test]
+    fn nosfet_aero_session_reports_unknown_bms_selector_as_parser_gap() {
+        let frame = live_aero_selector_0_frame_with_selector(9);
+        let output = aero_output_for_notification(&frame);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![NotificationIngestOutcome::parser_gap(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                VETERAN_DATA_CHANNEL,
+                frame.len(),
+                42,
+                ParserGapEvidence {
+                    selector: Some(9),
+                    tag: None,
+                    body_len: 26,
+                },
+            )]
+        );
+        assert!(read_only_response_events(&output).iter().all(|response| {
+            !matches!(
+                response,
+                ReadOnlyResponse::Battery(payload)
+                    if payload.page().selector == 9 && payload.page().kind == BatteryPageKind::Raw
+            )
+        }));
     }
 
     #[test]

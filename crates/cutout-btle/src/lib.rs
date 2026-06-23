@@ -26,9 +26,10 @@ use btleplug::{
 };
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, GattFingerprint,
-    GattRoles, LinkInfo, ParserDiagnostics, PevcapCapture, PevcapHeader, PevcapHeaderError,
-    PevcapRecord, ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput, SettingsReadback,
-    TelemetryDelta, TelemetrySnapshot, TransportAction, VerificationStatus, WriteMode,
+    GattRoles, LinkInfo, NotificationIngestOutcome, ParserDiagnostics, PevcapCapture, PevcapHeader,
+    PevcapHeaderError, PevcapRecord, ProtocolSession, ReadOnlyResponse, SessionInput,
+    SessionOutput, SettingsReadback, TelemetryDelta, TelemetrySnapshot, TransportAction,
+    VerificationStatus, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, IdentityConfidence, IdentityEvidence,
@@ -535,6 +536,15 @@ pub enum SessionBridgeEvent {
 
         /// Detailed parser error emitted at this timestamp.
         error: DiagnosticError,
+    },
+
+    /// Typed protocol notification ingest outcome emitted by the session.
+    NotificationIngest {
+        /// Relative monotonic timestamp in milliseconds.
+        monotonic_ms: u64,
+
+        /// Protocol ingest outcome emitted at this timestamp.
+        outcome: NotificationIngestOutcome,
     },
 }
 
@@ -1590,7 +1600,6 @@ where
                     context.identity_context,
                     context.identity_state,
                 );
-                let event_count_before = context.report.events.len();
                 session.handle(
                     SessionInput::Notification {
                         channel: context.channel,
@@ -1599,9 +1608,7 @@ where
                     },
                     outputs,
                 );
-                let notification_accepted = outputs
-                    .iter()
-                    .any(|output| matches!(output, SessionOutput::NotificationIngest(_)));
+                let decode_outcome = notification_decode_outcome(outputs);
                 process_session_outputs(
                     SessionOutputContext {
                         peripheral: context.peripheral,
@@ -1617,15 +1624,7 @@ where
                     *monotonic_ms,
                 )
                 .await?;
-                log_notification_decode_outcome(
-                    notification_decode_outcome(
-                        context.report,
-                        event_count_before,
-                        notification_accepted,
-                    ),
-                    &notification,
-                    context.channel,
-                );
+                log_notification_decode_outcome(decode_outcome, &notification, context.channel);
                 context.report.notifications += 1;
                 context.report.notification_bytes += notification.value.len();
                 context.report.latest_notification_len = Some(notification.value.len());
@@ -1653,22 +1652,70 @@ where
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NotificationDecodeOutcome {
     SemanticEvents,
-    AcceptedWithoutSemanticEvents,
+    BufferedFragment,
+    ParserDiagnostic,
+    KnownReserved,
+    ParserGap,
     Ignored,
 }
 
-fn notification_decode_outcome(
-    report: &SessionBridgeReport,
-    event_count_before: usize,
-    notification_accepted: bool,
+fn notification_decode_outcome(outputs: &[SessionOutput]) -> NotificationDecodeOutcome {
+    outputs
+        .iter()
+        .filter_map(|output| match output {
+            SessionOutput::NotificationIngest(outcome) => Some(outcome),
+            SessionOutput::Transport(_) | SessionOutput::Event(_) => None,
+        })
+        .fold(NotificationDecodeOutcome::Ignored, strongest_decode_outcome)
+}
+
+const fn strongest_decode_outcome(
+    current: NotificationDecodeOutcome,
+    outcome: &NotificationIngestOutcome,
 ) -> NotificationDecodeOutcome {
-    if report.events.len() != event_count_before {
-        return NotificationDecodeOutcome::SemanticEvents;
+    match outcome {
+        NotificationIngestOutcome::SemanticEvents { .. } => {
+            NotificationDecodeOutcome::SemanticEvents
+        }
+        NotificationIngestOutcome::ParserDiagnostic { .. } => {
+            if matches!(current, NotificationDecodeOutcome::SemanticEvents) {
+                current
+            } else {
+                NotificationDecodeOutcome::ParserDiagnostic
+            }
+        }
+        NotificationIngestOutcome::KnownReserved { .. } => {
+            if matches!(
+                current,
+                NotificationDecodeOutcome::SemanticEvents
+                    | NotificationDecodeOutcome::ParserDiagnostic
+            ) {
+                current
+            } else {
+                NotificationDecodeOutcome::KnownReserved
+            }
+        }
+        NotificationIngestOutcome::ParserGap { .. } => {
+            if matches!(
+                current,
+                NotificationDecodeOutcome::SemanticEvents
+                    | NotificationDecodeOutcome::ParserDiagnostic
+                    | NotificationDecodeOutcome::KnownReserved
+            ) {
+                current
+            } else {
+                NotificationDecodeOutcome::ParserGap
+            }
+        }
+        NotificationIngestOutcome::BufferedFragment(_) => {
+            if matches!(current, NotificationDecodeOutcome::Ignored) {
+                NotificationDecodeOutcome::BufferedFragment
+            } else {
+                current
+            }
+        }
+        NotificationIngestOutcome::Ignored(_) => current,
     }
-    if notification_accepted {
-        return NotificationDecodeOutcome::AcceptedWithoutSemanticEvents;
-    }
-    NotificationDecodeOutcome::Ignored
 }
 
 fn log_notification_decode_outcome(
@@ -1678,11 +1725,32 @@ fn log_notification_decode_outcome(
 ) {
     match outcome {
         NotificationDecodeOutcome::SemanticEvents => {}
-        NotificationDecodeOutcome::AcceptedWithoutSemanticEvents => {
+        NotificationDecodeOutcome::BufferedFragment => {
             debug!(
                 len = notification.value.len(),
                 channel = ?channel,
-                "session notification accepted by protocol decoder without completed frame"
+                "session notification buffered by protocol decoder"
+            );
+        }
+        NotificationDecodeOutcome::ParserDiagnostic => {
+            debug!(
+                len = notification.value.len(),
+                channel = ?channel,
+                "session notification produced parser diagnostic"
+            );
+        }
+        NotificationDecodeOutcome::KnownReserved => {
+            debug!(
+                len = notification.value.len(),
+                channel = ?channel,
+                "session notification produced known reserved protocol evidence"
+            );
+        }
+        NotificationDecodeOutcome::ParserGap => {
+            debug!(
+                len = notification.value.len(),
+                channel = ?channel,
+                "session notification produced parser gap evidence"
             );
         }
         NotificationDecodeOutcome::Ignored => {
@@ -2006,10 +2074,23 @@ where
             SessionOutput::Event(event) => {
                 process_device_event(context.report, event, monotonic_ms);
             }
-            SessionOutput::NotificationIngest(_) => {}
+            SessionOutput::NotificationIngest(outcome) => {
+                process_notification_ingest_outcome(context.report, outcome, monotonic_ms);
+            }
         }
     }
     Ok(())
+}
+
+fn process_notification_ingest_outcome(
+    report: &mut SessionBridgeReport,
+    outcome: NotificationIngestOutcome,
+    monotonic_ms: u64,
+) {
+    report.events.push(SessionBridgeEvent::NotificationIngest {
+        monotonic_ms,
+        outcome,
+    });
 }
 
 fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, monotonic_ms: u64) {
@@ -2227,11 +2308,12 @@ mod tests {
 
     use btleplug::api::{CharPropFlags, Characteristic, ValueNotification, WriteType};
     use cutout_core::{
-        DeviceCommand, DeviceEvent, FirmwareInfo, GattChannel, Measured, ParserDiagnostics,
+        DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
+        NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence,
         PevcapDirection, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, RawFieldValue,
-        ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-        TelemetryDelta, TransportAction, ValueQuality, ValueSource, VerificationStatus,
-        VerifiedValue, WriteMode,
+        ReadOnlyResponse, ReservedPayloadEvidence, SessionInput, SessionOutput, SettingsEntry,
+        SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
+        VerificationStatus, VerifiedValue, WriteMode,
     };
     use cutout_protocols::IdentityConfidence;
     use futures_util::stream;
@@ -3145,8 +3227,8 @@ mod tests {
         assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
         assert_eq!(
             report.diagnostic_errors.as_slice(),
-            &[cutout_core::DiagnosticError::from_parser_error(
-                cutout_core::ParserError::MalformedFrame
+            &[DiagnosticError::from_parser_error(
+                ParserError::MalformedFrame
             )]
         );
         assert!(report.events.iter().all(|event| {
@@ -3156,6 +3238,7 @@ mod tests {
                     | crate::SessionBridgeEvent::ReadOnlyResponse { .. }
                     | crate::SessionBridgeEvent::Diagnostics { .. }
                     | crate::SessionBridgeEvent::DiagnosticError { .. }
+                    | crate::SessionBridgeEvent::NotificationIngest { .. }
                     | crate::SessionBridgeEvent::LinkDown { .. }
             )
         }));
@@ -3199,92 +3282,149 @@ mod tests {
 
     #[test]
     fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
-        let mut report = crate::SessionBridgeReport::default();
-        let event_count_before = report.events.len();
-
-        report
-            .events
-            .push(crate::SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 7,
-                delta: TelemetryDelta {
-                    voltage_mv: Some(Measured::reported(126_000)),
-                    ..TelemetryDelta::empty(0)
-                },
-            });
+        let outputs = [SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::semantic_events(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                GattChannel::from_bytes([0xA1; 16]),
+                77,
+                7,
+                5,
+            ),
+        )];
 
         assert_eq!(
-            crate::notification_decode_outcome(&report, event_count_before, true),
+            crate::notification_decode_outcome(&outputs),
             crate::NotificationDecodeOutcome::SemanticEvents
         );
     }
 
     #[test]
     fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
-        let report = crate::SessionBridgeReport::default();
-        let event_count_before = report.events.len();
-
-        assert_eq!(
-            crate::notification_decode_outcome(&report, event_count_before, true),
-            crate::NotificationDecodeOutcome::AcceptedWithoutSemanticEvents
-        );
-    }
-
-    #[test]
-    fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
-        let report = crate::SessionBridgeReport::default();
-        let event_count_before = report.events.len();
-
-        assert_eq!(
-            crate::notification_decode_outcome(&report, event_count_before, false),
-            crate::NotificationDecodeOutcome::Ignored
-        );
-    }
-
-    #[test]
-    fn drive_session_reports_fragment_notifications_as_accepted_without_semantics() {
-        let mut report = crate::SessionBridgeReport::default();
-        let event_count_before = report.events.len();
-        let output = [SessionOutput::NotificationIngest(
-            cutout_core::NotificationIngestOutcome::buffered_fragment(
+        let outputs = [SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::buffered_fragment(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 GattChannel::from_bytes([0xA1; 16]),
                 20,
                 3,
             ),
         )];
-        let notification_accepted = output
-            .iter()
-            .any(|output| matches!(output, SessionOutput::NotificationIngest(_)));
-
-        for output in output {
-            if let SessionOutput::Event(event) = output {
-                crate::process_device_event(&mut report, event, 3);
-            }
-        }
 
         assert_eq!(
-            crate::notification_decode_outcome(&report, event_count_before, notification_accepted),
-            crate::NotificationDecodeOutcome::AcceptedWithoutSemanticEvents
+            crate::notification_decode_outcome(&outputs),
+            crate::NotificationDecodeOutcome::BufferedFragment
+        );
+    }
+
+    #[test]
+    fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
+        let outputs = [SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::ignored_wrong_channel(
+                GattChannel::from_bytes([0xA1; 16]),
+                20,
+                3,
+            ),
+        )];
+
+        assert_eq!(
+            crate::notification_decode_outcome(&outputs),
+            crate::NotificationDecodeOutcome::Ignored
+        );
+    }
+
+    #[test]
+    fn drive_session_reports_fragment_notifications_as_typed_ingest_events() {
+        let mut report = crate::SessionBridgeReport::default();
+        let outcome = NotificationIngestOutcome::buffered_fragment(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            GattChannel::from_bytes([0xA1; 16]),
+            20,
+            3,
+        );
+
+        crate::process_notification_ingest_outcome(&mut report, outcome, 3);
+
+        assert_eq!(
+            report.events.as_slice(),
+            &[crate::SessionBridgeEvent::NotificationIngest {
+                monotonic_ms: 3,
+                outcome,
+            }]
         );
     }
 
     #[test]
     fn semantic_notifications_suppress_transport_logging_without_raw_notification_event() {
-        let mut report = crate::SessionBridgeReport::default();
-        let event_count_before = report.events.len();
-
-        crate::process_device_event(
-            &mut report,
-            DeviceEvent::Telemetry(TelemetryDelta {
+        let outputs = [
+            SessionOutput::NotificationIngest(NotificationIngestOutcome::semantic_events(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                GattChannel::from_bytes([0xA1; 16]),
+                77,
+                3,
+                5,
+            )),
+            SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
                 voltage_mv: Some(Measured::reported(126_000)),
                 ..TelemetryDelta::empty(0)
-            }),
-            3,
-        );
+            })),
+        ];
 
         assert_eq!(
-            crate::notification_decode_outcome(&report, event_count_before, true),
+            crate::notification_decode_outcome(&outputs),
             crate::NotificationDecodeOutcome::SemanticEvents
+        );
+    }
+
+    #[test]
+    fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
+        let channel = GattChannel::from_bytes([0xA1; 16]);
+        let reserved = [SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::known_reserved(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                75,
+                4,
+                ReservedPayloadEvidence {
+                    selector: Some(8),
+                    tag: None,
+                    body_len: 24,
+                    verification: VerificationStatus::HardwareVerified,
+                },
+            ),
+        )];
+        let gap = [SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::parser_gap(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                77,
+                5,
+                ParserGapEvidence {
+                    selector: Some(9),
+                    tag: None,
+                    body_len: 26,
+                },
+            ),
+        )];
+        let diagnostic = [SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::parser_diagnostic(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                77,
+                6,
+                ParserError::BadChecksum,
+            ),
+        )];
+
+        assert_eq!(
+            crate::notification_decode_outcome(&reserved),
+            crate::NotificationDecodeOutcome::KnownReserved
+        );
+        assert_eq!(
+            crate::notification_decode_outcome(&gap),
+            crate::NotificationDecodeOutcome::ParserGap
+        );
+        assert_eq!(
+            crate::notification_decode_outcome(&diagnostic),
+            crate::NotificationDecodeOutcome::ParserDiagnostic
         );
     }
 
@@ -3860,7 +4000,7 @@ mod tests {
                         .lock()
                         .expect("notification channel") = Some(channel);
                     output.push(SessionOutput::NotificationIngest(
-                        cutout_core::NotificationIngestOutcome::semantic_events(
+                        NotificationIngestOutcome::semantic_events(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             GattChannel::from_bytes([0xA1; 16]),
                             2,
@@ -3898,9 +4038,7 @@ mod tests {
                         }),
                     )));
                     output.push(SessionOutput::Event(DeviceEvent::DiagnosticError(
-                        cutout_core::DiagnosticError::from_parser_error(
-                            cutout_core::ParserError::MalformedFrame,
-                        ),
+                        DiagnosticError::from_parser_error(ParserError::MalformedFrame),
                     )));
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         ParserDiagnostics {
