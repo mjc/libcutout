@@ -1,0 +1,221 @@
+use std::time::Duration;
+
+use async_trait::async_trait;
+use cutout_core::{DeviceCommand, GattChannel, ProtocolSession};
+
+use crate::{
+    BtleError, ConnectionSummary, ConnectionTarget, SessionBridgeError, SessionBridgeReport,
+    SessionCapture, SessionCaptureRecord, SessionPeripheral,
+    bridge::{DriveSessionConfig, drive_session_inner},
+    capture::session_record_monotonic_ms,
+    connect_and_discover,
+    report::merge_session_report,
+};
+
+/// Host boundary that can create fresh connected peripherals for reconnecting sessions.
+#[async_trait]
+pub trait ReconnectingSessionHost: Send {
+    /// Connected peripheral type returned for each link attempt.
+    type Peripheral: SessionPeripheral + Sync;
+
+    /// Connects and discovers the next link attempt.
+    async fn connect(&mut self) -> Result<(Self::Peripheral, ConnectionSummary), BtleError>;
+}
+
+/// Production reconnect host backed by btleplug target scanning and discovery.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BtleplugReconnectHost {
+    target: ConnectionTarget,
+    scan_for: Duration,
+}
+
+impl BtleplugReconnectHost {
+    /// Creates a reconnect host that reuses the same target and scan duration
+    /// for every link attempt.
+    #[must_use]
+    pub const fn new(target: ConnectionTarget, scan_for: Duration) -> Self {
+        Self { target, scan_for }
+    }
+
+    /// Returns the target reused for each reconnect attempt.
+    #[must_use]
+    pub const fn target(&self) -> &ConnectionTarget {
+        &self.target
+    }
+
+    /// Returns the scan duration reused for each reconnect attempt.
+    #[must_use]
+    pub const fn scan_for(&self) -> Duration {
+        self.scan_for
+    }
+}
+
+#[async_trait]
+impl ReconnectingSessionHost for BtleplugReconnectHost {
+    type Peripheral = btleplug::platform::Peripheral;
+
+    async fn connect(&mut self) -> Result<(Self::Peripheral, ConnectionSummary), BtleError> {
+        let connected = connect_and_discover(&self.target, self.scan_for).await?;
+        Ok((connected.peripheral, connected.summary))
+    }
+}
+
+/// Reconnect capture plus per-link connection metadata.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReconnectingSessionCapture {
+    /// Aggregate records and report across connected links.
+    pub capture: SessionCapture,
+
+    /// Ordered diagnostics for each connected link attempt.
+    pub attempts: Vec<ReconnectAttemptReport>,
+}
+
+/// Diagnostics captured for one reconnect link attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReconnectAttemptReport {
+    /// One-based link attempt number.
+    pub attempt: usize,
+
+    /// Connection summary observed for this link attempt.
+    pub summary: ConnectionSummary,
+
+    /// Bridge counters and lifecycle events observed during this link attempt.
+    pub report: SessionBridgeReport,
+}
+
+/// Captures a session across reconnect attempts supplied by a host boundary.
+///
+/// The host owns platform-specific connect/discover work. This bridge repeats
+/// one bounded session run only when the previous link intentionally
+/// disconnected.
+///
+/// # Errors
+///
+/// Returns the underlying host, transport, or bridge error from any link
+/// attempt.
+pub async fn capture_reconnecting_session<H, S>(
+    host: &mut H,
+    session: &mut S,
+    channel: GattChannel,
+    notification_window: Duration,
+    max_links: usize,
+    provisional_writes: bool,
+) -> Result<SessionCapture, BtleError>
+where
+    H: ReconnectingSessionHost,
+    S: ProtocolSession + Send,
+{
+    Ok(capture_reconnecting_session_with_commands(
+        host,
+        session,
+        channel,
+        notification_window,
+        max_links,
+        provisional_writes,
+        &[],
+    )
+    .await?
+    .capture)
+}
+
+/// Captures a reconnecting session and preserves per-link connection summaries.
+///
+/// # Errors
+///
+/// Returns the underlying host, transport, or bridge error from any link
+/// attempt.
+pub async fn capture_reconnecting_session_with_summaries<H, S>(
+    host: &mut H,
+    session: &mut S,
+    channel: GattChannel,
+    notification_window: Duration,
+    max_links: usize,
+    provisional_writes: bool,
+) -> Result<ReconnectingSessionCapture, BtleError>
+where
+    H: ReconnectingSessionHost,
+    S: ProtocolSession + Send,
+{
+    capture_reconnecting_session_with_commands(
+        host,
+        session,
+        channel,
+        notification_window,
+        max_links,
+        provisional_writes,
+        &[],
+    )
+    .await
+}
+
+/// Captures a reconnecting session, sending explicit commands on the first link only.
+///
+/// Commands are intentionally not replayed after reconnect. A link loss cancels
+/// any in-flight response expectation for those commands while allowing the
+/// read-only session to resume passive subscription on a fresh link.
+///
+/// # Errors
+///
+/// Returns the underlying host, transport, or bridge error from any link
+/// attempt.
+pub async fn capture_reconnecting_session_with_commands<H, S>(
+    host: &mut H,
+    session: &mut S,
+    channel: GattChannel,
+    notification_window: Duration,
+    max_links: usize,
+    provisional_writes: bool,
+    commands: &[DeviceCommand],
+) -> Result<ReconnectingSessionCapture, BtleError>
+where
+    H: ReconnectingSessionHost,
+    S: ProtocolSession + Send,
+{
+    let mut reconnecting_capture = ReconnectingSessionCapture::default();
+    let mut monotonic_start = 0;
+
+    for attempt in 1..=max_links {
+        let (peripheral, summary) = host.connect().await?;
+        let endpoints = summary
+            .select_session_endpoints()
+            .ok_or(SessionBridgeError::MissingSessionEndpoint)?;
+        let mut records = Vec::new();
+        let report = drive_session_inner(
+            &peripheral,
+            session,
+            DriveSessionConfig {
+                channel,
+                summary: &summary,
+                endpoints,
+                notification_window,
+                commands: if attempt == 1 { commands } else { &[] },
+                provisional_writes,
+                monotonic_start,
+            },
+            Some(&mut records),
+        )
+        .await?;
+        monotonic_start = records
+            .iter()
+            .map(session_record_monotonic_ms)
+            .max()
+            .unwrap_or(monotonic_start)
+            .saturating_add(1);
+        merge_session_report(&mut reconnecting_capture.capture.report, report.clone());
+        let should_reconnect = report.disconnects > 0
+            && records
+                .iter()
+                .any(|record| matches!(record, SessionCaptureRecord::LinkDown { .. }));
+        reconnecting_capture.attempts.push(ReconnectAttemptReport {
+            attempt,
+            summary,
+            report,
+        });
+        reconnecting_capture.capture.records.extend(records);
+        if !should_reconnect {
+            break;
+        }
+    }
+
+    Ok(reconnecting_capture)
+}

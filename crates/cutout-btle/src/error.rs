@@ -1,7 +1,9 @@
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
 use cutout_core::GattChannel;
 use thiserror::Error;
+
+const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Errors surfaced while bridging protocol outputs to BTLE operations.
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -86,4 +88,17 @@ impl BtleError {
             }
         }
     }
+}
+
+pub(crate) async fn backend_call<T, F>(operation: &'static str, future: F) -> Result<T, BtleError>
+where
+    F: Future<Output = Result<T, btleplug::Error>>,
+{
+    tokio::time::timeout(BACKEND_OPERATION_TIMEOUT, future)
+        .await
+        .map_err(|_| BtleError::OperationTimedOut {
+            operation,
+            after: BACKEND_OPERATION_TIMEOUT,
+        })?
+        .map_err(BtleError::Backend)
 }

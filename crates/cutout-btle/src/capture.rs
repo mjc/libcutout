@@ -1,143 +1,16 @@
-use std::fmt::{self, Write as _};
-
-use cutout_core::{
-    DiagnosticError, FirmwareInfo, NotificationIngestOutcome, ParserDiagnostics, PevcapCapture,
-    PevcapHeader, PevcapHeaderError, PevcapRecord, ReadOnlyResponse, SettingsReadback,
-    TelemetryDelta, TelemetrySnapshot, WriteMode,
+use std::{
+    fmt::{self, Write as _},
+    time::Duration,
 };
-use cutout_protocols::{IdentityConfidence, IdentityEvidence};
+
+use cutout_core::{PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord, WriteMode};
+use futures_util::StreamExt;
 use uuid::Uuid;
 
-use crate::{ConnectionSummary, gatt_channel_from_uuid};
-
-/// Report produced by a protocol bridge run.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct SessionBridgeReport {
-    /// Protocol write actions emitted by the session before transport chunking.
-    pub protocol_writes: usize,
-
-    /// Transport writes executed through the bridge.
-    pub writes: usize,
-
-    /// Transport subscribe operations executed through the bridge.
-    pub subscribes: usize,
-
-    /// Notification payloads relayed into the session.
-    pub notifications: usize,
-
-    /// Total notification payload bytes relayed into the session.
-    pub notification_bytes: usize,
-
-    /// Length of the latest notification payload, if any were observed.
-    pub latest_notification_len: Option<usize>,
-
-    /// Semantic telemetry events emitted by the session.
-    pub telemetry: usize,
-
-    /// Latest semantic telemetry values emitted by the session.
-    pub telemetry_snapshot: TelemetrySnapshot,
-
-    /// Semantic read-only response events emitted by the session.
-    pub read_only_responses: usize,
-
-    /// Full read-only response payloads emitted by the session.
-    pub read_only_response_events: Vec<ReadOnlyResponse>,
-
-    /// Latest firmware readback emitted by the session.
-    pub firmware: Option<FirmwareInfo>,
-
-    /// Settings readbacks emitted by the session.
-    pub settings: Vec<SettingsReadback>,
-
-    /// Parser diagnostics events emitted by the session.
-    pub diagnostics: usize,
-
-    /// Aggregated parser diagnostic counters emitted by the session.
-    pub diagnostics_snapshot: ParserDiagnostics,
-
-    /// Detailed parser diagnostic errors emitted by the session.
-    pub diagnostic_errors: Vec<DiagnosticError>,
-
-    /// Staged identity resolution from non-actuating evidence.
-    pub identity: Option<BridgeIdentityResolution>,
-
-    /// Timestamped semantic events observed during the run.
-    pub events: Vec<SessionBridgeEvent>,
-
-    /// Transport disconnect operations executed through the bridge.
-    pub disconnects: usize,
-}
-
-/// Staged identity resolution surfaced by a BTLE bridge run.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BridgeIdentityResolution {
-    /// Resolved manufacturer, when model confidence was reached.
-    pub manufacturer: Option<&'static str>,
-
-    /// Resolved model, when model confidence was reached.
-    pub model: Option<&'static str>,
-
-    /// Confidence reported by staged identification.
-    pub confidence: IdentityConfidence,
-
-    /// Evidence that contributed to the decision.
-    pub evidence: IdentityEvidence,
-}
-
-/// Timestamped semantic event emitted by the bridge.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SessionBridgeEvent {
-    /// Link-down event emitted by the protocol session after transport disconnect.
-    LinkDown {
-        /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
-    },
-
-    /// Decoded telemetry emitted by the protocol session.
-    ProcessedTelemetry {
-        /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
-
-        /// Telemetry delta emitted by the protocol session.
-        delta: TelemetryDelta,
-    },
-
-    /// Read-only response emitted by the protocol session.
-    ReadOnlyResponse {
-        /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
-
-        /// Read-only response emitted by the protocol session.
-        response: ReadOnlyResponse,
-    },
-
-    /// Parser diagnostics emitted by the protocol session.
-    Diagnostics {
-        /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
-
-        /// Parser diagnostic counters emitted at this timestamp.
-        diagnostics: ParserDiagnostics,
-    },
-
-    /// Detailed parser diagnostic error emitted by the protocol session.
-    DiagnosticError {
-        /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
-
-        /// Detailed parser error emitted at this timestamp.
-        error: DiagnosticError,
-    },
-
-    /// Typed protocol notification ingest outcome emitted by the session.
-    NotificationIngest {
-        /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
-
-        /// Protocol ingest outcome emitted at this timestamp.
-        outcome: NotificationIngestOutcome,
-    },
-}
+use crate::{
+    BtleError, CharacteristicSummary, ConnectionSummary, SessionBridgeReport, SessionPeripheral,
+    gatt::gatt_channel_from_uuid, types::characteristic_from_summary,
+};
 
 /// Captured bridge records suitable for live BTLE evidence files.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -262,29 +135,6 @@ pub struct SessionCapture {
     pub report: SessionBridgeReport,
 }
 
-/// Reconnect capture plus per-link connection metadata.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ReconnectingSessionCapture {
-    /// Aggregate records and report across connected links.
-    pub capture: SessionCapture,
-
-    /// Ordered diagnostics for each connected link attempt.
-    pub attempts: Vec<ReconnectAttemptReport>,
-}
-
-/// Diagnostics captured for one reconnect link attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReconnectAttemptReport {
-    /// One-based link attempt number.
-    pub attempt: usize,
-
-    /// Connection summary observed for this link attempt.
-    pub summary: ConnectionSummary,
-
-    /// Bridge counters and lifecycle events observed during this link attempt.
-    pub report: SessionBridgeReport,
-}
-
 /// Protocol-agnostic raw notification record captured from a subscribed
 /// characteristic.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -323,6 +173,50 @@ pub struct PevcapSessionMetadata<'a> {
 
     /// Human annotations attached to the capture.
     pub annotations: &'a [&'a str],
+}
+
+/// Subscribes to a notify/indicate characteristic and records raw notification chunks.
+///
+/// # Errors
+///
+/// Returns the underlying Bluetooth transport error if subscribe or
+/// notification streaming fails.
+pub async fn capture_raw_notifications<P>(
+    peripheral: &P,
+    characteristic: &CharacteristicSummary,
+    notification_window: Duration,
+) -> Result<Vec<RawNotificationRecord>, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+{
+    let characteristic = characteristic_from_summary(characteristic);
+    peripheral.subscribe(&characteristic).await?;
+    if notification_window.is_zero() {
+        return Ok(Vec::new());
+    }
+
+    let mut notifications = peripheral.notifications().await?;
+    let started_at = tokio::time::Instant::now();
+    let deadline = started_at + notification_window;
+    let mut records = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, notifications.next()).await {
+            Ok(Some(notification)) if notification.uuid == characteristic.uuid => {
+                records.push(RawNotificationRecord {
+                    monotonic_ms: u64::try_from(started_at.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                    characteristic: notification.uuid,
+                    service: notification.service_uuid,
+                    bytes: notification.value,
+                });
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+
+    Ok(records)
 }
 
 impl SessionCapture {
@@ -385,32 +279,6 @@ pub(crate) fn session_record_monotonic_ms(record: &SessionCaptureRecord) -> u64 
         | SessionCaptureRecord::Write { monotonic_ms, .. }
         | SessionCaptureRecord::Notification { monotonic_ms, .. } => *monotonic_ms,
     }
-}
-
-pub(crate) fn merge_session_report(into: &mut SessionBridgeReport, report: SessionBridgeReport) {
-    into.protocol_writes += report.protocol_writes;
-    into.writes += report.writes;
-    into.subscribes += report.subscribes;
-    into.notifications += report.notifications;
-    into.notification_bytes += report.notification_bytes;
-    if report.latest_notification_len.is_some() {
-        into.latest_notification_len = report.latest_notification_len;
-    }
-    into.telemetry += report.telemetry;
-    into.telemetry_snapshot = report.telemetry_snapshot;
-    into.read_only_responses += report.read_only_responses;
-    into.read_only_response_events
-        .extend(report.read_only_response_events);
-    into.firmware = report.firmware.or(into.firmware.take());
-    into.settings.extend(report.settings);
-    into.diagnostics += report.diagnostics;
-    into.diagnostics_snapshot.merge(report.diagnostics_snapshot);
-    into.diagnostic_errors.extend(report.diagnostic_errors);
-    if report.identity.is_some() {
-        into.identity = report.identity;
-    }
-    into.events.extend(report.events);
-    into.disconnects += report.disconnects;
 }
 
 fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<PevcapRecord> {
