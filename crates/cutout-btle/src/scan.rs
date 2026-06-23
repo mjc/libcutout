@@ -6,8 +6,8 @@ use btleplug::{
 };
 
 use crate::{
-    AdvertisedServices, BtleError, ConnectedPeripheral, ConnectionSummary, ConnectionTarget,
-    ManufacturerDataSummaries, PeripheralObservation, ServiceSummary,
+    BtleError, ConnectedPeripheral, ConnectionSummary, ConnectionTarget, PeripheralObservation,
+    ServiceSummary,
     error::backend_call,
     units::{ScanPollInterval, ScanWindow},
 };
@@ -98,14 +98,7 @@ async fn observation_from_peripheral(
     let Some(properties) =
         backend_call("read peripheral properties", peripheral.properties()).await?
     else {
-        return Ok(PeripheralObservation {
-            identifier: peripheral.id().to_string(),
-            address: None,
-            name: None,
-            rssi: None,
-            advertised_services: AdvertisedServices::new(),
-            manufacturer_data: ManufacturerDataSummaries::new(),
-        });
+        return Ok(PeripheralObservation::without_properties(peripheral));
     };
     Ok(PeripheralObservation::from_peripheral(
         peripheral, properties,

@@ -94,6 +94,17 @@ impl PeripheralObservation {
             manufacturer_data: manufacturer_data_summary(properties.manufacturer_data),
         }
     }
+
+    pub(crate) fn without_properties(peripheral: &Peripheral) -> Self {
+        Self {
+            identifier: peripheral.id().to_string(),
+            address: None,
+            name: None,
+            rssi: None,
+            advertised_services: AdvertisedServices::new(),
+            manufacturer_data: ManufacturerDataSummaries::new(),
+        }
+    }
 }
 
 impl fmt::Display for PeripheralObservation {
