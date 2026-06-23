@@ -365,12 +365,12 @@ pub const fn select_begode_falcon_battery_variant(
 
 /// Selects a Begode pack voltage profile from explicit evidence.
 #[must_use]
-pub fn select_begode_pack_voltage_profile(
-    evidence: &[BegodeVoltageEvidence],
-) -> BegodeVoltageProfileSelection {
+pub fn select_begode_pack_voltage_profile<I>(evidence: I) -> BegodeVoltageProfileSelection
+where
+    I: IntoIterator<Item = BegodeVoltageEvidence>,
+{
     evidence
-        .iter()
-        .copied()
+        .into_iter()
         .filter_map(evidence_profile)
         .try_fold(None, merge_profile_selection)
         .map_or(
@@ -1493,7 +1493,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_explicit_84v_class_evidence() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::VoltageClass84V]),
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::VoltageClass84V]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
         );
     }
@@ -1501,7 +1501,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_explicit_100v_class_evidence() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::VoltageClass100V]),
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::VoltageClass100V]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
         );
     }
@@ -1509,7 +1509,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_rejects_conflicting_classes() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[
+            select_begode_pack_voltage_profile([
                 BegodeVoltageEvidence::VoltageClass84V,
                 BegodeVoltageEvidence::VoltageClass100V,
             ]),
@@ -1520,7 +1520,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_does_not_guess_from_overlap_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
                 80_000
             )]),
             BegodeVoltageProfileSelection::Missing
@@ -1530,13 +1530,13 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_non_overlapping_observed_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
                 95_000
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
         );
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
                 65_000
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
@@ -1961,7 +1961,7 @@ mod tests {
         #[test]
         fn voltage_profile_selection_maps_low_non_overlap_voltage_to_84v(mv in 1u32..72_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
             );
         }
@@ -1969,7 +1969,7 @@ mod tests {
         #[test]
         fn voltage_profile_selection_maps_high_non_overlap_voltage_to_100v(mv in 84_001u32..=100_800) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
             );
         }
@@ -1977,7 +1977,7 @@ mod tests {
         #[test]
         fn voltage_profile_selection_keeps_overlap_voltage_ambiguous(mv in 72_000u32..=84_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
                 BegodeVoltageProfileSelection::Missing
             );
         }

@@ -281,13 +281,11 @@ fn select_falcon_replay_voltage_profile(capture: &PevcapCapture) -> BegodeVoltag
         BegodeVoltageProfileSelection::Conflicting => BegodeVoltageProfileSelection::Conflicting,
         BegodeVoltageProfileSelection::Selected(profile) => select_begode_pack_voltage_profile(
             core::iter::once(profile_evidence(profile))
-                .chain(falcon_replay_bms_voltage_evidence(capture))
-                .collect::<Vec<_>>()
-                .as_slice(),
+                .chain(falcon_replay_bms_voltage_evidence(capture)),
         ),
-        BegodeVoltageProfileSelection::Missing => select_begode_pack_voltage_profile(
-            &falcon_replay_bms_voltage_evidence(capture).collect::<Vec<_>>(),
-        ),
+        BegodeVoltageProfileSelection::Missing => {
+            select_begode_pack_voltage_profile(falcon_replay_bms_voltage_evidence(capture))
+        }
     }
 }
 
