@@ -2319,7 +2319,7 @@ fn usize_to_u64(value: usize) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{fmt::Write as _, io::Cursor};
 
     use super::*;
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
@@ -2434,6 +2434,16 @@ mod tests {
             }
         }
         text
+    }
+
+    fn assert_display_preserves_capacity(value: impl fmt::Display, expected: &str) {
+        let mut output = String::with_capacity(512);
+        let capacity = output.capacity();
+
+        write!(&mut output, "{value}").expect("display writes to string");
+
+        assert_eq!(output, expected);
+        assert_eq!(output.capacity(), capacity);
     }
 
     fn find_text_position(buffer: &Buffer, needle: &str) -> Option<(u16, u16)> {
@@ -3007,6 +3017,57 @@ mod tests {
         assert_eq!(
             TelemetryDeltaLog(TelemetryDelta::empty(42)).to_string(),
             "unmapped"
+        );
+    }
+
+    #[test]
+    fn dashboard_presenters_write_into_preallocated_buffers_without_reallocating() {
+        let channel = GattChannel::from_bytes([0xA1; 16]);
+        let ingest = NotificationIngestLog {
+            monotonic_ms: 4,
+            outcome: NotificationIngestOutcome::known_reserved(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                NotificationByteLen::new(75),
+                4,
+                ReservedPayloadEvidence {
+                    selector: Some(sel(8)),
+                    tag: None,
+                    body_len: PayloadBodyLen::new(24),
+                    verification: VerificationStatus::HardwareVerified,
+                },
+            ),
+        };
+        assert_display_preserves_capacity(
+            ingest,
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75",
+        );
+
+        assert_display_preserves_capacity(
+            MappedTelemetryLog(TelemetrySnapshot {
+                voltage_mv: Some(Measured::reported(119_600)),
+                battery_percent_reported: Some(Measured::reported(87)),
+                ..TelemetrySnapshot::default()
+            }),
+            "telemetry mapped voltage=120V battery=87%",
+        );
+
+        assert_display_preserves_capacity(
+            SettingsReadbackLog(SettingsReadback {
+                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
+            }),
+            "read-only settings field=32 value=540 quality=known verification=hardware_verified",
+        );
+
+        assert_display_preserves_capacity(
+            BmsPageSummary(BatteryPagePayload::raw(
+                BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
+                BatteryInfo {
+                    current_ma: Some(Measured::reported(2_010)),
+                    ..BatteryInfo::default()
+                },
+            )),
+            "selector=0 kind=metadata verification=hardware_verified current=2A",
         );
     }
 
