@@ -1480,7 +1480,7 @@ fn encode_raw_capture_pevcap(
 }
 
 fn gatt_channel_from_uuid(uuid: uuid::Uuid) -> GattChannel {
-    GattChannel::from_bytes(*uuid.as_bytes())
+    GattChannel::from_uuid(uuid)
 }
 
 fn capture_wall_clock_unix_ms() -> u64 {

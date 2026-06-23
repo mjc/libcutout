@@ -12,6 +12,7 @@ use std::{fmt, marker::PhantomData, ops::RangeInclusive};
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
+use uuid::Uuid;
 
 mod pevcap;
 pub use pevcap::*;
@@ -19,6 +20,9 @@ mod battery_page;
 pub use battery_page::*;
 mod ffi;
 pub use ffi::*;
+
+#[cfg(test)]
+mod gatt_channel_tests;
 
 /// Monotonic timestamp in milliseconds, supplied by the host.
 pub type MonotonicMillis = u64;
@@ -31,18 +35,30 @@ pub const MAX_INLINE_TRANSPORT_WRITE_LEN: usize = 32;
 
 /// Transport-independent identifier for a GATT characteristic or endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct GattChannel([u8; 16]);
+pub struct GattChannel(Uuid);
 
 impl GattChannel {
     /// Creates a channel identifier from its 16-byte representation.
     #[must_use]
     pub const fn from_bytes(bytes: [u8; 16]) -> Self {
-        Self(bytes)
+        Self(Uuid::from_bytes(bytes))
+    }
+
+    /// Creates a channel identifier from a UUID.
+    #[must_use]
+    pub const fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
     }
 
     /// Returns the channel identifier as raw bytes.
     #[must_use]
     pub const fn as_bytes(self) -> [u8; 16] {
+        *self.0.as_bytes()
+    }
+
+    /// Returns the channel identifier as a UUID.
+    #[must_use]
+    pub const fn as_uuid(self) -> Uuid {
         self.0
     }
 }
