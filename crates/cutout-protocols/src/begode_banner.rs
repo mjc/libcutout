@@ -17,6 +17,36 @@ pub enum BegodeBanner<'a> {
     Imu(BegodeImuKind<'a>),
 }
 
+/// Result of classifying a raw Begode/Gotway banner candidate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodeBannerParse<'a> {
+    /// The bytes were a recognized banner.
+    Banner(BegodeBanner<'a>),
+
+    /// No bytes were provided.
+    Empty,
+
+    /// The payload has the binary realtime frame prefix, not an ASCII banner.
+    BinaryFrame,
+
+    /// The payload contains bytes outside the accepted banner text subset.
+    NonAscii,
+
+    /// The payload is ASCII text, but not a recognized Begode/Gotway banner.
+    UnknownText,
+}
+
+impl<'a> BegodeBannerParse<'a> {
+    /// Returns the parsed banner when classification recognized one.
+    #[must_use]
+    pub const fn banner(self) -> Option<BegodeBanner<'a>> {
+        match self {
+            Self::Banner(banner) => Some(banner),
+            Self::Empty | Self::BinaryFrame | Self::NonAscii | Self::UnknownText => None,
+        }
+    }
+}
+
 /// Recognized Begode/Gotway firmware banner prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BegodeFirmwarePrefix {
@@ -60,21 +90,38 @@ pub enum BegodeImuKind<'a> {
 /// match the recognized banner prefixes.
 #[must_use]
 pub fn parse_begode_ascii_banner(bytes: &[u8]) -> Option<BegodeBanner<'_>> {
-    if bytes.is_empty()
-        || bytes.starts_with(&[0x55, 0xaa])
-        || !bytes.iter().copied().all(is_banner_ascii)
-    {
-        return None;
+    classify_begode_ascii_banner(bytes).banner()
+}
+
+/// Classifies a raw Begode/Gotway ASCII identity/config banner candidate.
+///
+/// The returned enum keeps the untrusted byte boundary explicit while allowing
+/// callers that only care about recognized banners to use
+/// [`parse_begode_ascii_banner`].
+#[must_use]
+pub fn classify_begode_ascii_banner(bytes: &[u8]) -> BegodeBannerParse<'_> {
+    if bytes.is_empty() {
+        return BegodeBannerParse::Empty;
+    }
+    if bytes.starts_with(&[0x55, 0xaa]) {
+        return BegodeBannerParse::BinaryFrame;
+    }
+    if !bytes.iter().copied().all(is_banner_ascii) {
+        return BegodeBannerParse::NonAscii;
     }
 
-    let text = core::str::from_utf8(bytes).ok()?.trim();
+    let Ok(text) = core::str::from_utf8(bytes) else {
+        return BegodeBannerParse::NonAscii;
+    };
+    let text = text.trim();
     if text.is_empty() {
-        return None;
+        return BegodeBannerParse::Empty;
     }
 
     parse_firmware_banner(text)
         .or_else(|| parse_model_name_banner(text))
         .or_else(|| parse_imu_banner(text))
+        .map_or(BegodeBannerParse::UnknownText, BegodeBannerParse::Banner)
 }
 
 fn parse_firmware_banner(text: &str) -> Option<BegodeBanner<'_>> {
@@ -126,7 +173,31 @@ const fn is_banner_ascii(byte: u8) -> bool {
 mod tests {
     use proptest::prelude::*;
 
-    use crate::{BegodeBanner, BegodeFirmwarePrefix, BegodeImuKind, parse_begode_ascii_banner};
+    use crate::{
+        BegodeBanner, BegodeBannerParse, BegodeFirmwarePrefix, BegodeImuKind,
+        classify_begode_ascii_banner, parse_begode_ascii_banner,
+    };
+
+    #[test]
+    fn classifies_untrusted_banner_boundary_without_allocating_decisions() {
+        assert_eq!(classify_begode_ascii_banner(b""), BegodeBannerParse::Empty);
+        assert_eq!(
+            classify_begode_ascii_banner(&[0x55, 0xaa, 0x20, 0x20]),
+            BegodeBannerParse::BinaryFrame
+        );
+        assert_eq!(
+            classify_begode_ascii_banner(b"NAME=Falcon\x00"),
+            BegodeBannerParse::NonAscii
+        );
+        assert_eq!(
+            classify_begode_ascii_banner(b"hello but not a banner"),
+            BegodeBannerParse::UnknownText
+        );
+        assert_eq!(
+            classify_begode_ascii_banner(b"NAME=Falcon"),
+            BegodeBannerParse::Banner(BegodeBanner::ModelName("Falcon"))
+        );
+    }
 
     #[test]
     fn parses_name_banner_with_equals_or_colon_separator() {

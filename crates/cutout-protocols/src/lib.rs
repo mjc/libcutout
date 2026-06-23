@@ -19,7 +19,8 @@ pub use begode_bms::{
 };
 mod begode_banner;
 pub use begode_banner::{
-    BegodeBanner, BegodeFirmwarePrefix, BegodeImuKind, parse_begode_ascii_banner,
+    BegodeBanner, BegodeBannerParse, BegodeFirmwarePrefix, BegodeImuKind,
+    classify_begode_ascii_banner, parse_begode_ascii_banner,
 };
 mod begode_telemetry;
 pub use begode_telemetry::{
