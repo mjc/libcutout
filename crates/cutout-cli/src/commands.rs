@@ -9,8 +9,8 @@ use std::{
 use anyhow::{Result, bail};
 use cutout_btle::{
     BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata,
-    RawNotificationRecord, ReconnectAttemptReport, SessionBridgeReport, SessionCapture,
-    SessionEndpoints, SessionPeripheral, capture_raw_notifications,
+    RawNotificationRecord, ReconnectAttemptReport, SessionBridgeEvent, SessionBridgeReport,
+    SessionCapture, SessionEndpoints, SessionPeripheral, capture_raw_notifications,
     capture_reconnecting_session_with_commands, capture_session_with_commands,
     connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
     scan_peripherals,
@@ -153,6 +153,7 @@ struct PevcapReplayReport {
     diagnostic_snapshots: Vec<DiagnosticSnapshot>,
     diagnostic_errors: Vec<DiagnosticError>,
     read_only_response_events: Vec<ReadOnlyResponse>,
+    events: Vec<SessionBridgeEvent>,
 }
 
 fn replay_pevcap_capture(
@@ -282,41 +283,61 @@ fn summarize_pevcap_replay(
         diagnostic_snapshots: Vec::new(),
         diagnostic_errors: Vec::new(),
         read_only_response_events: Vec::new(),
+        events: Vec::new(),
     };
 
     for output in outputs {
-        let SessionOutput::Event(event) = output else {
-            continue;
-        };
-        match event {
-            DeviceEvent::Telemetry(delta) => {
+        match output {
+            SessionOutput::Event(DeviceEvent::Telemetry(delta)) => {
                 report.telemetry += 1;
                 report.telemetry_snapshot.apply_delta(*delta);
             }
-            DeviceEvent::ReadOnlyResponse(response) => {
+            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
                 report.read_only_responses += 1;
                 report.read_only_response_events.push(*response);
                 if let ReadOnlyResponse::Firmware(firmware) = response {
                     report.firmware = Some(*firmware);
                 }
             }
-            DeviceEvent::Diagnostics(diagnostics) => {
+            SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => {
                 report.diagnostics += 1;
                 report
                     .diagnostic_snapshots
                     .push(DiagnosticSnapshot::from_parser_diagnostics(*diagnostics));
             }
-            DeviceEvent::DiagnosticError(error) => {
+            SessionOutput::Event(DeviceEvent::DiagnosticError(error)) => {
                 report.diagnostic_errors.push(*error);
             }
-            DeviceEvent::LinkUp(_)
-            | DeviceEvent::LinkDown
-            | DeviceEvent::Tick { .. }
-            | DeviceEvent::ControlRefusal(_) => {}
+            SessionOutput::NotificationIngest(outcome) => {
+                report.events.push(SessionBridgeEvent::NotificationIngest {
+                    monotonic_ms: notification_ingest_monotonic_ms(*outcome),
+                    outcome: *outcome,
+                });
+            }
+            SessionOutput::Transport(_)
+            | SessionOutput::Event(
+                DeviceEvent::LinkUp(_)
+                | DeviceEvent::LinkDown
+                | DeviceEvent::Tick { .. }
+                | DeviceEvent::ControlRefusal(_),
+            ) => {}
         }
     }
 
     report
+}
+
+const fn notification_ingest_monotonic_ms(outcome: cutout_core::NotificationIngestOutcome) -> u64 {
+    match outcome {
+        cutout_core::NotificationIngestOutcome::SemanticEvents { notification, .. }
+        | cutout_core::NotificationIngestOutcome::ParserDiagnostic { notification, .. }
+        | cutout_core::NotificationIngestOutcome::KnownReserved { notification, .. }
+        | cutout_core::NotificationIngestOutcome::ParserGap { notification, .. }
+        | cutout_core::NotificationIngestOutcome::BufferedFragment(notification)
+        | cutout_core::NotificationIngestOutcome::Ignored(notification) => {
+            notification.monotonic_ms
+        }
+    }
 }
 
 fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<DashboardState> {
@@ -364,7 +385,7 @@ fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<Dashboard
         diagnostics_snapshot: ParserDiagnostics::default(),
         diagnostic_errors: report.diagnostic_errors,
         identity: None,
-        events: Vec::new(),
+        events: report.events,
         disconnects: 0,
     });
     Ok(state)
@@ -2103,6 +2124,36 @@ mod tests {
         )
     }
 
+    fn sample_aero_reserved_replay_capture() -> PevcapCapture {
+        let header = PevcapHeader::new(
+            1_725_000_123_456,
+            "darwin",
+            Some(23),
+            &[VETERAN_DATA_CHANNEL],
+            &[],
+            None,
+            "0.1.0",
+            [0x25; 32],
+            &["aero selector 8 replay"],
+        )
+        .expect("header should validate");
+        PevcapCapture::new(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                42,
+                VETERAN_DATA_CHANNEL,
+                VETERAN_DATA_CHANNEL,
+                hex_literal::hex!(
+                    "dc5a5c4729f2000000170000ab6c001700000be9\
+                     045a00000226021ca8f607801b25000080c80000\
+                     808080808080080000803200364f371e00000100\
+                     808028062e7964800080801540e23a"
+                )
+                .to_vec(),
+            )],
+        )
+    }
+
     #[test]
     fn pevcap_converter_turns_jsonl_into_binary_container() {
         let capture = sample_pevcap_capture();
@@ -2423,6 +2474,7 @@ mod tests {
             diagnostic_snapshots: Vec::new(),
             diagnostic_errors: Vec::new(),
             read_only_response_events: Vec::new(),
+            events: Vec::new(),
         };
 
         assert_eq!(
@@ -2564,6 +2616,94 @@ mod tests {
         );
 
         assert_eq!(report.read_only_response_events, vec![response]);
+    }
+
+    #[test]
+    fn pevcap_replay_summary_collects_typed_notification_ingest_events() {
+        let outcome = cutout_core::NotificationIngestOutcome::known_reserved(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            VETERAN_DATA_CHANNEL,
+            75,
+            42,
+            cutout_core::ReservedPayloadEvidence {
+                selector: Some(8),
+                tag: None,
+                body_len: 24,
+                verification: VerificationStatus::HardwareVerified,
+            },
+        );
+        let outputs = [SessionOutput::NotificationIngest(outcome)];
+
+        let report = summarize_pevcap_replay(
+            1,
+            1,
+            &outputs,
+            ReplayChunkComparison {
+                whole_semantic_events: 0,
+                one_byte_semantic_events: 0,
+                arbitrary_semantic_events: 0,
+                one_byte_matches: true,
+                arbitrary_matches: true,
+            },
+        );
+
+        assert_eq!(
+            report.events.as_slice(),
+            &[SessionBridgeEvent::NotificationIngest {
+                monotonic_ms: 42,
+                outcome,
+            }]
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_chunk_modes_preserve_final_typed_ingest_outcomes() {
+        let capture = sample_aero_reserved_replay_capture();
+        let records = capture.replay_records();
+        let one_byte_records = capture.replay_records_with_notification_chunk_len(1);
+        let arbitrary_records = capture.replay_records_with_notification_chunks(
+            &cutout_core::replay_arbitrary_chunk_lengths(&records),
+        );
+
+        let whole = aero_replay_ingest_outcomes(&records);
+        let one_byte = aero_replay_ingest_outcomes(&one_byte_records);
+        let arbitrary = aero_replay_ingest_outcomes(&arbitrary_records);
+
+        assert!(one_byte[..one_byte.len() - 1].iter().all(|outcome| {
+            matches!(
+                outcome,
+                cutout_core::NotificationIngestOutcome::BufferedFragment(_)
+            )
+        }));
+        assert!(
+            arbitrary[..arbitrary.len() - 1].iter().all(|outcome| {
+                matches!(
+                    outcome,
+                    cutout_core::NotificationIngestOutcome::BufferedFragment(_)
+                )
+            }),
+            "arbitrary replay may differ only by explicit buffered progress: {arbitrary:?}"
+        );
+        assert_eq!(whole.last(), one_byte.last());
+        assert_eq!(whole.last(), arbitrary.last());
+        assert!(matches!(
+            whole.as_slice(),
+            [cutout_core::NotificationIngestOutcome::KnownReserved { payload, .. }]
+                if payload.selector == Some(8)
+        ));
+    }
+
+    fn aero_replay_ingest_outcomes(
+        records: &[CaptureRecord],
+    ) -> Vec<cutout_core::NotificationIngestOutcome> {
+        let mut host = HostSession::new(ReadOnlySession::<NosfetAeroModel, false>::default());
+        cutout_core::replay_capture(&mut host, records)
+            .into_iter()
+            .filter_map(|output| match output {
+                SessionOutput::NotificationIngest(outcome) => Some(outcome),
+                SessionOutput::Transport(_) | SessionOutput::Event(_) => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -2769,6 +2909,32 @@ mod tests {
                 .any(|page| page.contains("selector=3 kind=temperature"))
         );
         assert_eq!(state.read_only.unknown_raw_pages, 0);
+    }
+
+    #[test]
+    fn pevcap_replay_dashboard_renders_typed_ingest_outcomes() {
+        let capture = sample_aero_reserved_replay_capture();
+
+        let state = dashboard_state_from_aero_pevcap(&capture)
+            .expect("Aero dashboard replay uses existing Aero session");
+
+        assert!(
+            state
+                .logs
+                .iter()
+                .any(|line| line.message.contains("protocol known reserved")
+                    && line.message.contains("selector=8")),
+            "dashboard replay logs should include typed selector-8 reserved evidence: {:?}",
+            state.logs
+        );
+        assert!(
+            state
+                .logs
+                .iter()
+                .all(|line| !line.message.contains("raw notification")),
+            "dashboard replay logs should not recreate raw notification display paths: {:?}",
+            state.logs
+        );
     }
 
     #[test]
