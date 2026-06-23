@@ -491,6 +491,17 @@ impl fmt::Display for AnnotationList<'_> {
     }
 }
 
+struct OptionalUuid(Option<uuid::Uuid>);
+
+impl fmt::Display for OptionalUuid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(uuid) => uuid.fmt(f),
+            None => f.write_str("none"),
+        }
+    }
+}
+
 fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
     NotificationCount::new(
         capture
@@ -879,9 +890,7 @@ async fn run_dashboard_live_iteration(
     debug!(
         iteration,
         write = %endpoints.write.uuid,
-        notify = ?endpoints
-            .notify
-            .map(|characteristic| characteristic.uuid.to_string()),
+        notify = %OptionalUuid(endpoints.notify.map(|characteristic| characteristic.uuid)),
         window_ms = DASHBOARD_LIVE_WINDOW.as_millis(),
         "dashboard drive_session starting"
     );
