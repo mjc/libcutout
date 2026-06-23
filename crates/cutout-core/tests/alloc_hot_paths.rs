@@ -1,7 +1,10 @@
 #![allow(unsafe_code)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
@@ -47,6 +50,7 @@ static CATALOG_ENTRIES: [ModelCatalogEntry; 1] = [ModelCatalogEntry {
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static REALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+static ALLOCATION_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
@@ -118,6 +122,13 @@ fn reset_counts() {
     REALLOCATIONS.store(0, Ordering::SeqCst);
 }
 
+fn with_allocation_lock(action: impl FnOnce()) {
+    let _guard = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    action();
+}
+
 fn assert_no_allocations(label: &str, action: impl FnOnce()) {
     reset_counts();
     action();
@@ -132,6 +143,13 @@ fn assert_no_allocations(label: &str, action: impl FnOnce()) {
 
 #[test]
 fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
+    with_allocation_lock(|| {
+        hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked();
+        large_catalog_lookup_does_not_allocate_after_setup_locked();
+    });
+}
+
+fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     let mut link_up_host = HostSession::new(NoOpSession);
     assert_no_allocations("host link-up", || {
         link_up_host.ingest_link_up(LinkInfo {
@@ -233,4 +251,59 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
 
         assert_eq!(replay_outputs.len(), 1);
     });
+}
+
+fn large_catalog_lookup_does_not_allocate_after_setup_locked() {
+    let large_catalog_entries: Vec<_> = (0..1_000).map(synthetic_catalog_entry).collect();
+
+    assert_no_allocations("large model catalog borrowed lookup", || {
+        let catalog = ModelCatalog::new(&large_catalog_entries);
+        let model_entry = catalog
+            .find_model_names("Synthetic", "Model0999")
+            .expect("synthetic model exists");
+
+        assert_eq!(model_entry.registry.model, "Model0999");
+        assert!(matches!(
+            catalog.resolve_advertised_name("PEV-0999"),
+            cutout_core::CatalogModelResolution::Matched(entry)
+                if entry.registry.model == "Model0999"
+        ));
+    });
+}
+
+fn synthetic_catalog_entry(index: usize) -> ModelCatalogEntry {
+    let hint = leak_static_str(format!("PEV-{index:04}"));
+    let model = leak_static_str(format!("Model{index:04}"));
+    let hints = Box::leak(Box::new([hint]));
+    let registry = Box::leak(Box::new(ModelRegistryEntry {
+        manufacturer: "Synthetic",
+        model,
+        protocol_family: ProtocolFamily::VeteranLeaperkimNosfet,
+        advertised_name_hints: hints,
+        wire_model_id: None,
+        battery: None,
+        bms: None,
+        gatt: &CATALOG_GATT,
+        capabilities: cutout_core::Capabilities::from_supported_commands([
+            CommandKind::RequestIdentity,
+            CommandKind::RequestTelemetry,
+        ]),
+        verification: VerificationStatus::Inferred,
+    }));
+
+    ModelCatalogEntry {
+        registry,
+        registration: ModelRuntimeRegistration {
+            parser: Some(ParserKey::new(leak_static_str(format!(
+                "synthetic-parser-{index:04}"
+            )))),
+            session: Some(SessionKey::new(leak_static_str(format!(
+                "synthetic-session-{index:04}"
+            )))),
+        },
+    }
+}
+
+fn leak_static_str(value: String) -> &'static str {
+    Box::leak(value.into_boxed_str())
 }
