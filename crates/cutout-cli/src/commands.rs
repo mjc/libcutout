@@ -3133,8 +3133,14 @@ mod tests {
         assert_eq!(state.device.identifier, "darwin");
         assert_eq!(state.device.connection_state, "replayed");
         assert_eq!(state.counters.notifications, 1);
-        assert_eq!(state.counters.notification_bytes, 99);
-        assert_eq!(state.counters.latest_notification_len, Some(99));
+        assert_eq!(
+            state.counters.notification_bytes,
+            NotificationByteTotal::new(99)
+        );
+        assert_eq!(
+            state.counters.latest_notification_len,
+            Some(NotificationByteLen::new(99))
+        );
         assert_eq!(state.telemetry.latest_voltage_v, Some(108));
         assert!(state.read_only.firmware.is_some());
         assert!(

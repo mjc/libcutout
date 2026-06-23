@@ -13,11 +13,13 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{
-    ConnectionSummary, ConnectionTarget, ServiceSummary, SessionBridgeEvent, SessionBridgeReport,
+    ConnectionSummary, ConnectionTarget, NotificationByteTotal, ServiceSummary, SessionBridgeEvent,
+    SessionBridgeReport,
 };
 use cutout_core::{
-    BatteryPagePayload, FirmwareInfo, NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily,
-    ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
+    BatteryPagePayload, FirmwareInfo, NotificationByteLen, NotificationIngestOutcome,
+    ParserDiagnostics, ProtocolFamily, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+    TelemetryDelta, TelemetrySnapshot,
 };
 use cutout_protocols::VeteranModelProfile;
 use ratatui::termina::{
@@ -210,8 +212,8 @@ pub(crate) struct SessionCounters {
     pub(crate) connected: u64,
     pub(crate) subscriptions: u64,
     pub(crate) notifications: u64,
-    pub(crate) notification_bytes: u64,
-    pub(crate) latest_notification_len: Option<u64>,
+    pub(crate) notification_bytes: NotificationByteTotal,
+    pub(crate) latest_notification_len: Option<NotificationByteLen>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -424,7 +426,7 @@ impl DashboardState {
             connected: 1,
             subscriptions: 4,
             notifications: 27,
-            notification_bytes: 0,
+            notification_bytes: NotificationByteTotal::default(),
             latest_notification_len: None,
         };
         self.telemetry.load_window(
@@ -550,10 +552,8 @@ impl DashboardState {
         self.counters.notification_bytes = self
             .counters
             .notification_bytes
-            .saturating_add(usize_to_u64(report.notification_bytes.get()));
-        self.counters.latest_notification_len = report
-            .latest_notification_len
-            .map(|len| usize_to_u64(len.get()));
+            .saturating_add(report.notification_bytes);
+        self.counters.latest_notification_len = report.latest_notification_len;
         self.push_log(
             "info",
             &format!(
@@ -1538,7 +1538,7 @@ fn format_unmapped_telemetry_event(report: &SessionBridgeReport) -> String {
     )
 }
 
-struct OptionalNotificationLen(Option<cutout_core::NotificationByteLen>);
+struct OptionalNotificationLen(Option<NotificationByteLen>);
 
 impl fmt::Display for OptionalNotificationLen {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2189,7 +2189,7 @@ fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
             Span::styled("transport notifications ", Style::new().fg(Color::Gray)),
             Span::raw(state.counters.notifications.to_string()),
             Span::styled(" bytes ", Style::new().fg(Color::Gray)),
-            Span::raw(state.counters.notification_bytes.to_string()),
+            Span::raw(state.counters.notification_bytes.get().to_string()),
         ]),
     ])
     .block(panel_block("Decoded telemetry"));
@@ -2197,15 +2197,11 @@ fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
 }
 
 fn render_pending_telemetry_detail(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let latest = state
-        .counters
-        .latest_notification_len
-        .map_or_else(|| "none".to_owned(), |len| len.to_string());
     let text = Paragraph::new(vec![
         Line::from("waiting for protocol decoder output"),
         Line::from(vec![
             Span::styled("latest notification bytes ", Style::new().fg(Color::Gray)),
-            Span::raw(latest),
+            Span::raw(OptionalNotificationLen(state.counters.latest_notification_len).to_string()),
         ]),
     ])
     .block(panel_block("Decoder input"));
@@ -2865,8 +2861,14 @@ mod tests {
 
         assert_eq!(state.counters.subscriptions, 1);
         assert_eq!(state.counters.notifications, 184);
-        assert_eq!(state.counters.notification_bytes, 18_400);
-        assert_eq!(state.counters.latest_notification_len, Some(100));
+        assert_eq!(
+            state.counters.notification_bytes,
+            NotificationByteTotal::new(18_400)
+        );
+        assert_eq!(
+            state.counters.latest_notification_len,
+            Some(NotificationByteLen::new(100))
+        );
         assert!(
             state
                 .logs
@@ -3818,8 +3820,14 @@ mod tests {
 
         assert_eq!(state.counters.subscriptions, 2);
         assert_eq!(state.counters.notifications, 4);
-        assert_eq!(state.counters.notification_bytes, 80);
-        assert_eq!(state.counters.latest_notification_len, Some(20));
+        assert_eq!(
+            state.counters.notification_bytes,
+            NotificationByteTotal::new(80)
+        );
+        assert_eq!(
+            state.counters.latest_notification_len,
+            Some(NotificationByteLen::new(20))
+        );
     }
 
     #[test]
@@ -4017,8 +4025,8 @@ mod tests {
         let mut state = DashboardState::empty();
         state.active_tab = DashboardTab::new(1);
         state.counters.notifications = 47;
-        state.counters.notification_bytes = 4_700;
-        state.counters.latest_notification_len = Some(100);
+        state.counters.notification_bytes = NotificationByteTotal::new(4_700);
+        state.counters.latest_notification_len = Some(NotificationByteLen::new(100));
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
