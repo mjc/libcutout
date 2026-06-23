@@ -4,8 +4,8 @@ use cutout_core::{
 };
 
 use crate::{
-    BEGODE_DATA_CHANNEL, BegodeFalconModel, NosfetAeroModel, ReadOnlySession, RegisteredModelSpec,
-    VETERAN_DATA_CHANNEL,
+    BEGODE_DATA_CHANNEL, BegodeFalconModel, BegodeNotificationDecoder, BegodePackVoltageProfile,
+    NosfetAeroModel, ReadOnlySession, RegisteredModelSpec, VETERAN_DATA_CHANNEL,
 };
 
 /// Parser registration key for Veteran/LeaperKim/NOSFET notifications.
@@ -99,6 +99,18 @@ fn nosfet_aero_read_only_session() -> RegisteredReadOnlySession {
 
 fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
     RegisteredReadOnlySession::BegodeFalcon(ReadOnlySession::<BegodeFalconModel, true>::default())
+}
+
+/// Constructs a registered Begode Falcon read-only session with explicit pack-voltage evidence.
+#[must_use]
+pub fn begode_falcon_read_only_session_with_voltage_profile(
+    profile: BegodePackVoltageProfile,
+) -> RegisteredReadOnlySession {
+    RegisteredReadOnlySession::BegodeFalcon(
+        ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
+            BegodeNotificationDecoder::with_pack_voltage_profile(profile),
+        ),
+    )
 }
 
 /// Read-only session registrations available from this protocol crate.

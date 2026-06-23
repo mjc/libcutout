@@ -32,13 +32,13 @@ use cutout_core::{
 use cutout_protocols::VETERAN_DATA_CHANNEL;
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BegodeBmsSummary,
-    BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFalconModel, BegodeFrame,
-    BegodeNotificationDecoder, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
-    BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
-    NOSFET_AERO_SESSION_KEY, ReadOnlySession, RegisteredReadOnlySession, find_session_registration,
-    select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
-    select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
-    validate_begode_pack_evidence,
+    BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFrame, BegodePackEvidenceConsistency,
+    BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeVoltageEvidence,
+    BegodeVoltageProfileSelection, MODEL_CATALOG, NOSFET_AERO_SESSION_KEY,
+    RegisteredReadOnlySession, begode_falcon_read_only_session_with_voltage_profile,
+    find_session_registration, select_begode_pack_capacity_from_annotations,
+    select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
+    select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
 };
 use tracing::{debug, info};
 
@@ -261,15 +261,11 @@ fn replay_pevcap_capture(
     Ok(report)
 }
 
-fn falcon_replay_session(
-    capture: &PevcapCapture,
-) -> Result<ReadOnlySession<BegodeFalconModel, true>> {
+fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySession> {
     match select_falcon_replay_voltage_profile(capture) {
-        BegodeVoltageProfileSelection::Selected(profile) => {
-            Ok(ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
-                BegodeNotificationDecoder::with_pack_voltage_profile(profile),
-            ))
-        }
+        BegodeVoltageProfileSelection::Selected(profile) => Ok(
+            begode_falcon_read_only_session_with_voltage_profile(profile),
+        ),
         BegodeVoltageProfileSelection::Missing => {
             bail!("Falcon PEVCAP replay requires explicit Falcon battery voltage evidence")
         }
