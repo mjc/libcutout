@@ -320,7 +320,8 @@ where
     let records = capture.replay_records();
     let comparison_session = session.clone();
     let mut host = HostSession::new(session);
-    let outputs = cutout_core::replay_capture(&mut host, &records);
+    let mut outputs = Vec::with_capacity(records.len());
+    capture.replay_into_host(&mut host, &mut outputs);
     let arbitrary_chunks = cutout_core::replay_arbitrary_chunk_lengths(&records);
     let comparison = cutout_core::compare_replay_capture_chunks(
         || comparison_session.clone(),

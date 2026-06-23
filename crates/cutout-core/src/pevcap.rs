@@ -11,8 +11,9 @@ use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
 use crate::VescControllerId;
 use crate::{
-    CaptureRecord, GattChannel, GattFingerprint, LinkInfo, MonotonicMillis, NotificationChunkLen,
-    ProtocolFamily, RequestTarget, VerifiedValue, WriteMode,
+    CaptureRecord, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicMillis,
+    NotificationChunkLen, ProtocolFamily, ProtocolSession, RequestTarget, SessionInput,
+    SessionOutput, VerifiedValue, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -628,6 +629,47 @@ impl PevcapCapture {
             .into_iter()
             .flat_map(|record| record.split_notification_by_lengths(lengths))
             .collect()
+    }
+
+    /// Replays PEVCAP records directly through a host session using borrowed
+    /// payload slices and caller-provided output storage.
+    ///
+    /// Outbound writes are preserved in PEVCAP for audit but are intentionally
+    /// not replayed as host inputs.
+    pub fn replay_into_host<S>(&self, host: &mut HostSession<S>, outputs: &mut Vec<SessionOutput>)
+    where
+        S: ProtocolSession,
+    {
+        if !self
+            .records
+            .iter()
+            .any(|record| record.direction == PevcapDirection::LinkUp)
+        {
+            host.ingest_link_up(LinkInfo {
+                monotonic_ms: 0,
+                max_write_len: self.header.write_limit,
+            });
+            host.drain_outputs_into(outputs);
+        }
+
+        for record in &self.records {
+            match record.direction {
+                PevcapDirection::LinkUp => {
+                    host.ingest_link_up(LinkInfo {
+                        monotonic_ms: record.monotonic_ms,
+                        max_write_len: record.link_max_write_len,
+                    });
+                }
+                PevcapDirection::LinkDown => host.ingest_link_down(),
+                PevcapDirection::Inbound => host.ingest(SessionInput::Notification {
+                    channel: record.characteristic,
+                    bytes: record.bytes.as_ref(),
+                    monotonic_ms: record.monotonic_ms,
+                }),
+                PevcapDirection::Outbound => {}
+            }
+            host.drain_outputs_into(outputs);
+        }
     }
 
     /// Serializes this capture as line-delimited JSON for review tooling.
