@@ -7,7 +7,10 @@ use cutout_core::{
 };
 use thiserror::Error;
 
-use crate::BegodeFrame;
+use crate::{
+    BegodeFrame,
+    parser::{ByteCursor, ByteOffset},
+};
 
 /// Begode speed/distance unit mode inferred from Live B settings bit 0.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -803,17 +806,17 @@ impl BegodeLiveATelemetry {
         profile: BegodePackVoltageProfile,
     ) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x00)?;
-        let bytes = frame.as_slice();
-        let raw_voltage_centivolts = read_be_u16(bytes, 2);
+        let cursor = ByteCursor::new(frame.as_slice());
+        let raw_voltage_centivolts = be_u16(cursor, 2);
         Ok(Self {
             raw_voltage_centivolts,
             voltage_mv: scaled_voltage_mv(raw_voltage_centivolts, profile),
-            speed_milli_kmh: raw_speed_to_milli_kmh(read_be_i16(bytes, 4)),
-            trip_distance_m: read_be_u32(bytes, 6),
-            trip_distance_low_m: read_be_u16(bytes, 8),
-            phase_current_ma: i32::from(read_be_i16(bytes, 10)) * 10,
-            imu_temperature_mc: mpu6050_temperature_mc(read_be_i16(bytes, 12)),
-            hardware_pwm_raw: read_be_i16(bytes, 14),
+            speed_milli_kmh: raw_speed_to_milli_kmh(be_i16(cursor, 4)),
+            trip_distance_m: be_u32(cursor, 6),
+            trip_distance_low_m: be_u16(cursor, 8),
+            phase_current_ma: i32::from(be_i16(cursor, 10)) * 10,
+            imu_temperature_mc: mpu6050_temperature_mc(be_i16(cursor, 12)),
+            hardware_pwm_raw: be_i16(cursor, 14),
             battery_percent_estimated: estimate_begode_battery_percent(
                 scaled_voltage_mv(raw_voltage_centivolts, profile),
                 profile,
@@ -889,15 +892,15 @@ impl BegodeLiveBTelemetry {
     /// is not `0x04`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x04)?;
-        let bytes = frame.as_slice();
+        let cursor = ByteCursor::new(frame.as_slice());
         Ok(Self {
-            total_distance_m: read_be_u32(bytes, 2),
-            settings_bits: read_be_u16(bytes, 6),
-            power_off_timer_minutes: read_be_u16(bytes, 8),
-            tiltback_speed_kmh: read_be_u16(bytes, 10),
-            led_mode: read_u8(bytes, 13),
-            alert_flags: read_u8(bytes, 14),
-            light_mode: read_u8(bytes, 15) & 0x03,
+            total_distance_m: be_u32(cursor, 2),
+            settings_bits: be_u16(cursor, 6),
+            power_off_timer_minutes: be_u16(cursor, 8),
+            tiltback_speed_kmh: be_u16(cursor, 10),
+            led_mode: byte(cursor, 13),
+            alert_flags: byte(cursor, 14),
+            light_mode: byte(cursor, 15) & 0x03,
         })
     }
 
@@ -1003,11 +1006,11 @@ impl BegodeExtraTelemetry {
     /// is not `0x07`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x07)?;
-        let bytes = frame.as_slice();
+        let cursor = ByteCursor::new(frame.as_slice());
         Ok(Self {
-            battery_current_ma: i32::from(read_be_i16(bytes, 2)) * 10,
-            motor_temperature_mc: i32::from(read_be_i16(bytes, 6)) * 1_000,
-            true_pwm_raw: read_be_i16(bytes, 8),
+            battery_current_ma: i32::from(be_i16(cursor, 2)) * 10,
+            motor_temperature_mc: i32::from(be_i16(cursor, 6)) * 1_000,
+            true_pwm_raw: be_i16(cursor, 8),
         })
     }
 
@@ -1144,29 +1147,20 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
     }
 }
 
-fn read_u8(bytes: &[u8; 24], offset: usize) -> u8 {
-    bytes.get(offset).copied().unwrap_or_default()
+fn byte(cursor: ByteCursor<'_>, offset: usize) -> u8 {
+    cursor.byte(ByteOffset::new(offset)).unwrap_or_default()
 }
 
-fn read_be_u16(bytes: &[u8; 24], offset: usize) -> u16 {
-    match bytes.get(offset..offset + 2) {
-        Some([b0, b1]) => u16::from_be_bytes([*b0, *b1]),
-        _ => 0,
-    }
+fn be_u16(cursor: ByteCursor<'_>, offset: usize) -> u16 {
+    cursor.be_u16(ByteOffset::new(offset)).unwrap_or_default()
 }
 
-fn read_be_i16(bytes: &[u8; 24], offset: usize) -> i16 {
-    match bytes.get(offset..offset + 2) {
-        Some([b0, b1]) => i16::from_be_bytes([*b0, *b1]),
-        _ => 0,
-    }
+fn be_i16(cursor: ByteCursor<'_>, offset: usize) -> i16 {
+    cursor.be_i16(ByteOffset::new(offset)).unwrap_or_default()
 }
 
-fn read_be_u32(bytes: &[u8; 24], offset: usize) -> u32 {
-    match bytes.get(offset..offset + 4) {
-        Some([b0, b1, b2, b3]) => u32::from_be_bytes([*b0, *b1, *b2, *b3]),
-        _ => 0,
-    }
+fn be_u32(cursor: ByteCursor<'_>, offset: usize) -> u32 {
+    cursor.be_u32(ByteOffset::new(offset)).unwrap_or_default()
 }
 
 const fn div_round(numerator: i32, denominator: i32) -> i32 {
@@ -1229,7 +1223,7 @@ mod tests {
         estimate_begode_battery_percent, validate_begode_pack_evidence,
     };
     use cutout_core::{
-        DiagnosticSeverity, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
+        DiagnosticSeverity, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
         ValueQuality, ValueSource, VerificationStatus,
     };
     use proptest::prelude::*;
@@ -1243,6 +1237,7 @@ mod tests {
     #[test]
     fn live_a_decodes_source_backed_primary_fields_for_falcon_84v_full_charge() {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
+        assert_eq!(frame.tag(), ProtocolTag::new(0x00));
         let telemetry =
             BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A frame decodes");
