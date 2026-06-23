@@ -1,4 +1,5 @@
 use std::{
+    mem::size_of,
     pin::Pin,
     sync::{Arc, Mutex},
     time::{Duration, Instant as StdInstant},
@@ -1157,6 +1158,15 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
     assert_eq!(
         decode_outcome_evidence(outcome).len,
         NotificationByteLen::new(77)
+    );
+}
+
+#[test]
+fn notification_decode_outcome_is_bounded_typed_evidence() {
+    assert!(size_of::<crate::bridge::NotificationDecodeOutcome>() <= 64);
+    assert_eq!(
+        size_of::<crate::bridge::NotificationDecodeKind>(),
+        size_of::<u8>()
     );
 }
 
