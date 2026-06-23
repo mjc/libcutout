@@ -63,6 +63,20 @@ pub struct SessionBridgeReport {
     pub disconnects: usize,
 }
 
+impl SessionBridgeReport {
+    /// Records a typed notification ingest outcome at the report edge.
+    pub fn record_notification_ingest(
+        &mut self,
+        outcome: NotificationIngestOutcome,
+        monotonic_ms: MonotonicMs,
+    ) {
+        self.events.push(SessionBridgeEvent::NotificationIngest {
+            monotonic_ms,
+            outcome,
+        });
+    }
+}
+
 /// Timestamped semantic event emitted by the bridge.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionBridgeEvent {
@@ -149,10 +163,7 @@ pub(crate) fn process_notification_ingest_outcome(
     outcome: NotificationIngestOutcome,
     monotonic_ms: MonotonicMs,
 ) {
-    report.events.push(SessionBridgeEvent::NotificationIngest {
-        monotonic_ms,
-        outcome,
-    });
+    report.record_notification_ingest(outcome, monotonic_ms);
 }
 
 pub(crate) fn process_device_event(
