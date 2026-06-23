@@ -518,6 +518,19 @@ fn connection_summary_selects_standard_battery_level_characteristic() {
 }
 
 #[test]
+fn battery_level_percent_rejects_malformed_backend_values() {
+    assert_eq!(
+        crate::BatteryLevelPercent::from_backend_byte(88).map(crate::BatteryLevelPercent::get),
+        Some(88)
+    );
+    assert_eq!(
+        crate::BatteryLevelPercent::from_backend_byte(100).map(crate::BatteryLevelPercent::get),
+        Some(100)
+    );
+    assert_eq!(crate::BatteryLevelPercent::from_backend_byte(101), None);
+}
+
+#[test]
 fn connection_summary_uses_identifier_when_address_is_unavailable() {
     let summary = crate::ConnectionSummary {
         observation: crate::PeripheralObservation {

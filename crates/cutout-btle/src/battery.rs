@@ -8,7 +8,8 @@ use crate::{
 /// Reads the standard BLE Battery Level characteristic from a connected peripheral.
 ///
 /// Returns `Ok(None)` when the device does not expose a readable Battery Level
-/// characteristic or when the characteristic returns an empty payload.
+/// characteristic, when the characteristic returns an empty payload, or when
+/// the backend byte is outside the standard BLE 0..=100 percentage range.
 ///
 /// # Errors
 ///
@@ -29,5 +30,5 @@ pub async fn read_battery_level(
     Ok(value
         .first()
         .copied()
-        .map(BatteryLevelPercent::from_backend_byte))
+        .and_then(BatteryLevelPercent::from_backend_byte))
 }

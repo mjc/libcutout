@@ -211,10 +211,16 @@ impl fmt::Display for NegotiatedWriteLen {
 pub struct BatteryLevelPercent(u8);
 
 impl BatteryLevelPercent {
-    /// Parses the backend byte as a clamped BLE battery percentage.
+    /// Parses the backend byte as a standard BLE battery percentage.
+    ///
+    /// Values outside 0..=100 are malformed and stay untyped.
     #[must_use]
-    pub const fn from_backend_byte(value: u8) -> Self {
-        Self(if value > 100 { 100 } else { value })
+    pub const fn from_backend_byte(value: u8) -> Option<Self> {
+        if value <= 100 {
+            Some(Self(value))
+        } else {
+            None
+        }
     }
 
     /// Returns the percentage value for display or serialization.
