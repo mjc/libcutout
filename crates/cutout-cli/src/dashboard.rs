@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fmt,
     io::{self, Read, Write},
     sync::{
         Arc, OnceLock,
@@ -571,8 +572,16 @@ impl DashboardState {
             self.push_log("trace", &format_unmapped_telemetry_event(report));
         }
         for event in &report.events {
-            let (level, message) = format_bridge_event(event);
-            self.push_log(level, &message);
+            if let SessionBridgeEvent::NotificationIngest {
+                monotonic_ms,
+                outcome,
+            } = event
+            {
+                self.push_notification_ingest_log(*monotonic_ms, *outcome);
+            } else {
+                let (level, message) = format_bridge_event(event);
+                self.push_log(level, &message);
+            }
         }
     }
 
@@ -641,17 +650,38 @@ impl DashboardState {
         }
     }
 
+    fn push_notification_ingest_log(
+        &mut self,
+        monotonic_ms: cutout_btle::MonotonicMs,
+        outcome: NotificationIngestOutcome,
+    ) {
+        let message = NotificationIngestLog {
+            monotonic_ms: monotonic_ms.get(),
+            outcome,
+        };
+        let level = message.level();
+        let rendered = message.to_string();
+        log_dashboard_recent_event(level, &rendered);
+        if !dashboard_log_sink_installed() {
+            self.push_log_entry(level, &rendered);
+        }
+    }
+
     fn push_log_from_tracing(&mut self, level: &str, message: &str) {
         self.push_log_entry(level, message);
     }
 
     fn push_log_entry(&mut self, level: &str, message: &str) {
+        self.push_log_display(level, message);
+    }
+
+    fn push_log_display(&mut self, level: &str, message: impl fmt::Display) {
         if self.logs.len() == LOG_LIMIT {
             self.logs.pop_front();
         }
         self.logs.push_back(LogEntry {
             level: level.to_owned(),
-            message: message.to_owned(),
+            message: message.to_string(),
         });
     }
 }
@@ -1055,56 +1085,69 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
                 error.kind
             ),
         ),
-        SessionBridgeEvent::NotificationIngest {
-            monotonic_ms,
-            outcome,
-        } => format_notification_ingest_event(monotonic_ms.get(), *outcome),
+        SessionBridgeEvent::NotificationIngest { .. } => {
+            unreachable!("notification ingest events are routed through NotificationIngestLog")
+        }
     }
 }
 
-fn format_notification_ingest_event(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NotificationIngestLog {
     monotonic_ms: u64,
     outcome: NotificationIngestOutcome,
-) -> (&'static str, String) {
-    match outcome {
-        NotificationIngestOutcome::SemanticEvents {
-            notification,
-            event_count,
-        } => (
-            "info",
-            format!(
-                "t={monotonic_ms}ms protocol semantic events family={} events={} len={}",
+}
+
+impl NotificationIngestLog {
+    const fn level(self) -> &'static str {
+        match self.outcome {
+            NotificationIngestOutcome::SemanticEvents { .. }
+            | NotificationIngestOutcome::KnownReserved { .. } => "info",
+            NotificationIngestOutcome::ParserDiagnostic { .. }
+            | NotificationIngestOutcome::ParserGap { .. } => "warn",
+            NotificationIngestOutcome::BufferedFragment(_)
+            | NotificationIngestOutcome::Ignored(_) => "trace",
+        }
+    }
+}
+
+impl fmt::Display for NotificationIngestLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.outcome {
+            NotificationIngestOutcome::SemanticEvents {
+                notification,
+                event_count,
+            } => write!(
+                f,
+                "t={}ms protocol semantic events family={} events={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 event_count.get(),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::BufferedFragment(notification) => (
-            "trace",
-            format!(
-                "t={monotonic_ms}ms protocol buffered fragment family={} len={}",
+            NotificationIngestOutcome::BufferedFragment(notification) => write!(
+                f,
+                "t={}ms protocol buffered fragment family={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::ParserDiagnostic {
-            notification,
-            error,
-        } => (
-            "warn",
-            format!(
-                "t={monotonic_ms}ms protocol parser diagnostic family={} len={} error={error:?}",
+            NotificationIngestOutcome::ParserDiagnostic {
+                notification,
+                error,
+            } => write!(
+                f,
+                "t={}ms protocol parser diagnostic family={} len={} error={error:?}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::KnownReserved {
-            notification,
-            payload,
-        } => (
-            "info",
-            format!(
-                "t={monotonic_ms}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
+            NotificationIngestOutcome::KnownReserved {
+                notification,
+                payload,
+            } => write!(
+                f,
+                "t={}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 optional_u8(payload.selector.map(cutout_core::ProtocolSelector::get)),
                 optional_u16(payload.tag.map(cutout_core::ProtocolTag::get)),
@@ -1112,26 +1155,24 @@ fn format_notification_ingest_event(
                 verification_name(payload.verification),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::ParserGap { notification, gap } => (
-            "warn",
-            format!(
-                "t={monotonic_ms}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
+            NotificationIngestOutcome::ParserGap { notification, gap } => write!(
+                f,
+                "t={}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 optional_u8(gap.selector.map(cutout_core::ProtocolSelector::get)),
                 optional_u16(gap.tag.map(cutout_core::ProtocolTag::get)),
                 gap.body_len.get(),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::Ignored(notification) => (
-            "trace",
-            format!(
-                "t={monotonic_ms}ms protocol ignored notification family={} len={}",
+            NotificationIngestOutcome::Ignored(notification) => write!(
+                f,
+                "t={}ms protocol ignored notification family={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 notification.len.get()
             ),
-        ),
+        }
     }
 }
 
@@ -2610,6 +2651,32 @@ mod tests {
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("telemetry unmapped notifications=3"));
         assert!(!text.contains("raw notification"));
+    }
+
+    #[test]
+    fn notification_ingest_log_keeps_level_structured_until_render_edge() {
+        let channel = GattChannel::from_bytes([0xA1; 16]);
+        let log = NotificationIngestLog {
+            monotonic_ms: 4,
+            outcome: NotificationIngestOutcome::known_reserved(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                NotificationByteLen::new(75),
+                4,
+                ReservedPayloadEvidence {
+                    selector: Some(ProtocolSelector::new(8)),
+                    tag: None,
+                    body_len: PayloadBodyLen::new(24),
+                    verification: VerificationStatus::HardwareVerified,
+                },
+            ),
+        };
+
+        assert_eq!(log.level(), "info");
+        assert_eq!(
+            log.to_string(),
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75"
+        );
     }
 
     #[test]
