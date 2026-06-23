@@ -1197,21 +1197,36 @@ fn u64_to_i64(value: u64) -> Option<i64> {
     i64::try_from(value).ok()
 }
 
-fn format_optional_distance_m(value: Option<u64>) -> String {
-    value.map_or_else(|| "unknown".to_owned(), format_distance_m)
-}
+struct OptionalDistanceDisplay(Option<u64>);
 
-fn format_distance_m(value: u64) -> String {
-    if value < 1_000 {
-        return format!("{value} m");
+impl fmt::Display for OptionalDistanceDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => DistanceMDisplay(value).fmt(f),
+            None => f.write_str("unknown"),
+        }
     }
-
-    let km_tenths = value.saturating_mul(10).saturating_add(500) / 1_000;
-    format!("{} km", format_tenths(km_tenths))
 }
 
-fn format_tenths(value: u64) -> String {
-    format!("{}.{}", value / 10, value % 10)
+struct DistanceMDisplay(u64);
+
+impl fmt::Display for DistanceMDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 < 1_000 {
+            write!(f, "{} m", self.0)
+        } else {
+            let km_tenths = self.0.saturating_mul(10).saturating_add(500) / 1_000;
+            write!(f, "{} km", TenthsDisplay(km_tenths))
+        }
+    }
+}
+
+struct TenthsDisplay(u64);
+
+impl fmt::Display for TenthsDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.0 / 10, self.0 % 10)
+    }
 }
 
 struct DeviceIdentity {
@@ -2375,36 +2390,35 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
         lines.extend([
             Line::from(vec![
                 Span::styled("speed ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_u64(
-                    state.telemetry.latest_speed_mph,
-                    " mph",
-                )),
+                Span::raw(
+                    OptionalU64Display::new(state.telemetry.latest_speed_mph, " mph").to_string(),
+                ),
                 Span::styled(" voltage ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_u64(state.telemetry.latest_voltage_v, " V")),
+                Span::raw(
+                    OptionalU64Display::new(state.telemetry.latest_voltage_v, " V").to_string(),
+                ),
                 Span::styled(" battery ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_u64(state.telemetry.battery_pct, "%")),
+                Span::raw(OptionalU64Display::new(state.telemetry.battery_pct, "%").to_string()),
             ]),
             Line::from(vec![
                 Span::styled("current ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(state.telemetry.latest_current_a, " A")),
+                Span::raw(
+                    OptionalI64Display::new(state.telemetry.latest_current_a, " A").to_string(),
+                ),
                 Span::styled(" temp ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(
-                    state.telemetry.latest_temperature_c,
-                    " C",
-                )),
+                Span::raw(
+                    OptionalI64Display::new(state.telemetry.latest_temperature_c, " C").to_string(),
+                ),
                 Span::styled(" pwm ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(state.telemetry.latest_pwm_pct, "%")),
+                Span::raw(OptionalI64Display::new(state.telemetry.latest_pwm_pct, "%").to_string()),
             ]),
             Line::from(vec![
                 Span::styled("distance ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_distance_m(
-                    state.telemetry.latest_distance_m,
-                )),
+                Span::raw(OptionalDistanceDisplay(state.telemetry.latest_distance_m).to_string()),
                 Span::styled(" pitch ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(
-                    state.telemetry.latest_pitch_deg,
-                    " deg",
-                )),
+                Span::raw(
+                    OptionalI64Display::new(state.telemetry.latest_pitch_deg, " deg").to_string(),
+                ),
             ]),
         ]);
     }
@@ -2413,12 +2427,44 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
     frame.render_widget(panel, area);
 }
 
-fn format_optional_u64(value: Option<u64>, suffix: &str) -> String {
-    value.map_or_else(|| "unknown".to_owned(), |value| format!("{value}{suffix}"))
+struct OptionalU64Display<'a> {
+    value: Option<u64>,
+    suffix: &'a str,
 }
 
-fn format_optional_i64(value: Option<i64>, suffix: &str) -> String {
-    value.map_or_else(|| "unknown".to_owned(), |value| format!("{value}{suffix}"))
+impl<'a> OptionalU64Display<'a> {
+    const fn new(value: Option<u64>, suffix: &'a str) -> Self {
+        Self { value, suffix }
+    }
+}
+
+impl fmt::Display for OptionalU64Display<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.value {
+            Some(value) => write!(f, "{}{}", value, self.suffix),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+struct OptionalI64Display<'a> {
+    value: Option<i64>,
+    suffix: &'a str,
+}
+
+impl<'a> OptionalI64Display<'a> {
+    const fn new(value: Option<i64>, suffix: &'a str) -> Self {
+        Self { value, suffix }
+    }
+}
+
+impl fmt::Display for OptionalI64Display<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.value {
+            Some(value) => write!(f, "{}{}", value, self.suffix),
+            None => f.write_str("unknown"),
+        }
+    }
 }
 
 fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -2906,11 +2952,25 @@ mod tests {
 
     #[test]
     fn distance_formatter_uses_odometer_scale_for_large_distances() {
-        assert_eq!(format_distance_m(999), "999 m");
+        assert_eq!(DistanceMDisplay(999).to_string(), "999 m");
         assert_eq!(DistanceMmDisplay(1_551_169_000).to_string(), "1551.2 km");
-        assert_eq!(format_optional_distance_m(Some(1_551_169)), "1551.2 km");
-        assert_eq!(format_distance_m(1_550_438), "1550.4 km");
-        assert_eq!(format_optional_distance_m(None), "unknown");
+        assert_eq!(
+            OptionalDistanceDisplay(Some(1_551_169)).to_string(),
+            "1551.2 km"
+        );
+        assert_eq!(DistanceMDisplay(1_550_438).to_string(), "1550.4 km");
+        assert_eq!(OptionalDistanceDisplay(None).to_string(), "unknown");
+    }
+
+    #[test]
+    fn optional_numeric_presenters_render_without_helper_strings() {
+        assert_eq!(OptionalU64Display::new(Some(47), "%").to_string(), "47%");
+        assert_eq!(OptionalU64Display::new(None, " V").to_string(), "unknown");
+        assert_eq!(
+            OptionalI64Display::new(Some(-18), " A").to_string(),
+            "-18 A"
+        );
+        assert_eq!(OptionalI64Display::new(None, " C").to_string(), "unknown");
     }
 
     #[test]
