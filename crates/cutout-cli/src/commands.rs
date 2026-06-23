@@ -1873,11 +1873,11 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
         "current_ma": measured_i32_json(battery.current_ma),
         "bms_pack_current_0_ma": bms_pack_current_json(
             payload.bms_pack_currents(),
-            |currents| currents.current_0_ma,
+            cutout_core::BmsPackCurrents::current_0_ma,
         ),
         "bms_pack_current_1_ma": bms_pack_current_json(
             payload.bms_pack_currents(),
-            |currents| currents.current_1_ma,
+            cutout_core::BmsPackCurrents::current_1_ma,
         ),
         "percent_reported": measured_u8_json(battery.percent_reported),
         "percent_estimated": measured_u8_json(battery.percent_estimated),
@@ -2243,7 +2243,7 @@ impl FieldCount {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::{collections::BTreeSet, thread};
 
     use btleplug::api::CharPropFlags;
     use clap::Parser;
@@ -3673,6 +3673,46 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn pevcap_replay_lifted_wheel_exposes_typed_aero_bms_metadata_currents() {
+        let capture = PevcapCapture::decode(
+            include_str!(
+                "../../cutout-protocols/fixtures/nosfet-aero/pevcap/nf2557-lifted-wheel-120s.pevcap.jsonl"
+            )
+            .as_bytes(),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("lifted-wheel Aero PEVCAP decodes");
+
+        let report = replay_pevcap_capture(&capture, selected_aero_session_profile())
+            .expect("lifted-wheel Aero PEVCAP replays");
+
+        let mut observed = BTreeSet::new();
+        for response in &report.read_only_response_events {
+            if let ReadOnlyResponse::Battery(payload) = response
+                && payload.page().kind == BatteryPageKind::Metadata
+            {
+                let currents = payload
+                    .bms_pack_currents()
+                    .expect("metadata page should carry typed BMS currents");
+                assert_eq!(
+                    payload.battery().current_ma,
+                    Some(Measured::reported(currents.current_0_ma().get()))
+                );
+                observed.insert((
+                    payload.page().selector.get(),
+                    currents.current_0_ma().get(),
+                    currents.current_1_ma().get(),
+                ));
+            }
+        }
+
+        assert!(observed.contains(&(0, 10, 10)));
+        assert!(observed.contains(&(0, 20, 10)));
+        assert!(observed.contains(&(4, 10, 10)));
+        assert!(observed.contains(&(4, 20, 10)));
     }
 
     #[derive(Clone, Copy)]

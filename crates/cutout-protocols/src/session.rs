@@ -842,17 +842,14 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
     let battery = BatteryInfo {
-        current_ma: Some(Measured::reported(page.current_0_ma)),
+        current_ma: Some(Measured::reported(page.currents.current_0_ma().get())),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::raw(
         BatteryPageMetadata::metadata(page.selector, VerificationStatus::HardwareVerified),
         battery,
     )
-    .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-        page.current_0_ma,
-        page.current_1_ma,
-    ))
+    .with_bms_pack_currents(page.currents)
 }
 
 fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
@@ -2167,8 +2164,7 @@ mod tests {
     fn veteran_bms_metadata_payload_preserves_two_distinct_pack_currents() {
         let payload = veteran_bms_metadata_payload(VeteranBmsMetadataPage {
             selector: ProtocolSelector::new(4),
-            current_0_ma: -1_230,
-            current_1_ma: 450,
+            currents: cutout_core::BmsPackCurrents::reported(-1_230, 450),
         });
 
         let battery = payload.battery();

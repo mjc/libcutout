@@ -3406,10 +3406,10 @@ impl BmsPackCurrentMa {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsPackCurrents {
     /// First page-specific BMS pack current in milliamps.
-    pub current_0_ma: BmsPackCurrentMa,
+    current_0_ma: BmsPackCurrentMa,
 
     /// Second page-specific BMS pack current in milliamps.
-    pub current_1_ma: BmsPackCurrentMa,
+    current_1_ma: BmsPackCurrentMa,
 
     /// Source of the current values.
     pub source: ValueSource,
@@ -3432,6 +3432,18 @@ impl BmsPackCurrents {
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
         }
+    }
+
+    /// Returns the first page-specific BMS pack current.
+    #[must_use]
+    pub const fn current_0_ma(self) -> BmsPackCurrentMa {
+        self.current_0_ma
+    }
+
+    /// Returns the second page-specific BMS pack current.
+    #[must_use]
+    pub const fn current_1_ma(self) -> BmsPackCurrentMa {
+        self.current_1_ma
     }
 }
 

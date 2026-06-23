@@ -1165,8 +1165,8 @@ impl fmt::Display for BmsCurrentSummary {
             write!(
                 f,
                 " bms_current_0={}A bms_current_1={}A",
-                milliamps_to_amps(currents.current_0_ma.get()),
-                milliamps_to_amps(currents.current_1_ma.get())
+                milliamps_to_amps(currents.current_0_ma().get()),
+                milliamps_to_amps(currents.current_1_ma().get())
             )?;
         }
         Ok(())

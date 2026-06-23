@@ -682,10 +682,10 @@ impl BatteryInfoDto {
             voltage_mv: battery.voltage_mv.map(Into::into),
             current_ma: battery.current_ma.map(Into::into),
             bms_pack_current_0_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_0_ma, currents)
+                MeasuredI32Dto::from_bms_pack_current(currents.current_0_ma(), currents)
             }),
             bms_pack_current_1_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_1_ma, currents)
+                MeasuredI32Dto::from_bms_pack_current(currents.current_1_ma(), currents)
             }),
             percent_reported: battery.percent_reported.map(Into::into),
             percent_estimated: battery.percent_estimated.map(Into::into),
