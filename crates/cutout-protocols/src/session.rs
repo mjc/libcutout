@@ -150,7 +150,7 @@ pub trait ReadOnlyNotificationDecoder {
         bytes: &[u8],
         monotonic_ms: MonotonicMillis,
         output: &mut Vec<SessionOutput>,
-    ) -> NotificationIngestOutcome;
+    );
 }
 
 /// No-op notification decoder for models without typed notification decoding yet.
@@ -165,9 +165,11 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicMillis,
-        _output: &mut Vec<SessionOutput>,
-    ) -> NotificationIngestOutcome {
-        NotificationIngestOutcome::ignored_wrong_channel(channel, bytes.len(), monotonic_ms)
+        output: &mut Vec<SessionOutput>,
+    ) {
+        output.push(SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::ignored_wrong_channel(channel, bytes.len(), monotonic_ms),
+        ));
     }
 }
 
@@ -188,80 +190,110 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         bytes: &[u8],
         monotonic_ms: MonotonicMillis,
         output: &mut Vec<SessionOutput>,
-    ) -> NotificationIngestOutcome {
-        let output_len_before = output.len();
-        let mut known_reserved_payload = None;
+    ) {
+        let mut completed_frames = 0usize;
         for byte in bytes {
             match self.reassembler.feed_byte(*byte) {
                 Ok(Some(frame)) => {
-                    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(&frame)
-                        && evidence.selector == 8
-                    {
-                        known_reserved_payload = Some(ReservedPayloadEvidence {
-                            selector: Some(evidence.selector),
-                            tag: None,
-                            body_len: evidence.body.len(),
-                            verification: VerificationStatus::HardwareVerified,
-                        });
-                    }
+                    completed_frames += 1;
+                    let output_len_before = output.len();
                     push_veteran_frame(&frame, monotonic_ms, output);
+                    push_veteran_ingest_outcome_for_frame(
+                        &frame,
+                        channel,
+                        monotonic_ms,
+                        output.len() - output_len_before,
+                        output,
+                    );
                 }
                 Ok(None) => {}
                 Err(VeteranReassemblyError::CrcMismatch) => {
                     push_parser_error(ParserError::BadChecksum, output);
-                    return NotificationIngestOutcome::parser_diagnostic(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        bytes.len(),
-                        monotonic_ms,
-                        ParserError::BadChecksum,
-                    );
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            bytes.len(),
+                            monotonic_ms,
+                            ParserError::BadChecksum,
+                        ),
+                    ));
+                    return;
                 }
                 Err(VeteranReassemblyError::InvalidFrame) => {
                     push_parser_error(ParserError::MalformedFrame, output);
-                    return NotificationIngestOutcome::parser_diagnostic(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        bytes.len(),
-                        monotonic_ms,
-                        ParserError::MalformedFrame,
-                    );
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            bytes.len(),
+                            monotonic_ms,
+                            ParserError::MalformedFrame,
+                        ),
+                    ));
+                    return;
                 }
             }
         }
 
-        if let Some(payload) = known_reserved_payload {
-            return NotificationIngestOutcome::known_reserved(
-                ProtocolFamily::VeteranLeaperkimNosfet,
-                channel,
-                bytes.len(),
-                monotonic_ms,
-                payload,
-            );
-        }
-
-        let emitted = output.len() - output_len_before;
-        if emitted > 0 {
-            return NotificationIngestOutcome::semantic_events(
-                ProtocolFamily::VeteranLeaperkimNosfet,
-                channel,
-                bytes.len(),
-                monotonic_ms,
-                emitted,
-            );
-        }
-
-        if self.reassembler.is_buffering() {
-            NotificationIngestOutcome::buffered_fragment(
-                ProtocolFamily::VeteranLeaperkimNosfet,
-                channel,
-                bytes.len(),
-                monotonic_ms,
-            )
-        } else {
-            NotificationIngestOutcome::ignored_wrong_channel(channel, bytes.len(), monotonic_ms)
+        if completed_frames == 0 {
+            output.push(SessionOutput::NotificationIngest(
+                if self.reassembler.is_buffering() {
+                    NotificationIngestOutcome::buffered_fragment(
+                        ProtocolFamily::VeteranLeaperkimNosfet,
+                        channel,
+                        bytes.len(),
+                        monotonic_ms,
+                    )
+                } else {
+                    NotificationIngestOutcome::ignored_wrong_channel(
+                        channel,
+                        bytes.len(),
+                        monotonic_ms,
+                    )
+                },
+            ));
         }
     }
+}
+
+fn push_veteran_ingest_outcome_for_frame(
+    frame: &VeteranFrame,
+    channel: GattChannel,
+    monotonic_ms: MonotonicMillis,
+    event_count: usize,
+    output: &mut Vec<SessionOutput>,
+) {
+    let frame_len = frame.as_slice().len();
+    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
+        && evidence.selector == 8
+    {
+        output.push(SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::known_reserved(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                frame_len,
+                monotonic_ms,
+                ReservedPayloadEvidence {
+                    selector: Some(evidence.selector),
+                    tag: None,
+                    body_len: evidence.body.len(),
+                    verification: VerificationStatus::HardwareVerified,
+                },
+            ),
+        ));
+        return;
+    }
+
+    output.push(SessionOutput::NotificationIngest(
+        NotificationIngestOutcome::semantic_events(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            channel,
+            frame_len,
+            monotonic_ms,
+            event_count,
+        ),
+    ));
 }
 
 /// Begode/Gotway notification decoder for Falcon read-only telemetry.
@@ -308,7 +340,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         bytes: &[u8],
         monotonic_ms: MonotonicMillis,
         output: &mut Vec<SessionOutput>,
-    ) -> NotificationIngestOutcome {
+    ) {
         let output_len_before = output.len();
         for byte in bytes {
             match self.reassembler.feed_byte_at(*byte, monotonic_ms) {
@@ -324,19 +356,22 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 Ok(None) => {}
                 Err(BegodeFrameError::InvalidFrame) => {
                     push_parser_error(ParserError::MalformedFrame, output);
-                    return NotificationIngestOutcome::parser_diagnostic(
-                        ProtocolFamily::BegodeGotway,
-                        channel,
-                        bytes.len(),
-                        monotonic_ms,
-                        ParserError::MalformedFrame,
-                    );
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            ProtocolFamily::BegodeGotway,
+                            channel,
+                            bytes.len(),
+                            monotonic_ms,
+                            ParserError::MalformedFrame,
+                        ),
+                    ));
+                    return;
                 }
             }
         }
 
         let emitted = output.len() - output_len_before;
-        if emitted > 0 {
+        output.push(SessionOutput::NotificationIngest(if emitted > 0 {
             NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::BegodeGotway,
                 channel,
@@ -351,7 +386,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 bytes.len(),
                 monotonic_ms,
             )
-        }
+        }));
     }
 }
 
@@ -384,7 +419,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         bytes: &[u8],
         monotonic_ms: MonotonicMillis,
         output: &mut Vec<SessionOutput>,
-    ) -> NotificationIngestOutcome {
+    ) {
         let output_len_before = output.len();
         match self.stream.feed(bytes) {
             Ok(replies) => {
@@ -394,13 +429,16 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
             }
             Err(VescCodecError::UnsupportedReply) => {
                 push_parser_error(ParserError::UnmatchedReply, output);
-                return NotificationIngestOutcome::parser_diagnostic(
-                    ProtocolFamily::Vesc,
-                    channel,
-                    bytes.len(),
-                    monotonic_ms,
-                    ParserError::UnmatchedReply,
-                );
+                output.push(SessionOutput::NotificationIngest(
+                    NotificationIngestOutcome::parser_diagnostic(
+                        ProtocolFamily::Vesc,
+                        channel,
+                        bytes.len(),
+                        monotonic_ms,
+                        ParserError::UnmatchedReply,
+                    ),
+                ));
+                return;
             }
             Err(
                 VescCodecError::DecodeFailed
@@ -408,18 +446,21 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 | VescCodecError::EncodeFailed,
             ) => {
                 push_parser_error(ParserError::MalformedFrame, output);
-                return NotificationIngestOutcome::parser_diagnostic(
-                    ProtocolFamily::Vesc,
-                    channel,
-                    bytes.len(),
-                    monotonic_ms,
-                    ParserError::MalformedFrame,
-                );
+                output.push(SessionOutput::NotificationIngest(
+                    NotificationIngestOutcome::parser_diagnostic(
+                        ProtocolFamily::Vesc,
+                        channel,
+                        bytes.len(),
+                        monotonic_ms,
+                        ParserError::MalformedFrame,
+                    ),
+                ));
+                return;
             }
         }
 
         let emitted = output.len() - output_len_before;
-        if emitted > 0 {
+        output.push(SessionOutput::NotificationIngest(if emitted > 0 {
             NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::Vesc,
                 channel,
@@ -434,7 +475,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 bytes.len(),
                 monotonic_ms,
             )
-        }
+        }));
     }
 }
 
@@ -887,8 +928,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                     monotonic_ms,
                     len: bytes.len(),
                 }));
-                let outcome = decoder.handle_notification(channel, bytes, monotonic_ms, output);
-                output.push(SessionOutput::NotificationIngest(outcome));
+                decoder.handle_notification(channel, bytes, monotonic_ms, output);
             }
         }
         SessionInput::Command(command) => {
@@ -1076,6 +1116,7 @@ mod tests {
         BatteryPageKind, LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
         TransportAction, VerificationStatus, WriteMode,
     };
+    use proptest::prelude::*;
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0x11; 16]);
 
@@ -1143,6 +1184,15 @@ mod tests {
              808080808080080000803200364f371e00000100\
              808028062e7964800080801540e23a"
         )
+    }
+
+    fn live_aero_selector_0_frame_with_selector(selector: u8) -> [u8; 77] {
+        let mut frame = live_aero_selector_0_frame();
+        frame[VeteranBmsPageEvidence::SELECTOR_OFFSET] = selector;
+        let declared_len = usize::from(frame[3]);
+        let crc = crc32fast::hash(&frame[..declared_len]);
+        frame[declared_len..declared_len + 4].copy_from_slice(&crc.to_be_bytes());
+        frame
     }
 
     fn live_begode_a_frame() -> [u8; 24] {
@@ -1243,6 +1293,33 @@ mod tests {
             },
             &mut output,
         );
+
+        output
+    }
+
+    fn aero_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: 1,
+                max_write_len: Some(185),
+            }),
+            &mut output,
+        );
+        output.clear();
+
+        for (index, bytes) in chunks.iter().enumerate() {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes,
+                    monotonic_ms: 42 + u64::try_from(index).expect("chunk index fits"),
+                },
+                &mut output,
+            );
+        }
 
         output
     }
@@ -2027,6 +2104,143 @@ mod tests {
                 .iter()
                 .any(|error| error.kind == cutout_core::DiagnosticErrorKind::BadChecksum)
         );
+    }
+
+    #[test]
+    fn nosfet_aero_session_reports_one_byte_fragments_as_buffered_until_complete() {
+        let frame = live_aero_selector_0_frame();
+        let chunks: Vec<_> = frame.chunks(1).collect();
+        let output = aero_output_for_notification_chunks(&chunks);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(outcomes.len(), frame.len());
+        assert!(
+            outcomes[..outcomes.len() - 1]
+                .iter()
+                .all(|outcome| matches!(outcome, NotificationIngestOutcome::BufferedFragment(_)))
+        );
+        assert_eq!(
+            outcomes.last().copied(),
+            Some(NotificationIngestOutcome::semantic_events(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                VETERAN_DATA_CHANNEL,
+                frame.len(),
+                42 + u64::try_from(frame.len() - 1).expect("fixture length fits"),
+                5,
+            ))
+        );
+    }
+
+    #[test]
+    fn nosfet_aero_session_reports_bms_selectors_zero_through_eight_without_parser_gaps() {
+        for selector in 0..=8 {
+            let frame = live_aero_selector_0_frame_with_selector(selector);
+            let output = aero_output_for_notification(&frame);
+            let outcomes = notification_ingest_outcomes(&output);
+
+            assert_eq!(outcomes.len(), 1, "selector {selector}");
+            match (selector, outcomes[0]) {
+                (
+                    8,
+                    NotificationIngestOutcome::KnownReserved {
+                        payload,
+                        notification,
+                    },
+                ) => {
+                    assert_eq!(
+                        notification.family,
+                        Some(ProtocolFamily::VeteranLeaperkimNosfet)
+                    );
+                    assert_eq!(payload.selector, Some(8));
+                    assert_eq!(payload.body_len, 26);
+                    assert_eq!(payload.verification, VerificationStatus::HardwareVerified);
+                }
+                (0..=7, NotificationIngestOutcome::SemanticEvents { notification, .. }) => {
+                    assert_eq!(
+                        notification.family,
+                        Some(ProtocolFamily::VeteranLeaperkimNosfet)
+                    );
+                }
+                (_, outcome) => {
+                    panic!("selector {selector} produced unexpected outcome {outcome:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nosfet_aero_session_reports_each_complete_coalesced_frame_outcome() {
+        let semantic_frame = live_aero_selector_0_frame();
+        let reserved_frame = live_aero_selector_8_frame();
+        let mut coalesced = Vec::with_capacity(semantic_frame.len() + reserved_frame.len());
+        coalesced.extend_from_slice(&semantic_frame);
+        coalesced.extend_from_slice(&reserved_frame);
+
+        let output = aero_output_for_notification(&coalesced);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    VETERAN_DATA_CHANNEL,
+                    semantic_frame.len(),
+                    42,
+                    5,
+                ),
+                NotificationIngestOutcome::known_reserved(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    VETERAN_DATA_CHANNEL,
+                    reserved_frame.len(),
+                    42,
+                    ReservedPayloadEvidence {
+                        selector: Some(8),
+                        tag: None,
+                        body_len: 24,
+                        verification: VerificationStatus::HardwareVerified,
+                    },
+                ),
+            ]
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn nosfet_aero_session_fragmentation_outcomes_end_in_same_semantic_result(
+            chunk_sizes in proptest::collection::vec(1usize..20, 1..32),
+        ) {
+            let frame = live_aero_selector_0_frame();
+            let mut chunks = Vec::new();
+            let mut offset = 0usize;
+            let mut size_index = 0usize;
+
+            while offset < frame.len() {
+                let size = chunk_sizes[size_index % chunk_sizes.len()];
+                let end = offset.saturating_add(size).min(frame.len());
+                chunks.push(&frame[offset..end]);
+                offset = end;
+                size_index += 1;
+            }
+
+            let output = aero_output_for_notification_chunks(&chunks);
+            let outcomes = notification_ingest_outcomes(&output);
+
+            prop_assert_eq!(outcomes.len(), chunks.len());
+            prop_assert!(outcomes[..outcomes.len() - 1]
+                .iter()
+                .all(|outcome| matches!(outcome, NotificationIngestOutcome::BufferedFragment(_))));
+            prop_assert_eq!(
+                outcomes.last().copied(),
+                Some(NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    VETERAN_DATA_CHANNEL,
+                    frame.len(),
+                    42 + u64::try_from(chunks.len() - 1).expect("chunk count fits"),
+                    5,
+                ))
+            );
+        }
     }
 
     #[test]
