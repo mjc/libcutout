@@ -470,14 +470,25 @@ fn pevcap_dashboard_provenance(capture: &PevcapCapture) -> String {
     format!(
         "pevcap replay platform={} annotations={}",
         capture.header.platform_id,
-        capture
-            .header
-            .annotations
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(",")
+        AnnotationList(capture.header.annotations.as_slice())
     )
+}
+
+struct AnnotationList<'annotations>(&'annotations [String]);
+
+impl fmt::Display for AnnotationList<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut annotations = self.0.iter();
+        let Some(first) = annotations.next() else {
+            return Ok(());
+        };
+        f.write_str(first)?;
+        for annotation in annotations {
+            f.write_str(",")?;
+            f.write_str(annotation)?;
+        }
+        Ok(())
+    }
 }
 
 fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
