@@ -957,10 +957,6 @@ fn u64_to_i64(value: u64) -> Option<i64> {
     i64::try_from(value).ok()
 }
 
-fn format_distance_mm(value: u64) -> String {
-    format_distance_m(value / 1_000)
-}
-
 fn format_optional_distance_m(value: Option<u64>) -> String {
     value.map_or_else(|| "unknown".to_owned(), format_distance_m)
 }
@@ -1002,7 +998,7 @@ struct MappedTelemetryLog(TelemetrySnapshot);
 
 impl fmt::Display for MappedTelemetryLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut fields = TelemetryFieldWriter::new(f);
+        let mut fields = TelemetryFieldWriter::new(f, Some("telemetry mapped"), "none");
         let snapshot = self.0;
 
         if let Some(speed) = snapshot.speed_mm_s {
@@ -1048,14 +1044,72 @@ impl fmt::Display for MappedTelemetryLog {
     }
 }
 
+struct TelemetryDeltaLog(TelemetryDelta);
+
+impl fmt::Display for TelemetryDeltaLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut fields = TelemetryFieldWriter::new(f, None, "unmapped");
+        let delta = self.0;
+
+        if let Some(speed) = delta.speed_mm_s {
+            fields.write("speed", mm_s_to_mph(speed.value), "mph")?;
+        }
+        if let Some(voltage) = delta.voltage_mv {
+            fields.write("voltage", millivolts_to_volts(voltage.value), "V")?;
+        }
+        if let Some(percent) = delta
+            .battery_percent_reported
+            .or(delta.battery_percent_estimated)
+        {
+            fields.write("battery", percent.value, "%")?;
+        }
+        if let Some(current) = delta.battery_current_ma.or(delta.motor_current_ma) {
+            fields.write("current", milliamps_to_amps(current.value), "A")?;
+        }
+        if let Some(temperature) = delta
+            .controller_temperature_mc
+            .or(delta.motor_temperature_mc)
+            .or(delta.battery_temperature_mc)
+        {
+            fields.write(
+                "temperature",
+                millicelsius_to_celsius_signed(temperature.value),
+                "C",
+            )?;
+        }
+        if let Some(pwm) = delta.pwm_permille {
+            fields.write("pwm", permille_to_percent(pwm.value), "%")?;
+        }
+        if let Some(distance) = delta.distance_mm {
+            fields.write_display("distance", DistanceMmDisplay(distance.value))?;
+        }
+        if let Some(pitch) = delta.pitch_mdeg {
+            fields.write("pitch", millidegrees_to_degrees(pitch.value), "deg")?;
+        }
+
+        fields.finish()
+    }
+}
+
 struct TelemetryFieldWriter<'formatter, 'output> {
     output: &'formatter mut fmt::Formatter<'output>,
+    prefix: Option<&'static str>,
+    empty: &'static str,
     fields: usize,
 }
 
 impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
-    const fn new(output: &'formatter mut fmt::Formatter<'output>) -> Self {
-        Self { output, fields: 0 }
+    const fn new(
+        output: &'formatter mut fmt::Formatter<'output>,
+        prefix: Option<&'static str>,
+        empty: &'static str,
+    ) -> Self {
+        Self {
+            output,
+            prefix,
+            empty,
+            fields: 0,
+        }
     }
 
     fn write<T: fmt::Display>(&mut self, name: &str, value: T, unit: &str) -> fmt::Result {
@@ -1070,7 +1124,11 @@ impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
 
     fn write_prefix(&mut self, name: &str) -> fmt::Result {
         if self.fields == 0 {
-            write!(self.output, "telemetry mapped {name}=")?;
+            if let Some(prefix) = self.prefix {
+                write!(self.output, "{prefix} {name}=")?;
+            } else {
+                write!(self.output, "{name}=")?;
+            }
         } else {
             write!(self.output, " {name}=")?;
         }
@@ -1080,7 +1138,11 @@ impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
 
     fn finish(self) -> fmt::Result {
         if self.fields == 0 {
-            write!(self.output, "telemetry mapped none")
+            if let Some(prefix) = self.prefix {
+                write!(self.output, "{prefix} {}", self.empty)
+            } else {
+                write!(self.output, "{}", self.empty)
+            }
         } else {
             Ok(())
         }
@@ -1326,46 +1388,7 @@ fn report_has_no_parsed_events(report: &SessionBridgeReport) -> bool {
 }
 
 fn format_telemetry_delta(delta: TelemetryDelta) -> String {
-    let mut fields = Vec::new();
-    if let Some(speed) = delta.speed_mm_s {
-        fields.push(format!("speed={}mph", mm_s_to_mph(speed.value)));
-    }
-    if let Some(voltage) = delta.voltage_mv {
-        fields.push(format!("voltage={}V", millivolts_to_volts(voltage.value)));
-    }
-    if let Some(percent) = delta
-        .battery_percent_reported
-        .or(delta.battery_percent_estimated)
-    {
-        fields.push(format!("battery={}%", percent.value));
-    }
-    if let Some(current) = delta.battery_current_ma.or(delta.motor_current_ma) {
-        fields.push(format!("current={}A", milliamps_to_amps(current.value)));
-    }
-    if let Some(temperature) = delta
-        .controller_temperature_mc
-        .or(delta.motor_temperature_mc)
-        .or(delta.battery_temperature_mc)
-    {
-        fields.push(format!(
-            "temperature={}C",
-            millicelsius_to_celsius_signed(temperature.value)
-        ));
-    }
-    if let Some(pwm) = delta.pwm_permille {
-        fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
-    }
-    if let Some(distance) = delta.distance_mm {
-        fields.push(format!("distance={}", format_distance_mm(distance.value)));
-    }
-    if let Some(pitch) = delta.pitch_mdeg {
-        fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
-    }
-    if fields.is_empty() {
-        "unmapped".to_owned()
-    } else {
-        fields.join(" ")
-    }
+    TelemetryDeltaLog(delta).to_string()
 }
 
 fn format_unmapped_telemetry_event(report: &SessionBridgeReport) -> String {
@@ -2457,7 +2480,7 @@ mod tests {
     #[test]
     fn distance_formatter_uses_odometer_scale_for_large_distances() {
         assert_eq!(format_distance_m(999), "999 m");
-        assert_eq!(format_distance_mm(1_551_169_000), "1551.2 km");
+        assert_eq!(DistanceMmDisplay(1_551_169_000).to_string(), "1551.2 km");
         assert_eq!(format_optional_distance_m(Some(1_551_169)), "1551.2 km");
         assert_eq!(format_distance_m(1_550_438), "1550.4 km");
         assert_eq!(format_optional_distance_m(None), "unknown");
@@ -2807,6 +2830,29 @@ mod tests {
         assert_eq!(
             SettingsReadbackLog(SettingsReadback::default()).to_string(),
             "read-only settings none observed"
+        );
+    }
+
+    #[test]
+    fn telemetry_delta_log_reuses_typed_field_rendering() {
+        let delta = TelemetryDelta {
+            speed_mm_s: Some(Measured::reported(4_470)),
+            voltage_mv: Some(Measured::reported(118_400)),
+            battery_percent_estimated: Some(Measured::estimated(78)),
+            battery_current_ma: Some(Measured::reported(-12_400)),
+            motor_temperature_mc: Some(Measured::reported(44_600)),
+            distance_mm: Some(Measured::reported(999_000)),
+            pitch_mdeg: Some(Measured::reported(-3_000)),
+            ..TelemetryDelta::empty(42)
+        };
+
+        assert_eq!(
+            TelemetryDeltaLog(delta).to_string(),
+            "speed=10mph voltage=118V battery=78% current=-12A temperature=44C distance=999 m pitch=-3deg"
+        );
+        assert_eq!(
+            TelemetryDeltaLog(TelemetryDelta::empty(42)).to_string(),
+            "unmapped"
         );
     }
 
