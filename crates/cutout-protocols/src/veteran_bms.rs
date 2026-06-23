@@ -4,7 +4,10 @@ use cutout_core::{
 };
 use thiserror::Error;
 
-use crate::VeteranFrame;
+use crate::{
+    VeteranFrame,
+    parser::{ByteCursor, ByteLen, ByteOffset, ByteRange},
+};
 
 /// Cell-voltage count observed for typed Veteran/NOSFET BMS pages.
 pub const VETERAN_BMS_CELL_VALUES_PER_PAGE: u8 = 15;
@@ -55,11 +58,18 @@ impl<'frame> VeteranBmsPageEvidence<'frame> {
     /// Extracts conservative BMS page evidence from a complete frame.
     #[must_use]
     pub fn from_frame(frame: &'frame VeteranFrame) -> Option<Self> {
-        let bytes = frame.as_slice();
-        let selector = *bytes.get(Self::SELECTOR_OFFSET)?;
+        let cursor = ByteCursor::new(frame.as_slice());
+        let selector = cursor.byte(ByteOffset::new(Self::SELECTOR_OFFSET))?;
         let body_start = Self::SELECTOR_OFFSET + 1;
-        let body_end = bytes.len().checked_sub(Self::CRC_TRAILER_LEN)?;
-        let body = bytes.get(body_start..body_end)?;
+        let body_len = frame
+            .as_slice()
+            .len()
+            .checked_sub(Self::CRC_TRAILER_LEN)?
+            .checked_sub(body_start)?;
+        let body = cursor.range(ByteRange::new(
+            ByteOffset::new(body_start),
+            ByteLen::new(body_len),
+        ))?;
 
         Some(Self {
             selector,
@@ -112,8 +122,9 @@ impl VeteranBmsCellPage {
                 observed: body.len(),
             })?;
         let mut cell_mv = ArrayVec::new();
-        for bytes in values.chunks_exact(2) {
-            if let Some(value) = read_be_u16_pair(bytes) {
+        let cursor = ByteCursor::new(values);
+        for offset in (0..values.len()).step_by(2) {
+            if let Some(value) = cursor.be_u16(ByteOffset::new(offset)) {
                 cell_mv.push(value);
             }
         }
@@ -155,8 +166,9 @@ impl VeteranBmsTemperaturePage {
                 observed: body.len(),
             })?;
         let mut temperatures_mc = ArrayVec::new();
-        for bytes in values.chunks_exact(2) {
-            if let Some(value) = read_be_i16_pair(bytes) {
+        let cursor = ByteCursor::new(values);
+        for offset in (0..values.len()).step_by(2) {
+            if let Some(value) = cursor.be_i16(ByteOffset::new(offset)) {
                 temperatures_mc.push(i32::from(value) * 10);
             }
         }
@@ -204,30 +216,22 @@ impl VeteranBmsMetadataPage {
                 observed: body.len(),
             })?;
 
+        let cursor = ByteCursor::new(values);
+
         Ok(Self {
             selector,
-            current_0_ma: read_be_i16_at(values, 0).map_or(0, |value| i32::from(value) * 10),
-            current_1_ma: read_be_i16_at(values, 2).map_or(0, |value| i32::from(value) * 10),
+            current_0_ma: cursor
+                .be_i16(ByteOffset::new(0))
+                .map_or(0, |value| i32::from(value) * 10),
+            current_1_ma: cursor
+                .be_i16(ByteOffset::new(2))
+                .map_or(0, |value| i32::from(value) * 10),
         })
     }
 }
 
 const fn body_offset(absolute_offset: usize) -> usize {
     absolute_offset - VeteranBmsPageEvidence::BODY_OFFSET
-}
-
-fn read_be_i16_at(bytes: &[u8], offset: usize) -> Option<i16> {
-    read_be_i16_pair(bytes.get(offset..offset + 2)?)
-}
-
-fn read_be_i16_pair(bytes: &[u8]) -> Option<i16> {
-    read_be_u16_pair(bytes).map(|value| i16::from_be_bytes(value.to_be_bytes()))
-}
-
-fn read_be_u16_pair(bytes: &[u8]) -> Option<u16> {
-    let high = *bytes.first()?;
-    let low = *bytes.get(1)?;
-    Some(u16::from_be_bytes([high, low]))
 }
 
 /// Error returned when a typed Veteran/NOSFET BMS page violates invariants.

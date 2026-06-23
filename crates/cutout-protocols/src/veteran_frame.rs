@@ -1,6 +1,8 @@
 use arrayvec::ArrayVec;
 use thiserror::Error;
 
+use crate::parser::{ByteCursor, ByteOffset};
+
 /// Maximum complete Veteran/LeaperKim/NOSFET frame length.
 pub const MAX_VETERAN_FRAME_LEN: usize = 259;
 
@@ -193,34 +195,29 @@ impl VeteranFrameParseState {
 }
 
 fn veteran_expected_len(bytes: &[u8]) -> Option<usize> {
-    bytes.get(3).map(|len| usize::from(*len) + 4)
+    ByteCursor::new(bytes)
+        .byte(ByteOffset::new(3))
+        .map(|len| usize::from(len) + 4)
 }
 
 fn veteran_uses_crc(bytes: &[u8]) -> bool {
-    bytes
-        .get(3)
-        .is_some_and(|len| *len > VETERAN_SHORT_FRAME_MAX_LEN)
+    ByteCursor::new(bytes)
+        .byte(ByteOffset::new(3))
+        .is_some_and(|len| len > VETERAN_SHORT_FRAME_MAX_LEN)
 }
 
 fn veteran_crc_matches(bytes: &[u8]) -> bool {
-    let Some(declared_len) = bytes.get(3).copied().map(usize::from) else {
+    let cursor = ByteCursor::new(bytes);
+    let Some(declared_len) = cursor.byte(ByteOffset::new(3)).map(usize::from) else {
         return false;
     };
-    let Some(expected_crc) = read_be_u32(bytes, declared_len) else {
+    let Some(expected_crc) = cursor.be_u32(ByteOffset::new(declared_len)) else {
         return false;
     };
     let Some(crc_bytes) = bytes.get(..declared_len) else {
         return false;
     };
     crc32fast::hash(crc_bytes) == expected_crc
-}
-
-fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
-    let b0 = *bytes.get(offset)?;
-    let b1 = *bytes.get(offset + 1)?;
-    let b2 = *bytes.get(offset + 2)?;
-    let b3 = *bytes.get(offset + 3)?;
-    Some(u32::from_be_bytes([b0, b1, b2, b3]))
 }
 
 #[cfg(test)]

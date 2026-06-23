@@ -53,6 +53,7 @@ pub use identification::{
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
+mod parser;
 mod registry;
 pub use registry::BEGODE_FALCON_REGISTRY_ENTRY;
 mod request_encoder;
