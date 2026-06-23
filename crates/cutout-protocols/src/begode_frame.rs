@@ -62,6 +62,19 @@ pub enum BegodeFrameError {
     InvalidFrame,
 }
 
+/// Parser-owned result for one Begode/Gotway stream byte.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BegodeFrameParseResult {
+    /// The parser has not accepted a Begode frame prefix yet.
+    Seeking,
+
+    /// The parser accepted bytes into a bounded partial frame.
+    Buffered,
+
+    /// The parser completed and validated one fixed-size frame.
+    Complete(BegodeFrame),
+}
+
 /// Sync reassembler for fixed 24-byte Begode/Gotway notification streams.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFrameReassembler {
@@ -95,19 +108,23 @@ impl BegodeFrameReassembler {
         true
     }
 
-    /// Feeds one byte and returns a complete frame when one is assembled.
+    /// Feeds one byte and returns a parser-owned typed result.
     ///
     /// # Errors
     ///
     /// Returns [`BegodeFrameError::InvalidFrame`] when a 24-byte candidate has
     /// the Begode header but not the required terminator.
-    pub fn feed_byte(&mut self, byte: u8) -> Result<Option<BegodeFrame>, BegodeFrameError> {
+    pub fn feed_byte_result(
+        &mut self,
+        byte: u8,
+    ) -> Result<BegodeFrameParseResult, BegodeFrameError> {
         if self.buffer.is_empty() {
             if byte == BEGODE_HEADER[0] {
                 self.buffer.push(byte);
                 self.last_byte_ms = None;
+                return Ok(BegodeFrameParseResult::Buffered);
             }
-            return Ok(None);
+            return Ok(BegodeFrameParseResult::Seeking);
         }
 
         if self.buffer.len() == 1 {
@@ -116,7 +133,11 @@ impl BegodeFrameReassembler {
             } else if byte != BEGODE_HEADER[0] {
                 self.clear_buffer();
             }
-            return Ok(None);
+            return Ok(if self.buffer.is_empty() {
+                BegodeFrameParseResult::Seeking
+            } else {
+                BegodeFrameParseResult::Buffered
+            });
         }
 
         let pushed = self.buffer.try_push(byte);
@@ -124,12 +145,12 @@ impl BegodeFrameReassembler {
         self.apply_embedded_header_resync();
 
         if self.buffer.len() != BEGODE_FRAME_LEN {
-            return Ok(None);
+            return Ok(BegodeFrameParseResult::Buffered);
         }
 
         let frame = BegodeFrame::try_from_slice(self.buffer.as_slice());
         self.clear_buffer();
-        frame.map(Some)
+        frame.map(BegodeFrameParseResult::Complete)
     }
 
     /// Feeds one byte and records the byte arrival time for timeout handling.
@@ -138,18 +159,18 @@ impl BegodeFrameReassembler {
     ///
     /// Returns [`BegodeFrameError::InvalidFrame`] when a 24-byte candidate has
     /// the Begode header but not the required terminator.
-    pub fn feed_byte_at(
+    pub fn feed_byte_result_at(
         &mut self,
         byte: u8,
         monotonic_ms: MonotonicMillis,
-    ) -> Result<Option<BegodeFrame>, BegodeFrameError> {
-        let frame = self.feed_byte(byte)?;
+    ) -> Result<BegodeFrameParseResult, BegodeFrameError> {
+        let result = self.feed_byte_result(byte)?;
         self.last_byte_ms = if self.buffer.is_empty() {
             None
         } else {
             Some(monotonic_ms)
         };
-        Ok(frame)
+        Ok(result)
     }
 
     fn apply_embedded_header_resync(&mut self) {
@@ -187,9 +208,13 @@ mod tests {
         bytes
             .iter()
             .filter_map(|byte| {
-                reassembler
-                    .feed_byte(*byte)
+                match reassembler
+                    .feed_byte_result(*byte)
                     .expect("fixture frame is valid")
+                {
+                    BegodeFrameParseResult::Complete(frame) => Some(frame),
+                    BegodeFrameParseResult::Seeking | BegodeFrameParseResult::Buffered => None,
+                }
             })
             .collect()
     }
@@ -228,6 +253,41 @@ mod tests {
         let frames = feed_bytes(&mut reassembler, &LIVE_A[9..]);
 
         assert_eq!(frames, vec![BegodeFrame::try_from_slice(&LIVE_A).unwrap()]);
+    }
+
+    #[test]
+    fn reassembler_reports_typed_parser_progress() {
+        let mut reassembler = BegodeFrameReassembler::default();
+
+        assert_eq!(
+            reassembler.feed_byte_result(0x00),
+            Ok(BegodeFrameParseResult::Seeking)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x55),
+            Ok(BegodeFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0xaa),
+            Ok(BegodeFrameParseResult::Buffered)
+        );
+    }
+
+    #[test]
+    fn reassembler_reports_typed_complete_frame() {
+        let mut reassembler = BegodeFrameReassembler::default();
+        let mut result = BegodeFrameParseResult::Seeking;
+
+        for byte in LIVE_A {
+            result = reassembler
+                .feed_byte_result(byte)
+                .expect("live frame parses");
+        }
+
+        assert_eq!(
+            result,
+            BegodeFrameParseResult::Complete(BegodeFrame::try_from_slice(&LIVE_A).unwrap())
+        );
     }
 
     #[test]
@@ -276,8 +336,10 @@ mod tests {
 
         for (offset, byte) in LIVE_A[..12].iter().enumerate() {
             assert_eq!(
-                reassembler.feed_byte_at(*byte, offset as u64).unwrap(),
-                None
+                reassembler
+                    .feed_byte_result_at(*byte, offset as u64)
+                    .unwrap(),
+                BegodeFrameParseResult::Buffered
             );
         }
 
@@ -293,8 +355,10 @@ mod tests {
 
         for (offset, byte) in LIVE_A[..12].iter().enumerate() {
             assert_eq!(
-                reassembler.feed_byte_at(*byte, offset as u64).unwrap(),
-                None
+                reassembler
+                    .feed_byte_result_at(*byte, offset as u64)
+                    .unwrap(),
+                BegodeFrameParseResult::Buffered
             );
         }
 
@@ -312,7 +376,7 @@ mod tests {
 
         let error = bad
             .iter()
-            .find_map(|byte| reassembler.feed_byte(*byte).err())
+            .find_map(|byte| reassembler.feed_byte_result(*byte).err())
             .expect("bad terminator reports invalid frame");
         let frames = feed_bytes(&mut reassembler, &LIVE_A);
 

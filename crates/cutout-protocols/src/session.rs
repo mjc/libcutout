@@ -12,11 +12,11 @@ use cutout_core::{
 
 use crate::{
     AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage,
-    BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameReassembler,
-    BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext,
-    BegodeTelemetryError, FalconProbe, FalconRequestEncoder, RequestDisposition,
-    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile,
-    VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
+    BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
+    BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
+    BegodeTelemetryContext, BegodeTelemetryError, FalconProbe, FalconRequestEncoder,
+    RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
+    VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
     VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry, VescValuesTelemetry,
     VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
     VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
@@ -377,8 +377,8 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
     ) {
         let output_len_before = output.len();
         for byte in bytes {
-            match self.reassembler.feed_byte_at(*byte, monotonic_ms) {
-                Ok(Some(frame)) => {
+            match self.reassembler.feed_byte_result_at(*byte, monotonic_ms) {
+                Ok(BegodeFrameParseResult::Complete(frame)) => {
                     push_begode_frame(
                         &mut self.context,
                         self.pack_voltage_profile,
@@ -387,7 +387,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                         output,
                     );
                 }
-                Ok(None) => {}
+                Ok(BegodeFrameParseResult::Seeking | BegodeFrameParseResult::Buffered) => {}
                 Err(BegodeFrameError::InvalidFrame) => {
                     push_parser_error(ParserError::MalformedFrame, output);
                     output.push(SessionOutput::NotificationIngest(

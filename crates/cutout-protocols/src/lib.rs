@@ -12,7 +12,9 @@
 mod gatt;
 pub use gatt::*;
 mod begode_frame;
-pub use begode_frame::{BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameReassembler};
+pub use begode_frame::{
+    BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameParseResult, BegodeFrameReassembler,
+};
 mod begode_bms;
 pub use begode_bms::{
     BEGODE_BMS_CELL_VALUES_PER_PAGE, BegodeBmsCellPage, BegodeBmsPageError, BegodeBmsSummary,
