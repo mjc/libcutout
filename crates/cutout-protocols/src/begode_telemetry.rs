@@ -7,7 +7,10 @@ use cutout_core::{
 };
 use thiserror::Error;
 
-use crate::BegodeFrame;
+use crate::{
+    BegodeFrame,
+    parser::{ByteCursor, ByteOffset},
+};
 
 /// Begode speed/distance unit mode inferred from Live B settings bit 0.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -362,12 +365,12 @@ pub const fn select_begode_falcon_battery_variant(
 
 /// Selects a Begode pack voltage profile from explicit evidence.
 #[must_use]
-pub fn select_begode_pack_voltage_profile(
-    evidence: &[BegodeVoltageEvidence],
-) -> BegodeVoltageProfileSelection {
+pub fn select_begode_pack_voltage_profile<I>(evidence: I) -> BegodeVoltageProfileSelection
+where
+    I: IntoIterator<Item = BegodeVoltageEvidence>,
+{
     evidence
-        .iter()
-        .copied()
+        .into_iter()
         .filter_map(evidence_profile)
         .try_fold(None, merge_profile_selection)
         .map_or(
@@ -803,17 +806,17 @@ impl BegodeLiveATelemetry {
         profile: BegodePackVoltageProfile,
     ) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x00)?;
-        let bytes = frame.as_slice();
-        let raw_voltage_centivolts = read_be_u16(bytes, 2);
+        let cursor = ByteCursor::new(frame.as_slice());
+        let raw_voltage_centivolts = be_u16(cursor, ByteOffset::new(2));
         Ok(Self {
             raw_voltage_centivolts,
             voltage_mv: scaled_voltage_mv(raw_voltage_centivolts, profile),
-            speed_milli_kmh: raw_speed_to_milli_kmh(read_be_i16(bytes, 4)),
-            trip_distance_m: read_be_u32(bytes, 6),
-            trip_distance_low_m: read_be_u16(bytes, 8),
-            phase_current_ma: i32::from(read_be_i16(bytes, 10)) * 10,
-            imu_temperature_mc: mpu6050_temperature_mc(read_be_i16(bytes, 12)),
-            hardware_pwm_raw: read_be_i16(bytes, 14),
+            speed_milli_kmh: raw_speed_to_milli_kmh(be_i16(cursor, ByteOffset::new(4))),
+            trip_distance_m: be_u32(cursor, ByteOffset::new(6)),
+            trip_distance_low_m: be_u16(cursor, ByteOffset::new(8)),
+            phase_current_ma: i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
+            imu_temperature_mc: mpu6050_temperature_mc(be_i16(cursor, ByteOffset::new(12))),
+            hardware_pwm_raw: be_i16(cursor, ByteOffset::new(14)),
             battery_percent_estimated: estimate_begode_battery_percent(
                 scaled_voltage_mv(raw_voltage_centivolts, profile),
                 profile,
@@ -889,15 +892,15 @@ impl BegodeLiveBTelemetry {
     /// is not `0x04`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x04)?;
-        let bytes = frame.as_slice();
+        let cursor = ByteCursor::new(frame.as_slice());
         Ok(Self {
-            total_distance_m: read_be_u32(bytes, 2),
-            settings_bits: read_be_u16(bytes, 6),
-            power_off_timer_minutes: read_be_u16(bytes, 8),
-            tiltback_speed_kmh: read_be_u16(bytes, 10),
-            led_mode: read_u8(bytes, 13),
-            alert_flags: read_u8(bytes, 14),
-            light_mode: read_u8(bytes, 15) & 0x03,
+            total_distance_m: be_u32(cursor, ByteOffset::new(2)),
+            settings_bits: be_u16(cursor, ByteOffset::new(6)),
+            power_off_timer_minutes: be_u16(cursor, ByteOffset::new(8)),
+            tiltback_speed_kmh: be_u16(cursor, ByteOffset::new(10)),
+            led_mode: byte(cursor, ByteOffset::new(13)),
+            alert_flags: byte(cursor, ByteOffset::new(14)),
+            light_mode: byte(cursor, ByteOffset::new(15)) & 0x03,
         })
     }
 
@@ -1003,11 +1006,11 @@ impl BegodeExtraTelemetry {
     /// is not `0x07`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x07)?;
-        let bytes = frame.as_slice();
+        let cursor = ByteCursor::new(frame.as_slice());
         Ok(Self {
-            battery_current_ma: i32::from(read_be_i16(bytes, 2)) * 10,
-            motor_temperature_mc: i32::from(read_be_i16(bytes, 6)) * 1_000,
-            true_pwm_raw: read_be_i16(bytes, 8),
+            battery_current_ma: i32::from(be_i16(cursor, ByteOffset::new(2))) * 10,
+            motor_temperature_mc: i32::from(be_i16(cursor, ByteOffset::new(6))) * 1_000,
+            true_pwm_raw: be_i16(cursor, ByteOffset::new(8)),
         })
     }
 
@@ -1070,10 +1073,13 @@ pub fn estimate_begode_battery_percent(voltage_mv: i32, profile: BegodePackVolta
 
 fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryError> {
     let actual = frame.tag();
-    if actual == expected {
+    if actual.get() == u16::from(expected) {
         Ok(())
     } else {
-        Err(BegodeTelemetryError::UnexpectedFrameTag { expected, actual })
+        Err(BegodeTelemetryError::UnexpectedFrameTag {
+            expected,
+            actual: u8::try_from(actual.get()).unwrap_or_default(),
+        })
     }
 }
 
@@ -1141,29 +1147,20 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
     }
 }
 
-fn read_u8(bytes: &[u8; 24], offset: usize) -> u8 {
-    bytes.get(offset).copied().unwrap_or_default()
+fn byte(cursor: ByteCursor<'_>, offset: ByteOffset) -> u8 {
+    cursor.byte(offset).unwrap_or_default()
 }
 
-fn read_be_u16(bytes: &[u8; 24], offset: usize) -> u16 {
-    match bytes.get(offset..offset + 2) {
-        Some([b0, b1]) => u16::from_be_bytes([*b0, *b1]),
-        _ => 0,
-    }
+fn be_u16(cursor: ByteCursor<'_>, offset: ByteOffset) -> u16 {
+    cursor.be_u16(offset).unwrap_or_default()
 }
 
-fn read_be_i16(bytes: &[u8; 24], offset: usize) -> i16 {
-    match bytes.get(offset..offset + 2) {
-        Some([b0, b1]) => i16::from_be_bytes([*b0, *b1]),
-        _ => 0,
-    }
+fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
+    cursor.be_i16(offset).unwrap_or_default()
 }
 
-fn read_be_u32(bytes: &[u8; 24], offset: usize) -> u32 {
-    match bytes.get(offset..offset + 4) {
-        Some([b0, b1, b2, b3]) => u32::from_be_bytes([*b0, *b1, *b2, *b3]),
-        _ => 0,
-    }
+fn be_u32(cursor: ByteCursor<'_>, offset: ByteOffset) -> u32 {
+    cursor.be_u32(offset).unwrap_or_default()
 }
 
 const fn div_round(numerator: i32, denominator: i32) -> i32 {
@@ -1226,7 +1223,7 @@ mod tests {
         estimate_begode_battery_percent, validate_begode_pack_evidence,
     };
     use cutout_core::{
-        DiagnosticSeverity, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
+        DiagnosticSeverity, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
         ValueQuality, ValueSource, VerificationStatus,
     };
     use proptest::prelude::*;
@@ -1240,6 +1237,7 @@ mod tests {
     #[test]
     fn live_a_decodes_source_backed_primary_fields_for_falcon_84v_full_charge() {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
+        assert_eq!(frame.tag(), ProtocolTag::new(0x00));
         let telemetry =
             BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A frame decodes");
@@ -1495,7 +1493,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_explicit_84v_class_evidence() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::VoltageClass84V]),
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::VoltageClass84V]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
         );
     }
@@ -1503,7 +1501,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_explicit_100v_class_evidence() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::VoltageClass100V]),
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::VoltageClass100V]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
         );
     }
@@ -1511,7 +1509,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_rejects_conflicting_classes() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[
+            select_begode_pack_voltage_profile([
                 BegodeVoltageEvidence::VoltageClass84V,
                 BegodeVoltageEvidence::VoltageClass100V,
             ]),
@@ -1522,7 +1520,7 @@ mod tests {
     #[test]
     fn voltage_profile_selection_does_not_guess_from_overlap_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
                 80_000
             )]),
             BegodeVoltageProfileSelection::Missing
@@ -1532,13 +1530,13 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_non_overlapping_observed_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
                 95_000
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
         );
         assert_eq!(
-            select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
                 65_000
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
@@ -1963,7 +1961,7 @@ mod tests {
         #[test]
         fn voltage_profile_selection_maps_low_non_overlap_voltage_to_84v(mv in 1u32..72_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
             );
         }
@@ -1971,7 +1969,7 @@ mod tests {
         #[test]
         fn voltage_profile_selection_maps_high_non_overlap_voltage_to_100v(mv in 84_001u32..=100_800) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
             );
         }
@@ -1979,7 +1977,7 @@ mod tests {
         #[test]
         fn voltage_profile_selection_keeps_overlap_voltage_ambiguous(mv in 72_000u32..=84_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile(&[BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
                 BegodeVoltageProfileSelection::Missing
             );
         }

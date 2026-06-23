@@ -9,6 +9,36 @@ pub const MAX_VETERAN_FRAME_LEN: usize = 259;
 const VETERAN_MAGIC: [u8; 3] = [0xdc, 0x5a, 0x5c];
 const VETERAN_SHORT_FRAME_MAX_LEN: u8 = 38;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct VeteranDeclaredLen(usize);
+
+impl VeteranDeclaredLen {
+    const fn from_wire(value: u8) -> Self {
+        Self(value as usize)
+    }
+
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    const fn complete_frame_len(self) -> VeteranCompleteFrameLen {
+        VeteranCompleteFrameLen(self.0 + 4)
+    }
+
+    fn crc_offset(self) -> ByteOffset {
+        ByteOffset::new(self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct VeteranCompleteFrameLen(usize);
+
+impl VeteranCompleteFrameLen {
+    const fn get(self) -> usize {
+        self.0
+    }
+}
+
 /// Complete Veteran/LeaperKim/NOSFET frame reassembled from BLE notifications.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranFrame {
@@ -29,7 +59,11 @@ impl VeteranFrame {
         let Some(len) = bytes.get(3) else {
             return Err(VeteranReassemblyError::InvalidFrame);
         };
-        if bytes.len() != usize::from(*len) + 4 {
+        if bytes.len()
+            != VeteranDeclaredLen::from_wire(*len)
+                .complete_frame_len()
+                .get()
+        {
             return Err(VeteranReassemblyError::InvalidFrame);
         }
         let Ok(bytes) = ArrayVec::try_from(bytes) else {
@@ -57,6 +91,23 @@ pub enum VeteranReassemblyError {
     InvalidFrame,
 }
 
+/// Parser-owned result for one Veteran/LeaperKim/NOSFET stream byte.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "complete frames stay inline to keep parser hot paths allocation-free"
+)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VeteranFrameParseResult {
+    /// The parser has not accepted a frame prefix yet.
+    Seeking,
+
+    /// The parser accepted bytes into a bounded partial frame.
+    Buffered,
+
+    /// The parser completed and validated one frame.
+    Complete(VeteranFrame),
+}
+
 /// Sync reassembler for Veteran/LeaperKim/NOSFET `dc5a5c` notification streams.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranFrameReassembler {
@@ -74,28 +125,34 @@ impl Default for VeteranFrameReassembler {
 }
 
 impl VeteranFrameReassembler {
-    /// Feeds one notification byte into the reassembler.
+    /// Feeds one notification byte and returns a parser-owned typed result.
     ///
     /// # Errors
     ///
     /// Returns [`VeteranReassemblyError::CrcMismatch`] when a long frame's
     /// CRC32 trailer does not match the frame contents.
-    pub fn feed_byte(&mut self, byte: u8) -> Result<Option<VeteranFrame>, VeteranReassemblyError> {
+    pub fn feed_byte_result(
+        &mut self,
+        byte: u8,
+    ) -> Result<VeteranFrameParseResult, VeteranReassemblyError> {
         let (state, frame) = self.state.feed_byte(byte, &mut self.buffer)?;
         self.state = state;
-        Ok(frame)
+        Ok(frame.map_or_else(
+            || {
+                if self.buffer.is_empty() {
+                    VeteranFrameParseResult::Seeking
+                } else {
+                    VeteranFrameParseResult::Buffered
+                }
+            },
+            VeteranFrameParseResult::Complete,
+        ))
     }
 
     /// Resets parser state and drops any partial frame bytes.
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.state = VeteranFrameParseState::default();
-    }
-
-    /// Returns whether the reassembler is holding a valid partial frame prefix.
-    #[must_use]
-    pub fn is_buffering(&self) -> bool {
-        !self.buffer.is_empty()
     }
 }
 
@@ -179,7 +236,7 @@ impl VeteranFrameParseState {
         let Some(expected_len) = veteran_expected_len(buffer.as_slice()) else {
             return Ok(None);
         };
-        if buffer.len() < expected_len {
+        if buffer.len() < expected_len.get() {
             return Ok(None);
         }
 
@@ -194,10 +251,11 @@ impl VeteranFrameParseState {
     }
 }
 
-fn veteran_expected_len(bytes: &[u8]) -> Option<usize> {
+fn veteran_expected_len(bytes: &[u8]) -> Option<VeteranCompleteFrameLen> {
     ByteCursor::new(bytes)
         .byte(ByteOffset::new(3))
-        .map(|len| usize::from(len) + 4)
+        .map(VeteranDeclaredLen::from_wire)
+        .map(VeteranDeclaredLen::complete_frame_len)
 }
 
 fn veteran_uses_crc(bytes: &[u8]) -> bool {
@@ -208,13 +266,16 @@ fn veteran_uses_crc(bytes: &[u8]) -> bool {
 
 fn veteran_crc_matches(bytes: &[u8]) -> bool {
     let cursor = ByteCursor::new(bytes);
-    let Some(declared_len) = cursor.byte(ByteOffset::new(3)).map(usize::from) else {
+    let Some(declared_len) = cursor
+        .byte(ByteOffset::new(3))
+        .map(VeteranDeclaredLen::from_wire)
+    else {
         return false;
     };
-    let Some(expected_crc) = cursor.be_u32(ByteOffset::new(declared_len)) else {
+    let Some(expected_crc) = cursor.be_u32(declared_len.crc_offset()) else {
         return false;
     };
-    let Some(crc_bytes) = bytes.get(..declared_len) else {
+    let Some(crc_bytes) = bytes.get(..declared_len.get()) else {
         return false;
     };
     crc32fast::hash(crc_bytes) == expected_crc
@@ -235,8 +296,9 @@ mod tests {
     ) -> Result<Vec<VeteranFrame>, VeteranReassemblyError> {
         let mut frames = Vec::new();
         for byte in bytes {
-            if let Some(frame) = reassembler.feed_byte(*byte)? {
-                frames.push(frame);
+            match reassembler.feed_byte_result(*byte)? {
+                VeteranFrameParseResult::Complete(frame) => frames.push(frame),
+                VeteranFrameParseResult::Seeking | VeteranFrameParseResult::Buffered => {}
             }
         }
         Ok(frames)
@@ -349,15 +411,65 @@ mod tests {
     fn reassembler_waits_for_complete_header_before_using_length() {
         let mut reassembler = VeteranFrameReassembler::default();
 
-        assert_eq!(reassembler.feed_byte(0xdc), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x5a), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x5c), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x01), Ok(None));
         assert_eq!(
-            reassembler.feed_byte(0xaa),
-            Ok(Some(
+            reassembler.feed_byte_result(0xdc),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5a),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5c),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x01),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0xaa),
+            Ok(VeteranFrameParseResult::Complete(
                 VeteranFrame::try_from_slice(b"\xdc\x5a\x5c\x01\xaa").expect("fixture frame fits")
             ))
+        );
+    }
+
+    #[test]
+    fn reassembler_reports_typed_parser_progress() {
+        let mut reassembler = VeteranFrameReassembler::default();
+
+        assert_eq!(
+            reassembler.feed_byte_result(0x00),
+            Ok(VeteranFrameParseResult::Seeking)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0xdc),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5a),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+    }
+
+    #[test]
+    fn reassembler_reports_typed_complete_frame() {
+        let mut reassembler = VeteranFrameReassembler::default();
+        let frame_bytes = hex_literal::hex!("dc5a5c0100");
+        let mut result = VeteranFrameParseResult::Seeking;
+
+        for byte in frame_bytes {
+            result = reassembler
+                .feed_byte_result(byte)
+                .expect("short frame parses");
+        }
+
+        assert_eq!(
+            result,
+            VeteranFrameParseResult::Complete(
+                VeteranFrame::try_from_slice(&frame_bytes).expect("fixture frame fits")
+            )
         );
     }
 
@@ -365,8 +477,14 @@ mod tests {
     fn reset_drops_partial_frame_state() {
         let mut reassembler = VeteranFrameReassembler::default();
 
-        assert_eq!(reassembler.feed_byte(0xdc), Ok(None));
-        assert_eq!(reassembler.feed_byte(0x5a), Ok(None));
+        assert_eq!(
+            reassembler.feed_byte_result(0xdc),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x5a),
+            Ok(VeteranFrameParseResult::Buffered)
+        );
         reassembler.reset();
         let frames = feed_chunk(&mut reassembler, b"\x5c\x01\xaa");
 
@@ -465,6 +583,10 @@ mod tests {
         ) {
             let frame = long_veteran_frame();
             let channel = cutout_core::GattChannel::from_bytes([0x5c; 16]);
+            let chunk_sizes = chunk_sizes
+                .into_iter()
+                .map(cutout_core::NotificationChunkLen::new)
+                .collect::<Vec<_>>();
             let cases = cutout_core::notification_boundary_replay_cases(
                 channel,
                 &[frame.as_slice()],

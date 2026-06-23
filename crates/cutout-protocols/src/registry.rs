@@ -1,37 +1,13 @@
-use cutout_core::{
-    Capabilities, CommandKind, GattFingerprint, GattRoles, ModelRegistryEntry, ProtocolFamily,
-    VerificationStatus,
-};
+use cutout_core::ModelRegistryEntry;
 
-use crate::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL};
-
-const BEGODE_FALCON_GATT: [GattFingerprint; 1] = [GattFingerprint {
-    service: BEGODE_SERVICE_CHANNEL,
-    characteristic: BEGODE_DATA_CHANNEL,
-    roles: GattRoles::empty()
-        .with_write_without_response()
-        .with_notify(),
-    verification: VerificationStatus::SourceVerified,
-}];
+use crate::{BegodeFalconModel, RegisteredModelSpec};
 
 /// Source-backed initial registry entry for the Begode Falcon.
-pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
-    manufacturer: "Begode",
-    model: "Falcon",
-    protocol_family: ProtocolFamily::BegodeGotway,
-    advertised_name_hints: &["Falcon", "Begode", "Gotway"],
-    wire_model_id: None,
-    battery: None,
-    bms: None,
-    gatt: &BEGODE_FALCON_GATT,
-    capabilities: Capabilities::from_supported_commands([
-        CommandKind::RequestIdentity,
-        CommandKind::RequestFirmwareInfo,
-        CommandKind::RequestTelemetry,
-        CommandKind::RequestBatteryInfo,
-    ]),
-    verification: VerificationStatus::Inferred,
-};
+pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry =
+    <BegodeFalconModel as RegisteredModelSpec>::REGISTRY_ENTRY;
+
+/// Compile-time model registry entries known to this crate.
+pub const MODEL_REGISTRY: [&ModelRegistryEntry; 1] = [&BEGODE_FALCON_REGISTRY_ENTRY];
 
 #[cfg(test)]
 mod tests {
@@ -39,12 +15,17 @@ mod tests {
 
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL,
-        BegodePackVoltageProfile, begode_falcon_target_voltage_profile,
+        BegodeFalconModel, BegodePackVoltageProfile, RegisteredModelSpec,
+        begode_falcon_target_voltage_profile,
     };
 
     #[test]
     fn begode_falcon_registry_entry_does_not_select_battery_from_model_name() {
         assert_eq!(BEGODE_FALCON_REGISTRY_ENTRY.battery, None);
+        assert_eq!(
+            BEGODE_FALCON_REGISTRY_ENTRY,
+            <BegodeFalconModel as RegisteredModelSpec>::REGISTRY_ENTRY
+        );
     }
 
     #[test]

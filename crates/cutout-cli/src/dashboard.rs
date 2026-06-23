@@ -1,6 +1,8 @@
 use std::{
     collections::VecDeque,
+    fmt::{self, Write as FmtWrite},
     io::{self, Read, Write},
+    marker::PhantomData,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -11,10 +13,14 @@ use std::{
 };
 
 use anyhow::Result;
-use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeEvent, SessionBridgeReport};
+use cutout_btle::{
+    ConnectionSummary, ConnectionTarget, NotificationByteTotal, NotificationCount, ServiceSummary,
+    SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
+};
 use cutout_core::{
-    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, ReadOnlyResponse, TelemetryDelta,
-    TelemetrySnapshot,
+    BatteryPagePayload, DiagnosticReadback, FirmwareInfo, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback,
+    ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
 };
 use cutout_protocols::VeteranModelProfile;
 use ratatui::termina::{
@@ -39,10 +45,61 @@ const HISTORY_LIMIT: usize = 32;
 const READ_ONLY_SUMMARY_LIMIT: usize = 16;
 const TAB_COUNT: usize = 4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DashboardTab(usize);
+
+impl DashboardTab {
+    #[cfg(test)]
+    pub(crate) const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    const fn first() -> Self {
+        Self(0)
+    }
+
+    fn next(self) -> Self {
+        Self((self.0 + 1) % TAB_COUNT)
+    }
+
+    fn previous(self) -> Self {
+        Self(if self.0 == 0 {
+            TAB_COUNT - 1
+        } else {
+            self.0 - 1
+        })
+    }
+
+    fn bounded(self) -> usize {
+        self.0.min(TAB_COUNT - 1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScanSelection(usize);
+
+impl ScanSelection {
+    const fn first() -> Self {
+        Self(0)
+    }
+
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    fn shift_after_front_removal(&mut self) {
+        self.0 = self.0.saturating_sub(1);
+    }
+
+    fn select_last_len(&mut self, len: usize) {
+        self.0 = len.saturating_sub(1);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DashboardState {
     pub(crate) source: DashboardSource,
-    pub(crate) active_tab: usize,
+    pub(crate) active_tab: DashboardTab,
     pub(crate) provenance: Option<String>,
     pub(crate) device: DeviceSnapshot,
     pub(crate) scan_browser: ScanBrowser,
@@ -82,7 +139,7 @@ pub(crate) struct ProfileSnapshot {
 pub(crate) struct ScanBrowser {
     pub(crate) filters: TargetFilterSummary,
     pub(crate) observations: Vec<ScanObservation>,
-    pub(crate) selected: usize,
+    pub(crate) selected: ScanSelection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -129,37 +186,231 @@ impl ScanBrowser {
         Self {
             filters: TargetFilterSummary::default(),
             observations: Vec::new(),
-            selected: 0,
+            selected: ScanSelection::first(),
         }
     }
 
     fn selected(&self) -> Option<&ScanObservation> {
-        self.observations.get(self.selected)
+        self.observations.get(self.selected.get())
     }
 
     fn push_observation(&mut self, observation: ScanObservation, selected: bool) {
         if self.observations.len() == HISTORY_LIMIT {
             self.observations.remove(0);
-            if self.selected > 0 {
-                self.selected -= 1;
-            }
+            self.selected.shift_after_front_removal();
         }
 
         self.observations.push(observation);
         if selected {
-            self.selected = self.observations.len().saturating_sub(1);
+            self.selected.select_last_len(self.observations.len());
         }
+    }
+}
+
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DashboardCount<Tag> {
+    value: u64,
+    tag: PhantomData<fn() -> Tag>,
+}
+
+impl<Tag> Clone for DashboardCount<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Tag> Copy for DashboardCount<Tag> {}
+
+impl<Tag> Default for DashboardCount<Tag> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl<Tag> DashboardCount<Tag> {
+    const fn new(value: u64) -> Self {
+        Self {
+            value,
+            tag: PhantomData,
+        }
+    }
+}
+
+impl<Tag> fmt::Display for DashboardCount<Tag> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ReadOnlySummaryCount<Tag> {
+    value: u64,
+    tag: PhantomData<fn() -> Tag>,
+}
+
+impl<Tag> Clone for ReadOnlySummaryCount<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Tag> Copy for ReadOnlySummaryCount<Tag> {}
+
+impl<Tag> Default for ReadOnlySummaryCount<Tag> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl<Tag> ReadOnlySummaryCount<Tag> {
+    pub(crate) const fn new(value: u64) -> Self {
+        Self {
+            value,
+            tag: PhantomData,
+        }
+    }
+
+    const fn increment(self) -> Self {
+        Self::new(self.value.saturating_add(1))
+    }
+}
+
+impl<Tag> fmt::Display for ReadOnlySummaryCount<Tag> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DiscoveredDeviceCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ConnectedDeviceCountTag;
+
+pub(crate) type DiscoveredDeviceCount = DashboardCount<DiscoveredDeviceCountTag>;
+pub(crate) type ConnectedDeviceCount = DashboardCount<ConnectedDeviceCountTag>;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct RawReadOnlyPageCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ReadOnlyDiagnosticResponseCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct RawTelemetryResponseCountTag;
+
+pub(crate) type RawReadOnlyPageCount = ReadOnlySummaryCount<RawReadOnlyPageCountTag>;
+pub(crate) type ReadOnlyDiagnosticResponseCount =
+    ReadOnlySummaryCount<ReadOnlyDiagnosticResponseCountTag>;
+pub(crate) type RawTelemetryResponseCount = ReadOnlySummaryCount<RawTelemetryResponseCountTag>;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DashboardBatteryPercent(u64);
+
+impl DashboardBatteryPercent {
+    const fn new(value: u64) -> Self {
+        Self(if value > 100 { 100 } else { value })
+    }
+
+    fn from_u8(value: u8) -> Self {
+        Self::new(u64::from(value))
+    }
+
+    const fn decrement_for_demo(self) -> Self {
+        let value = self.0.saturating_sub(1);
+        if value < 10 { Self(10) } else { Self(value) }
+    }
+
+    fn ratio(self) -> f64 {
+        f64::from(u32::try_from(self.0).unwrap_or(100)) / 100.0
+    }
+}
+
+impl fmt::Display for DashboardBatteryPercent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct SignalPercent(u64);
+
+impl SignalPercent {
+    const fn new(value: u64) -> Self {
+        Self(if value > 100 { 100 } else { value })
+    }
+
+    fn from_rssi_dbm(rssi_dbm: i16) -> Self {
+        let clamped = rssi_dbm.clamp(-100, -40);
+        Self::new(
+            u64::try_from(i32::from(clamped) + 100)
+                .unwrap_or(0)
+                .saturating_mul(100)
+                / 60,
+        )
+    }
+
+    const fn increment(self) -> Self {
+        Self::new(self.0.saturating_add(1))
+    }
+
+    fn ratio(self) -> f64 {
+        f64::from(u32::try_from(self.0).unwrap_or(100)) / 100.0
+    }
+}
+
+impl fmt::Display for SignalPercent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PopulatedDiagnosticDetailCount(usize);
+
+impl PopulatedDiagnosticDetailCount {
+    const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    fn from_diagnostics(diagnostics: DiagnosticReadback) -> Self {
+        Self::new(diagnostics.details.into_iter().flatten().count())
+    }
+}
+
+impl fmt::Display for PopulatedDiagnosticDetailCount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PopulatedRawTelemetryFieldCount(usize);
+
+impl PopulatedRawTelemetryFieldCount {
+    const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    fn from_raw_telemetry(raw: RawTelemetryReadback) -> Self {
+        Self::new(raw.fields.into_iter().flatten().count())
+    }
+}
+
+impl fmt::Display for PopulatedRawTelemetryFieldCount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SessionCounters {
-    pub(crate) discovered: u64,
-    pub(crate) connected: u64,
-    pub(crate) subscriptions: u64,
-    pub(crate) notifications: u64,
-    pub(crate) notification_bytes: u64,
-    pub(crate) latest_notification_len: Option<u64>,
+    pub(crate) discovered: DiscoveredDeviceCount,
+    pub(crate) connected: ConnectedDeviceCount,
+    pub(crate) subscriptions: SubscribeCount,
+    pub(crate) notifications: NotificationCount,
+    pub(crate) notification_bytes: NotificationByteTotal,
+    pub(crate) latest_notification_len: Option<NotificationByteLen>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,33 +421,24 @@ pub(crate) struct LogEntry {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ReadOnlyDashboardState {
-    pub(crate) firmware: Option<String>,
-    pub(crate) settings: VecDeque<String>,
-    pub(crate) bms_pages: VecDeque<String>,
-    pub(crate) latest_bms_temperature: Option<String>,
-    pub(crate) diagnostics: u64,
-    pub(crate) raw_telemetry: u64,
-    pub(crate) unknown_raw_pages: u64,
+    pub(crate) firmware: Option<FirmwareInfo>,
+    pub(crate) settings: VecDeque<SettingsEntry>,
+    pub(crate) bms_pages: VecDeque<BatteryPagePayload>,
+    pub(crate) latest_bms_temperature: Option<BatteryPagePayload>,
+    pub(crate) diagnostics: ReadOnlyDiagnosticResponseCount,
+    pub(crate) raw_telemetry: RawTelemetryResponseCount,
+    pub(crate) unknown_raw_pages: RawReadOnlyPageCount,
 }
 
 impl ReadOnlyDashboardState {
     fn apply_response(&mut self, response: ReadOnlyResponse) {
         match response {
             ReadOnlyResponse::Firmware(firmware) => {
-                self.firmware = Some(format_firmware_summary(firmware));
+                self.firmware = Some(firmware);
             }
             ReadOnlyResponse::Settings(settings) => {
                 for entry in settings.entries.into_iter().flatten() {
-                    push_bounded(
-                        &mut self.settings,
-                        format!(
-                            "field={} value={} quality={} verification={}",
-                            entry.field.id,
-                            entry.field.value,
-                            quality_name(entry.quality),
-                            verification_name(entry.verification)
-                        ),
-                    );
+                    push_bounded(&mut self.settings, entry);
                 }
             }
             ReadOnlyResponse::Battery(payload) => {
@@ -205,35 +447,18 @@ impl ReadOnlyDashboardState {
                     page.kind,
                     cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
                 ) {
-                    self.unknown_raw_pages = self.unknown_raw_pages.saturating_add(1);
+                    self.unknown_raw_pages = self.unknown_raw_pages.increment();
                 }
-                let temperature_summary = bms_temperature_summary(payload);
-                let current_summary = bms_current_summary(payload);
-                if let Some(summary) = temperature_summary.as_ref() {
-                    self.latest_bms_temperature = Some(format!(
-                        "selector={} verification={}{}",
-                        page.selector,
-                        verification_name(page.verification),
-                        summary
-                    ));
+                if BmsTemperatureValues(payload).has_values() {
+                    self.latest_bms_temperature = Some(payload);
                 }
-                push_bounded(
-                    &mut self.bms_pages,
-                    format!(
-                        "selector={} kind={} verification={}{}{}",
-                        page.selector,
-                        battery_page_kind_name(page.kind),
-                        verification_name(page.verification),
-                        temperature_summary.as_deref().unwrap_or(""),
-                        current_summary.as_deref().unwrap_or("")
-                    ),
-                );
+                push_bounded(&mut self.bms_pages, payload);
             }
             ReadOnlyResponse::Diagnostics(_) => {
-                self.diagnostics = self.diagnostics.saturating_add(1);
+                self.diagnostics = self.diagnostics.increment();
             }
             ReadOnlyResponse::RawTelemetry(_) => {
-                self.raw_telemetry = self.raw_telemetry.saturating_add(1);
+                self.raw_telemetry = self.raw_telemetry.increment();
             }
         }
     }
@@ -248,9 +473,9 @@ pub(crate) enum DashboardUpdate {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TelemetryWindow {
-    pub(crate) battery_pct: Option<u64>,
+    pub(crate) battery_pct: Option<DashboardBatteryPercent>,
     pub(crate) battery_source: BatterySource,
-    pub(crate) signal_pct: u64,
+    pub(crate) signal_pct: SignalPercent,
     pub(crate) latest_speed_mph: Option<u64>,
     pub(crate) latest_voltage_v: Option<u64>,
     pub(crate) latest_current_a: Option<i64>,
@@ -303,7 +528,7 @@ impl DashboardState {
     pub(crate) fn empty() -> Self {
         Self {
             source: DashboardSource::Live,
-            active_tab: 0,
+            active_tab: DashboardTab::first(),
             provenance: None,
             device: DeviceSnapshot {
                 make: "unknown".to_owned(),
@@ -339,7 +564,7 @@ impl DashboardState {
                     .scan_browser
                     .observations
                     .retain(|observation| observation.real_device && observation.name == device);
-                state.scan_browser.selected = 0;
+                state.scan_browser.selected = ScanSelection::first();
             }
         }
 
@@ -394,16 +619,16 @@ impl DashboardState {
             false,
         );
         self.counters = SessionCounters {
-            discovered: 8,
-            connected: 1,
-            subscriptions: 4,
-            notifications: 27,
-            notification_bytes: 0,
+            discovered: DiscoveredDeviceCount::new(8),
+            connected: ConnectedDeviceCount::new(1),
+            subscriptions: SubscribeCount::new(4),
+            notifications: NotificationCount::new(27),
+            notification_bytes: NotificationByteTotal::default(),
             latest_notification_len: None,
         };
         self.telemetry.load_window(
-            74,
-            81,
+            DashboardBatteryPercent::new(74),
+            SignalPercent::new(81),
             DEMO_SPEED_MPH,
             DEMO_VOLTAGE_V,
             DEMO_CURRENT_A,
@@ -481,9 +706,11 @@ impl DashboardState {
             firmware: "unknown".to_owned(),
             connection_state: "connected".to_owned(),
         };
-        state.counters.discovered = 1;
-        state.counters.connected = 1;
-        state.telemetry.signal_pct = observation.rssi.map_or(0, rssi_to_signal_percent);
+        state.counters.discovered = DiscoveredDeviceCount::new(1);
+        state.counters.connected = ConnectedDeviceCount::new(1);
+        state.telemetry.signal_pct = observation
+            .rssi
+            .map_or_else(SignalPercent::default, SignalPercent::from_rssi_dbm);
         state.scan_browser.push_observation(
             ScanObservation {
                 name: state.device.name.clone(),
@@ -516,16 +743,16 @@ impl DashboardState {
         self.counters.subscriptions = self
             .counters
             .subscriptions
-            .saturating_add(usize_to_u64(report.subscribes));
+            .saturating_add(report.subscribes);
         self.counters.notifications = self
             .counters
             .notifications
-            .saturating_add(usize_to_u64(report.notifications));
+            .saturating_add(report.notifications);
         self.counters.notification_bytes = self
             .counters
             .notification_bytes
-            .saturating_add(usize_to_u64(report.notification_bytes));
-        self.counters.latest_notification_len = report.latest_notification_len.map(usize_to_u64);
+            .saturating_add(report.notification_bytes);
+        self.counters.latest_notification_len = report.latest_notification_len;
         self.push_log(
             "info",
             &format!(
@@ -534,11 +761,11 @@ impl DashboardState {
                 report.writes,
                 report.subscribes,
                 report.notifications,
-                report.notification_bytes
+                report.notification_bytes.get()
             ),
         );
 
-        if report.telemetry == 0 {
+        if report.telemetry.has_no_events() {
             if report_has_no_parsed_events(report) {
                 self.push_log(
                     "warn",
@@ -549,19 +776,19 @@ impl DashboardState {
             self.push_log("info", &format!("telemetry samples={}", report.telemetry));
         }
 
-        if report.diagnostics > 0 {
+        if report.diagnostics.has_events() {
             self.push_log("warn", &format!("diagnostics={}", report.diagnostics));
         }
 
-        if report.telemetry > 0 {
+        if report.telemetry.has_events() {
             let snapshot = report.telemetry_snapshot;
-            self.push_log("info", &format_mapped_telemetry_event(snapshot));
+            self.push_log_with_display("info", MappedTelemetryLog(snapshot));
             self.telemetry.apply_snapshot(snapshot);
         }
         for response in &report.read_only_response_events {
             self.read_only.apply_response(*response);
         }
-        if report.read_only_responses > 0 {
+        if report.read_only_responses.has_events() {
             self.push_log(
                 "info",
                 &format!("read-only responses={}", report.read_only_responses),
@@ -571,14 +798,22 @@ impl DashboardState {
             self.push_log("trace", &format_unmapped_telemetry_event(report));
         }
         for event in &report.events {
-            let (level, message) = format_bridge_event(event);
-            self.push_log(level, &message);
+            if let SessionBridgeEvent::NotificationIngest {
+                monotonic_ms,
+                outcome,
+            } = event
+            {
+                self.push_notification_ingest_log(*monotonic_ms, *outcome);
+            } else {
+                let (level, message) = format_bridge_event(event);
+                self.push_log(level, &message);
+            }
         }
     }
 
     pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
-        let percent = percent.min(100);
-        self.telemetry.battery_pct = Some(u64::from(percent));
+        let percent = DashboardBatteryPercent::from_u8(percent);
+        self.telemetry.battery_pct = Some(percent);
         self.telemetry.battery_source = BatterySource::StandardBle;
         self.push_log("info", &format!("battery level {percent}%"));
     }
@@ -596,22 +831,18 @@ impl DashboardState {
             return;
         }
 
-        let next_notification = self.counters.notifications.saturating_add(1);
+        let next_notification = self.counters.notifications.increment();
         self.counters.notifications = next_notification;
         self.telemetry.step();
         self.push_log("trace", "fixture heartbeat advanced");
     }
 
     fn next_tab(&mut self) {
-        self.active_tab = (self.active_tab + 1) % TAB_COUNT;
+        self.active_tab = self.active_tab.next();
     }
 
     fn previous_tab(&mut self) {
-        self.active_tab = if self.active_tab == 0 {
-            TAB_COUNT - 1
-        } else {
-            self.active_tab - 1
-        };
+        self.active_tab = self.active_tab.previous();
     }
 
     fn apply_device_snapshot(
@@ -641,17 +872,42 @@ impl DashboardState {
         }
     }
 
+    fn push_log_with_display(&mut self, level: &str, message: impl fmt::Display) {
+        let rendered = message.to_string();
+        log_dashboard_recent_event(level, &rendered);
+        if !dashboard_log_sink_installed() {
+            self.push_log_entry(level, &rendered);
+        }
+    }
+
+    fn push_notification_ingest_log(
+        &mut self,
+        monotonic_ms: cutout_btle::MonotonicMs,
+        outcome: NotificationIngestOutcome,
+    ) {
+        let message = NotificationIngestLog {
+            monotonic_ms: monotonic_ms.get(),
+            outcome,
+        };
+        let level = message.level();
+        self.push_log_with_display(level, message);
+    }
+
     fn push_log_from_tracing(&mut self, level: &str, message: &str) {
         self.push_log_entry(level, message);
     }
 
     fn push_log_entry(&mut self, level: &str, message: &str) {
+        self.push_log_display(level, message);
+    }
+
+    fn push_log_display(&mut self, level: &str, message: impl fmt::Display) {
         if self.logs.len() == LOG_LIMIT {
             self.logs.pop_front();
         }
         self.logs.push_back(LogEntry {
             level: level.to_owned(),
-            message: message.to_owned(),
+            message: message.to_string(),
         });
     }
 }
@@ -661,7 +917,7 @@ impl TelemetryWindow {
         Self {
             battery_pct: None,
             battery_source: BatterySource::Unknown,
-            signal_pct: 0,
+            signal_pct: SignalPercent::default(),
             latest_speed_mph: None,
             latest_voltage_v: None,
             latest_current_a: None,
@@ -680,8 +936,8 @@ impl TelemetryWindow {
 
     fn load_window(
         &mut self,
-        battery_pct: u64,
-        signal_pct: u64,
+        battery_pct: DashboardBatteryPercent,
+        signal_pct: SignalPercent,
         speed_mph: &'static [u64],
         voltage_v: &'static [u64],
         current_a: &'static [u64],
@@ -712,9 +968,9 @@ impl TelemetryWindow {
         let next_temperature = 30 + ((self.temperature_c.last().copied().unwrap_or(32) + 1) % 9);
 
         if let Some(battery_pct) = self.battery_pct.as_mut() {
-            *battery_pct = battery_pct.saturating_sub(1).max(10);
+            *battery_pct = battery_pct.decrement_for_demo();
         }
-        self.signal_pct = (self.signal_pct + 1).min(100);
+        self.signal_pct = self.signal_pct.increment();
         push_sample(&mut self.speed_mph, next_speed);
         push_sample(&mut self.voltage_v, next_voltage);
         push_sample(&mut self.current_a, next_current);
@@ -745,10 +1001,10 @@ impl TelemetryWindow {
 
     fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
         if let Some(percent) = snapshot.battery_percent_reported {
-            self.battery_pct = Some(u64::from(percent.value));
+            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value));
             self.battery_source = BatterySource::TelemetryReported;
         } else if let Some(percent) = snapshot.battery_percent_estimated {
-            self.battery_pct = Some(u64::from(percent.value));
+            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value));
             self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed_mm_s {
@@ -819,17 +1075,43 @@ fn push_bounded<T>(items: &mut VecDeque<T>, item: T) {
     items.push_back(item);
 }
 
-fn format_firmware_summary(firmware: cutout_core::FirmwareInfo) -> String {
-    let major = firmware
-        .firmware_major
-        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
-    let minor = firmware
-        .firmware_minor
-        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
-    let patch = firmware
-        .firmware_patch
-        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
-    format!("{major}.{minor}.{patch}")
+struct FirmwareSummary(FirmwareInfo);
+
+impl fmt::Display for FirmwareSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_optional_measured_u16(f, self.0.firmware_major)?;
+        write!(f, ".")?;
+        write_optional_measured_u16(f, self.0.firmware_minor)?;
+        write!(f, ".")?;
+        write_optional_measured_u16(f, self.0.firmware_patch)
+    }
+}
+
+fn write_optional_measured_u16(
+    f: &mut fmt::Formatter<'_>,
+    value: Option<cutout_core::Measured<u16>>,
+) -> fmt::Result {
+    if let Some(value) = value {
+        write!(f, "{}", value.value)
+    } else {
+        write!(f, "?")
+    }
+}
+
+struct SettingsEntrySummary(SettingsEntry);
+
+impl fmt::Display for SettingsEntrySummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let entry = self.0;
+        write!(
+            f,
+            "field={} value={} quality={} verification={}",
+            entry.field.id,
+            entry.field.value,
+            quality_name(entry.quality),
+            verification_name(entry.verification)
+        )
+    }
 }
 
 const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static str {
@@ -841,30 +1123,85 @@ const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static 
     }
 }
 
-fn bms_temperature_summary(payload: cutout_core::BatteryPagePayload) -> Option<String> {
-    let temperatures = payload.temperatures_mc();
-    if !matches!(payload, cutout_core::BatteryPagePayload::Temperature(_)) {
-        return None;
-    }
+struct BmsTemperatureValues(BatteryPagePayload);
 
-    let mut summary = String::from(" temps_c=");
-    let mut wrote = false;
-    for temperature in temperatures.into_iter().flatten() {
-        if wrote {
-            summary.push(',');
-        }
-        wrote = true;
-        summary.push_str(&millicelsius_to_celsius_signed(temperature.value).to_string());
+impl BmsTemperatureValues {
+    fn has_values(self) -> bool {
+        matches!(self.0, BatteryPagePayload::Temperature(_))
+            && self
+                .0
+                .temperatures_mc()
+                .into_iter()
+                .any(|value| value.is_some())
     }
-
-    wrote.then_some(summary)
 }
 
-fn bms_current_summary(payload: cutout_core::BatteryPagePayload) -> Option<String> {
-    payload
-        .battery()
-        .current_ma
-        .map(|current| format!(" current={}A", milliamps_to_amps(current.value)))
+impl fmt::Display for BmsTemperatureValues {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut wrote = false;
+        for temperature in self.0.temperatures_mc().into_iter().flatten() {
+            if wrote {
+                write!(f, ",")?;
+            } else {
+                write!(f, " temps_c=")?;
+            }
+            wrote = true;
+            write!(f, "{}", millicelsius_to_celsius_signed(temperature.value))?;
+        }
+        Ok(())
+    }
+}
+
+struct BmsCurrentSummary(BatteryPagePayload);
+
+impl fmt::Display for BmsCurrentSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let battery = self.0.battery();
+        if let Some(current) = battery.current_ma {
+            write!(f, " current={}A", milliamps_to_amps(current.value))?;
+        }
+        if let Some(currents) = self.0.bms_pack_currents() {
+            write!(
+                f,
+                " bms_current_0={}A bms_current_1={}A",
+                milliamps_to_amps(currents.current_0_ma.get()),
+                milliamps_to_amps(currents.current_1_ma.get())
+            )?;
+        }
+        Ok(())
+    }
+}
+
+struct BmsPageSummary(BatteryPagePayload);
+
+impl fmt::Display for BmsPageSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let page = self.0.page();
+        write!(
+            f,
+            "selector={} kind={} verification={}{}{}",
+            page.selector,
+            battery_page_kind_name(page.kind),
+            verification_name(page.verification),
+            BmsTemperatureValues(self.0),
+            BmsCurrentSummary(self.0)
+        )
+    }
+}
+
+struct LatestBmsTemperatureSummary(BatteryPagePayload);
+
+impl fmt::Display for LatestBmsTemperatureSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let page = self.0.page();
+        write!(
+            f,
+            "selector={} verification={}{}",
+            page.selector,
+            verification_name(page.verification),
+            BmsTemperatureValues(self.0)
+        )
+    }
 }
 
 const fn quality_name(quality: cutout_core::ValueQuality) -> &'static str {
@@ -923,25 +1260,36 @@ fn u64_to_i64(value: u64) -> Option<i64> {
     i64::try_from(value).ok()
 }
 
-fn format_distance_mm(value: u64) -> String {
-    format_distance_m(value / 1_000)
-}
+struct OptionalDistanceDisplay(Option<u64>);
 
-fn format_optional_distance_m(value: Option<u64>) -> String {
-    value.map_or_else(|| "unknown".to_owned(), format_distance_m)
-}
-
-fn format_distance_m(value: u64) -> String {
-    if value < 1_000 {
-        return format!("{value} m");
+impl fmt::Display for OptionalDistanceDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => DistanceMDisplay(value).fmt(f),
+            None => f.write_str("unknown"),
+        }
     }
-
-    let km_tenths = value.saturating_mul(10).saturating_add(500) / 1_000;
-    format!("{} km", format_tenths(km_tenths))
 }
 
-fn format_tenths(value: u64) -> String {
-    format!("{}.{}", value / 10, value % 10)
+struct DistanceMDisplay(u64);
+
+impl fmt::Display for DistanceMDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 < 1_000 {
+            write!(f, "{} m", self.0)
+        } else {
+            let km_tenths = self.0.saturating_mul(10).saturating_add(500) / 1_000;
+            write!(f, "{} km", TenthsDisplay(km_tenths))
+        }
+    }
+}
+
+struct TenthsDisplay(u64);
+
+impl fmt::Display for TenthsDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.0 / 10, self.0 % 10)
+    }
 }
 
 struct DeviceIdentity {
@@ -964,49 +1312,189 @@ fn classify_device_identity(name: &str) -> DeviceIdentity {
     }
 }
 
-fn format_mapped_telemetry_event(snapshot: TelemetrySnapshot) -> String {
-    let mut fields = Vec::new();
-    if let Some(speed) = snapshot.speed_mm_s {
-        fields.push(format!("speed={}mph", mm_s_to_mph(speed.value)));
+struct MappedTelemetryLog(TelemetrySnapshot);
+
+impl fmt::Display for MappedTelemetryLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut fields = TelemetryFieldWriter::new(f, Some("telemetry mapped"), "none");
+        let snapshot = self.0;
+
+        if let Some(speed) = snapshot.speed_mm_s {
+            fields.write("speed", mm_s_to_mph(speed.value), "mph")?;
+        }
+        if let Some(voltage) = snapshot.voltage_mv {
+            fields.write("voltage", millivolts_to_volts(voltage.value), "V")?;
+        }
+        if let Some(percent) = snapshot
+            .battery_percent_reported
+            .or(snapshot.battery_percent_estimated)
+        {
+            fields.write("battery", percent.value, "%")?;
+        }
+        if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
+            fields.write("current", milliamps_to_amps(current.value), "A")?;
+        }
+        if let Some(temperature) = snapshot
+            .controller_temperature_mc
+            .or(snapshot.motor_temperature_mc)
+            .or(snapshot.battery_temperature_mc)
+        {
+            fields.write(
+                "temperature",
+                millicelsius_to_celsius_signed(temperature.value),
+                "C",
+            )?;
+        }
+        if let Some(pwm) = snapshot.pwm_permille {
+            fields.write("pwm", permille_to_percent(pwm.value), "%")?;
+        }
+        if let Some(distance) = snapshot.distance_mm {
+            fields.write_display("distance", DistanceMmDisplay(distance.value))?;
+        }
+        if let Some(pitch) = snapshot.pitch_mdeg {
+            fields.write("pitch", millidegrees_to_degrees(pitch.value), "deg")?;
+        }
+        if let Some(roll) = snapshot.roll_mdeg {
+            fields.write("roll", millidegrees_to_degrees(roll.value), "deg")?;
+        }
+
+        fields.finish()
     }
-    if let Some(voltage) = snapshot.voltage_mv {
-        fields.push(format!("voltage={}V", millivolts_to_volts(voltage.value)));
+}
+
+struct TelemetryDeltaLog(TelemetryDelta);
+
+impl fmt::Display for TelemetryDeltaLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut fields = TelemetryFieldWriter::new(f, None, "unmapped");
+        let delta = self.0;
+
+        if let Some(speed) = delta.speed_mm_s {
+            fields.write("speed", mm_s_to_mph(speed.value), "mph")?;
+        }
+        if let Some(voltage) = delta.voltage_mv {
+            fields.write("voltage", millivolts_to_volts(voltage.value), "V")?;
+        }
+        if let Some(percent) = delta
+            .battery_percent_reported
+            .or(delta.battery_percent_estimated)
+        {
+            fields.write("battery", percent.value, "%")?;
+        }
+        if let Some(current) = delta.battery_current_ma.or(delta.motor_current_ma) {
+            fields.write("current", milliamps_to_amps(current.value), "A")?;
+        }
+        if let Some(temperature) = delta
+            .controller_temperature_mc
+            .or(delta.motor_temperature_mc)
+            .or(delta.battery_temperature_mc)
+        {
+            fields.write(
+                "temperature",
+                millicelsius_to_celsius_signed(temperature.value),
+                "C",
+            )?;
+        }
+        if let Some(pwm) = delta.pwm_permille {
+            fields.write("pwm", permille_to_percent(pwm.value), "%")?;
+        }
+        if let Some(distance) = delta.distance_mm {
+            fields.write_display("distance", DistanceMmDisplay(distance.value))?;
+        }
+        if let Some(pitch) = delta.pitch_mdeg {
+            fields.write("pitch", millidegrees_to_degrees(pitch.value), "deg")?;
+        }
+
+        fields.finish()
     }
-    if let Some(percent) = snapshot
-        .battery_percent_reported
-        .or(snapshot.battery_percent_estimated)
-    {
-        fields.push(format!("battery={}%", percent.value));
+}
+
+struct TelemetryFieldWriter<'formatter, 'output> {
+    output: &'formatter mut fmt::Formatter<'output>,
+    prefix: Option<&'static str>,
+    empty: &'static str,
+    fields: FieldCount,
+}
+
+impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
+    const fn new(
+        output: &'formatter mut fmt::Formatter<'output>,
+        prefix: Option<&'static str>,
+        empty: &'static str,
+    ) -> Self {
+        Self {
+            output,
+            prefix,
+            empty,
+            fields: FieldCount::empty(),
+        }
     }
-    if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
-        fields.push(format!("current={}A", milliamps_to_amps(current.value)));
+
+    fn write<T: fmt::Display>(&mut self, name: &str, value: T, unit: &str) -> fmt::Result {
+        self.write_prefix(name)?;
+        write!(self.output, "{value}{unit}")
     }
-    if let Some(temperature) = snapshot
-        .controller_temperature_mc
-        .or(snapshot.motor_temperature_mc)
-        .or(snapshot.battery_temperature_mc)
-    {
-        fields.push(format!(
-            "temperature={}C",
-            millicelsius_to_celsius_signed(temperature.value)
-        ));
+
+    fn write_display<T: fmt::Display>(&mut self, name: &str, value: T) -> fmt::Result {
+        self.write_prefix(name)?;
+        write!(self.output, "{value}")
     }
-    if let Some(pwm) = snapshot.pwm_permille {
-        fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
+
+    fn write_prefix(&mut self, name: &str) -> fmt::Result {
+        if self.fields.is_empty() {
+            if let Some(prefix) = self.prefix {
+                write!(self.output, "{prefix} {name}=")?;
+            } else {
+                write!(self.output, "{name}=")?;
+            }
+        } else {
+            write!(self.output, " {name}=")?;
+        }
+        self.fields = self.fields.increment();
+        Ok(())
     }
-    if let Some(distance) = snapshot.distance_mm {
-        fields.push(format!("distance={}", format_distance_mm(distance.value)));
+
+    fn finish(self) -> fmt::Result {
+        if self.fields.is_empty() {
+            if let Some(prefix) = self.prefix {
+                write!(self.output, "{prefix} {}", self.empty)
+            } else {
+                write!(self.output, "{}", self.empty)
+            }
+        } else {
+            Ok(())
+        }
     }
-    if let Some(pitch) = snapshot.pitch_mdeg {
-        fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct FieldCount(usize);
+
+impl FieldCount {
+    const fn empty() -> Self {
+        Self(0)
     }
-    if let Some(roll) = snapshot.roll_mdeg {
-        fields.push(format!("roll={}deg", millidegrees_to_degrees(roll.value)));
+
+    const fn is_empty(self) -> bool {
+        self.0 == 0
     }
-    if fields.is_empty() {
-        "telemetry mapped none".to_owned()
-    } else {
-        format!("telemetry mapped {}", fields.join(" "))
+
+    const fn increment(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+struct DistanceMmDisplay(u64);
+
+impl fmt::Display for DistanceMmDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let meters = self.0 / 1_000;
+        if meters < 1_000 {
+            return write!(f, "{meters} m");
+        }
+
+        let km_tenths = meters.saturating_mul(10).saturating_add(500) / 1_000;
+        write!(f, "{}.{} km", km_tenths / 10, km_tenths % 10)
     }
 }
 
@@ -1055,83 +1543,116 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
                 error.kind
             ),
         ),
-        SessionBridgeEvent::NotificationIngest {
-            monotonic_ms,
-            outcome,
-        } => format_notification_ingest_event(*monotonic_ms, *outcome),
+        SessionBridgeEvent::NotificationIngest { .. } => {
+            unreachable!("notification ingest events are routed through NotificationIngestLog")
+        }
     }
 }
 
-fn format_notification_ingest_event(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NotificationIngestLog {
     monotonic_ms: u64,
     outcome: NotificationIngestOutcome,
-) -> (&'static str, String) {
-    match outcome {
-        NotificationIngestOutcome::SemanticEvents {
-            notification,
-            event_count,
-        } => (
-            "info",
-            format!(
-                "t={monotonic_ms}ms protocol semantic events family={} events={} len={}",
+}
+
+impl NotificationIngestLog {
+    const fn level(self) -> &'static str {
+        match self.outcome {
+            NotificationIngestOutcome::SemanticEvents { .. }
+            | NotificationIngestOutcome::KnownReserved { .. } => "info",
+            NotificationIngestOutcome::ParserDiagnostic { .. }
+            | NotificationIngestOutcome::ParserGap { .. } => "warn",
+            NotificationIngestOutcome::BufferedFragment(_)
+            | NotificationIngestOutcome::Ignored(_) => "trace",
+        }
+    }
+}
+
+impl fmt::Display for NotificationIngestLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.outcome {
+            NotificationIngestOutcome::SemanticEvents {
+                notification,
+                event_count,
+            } => write!(
+                f,
+                "t={}ms protocol semantic events family={} events={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 event_count.get(),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::BufferedFragment(notification) => (
-            "trace",
-            format!(
-                "t={monotonic_ms}ms protocol buffered fragment family={} len={}",
+            NotificationIngestOutcome::BufferedFragment(notification) => write!(
+                f,
+                "t={}ms protocol buffered fragment family={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::ParserDiagnostic {
-            notification,
-            error,
-        } => (
-            "warn",
-            format!(
-                "t={monotonic_ms}ms protocol parser diagnostic family={} len={} error={error:?}",
+            NotificationIngestOutcome::ParserDiagnostic {
+                notification,
+                error,
+            } => write!(
+                f,
+                "t={}ms protocol parser diagnostic family={} len={} error={error:?}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::KnownReserved {
-            notification,
-            payload,
-        } => (
-            "info",
-            format!(
-                "t={monotonic_ms}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
+            NotificationIngestOutcome::KnownReserved {
+                notification,
+                payload,
+            } => write!(
+                f,
+                "t={}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
-                optional_u8(payload.selector.map(cutout_core::ProtocolSelector::get)),
-                optional_u16(payload.tag.map(cutout_core::ProtocolTag::get)),
+                OptionalU8(payload.selector.map(cutout_core::ProtocolSelector::get)),
+                OptionalU16(payload.tag.map(cutout_core::ProtocolTag::get)),
                 payload.body_len.get(),
                 verification_name(payload.verification),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::ParserGap { notification, gap } => (
-            "warn",
-            format!(
-                "t={monotonic_ms}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
+            NotificationIngestOutcome::ParserGap { notification, gap } => write!(
+                f,
+                "t={}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
-                optional_u8(gap.selector.map(cutout_core::ProtocolSelector::get)),
-                optional_u16(gap.tag.map(cutout_core::ProtocolTag::get)),
+                OptionalU8(gap.selector.map(cutout_core::ProtocolSelector::get)),
+                OptionalU16(gap.tag.map(cutout_core::ProtocolTag::get)),
                 gap.body_len.get(),
                 notification.len.get()
             ),
-        ),
-        NotificationIngestOutcome::Ignored(notification) => (
-            "trace",
-            format!(
-                "t={monotonic_ms}ms protocol ignored notification family={} len={}",
+            NotificationIngestOutcome::Ignored(notification) => write!(
+                f,
+                "t={}ms protocol ignored notification family={} len={}",
+                self.monotonic_ms,
                 family_name(notification.family),
                 notification.len.get()
             ),
-        ),
+        }
+    }
+}
+
+struct OptionalU8(Option<u8>);
+
+impl fmt::Display for OptionalU8 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "{value}"),
+            None => write!(f, "none"),
+        }
+    }
+}
+
+struct OptionalU16(Option<u16>);
+
+impl fmt::Display for OptionalU16 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "{value}"),
+            None => write!(f, "none"),
+        }
     }
 }
 
@@ -1144,36 +1665,12 @@ fn family_name(family: Option<ProtocolFamily>) -> &'static str {
     }
 }
 
-fn optional_u8(value: Option<u8>) -> String {
-    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
-}
-
-fn optional_u16(value: Option<u16>) -> String {
-    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
-}
-
 fn format_read_only_response(response: ReadOnlyResponse) -> String {
     match response {
         ReadOnlyResponse::Firmware(firmware) => {
-            format!("read-only firmware {}", format_firmware_summary(firmware))
+            format!("read-only firmware {}", FirmwareSummary(firmware))
         }
-        ReadOnlyResponse::Settings(settings) => {
-            let mut entries = Vec::new();
-            for entry in settings.entries.into_iter().flatten() {
-                entries.push(format!(
-                    "field={} value={} quality={} verification={}",
-                    entry.field.id,
-                    entry.field.value,
-                    quality_name(entry.quality),
-                    verification_name(entry.verification)
-                ));
-            }
-            if entries.is_empty() {
-                "read-only settings none observed".to_owned()
-            } else {
-                format!("read-only settings {}", entries.join(" "))
-            }
-        }
+        ReadOnlyResponse::Settings(settings) => SettingsReadbackLog(settings).to_string(),
         ReadOnlyResponse::Battery(payload) => {
             let page = payload.page();
             let mut summary = format!(
@@ -1182,85 +1679,88 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
                 battery_page_kind_name(page.kind),
                 verification_name(page.verification)
             );
-            if let Some(temperature_summary) = bms_temperature_summary(payload) {
-                summary.push_str(&temperature_summary);
-            }
-            if let Some(current_summary) = bms_current_summary(payload) {
-                summary.push_str(&current_summary);
-            }
+            let _ = write!(
+                summary,
+                "{}{}",
+                BmsTemperatureValues(payload),
+                BmsCurrentSummary(payload)
+            );
             summary
         }
         ReadOnlyResponse::Diagnostics(diagnostics) => {
-            let populated = diagnostics.details.into_iter().flatten().count();
+            let populated = PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics);
             format!("read-only diagnostics details={populated}")
         }
         ReadOnlyResponse::RawTelemetry(raw) => {
-            let populated = raw.fields.into_iter().flatten().count();
+            let populated = PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw);
             format!("read-only raw telemetry fields={populated}")
         }
     }
 }
 
+struct SettingsReadbackLog(SettingsReadback);
+
+impl fmt::Display for SettingsReadbackLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut wrote = false;
+        for entry in self.0.entries.into_iter().flatten() {
+            if wrote {
+                write!(f, " ")?;
+            } else {
+                write!(f, "read-only settings ")?;
+            }
+            wrote = true;
+            write!(
+                f,
+                "field={} value={} quality={} verification={}",
+                entry.field.id,
+                entry.field.value,
+                quality_name(entry.quality),
+                verification_name(entry.verification)
+            )?;
+        }
+
+        if wrote {
+            Ok(())
+        } else {
+            write!(f, "read-only settings none observed")
+        }
+    }
+}
+
 fn report_has_no_parsed_events(report: &SessionBridgeReport) -> bool {
-    report.telemetry == 0
-        && report.read_only_responses == 0
-        && report.diagnostics == 0
+    report.telemetry.has_no_events()
+        && report.read_only_responses.has_no_events()
+        && report.diagnostics.has_no_events()
         && report.diagnostic_errors.is_empty()
         && report.read_only_response_events.is_empty()
 }
 
 fn format_telemetry_delta(delta: TelemetryDelta) -> String {
-    let mut fields = Vec::new();
-    if let Some(speed) = delta.speed_mm_s {
-        fields.push(format!("speed={}mph", mm_s_to_mph(speed.value)));
-    }
-    if let Some(voltage) = delta.voltage_mv {
-        fields.push(format!("voltage={}V", millivolts_to_volts(voltage.value)));
-    }
-    if let Some(percent) = delta
-        .battery_percent_reported
-        .or(delta.battery_percent_estimated)
-    {
-        fields.push(format!("battery={}%", percent.value));
-    }
-    if let Some(current) = delta.battery_current_ma.or(delta.motor_current_ma) {
-        fields.push(format!("current={}A", milliamps_to_amps(current.value)));
-    }
-    if let Some(temperature) = delta
-        .controller_temperature_mc
-        .or(delta.motor_temperature_mc)
-        .or(delta.battery_temperature_mc)
-    {
-        fields.push(format!(
-            "temperature={}C",
-            millicelsius_to_celsius_signed(temperature.value)
-        ));
-    }
-    if let Some(pwm) = delta.pwm_permille {
-        fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
-    }
-    if let Some(distance) = delta.distance_mm {
-        fields.push(format!("distance={}", format_distance_mm(distance.value)));
-    }
-    if let Some(pitch) = delta.pitch_mdeg {
-        fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
-    }
-    if fields.is_empty() {
-        "unmapped".to_owned()
-    } else {
-        fields.join(" ")
-    }
+    TelemetryDeltaLog(delta).to_string()
 }
 
 fn format_unmapped_telemetry_event(report: &SessionBridgeReport) -> String {
-    let latest = report
-        .latest_notification_len
-        .map_or_else(|| "none".to_owned(), |len| len.to_string());
     let diagnostics = format_parser_diagnostics(report.diagnostics_snapshot);
     format!(
         "telemetry unmapped notifications={} bytes={} latest_len={} diagnostics={} {}",
-        report.notifications, report.notification_bytes, latest, report.diagnostics, diagnostics
+        report.notifications,
+        report.notification_bytes.get(),
+        OptionalNotificationLen(report.latest_notification_len),
+        report.diagnostics,
+        diagnostics
     )
+}
+
+struct OptionalNotificationLen(Option<NotificationByteLen>);
+
+impl fmt::Display for OptionalNotificationLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(len) => len.fmt(f),
+            None => f.write_str("none"),
+        }
+    }
 }
 
 fn format_parser_diagnostics(diagnostics: ParserDiagnostics) -> String {
@@ -1277,16 +1777,34 @@ fn format_parser_diagnostics(diagnostics: ParserDiagnostics) -> String {
 }
 
 fn services_summary(summary: &ConnectionSummary) -> String {
-    if summary.services.is_empty() {
-        return "none discovered".to_owned();
-    }
+    CompactServicesSummary(summary.services.as_slice()).to_string()
+}
 
-    summary
-        .services
-        .iter()
-        .map(|service| format!("{}:{} chars", service.uuid, service.characteristics.len()))
-        .collect::<Vec<_>>()
-        .join(", ")
+struct CompactServicesSummary<'services>(&'services [ServiceSummary]);
+
+impl fmt::Display for CompactServicesSummary<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut services = self.0.iter();
+        let Some(first) = services.next() else {
+            return write!(f, "none discovered");
+        };
+
+        write_service_summary(f, first)?;
+        for service in services {
+            write!(f, ", ")?;
+            write_service_summary(f, service)?;
+        }
+        Ok(())
+    }
+}
+
+fn write_service_summary(f: &mut fmt::Formatter<'_>, service: &ServiceSummary) -> fmt::Result {
+    write!(
+        f,
+        "{}:{} chars",
+        service.uuid,
+        service.characteristics.len()
+    )
 }
 
 pub(crate) fn run_dashboard_with_updates(
@@ -1470,7 +1988,7 @@ fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInp
 }
 
 pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
-    let active_tab = state.active_tab.min(TAB_COUNT - 1);
+    let active_tab = state.active_tab.bounded();
     let areas = if active_tab == 3 {
         Layout::default()
             .direction(Direction::Vertical)
@@ -1503,7 +2021,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         Line::from("Profiles"),
         Line::from("Logs"),
     ])
-    .select(state.active_tab.min(3))
+    .select(state.active_tab.bounded())
     .block(Block::bordered().title("Cutout dashboard"))
     .highlight_style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
@@ -1511,7 +2029,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn render_body(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    match state.active_tab.min(TAB_COUNT - 1) {
+    match state.active_tab.bounded() {
         0 => render_overview_tab(frame, area, state),
         1 => render_telemetry(frame, area, state),
         2 => render_profiles(frame, area, state),
@@ -1641,7 +2159,7 @@ fn render_battery_cluster(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
 fn render_battery_gauge(
     frame: &mut Frame<'_>,
     area: Rect,
-    battery_pct: Option<u64>,
+    battery_pct: Option<DashboardBatteryPercent>,
     source: BatterySource,
     latest_voltage_v: Option<u64>,
 ) {
@@ -1649,7 +2167,7 @@ fn render_battery_gauge(
         let battery = Gauge::default()
             .block(Block::bordered().title(source.label()))
             .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
-            .ratio(percent_ratio(battery_pct));
+            .ratio(battery_pct.ratio());
         frame.render_widget(battery, area);
     } else {
         let message = latest_voltage_v.map_or_else(
@@ -1670,16 +2188,8 @@ fn render_signal_gauge(frame: &mut Frame<'_>, area: Rect, state: &DashboardState
         .block(Block::bordered().title("Signal"))
         .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
         .label(format!("{}% / {rssi}", state.telemetry.signal_pct))
-        .ratio(percent_ratio(state.telemetry.signal_pct));
+        .ratio(state.telemetry.signal_pct.ratio());
     frame.render_widget(signal, area);
-}
-
-fn rssi_to_signal_percent(rssi_dbm: i16) -> u64 {
-    let clamped = rssi_dbm.clamp(-100, -40);
-    u64::try_from(i32::from(clamped) + 100)
-        .unwrap_or(0)
-        .saturating_mul(100)
-        / 60
 }
 
 fn render_voltage_sparkline(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -1806,13 +2316,16 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
         Span::styled("firmware ", Style::new().fg(Color::Gray)),
-        Span::raw(read_only.firmware.as_deref().unwrap_or("unknown")),
+        read_only.firmware.map_or_else(
+            || Span::raw("unknown"),
+            |firmware| Span::raw(FirmwareSummary(firmware).to_string()),
+        ),
     ]));
 
-    if let Some(temperature) = read_only.latest_bms_temperature.as_deref() {
+    if let Some(temperature) = read_only.latest_bms_temperature {
         lines.push(Line::from(vec![
             Span::styled("bms temp ", Style::new().fg(Color::Gray)),
-            Span::raw(temperature),
+            Span::raw(LatestBmsTemperatureSummary(temperature).to_string()),
         ]));
     }
 
@@ -1833,7 +2346,9 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         lines.push(Line::from(vec![Span::raw("none observed")]));
     } else {
         for setting in read_only.settings.iter().rev().take(4) {
-            lines.push(Line::from(vec![Span::raw(setting.as_str())]));
+            lines.push(Line::from(vec![Span::raw(
+                SettingsEntrySummary(*setting).to_string(),
+            )]));
         }
     }
 
@@ -1842,7 +2357,9 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         Style::new().fg(Color::Gray),
     )]));
     for page in read_only.bms_pages.iter().rev().take(4) {
-        lines.push(Line::from(vec![Span::raw(page.as_str())]));
+        lines.push(Line::from(vec![Span::raw(
+            BmsPageSummary(*page).to_string(),
+        )]));
     }
 
     let panel = Paragraph::new(lines).block(panel_block("Read-only responses"));
@@ -1876,9 +2393,9 @@ fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         Line::from("decoded telemetry samples: 0"),
         Line::from(vec![
             Span::styled("transport notifications ", Style::new().fg(Color::Gray)),
-            Span::raw(state.counters.notifications.to_string()),
+            Span::raw(state.counters.notifications.get().to_string()),
             Span::styled(" bytes ", Style::new().fg(Color::Gray)),
-            Span::raw(state.counters.notification_bytes.to_string()),
+            Span::raw(state.counters.notification_bytes.get().to_string()),
         ]),
     ])
     .block(panel_block("Decoded telemetry"));
@@ -1886,15 +2403,11 @@ fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
 }
 
 fn render_pending_telemetry_detail(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let latest = state
-        .counters
-        .latest_notification_len
-        .map_or_else(|| "none".to_owned(), |len| len.to_string());
     let text = Paragraph::new(vec![
         Line::from("waiting for protocol decoder output"),
         Line::from(vec![
             Span::styled("latest notification bytes ", Style::new().fg(Color::Gray)),
-            Span::raw(latest),
+            Span::raw(OptionalNotificationLen(state.counters.latest_notification_len).to_string()),
         ]),
     ])
     .block(panel_block("Decoder input"));
@@ -1932,36 +2445,35 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
         lines.extend([
             Line::from(vec![
                 Span::styled("speed ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_u64(
-                    state.telemetry.latest_speed_mph,
-                    " mph",
-                )),
+                Span::raw(
+                    OptionalU64Display::new(state.telemetry.latest_speed_mph, " mph").to_string(),
+                ),
                 Span::styled(" voltage ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_u64(state.telemetry.latest_voltage_v, " V")),
+                Span::raw(
+                    OptionalU64Display::new(state.telemetry.latest_voltage_v, " V").to_string(),
+                ),
                 Span::styled(" battery ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_u64(state.telemetry.battery_pct, "%")),
+                Span::raw(OptionalBatteryPercentDisplay(state.telemetry.battery_pct).to_string()),
             ]),
             Line::from(vec![
                 Span::styled("current ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(state.telemetry.latest_current_a, " A")),
+                Span::raw(
+                    OptionalI64Display::new(state.telemetry.latest_current_a, " A").to_string(),
+                ),
                 Span::styled(" temp ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(
-                    state.telemetry.latest_temperature_c,
-                    " C",
-                )),
+                Span::raw(
+                    OptionalI64Display::new(state.telemetry.latest_temperature_c, " C").to_string(),
+                ),
                 Span::styled(" pwm ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(state.telemetry.latest_pwm_pct, "%")),
+                Span::raw(OptionalI64Display::new(state.telemetry.latest_pwm_pct, "%").to_string()),
             ]),
             Line::from(vec![
                 Span::styled("distance ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_distance_m(
-                    state.telemetry.latest_distance_m,
-                )),
+                Span::raw(OptionalDistanceDisplay(state.telemetry.latest_distance_m).to_string()),
                 Span::styled(" pitch ", Style::new().fg(Color::Gray)),
-                Span::raw(format_optional_i64(
-                    state.telemetry.latest_pitch_deg,
-                    " deg",
-                )),
+                Span::raw(
+                    OptionalI64Display::new(state.telemetry.latest_pitch_deg, " deg").to_string(),
+                ),
             ]),
         ]);
     }
@@ -1970,12 +2482,55 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
     frame.render_widget(panel, area);
 }
 
-fn format_optional_u64(value: Option<u64>, suffix: &str) -> String {
-    value.map_or_else(|| "unknown".to_owned(), |value| format!("{value}{suffix}"))
+struct OptionalU64Display<'a> {
+    value: Option<u64>,
+    suffix: &'a str,
 }
 
-fn format_optional_i64(value: Option<i64>, suffix: &str) -> String {
-    value.map_or_else(|| "unknown".to_owned(), |value| format!("{value}{suffix}"))
+impl<'a> OptionalU64Display<'a> {
+    const fn new(value: Option<u64>, suffix: &'a str) -> Self {
+        Self { value, suffix }
+    }
+}
+
+impl fmt::Display for OptionalU64Display<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.value {
+            Some(value) => write!(f, "{}{}", value, self.suffix),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+struct OptionalBatteryPercentDisplay(Option<DashboardBatteryPercent>);
+
+impl fmt::Display for OptionalBatteryPercentDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(percent) => write!(f, "{percent}%"),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+struct OptionalI64Display<'a> {
+    value: Option<i64>,
+    suffix: &'a str,
+}
+
+impl<'a> OptionalI64Display<'a> {
+    const fn new(value: Option<i64>, suffix: &'a str) -> Self {
+        Self { value, suffix }
+    }
+}
+
+impl fmt::Display for OptionalI64Display<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.value {
+            Some(value) => write!(f, "{}{}", value, self.suffix),
+            None => f.write_str("unknown"),
+        }
+    }
 }
 
 fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -2090,10 +2645,6 @@ fn panel_block(title: &str) -> Block<'_> {
     Block::bordered().title(title)
 }
 
-fn percent_ratio(value: u64) -> f64 {
-    f64::from(u32::try_from(value).unwrap_or(u32::MAX)) / 100.0
-}
-
 fn to_f64(value: u64) -> f64 {
     f64::from(u32::try_from(value).unwrap_or(u32::MAX))
 }
@@ -2102,25 +2653,61 @@ fn index_to_f64(value: usize) -> f64 {
     f64::from(u32::try_from(value).unwrap_or(u32::MAX))
 }
 
-fn usize_to_u64(value: usize) -> u64 {
-    u64::try_from(value).unwrap_or(u64::MAX)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{fmt::Write as _, io::Cursor};
 
     use super::*;
-    use cutout_btle::{ConnectionTarget, PeripheralObservation};
+    use cutout_btle::{
+        ConnectionTarget, DiagnosticEventCount, DisconnectCount, NotificationByteTotal,
+        NotificationCount, PeripheralObservation, ProtocolWriteCount, ReadOnlyResponseCount,
+        SubscribeCount, TelemetryEventCount, TransportWriteCount,
+    };
     use cutout_core::{
-        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback, FirmwareInfo,
-        GattChannel, Measured, NotificationByteLen, NotificationIngestOutcome, ParserError,
-        ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue,
-        RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
+        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticDetail,
+        DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, NotificationByteLen,
+        NotificationIngestOutcome, ParserError, ParserGapEvidence, PayloadBodyLen, ProtocolFamily,
+        ProtocolSelector, RawFieldValue, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
         SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+    const fn protocol_writes(value: usize) -> ProtocolWriteCount {
+        ProtocolWriteCount::new(value)
+    }
+
+    const fn writes(value: usize) -> TransportWriteCount {
+        TransportWriteCount::new(value)
+    }
+
+    const fn subscribes(value: usize) -> SubscribeCount {
+        SubscribeCount::new(value)
+    }
+
+    const fn notifications(value: usize) -> NotificationCount {
+        NotificationCount::new(value)
+    }
+
+    const fn telemetry_events(value: usize) -> TelemetryEventCount {
+        TelemetryEventCount::new(value)
+    }
+
+    const fn read_only_responses(value: usize) -> ReadOnlyResponseCount {
+        ReadOnlyResponseCount::new(value)
+    }
+
+    const fn diagnostic_events(value: usize) -> DiagnosticEventCount {
+        DiagnosticEventCount::new(value)
+    }
+
+    const fn disconnects(value: usize) -> DisconnectCount {
+        DisconnectCount::new(value)
+    }
+
+    const fn sel(value: u8) -> ProtocolSelector {
+        ProtocolSelector::new(value)
+    }
 
     fn live_aero_telemetry_snapshot() -> TelemetrySnapshot {
         let frame = VeteranFrame::try_from_slice(&hex_literal::hex!(
@@ -2139,6 +2726,12 @@ mod tests {
         snapshot
     }
 
+    fn snapshot_from_delta(delta: TelemetryDelta) -> TelemetrySnapshot {
+        let mut snapshot = TelemetrySnapshot::default();
+        snapshot.apply_delta(delta);
+        snapshot
+    }
+
     fn render_buffer(state: &DashboardState, width: u16, height: u16) -> Buffer {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("terminal creates");
@@ -2146,6 +2739,65 @@ mod tests {
             .draw(|frame| render_dashboard(frame, state))
             .expect("dashboard renders");
         terminal.backend().buffer().clone()
+    }
+
+    fn firmware_43_2_54() -> FirmwareInfo {
+        FirmwareInfo {
+            firmware_major: Some(Measured::reported(43)),
+            firmware_minor: Some(Measured::reported(2)),
+            firmware_patch: Some(Measured::reported(54)),
+            ..FirmwareInfo::default()
+        }
+    }
+
+    fn firmware_summary_text(state: &DashboardState) -> Option<String> {
+        state
+            .read_only
+            .firmware
+            .map(FirmwareSummary)
+            .map(|firmware| firmware.to_string())
+    }
+
+    fn hardware_setting(field: u16, value: i64) -> SettingsEntry {
+        SettingsEntry {
+            field: RawFieldValue::new(field, value),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
+
+    fn sample_aero_read_only_responses() -> Vec<ReadOnlyResponse> {
+        vec![
+            ReadOnlyResponse::Firmware(firmware_43_2_54()),
+            ReadOnlyResponse::Settings(SettingsReadback {
+                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
+            }),
+            ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            )),
+            ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+                BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
+                BatteryInfo {
+                    temperature_mc: Some(Measured::reported(16_730)),
+                    ..BatteryInfo::default()
+                },
+                [
+                    Some(Measured::reported(16_730)),
+                    Some(Measured::reported(17_840)),
+                    Some(Measured::reported(18_100)),
+                    Some(Measured::reported(17_800)),
+                    Some(Measured::reported(17_700)),
+                    Some(Measured::reported(19_100)),
+                ],
+            )),
+            ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            )),
+            ReadOnlyResponse::RawTelemetry(RawTelemetryReadback::default()),
+        ]
     }
 
     fn buffer_text(buffer: &Buffer) -> String {
@@ -2159,6 +2811,16 @@ mod tests {
             }
         }
         text
+    }
+
+    fn assert_display_preserves_capacity(value: impl fmt::Display, expected: &str) {
+        let mut output = String::with_capacity(512);
+        let capacity = output.capacity();
+
+        write!(&mut output, "{value}").expect("display writes to string");
+
+        assert_eq!(output, expected);
+        assert_eq!(output.capacity(), capacity);
     }
 
     fn find_text_position(buffer: &Buffer, needle: &str) -> Option<(u16, u16)> {
@@ -2183,7 +2845,7 @@ mod tests {
         let state = DashboardState::sample();
 
         assert_eq!(state.source, DashboardSource::Demo);
-        assert_eq!(state.active_tab, 0);
+        assert_eq!(state.active_tab, DashboardTab::first());
         assert_eq!(
             state.provenance.as_deref(),
             Some("demo state: aero-nf2557.v1")
@@ -2191,7 +2853,7 @@ mod tests {
         assert_eq!(state.device.make, "NOSFET");
         assert_eq!(state.device.model, "Aero");
         assert_eq!(state.device.name, "Aero NF2557");
-        assert_eq!(state.scan_browser.selected, 0);
+        assert_eq!(state.scan_browser.selected, ScanSelection::first());
         assert_eq!(state.scan_browser.observations.len(), 3);
         assert_eq!(
             state.scan_browser.filters.address.as_deref(),
@@ -2265,10 +2927,10 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("Aero NF2557".to_owned()),
                 rssi: Some(-61),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: vec![].into(),
+                manufacturer_data: Vec::new().into(),
             },
-            services: Vec::new(),
+            services: Vec::new().into(),
         };
 
         let state = DashboardState::live_connected(&target, &summary);
@@ -2279,10 +2941,10 @@ mod tests {
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.device.address, "AA:BB:CC:DD:EE:FF");
         assert_eq!(state.device.connection_state, "connected");
-        assert_eq!(state.counters.connected, 1);
+        assert_eq!(state.counters.connected, ConnectedDeviceCount::new(1));
         assert_eq!(state.telemetry.battery_pct, None);
         assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
-        assert_eq!(state.telemetry.signal_pct, 65);
+        assert_eq!(state.telemetry.signal_pct, SignalPercent::new(65));
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
@@ -2294,13 +2956,35 @@ mod tests {
     }
 
     #[test]
+    fn compact_services_summary_streams_service_entries() {
+        let services = vec![
+            ServiceSummary {
+                uuid: uuid::Uuid::from_u128(0x0000180f_0000_1000_8000_00805f9b34fb),
+                primary: true,
+                characteristics: Vec::new().into(),
+            },
+            ServiceSummary {
+                uuid: uuid::Uuid::from_u128(0x0000ffe0_0000_1000_8000_00805f9b34fb),
+                primary: true,
+                characteristics: Vec::new().into(),
+            },
+        ];
+
+        assert_eq!(
+            CompactServicesSummary(&services).to_string(),
+            "0000180f-0000-1000-8000-00805f9b34fb:0 chars, 0000ffe0-0000-1000-8000-00805f9b34fb:0 chars"
+        );
+        assert_eq!(CompactServicesSummary(&[]).to_string(), "none discovered");
+    }
+
+    #[test]
     fn rssi_signal_percent_clamps_to_reasonable_ble_range() {
-        assert_eq!(rssi_to_signal_percent(-40), 100);
-        assert_eq!(rssi_to_signal_percent(-61), 65);
-        assert_eq!(rssi_to_signal_percent(-74), 43);
-        assert_eq!(rssi_to_signal_percent(-100), 0);
-        assert_eq!(rssi_to_signal_percent(-120), 0);
-        assert_eq!(rssi_to_signal_percent(-20), 100);
+        assert_eq!(SignalPercent::from_rssi_dbm(-40), SignalPercent::new(100));
+        assert_eq!(SignalPercent::from_rssi_dbm(-61), SignalPercent::new(65));
+        assert_eq!(SignalPercent::from_rssi_dbm(-74), SignalPercent::new(43));
+        assert_eq!(SignalPercent::from_rssi_dbm(-100), SignalPercent::new(0));
+        assert_eq!(SignalPercent::from_rssi_dbm(-120), SignalPercent::new(0));
+        assert_eq!(SignalPercent::from_rssi_dbm(-20), SignalPercent::new(100));
     }
 
     #[test]
@@ -2336,11 +3020,30 @@ mod tests {
 
     #[test]
     fn distance_formatter_uses_odometer_scale_for_large_distances() {
-        assert_eq!(format_distance_m(999), "999 m");
-        assert_eq!(format_distance_mm(1_551_169_000), "1551.2 km");
-        assert_eq!(format_optional_distance_m(Some(1_551_169)), "1551.2 km");
-        assert_eq!(format_distance_m(1_550_438), "1550.4 km");
-        assert_eq!(format_optional_distance_m(None), "unknown");
+        assert_eq!(DistanceMDisplay(999).to_string(), "999 m");
+        assert_eq!(DistanceMmDisplay(1_551_169_000).to_string(), "1551.2 km");
+        assert_eq!(
+            OptionalDistanceDisplay(Some(1_551_169)).to_string(),
+            "1551.2 km"
+        );
+        assert_eq!(DistanceMDisplay(1_550_438).to_string(), "1550.4 km");
+        assert_eq!(OptionalDistanceDisplay(None).to_string(), "unknown");
+    }
+
+    #[test]
+    fn optional_numeric_presenters_render_without_helper_strings() {
+        assert_eq!(OptionalU64Display::new(Some(47), "%").to_string(), "47%");
+        assert_eq!(OptionalU64Display::new(None, " V").to_string(), "unknown");
+        assert_eq!(
+            OptionalBatteryPercentDisplay(Some(DashboardBatteryPercent::new(47))).to_string(),
+            "47%"
+        );
+        assert_eq!(OptionalBatteryPercentDisplay(None).to_string(), "unknown");
+        assert_eq!(
+            OptionalI64Display::new(Some(-18), " A").to_string(),
+            "-18 A"
+        );
+        assert_eq!(OptionalI64Display::new(None, " C").to_string(), "unknown");
     }
 
     #[test]
@@ -2350,7 +3053,7 @@ mod tests {
         state.device.model = "Aero".to_owned();
         state.telemetry.latest_voltage_v = Some(120);
         state.telemetry.voltage_v = vec![109, 120, 126];
-        state.telemetry.battery_pct = Some(85);
+        state.telemetry.battery_pct = Some(DashboardBatteryPercent::new(85));
 
         assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
         assert_eq!(voltage_sparkline_max_v(&state), 126);
@@ -2382,19 +3085,19 @@ mod tests {
     fn live_session_report_updates_real_counters_and_logs() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 184,
-            notification_bytes: 18_400,
-            latest_notification_len: Some(100),
-            telemetry: 0,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(184),
+            notification_bytes: NotificationByteTotal::new(18_400),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 1,
+            diagnostics: diagnostic_events(1),
             diagnostics_snapshot: ParserDiagnostics {
                 malformed_frames: 2,
                 unmatched_replies: 1,
@@ -2404,24 +3107,32 @@ mod tests {
             identity: None,
             events: vec![
                 SessionBridgeEvent::Diagnostics {
-                    monotonic_ms: 18,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(18),
                     diagnostics: ParserDiagnostics {
                         malformed_frames: 2,
                         unmatched_replies: 1,
                         ..ParserDiagnostics::default()
                     },
                 },
-                SessionBridgeEvent::LinkDown { monotonic_ms: 19 },
+                SessionBridgeEvent::LinkDown {
+                    monotonic_ms: cutout_btle::MonotonicMs::new(19),
+                },
             ],
-            disconnects: 1,
+            disconnects: disconnects(1),
         };
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.counters.subscriptions, 1);
-        assert_eq!(state.counters.notifications, 184);
-        assert_eq!(state.counters.notification_bytes, 18_400);
-        assert_eq!(state.counters.latest_notification_len, Some(100));
+        assert_eq!(state.counters.subscriptions, subscribes(1));
+        assert_eq!(state.counters.notifications, notifications(184));
+        assert_eq!(
+            state.counters.notification_bytes,
+            NotificationByteTotal::new(18_400)
+        );
+        assert_eq!(
+            state.counters.latest_notification_len,
+            Some(NotificationByteLen::new(100))
+        );
         assert!(
             state
                 .logs
@@ -2449,13 +3160,13 @@ mod tests {
     fn live_session_report_applies_telemetry_snapshot() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 2,
-            notification_bytes: 200,
-            latest_notification_len: Some(100),
-            telemetry: 1,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(2),
+            notification_bytes: NotificationByteTotal::new(200),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
+            telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
                 speed_mm_s: Some(Measured::reported(4_470)),
                 voltage_mv: Some(Measured::reported(84_400)),
@@ -2464,16 +3175,16 @@ mod tests {
                 battery_percent_reported: Some(Measured::reported(77)),
                 ..TelemetrySnapshot::default()
             },
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 42,
+                monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
                     speed_mm_s: Some(Measured::reported(4_470)),
                     voltage_mv: Some(Measured::reported(84_400)),
@@ -2483,12 +3194,15 @@ mod tests {
                     ..TelemetryDelta::empty(42)
                 },
             }],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.telemetry.battery_pct, Some(77));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(77))
+        );
         assert_eq!(
             state.telemetry.battery_source,
             BatterySource::TelemetryReported
@@ -2526,17 +3240,17 @@ mod tests {
     fn parsed_session_report_suppresses_raw_notification_log_spam() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            notifications: 1,
-            notification_bytes: 99,
-            latest_notification_len: Some(99),
-            telemetry: 1,
+            notifications: notifications(1),
+            notification_bytes: NotificationByteTotal::new(99),
+            latest_notification_len: Some(NotificationByteLen::new(99)),
+            telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
                 voltage_mv: Some(Measured::reported(117_600)),
                 battery_percent_estimated: Some(Measured::estimated(78)),
                 ..TelemetrySnapshot::default()
             },
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage_mv: Some(Measured::reported(117_600)),
                     battery_percent_estimated: Some(Measured::estimated(78)),
@@ -2567,7 +3281,7 @@ mod tests {
                 .all(|entry| !entry.message.contains("telemetry unmapped notifications=1"))
         );
 
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("processed telemetry voltage=118V battery=78%"));
         assert!(!text.contains("raw notification len=99"));
@@ -2578,9 +3292,9 @@ mod tests {
     fn unparsed_session_report_summarizes_transport_without_raw_event_spam() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            notifications: 3,
-            notification_bytes: 57,
-            latest_notification_len: Some(20),
+            notifications: notifications(3),
+            notification_bytes: NotificationByteTotal::new(57),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
             events: Vec::new(),
             ..empty_session_bridge_report()
         };
@@ -2600,10 +3314,229 @@ mod tests {
                 .all(|entry| !entry.message.contains("raw notification"))
         );
 
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("telemetry unmapped notifications=3"));
         assert!(!text.contains("raw notification"));
+    }
+
+    #[test]
+    fn notification_ingest_log_keeps_level_structured_until_render_edge() {
+        let channel = GattChannel::from_bytes([0xA1; 16]);
+        let log = NotificationIngestLog {
+            monotonic_ms: 4,
+            outcome: NotificationIngestOutcome::known_reserved(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                NotificationByteLen::new(75),
+                4,
+                ReservedPayloadEvidence {
+                    selector: Some(ProtocolSelector::new(8)),
+                    tag: None,
+                    body_len: PayloadBodyLen::new(24),
+                    verification: VerificationStatus::HardwareVerified,
+                },
+            ),
+        };
+
+        assert_eq!(log.level(), "info");
+        assert_eq!(
+            log.to_string(),
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75"
+        );
+    }
+
+    #[test]
+    fn mapped_telemetry_log_keeps_snapshot_structured_until_render_edge() {
+        let snapshot = TelemetrySnapshot {
+            speed_mm_s: Some(Measured::reported(12_000)),
+            voltage_mv: Some(Measured::reported(119_600)),
+            battery_percent_reported: Some(Measured::reported(87)),
+            motor_current_ma: Some(Measured::reported(-18_500)),
+            controller_temperature_mc: Some(Measured::reported(36_000)),
+            pwm_permille: Some(Measured::reported(420)),
+            distance_mm: Some(Measured::reported(1_551_169_000)),
+            pitch_mdeg: Some(Measured::reported(-2_000)),
+            roll_mdeg: Some(Measured::reported(1_000)),
+            ..TelemetrySnapshot::default()
+        };
+
+        assert_eq!(
+            MappedTelemetryLog(snapshot).to_string(),
+            "telemetry mapped speed=27mph voltage=120V battery=87% current=-18A temperature=36C pwm=42% distance=1551.2 km pitch=-2deg roll=1deg"
+        );
+        assert_eq!(
+            MappedTelemetryLog(TelemetrySnapshot::default()).to_string(),
+            "telemetry mapped none"
+        );
+    }
+
+    #[test]
+    fn settings_readback_log_streams_bounded_entries_at_render_edge() {
+        let settings = SettingsReadback {
+            entries: [
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x20, 540),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x21, -12),
+                    source: ValueSource::Estimated,
+                    quality: ValueQuality::Inferred,
+                    verification: VerificationStatus::Inferred,
+                }),
+                None,
+            ],
+        };
+
+        assert_eq!(
+            SettingsReadbackLog(settings).to_string(),
+            "read-only settings field=32 value=540 quality=known verification=hardware_verified field=33 value=-12 quality=inferred verification=inferred"
+        );
+        assert_eq!(
+            SettingsReadbackLog(SettingsReadback::default()).to_string(),
+            "read-only settings none observed"
+        );
+    }
+
+    #[test]
+    fn read_only_response_summary_counts_use_typed_units() {
+        let diagnostics = DiagnosticReadback {
+            details: [
+                None,
+                Some(DiagnosticDetail {
+                    field: RawFieldValue::new(0x30, 7),
+                    severity: DiagnosticSeverity::Info,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                None,
+            ],
+        };
+        let raw = RawTelemetryReadback {
+            fields: [
+                Some(RawFieldValue::new(0x8001, 989)),
+                None,
+                Some(RawFieldValue::new(0x8002, -21_973)),
+                None,
+            ],
+        };
+
+        assert_eq!(
+            PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics),
+            PopulatedDiagnosticDetailCount::new(1)
+        );
+        assert_eq!(
+            PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw),
+            PopulatedRawTelemetryFieldCount::new(2)
+        );
+        assert_eq!(
+            format_read_only_response(ReadOnlyResponse::Diagnostics(diagnostics)),
+            "read-only diagnostics details=1"
+        );
+        assert_eq!(
+            format_read_only_response(ReadOnlyResponse::RawTelemetry(raw)),
+            "read-only raw telemetry fields=2"
+        );
+    }
+
+    #[test]
+    fn telemetry_delta_log_reuses_typed_field_rendering() {
+        let delta = TelemetryDelta {
+            speed_mm_s: Some(Measured::reported(4_470)),
+            voltage_mv: Some(Measured::reported(118_400)),
+            battery_percent_estimated: Some(Measured::estimated(78)),
+            battery_current_ma: Some(Measured::reported(-12_400)),
+            motor_temperature_mc: Some(Measured::reported(44_600)),
+            distance_mm: Some(Measured::reported(999_000)),
+            pitch_mdeg: Some(Measured::reported(-3_000)),
+            ..TelemetryDelta::empty(42)
+        };
+
+        assert_eq!(
+            TelemetryDeltaLog(delta).to_string(),
+            "speed=10mph voltage=118V battery=78% current=-12A temperature=44C distance=999 m pitch=-3deg"
+        );
+        assert_eq!(
+            TelemetryDeltaLog(TelemetryDelta::empty(42)).to_string(),
+            "unmapped"
+        );
+    }
+
+    #[test]
+    fn dashboard_presenters_write_into_preallocated_buffers_without_reallocating() {
+        let channel = GattChannel::from_bytes([0xA1; 16]);
+        let ingest = NotificationIngestLog {
+            monotonic_ms: 4,
+            outcome: NotificationIngestOutcome::known_reserved(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                NotificationByteLen::new(75),
+                4,
+                ReservedPayloadEvidence {
+                    selector: Some(sel(8)),
+                    tag: None,
+                    body_len: PayloadBodyLen::new(24),
+                    verification: VerificationStatus::HardwareVerified,
+                },
+            ),
+        };
+        assert_display_preserves_capacity(
+            ingest,
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75",
+        );
+        let parser_gap = NotificationIngestLog {
+            monotonic_ms: 9,
+            outcome: NotificationIngestOutcome::parser_gap(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                NotificationByteLen::new(75),
+                9,
+                ParserGapEvidence {
+                    selector: None,
+                    tag: Some(cutout_core::ProtocolTag::new(0x1234)),
+                    body_len: PayloadBodyLen::new(12),
+                },
+            ),
+        };
+        assert_display_preserves_capacity(
+            parser_gap,
+            "t=9ms protocol parser gap family=VeteranLeaperkimNosfet selector=none tag=4660 body_len=12 len=75",
+        );
+
+        assert_display_preserves_capacity(
+            MappedTelemetryLog(TelemetrySnapshot {
+                voltage_mv: Some(Measured::reported(119_600)),
+                battery_percent_reported: Some(Measured::reported(87)),
+                ..TelemetrySnapshot::default()
+            }),
+            "telemetry mapped voltage=120V battery=87%",
+        );
+
+        assert_display_preserves_capacity(
+            SettingsReadbackLog(SettingsReadback {
+                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
+            }),
+            "read-only settings field=32 value=540 quality=known verification=hardware_verified",
+        );
+
+        assert_display_preserves_capacity(
+            BmsPageSummary(
+                BatteryPagePayload::raw(
+                    BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
+                    BatteryInfo {
+                        current_ma: Some(Measured::reported(2_010)),
+                        ..BatteryInfo::default()
+                    },
+                )
+                .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+            ),
+            "selector=0 kind=metadata verification=hardware_verified current=2A bms_current_0=-1A bms_current_1=0A",
+        );
     }
 
     #[test]
@@ -2611,12 +3544,12 @@ mod tests {
         let mut state = DashboardState::empty();
         let channel = GattChannel::from_bytes([0xA1; 16]);
         let report = SessionBridgeReport {
-            notifications: 5,
-            notification_bytes: 269,
-            latest_notification_len: Some(77),
+            notifications: notifications(5),
+            notification_bytes: NotificationByteTotal::new(269),
+            latest_notification_len: Some(NotificationByteLen::new(77)),
             events: vec![
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 3,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(3),
                     outcome: NotificationIngestOutcome::buffered_fragment(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2625,7 +3558,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 4,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(4),
                     outcome: NotificationIngestOutcome::known_reserved(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2640,7 +3573,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 5,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(5),
                     outcome: NotificationIngestOutcome::parser_gap(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2654,7 +3587,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 6,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(6),
                     outcome: NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2664,7 +3597,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 7,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(7),
                     outcome: NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
                         NotificationByteLen::new(20),
@@ -2676,7 +3609,7 @@ mod tests {
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 140, 36));
 
@@ -2696,7 +3629,7 @@ mod tests {
     fn read_only_response_events_render_as_parsed_aero_events() {
         let mut state = DashboardState::empty();
         let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-            BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+            BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
             BatteryInfo {
                 temperature_mc: Some(Measured::reported(17_600)),
                 ..BatteryInfo::default()
@@ -2711,17 +3644,17 @@ mod tests {
             ],
         ));
         let report = SessionBridgeReport {
-            read_only_responses: 1,
+            read_only_responses: read_only_responses(1),
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
             }],
             ..empty_session_bridge_report()
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -2744,25 +3677,28 @@ mod tests {
     #[test]
     fn read_only_metadata_current_renders_as_parsed_aero_event() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::metadata(0, VerificationStatus::HardwareVerified),
-            BatteryInfo {
-                current_ma: Some(Measured::reported(2_010)),
-                ..BatteryInfo::default()
-            },
-        ));
+        let read_only_response = ReadOnlyResponse::Battery(
+            BatteryPagePayload::raw(
+                BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
+                BatteryInfo {
+                    current_ma: Some(Measured::reported(2_010)),
+                    ..BatteryInfo::default()
+                },
+            )
+            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+        );
         let report = SessionBridgeReport {
-            read_only_responses: 1,
+            read_only_responses: read_only_responses(1),
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
             }],
             ..empty_session_bridge_report()
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -2772,39 +3708,43 @@ mod tests {
                     .message
                     .contains("read-only battery selector=0 kind=metadata")
                 && entry.message.contains("current=2A")
+                && entry.message.contains("bms_current_0=-1A")
+                && entry.message.contains("bms_current_1=0A")
         }));
         assert!(text.contains("current=2A"));
+        assert!(text.contains("bms_current_0=-1A"));
+        assert!(text.contains("bms_current_1=0A"));
     }
 
     #[test]
     fn first_voltage_sample_seeds_the_sparkline_history() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 1,
-            notification_bytes: 20,
-            latest_notification_len: Some(20),
-            telemetry: 1,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(1),
+            notification_bytes: NotificationByteTotal::new(20),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
+            telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage_mv: Some(Measured::reported(108_760)),
                     battery_percent_estimated: Some(Measured::estimated(47)),
                     ..TelemetryDelta::empty(7)
                 },
             }],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
@@ -2824,91 +3764,71 @@ mod tests {
     fn live_session_report_summarizes_read_only_responses() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 3,
-            notification_bytes: 300,
-            latest_notification_len: Some(100),
-            telemetry: 0,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(3),
+            notification_bytes: NotificationByteTotal::new(300),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: 5,
-            read_only_response_events: vec![
-                ReadOnlyResponse::Firmware(FirmwareInfo {
-                    firmware_major: Some(Measured::reported(43)),
-                    firmware_minor: Some(Measured::reported(2)),
-                    firmware_patch: Some(Measured::reported(54)),
-                    ..FirmwareInfo::default()
-                }),
-                ReadOnlyResponse::Settings(SettingsReadback {
-                    entries: [
-                        Some(SettingsEntry {
-                            field: RawFieldValue::new(0x20, 540),
-                            source: ValueSource::Reported,
-                            quality: ValueQuality::Known,
-                            verification: VerificationStatus::HardwareVerified,
-                        }),
-                        None,
-                        None,
-                        None,
-                    ],
-                }),
-                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
-                    BatteryInfo::default(),
-                )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-                    BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
-                    BatteryInfo {
-                        temperature_mc: Some(Measured::reported(16_730)),
-                        ..BatteryInfo::default()
-                    },
-                    [
-                        Some(Measured::reported(16_730)),
-                        Some(Measured::reported(17_840)),
-                        Some(Measured::reported(18_100)),
-                        Some(Measured::reported(17_800)),
-                        Some(Measured::reported(17_700)),
-                        Some(Measured::reported(19_100)),
-                    ],
-                )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
-                    BatteryInfo::default(),
-                )),
-                ReadOnlyResponse::RawTelemetry(RawTelemetryReadback::default()),
-            ],
+            read_only_responses: read_only_responses(5),
+            read_only_response_events: sample_aero_read_only_responses(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: Vec::new(),
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.read_only.firmware.as_deref(), Some("43.2.54"));
+        assert_eq!(firmware_summary_text(&state), Some("43.2.54".to_owned()));
         assert_eq!(state.read_only.settings.len(), 1);
-        assert!(
-            state.read_only.settings[0].contains("field=32")
-                && state.read_only.settings[0].contains("value=540")
-                && state.read_only.settings[0].contains("hardware_verified")
+        assert_eq!(
+            state.read_only.settings[0].field,
+            RawFieldValue::new(0x20, 540)
+        );
+        assert_eq!(
+            state.read_only.settings[0].verification,
+            VerificationStatus::HardwareVerified
         );
         assert_eq!(state.read_only.bms_pages.len(), 3);
-        assert!(state.read_only.bms_pages[0].contains("selector=2 kind=cell_voltage"));
-        assert!(state.read_only.bms_pages[1].contains(
-            "selector=3 kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
-        ));
-        assert!(state.read_only.bms_pages[2].contains("selector=8 kind=raw"));
         assert_eq!(
-            state.read_only.latest_bms_temperature.as_deref(),
-            Some("selector=3 verification=hardware_verified temps_c=16,17,18,17,17,19")
+            state.read_only.bms_pages[0].page().kind,
+            BatteryPageKind::CellVoltage
         );
-        assert_eq!(state.read_only.unknown_raw_pages, 1);
-        assert_eq!(state.read_only.raw_telemetry, 1);
+        assert_eq!(
+            state.read_only.bms_pages[1].page().kind,
+            BatteryPageKind::Temperature
+        );
+        assert_eq!(
+            BmsPageSummary(state.read_only.bms_pages[1]).to_string(),
+            "selector=3 kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
+        );
+        assert_eq!(
+            state.read_only.bms_pages[2].page().kind,
+            BatteryPageKind::Raw
+        );
+        assert_eq!(
+            state
+                .read_only
+                .latest_bms_temperature
+                .map(LatestBmsTemperatureSummary)
+                .map(|summary| summary.to_string()),
+            Some("selector=3 verification=hardware_verified temps_c=16,17,18,17,17,19".to_owned())
+        );
+        assert_eq!(
+            state.read_only.unknown_raw_pages,
+            RawReadOnlyPageCount::new(1)
+        );
+        assert_eq!(
+            state.read_only.raw_telemetry,
+            RawTelemetryResponseCount::new(1)
+        );
         assert!(
             state
                 .logs
@@ -2921,15 +3841,15 @@ mod tests {
     fn read_only_session_report_does_not_warn_about_missing_telemetry_samples() {
         let mut state = DashboardState::empty();
         let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+            BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
             BatteryInfo::default(),
         ));
         let report = SessionBridgeReport {
-            telemetry: 0,
-            read_only_responses: 1,
+            telemetry: telemetry_events(0),
+            read_only_responses: read_only_responses(1),
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
             }],
             ..empty_session_bridge_report()
@@ -2954,19 +3874,15 @@ mod tests {
             ..TelemetryDelta::empty(42)
         };
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 4,
-            notification_bytes: 400,
-            latest_notification_len: Some(100),
-            telemetry: 1,
-            telemetry_snapshot: {
-                let mut snapshot = TelemetrySnapshot::default();
-                snapshot.apply_delta(telemetry);
-                snapshot
-            },
-            read_only_responses: 5,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(4),
+            notification_bytes: NotificationByteTotal::new(400),
+            latest_notification_len: Some(NotificationByteLen::new(100)),
+            telemetry: telemetry_events(1),
+            telemetry_snapshot: snapshot_from_delta(telemetry),
+            read_only_responses: read_only_responses(5),
             read_only_response_events: vec![
                 ReadOnlyResponse::Firmware(FirmwareInfo {
                     firmware_major: Some(Measured::reported(43)),
@@ -2988,18 +3904,18 @@ mod tests {
                     ],
                 }),
                 ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Diagnostics(DiagnosticReadback::default()),
             ],
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 1,
+            diagnostics: diagnostic_events(1),
             diagnostics_snapshot: ParserDiagnostics {
                 malformed_frames: 1,
                 ..ParserDiagnostics::default()
@@ -3008,32 +3924,41 @@ mod tests {
             identity: None,
             events: vec![
                 SessionBridgeEvent::ProcessedTelemetry {
-                    monotonic_ms: 42,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(42),
                     delta: telemetry,
                 },
                 SessionBridgeEvent::Diagnostics {
-                    monotonic_ms: 43,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(43),
                     diagnostics: ParserDiagnostics {
                         malformed_frames: 1,
                         ..ParserDiagnostics::default()
                     },
                 },
             ],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.counters.subscriptions, 1);
-        assert_eq!(state.counters.notifications, 4);
+        assert_eq!(state.counters.subscriptions, subscribes(1));
+        assert_eq!(state.counters.notifications, notifications(4));
         assert_eq!(state.telemetry.latest_speed_mph, Some(10));
         assert_eq!(state.telemetry.latest_voltage_v, Some(109));
-        assert_eq!(state.telemetry.battery_pct, Some(47));
-        assert_eq!(state.read_only.firmware.as_deref(), Some("43.2.54"));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(47))
+        );
+        assert_eq!(firmware_summary_text(&state), Some("43.2.54".to_owned()));
         assert_eq!(state.read_only.settings.len(), 1);
         assert_eq!(state.read_only.bms_pages.len(), 2);
-        assert_eq!(state.read_only.unknown_raw_pages, 1);
-        assert_eq!(state.read_only.diagnostics, 1);
+        assert_eq!(
+            state.read_only.unknown_raw_pages,
+            RawReadOnlyPageCount::new(1)
+        );
+        assert_eq!(
+            state.read_only.diagnostics,
+            ReadOnlyDiagnosticResponseCount::new(1)
+        );
         assert!(state.logs.iter().any(|entry| {
             entry.level == "info" && entry.message.contains("read-only responses=5")
         }));
@@ -3050,48 +3975,56 @@ mod tests {
         let pages: Vec<_> = (0_u8..20)
             .map(|selector| {
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(selector, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::raw(sel(selector), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 ))
             })
             .collect();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 0,
-            notifications: 0,
-            notification_bytes: 0,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(0),
+            notifications: notifications(0),
+            notification_bytes: NotificationByteTotal::default(),
             latest_notification_len: None,
-            telemetry: 0,
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: pages.len(),
+            read_only_responses: read_only_responses(pages.len()),
             read_only_response_events: pages,
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: Vec::new(),
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
 
         assert_eq!(state.read_only.bms_pages.len(), READ_ONLY_SUMMARY_LIMIT);
-        assert!(state.read_only.bms_pages[0].contains("selector=4"));
-        assert!(state.read_only.bms_pages[READ_ONLY_SUMMARY_LIMIT - 1].contains("selector=19"));
-        assert_eq!(state.read_only.unknown_raw_pages, 20);
+        assert_eq!(state.read_only.bms_pages[0].page().selector, sel(4));
+        assert_eq!(
+            state.read_only.bms_pages[READ_ONLY_SUMMARY_LIMIT - 1]
+                .page()
+                .selector,
+            sel(19)
+        );
+        assert_eq!(
+            state.read_only.unknown_raw_pages,
+            RawReadOnlyPageCount::new(20)
+        );
     }
 
     #[test]
     fn read_only_temperature_summary_survives_later_bms_pages() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            read_only_responses: 4,
+            read_only_responses: read_only_responses(4),
             read_only_response_events: vec![
                 ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-                    BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                     BatteryInfo {
                         temperature_mc: Some(Measured::reported(17_600)),
                         ..BatteryInfo::default()
@@ -3106,15 +4039,15 @@ mod tests {
                     ],
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::metadata(0, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
             ],
@@ -3122,12 +4055,16 @@ mod tests {
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 2;
+        state.active_tab = DashboardTab::new(2);
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert_eq!(
-            state.read_only.latest_bms_temperature.as_deref(),
-            Some("selector=3 verification=hardware_verified temps_c=17,17,17,18,19,19")
+            state
+                .read_only
+                .latest_bms_temperature
+                .map(LatestBmsTemperatureSummary)
+                .map(|summary| summary.to_string()),
+            Some("selector=3 verification=hardware_verified temps_c=17,17,17,18,19,19".to_owned())
         );
         assert!(text.contains("bms temp"));
         assert!(text.contains("temps_c=17,17,17,18,19,19"));
@@ -3139,7 +4076,10 @@ mod tests {
 
         state.apply_battery_percent(88);
 
-        assert_eq!(state.telemetry.battery_pct, Some(88));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(88))
+        );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
             state
@@ -3150,7 +4090,10 @@ mod tests {
 
         state.apply_battery_percent(150);
 
-        assert_eq!(state.telemetry.battery_pct, Some(100));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(100))
+        );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
             state
@@ -3170,7 +4113,10 @@ mod tests {
             message: "live dashboard update received".to_owned(),
         });
 
-        assert_eq!(state.telemetry.battery_pct, Some(45));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(45))
+        );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(state.logs.iter().any(|entry| {
             entry.level == "info" && entry.message == "live dashboard update received"
@@ -3181,57 +4127,63 @@ mod tests {
     fn live_session_reports_accumulate_transport_counters() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 2,
-            notification_bytes: 40,
-            latest_notification_len: Some(20),
-            telemetry: 0,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(2),
+            notification_bytes: NotificationByteTotal::new(40),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: Vec::new(),
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
         state.apply_session_report(&report);
 
-        assert_eq!(state.counters.subscriptions, 2);
-        assert_eq!(state.counters.notifications, 4);
-        assert_eq!(state.counters.notification_bytes, 80);
-        assert_eq!(state.counters.latest_notification_len, Some(20));
+        assert_eq!(state.counters.subscriptions, subscribes(2));
+        assert_eq!(state.counters.notifications, notifications(4));
+        assert_eq!(
+            state.counters.notification_bytes,
+            NotificationByteTotal::new(80)
+        );
+        assert_eq!(
+            state.counters.latest_notification_len,
+            Some(NotificationByteLen::new(20))
+        );
     }
 
     #[test]
     fn live_session_report_uses_estimated_battery_from_voltage_telemetry() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 1,
-            notification_bytes: 20,
-            latest_notification_len: Some(20),
-            telemetry: 1,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(1),
+            notification_bytes: NotificationByteTotal::new(20),
+            latest_notification_len: Some(NotificationByteLen::new(20)),
+            telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 42,
+                monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
                     speed_mm_s: Some(Measured::reported(0)),
                     voltage_mv: Some(Measured::reported(108_760)),
@@ -3244,12 +4196,15 @@ mod tests {
                     ..TelemetryDelta::empty(42)
                 },
             }],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.telemetry.battery_pct, Some(47));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(47))
+        );
         assert_eq!(
             state.telemetry.battery_source,
             BatterySource::TelemetryEstimated
@@ -3274,7 +4229,7 @@ mod tests {
         assert!(overview_text.contains("47%"));
         assert!(overview_text.contains("Voltage"));
 
-        state.active_tab = 1;
+        state.active_tab = DashboardTab::new(1);
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("voltage 109 V"));
         assert!(text.contains("109 V"));
@@ -3307,7 +4262,7 @@ mod tests {
         state.advance();
 
         assert!(state.logs.is_empty());
-        assert_eq!(state.counters.notifications, 0);
+        assert_eq!(state.counters.notifications, NotificationCount::default());
     }
 
     #[test]
@@ -3315,13 +4270,13 @@ mod tests {
         let mut state = DashboardState::empty();
 
         state.next_tab();
-        assert_eq!(state.active_tab, 1);
+        assert_eq!(state.active_tab, DashboardTab::new(1));
 
         state.previous_tab();
-        assert_eq!(state.active_tab, 0);
+        assert_eq!(state.active_tab, DashboardTab::first());
 
         state.previous_tab();
-        assert_eq!(state.active_tab, 3);
+        assert_eq!(state.active_tab, DashboardTab::new(3));
     }
 
     #[test]
@@ -3338,7 +4293,7 @@ mod tests {
     #[test]
     fn telemetry_tab_renders_telemetry_page() {
         let mut state = DashboardState::sample();
-        state.active_tab = 1;
+        state.active_tab = DashboardTab::new(1);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -3352,31 +4307,39 @@ mod tests {
     #[test]
     fn profiles_tab_renders_read_only_aero_state() {
         let mut state = DashboardState::empty();
-        state.active_tab = 2;
+        state.active_tab = DashboardTab::new(2);
         state
             .telemetry
             .apply_snapshot(live_aero_telemetry_snapshot());
-        state.read_only.firmware = Some("43.2.54".to_owned());
-        state.read_only.settings.push_back(
-            "field=36 value=1920 quality=known verification=hardware_verified".to_owned(),
-        );
-        state.read_only.settings.push_back(
-            "field=37 value=1940 quality=known verification=hardware_verified".to_owned(),
-        );
+        state.read_only.firmware = Some(firmware_43_2_54());
+        state
+            .read_only
+            .settings
+            .push_back(hardware_setting(36, 1920));
+        state
+            .read_only
+            .settings
+            .push_back(hardware_setting(37, 1940));
         state
             .read_only
             .bms_pages
-            .push_back("selector=2 kind=cell_voltage verification=hardware_verified".to_owned());
+            .push_back(BatteryPagePayload::cell_voltage(
+                BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            ));
+        state.read_only.bms_pages.push_back(BatteryPagePayload::raw(
+            BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
+            BatteryInfo::default(),
+        ));
         state
             .read_only
             .bms_pages
-            .push_back("selector=8 kind=raw verification=hardware_verified".to_owned());
-        state
-            .read_only
-            .bms_pages
-            .push_back("selector=47 kind=temperature verification=hardware_verified".to_owned());
-        state.read_only.unknown_raw_pages = 1;
-        state.read_only.diagnostics = 1;
+            .push_back(BatteryPagePayload::temperature(
+                BatteryPageMetadata::temperature(sel(47), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            ));
+        state.read_only.unknown_raw_pages = RawReadOnlyPageCount::new(1);
+        state.read_only.diagnostics = ReadOnlyDiagnosticResponseCount::new(1);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -3395,10 +4358,10 @@ mod tests {
     #[test]
     fn live_telemetry_tab_renders_decoder_input_when_decoder_has_no_samples() {
         let mut state = DashboardState::empty();
-        state.active_tab = 1;
-        state.counters.notifications = 47;
-        state.counters.notification_bytes = 4_700;
-        state.counters.latest_notification_len = Some(100);
+        state.active_tab = DashboardTab::new(1);
+        state.counters.notifications = notifications(47);
+        state.counters.notification_bytes = NotificationByteTotal::new(4_700);
+        state.counters.latest_notification_len = Some(NotificationByteLen::new(100));
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -3461,7 +4424,7 @@ mod tests {
     #[test]
     fn logs_tab_uses_recent_events_as_the_primary_panel() {
         let mut state = DashboardState::sample();
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -3473,7 +4436,7 @@ mod tests {
     #[test]
     fn taller_logs_tab_reveals_more_retained_events() {
         let mut state = DashboardState::empty();
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
         for index in 0..80 {
             state.push_log("info", &format!("event-{index:02}"));
         }
@@ -3564,7 +4527,7 @@ mod tests {
             Some("demo state: aero-nf2557.v1")
         );
         assert_eq!(state.device.name, "Aero NF2557");
-        assert_eq!(state.counters.notifications, 27);
+        assert_eq!(state.counters.notifications, notifications(27));
         assert_eq!(state.profiles.len(), 3);
         assert_eq!(state.telemetry.speed_mph.len(), 12);
         assert_eq!(state.telemetry.current_points.len(), 12);

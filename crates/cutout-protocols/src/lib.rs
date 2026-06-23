@@ -12,14 +12,17 @@
 mod gatt;
 pub use gatt::*;
 mod begode_frame;
-pub use begode_frame::{BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameReassembler};
+pub use begode_frame::{
+    BEGODE_FRAME_LEN, BegodeFrame, BegodeFrameError, BegodeFrameParseResult, BegodeFrameReassembler,
+};
 mod begode_bms;
 pub use begode_bms::{
     BEGODE_BMS_CELL_VALUES_PER_PAGE, BegodeBmsCellPage, BegodeBmsPageError, BegodeBmsSummary,
 };
 mod begode_banner;
 pub use begode_banner::{
-    BegodeBanner, BegodeFirmwarePrefix, BegodeImuKind, parse_begode_ascii_banner,
+    BegodeBanner, BegodeBannerParse, BegodeFirmwarePrefix, BegodeImuKind,
+    classify_begode_ascii_banner, parse_begode_ascii_banner,
 };
 mod begode_telemetry;
 pub use begode_telemetry::{
@@ -48,14 +51,14 @@ mod fixture;
 pub use fixture::*;
 mod identification;
 pub use identification::{
-    IdentityConfidence, IdentityEvidence, StagedIdentityInput, StagedIdentityResolution,
-    identify_model,
+    IdentityConfidence, IdentityEvidence, IdentityParser, ParsedModelBanner, StagedIdentityInput,
+    StagedIdentityResolution, identify_known_model, identify_model, parse_model_banner,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
 mod registry;
-pub use registry::BEGODE_FALCON_REGISTRY_ENTRY;
+pub use registry::{BEGODE_FALCON_REGISTRY_ENTRY, MODEL_REGISTRY};
 mod request_encoder;
 mod session;
 mod vesc_codec;
@@ -72,19 +75,19 @@ pub use session::{
     BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
-    ReadOnlyOperation, ReadOnlySession, SettingsWriteOperation, SupportsBenignControls,
-    SupportsDangerousActuation, SupportsReadRequests, SupportsSettingsWrites,
-    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID, VESC_RAW_FAULT_CODE_FIELD_ID,
-    VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-    VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
-    VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
-    VeteranNotificationDecoder,
+    ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
+    SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
+    SupportsSettingsWrites, VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
+    VESC_RAW_FAULT_CODE_FIELD_ID, VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
+    VESC_RAW_STATS_CURRENT_AVG_FIELD_ID, VESC_RAW_STATS_POWER_AVG_FIELD_ID,
+    VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel,
+    VescNotificationDecoder, VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
     VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN, VESC_MAX_STREAM_REPLIES, VescBoardProfile,
     VescCanReadOnlyRequest, VescCodecError, VescFaultCode, VescReadOnlyCodec, VescReadOnlyReply,
-    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescStatsMask, VescStatsTelemetry,
-    VescValuesMask, VescValuesTelemetry,
+    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask,
+    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,
@@ -94,7 +97,8 @@ pub use veteran_bms::{
     classify_veteran_bms_selector, decode_veteran_bms_page,
 };
 pub use veteran_frame::{
-    MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
+    MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
+    VeteranReassemblyError,
 };
 pub use veteran_telemetry::{
     NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV,

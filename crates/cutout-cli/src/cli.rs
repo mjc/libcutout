@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use cutout_btle::ConnectionTarget;
+use cutout_btle::{ConnectionTarget, MaxReconnectLinks};
 use cutout_core::{CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel};
 use uuid::Uuid;
 
@@ -159,6 +159,10 @@ impl ScanArgs {
     }
 }
 
+fn parse_max_reconnect_links(value: &str) -> Result<MaxReconnectLinks, std::num::ParseIntError> {
+    value.parse().map(MaxReconnectLinks::at_least_one)
+}
+
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
 pub(crate) struct TargetedScanArgs {
     #[command(flatten)]
@@ -190,8 +194,13 @@ pub(crate) struct CaptureArgs {
     pub(crate) target: TargetedScanArgs,
 
     /// Maximum connected-link attempts for reconnect capture.
-    #[arg(long = "reconnect-attempts", value_name = "COUNT", default_value_t = 1)]
-    pub(crate) reconnect_attempts: usize,
+    #[arg(
+        long = "reconnect-attempts",
+        value_name = "COUNT",
+        default_value = "1",
+        value_parser = parse_max_reconnect_links
+    )]
+    pub(crate) reconnect_attempts: MaxReconnectLinks,
 
     /// Standard capture scenario label stored in PEVCAP metadata.
     #[arg(long = "capture-label", value_enum)]
@@ -507,6 +516,7 @@ mod tests {
     use std::path::PathBuf;
 
     use clap::{CommandFactory, Parser, error::ErrorKind};
+    use cutout_btle::MaxReconnectLinks;
     use uuid::Uuid;
 
     use super::{
@@ -892,7 +902,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
-                reconnect_attempts: 1,
+                reconnect_attempts: MaxReconnectLinks::at_least_one(1),
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -919,7 +929,7 @@ mod tests {
             panic!("expected capture command");
         };
 
-        assert_eq!(args.reconnect_attempts, 3);
+        assert_eq!(args.reconnect_attempts, MaxReconnectLinks::at_least_one(3));
     }
 
     #[test]
@@ -944,7 +954,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
-                reconnect_attempts: 1,
+                reconnect_attempts: MaxReconnectLinks::at_least_one(1),
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -984,7 +994,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
-                reconnect_attempts: 1,
+                reconnect_attempts: MaxReconnectLinks::at_least_one(1),
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -1024,7 +1034,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
-                reconnect_attempts: 1,
+                reconnect_attempts: MaxReconnectLinks::at_least_one(1),
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -1068,7 +1078,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
-                reconnect_attempts: 1,
+                reconnect_attempts: MaxReconnectLinks::at_least_one(1),
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -1110,7 +1120,7 @@ mod tests {
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 },
-                reconnect_attempts: 1,
+                reconnect_attempts: MaxReconnectLinks::at_least_one(1),
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,
@@ -1183,7 +1193,7 @@ mod tests {
                     diagnostics_jsonl: true,
                     read_only_jsonl: false,
                 },
-                reconnect_attempts: 1,
+                reconnect_attempts: MaxReconnectLinks::at_least_one(1),
                 capture_label: None,
                 capture_privacy: None,
                 capture_evidence: None,

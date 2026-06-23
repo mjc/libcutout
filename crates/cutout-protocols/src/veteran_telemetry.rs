@@ -1,8 +1,8 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
-    BmsLayoutSpec, BmsPageSelectorSpec, FirmwareInfo, Measured, MonotonicMillis, RawFieldValue,
-    ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality, ValueSource,
-    VerificationStatus,
+    BmsLayoutSpec, BmsPageSelectorSpec, FirmwareInfo, Measured, MonotonicMillis, ProtocolSelector,
+    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality,
+    ValueSource, VerificationStatus,
 };
 use thiserror::Error;
 
@@ -45,7 +45,7 @@ const VETERAN_BMS_42S_6P_LAYOUT: BmsLayoutSpec = veteran_bms_layout(42, 6);
 const fn bms_page_selector(selector: u8) -> BmsPageSelectorSpec {
     BmsPageSelectorSpec {
         selector,
-        kind: classify_veteran_bms_selector(selector),
+        kind: classify_veteran_bms_selector(ProtocolSelector::new(selector)),
         verification: VETERAN_BMS_SELECTOR_VERIFICATION,
     }
 }

@@ -1,6 +1,10 @@
+use std::borrow::Borrow;
+
 use cutout_core::{GattFingerprint, ModelRegistryEntry, ProtocolFamily};
 
-use crate::{BegodeBanner, DeviceFamily, ProtocolFamilyClassification};
+use crate::{
+    BegodeBanner, DeviceFamily, ProtocolFamilyClassification, classify_begode_ascii_banner,
+};
 
 /// Confidence level for staged model identification.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -77,18 +81,18 @@ impl IdentityEvidence {
 
 /// Borrowed evidence collected during staged identity detection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StagedIdentityInput<'a> {
+pub struct StagedIdentityInput<'a, GattEvidence = &'a [GattFingerprint]> {
     /// BLE advertised name, when present.
     pub advertised_name: Option<&'a str>,
 
     /// Host-observed GATT fingerprints.
-    pub gatt: &'a [GattFingerprint],
+    pub gatt: GattEvidence,
 
     /// Passive stream-family classification from notification bytes.
     pub stream_family: ProtocolFamilyClassification,
 
-    /// Most recent parsed identity/config banner.
-    pub banner: Option<BegodeBanner<'a>>,
+    /// Most recent parsed model banner text.
+    pub banner_model: Option<&'a str>,
 }
 
 /// Result of staged identity detection.
@@ -104,6 +108,45 @@ pub struct StagedIdentityResolution {
     pub evidence: IdentityEvidence,
 }
 
+/// Model evidence parsed from untrusted identity bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParsedModelBanner<'a> {
+    /// Model name text extracted from a recognized identity banner.
+    pub model: &'a str,
+}
+
+/// Parser for model identity bytes emitted by a protocol family.
+#[derive(Clone, Copy, Debug)]
+pub struct IdentityParser {
+    parse_model_banner: for<'a> fn(&'a [u8]) -> Option<ParsedModelBanner<'a>>,
+}
+
+impl IdentityParser {
+    /// Creates a parser from a model-banner parser function.
+    #[must_use]
+    pub const fn new(
+        parse_model_banner: for<'a> fn(&'a [u8]) -> Option<ParsedModelBanner<'a>>,
+    ) -> Self {
+        Self { parse_model_banner }
+    }
+
+    /// Parses untrusted identity bytes as model banner evidence.
+    #[must_use]
+    pub fn parse_model_banner(self, bytes: &[u8]) -> Option<ParsedModelBanner<'_>> {
+        (self.parse_model_banner)(bytes)
+    }
+}
+
+const IDENTITY_PARSERS: [IdentityParser; 1] = [IdentityParser::new(parse_begode_model_banner)];
+
+/// Iterates known identity parsers and returns the first model banner they recognize.
+#[must_use]
+pub fn parse_model_banner(bytes: &[u8]) -> Option<ParsedModelBanner<'_>> {
+    IDENTITY_PARSERS
+        .into_iter()
+        .find_map(|parser| parser.parse_model_banner(bytes))
+}
+
 impl StagedIdentityResolution {
     const NO_MATCH: Self = Self {
         model: None,
@@ -115,91 +158,95 @@ impl StagedIdentityResolution {
 /// Identifies the best registry model candidate from staged, non-actuating evidence.
 #[must_use]
 pub fn identify_model(
-    input: StagedIdentityInput<'_>,
+    input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
     registry: &[&'static ModelRegistryEntry],
 ) -> StagedIdentityResolution {
     let Some(expected_family) = protocol_family_from_classification(input.stream_family) else {
         return hints_only_resolution(input, registry);
     };
 
-    let mut best = StagedIdentityResolution::NO_MATCH;
+    registry
+        .iter()
+        .copied()
+        .filter(|entry| entry.protocol_family == expected_family)
+        .map(|entry| family_resolution(input, entry))
+        .max_by_key(|resolution| resolution.confidence)
+        .unwrap_or(StagedIdentityResolution::NO_MATCH)
+}
 
-    for entry in registry {
-        if entry.protocol_family != expected_family {
-            continue;
-        }
-
-        let mut evidence = candidate_hints(input, entry).with_passive_family_match();
-        if has_matching_model_banner(input.banner, entry) {
-            evidence = evidence.with_banner_model_match();
-            return StagedIdentityResolution {
-                model: Some(*entry),
-                confidence: IdentityConfidence::Model,
-                evidence,
-            };
-        }
-
-        best = max_resolution(
-            best,
-            StagedIdentityResolution {
-                model: None,
-                confidence: IdentityConfidence::FamilyOnly,
-                evidence,
-            },
-        );
-    }
-
-    best
+/// Identifies the best known model from the crate-owned compile-time registry.
+#[must_use]
+pub fn identify_known_model(
+    input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
+) -> StagedIdentityResolution {
+    identify_model(input, &crate::MODEL_REGISTRY)
 }
 
 fn hints_only_resolution(
-    input: StagedIdentityInput<'_>,
+    input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
     registry: &[&'static ModelRegistryEntry],
 ) -> StagedIdentityResolution {
-    let mut best = StagedIdentityResolution::NO_MATCH;
-
-    for entry in registry {
-        let evidence = candidate_hints(input, entry);
-        if evidence != IdentityEvidence::empty() {
-            best = max_resolution(
-                best,
-                StagedIdentityResolution {
-                    model: None,
-                    confidence: IdentityConfidence::HintsOnly,
-                    evidence,
-                },
-            );
-        }
-    }
-
-    best
+    registry
+        .iter()
+        .copied()
+        .map(|entry| StagedIdentityResolution {
+            model: None,
+            confidence: IdentityConfidence::HintsOnly,
+            evidence: candidate_hints(input, entry),
+        })
+        .filter(|resolution| resolution.evidence != IdentityEvidence::empty())
+        .max_by_key(|resolution| resolution.confidence)
+        .unwrap_or(StagedIdentityResolution::NO_MATCH)
 }
 
-fn candidate_hints(input: StagedIdentityInput<'_>, entry: &ModelRegistryEntry) -> IdentityEvidence {
-    let mut evidence = IdentityEvidence::empty();
-
-    if input
-        .advertised_name
-        .is_some_and(|name| model_name_matches(name, entry))
-    {
-        evidence = evidence.with_advertised_name_hint();
-    }
-    if gatt_matches(input.gatt, entry.gatt) {
-        evidence = evidence.with_gatt_hint();
-    }
-
-    evidence
+fn family_resolution<GattEvidence>(
+    input: &StagedIdentityInput<'_, GattEvidence>,
+    entry: &'static ModelRegistryEntry,
+) -> StagedIdentityResolution
+where
+    GattEvidence: Clone + IntoIterator,
+    GattEvidence::Item: Borrow<GattFingerprint>,
+{
+    input
+        .banner_model
+        .filter(|name| model_name_matches(name, entry))
+        .map_or_else(
+            || StagedIdentityResolution {
+                model: None,
+                confidence: IdentityConfidence::FamilyOnly,
+                evidence: candidate_hints(input, entry).with_passive_family_match(),
+            },
+            |_| StagedIdentityResolution {
+                model: Some(entry),
+                confidence: IdentityConfidence::Model,
+                evidence: candidate_hints(input, entry)
+                    .with_passive_family_match()
+                    .with_banner_model_match(),
+            },
+        )
 }
 
-fn max_resolution(
-    current: StagedIdentityResolution,
-    candidate: StagedIdentityResolution,
-) -> StagedIdentityResolution {
-    if candidate.confidence > current.confidence {
-        candidate
-    } else {
-        current
-    }
+fn candidate_hints<GattEvidence>(
+    input: &StagedIdentityInput<'_, GattEvidence>,
+    entry: &ModelRegistryEntry,
+) -> IdentityEvidence
+where
+    GattEvidence: Clone + IntoIterator,
+    GattEvidence::Item: Borrow<GattFingerprint>,
+{
+    [
+        input
+            .advertised_name
+            .is_some_and(|name| model_name_matches(name, entry))
+            .then_some(IdentityEvidence::with_advertised_name_hint as fn(IdentityEvidence) -> _),
+        gatt_matches(input.gatt.clone(), entry.gatt)
+            .then_some(IdentityEvidence::with_gatt_hint as fn(IdentityEvidence) -> _),
+    ]
+    .into_iter()
+    .flatten()
+    .fold(IdentityEvidence::empty(), |evidence, with_hint| {
+        with_hint(evidence)
+    })
 }
 
 const fn protocol_family_from_classification(
@@ -216,10 +263,6 @@ const fn protocol_family_from_classification(
     }
 }
 
-fn has_matching_model_banner(banner: Option<BegodeBanner<'_>>, entry: &ModelRegistryEntry) -> bool {
-    matches!(banner, Some(BegodeBanner::ModelName(name)) if model_name_matches(name, entry))
-}
-
 fn model_name_matches(name: &str, entry: &ModelRegistryEntry) -> bool {
     contains_ascii_ignore_case(name, entry.model)
         || entry
@@ -229,8 +272,22 @@ fn model_name_matches(name: &str, entry: &ModelRegistryEntry) -> bool {
             .any(|hint| contains_ascii_ignore_case(name, hint))
 }
 
-fn gatt_matches(observed: &[GattFingerprint], expected: &[GattFingerprint]) -> bool {
-    observed.iter().any(|observed| {
+fn parse_begode_model_banner(bytes: &[u8]) -> Option<ParsedModelBanner<'_>> {
+    classify_begode_ascii_banner(bytes)
+        .banner()
+        .and_then(|banner| match banner {
+            BegodeBanner::ModelName(model) => Some(ParsedModelBanner { model }),
+            BegodeBanner::Firmware { .. } | BegodeBanner::Imu(_) => None,
+        })
+}
+
+fn gatt_matches<GattEvidence>(observed: GattEvidence, expected: &[GattFingerprint]) -> bool
+where
+    GattEvidence: IntoIterator,
+    GattEvidence::Item: Borrow<GattFingerprint>,
+{
+    observed.into_iter().any(|observed| {
+        let observed = observed.borrow();
         expected.iter().any(|expected| {
             observed.service == expected.service
                 && observed.characteristic == expected.characteristic
@@ -272,9 +329,9 @@ mod tests {
     use cutout_core::{GattFingerprint, GattRoles, VerificationStatus};
 
     use crate::{
-        BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL, BegodeBanner,
-        DeviceFamily, IdentityConfidence, IdentityEvidence, ProtocolFamilyClassification,
-        StagedIdentityInput, identify_model,
+        BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL, DeviceFamily,
+        IdentityConfidence, IdentityEvidence, ProtocolFamilyClassification, StagedIdentityInput,
+        identify_known_model, identify_model, parse_model_banner,
     };
 
     const BEGODE_GATT: [GattFingerprint; 1] = [GattFingerprint {
@@ -289,11 +346,11 @@ mod tests {
     #[test]
     fn advertised_name_and_shared_gatt_are_hints_only() {
         let resolution = identify_model(
-            StagedIdentityInput {
+            &StagedIdentityInput {
                 advertised_name: Some("Falcon"),
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Pending,
-                banner: None,
+                banner_model: None,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -307,11 +364,11 @@ mod tests {
     #[test]
     fn begode_family_magic_without_model_evidence_does_not_resolve_falcon() {
         let resolution = identify_model(
-            StagedIdentityInput {
+            &StagedIdentityInput {
                 advertised_name: None,
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner: None,
+                banner_model: None,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -323,15 +380,29 @@ mod tests {
 
     #[test]
     fn begode_family_magic_and_name_banner_resolve_falcon() {
-        let resolution = identify_model(
-            StagedIdentityInput {
-                advertised_name: Some("Begode_Falcon"),
-                gatt: &BEGODE_GATT,
-                stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner: Some(BegodeBanner::ModelName("Falcon")),
-            },
-            &[&BEGODE_FALCON_REGISTRY_ENTRY],
-        );
+        let input = StagedIdentityInput {
+            advertised_name: Some("Begode_Falcon"),
+            gatt: &BEGODE_GATT,
+            stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+            banner_model: Some("Falcon"),
+        };
+        let resolution = identify_model(&input, &[&BEGODE_FALCON_REGISTRY_ENTRY]);
+        let known_resolution = identify_known_model(&input);
+
+        assert_eq!(known_resolution, resolution);
+        assert_eq!(resolution.confidence, IdentityConfidence::Model);
+        assert_eq!(resolution.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+        assert!(resolution.evidence.has_banner_model_match());
+    }
+
+    #[test]
+    fn known_model_identification_uses_protocol_owned_registry() {
+        let resolution = identify_known_model(&StagedIdentityInput {
+            advertised_name: Some("Begode_Falcon"),
+            gatt: &BEGODE_GATT,
+            stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+            banner_model: Some("Falcon"),
+        });
 
         assert_eq!(resolution.confidence, IdentityConfidence::Model);
         assert_eq!(resolution.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
@@ -339,13 +410,35 @@ mod tests {
     }
 
     #[test]
+    fn identity_accepts_streamed_gatt_evidence_without_a_slice() {
+        let resolution = identify_known_model(&StagedIdentityInput {
+            advertised_name: None,
+            gatt: BEGODE_GATT.iter().copied(),
+            stream_family: ProtocolFamilyClassification::Pending,
+            banner_model: None,
+        });
+
+        assert_eq!(resolution.confidence, IdentityConfidence::HintsOnly);
+        assert!(resolution.evidence.has_gatt_hint());
+    }
+
+    #[test]
+    fn identity_parsers_find_model_banner_without_transport_knowing_family_type() {
+        assert_eq!(
+            parse_model_banner(b"NAME=Falcon"),
+            Some(super::ParsedModelBanner { model: "Falcon" })
+        );
+        assert_eq!(parse_model_banner(&[0x55, 0xaa, 0x20, 0x20]), None);
+    }
+
+    #[test]
     fn conflicting_stream_family_rejects_advertised_name_match() {
         let resolution = identify_model(
-            StagedIdentityInput {
+            &StagedIdentityInput {
                 advertised_name: Some("Falcon"),
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero),
-                banner: Some(BegodeBanner::ModelName("Falcon")),
+                banner_model: Some("Falcon"),
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -358,11 +451,11 @@ mod tests {
     #[test]
     fn different_name_banner_keeps_begode_resolution_at_family_level() {
         let resolution = identify_model(
-            StagedIdentityInput {
+            &StagedIdentityInput {
                 advertised_name: Some("Begode_Master"),
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner: Some(BegodeBanner::ModelName("Master")),
+                banner_model: Some("Master"),
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );

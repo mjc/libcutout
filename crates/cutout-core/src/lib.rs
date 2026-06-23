@@ -12,6 +12,7 @@ use std::{fmt, marker::PhantomData, ops::RangeInclusive};
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
+use uuid::Uuid;
 
 mod pevcap;
 pub use pevcap::*;
@@ -19,6 +20,9 @@ mod battery_page;
 pub use battery_page::*;
 mod ffi;
 pub use ffi::*;
+
+#[cfg(test)]
+mod gatt_channel_tests;
 
 /// Monotonic timestamp in milliseconds, supplied by the host.
 pub type MonotonicMillis = u64;
@@ -31,18 +35,30 @@ pub const MAX_INLINE_TRANSPORT_WRITE_LEN: usize = 32;
 
 /// Transport-independent identifier for a GATT characteristic or endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct GattChannel([u8; 16]);
+pub struct GattChannel(Uuid);
 
 impl GattChannel {
     /// Creates a channel identifier from its 16-byte representation.
     #[must_use]
     pub const fn from_bytes(bytes: [u8; 16]) -> Self {
-        Self(bytes)
+        Self(Uuid::from_bytes(bytes))
+    }
+
+    /// Creates a channel identifier from a UUID.
+    #[must_use]
+    pub const fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
     }
 
     /// Returns the channel identifier as raw bytes.
     #[must_use]
     pub const fn as_bytes(self) -> [u8; 16] {
+        *self.0.as_bytes()
+    }
+
+    /// Returns the channel identifier as a UUID.
+    #[must_use]
+    pub const fn as_uuid(self) -> Uuid {
         self.0
     }
 }
@@ -1340,6 +1356,7 @@ impl DiagnosticError {
 }
 
 enum NotificationByteLenUnit {}
+enum NotificationChunkLenUnit {}
 enum PayloadBodyLenUnit {}
 enum SemanticEventCountUnit {}
 enum ProtocolSelectorUnit {}
@@ -1376,6 +1393,12 @@ macro_rules! typed_protocol_value {
                 f.debug_tuple(stringify!($name)).field(&self.value).finish()
             }
         }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.value.fmt(f)
+            }
+        }
     };
 }
 
@@ -1385,6 +1408,21 @@ typed_protocol_value!(
     usize,
     "Length of one transport notification payload after capture/parser admission."
 );
+
+typed_protocol_value!(
+    NotificationChunkLen,
+    NotificationChunkLenUnit,
+    usize,
+    "Replay split length for one notification chunk; zero preserves whole-notification replay."
+);
+
+impl NotificationChunkLen {
+    /// Returns true when replay should preserve whole notifications.
+    #[must_use]
+    pub const fn is_whole(self) -> bool {
+        self.value == 0
+    }
+}
 
 typed_protocol_value!(
     PayloadBodyLen,
@@ -1399,6 +1437,20 @@ typed_protocol_value!(
     usize,
     "Number of semantic events emitted from one protocol ingest operation."
 );
+
+impl SemanticEventCount {
+    /// Adds one observed semantic event, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self::new(self.value.saturating_add(1))
+    }
+
+    /// Adds another semantic event count, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::new(self.value.saturating_add(other.value))
+    }
+}
 
 typed_protocol_value!(
     ProtocolSelector,
@@ -2523,6 +2575,58 @@ pub struct FirmwareInfo {
     pub build_id: Option<RawFieldValue>,
 }
 
+/// BMS pack current in milliamps.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BmsPackCurrentMa(i32);
+
+impl BmsPackCurrentMa {
+    /// Creates a BMS pack current value in milliamps.
+    #[must_use]
+    pub const fn new(value: i32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the current value in milliamps.
+    #[must_use]
+    pub const fn get(self) -> i32 {
+        self.0
+    }
+}
+
+/// Paired page-specific BMS pack-current values with shared provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BmsPackCurrents {
+    /// First page-specific BMS pack current in milliamps.
+    pub current_0_ma: BmsPackCurrentMa,
+
+    /// Second page-specific BMS pack current in milliamps.
+    pub current_1_ma: BmsPackCurrentMa,
+
+    /// Source of the current values.
+    pub source: ValueSource,
+
+    /// Confidence in the current values.
+    pub quality: ValueQuality,
+
+    /// Verification state for the current values.
+    pub verification: VerificationStatus,
+}
+
+impl BmsPackCurrents {
+    /// Creates known BMS pack current values reported directly by the device.
+    #[must_use]
+    pub const fn reported(current_0_ma: i32, current_1_ma: i32) -> Self {
+        Self {
+            current_0_ma: BmsPackCurrentMa::new(current_0_ma),
+            current_1_ma: BmsPackCurrentMa::new(current_1_ma),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
+}
+
 /// Generic battery or BMS information.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatteryInfo {
@@ -3101,6 +3205,11 @@ where
         core::mem::take(&mut self.output)
     }
 
+    /// Moves accumulated session outputs into an existing buffer.
+    pub fn drain_outputs_into(&mut self, output: &mut Vec<SessionOutput>) {
+        output.append(&mut self.output);
+    }
+
     /// Returns the latest telemetry snapshot.
     #[must_use]
     pub const fn current_snapshot(&self) -> TelemetrySnapshot {
@@ -3207,7 +3316,7 @@ impl CaptureRecord {
     /// Non-notification records are returned unchanged. A zero `chunk_len`
     /// leaves the record unchanged.
     #[must_use]
-    pub fn split_notification_bytes(self, chunk_len: usize) -> Vec<Self> {
+    pub fn split_notification_bytes(self, chunk_len: NotificationChunkLen) -> Vec<Self> {
         let Self::Notification {
             channel,
             bytes,
@@ -3217,12 +3326,12 @@ impl CaptureRecord {
             return vec![self];
         };
 
-        if chunk_len == 0 {
+        if chunk_len.is_whole() {
             return vec![Self::notification(channel, bytes, monotonic_ms)];
         }
 
         bytes
-            .chunks(chunk_len)
+            .chunks(chunk_len.get())
             .map(|chunk| Self::notification(channel, chunk.to_vec(), monotonic_ms))
             .collect()
     }
@@ -3232,7 +3341,7 @@ impl CaptureRecord {
     /// Extra bytes are appended as a final chunk. Non-notification records are
     /// returned unchanged.
     #[must_use]
-    pub fn split_notification_by_lengths(self, lengths: &[usize]) -> Vec<Self> {
+    pub fn split_notification_by_lengths(self, lengths: &[NotificationChunkLen]) -> Vec<Self> {
         let Self::Notification {
             channel,
             bytes,
@@ -3244,11 +3353,11 @@ impl CaptureRecord {
 
         let mut records = Vec::new();
         let mut offset = 0;
-        for length in lengths.iter().copied().filter(|length| *length > 0) {
+        for length in lengths.iter().copied().filter(|length| !length.is_whole()) {
             if offset >= bytes.len() {
                 break;
             }
-            let end = offset.saturating_add(length).min(bytes.len());
+            let end = offset.saturating_add(length.get()).min(bytes.len());
             records.push(Self::notification(
                 channel,
                 bytes[offset..end].to_vec(),
@@ -3274,6 +3383,18 @@ where
     S: ProtocolSession,
 {
     let mut outputs = Vec::new();
+    replay_capture_into(host, records, &mut outputs);
+    outputs
+}
+
+/// Replays captured host inputs through a host session into an existing buffer.
+pub fn replay_capture_into<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+    outputs: &mut Vec<SessionOutput>,
+) where
+    S: ProtocolSession,
+{
     for record in records {
         match record {
             CaptureRecord::LinkUp(link) => host.ingest_link_up(*link),
@@ -3282,15 +3403,18 @@ where
                 channel,
                 bytes,
                 monotonic_ms,
-            } => host.ingest_notification_owned(*channel, bytes.clone(), *monotonic_ms),
+            } => host.ingest(SessionInput::Notification {
+                channel: *channel,
+                bytes,
+                monotonic_ms: *monotonic_ms,
+            }),
             CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
             CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
                 host.issue_command(*command);
             }
         }
-        outputs.extend(host.drain_outputs());
+        host.drain_outputs_into(outputs);
     }
-    outputs
 }
 
 /// Summary of deterministic replay equivalence across notification chunking
@@ -3298,13 +3422,13 @@ where
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReplayChunkComparison {
     /// Semantic event count from whole-notification replay.
-    pub whole_semantic_events: usize,
+    pub whole_semantic_events: SemanticEventCount,
 
     /// Semantic event count from one-byte notification replay.
-    pub one_byte_semantic_events: usize,
+    pub one_byte_semantic_events: SemanticEventCount,
 
     /// Semantic event count from arbitrary notification chunk replay.
-    pub arbitrary_semantic_events: usize,
+    pub arbitrary_semantic_events: SemanticEventCount,
 
     /// Whether one-byte replay produced the same semantic events as whole
     /// replay.
@@ -3364,14 +3488,15 @@ where
 pub fn compare_replay_capture_chunks<S, F>(
     mut make_session: F,
     records: &[CaptureRecord],
-    arbitrary_lengths: &[usize],
+    arbitrary_lengths: &[NotificationChunkLen],
 ) -> ReplayChunkComparison
 where
     S: ProtocolSession,
     F: FnMut() -> S,
 {
     let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
-    let one_byte_records = split_capture_notifications_by_len(records, 1);
+    let one_byte_records =
+        split_capture_notifications_by_len(records, NotificationChunkLen::new(1));
     let one_byte =
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
     let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
@@ -3379,9 +3504,9 @@ where
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
 
     ReplayChunkComparison {
-        whole_semantic_events: whole.len(),
-        one_byte_semantic_events: one_byte.len(),
-        arbitrary_semantic_events: arbitrary.len(),
+        whole_semantic_events: SemanticEventCount::new(whole.len()),
+        one_byte_semantic_events: SemanticEventCount::new(one_byte.len()),
+        arbitrary_semantic_events: SemanticEventCount::new(arbitrary.len()),
         one_byte_matches: one_byte == whole,
         arbitrary_matches: arbitrary == whole,
     }
@@ -3394,7 +3519,7 @@ where
 /// repeating 2/3/5 byte pattern. Shorter notifications ignore extra chunk
 /// lengths during replay.
 #[must_use]
-pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<usize> {
+pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<NotificationChunkLen> {
     let max_notification_len = records
         .iter()
         .filter_map(|record| match record {
@@ -3416,7 +3541,7 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<usize> {
         }
         let remaining = max_notification_len - covered;
         let next = chunk_len.min(remaining);
-        lengths.push(next);
+        lengths.push(NotificationChunkLen::new(next));
         covered += next;
     }
     lengths
@@ -3434,10 +3559,11 @@ pub fn notification_boundary_replay_cases(
     channel: GattChannel,
     frames: &[&[u8]],
     monotonic_ms: MonotonicMillis,
-    arbitrary_lengths: &[usize],
+    arbitrary_lengths: &[NotificationChunkLen],
 ) -> Vec<NotificationBoundaryReplayCase> {
     let whole_records = notification_records(channel, frames, monotonic_ms);
-    let one_byte_records = split_capture_notifications_by_len(&whole_records, 1);
+    let one_byte_records =
+        split_capture_notifications_by_len(&whole_records, NotificationChunkLen::new(1));
     let arbitrary_records =
         split_capture_notifications_by_lengths(&whole_records, arbitrary_lengths);
     let coalesced_records = coalesced_notification_record(channel, frames, monotonic_ms);
@@ -3597,7 +3723,7 @@ fn timeout_after_partial_records(
 
 fn split_capture_notifications_by_len(
     records: &[CaptureRecord],
-    chunk_len: usize,
+    chunk_len: NotificationChunkLen,
 ) -> Vec<CaptureRecord> {
     records
         .iter()
@@ -3608,7 +3734,7 @@ fn split_capture_notifications_by_len(
 
 fn split_capture_notifications_by_lengths(
     records: &[CaptureRecord],
-    lengths: &[usize],
+    lengths: &[NotificationChunkLen],
 ) -> Vec<CaptureRecord> {
     records
         .iter()
@@ -3747,6 +3873,7 @@ mod tests {
         assert!(size_of::<Measured<i32>>() <= 16);
         assert!(size_of::<Measured<u64>>() <= 24);
         assert_eq!(size_of::<crate::NotificationByteLen>(), size_of::<usize>());
+        assert_eq!(size_of::<crate::NotificationChunkLen>(), size_of::<usize>());
         assert_eq!(size_of::<crate::PayloadBodyLen>(), size_of::<usize>());
         assert_eq!(size_of::<crate::SemanticEventCount>(), size_of::<usize>());
         assert_eq!(size_of::<crate::ProtocolSelector>(), size_of::<u8>());
@@ -4187,13 +4314,19 @@ mod tests {
             raw_state: None,
         };
         let response = crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
-            crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            crate::BatteryPageMetadata::raw(
+                crate::ProtocolSelector::new(8),
+                VerificationStatus::SourceVerified,
+            ),
             battery,
         ));
 
         assert_eq!(
             response.page(),
-            crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified)
+            crate::BatteryPageMetadata::raw(
+                crate::ProtocolSelector::new(8),
+                VerificationStatus::SourceVerified,
+            )
         );
         assert_eq!(response.battery().current_ma, Some(Measured::reported(0)));
         assert_eq!(
@@ -4630,7 +4763,10 @@ mod tests {
         let firmware = crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo::default());
         let battery = crate::ReadOnlyResponse::Battery(crate::BatteryPagePayload::Raw(
             crate::BatteryRawPage::new(
-                crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+                crate::BatteryPageMetadata::raw(
+                    crate::ProtocolSelector::new(8),
+                    VerificationStatus::SourceVerified,
+                ),
                 crate::BatteryInfo::default(),
             ),
         ));
@@ -6234,11 +6370,16 @@ mod tests {
             crate::CaptureRecord::targeted_command(DeviceCommand::RequestTelemetry, target);
 
         assert_eq!(
-            record.clone().split_notification_bytes(1),
+            record
+                .clone()
+                .split_notification_bytes(crate::NotificationChunkLen::new(1)),
             vec![record.clone()]
         );
         assert_eq!(
-            record.clone().split_notification_by_lengths(&[1, 2]),
+            record.clone().split_notification_by_lengths(&[
+                crate::NotificationChunkLen::new(1),
+                crate::NotificationChunkLen::new(2),
+            ]),
             vec![record]
         );
     }
@@ -6252,7 +6393,7 @@ mod tests {
             10,
         )];
         let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], 10)
-            .split_notification_bytes(1);
+            .split_notification_bytes(crate::NotificationChunkLen::new(1));
 
         assert_eq!(replay_events(&one_byte), replay_events(&whole));
     }
@@ -6266,15 +6407,21 @@ mod tests {
             10,
         )];
 
-        let comparison =
-            crate::compare_replay_capture_chunks(FramedCaptureSession::default, &records, &[2, 1]);
+        let comparison = crate::compare_replay_capture_chunks(
+            FramedCaptureSession::default,
+            &records,
+            &[
+                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::new(1),
+            ],
+        );
 
         assert_eq!(
             comparison,
             crate::ReplayChunkComparison {
-                whole_semantic_events: 1,
-                one_byte_semantic_events: 1,
-                arbitrary_semantic_events: 1,
+                whole_semantic_events: crate::SemanticEventCount::new(1),
+                one_byte_semantic_events: crate::SemanticEventCount::new(1),
+                arbitrary_semantic_events: crate::SemanticEventCount::new(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             }
@@ -6315,8 +6462,14 @@ mod tests {
             10,
         )];
 
-        let comparison =
-            crate::compare_replay_capture_chunks(|| NotificationLengthSession, &records, &[2, 2]);
+        let comparison = crate::compare_replay_capture_chunks(
+            || NotificationLengthSession,
+            &records,
+            &[
+                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::new(2),
+            ],
+        );
 
         assert!(!comparison.one_byte_matches);
         assert!(!comparison.arbitrary_matches);
@@ -6334,7 +6487,11 @@ mod tests {
 
         assert_eq!(
             crate::replay_arbitrary_chunk_lengths(&records),
-            vec![2, 3, 5]
+            vec![
+                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::new(3),
+                crate::NotificationChunkLen::new(5),
+            ]
         );
     }
 
@@ -6344,7 +6501,7 @@ mod tests {
             crate::replay_arbitrary_chunk_lengths(&[crate::CaptureRecord::Tick {
                 monotonic_ms: 1
             }]),
-            Vec::<usize>::new()
+            Vec::<crate::NotificationChunkLen>::new()
         );
     }
 
@@ -6358,7 +6515,7 @@ mod tests {
             channel,
             &[frame_a.as_slice(), frame_b.as_slice()],
             10,
-            &[2],
+            &[crate::NotificationChunkLen::new(2)],
         );
 
         assert_eq!(
@@ -6415,8 +6572,12 @@ mod tests {
             let mut payload = payload_prefix;
             payload.push(0xff);
             let whole = [crate::CaptureRecord::notification(channel, payload.clone(), 20)];
+            let chunk_lengths = lengths
+                .into_iter()
+                .map(crate::NotificationChunkLen::new)
+                .collect::<Vec<_>>();
             let chunks = crate::CaptureRecord::notification(channel, payload, 20)
-                .split_notification_by_lengths(&lengths);
+                .split_notification_by_lengths(&chunk_lengths);
 
             prop_assert_eq!(replay_events(&chunks), replay_events(&whole));
         }

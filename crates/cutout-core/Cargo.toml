@@ -15,9 +15,11 @@ workspace = true
 
 [dependencies]
 arrayvec.workspace = true
+bytes.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

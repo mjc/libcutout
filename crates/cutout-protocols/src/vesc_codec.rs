@@ -10,6 +10,31 @@ pub const VESC_MAX_HASH_LEN: usize = 47;
 /// Maximum replies returned from one VESC stream feed.
 pub const VESC_MAX_STREAM_REPLIES: usize = 4;
 
+/// Parser-owned result for one VESC UART stream feed.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "reply batches stay inline to keep parser hot paths allocation-free"
+)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum VescReadOnlyStreamResult {
+    /// The decoder accepted bytes but is still waiting for a complete reply.
+    Buffered,
+
+    /// The decoder completed one or more bounded read-only replies.
+    Replies(ArrayVec<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>),
+}
+
+#[cfg(test)]
+impl VescReadOnlyStreamResult {
+    #[must_use]
+    fn into_replies(self) -> ArrayVec<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES> {
+        match self {
+            Self::Buffered => ArrayVec::new(),
+            Self::Replies(replies) => replies,
+        }
+    }
+}
+
 /// Owned VESC selective values mask.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescValuesMask(u32);
@@ -314,17 +339,17 @@ impl VescReadOnlyStreamDecoder {
         }
     }
 
-    /// Feeds bytes into the stream decoder and returns any complete replies.
+    /// Feeds bytes into the stream decoder and returns a typed parser result.
     ///
     /// # Errors
     ///
     /// Returns [`VescCodecError`] if the private decoder rejects the input,
     /// produces an unsupported reply, or yields more replies than the bounded
     /// result can hold.
-    pub fn feed(
+    pub fn feed_result(
         &mut self,
         bytes: &[u8],
-    ) -> Result<ArrayVec<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>, VescCodecError> {
+    ) -> Result<VescReadOnlyStreamResult, VescCodecError> {
         let consumed = self
             .inner
             .feed(bytes)
@@ -339,7 +364,11 @@ impl VescReadOnlyStreamDecoder {
                 .try_push(map_command_reply(reply)?)
                 .map_err(|_reply| VescCodecError::DecodeFailed)?;
         }
-        Ok(replies)
+        Ok(if replies.is_empty() {
+            VescReadOnlyStreamResult::Buffered
+        } else {
+            VescReadOnlyStreamResult::Replies(replies)
+        })
     }
 }
 
@@ -704,9 +733,38 @@ mod tests {
         let expected = VescReadOnlyCodec::decode_reply(&frame).expect("fixture decodes");
         let mut decoder = VescReadOnlyStreamDecoder::new();
 
-        let replies = decoder.feed(&frame).expect("stream feed succeeds");
+        let replies = decoder
+            .feed_result(&frame)
+            .expect("stream feed succeeds")
+            .into_replies();
 
         assert_eq!(replies.as_slice(), &[expected]);
+    }
+
+    #[test]
+    fn stream_decoder_reports_typed_buffered_result_for_partial_frame() {
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+
+        assert_eq!(
+            decoder.feed_result(&selective_values_frame()[..3]),
+            Ok(VescReadOnlyStreamResult::Buffered)
+        );
+    }
+
+    #[test]
+    fn stream_decoder_reports_typed_replies_for_complete_frame() {
+        let frame = selective_values_frame();
+        let expected = VescReadOnlyCodec::decode_reply(&frame).expect("fixture decodes");
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+        let mut expected_replies = ArrayVec::<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>::new();
+        expected_replies
+            .try_push(expected)
+            .expect("fixture emits one reply");
+
+        assert_eq!(
+            decoder.feed_result(&frame),
+            Ok(VescReadOnlyStreamResult::Replies(expected_replies))
+        );
     }
 
     #[test]
@@ -717,9 +775,13 @@ mod tests {
         let mut replies = ArrayVec::<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>::new();
 
         for byte in frame {
-            let feed_replies = decoder.feed(&[byte]).expect("single-byte feed succeeds");
-            for reply in feed_replies {
-                replies.try_push(reply).expect("fixture emits one reply");
+            let feed_result = decoder
+                .feed_result(&[byte])
+                .expect("single-byte feed succeeds");
+            if let VescReadOnlyStreamResult::Replies(feed_replies) = feed_result {
+                for reply in feed_replies {
+                    replies.try_push(reply).expect("fixture emits one reply");
+                }
             }
         }
 
@@ -744,11 +806,13 @@ mod tests {
         let mut replies = ArrayVec::<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>::new();
 
         for chunk in input.chunks(7) {
-            let feed_replies = decoder.feed(chunk).expect("chunk feed succeeds");
-            for reply in feed_replies {
-                replies
-                    .try_push(reply)
-                    .expect("fixture emits bounded replies");
+            let feed_result = decoder.feed_result(chunk).expect("chunk feed succeeds");
+            if let VescReadOnlyStreamResult::Replies(feed_replies) = feed_result {
+                for reply in feed_replies {
+                    replies
+                        .try_push(reply)
+                        .expect("fixture emits bounded replies");
+                }
             }
         }
 

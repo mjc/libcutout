@@ -21,12 +21,12 @@ const VALIDATION_ROWS: &[ValidationRow] = &[
         firmware: "v3.8.12",
         variant_scope: "NF2557 / 30s Samsung 50S target",
         capture_id: "aero-nf2557-2026-06-21-powered-on-long",
-        bms_status: "30s/2p Veteran smart-BMS; cell pages typed; temperature/current/status gated",
-        tested_fields: "identity, telemetry, battery, GATT",
+        bms_status: "30s/2p Veteran smart-BMS; typed cell pages, typed temperature pages, paired metadata currents, selector 8 reserved/raw",
+        tested_fields: "identity, telemetry, battery, GATT, BMS cell pages, BMS temperature pages, BMS metadata current shape",
         inferred_fields: "none",
-        unverified_fields: "controls, firmware variants",
+        unverified_fields: "controls, firmware variants, BMS metadata currents under load, page 8 semantics beyond reserved/raw",
         controls: "read-only scan, connect, capture",
-        minimum_evidence: "additional charging/lift/rolling/BMS-screen captures before full BMS close",
+        minimum_evidence: "idle and changing-load Bluetooth evidence, BMS-screen/app labels, live dashboard parser-first typed-ingest verification",
         acceptance: "hardware-tested",
     },
     ValidationRow {
@@ -133,6 +133,12 @@ mod tests {
         assert!(report.contains("BMS status"));
         assert!(report.contains("minimum evidence"));
         assert!(report.contains("30s/2p Veteran smart-BMS"));
+        assert!(
+            report.contains("typed cell pages, typed temperature pages, paired metadata currents")
+        );
+        assert!(report.contains("selector 8 reserved/raw"));
+        assert!(report.contains("idle and changing-load Bluetooth evidence"));
+        assert!(report.contains("live dashboard parser-first typed-ingest verification"));
         assert!(report.contains("84V target hardware; registry selection gated"));
         assert!(report.contains("capture advertisement, GATT, PEVCAP replay, and protocol frames"));
     }
