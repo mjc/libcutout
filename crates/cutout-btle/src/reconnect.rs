@@ -192,6 +192,7 @@ where
                 monotonic_start,
             },
             Some(&mut records),
+            None,
         )
         .await?;
         monotonic_start = records

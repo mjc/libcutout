@@ -16,7 +16,6 @@ use cutout_core::{
     TelemetryDelta, TransportAction, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
     WriteMode,
 };
-use cutout_protocols::IdentityConfidence;
 use futures_util::stream;
 use smallvec::smallvec;
 use uuid::Uuid;
@@ -26,6 +25,46 @@ use super::crate_name;
 type WriteRecord = (Uuid, Bytes, WriteMode);
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
 type NotificationLog = Arc<Mutex<Vec<crate::BtleNotification>>>;
+
+#[derive(Default)]
+struct TestIdentityObserver {
+    saw_connection: bool,
+    notifications: usize,
+}
+
+impl crate::BridgeIdentityObserver for TestIdentityObserver {
+    fn observe_connection(&mut self, summary: &crate::ConnectionSummary) {
+        self.saw_connection = summary.observation.name.is_some();
+    }
+
+    fn observe_notification(&mut self, _notification: &crate::BtleNotification) {
+        self.notifications = self.notifications.saturating_add(1);
+    }
+
+    fn resolution(&self) -> Option<crate::BridgeIdentityResolution> {
+        self.saw_connection
+            .then(|| crate::BridgeIdentityResolution {
+                manufacturer: (self.notifications > 0).then_some("TestCo"),
+                model: (self.notifications > 0).then_some("Observer"),
+                confidence: if self.notifications > 0 {
+                    crate::BridgeIdentityConfidence::Model
+                } else {
+                    crate::BridgeIdentityConfidence::HintsOnly
+                },
+                evidence: if self.notifications > 0 {
+                    crate::BridgeIdentityEvidence::empty()
+                        .with(crate::BridgeIdentityEvidenceKind::AdvertisedNameHint)
+                        .with(crate::BridgeIdentityEvidenceKind::GattHint)
+                        .with(crate::BridgeIdentityEvidenceKind::PassiveFamilyMatch)
+                        .with(crate::BridgeIdentityEvidenceKind::BannerModelMatch)
+                } else {
+                    crate::BridgeIdentityEvidence::empty()
+                        .with(crate::BridgeIdentityEvidenceKind::AdvertisedNameHint)
+                        .with(crate::BridgeIdentityEvidenceKind::GattHint)
+                },
+            })
+    }
+}
 
 static OVERSIZED_BTLE_VALUE: [u8; 513] = [0; 513];
 
@@ -914,12 +953,13 @@ fn connection_summary_selects_session_endpoints() {
 }
 
 #[tokio::test]
-async fn drive_session_reports_hints_only_identity_from_name_and_shared_gatt() {
+async fn drive_session_reports_hints_only_identity_from_host_observer() {
     let peripheral = RecordingPeripheral::default();
     let mut session = SubscribeOnlySession;
     let summary = begode_falcon_summary("Falcon");
+    let mut observer = TestIdentityObserver::default();
 
-    let report = crate::drive_session(
+    let report = crate::drive_session_with_identity_observer(
         &peripheral,
         &mut session,
         GattChannel::from_bytes(
@@ -930,12 +970,16 @@ async fn drive_session_reports_hints_only_identity_from_name_and_shared_gatt() {
             .select_session_endpoints()
             .expect("summary has session endpoints"),
         crate::NotificationWindow::from_millis(0),
+        &mut observer,
     )
     .await
-    .expect("bridge reports staged identity hints");
+    .expect("bridge reports host-supplied identity hints");
 
     let identity = report.identity.expect("identity hints are reported");
-    assert_eq!(identity.confidence, IdentityConfidence::HintsOnly);
+    assert_eq!(
+        identity.confidence,
+        crate::BridgeIdentityConfidence::HintsOnly
+    );
     assert_eq!(identity.model, None);
     assert_eq!(identity.manufacturer, None);
     assert!(identity.evidence.has_advertised_name_hint());
@@ -944,7 +988,7 @@ async fn drive_session_reports_hints_only_identity_from_name_and_shared_gatt() {
 }
 
 #[tokio::test]
-async fn drive_session_resolves_falcon_after_family_and_name_banner_notifications() {
+async fn drive_session_updates_identity_from_host_observer_notifications() {
     let peripheral = RecordingPeripheral::with_notifications(vec![
         crate::BtleNotification::from_raw_bytes(
             Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
@@ -959,8 +1003,9 @@ async fn drive_session_resolves_falcon_after_family_and_name_banner_notification
     ]);
     let mut session = SubscribeOnlySession;
     let summary = begode_falcon_summary("Begode_Falcon");
+    let mut observer = TestIdentityObserver::default();
 
-    let report = crate::drive_session(
+    let report = crate::drive_session_with_identity_observer(
         &peripheral,
         &mut session,
         GattChannel::from_bytes(
@@ -971,14 +1016,15 @@ async fn drive_session_resolves_falcon_after_family_and_name_banner_notification
             .select_session_endpoints()
             .expect("summary has session endpoints"),
         crate::NotificationWindow::from_millis(10),
+        &mut observer,
     )
     .await
-    .expect("bridge resolves Falcon identity");
+    .expect("bridge resolves host-supplied identity");
 
     let identity = report.identity.expect("model identity is reported");
-    assert_eq!(identity.confidence, IdentityConfidence::Model);
-    assert_eq!(identity.manufacturer, Some("Begode"));
-    assert_eq!(identity.model, Some("Falcon"));
+    assert_eq!(identity.confidence, crate::BridgeIdentityConfidence::Model);
+    assert_eq!(identity.manufacturer, Some("TestCo"));
+    assert_eq!(identity.model, Some("Observer"));
     assert!(identity.evidence.has_passive_family_match());
     assert!(identity.evidence.has_banner_model_match());
     assert_eq!(report.notifications, notifications(2));

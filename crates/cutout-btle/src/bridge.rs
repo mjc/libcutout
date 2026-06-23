@@ -9,7 +9,7 @@ use tracing::{debug, info};
 use crate::{
     BtleError, BtleNotification, BtleWriteChunk, ConnectionSummary, SessionBridgeError,
     SessionBridgeReport, SessionCapture, SessionCaptureRecord, SessionEndpoints, SessionPeripheral,
-    identity::{IdentityContext, IdentityState, update_identity_report},
+    identity::BridgeIdentityObserver,
     report::{process_device_event, process_notification_ingest_outcome},
     types::characteristic_from_summary,
     units::{MonotonicMs, NegotiatedWriteLen, NotificationWindow, WriteProvenance},
@@ -42,6 +42,43 @@ where
         endpoints,
         notification_window,
         &[],
+    )
+    .await
+}
+
+/// Drives a protocol session while reporting identity from a host-supplied observer.
+///
+/// # Errors
+///
+/// Returns the underlying Bluetooth transport error if subscribe, write, or
+/// notification streaming fails.
+pub async fn drive_session_with_identity_observer<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    channel: GattChannel,
+    summary: &ConnectionSummary,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: NotificationWindow,
+    identity_observer: &mut dyn BridgeIdentityObserver,
+) -> Result<SessionBridgeReport, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    drive_session_inner(
+        peripheral,
+        session,
+        DriveSessionConfig {
+            channel,
+            summary,
+            endpoints,
+            notification_window,
+            commands: &[],
+            write_provenance: WriteProvenance::Stable,
+            monotonic_start: MonotonicMs::default(),
+        },
+        None,
+        Some(identity_observer),
     )
     .await
 }
@@ -82,6 +119,7 @@ where
             monotonic_start: MonotonicMs::default(),
         },
         None,
+        None,
     )
     .await
 }
@@ -120,6 +158,7 @@ where
             monotonic_start: MonotonicMs::default(),
         },
         Some(&mut records),
+        None,
     )
     .await?;
 
@@ -159,6 +198,7 @@ where
             monotonic_start: MonotonicMs::default(),
         },
         Some(&mut records),
+        None,
     )
     .await?;
     Ok(SessionCapture { records, report })
@@ -179,6 +219,7 @@ pub(crate) async fn drive_session_inner<P, S>(
     session: &mut S,
     config: DriveSessionConfig<'_>,
     mut capture: Option<&mut Vec<SessionCaptureRecord>>,
+    mut identity_observer: Option<&mut dyn BridgeIdentityObserver>,
 ) -> Result<SessionBridgeReport, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -190,9 +231,10 @@ where
         "session bridge drive inner entered"
     );
     let mut report = SessionBridgeReport::default();
-    let identity_context = IdentityContext::new(config.summary);
-    let mut identity_state = IdentityState::default();
-    update_identity_report(&mut report, &identity_context, &identity_state);
+    if let Some(observer) = identity_observer.as_deref_mut() {
+        observer.observe_connection(config.summary);
+        report.identity = observer.resolution();
+    }
     let bindings = BridgeBindings {
         write_characteristic: characteristic_from_summary(config.endpoints.write),
         notify_characteristic: config.endpoints.notify.map(characteristic_from_summary),
@@ -267,8 +309,7 @@ where
             peripheral,
             channel: config.channel,
             bindings: &bindings,
-            identity_context: &identity_context,
-            identity_state: &mut identity_state,
+            identity_observer,
             report: &mut report,
             capture,
             write_provenance: config.write_provenance,
@@ -351,19 +392,18 @@ where
     Ok(())
 }
 
-struct NotificationLoopContext<'a, P: ?Sized> {
+struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     peripheral: &'a P,
     channel: GattChannel,
     bindings: &'a BridgeBindings,
-    identity_context: &'a IdentityContext<'a>,
-    identity_state: &'a mut IdentityState,
+    identity_observer: Option<&'observer mut dyn BridgeIdentityObserver>,
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
     write_provenance: WriteProvenance,
 }
 
 async fn process_notification_window<P, S>(
-    mut context: NotificationLoopContext<'_, P>,
+    mut context: NotificationLoopContext<'_, '_, P>,
     session: &mut S,
     outputs: &mut Vec<SessionOutput>,
     monotonic_ms: &mut MonotonicMs,
@@ -398,12 +438,10 @@ where
                         bytes: notification.bytes.clone(),
                     });
                 }
-                context.identity_state.observe(notification.as_raw_bytes());
-                update_identity_report(
-                    context.report,
-                    context.identity_context,
-                    context.identity_state,
-                );
+                if let Some(observer) = context.identity_observer.as_deref_mut() {
+                    observer.observe_notification(&notification);
+                    context.report.identity = observer.resolution();
+                }
                 session.handle(
                     SessionInput::Notification {
                         channel: context.channel,

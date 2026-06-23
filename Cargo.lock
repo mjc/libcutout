@@ -467,7 +467,6 @@ dependencies = [
  "btleplug",
  "bytes",
  "cutout-core",
- "cutout-protocols",
  "futures-util",
  "smallvec",
  "thiserror 2.0.18",

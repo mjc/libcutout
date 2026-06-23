@@ -2191,6 +2191,7 @@ mod tests {
     use btleplug::api::CharPropFlags;
     use clap::Parser;
     use cutout_btle::{
+        BridgeIdentityConfidence, BridgeIdentityEvidence, BridgeIdentityEvidenceKind,
         BridgeIdentityResolution, CapturedBtlePacket, ConnectionSummary, ConnectionTarget,
         PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
@@ -2198,10 +2199,6 @@ mod tests {
         CaptureRecord, GattChannel, LinkInfo, NotificationByteLen, PayloadBodyLen, PevcapHeader,
         PevcapRecord, ProtocolFamily, ProtocolSelector, SemanticEventCount, VerificationStatus,
         VerifiedValue, WriteMode,
-    };
-    use cutout_protocols::{
-        BEGODE_FALCON_REGISTRY_ENTRY, DeviceFamily, IdentityConfidence,
-        ProtocolFamilyClassification, StagedIdentityInput, identify_model,
     };
     use uuid::Uuid;
 
@@ -3620,21 +3617,16 @@ mod tests {
 
     #[test]
     fn identity_renderer_includes_confidence_and_evidence() {
-        let resolution = identify_model(
-            &StagedIdentityInput {
-                advertised_name: Some("Begode_Falcon"),
-                gatt: BEGODE_FALCON_REGISTRY_ENTRY.gatt,
-                stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner_model: Some("Falcon"),
-            },
-            &[&BEGODE_FALCON_REGISTRY_ENTRY],
-        );
         let report = SessionBridgeReport {
             identity: Some(BridgeIdentityResolution {
                 manufacturer: Some("Begode"),
                 model: Some("Falcon"),
-                confidence: IdentityConfidence::Model,
-                evidence: resolution.evidence,
+                confidence: BridgeIdentityConfidence::Model,
+                evidence: BridgeIdentityEvidence::empty()
+                    .with(BridgeIdentityEvidenceKind::AdvertisedNameHint)
+                    .with(BridgeIdentityEvidenceKind::GattHint)
+                    .with(BridgeIdentityEvidenceKind::PassiveFamilyMatch)
+                    .with(BridgeIdentityEvidenceKind::BannerModelMatch),
             }),
             ..SessionBridgeReport::default()
         };
