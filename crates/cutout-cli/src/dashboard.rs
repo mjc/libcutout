@@ -13,8 +13,8 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{
-    ConnectionSummary, ConnectionTarget, NotificationByteTotal, ServiceSummary, SessionBridgeEvent,
-    SessionBridgeReport,
+    ConnectionSummary, ConnectionTarget, NotificationByteTotal, NotificationCount, ServiceSummary,
+    SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
     BatteryPagePayload, FirmwareInfo, NotificationByteLen, NotificationIngestOutcome,
@@ -210,8 +210,8 @@ impl ScanBrowser {
 pub(crate) struct SessionCounters {
     pub(crate) discovered: u64,
     pub(crate) connected: u64,
-    pub(crate) subscriptions: u64,
-    pub(crate) notifications: u64,
+    pub(crate) subscriptions: SubscribeCount,
+    pub(crate) notifications: NotificationCount,
     pub(crate) notification_bytes: NotificationByteTotal,
     pub(crate) latest_notification_len: Option<NotificationByteLen>,
 }
@@ -424,8 +424,8 @@ impl DashboardState {
         self.counters = SessionCounters {
             discovered: 8,
             connected: 1,
-            subscriptions: 4,
-            notifications: 27,
+            subscriptions: SubscribeCount::new(4),
+            notifications: NotificationCount::new(27),
             notification_bytes: NotificationByteTotal::default(),
             latest_notification_len: None,
         };
@@ -544,11 +544,11 @@ impl DashboardState {
         self.counters.subscriptions = self
             .counters
             .subscriptions
-            .saturating_add(usize_to_u64(report.subscribes.get()));
+            .saturating_add(report.subscribes);
         self.counters.notifications = self
             .counters
             .notifications
-            .saturating_add(usize_to_u64(report.notifications.get()));
+            .saturating_add(report.notifications);
         self.counters.notification_bytes = self
             .counters
             .notification_bytes
@@ -632,7 +632,7 @@ impl DashboardState {
             return;
         }
 
-        let next_notification = self.counters.notifications.saturating_add(1);
+        let next_notification = self.counters.notifications.increment();
         self.counters.notifications = next_notification;
         self.telemetry.step();
         self.push_log("trace", "fixture heartbeat advanced");
@@ -2187,7 +2187,7 @@ fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         Line::from("decoded telemetry samples: 0"),
         Line::from(vec![
             Span::styled("transport notifications ", Style::new().fg(Color::Gray)),
-            Span::raw(state.counters.notifications.to_string()),
+            Span::raw(state.counters.notifications.get().to_string()),
             Span::styled(" bytes ", Style::new().fg(Color::Gray)),
             Span::raw(state.counters.notification_bytes.get().to_string()),
         ]),
@@ -2407,10 +2407,6 @@ fn to_f64(value: u64) -> f64 {
 
 fn index_to_f64(value: usize) -> f64 {
     f64::from(u32::try_from(value).unwrap_or(u32::MAX))
-}
-
-fn usize_to_u64(value: usize) -> u64 {
-    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -2859,8 +2855,8 @@ mod tests {
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.counters.subscriptions, 1);
-        assert_eq!(state.counters.notifications, 184);
+        assert_eq!(state.counters.subscriptions, subscribes(1));
+        assert_eq!(state.counters.notifications, notifications(184));
         assert_eq!(
             state.counters.notification_bytes,
             NotificationByteTotal::new(18_400)
@@ -3629,8 +3625,8 @@ mod tests {
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.counters.subscriptions, 1);
-        assert_eq!(state.counters.notifications, 4);
+        assert_eq!(state.counters.subscriptions, subscribes(1));
+        assert_eq!(state.counters.notifications, notifications(4));
         assert_eq!(state.telemetry.latest_speed_mph, Some(10));
         assert_eq!(state.telemetry.latest_voltage_v, Some(109));
         assert_eq!(state.telemetry.battery_pct, Some(47));
@@ -3818,8 +3814,8 @@ mod tests {
         state.apply_session_report(&report);
         state.apply_session_report(&report);
 
-        assert_eq!(state.counters.subscriptions, 2);
-        assert_eq!(state.counters.notifications, 4);
+        assert_eq!(state.counters.subscriptions, subscribes(2));
+        assert_eq!(state.counters.notifications, notifications(4));
         assert_eq!(
             state.counters.notification_bytes,
             NotificationByteTotal::new(80)
@@ -3927,7 +3923,7 @@ mod tests {
         state.advance();
 
         assert!(state.logs.is_empty());
-        assert_eq!(state.counters.notifications, 0);
+        assert_eq!(state.counters.notifications, NotificationCount::default());
     }
 
     #[test]
@@ -4024,7 +4020,7 @@ mod tests {
     fn live_telemetry_tab_renders_decoder_input_when_decoder_has_no_samples() {
         let mut state = DashboardState::empty();
         state.active_tab = DashboardTab::new(1);
-        state.counters.notifications = 47;
+        state.counters.notifications = notifications(47);
         state.counters.notification_bytes = NotificationByteTotal::new(4_700);
         state.counters.latest_notification_len = Some(NotificationByteLen::new(100));
 
@@ -4192,7 +4188,7 @@ mod tests {
             Some("demo state: aero-nf2557.v1")
         );
         assert_eq!(state.device.name, "Aero NF2557");
-        assert_eq!(state.counters.notifications, 27);
+        assert_eq!(state.counters.notifications, notifications(27));
         assert_eq!(state.profiles.len(), 3);
         assert_eq!(state.telemetry.speed_mph.len(), 12);
         assert_eq!(state.telemetry.current_points.len(), 12);

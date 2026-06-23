@@ -3132,7 +3132,7 @@ mod tests {
         );
         assert_eq!(state.device.identifier, "darwin");
         assert_eq!(state.device.connection_state, "replayed");
-        assert_eq!(state.counters.notifications, 1);
+        assert_eq!(state.counters.notifications, NotificationCount::new(1));
         assert_eq!(
             state.counters.notification_bytes,
             NotificationByteTotal::new(99)

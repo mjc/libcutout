@@ -208,7 +208,9 @@ impl<Tag> SessionCount<Tag> {
         Self::new(self.value.saturating_add(1))
     }
 
-    pub(crate) const fn saturating_add(self, other: Self) -> Self {
+    /// Adds another typed event count, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
         Self::new(self.value.saturating_add(other.value))
     }
 }
