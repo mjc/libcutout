@@ -8,10 +8,12 @@ use std::{
 
 use anyhow::{Result, bail};
 use cutout_btle::{
-    BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, MaxReconnectLinks,
-    MonotonicMs, NotificationWindow, PevcapSessionMetadata, RawNotificationRecord,
-    ReconnectAttemptReport, ScanWindow, SessionBridgeEvent, SessionBridgeReport, SessionCapture,
-    SessionEndpoints, SessionPeripheral, WriteProvenance, capture_raw_notifications,
+    BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, DiagnosticEventCount,
+    DisconnectCount, MaxReconnectLinks, MonotonicMs, NotificationByteTotal, NotificationCount,
+    NotificationWindow, PevcapSessionMetadata, ProtocolWriteCount, RawNotificationRecord,
+    ReadOnlyResponseCount, ReconnectAttemptReport, ScanWindow, SessionBridgeEvent,
+    SessionBridgeReport, SessionCapture, SessionEndpoints, SessionPeripheral, SubscribeCount,
+    TelemetryEventCount, TransportWriteCount, WriteProvenance, capture_raw_notifications,
     capture_reconnecting_session_with_commands, capture_session_with_commands,
     connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
     scan_peripherals,
@@ -372,24 +374,24 @@ fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<Dashboard
     }
 
     state.apply_session_report(&SessionBridgeReport {
-        protocol_writes: 0,
-        writes: 0,
-        subscribes: 0,
+        protocol_writes: ProtocolWriteCount::default(),
+        writes: TransportWriteCount::default(),
+        subscribes: SubscribeCount::default(),
         notifications: replay_notification_count(capture),
         notification_bytes: replay_notification_bytes(capture),
         latest_notification_len: latest_replay_notification_len(capture),
-        telemetry: report.telemetry,
+        telemetry: TelemetryEventCount::new(report.telemetry),
         telemetry_snapshot: report.telemetry_snapshot,
-        read_only_responses: report.read_only_responses,
+        read_only_responses: ReadOnlyResponseCount::new(report.read_only_responses),
         read_only_response_events: report.read_only_response_events,
         firmware: report.firmware,
         settings: Vec::new(),
-        diagnostics: report.diagnostics,
+        diagnostics: DiagnosticEventCount::new(report.diagnostics),
         diagnostics_snapshot: ParserDiagnostics::default(),
         diagnostic_errors: report.diagnostic_errors,
         identity: None,
         events: report.events,
-        disconnects: 0,
+        disconnects: DisconnectCount::default(),
     });
     Ok(state)
 }
@@ -412,21 +414,25 @@ fn pevcap_dashboard_provenance(capture: &PevcapCapture) -> String {
     )
 }
 
-fn replay_notification_count(capture: &PevcapCapture) -> usize {
-    capture
-        .records
-        .iter()
-        .filter(|record| record.direction == PevcapDirection::Inbound)
-        .count()
+fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
+    NotificationCount::new(
+        capture
+            .records
+            .iter()
+            .filter(|record| record.direction == PevcapDirection::Inbound)
+            .count(),
+    )
 }
 
-fn replay_notification_bytes(capture: &PevcapCapture) -> usize {
-    capture
-        .records
-        .iter()
-        .filter(|record| record.direction == PevcapDirection::Inbound)
-        .map(|record| record.bytes.len())
-        .sum()
+fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationByteTotal {
+    NotificationByteTotal::new(
+        capture
+            .records
+            .iter()
+            .filter(|record| record.direction == PevcapDirection::Inbound)
+            .map(|record| record.bytes.len())
+            .sum::<usize>(),
+    )
 }
 
 fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<NotificationByteLen> {
@@ -827,19 +833,19 @@ fn send_dashboard_session_report(
 ) -> bool {
     info!(
         iteration,
-        notifications = report.notifications,
-        read_only_responses = report.read_only_responses,
-        telemetry = report.telemetry,
+        notifications = report.notifications.get(),
+        read_only_responses = report.read_only_responses.get(),
+        telemetry = report.telemetry.get(),
         "dashboard drive_session returned"
     );
     debug!(
         iteration,
-        subscribes = report.subscribes,
-        notifications = report.notifications,
-        notification_bytes = report.notification_bytes,
-        telemetry = report.telemetry,
-        read_only_responses = report.read_only_responses,
-        diagnostics = report.diagnostics,
+        subscribes = report.subscribes.get(),
+        notifications = report.notifications.get(),
+        notification_bytes = report.notification_bytes.get(),
+        telemetry = report.telemetry.get(),
+        read_only_responses = report.read_only_responses.get(),
+        diagnostics = report.diagnostics.get(),
         latest_notification_len = ?report.latest_notification_len,
         "dashboard drive_session completed"
     );
@@ -1504,14 +1510,14 @@ fn capture_wall_clock_unix_ms() -> u64 {
 
 fn print_session_report(report: &SessionBridgeReport) {
     info!(
-        protocol_writes = report.protocol_writes,
-        writes = report.writes,
-        subscribes = report.subscribes,
-        notifications = report.notifications,
-        telemetry = report.telemetry,
-        read_only_responses = report.read_only_responses,
-        diagnostics = report.diagnostics,
-        disconnects = report.disconnects,
+        protocol_writes = report.protocol_writes.get(),
+        writes = report.writes.get(),
+        subscribes = report.subscribes.get(),
+        notifications = report.notifications.get(),
+        telemetry = report.telemetry.get(),
+        read_only_responses = report.read_only_responses.get(),
+        diagnostics = report.diagnostics.get(),
+        disconnects = report.disconnects.get(),
         "session report"
     );
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
@@ -1572,8 +1578,8 @@ fn render_session_diagnostics_jsonl(
     serde_json::to_string(&serde_json::json!({
         "type": "diagnostic_snapshot",
         "sequence": 0,
-        "protocol_writes": report.protocol_writes,
-        "writes": report.writes,
+        "protocol_writes": report.protocol_writes.get(),
+        "writes": report.writes.get(),
         "dropped_bytes": diagnostics.dropped_bytes,
         "resyncs": diagnostics.resyncs,
         "bad_checksums": diagnostics.bad_checksums,
@@ -1595,14 +1601,14 @@ fn render_reconnect_attempt_diagnostics_jsonl(
         "identifier": attempt.summary.observation.identifier,
         "name": attempt.summary.observation.name,
         "rssi": attempt.summary.observation.rssi,
-        "protocol_writes": attempt.report.protocol_writes,
-        "writes": attempt.report.writes,
-        "subscribes": attempt.report.subscribes,
-        "notifications": attempt.report.notifications,
-        "telemetry": attempt.report.telemetry,
-        "read_only_responses": attempt.report.read_only_responses,
-        "diagnostics": attempt.report.diagnostics,
-        "disconnects": attempt.report.disconnects,
+        "protocol_writes": attempt.report.protocol_writes.get(),
+        "writes": attempt.report.writes.get(),
+        "subscribes": attempt.report.subscribes.get(),
+        "notifications": attempt.report.notifications.get(),
+        "telemetry": attempt.report.telemetry.get(),
+        "read_only_responses": attempt.report.read_only_responses.get(),
+        "diagnostics": attempt.report.diagnostics.get(),
+        "disconnects": attempt.report.disconnects.get(),
         "dropped_bytes": diagnostics.dropped_bytes,
         "resyncs": diagnostics.resyncs,
         "bad_checksums": diagnostics.bad_checksums,
@@ -2809,8 +2815,8 @@ mod tests {
     #[test]
     fn live_session_diagnostics_jsonl_uses_aggregate_report_snapshot() {
         let report = SessionBridgeReport {
-            protocol_writes: 1,
-            writes: 3,
+            protocol_writes: ProtocolWriteCount::new(1),
+            writes: TransportWriteCount::new(3),
             diagnostics_snapshot: ParserDiagnostics {
                 dropped_bytes: 1,
                 resyncs: 2,
@@ -2867,11 +2873,11 @@ mod tests {
                 services: Vec::new().into(),
             },
             report: SessionBridgeReport {
-                protocol_writes: 2,
-                writes: 3,
-                subscribes: 1,
-                notifications: 8,
-                disconnects: 0,
+                protocol_writes: ProtocolWriteCount::new(2),
+                writes: TransportWriteCount::new(3),
+                subscribes: SubscribeCount::new(1),
+                notifications: NotificationCount::new(8),
+                disconnects: DisconnectCount::default(),
                 diagnostics_snapshot: ParserDiagnostics {
                     dropped_bytes: 5,
                     resyncs: 1,

@@ -25,6 +25,38 @@ type WriteRecord = (Uuid, Vec<u8>, WriteMode);
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
 type NotificationLog = Arc<Mutex<Vec<ValueNotification>>>;
 
+const fn protocol_writes(value: usize) -> crate::ProtocolWriteCount {
+    crate::ProtocolWriteCount::new(value)
+}
+
+const fn writes(value: usize) -> crate::TransportWriteCount {
+    crate::TransportWriteCount::new(value)
+}
+
+const fn subscribes(value: usize) -> crate::SubscribeCount {
+    crate::SubscribeCount::new(value)
+}
+
+const fn notifications(value: usize) -> crate::NotificationCount {
+    crate::NotificationCount::new(value)
+}
+
+const fn telemetry_events(value: usize) -> crate::TelemetryEventCount {
+    crate::TelemetryEventCount::new(value)
+}
+
+const fn read_only_responses(value: usize) -> crate::ReadOnlyResponseCount {
+    crate::ReadOnlyResponseCount::new(value)
+}
+
+const fn diagnostic_events(value: usize) -> crate::DiagnosticEventCount {
+    crate::DiagnosticEventCount::new(value)
+}
+
+const fn disconnects(value: usize) -> crate::DisconnectCount {
+    crate::DisconnectCount::new(value)
+}
+
 fn decode_outcome_evidence(
     outcome: crate::bridge::NotificationDecodeOutcome,
 ) -> cutout_core::NotificationEvidence {
@@ -910,7 +942,7 @@ async fn drive_session_resolves_falcon_after_family_and_name_banner_notification
     assert_eq!(identity.model, Some("Falcon"));
     assert!(identity.evidence.has_passive_family_match());
     assert!(identity.evidence.has_banner_model_match());
-    assert_eq!(report.notifications, 2);
+    assert_eq!(report.notifications, notifications(2));
     assert_eq!(peripheral.writes.lock().expect("write log").len(), 0);
 }
 
@@ -960,9 +992,9 @@ async fn drive_session_subscribes_and_writes_matching_transport_channels() {
     .await
     .expect("bridge accepts matching transport outputs");
 
-    assert_eq!(report.writes, 1);
-    assert_eq!(report.subscribes, 1);
-    assert_eq!(report.notifications, 0);
+    assert_eq!(report.writes, writes(1));
+    assert_eq!(report.subscribes, subscribes(1));
+    assert_eq!(report.notifications, notifications(0));
     assert_eq!(
         peripheral
             .subscribes
@@ -1005,8 +1037,11 @@ async fn drive_session_relays_notifications_back_into_session() {
     .await
     .expect("bridge consumes notifications");
 
-    assert_eq!(report.notifications, 1);
-    assert_eq!(report.notification_bytes, 2);
+    assert_eq!(report.notifications, notifications(1));
+    assert_eq!(
+        report.notification_bytes,
+        crate::NotificationByteTotal::new(2)
+    );
     assert_eq!(
         report.latest_notification_len,
         Some(NotificationByteLen::new(2))
@@ -1018,8 +1053,8 @@ async fn drive_session_relays_notifications_back_into_session() {
             .expect("notification channel"),
         Some(GattChannel::from_bytes([0xA1; 16]))
     );
-    assert_eq!(report.telemetry, 1);
-    assert_eq!(report.read_only_responses, 2);
+    assert_eq!(report.telemetry, telemetry_events(1));
+    assert_eq!(report.read_only_responses, read_only_responses(2));
     assert_eq!(
         report.telemetry_snapshot.speed_mm_s,
         Some(Measured::reported(1_200))
@@ -1042,7 +1077,7 @@ async fn drive_session_relays_notifications_back_into_session() {
             .field,
         RawFieldValue::new(0x0014, 30)
     );
-    assert_eq!(report.diagnostics, 1);
+    assert_eq!(report.diagnostics, diagnostic_events(1));
     assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
     assert_eq!(
         report.diagnostic_errors.as_slice(),
@@ -1317,7 +1352,7 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
     .await
     .expect("capture consumes bridge outputs");
 
-    assert_eq!(capture.report.notifications, 1);
+    assert_eq!(capture.report.notifications, notifications(1));
     assert_eq!(
         capture.records,
         vec![
@@ -1371,7 +1406,7 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
     .await
     .expect("capture records explicit command writes");
 
-    assert_eq!(capture.report.writes, 2);
+    assert_eq!(capture.report.writes, writes(2));
     assert_eq!(
         capture.records,
         vec![
@@ -1421,8 +1456,8 @@ async fn capture_session_chunks_writes_by_negotiated_write_limit() {
     .await
     .expect("capture chunks oversized bridge writes");
 
-    assert_eq!(capture.report.protocol_writes, 1);
-    assert_eq!(capture.report.writes, 3);
+    assert_eq!(capture.report.protocol_writes, protocol_writes(1));
+    assert_eq!(capture.report.writes, writes(3));
     assert_eq!(
         peripheral.writes.lock().expect("write log").as_slice(),
         &[
@@ -1485,7 +1520,7 @@ async fn drive_session_feeds_link_down_after_intentional_disconnect() {
     .await
     .expect("bridge handles intentional disconnect");
 
-    assert_eq!(report.disconnects, 1);
+    assert_eq!(report.disconnects, disconnects(1));
     assert_eq!(
         report.events.as_slice(),
         &[crate::SessionBridgeEvent::LinkDown {
@@ -1528,7 +1563,7 @@ async fn capture_session_records_link_down_after_intentional_disconnect() {
             },
         ]
     );
-    assert_eq!(capture.report.disconnects, 1);
+    assert_eq!(capture.report.disconnects, disconnects(1));
 }
 
 #[tokio::test]
@@ -1556,14 +1591,26 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
         reconnecting_capture.attempts[0].attempt,
         crate::ReconnectAttempt::new(1)
     );
-    assert_eq!(reconnecting_capture.attempts[0].report.subscribes, 1);
-    assert_eq!(reconnecting_capture.attempts[0].report.disconnects, 1);
+    assert_eq!(
+        reconnecting_capture.attempts[0].report.subscribes,
+        subscribes(1)
+    );
+    assert_eq!(
+        reconnecting_capture.attempts[0].report.disconnects,
+        disconnects(1)
+    );
     assert_eq!(
         reconnecting_capture.attempts[1].attempt,
         crate::ReconnectAttempt::new(2)
     );
-    assert_eq!(reconnecting_capture.attempts[1].report.subscribes, 1);
-    assert_eq!(reconnecting_capture.attempts[1].report.disconnects, 0);
+    assert_eq!(
+        reconnecting_capture.attempts[1].report.subscribes,
+        subscribes(1)
+    );
+    assert_eq!(
+        reconnecting_capture.attempts[1].report.disconnects,
+        disconnects(0)
+    );
     assert_eq!(
         reconnecting_capture.attempts[0]
             .summary
@@ -1580,8 +1627,8 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
             .as_deref(),
         Some("NOSFET Aero")
     );
-    assert_eq!(capture.report.subscribes, 2);
-    assert_eq!(capture.report.disconnects, 1);
+    assert_eq!(capture.report.subscribes, subscribes(2));
+    assert_eq!(capture.report.disconnects, disconnects(1));
     assert_eq!(*session.link_ups.lock().expect("link ups"), 2);
     assert_eq!(*session.link_downs.lock().expect("link downs"), 1);
     assert_eq!(first.subscribes.lock().expect("first subscribes").len(), 1);
@@ -1640,8 +1687,8 @@ async fn capture_reconnecting_session_cancels_commands_after_reconnect() {
     .expect("fake host reconnects after first-link commands");
 
     assert_eq!(capture.attempts.len(), 2);
-    assert_eq!(capture.attempts[0].report.writes, 2);
-    assert_eq!(capture.attempts[1].report.writes, 0);
+    assert_eq!(capture.attempts[0].report.writes, writes(2));
+    assert_eq!(capture.attempts[1].report.writes, writes(0));
     assert_eq!(
         first.writes.lock().expect("first writes").as_slice(),
         &[

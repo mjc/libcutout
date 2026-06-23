@@ -429,10 +429,13 @@ where
                 )
                 .await?;
                 log_notification_decode_outcome(decode_outcome, &notification, context.channel);
-                context.report.notifications += 1;
-                context.report.notification_bytes += notification.value.len();
-                context.report.latest_notification_len =
-                    Some(NotificationByteLen::new(notification.value.len()));
+                context.report.notifications = context.report.notifications.increment();
+                let notification_len = NotificationByteLen::new(notification.value.len());
+                context.report.notification_bytes = context
+                    .report
+                    .notification_bytes
+                    .saturating_add_len(notification_len);
+                context.report.latest_notification_len = Some(notification_len);
             }
             Ok(None) => {
                 debug!("session notification stream ended");
@@ -445,8 +448,8 @@ where
         }
     }
     debug!(
-        notifications = context.report.notifications,
-        notification_bytes = context.report.notification_bytes,
+        notifications = context.report.notifications.get(),
+        notification_bytes = context.report.notification_bytes.get(),
         latest_notification_len = ?context.report.latest_notification_len,
         "session notification window completed"
     );
@@ -634,7 +637,7 @@ where
                             characteristic: notify_characteristic.uuid,
                         });
                     }
-                    context.report.subscribes += 1;
+                    context.report.subscribes = context.report.subscribes.increment();
                 }
                 SessionOutput::Transport(TransportAction::Write {
                     channel: observed,
@@ -648,7 +651,7 @@ where
                         }
                         .into());
                     }
-                    context.report.protocol_writes += 1;
+                    context.report.protocol_writes = context.report.protocol_writes.increment();
                     let write_limit = NegotiatedWriteLen::from_mtu(context.peripheral.mtu());
                     for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
                         context
@@ -664,7 +667,7 @@ where
                                 provenance: context.write_provenance,
                             });
                         }
-                        context.report.writes += 1;
+                        context.report.writes = context.report.writes.increment();
                     }
                 }
                 SessionOutput::Transport(TransportAction::Disconnect) => {
@@ -672,7 +675,7 @@ where
                     if let Some(records) = context.capture.as_deref_mut() {
                         records.push(SessionCaptureRecord::LinkDown { monotonic_ms });
                     }
-                    context.report.disconnects += 1;
+                    context.report.disconnects = context.report.disconnects.increment();
                     session.handle(SessionInput::LinkDown, outputs);
                 }
                 SessionOutput::Event(event) => {

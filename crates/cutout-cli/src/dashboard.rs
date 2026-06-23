@@ -493,15 +493,15 @@ impl DashboardState {
         self.counters.subscriptions = self
             .counters
             .subscriptions
-            .saturating_add(usize_to_u64(report.subscribes));
+            .saturating_add(usize_to_u64(report.subscribes.get()));
         self.counters.notifications = self
             .counters
             .notifications
-            .saturating_add(usize_to_u64(report.notifications));
+            .saturating_add(usize_to_u64(report.notifications.get()));
         self.counters.notification_bytes = self
             .counters
             .notification_bytes
-            .saturating_add(usize_to_u64(report.notification_bytes));
+            .saturating_add(usize_to_u64(report.notification_bytes.get()));
         self.counters.latest_notification_len = report
             .latest_notification_len
             .map(|len| usize_to_u64(len.get()));
@@ -513,11 +513,11 @@ impl DashboardState {
                 report.writes,
                 report.subscribes,
                 report.notifications,
-                report.notification_bytes
+                report.notification_bytes.get()
             ),
         );
 
-        if report.telemetry == 0 {
+        if report.telemetry.has_no_events() {
             if report_has_no_parsed_events(report) {
                 self.push_log(
                     "warn",
@@ -528,11 +528,11 @@ impl DashboardState {
             self.push_log("info", &format!("telemetry samples={}", report.telemetry));
         }
 
-        if report.diagnostics > 0 {
+        if report.diagnostics.has_events() {
             self.push_log("warn", &format!("diagnostics={}", report.diagnostics));
         }
 
-        if report.telemetry > 0 {
+        if report.telemetry.has_events() {
             let snapshot = report.telemetry_snapshot;
             self.push_log_with_display("info", MappedTelemetryLog(snapshot));
             self.telemetry.apply_snapshot(snapshot);
@@ -540,7 +540,7 @@ impl DashboardState {
         for response in &report.read_only_response_events {
             self.read_only.apply_response(*response);
         }
-        if report.read_only_responses > 0 {
+        if report.read_only_responses.has_events() {
             self.push_log(
                 "info",
                 &format!("read-only responses={}", report.read_only_responses),
@@ -1453,9 +1453,9 @@ impl fmt::Display for SettingsReadbackLog {
 }
 
 fn report_has_no_parsed_events(report: &SessionBridgeReport) -> bool {
-    report.telemetry == 0
-        && report.read_only_responses == 0
-        && report.diagnostics == 0
+    report.telemetry.has_no_events()
+        && report.read_only_responses.has_no_events()
+        && report.diagnostics.has_no_events()
         && report.diagnostic_errors.is_empty()
         && report.read_only_response_events.is_empty()
 }
@@ -1471,7 +1471,11 @@ fn format_unmapped_telemetry_event(report: &SessionBridgeReport) -> String {
     let diagnostics = format_parser_diagnostics(report.diagnostics_snapshot);
     format!(
         "telemetry unmapped notifications={} bytes={} latest_len={} diagnostics={} {}",
-        report.notifications, report.notification_bytes, latest, report.diagnostics, diagnostics
+        report.notifications,
+        report.notification_bytes.get(),
+        latest,
+        report.diagnostics,
+        diagnostics
     )
 }
 
@@ -2348,7 +2352,11 @@ mod tests {
     use std::{fmt::Write as _, io::Cursor};
 
     use super::*;
-    use cutout_btle::{ConnectionTarget, PeripheralObservation};
+    use cutout_btle::{
+        ConnectionTarget, DiagnosticEventCount, DisconnectCount, NotificationByteTotal,
+        NotificationCount, PeripheralObservation, ProtocolWriteCount, ReadOnlyResponseCount,
+        SubscribeCount, TelemetryEventCount, TransportWriteCount,
+    };
     use cutout_core::{
         BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback,
         FirmwareInfo, GattChannel, Measured, NotificationByteLen, NotificationIngestOutcome,
@@ -2359,6 +2367,38 @@ mod tests {
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+    const fn protocol_writes(value: usize) -> ProtocolWriteCount {
+        ProtocolWriteCount::new(value)
+    }
+
+    const fn writes(value: usize) -> TransportWriteCount {
+        TransportWriteCount::new(value)
+    }
+
+    const fn subscribes(value: usize) -> SubscribeCount {
+        SubscribeCount::new(value)
+    }
+
+    const fn notifications(value: usize) -> NotificationCount {
+        NotificationCount::new(value)
+    }
+
+    const fn telemetry_events(value: usize) -> TelemetryEventCount {
+        TelemetryEventCount::new(value)
+    }
+
+    const fn read_only_responses(value: usize) -> ReadOnlyResponseCount {
+        ReadOnlyResponseCount::new(value)
+    }
+
+    const fn diagnostic_events(value: usize) -> DiagnosticEventCount {
+        DiagnosticEventCount::new(value)
+    }
+
+    const fn disconnects(value: usize) -> DisconnectCount {
+        DisconnectCount::new(value)
+    }
 
     const fn sel(value: u8) -> ProtocolSelector {
         ProtocolSelector::new(value)
@@ -2715,19 +2755,19 @@ mod tests {
     fn live_session_report_updates_real_counters_and_logs() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 184,
-            notification_bytes: 18_400,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(184),
+            notification_bytes: NotificationByteTotal::new(18_400),
             latest_notification_len: Some(NotificationByteLen::new(100)),
-            telemetry: 0,
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 1,
+            diagnostics: diagnostic_events(1),
             diagnostics_snapshot: ParserDiagnostics {
                 malformed_frames: 2,
                 unmatched_replies: 1,
@@ -2748,7 +2788,7 @@ mod tests {
                     monotonic_ms: cutout_btle::MonotonicMs::new(19),
                 },
             ],
-            disconnects: 1,
+            disconnects: disconnects(1),
         };
 
         state.apply_session_report(&report);
@@ -2784,13 +2824,13 @@ mod tests {
     fn live_session_report_applies_telemetry_snapshot() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 2,
-            notification_bytes: 200,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(2),
+            notification_bytes: NotificationByteTotal::new(200),
             latest_notification_len: Some(NotificationByteLen::new(100)),
-            telemetry: 1,
+            telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
                 speed_mm_s: Some(Measured::reported(4_470)),
                 voltage_mv: Some(Measured::reported(84_400)),
@@ -2799,11 +2839,11 @@ mod tests {
                 battery_percent_reported: Some(Measured::reported(77)),
                 ..TelemetrySnapshot::default()
             },
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
@@ -2818,7 +2858,7 @@ mod tests {
                     ..TelemetryDelta::empty(42)
                 },
             }],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
@@ -2861,10 +2901,10 @@ mod tests {
     fn parsed_session_report_suppresses_raw_notification_log_spam() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            notifications: 1,
-            notification_bytes: 99,
+            notifications: notifications(1),
+            notification_bytes: NotificationByteTotal::new(99),
             latest_notification_len: Some(NotificationByteLen::new(99)),
-            telemetry: 1,
+            telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
                 voltage_mv: Some(Measured::reported(117_600)),
                 battery_percent_estimated: Some(Measured::estimated(78)),
@@ -2913,8 +2953,8 @@ mod tests {
     fn unparsed_session_report_summarizes_transport_without_raw_event_spam() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            notifications: 3,
-            notification_bytes: 57,
+            notifications: notifications(3),
+            notification_bytes: NotificationByteTotal::new(57),
             latest_notification_len: Some(NotificationByteLen::new(20)),
             events: Vec::new(),
             ..empty_session_bridge_report()
@@ -3123,8 +3163,8 @@ mod tests {
         let mut state = DashboardState::empty();
         let channel = GattChannel::from_bytes([0xA1; 16]);
         let report = SessionBridgeReport {
-            notifications: 5,
-            notification_bytes: 269,
+            notifications: notifications(5),
+            notification_bytes: NotificationByteTotal::new(269),
             latest_notification_len: Some(NotificationByteLen::new(77)),
             events: vec![
                 SessionBridgeEvent::NotificationIngest {
@@ -3223,7 +3263,7 @@ mod tests {
             ],
         ));
         let report = SessionBridgeReport {
-            read_only_responses: 1,
+            read_only_responses: read_only_responses(1),
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
@@ -3267,7 +3307,7 @@ mod tests {
             .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
         );
         let report = SessionBridgeReport {
-            read_only_responses: 1,
+            read_only_responses: read_only_responses(1),
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
@@ -3299,19 +3339,19 @@ mod tests {
     fn first_voltage_sample_seeds_the_sparkline_history() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 1,
-            notification_bytes: 20,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(1),
+            notification_bytes: NotificationByteTotal::new(20),
             latest_notification_len: Some(NotificationByteLen::new(20)),
-            telemetry: 1,
+            telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
@@ -3323,7 +3363,7 @@ mod tests {
                     ..TelemetryDelta::empty(7)
                 },
             }],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
@@ -3343,24 +3383,24 @@ mod tests {
     fn live_session_report_summarizes_read_only_responses() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 3,
-            notification_bytes: 300,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(3),
+            notification_bytes: NotificationByteTotal::new(300),
             latest_notification_len: Some(NotificationByteLen::new(100)),
-            telemetry: 0,
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: 5,
+            read_only_responses: read_only_responses(5),
             read_only_response_events: sample_aero_read_only_responses(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: Vec::new(),
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
@@ -3418,8 +3458,8 @@ mod tests {
             BatteryInfo::default(),
         ));
         let report = SessionBridgeReport {
-            telemetry: 0,
-            read_only_responses: 1,
+            telemetry: telemetry_events(0),
+            read_only_responses: read_only_responses(1),
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
@@ -3447,19 +3487,19 @@ mod tests {
             ..TelemetryDelta::empty(42)
         };
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 4,
-            notification_bytes: 400,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(4),
+            notification_bytes: NotificationByteTotal::new(400),
             latest_notification_len: Some(NotificationByteLen::new(100)),
-            telemetry: 1,
+            telemetry: telemetry_events(1),
             telemetry_snapshot: {
                 let mut snapshot = TelemetrySnapshot::default();
                 snapshot.apply_delta(telemetry);
                 snapshot
             },
-            read_only_responses: 5,
+            read_only_responses: read_only_responses(5),
             read_only_response_events: vec![
                 ReadOnlyResponse::Firmware(FirmwareInfo {
                     firmware_major: Some(Measured::reported(43)),
@@ -3492,7 +3532,7 @@ mod tests {
             ],
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 1,
+            diagnostics: diagnostic_events(1),
             diagnostics_snapshot: ParserDiagnostics {
                 malformed_frames: 1,
                 ..ParserDiagnostics::default()
@@ -3512,7 +3552,7 @@ mod tests {
                     },
                 },
             ],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
@@ -3549,24 +3589,24 @@ mod tests {
             })
             .collect();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 0,
-            notifications: 0,
-            notification_bytes: 0,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(0),
+            notifications: notifications(0),
+            notification_bytes: NotificationByteTotal::default(),
             latest_notification_len: None,
-            telemetry: 0,
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: pages.len(),
+            read_only_responses: read_only_responses(pages.len()),
             read_only_response_events: pages,
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: Vec::new(),
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
@@ -3586,7 +3626,7 @@ mod tests {
     fn read_only_temperature_summary_survives_later_bms_pages() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            read_only_responses: 4,
+            read_only_responses: read_only_responses(4),
             read_only_response_events: vec![
                 ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
                     BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
@@ -3683,24 +3723,24 @@ mod tests {
     fn live_session_reports_accumulate_transport_counters() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 2,
-            notification_bytes: 40,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(2),
+            notification_bytes: NotificationByteTotal::new(40),
             latest_notification_len: Some(NotificationByteLen::new(20)),
-            telemetry: 0,
+            telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
             events: Vec::new(),
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);
@@ -3716,19 +3756,19 @@ mod tests {
     fn live_session_report_uses_estimated_battery_from_voltage_telemetry() {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
-            protocol_writes: 0,
-            writes: 0,
-            subscribes: 1,
-            notifications: 1,
-            notification_bytes: 20,
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(1),
+            notification_bytes: NotificationByteTotal::new(20),
             latest_notification_len: Some(NotificationByteLen::new(20)),
-            telemetry: 1,
+            telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
-            read_only_responses: 0,
+            read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
             settings: Vec::new(),
-            diagnostics: 0,
+            diagnostics: diagnostic_events(0),
             diagnostics_snapshot: ParserDiagnostics::default(),
             diagnostic_errors: Vec::new(),
             identity: None,
@@ -3746,7 +3786,7 @@ mod tests {
                     ..TelemetryDelta::empty(42)
                 },
             }],
-            disconnects: 0,
+            disconnects: disconnects(0),
         };
 
         state.apply_session_report(&report);

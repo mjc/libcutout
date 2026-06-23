@@ -1,4 +1,6 @@
-use std::{fmt, num::NonZeroUsize, time::Duration};
+use std::{fmt, marker::PhantomData, num::NonZeroUsize, time::Duration};
+
+use cutout_core::NotificationByteLen;
 
 /// Bounded scan duration parsed at the caller boundary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -108,6 +110,164 @@ impl fmt::Display for MonotonicMs {
         self.0.fmt(f)
     }
 }
+
+/// Total notification payload bytes observed across a bridge report.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct NotificationByteTotal(usize);
+
+impl NotificationByteTotal {
+    /// Creates a total from an already counted byte value.
+    #[must_use]
+    pub const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    /// Creates a total from one typed notification length.
+    #[must_use]
+    pub const fn from_len(len: NotificationByteLen) -> Self {
+        Self(len.get())
+    }
+
+    /// Returns the primitive value for rendering or serialization edges.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+
+    pub(crate) const fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+
+    pub(crate) const fn saturating_add_len(self, len: NotificationByteLen) -> Self {
+        Self(self.0.saturating_add(len.get()))
+    }
+}
+
+impl fmt::Display for NotificationByteTotal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Typed session report counter backed by a zero-sized semantic tag.
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SessionCount<Tag> {
+    value: usize,
+    tag: PhantomData<fn() -> Tag>,
+}
+
+impl<Tag> Clone for SessionCount<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Tag> Copy for SessionCount<Tag> {}
+
+impl<Tag> Default for SessionCount<Tag> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl<Tag> SessionCount<Tag> {
+    /// Creates a counter from an already parsed count value.
+    #[must_use]
+    pub const fn new(value: usize) -> Self {
+        Self {
+            value,
+            tag: PhantomData,
+        }
+    }
+
+    /// Returns the primitive value for rendering or serialization edges.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.value
+    }
+
+    /// Returns true when the counter has no observed events.
+    #[must_use]
+    pub const fn has_no_events(self) -> bool {
+        self.value == 0
+    }
+
+    /// Returns true when the counter has at least one observed event.
+    #[must_use]
+    pub const fn has_events(self) -> bool {
+        !self.has_no_events()
+    }
+
+    pub(crate) const fn increment(self) -> Self {
+        Self::new(self.value.saturating_add(1))
+    }
+
+    pub(crate) const fn saturating_add(self, other: Self) -> Self {
+        Self::new(self.value.saturating_add(other.value))
+    }
+}
+
+impl<Tag> fmt::Display for SessionCount<Tag> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+/// Zero-sized tag for protocol writes produced by a protocol session.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ProtocolWriteCountTag;
+
+/// Zero-sized tag for transport writes executed by the BTLE bridge.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TransportWriteCountTag;
+
+/// Zero-sized tag for transport subscribe operations.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SubscribeCountTag;
+
+/// Zero-sized tag for notification payloads relayed into a session.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct NotificationCountTag;
+
+/// Zero-sized tag for semantic telemetry events emitted by a session.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TelemetryEventCountTag;
+
+/// Zero-sized tag for read-only response events emitted by a session.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ReadOnlyResponseCountTag;
+
+/// Zero-sized tag for parser diagnostics events emitted by a session.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct DiagnosticEventCountTag;
+
+/// Zero-sized tag for transport disconnect operations.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct DisconnectCountTag;
+
+/// Protocol write actions emitted by a protocol session.
+pub type ProtocolWriteCount = SessionCount<ProtocolWriteCountTag>;
+
+/// Transport writes executed through the BTLE bridge.
+pub type TransportWriteCount = SessionCount<TransportWriteCountTag>;
+
+/// Transport subscribe operations executed through the BTLE bridge.
+pub type SubscribeCount = SessionCount<SubscribeCountTag>;
+
+/// Notification payloads relayed into a protocol session.
+pub type NotificationCount = SessionCount<NotificationCountTag>;
+
+/// Semantic telemetry events emitted by a protocol session.
+pub type TelemetryEventCount = SessionCount<TelemetryEventCountTag>;
+
+/// Semantic read-only response events emitted by a protocol session.
+pub type ReadOnlyResponseCount = SessionCount<ReadOnlyResponseCountTag>;
+
+/// Parser diagnostics events emitted by a protocol session.
+pub type DiagnosticEventCount = SessionCount<DiagnosticEventCountTag>;
+
+/// Transport disconnect operations executed through the BTLE bridge.
+pub type DisconnectCount = SessionCount<DisconnectCountTag>;
 
 /// Number of reconnect links a session may attempt.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

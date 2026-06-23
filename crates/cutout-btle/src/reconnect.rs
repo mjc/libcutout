@@ -201,7 +201,7 @@ where
             .unwrap_or(monotonic_start)
             .next();
         merge_session_report(&mut reconnecting_capture.capture.report, report.clone());
-        let should_reconnect = report.disconnects > 0
+        let should_reconnect = report.disconnects.has_events()
             && records
                 .iter()
                 .any(|record| matches!(record, SessionCaptureRecord::LinkDown { .. }));
