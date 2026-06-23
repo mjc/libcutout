@@ -837,9 +837,41 @@ impl<'a> ModelCatalog<'a> {
         manufacturer: ManufacturerKey,
         model: ModelKey,
     ) -> Option<&'a ModelCatalogEntry> {
-        self.entries
+        self.find_model_names(manufacturer.as_str(), model.as_str())
+    }
+
+    /// Finds an entry by borrowed manufacturer/model names.
+    #[must_use]
+    pub fn find_model_names(
+        self,
+        manufacturer: &str,
+        model: &str,
+    ) -> Option<&'a ModelCatalogEntry> {
+        self.entries.iter().find(|entry| {
+            entry.registry.manufacturer == manufacturer && entry.registry.model == model
+        })
+    }
+
+    /// Resolves a display model name to a catalog entry within a protocol family.
+    #[must_use]
+    pub fn resolve_display_model(
+        self,
+        family: ProtocolFamily,
+        display_model: &str,
+    ) -> CatalogModelResolution<'a> {
+        let mut matches = self
+            .entries
             .iter()
-            .find(|entry| entry.manufacturer_key() == manufacturer && entry.model_key() == model)
+            .filter(|entry| entry.registry.protocol_family == family)
+            .filter(|entry| registry_entry_matches_display_model(entry.registry, display_model));
+        let Some(first) = matches.next() else {
+            return CatalogModelResolution::NoMatch;
+        };
+        if matches.next().is_some() {
+            CatalogModelResolution::Ambiguous
+        } else {
+            CatalogModelResolution::Matched(first)
+        }
     }
 
     /// Finds the first catalog entry registered for a parser key.
@@ -867,6 +899,27 @@ impl<'a> ModelCatalog<'a> {
             .iter()
             .filter(move |entry| entry.family_key() == family)
     }
+}
+
+/// Result of resolving identity metadata against a model catalog.
+#[derive(Clone, Copy, Debug)]
+pub enum CatalogModelResolution<'a> {
+    /// Exactly one catalog entry matched.
+    Matched(&'a ModelCatalogEntry),
+
+    /// No catalog entry matched.
+    NoMatch,
+
+    /// More than one catalog entry matched.
+    Ambiguous,
+}
+
+fn registry_entry_matches_display_model(entry: &ModelRegistryEntry, display_model: &str) -> bool {
+    display_model == entry.model
+        || display_model
+            .strip_prefix(entry.manufacturer)
+            .and_then(|suffix| suffix.strip_prefix(' '))
+            == Some(entry.model)
 }
 
 /// Registry data validation error.
@@ -5020,6 +5073,74 @@ mod tests {
                 .find_session(crate::SessionKey::new("missing"))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn catalog_resolves_borrowed_display_model_without_allocating_keys() {
+        let entries = [crate::ModelCatalogEntry {
+            registry: &STATIC_AERO_REGISTRY_ENTRY,
+            registration: crate::ModelRuntimeRegistration {
+                parser: Some(crate::ParserKey::new("test-parser")),
+                session: Some(crate::SessionKey::new("test-session")),
+            },
+        }];
+        let catalog = crate::ModelCatalog::new(&entries);
+
+        assert_eq!(
+            catalog
+                .find_model_names("NOSFET", "Aero")
+                .map(|entry| entry.model_key()),
+            Some(crate::ModelKey::new("Aero"))
+        );
+        let crate::CatalogModelResolution::Matched(entry) = catalog
+            .resolve_display_model(crate::ProtocolFamily::VeteranLeaperkimNosfet, "NOSFET Aero")
+        else {
+            panic!("display model should resolve");
+        };
+        assert_eq!(entry.model_key(), crate::ModelKey::new("Aero"));
+
+        assert!(matches!(
+            catalog.resolve_display_model(crate::ProtocolFamily::BegodeGotway, "NOSFET Aero"),
+            crate::CatalogModelResolution::NoMatch
+        ));
+    }
+
+    #[test]
+    fn catalog_display_model_resolution_reports_ambiguity() {
+        static OTHER_AERO_REGISTRY_ENTRY: crate::ModelRegistryEntry = crate::ModelRegistryEntry {
+            manufacturer: "Other",
+            model: "Aero",
+            protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            advertised_name_hints: &[],
+            wire_model_id: None,
+            battery: None,
+            bms: None,
+            gatt: STATIC_AERO_REGISTRY_ENTRY.gatt,
+            capabilities: STATIC_AERO_REGISTRY_ENTRY.capabilities,
+            verification: VerificationStatus::Inferred,
+        };
+        let entries = [
+            crate::ModelCatalogEntry {
+                registry: &STATIC_AERO_REGISTRY_ENTRY,
+                registration: crate::ModelRuntimeRegistration {
+                    parser: Some(crate::ParserKey::new("test-parser")),
+                    session: Some(crate::SessionKey::new("test-session")),
+                },
+            },
+            crate::ModelCatalogEntry {
+                registry: &OTHER_AERO_REGISTRY_ENTRY,
+                registration: crate::ModelRuntimeRegistration {
+                    parser: Some(crate::ParserKey::new("other-parser")),
+                    session: Some(crate::SessionKey::new("other-session")),
+                },
+            },
+        ];
+        let catalog = crate::ModelCatalog::new(&entries);
+
+        assert!(matches!(
+            catalog.resolve_display_model(crate::ProtocolFamily::VeteranLeaperkimNosfet, "Aero"),
+            crate::CatalogModelResolution::Ambiguous
+        ));
     }
 
     #[test]

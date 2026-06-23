@@ -21,12 +21,12 @@ use cutout_btle::{
 };
 use cutout_core::{
     BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
-    CaptureSessionLabel, DeviceCommand, DeviceEvent, DiagnosticError, DiagnosticErrorKind,
-    DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured, NotificationByteLen,
-    ParserDiagnostics, PevcapCapture, PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey,
-    SessionOutput, SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource,
-    VerificationStatus, VerifiedValue,
+    CaptureSessionLabel, CatalogModelResolution, DeviceCommand, DeviceEvent, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
+    ModelCatalog, NotificationByteLen, ParserDiagnostics, PevcapCapture, PevcapDirection,
+    PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily,
+    ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput, SettingsReadback,
+    TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -34,7 +34,7 @@ use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BegodeBmsSummary,
     BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFalconModel, BegodeFrame,
     BegodeNotificationDecoder, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
-    BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection,
+    BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
     NOSFET_AERO_SESSION_KEY, ReadOnlySession, RegisteredReadOnlySession, find_session_registration,
     select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
     select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
@@ -1396,6 +1396,16 @@ enum SelectedSessionProfile {
 }
 
 impl SelectedSessionProfile {
+    fn from_session_key(key: SessionKey) -> Option<Self> {
+        if key == NOSFET_AERO_SESSION_KEY {
+            Some(Self::Aero)
+        } else if key == BEGODE_FALCON_SESSION_KEY {
+            Some(Self::Falcon)
+        } else {
+            None
+        }
+    }
+
     const fn session_key(self) -> SessionKey {
         match self {
             Self::Aero => NOSFET_AERO_SESSION_KEY,
@@ -1446,18 +1456,49 @@ fn selected_pevcap_replay_profile(
 }
 
 fn auto_pevcap_replay_profile(capture: &PevcapCapture) -> Result<SelectedSessionProfile> {
-    match capture
-        .header
-        .resolved_identity
-        .as_ref()
-        .and_then(|identity| identity.protocol_family)
-    {
-        Some(ProtocolFamily::VeteranLeaperkimNosfet) => Ok(SelectedSessionProfile::Aero),
-        Some(ProtocolFamily::BegodeGotway) => Ok(SelectedSessionProfile::Falcon),
-        None | Some(ProtocolFamily::Vesc) => {
-            bail!("PEVCAP replay --profile auto requires resolved Aero or Falcon identity metadata")
+    let Some(identity) = capture.header.resolved_identity.as_ref() else {
+        bail!("PEVCAP replay --profile auto requires resolved model identity metadata");
+    };
+    let Some(family) = identity.protocol_family else {
+        bail!("PEVCAP replay --profile auto requires resolved protocol family metadata");
+    };
+    let Some(model) = identity.model.as_ref() else {
+        bail!("PEVCAP replay --profile auto requires resolved model metadata");
+    };
+
+    match ModelCatalog::new(&MODEL_CATALOG).resolve_display_model(family, model.value.as_str()) {
+        CatalogModelResolution::Matched(entry) => selected_session_profile_for_catalog_entry(entry),
+        CatalogModelResolution::NoMatch => {
+            bail!(
+                "PEVCAP replay --profile auto found no catalog entry for resolved model {}",
+                model.value
+            )
+        }
+        CatalogModelResolution::Ambiguous => {
+            bail!(
+                "PEVCAP replay --profile auto found ambiguous catalog entries for resolved model {}",
+                model.value
+            )
         }
     }
+}
+
+fn selected_session_profile_for_catalog_entry(
+    entry: &cutout_core::ModelCatalogEntry,
+) -> Result<SelectedSessionProfile> {
+    let Some(session) = entry.registration.session else {
+        bail!(
+            "catalog entry {} has no session registration",
+            entry.registry.model
+        );
+    };
+    SelectedSessionProfile::from_session_key(session).ok_or_else(|| {
+        anyhow::anyhow!(
+            "catalog entry {} uses unsupported CLI session registration: {}",
+            entry.registry.model,
+            session.as_str()
+        )
+    })
 }
 
 fn pevcap_identity_for_profile(profile: SelectedSessionProfile) -> PevcapResolvedIdentity {
@@ -3256,7 +3297,29 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("requires resolved Aero or Falcon")
+                .contains("requires resolved model identity metadata")
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_auto_rejects_unknown_resolved_model() {
+        let mut capture = sample_aero_replay_capture();
+        capture.header.resolved_identity = Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+            model: Some(VerifiedValue {
+                value: "NOSFET Unknown".to_owned(),
+                verification: VerificationStatus::Inferred,
+            }),
+            firmware: None,
+        });
+
+        let error = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect_err("unknown model should not guess a replay profile");
+
+        assert!(
+            error
+                .to_string()
+                .contains("found no catalog entry for resolved model NOSFET Unknown")
         );
     }
 
