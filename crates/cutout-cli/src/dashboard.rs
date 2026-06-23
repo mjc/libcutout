@@ -42,10 +42,61 @@ const HISTORY_LIMIT: usize = 32;
 const READ_ONLY_SUMMARY_LIMIT: usize = 16;
 const TAB_COUNT: usize = 4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DashboardTab(usize);
+
+impl DashboardTab {
+    #[cfg(test)]
+    pub(crate) const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    const fn first() -> Self {
+        Self(0)
+    }
+
+    fn next(self) -> Self {
+        Self((self.0 + 1) % TAB_COUNT)
+    }
+
+    fn previous(self) -> Self {
+        Self(if self.0 == 0 {
+            TAB_COUNT - 1
+        } else {
+            self.0 - 1
+        })
+    }
+
+    fn bounded(self) -> usize {
+        self.0.min(TAB_COUNT - 1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScanSelection(usize);
+
+impl ScanSelection {
+    const fn first() -> Self {
+        Self(0)
+    }
+
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    fn shift_after_front_removal(&mut self) {
+        self.0 = self.0.saturating_sub(1);
+    }
+
+    fn select_last_len(&mut self, len: usize) {
+        self.0 = len.saturating_sub(1);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DashboardState {
     pub(crate) source: DashboardSource,
-    pub(crate) active_tab: usize,
+    pub(crate) active_tab: DashboardTab,
     pub(crate) provenance: Option<String>,
     pub(crate) device: DeviceSnapshot,
     pub(crate) scan_browser: ScanBrowser,
@@ -85,7 +136,7 @@ pub(crate) struct ProfileSnapshot {
 pub(crate) struct ScanBrowser {
     pub(crate) filters: TargetFilterSummary,
     pub(crate) observations: Vec<ScanObservation>,
-    pub(crate) selected: usize,
+    pub(crate) selected: ScanSelection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -132,25 +183,23 @@ impl ScanBrowser {
         Self {
             filters: TargetFilterSummary::default(),
             observations: Vec::new(),
-            selected: 0,
+            selected: ScanSelection::first(),
         }
     }
 
     fn selected(&self) -> Option<&ScanObservation> {
-        self.observations.get(self.selected)
+        self.observations.get(self.selected.get())
     }
 
     fn push_observation(&mut self, observation: ScanObservation, selected: bool) {
         if self.observations.len() == HISTORY_LIMIT {
             self.observations.remove(0);
-            if self.selected > 0 {
-                self.selected -= 1;
-            }
+            self.selected.shift_after_front_removal();
         }
 
         self.observations.push(observation);
         if selected {
-            self.selected = self.observations.len().saturating_sub(1);
+            self.selected.select_last_len(self.observations.len());
         }
     }
 }
@@ -280,7 +329,7 @@ impl DashboardState {
     pub(crate) fn empty() -> Self {
         Self {
             source: DashboardSource::Live,
-            active_tab: 0,
+            active_tab: DashboardTab::first(),
             provenance: None,
             device: DeviceSnapshot {
                 make: "unknown".to_owned(),
@@ -316,7 +365,7 @@ impl DashboardState {
                     .scan_browser
                     .observations
                     .retain(|observation| observation.real_device && observation.name == device);
-                state.scan_browser.selected = 0;
+                state.scan_browser.selected = ScanSelection::first();
             }
         }
 
@@ -590,15 +639,11 @@ impl DashboardState {
     }
 
     fn next_tab(&mut self) {
-        self.active_tab = (self.active_tab + 1) % TAB_COUNT;
+        self.active_tab = self.active_tab.next();
     }
 
     fn previous_tab(&mut self) {
-        self.active_tab = if self.active_tab == 0 {
-            TAB_COUNT - 1
-        } else {
-            self.active_tab - 1
-        };
+        self.active_tab = self.active_tab.previous();
     }
 
     fn apply_device_snapshot(
@@ -1704,7 +1749,7 @@ fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInp
 }
 
 pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
-    let active_tab = state.active_tab.min(TAB_COUNT - 1);
+    let active_tab = state.active_tab.bounded();
     let areas = if active_tab == 3 {
         Layout::default()
             .direction(Direction::Vertical)
@@ -1737,7 +1782,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         Line::from("Profiles"),
         Line::from("Logs"),
     ])
-    .select(state.active_tab.min(3))
+    .select(state.active_tab.bounded())
     .block(Block::bordered().title("Cutout dashboard"))
     .highlight_style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
@@ -1745,7 +1790,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn render_body(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    match state.active_tab.min(TAB_COUNT - 1) {
+    match state.active_tab.bounded() {
         0 => render_overview_tab(frame, area, state),
         1 => render_telemetry(frame, area, state),
         2 => render_profiles(frame, area, state),
@@ -2534,7 +2579,7 @@ mod tests {
         let state = DashboardState::sample();
 
         assert_eq!(state.source, DashboardSource::Demo);
-        assert_eq!(state.active_tab, 0);
+        assert_eq!(state.active_tab, DashboardTab::first());
         assert_eq!(
             state.provenance.as_deref(),
             Some("demo state: aero-nf2557.v1")
@@ -2542,7 +2587,7 @@ mod tests {
         assert_eq!(state.device.make, "NOSFET");
         assert_eq!(state.device.model, "Aero");
         assert_eq!(state.device.name, "Aero NF2557");
-        assert_eq!(state.scan_browser.selected, 0);
+        assert_eq!(state.scan_browser.selected, ScanSelection::first());
         assert_eq!(state.scan_browser.observations.len(), 3);
         assert_eq!(
             state.scan_browser.filters.address.as_deref(),
@@ -2942,7 +2987,7 @@ mod tests {
                 .all(|entry| !entry.message.contains("telemetry unmapped notifications=1"))
         );
 
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("processed telemetry voltage=118V battery=78%"));
         assert!(!text.contains("raw notification len=99"));
@@ -2975,7 +3020,7 @@ mod tests {
                 .all(|entry| !entry.message.contains("raw notification"))
         );
 
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("telemetry unmapped notifications=3"));
         assert!(!text.contains("raw notification"));
@@ -3228,7 +3273,7 @@ mod tests {
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 140, 36));
 
@@ -3273,7 +3318,7 @@ mod tests {
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -3317,7 +3362,7 @@ mod tests {
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -3660,7 +3705,7 @@ mod tests {
         };
 
         state.apply_session_report(&report);
-        state.active_tab = 2;
+        state.active_tab = DashboardTab::new(2);
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert_eq!(
@@ -3816,7 +3861,7 @@ mod tests {
         assert!(overview_text.contains("47%"));
         assert!(overview_text.contains("Voltage"));
 
-        state.active_tab = 1;
+        state.active_tab = DashboardTab::new(1);
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("voltage 109 V"));
         assert!(text.contains("109 V"));
@@ -3857,13 +3902,13 @@ mod tests {
         let mut state = DashboardState::empty();
 
         state.next_tab();
-        assert_eq!(state.active_tab, 1);
+        assert_eq!(state.active_tab, DashboardTab::new(1));
 
         state.previous_tab();
-        assert_eq!(state.active_tab, 0);
+        assert_eq!(state.active_tab, DashboardTab::first());
 
         state.previous_tab();
-        assert_eq!(state.active_tab, 3);
+        assert_eq!(state.active_tab, DashboardTab::new(3));
     }
 
     #[test]
@@ -3880,7 +3925,7 @@ mod tests {
     #[test]
     fn telemetry_tab_renders_telemetry_page() {
         let mut state = DashboardState::sample();
-        state.active_tab = 1;
+        state.active_tab = DashboardTab::new(1);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -3894,7 +3939,7 @@ mod tests {
     #[test]
     fn profiles_tab_renders_read_only_aero_state() {
         let mut state = DashboardState::empty();
-        state.active_tab = 2;
+        state.active_tab = DashboardTab::new(2);
         state
             .telemetry
             .apply_snapshot(live_aero_telemetry_snapshot());
@@ -3945,7 +3990,7 @@ mod tests {
     #[test]
     fn live_telemetry_tab_renders_decoder_input_when_decoder_has_no_samples() {
         let mut state = DashboardState::empty();
-        state.active_tab = 1;
+        state.active_tab = DashboardTab::new(1);
         state.counters.notifications = 47;
         state.counters.notification_bytes = 4_700;
         state.counters.latest_notification_len = Some(100);
@@ -4011,7 +4056,7 @@ mod tests {
     #[test]
     fn logs_tab_uses_recent_events_as_the_primary_panel() {
         let mut state = DashboardState::sample();
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
@@ -4023,7 +4068,7 @@ mod tests {
     #[test]
     fn taller_logs_tab_reveals_more_retained_events() {
         let mut state = DashboardState::empty();
-        state.active_tab = 3;
+        state.active_tab = DashboardTab::new(3);
         for index in 0..80 {
             state.push_log("info", &format!("event-{index:02}"));
         }
