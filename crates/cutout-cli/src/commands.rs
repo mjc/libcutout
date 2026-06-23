@@ -3535,7 +3535,7 @@ mod tests {
                 case.name
             );
             assert!(
-                report.arbitrary_chunk_plan_len.get() >= case.minimum_chunk_plan_len,
+                report.arbitrary_chunk_plan_len >= case.minimum_chunk_plan_len,
                 "{} chunk plan length",
                 case.name
             );
@@ -3547,7 +3547,7 @@ mod tests {
         name: &'static str,
         jsonl: &'static str,
         profile: SelectedSessionProfile,
-        minimum_chunk_plan_len: usize,
+        minimum_chunk_plan_len: ReplayChunkPlanLen,
     }
 
     const PEVCAP_REPLAY_CORPUS: &[PevcapReplayCorpusCase] = &[
@@ -3555,13 +3555,13 @@ mod tests {
             name: "aero-veteran-live",
             jsonl: include_str!("../fixtures/pevcap/aero-veteran-live.jsonl"),
             profile: SelectedSessionProfile::Aero,
-            minimum_chunk_plan_len: 5,
+            minimum_chunk_plan_len: ReplayChunkPlanLen::new(5),
         },
         PevcapReplayCorpusCase {
             name: "falcon-begode-banner",
             jsonl: include_str!("../fixtures/pevcap/falcon-begode-banner.jsonl"),
             profile: SelectedSessionProfile::Falcon,
-            minimum_chunk_plan_len: 4,
+            minimum_chunk_plan_len: ReplayChunkPlanLen::new(4),
         },
     ];
 
