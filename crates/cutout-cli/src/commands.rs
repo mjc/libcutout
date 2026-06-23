@@ -317,19 +317,15 @@ fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapR
 where
     S: Clone + cutout_core::ProtocolSession,
 {
-    let records = capture.replay_records();
     let comparison_session = session.clone();
     let mut host = HostSession::new(session);
-    let mut outputs = Vec::with_capacity(records.len());
+    let mut outputs = Vec::with_capacity(capture.replay_input_count());
     capture.replay_into_host(&mut host, &mut outputs);
-    let arbitrary_chunks = cutout_core::replay_arbitrary_chunk_lengths(&records);
-    let comparison = cutout_core::compare_replay_capture_chunks(
-        || comparison_session.clone(),
-        &records,
-        &arbitrary_chunks,
-    );
+    let arbitrary_chunks = capture.arbitrary_notification_chunk_lengths();
+    let comparison =
+        capture.compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks);
     summarize_pevcap_replay(
-        ReplayRecordCount::new(records.len()),
+        ReplayRecordCount::new(capture.replay_input_count()),
         ReplayChunkPlanLen::new(arbitrary_chunks.len()),
         &outputs,
         comparison,
@@ -2257,8 +2253,8 @@ mod tests {
         PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        CaptureRecord, GattChannel, LinkInfo, NotificationByteLen, PayloadBodyLen, PevcapHeader,
-        PevcapRecord, ProtocolFamily, ProtocolSelector, SemanticEventCount, VerificationStatus,
+        DeviceEvent, GattChannel, NotificationByteLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
+        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, VerificationStatus,
         VerifiedValue, WriteMode,
     };
     use uuid::Uuid;
@@ -2271,6 +2267,37 @@ mod tests {
     impl Drop for DropSignal {
         fn drop(&mut self) {
             let _ = self.0.send(());
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct RecordingSession;
+
+    impl cutout_core::ProtocolSession for RecordingSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::LinkUp(link) => {
+                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(link)));
+                }
+                SessionInput::LinkDown => {
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                }
+                SessionInput::Notification {
+                    channel,
+                    bytes,
+                    monotonic_ms,
+                } => output.push(SessionOutput::NotificationIngest(
+                    cutout_core::NotificationIngestOutcome::ignored_wrong_channel(
+                        channel,
+                        NotificationByteLen::new(bytes.len()),
+                        monotonic_ms,
+                    ),
+                )),
+                SessionInput::Tick { monotonic_ms } => {
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+                }
+                SessionInput::Command(_) => {}
+            }
         }
     }
 
@@ -2724,24 +2751,27 @@ mod tests {
                 "capture_privacy=private".to_owned(),
             ]
         );
-        let replay = decoded.replay_records();
-        assert_eq!(replay.len(), 3);
+        assert_eq!(decoded.replay_input_count(), 3);
+
+        let mut host = HostSession::new(RecordingSession);
+        let mut replay = Vec::with_capacity(3);
+        decoded.replay_into_host(&mut host, &mut replay);
+
         assert!(matches!(
             replay[0],
-            CaptureRecord::LinkUp(LinkInfo {
-                monotonic_ms: 0,
-                max_write_len: Some(185),
-            })
+            SessionOutput::Event(DeviceEvent::LinkUp(link))
+                if link.monotonic_ms == 0 && link.max_write_len == Some(185)
         ));
         assert!(matches!(
-            &replay[1],
-            CaptureRecord::Notification {
-                monotonic_ms: 7,
-                bytes,
-                ..
-            } if bytes.as_slice() == [0xde, 0xad, 0xbe, 0xef]
+            replay[1],
+            SessionOutput::NotificationIngest(
+                cutout_core::NotificationIngestOutcome::Ignored(evidence)
+            ) if evidence.monotonic_ms == 7 && evidence.len == NotificationByteLen::new(4)
         ));
-        assert_eq!(replay[2], CaptureRecord::LinkDown);
+        assert!(matches!(
+            replay[2],
+            SessionOutput::Event(DeviceEvent::LinkDown)
+        ));
     }
 
     #[test]
@@ -2962,16 +2992,12 @@ mod tests {
     #[test]
     fn pevcap_replay_chunk_modes_preserve_final_typed_ingest_outcomes() {
         let capture = sample_aero_reserved_replay_capture();
-        let records = capture.replay_records();
-        let one_byte_records = capture
-            .replay_records_with_notification_chunk_len(cutout_core::NotificationChunkLen::new(1));
-        let arbitrary_records = capture.replay_records_with_notification_chunks(
-            &cutout_core::replay_arbitrary_chunk_lengths(&records),
-        );
+        let arbitrary_lengths = capture.arbitrary_notification_chunk_lengths();
 
-        let whole = aero_replay_ingest_outcomes(&records);
-        let one_byte = aero_replay_ingest_outcomes(&one_byte_records);
-        let arbitrary = aero_replay_ingest_outcomes(&arbitrary_records);
+        let whole = aero_pevcap_ingest_outcomes(&capture, PevcapReplayMode::Whole);
+        let one_byte = aero_pevcap_ingest_outcomes(&capture, PevcapReplayMode::OneByte);
+        let arbitrary =
+            aero_pevcap_ingest_outcomes(&capture, PevcapReplayMode::Arbitrary(&arbitrary_lengths));
 
         assert!(one_byte[..one_byte.len() - 1].iter().all(|outcome| {
             matches!(
@@ -2997,8 +3023,16 @@ mod tests {
         ));
     }
 
-    fn aero_replay_ingest_outcomes(
-        records: &[CaptureRecord],
+    #[derive(Clone, Copy)]
+    enum PevcapReplayMode<'a> {
+        Whole,
+        OneByte,
+        Arbitrary(&'a [cutout_core::NotificationChunkLen]),
+    }
+
+    fn aero_pevcap_ingest_outcomes(
+        capture: &PevcapCapture,
+        mode: PevcapReplayMode<'_>,
     ) -> Vec<cutout_core::NotificationIngestOutcome> {
         let mut host = HostSession::new(
             selected_aero_session_profile()
@@ -3006,7 +3040,17 @@ mod tests {
                 .expect("registered Aero session exists")
                 .construct(),
         );
-        cutout_core::replay_capture(&mut host, records)
+        let mut outputs = Vec::new();
+        match mode {
+            PevcapReplayMode::Whole => capture.replay_into_host(&mut host, &mut outputs),
+            PevcapReplayMode::OneByte => {
+                capture.replay_one_byte_notifications_into_host(&mut host, &mut outputs);
+            }
+            PevcapReplayMode::Arbitrary(lengths) => {
+                capture.replay_notification_chunks_into_host(lengths, &mut host, &mut outputs);
+            }
+        }
+        outputs
             .into_iter()
             .filter_map(|output| match output {
                 SessionOutput::NotificationIngest(outcome) => Some(outcome),

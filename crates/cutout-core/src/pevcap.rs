@@ -11,9 +11,9 @@ use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
 use crate::VescControllerId;
 use crate::{
-    CaptureRecord, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicMillis,
-    NotificationChunkLen, ProtocolFamily, ProtocolSession, RequestTarget, SessionInput,
-    SessionOutput, VerifiedValue, WriteMode,
+    DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicMillis,
+    NotificationChunkLen, ProtocolFamily, ProtocolSession, ReplayChunkComparison, RequestTarget,
+    SemanticEventCount, SessionInput, SessionOutput, VerifiedValue, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -569,68 +569,6 @@ impl PevcapCapture {
         }
     }
 
-    /// Converts inbound PEVCAP transport records into deterministic replay
-    /// inputs.
-    ///
-    /// Outbound writes are preserved in the PEVCAP record stream for audit, but
-    /// are not converted into replay inputs because the core replay facade
-    /// drives host commands rather than low-level transport writes.
-    #[must_use]
-    pub fn replay_records(&self) -> Vec<CaptureRecord> {
-        let has_explicit_link_up = self
-            .records
-            .iter()
-            .any(|record| record.direction == PevcapDirection::LinkUp);
-        let mut records = Vec::with_capacity(
-            self.records
-                .len()
-                .saturating_add(usize::from(!has_explicit_link_up)),
-        );
-        if !has_explicit_link_up {
-            records.push(CaptureRecord::LinkUp(LinkInfo {
-                monotonic_ms: 0,
-                max_write_len: self.header.write_limit,
-            }));
-        }
-        records.extend(
-            self.records
-                .iter()
-                .filter_map(PevcapRecord::to_replay_record),
-        );
-        records
-    }
-
-    /// Converts inbound PEVCAP transport records into replay inputs, splitting
-    /// each notification into chunks no larger than `chunk_len`.
-    ///
-    /// A zero `chunk_len` preserves whole-notification replay.
-    #[must_use]
-    pub fn replay_records_with_notification_chunk_len(
-        &self,
-        chunk_len: NotificationChunkLen,
-    ) -> Vec<CaptureRecord> {
-        self.replay_records()
-            .into_iter()
-            .flat_map(|record| record.split_notification_bytes(chunk_len))
-            .collect()
-    }
-
-    /// Converts inbound PEVCAP transport records into replay inputs, splitting
-    /// each notification by the provided chunk lengths.
-    ///
-    /// Empty and zero lengths are ignored by the underlying capture record
-    /// splitter; remaining bytes are appended as a final chunk.
-    #[must_use]
-    pub fn replay_records_with_notification_chunks(
-        &self,
-        lengths: &[NotificationChunkLen],
-    ) -> Vec<CaptureRecord> {
-        self.replay_records()
-            .into_iter()
-            .flat_map(|record| record.split_notification_by_lengths(lengths))
-            .collect()
-    }
-
     /// Replays PEVCAP records directly through a host session using borrowed
     /// payload slices and caller-provided output storage.
     ///
@@ -638,6 +576,145 @@ impl PevcapCapture {
     /// not replayed as host inputs.
     pub fn replay_into_host<S>(&self, host: &mut HostSession<S>, outputs: &mut Vec<SessionOutput>)
     where
+        S: ProtocolSession,
+    {
+        self.replay_with_notification_chunks_into_host(host, outputs, None);
+    }
+
+    /// Replays PEVCAP records directly through a host session, splitting each
+    /// inbound notification into one-byte chunks.
+    pub fn replay_one_byte_notifications_into_host<S>(
+        &self,
+        host: &mut HostSession<S>,
+        outputs: &mut Vec<SessionOutput>,
+    ) where
+        S: ProtocolSession,
+    {
+        self.replay_with_notification_chunks_into_host(
+            host,
+            outputs,
+            Some(PevcapReplayChunks::OneByte),
+        );
+    }
+
+    /// Replays PEVCAP records directly through a host session, splitting each
+    /// inbound notification by the provided chunk lengths.
+    pub fn replay_notification_chunks_into_host<S>(
+        &self,
+        lengths: &[NotificationChunkLen],
+        host: &mut HostSession<S>,
+        outputs: &mut Vec<SessionOutput>,
+    ) where
+        S: ProtocolSession,
+    {
+        self.replay_with_notification_chunks_into_host(
+            host,
+            outputs,
+            Some(PevcapReplayChunks::Lengths(lengths)),
+        );
+    }
+
+    /// Counts host inputs represented by this capture's replay path.
+    #[must_use]
+    pub fn replay_input_count(&self) -> usize {
+        usize::from(
+            !self
+                .records
+                .iter()
+                .any(|record| record.direction == PevcapDirection::LinkUp),
+        )
+        .saturating_add(
+            self.records
+                .iter()
+                .filter(|record| record.direction != PevcapDirection::Outbound)
+                .count(),
+        )
+    }
+
+    /// Builds the deterministic arbitrary notification chunk plan for this
+    /// capture without materializing owned replay records.
+    #[must_use]
+    pub fn arbitrary_notification_chunk_lengths(&self) -> Vec<NotificationChunkLen> {
+        let max_notification_len = self
+            .records
+            .iter()
+            .filter_map(|record| {
+                (record.direction == PevcapDirection::Inbound).then_some(record.bytes.len())
+            })
+            .max()
+            .unwrap_or_default();
+
+        let mut lengths = Vec::new();
+        let mut covered = 0usize;
+        for chunk_len in [2usize, 3, 5].into_iter().cycle() {
+            if covered >= max_notification_len {
+                break;
+            }
+            let remaining = max_notification_len - covered;
+            let next = chunk_len.min(remaining);
+            lengths.push(NotificationChunkLen::new(next));
+            covered += next;
+        }
+        lengths
+    }
+
+    /// Compares whole-notification PEVCAP replay against one-byte and
+    /// arbitrary notification chunk replay without materializing owned replay
+    /// records.
+    #[must_use]
+    pub fn compare_replay_chunks<S, F>(
+        &self,
+        mut make_session: F,
+        arbitrary_lengths: &[NotificationChunkLen],
+    ) -> ReplayChunkComparison
+    where
+        S: ProtocolSession,
+        F: FnMut() -> S,
+    {
+        let whole = self.replay_semantic_events(HostSession::new(make_session()), None);
+        let one_byte = self.replay_semantic_events(
+            HostSession::new(make_session()),
+            Some(PevcapReplayChunks::OneByte),
+        );
+        let arbitrary = self.replay_semantic_events(
+            HostSession::new(make_session()),
+            Some(PevcapReplayChunks::Lengths(arbitrary_lengths)),
+        );
+
+        ReplayChunkComparison {
+            whole_semantic_events: SemanticEventCount::new(whole.len()),
+            one_byte_semantic_events: SemanticEventCount::new(one_byte.len()),
+            arbitrary_semantic_events: SemanticEventCount::new(arbitrary.len()),
+            one_byte_matches: one_byte == whole,
+            arbitrary_matches: arbitrary == whole,
+        }
+    }
+
+    fn replay_semantic_events<S>(
+        &self,
+        mut host: HostSession<S>,
+        chunks: Option<PevcapReplayChunks<'_>>,
+    ) -> Vec<DeviceEvent>
+    where
+        S: ProtocolSession,
+    {
+        let mut outputs = Vec::new();
+        self.replay_with_notification_chunks_into_host(&mut host, &mut outputs, chunks);
+        outputs
+            .into_iter()
+            .filter_map(|output| match output {
+                SessionOutput::Event(event) => Some(event),
+                SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
+            })
+            .collect()
+    }
+
+    fn replay_with_notification_chunks_into_host<S>(
+        &self,
+        host: &mut HostSession<S>,
+        outputs: &mut Vec<SessionOutput>,
+        chunks: Option<PevcapReplayChunks<'_>>,
+    ) where
         S: ProtocolSession,
     {
         if !self
@@ -661,11 +738,10 @@ impl PevcapCapture {
                     });
                 }
                 PevcapDirection::LinkDown => host.ingest_link_down(),
-                PevcapDirection::Inbound => host.ingest(SessionInput::Notification {
-                    channel: record.characteristic,
-                    bytes: record.bytes.as_ref(),
-                    monotonic_ms: record.monotonic_ms,
-                }),
+                PevcapDirection::Inbound => {
+                    replay_pevcap_notification(record, chunks, host, outputs);
+                    continue;
+                }
                 PevcapDirection::Outbound => {}
             }
             host.drain_outputs_into(outputs);
@@ -898,20 +974,62 @@ impl PevcapCapture {
     }
 }
 
-impl PevcapRecord {
-    fn to_replay_record(&self) -> Option<CaptureRecord> {
-        match self.direction {
-            PevcapDirection::LinkUp => Some(CaptureRecord::LinkUp(LinkInfo {
-                monotonic_ms: self.monotonic_ms,
-                max_write_len: self.link_max_write_len,
-            })),
-            PevcapDirection::LinkDown => Some(CaptureRecord::LinkDown),
-            PevcapDirection::Inbound => Some(CaptureRecord::notification(
-                self.characteristic,
-                self.bytes.to_vec(),
-                self.monotonic_ms,
-            )),
-            PevcapDirection::Outbound => None,
+#[derive(Clone, Copy)]
+enum PevcapReplayChunks<'a> {
+    OneByte,
+    Lengths(&'a [NotificationChunkLen]),
+}
+
+fn replay_pevcap_notification<S>(
+    record: &PevcapRecord,
+    chunks: Option<PevcapReplayChunks<'_>>,
+    host: &mut HostSession<S>,
+    outputs: &mut Vec<SessionOutput>,
+) where
+    S: ProtocolSession,
+{
+    match chunks {
+        None => {
+            host.ingest(SessionInput::Notification {
+                channel: record.characteristic,
+                bytes: record.bytes.as_ref(),
+                monotonic_ms: record.monotonic_ms,
+            });
+            host.drain_outputs_into(outputs);
+        }
+        Some(PevcapReplayChunks::OneByte) => {
+            for chunk in record.bytes.as_ref().chunks(1) {
+                host.ingest(SessionInput::Notification {
+                    channel: record.characteristic,
+                    bytes: chunk,
+                    monotonic_ms: record.monotonic_ms,
+                });
+                host.drain_outputs_into(outputs);
+            }
+        }
+        Some(PevcapReplayChunks::Lengths(lengths)) => {
+            let mut offset = 0usize;
+            for length in lengths.iter().copied().filter(|length| !length.is_whole()) {
+                if offset >= record.bytes.len() {
+                    break;
+                }
+                let end = offset.saturating_add(length.get()).min(record.bytes.len());
+                host.ingest(SessionInput::Notification {
+                    channel: record.characteristic,
+                    bytes: &record.bytes[offset..end],
+                    monotonic_ms: record.monotonic_ms,
+                });
+                host.drain_outputs_into(outputs);
+                offset = end;
+            }
+            if offset < record.bytes.len() {
+                host.ingest(SessionInput::Notification {
+                    channel: record.characteristic,
+                    bytes: &record.bytes[offset..],
+                    monotonic_ms: record.monotonic_ms,
+                });
+                host.drain_outputs_into(outputs);
+            }
         }
     }
 }
@@ -1675,8 +1793,83 @@ impl WriteModeJson {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::VerificationStatus;
+    use crate::{NotificationByteLen, VerificationStatus};
     use proptest::prelude::*;
+    use std::{cell::RefCell, rc::Rc};
+
+    #[derive(Clone, Default)]
+    struct RecordingSession {
+        bytes: Rc<RefCell<Vec<u8>>>,
+    }
+
+    impl ProtocolSession for RecordingSession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            match input {
+                SessionInput::LinkUp(link) => {
+                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(link)));
+                }
+                SessionInput::LinkDown => output.push(SessionOutput::Event(DeviceEvent::LinkDown)),
+                SessionInput::Notification {
+                    channel,
+                    bytes,
+                    monotonic_ms,
+                } => {
+                    self.bytes.borrow_mut().extend_from_slice(bytes);
+                    output.push(SessionOutput::NotificationIngest(
+                        crate::NotificationIngestOutcome::ignored_wrong_channel(
+                            channel,
+                            NotificationByteLen::new(bytes.len()),
+                            monotonic_ms,
+                        ),
+                    ));
+                }
+                SessionInput::Tick { monotonic_ms } => {
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+                }
+                SessionInput::Command(_) => {}
+            }
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum TestReplayMode<'a> {
+        Whole,
+        OneByte,
+        Chunks(&'a [NotificationChunkLen]),
+    }
+
+    fn replay_outputs(capture: &PevcapCapture, mode: TestReplayMode<'_>) -> Vec<SessionOutput> {
+        let recorder = RecordingSession::default();
+        let mut host = HostSession::new(recorder);
+        let mut outputs = Vec::new();
+        match mode {
+            TestReplayMode::Whole => capture.replay_into_host(&mut host, &mut outputs),
+            TestReplayMode::OneByte => {
+                capture.replay_one_byte_notifications_into_host(&mut host, &mut outputs);
+            }
+            TestReplayMode::Chunks(lengths) => {
+                capture.replay_notification_chunks_into_host(lengths, &mut host, &mut outputs);
+            }
+        }
+        outputs
+    }
+
+    fn replayed_bytes(capture: &PevcapCapture, mode: TestReplayMode<'_>) -> Vec<u8> {
+        let recorder = RecordingSession::default();
+        let bytes = Rc::clone(&recorder.bytes);
+        let mut host = HostSession::new(recorder);
+        let mut outputs = Vec::new();
+        match mode {
+            TestReplayMode::Whole => capture.replay_into_host(&mut host, &mut outputs),
+            TestReplayMode::OneByte => {
+                capture.replay_one_byte_notifications_into_host(&mut host, &mut outputs);
+            }
+            TestReplayMode::Chunks(lengths) => {
+                capture.replay_notification_chunks_into_host(lengths, &mut host, &mut outputs);
+            }
+        }
+        bytes.borrow().clone()
+    }
 
     #[test]
     fn pevcap_current_version_and_magic_are_stable() {
@@ -1990,7 +2183,7 @@ mod tests {
     }
 
     #[test]
-    fn pevcap_capture_converts_inbound_notifications_to_replay_records() {
+    fn pevcap_capture_replays_inbound_notifications_into_host() {
         let service = GattChannel::from_bytes([0x44; 16]);
         let characteristic = GattChannel::from_bytes([0x55; 16]);
         let header = PevcapHeader::new(
@@ -2029,16 +2222,28 @@ mod tests {
             ],
         );
 
+        let outputs = replay_outputs(&capture, TestReplayMode::Whole);
+        assert_eq!(capture.replay_input_count(), 3);
+        assert!(matches!(
+            outputs[0],
+            SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
+                monotonic_ms: 0,
+                max_write_len: Some(23),
+            }))
+        ));
+        assert!(matches!(
+            outputs[1],
+            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
+                if evidence.monotonic_ms == 9
+        ));
+        assert!(matches!(
+            outputs[2],
+            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
+                if evidence.monotonic_ms == 11
+        ));
         assert_eq!(
-            capture.replay_records(),
-            vec![
-                CaptureRecord::LinkUp(LinkInfo {
-                    monotonic_ms: 0,
-                    max_write_len: Some(23),
-                }),
-                CaptureRecord::notification(characteristic, b"NAME=Falcon".to_vec(), 9),
-                CaptureRecord::notification(characteristic, b"55aa".to_vec(), 11),
-            ]
+            replayed_bytes(&capture, TestReplayMode::Whole),
+            b"NAME=Falcon55aa"
         );
     }
 
@@ -2079,21 +2284,29 @@ mod tests {
             ],
         );
 
+        let outputs = replay_outputs(&capture, TestReplayMode::Whole);
+        assert_eq!(capture.replay_input_count(), 5);
+        assert!(matches!(
+            outputs[0],
+            SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
+                monotonic_ms: 5,
+                max_write_len: Some(23),
+            }))
+        ));
+        assert!(matches!(
+            outputs[2],
+            SessionOutput::Event(DeviceEvent::LinkDown)
+        ));
+        assert!(matches!(
+            outputs[3],
+            SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
+                monotonic_ms: 20,
+                max_write_len: Some(23),
+            }))
+        ));
         assert_eq!(
-            capture.replay_records(),
-            vec![
-                CaptureRecord::LinkUp(LinkInfo {
-                    monotonic_ms: 5,
-                    max_write_len: Some(23),
-                }),
-                CaptureRecord::notification(characteristic, b"NAME=Falcon".to_vec(), 9),
-                CaptureRecord::LinkDown,
-                CaptureRecord::LinkUp(LinkInfo {
-                    monotonic_ms: 20,
-                    max_write_len: Some(23),
-                }),
-                CaptureRecord::notification(characteristic, b"55aa".to_vec(), 21),
-            ]
+            replayed_bytes(&capture, TestReplayMode::Whole),
+            b"NAME=Falcon55aa"
         );
     }
 
@@ -2112,13 +2325,15 @@ mod tests {
             )],
         );
 
-        assert_eq!(
-            capture.replay_records(),
-            vec![CaptureRecord::LinkUp(LinkInfo {
+        let outputs = replay_outputs(&capture, TestReplayMode::Whole);
+        assert_eq!(capture.replay_input_count(), 1);
+        assert!(matches!(
+            outputs.as_slice(),
+            [SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
                 monotonic_ms: 0,
                 max_write_len: None,
-            })]
-        );
+            }))]
+        ));
     }
 
     #[test]
@@ -2146,18 +2361,17 @@ mod tests {
             )],
         );
 
-        assert_eq!(
-            capture.replay_records_with_notification_chunk_len(NotificationChunkLen::new(1)),
-            vec![
-                CaptureRecord::LinkUp(LinkInfo {
-                    monotonic_ms: 0,
-                    max_write_len: Some(128),
-                }),
-                CaptureRecord::notification(characteristic, b"a".to_vec(), 9),
-                CaptureRecord::notification(characteristic, b"b".to_vec(), 9),
-                CaptureRecord::notification(characteristic, b"c".to_vec(), 9),
-            ]
-        );
+        let outputs = replay_outputs(&capture, TestReplayMode::OneByte);
+        assert_eq!(outputs.len(), 4);
+        assert_eq!(replayed_bytes(&capture, TestReplayMode::OneByte), b"abc");
+        assert!(outputs[1..].iter().all(|output| {
+            matches!(
+                output,
+                SessionOutput::NotificationIngest(
+                    crate::NotificationIngestOutcome::Ignored(evidence)
+                ) if evidence.len == NotificationByteLen::new(1)
+            )
+        }));
     }
 
     #[test]
@@ -2185,21 +2399,18 @@ mod tests {
             )],
         );
 
+        let lengths = [NotificationChunkLen::new(2), NotificationChunkLen::new(1)];
+        let outputs = replay_outputs(&capture, TestReplayMode::Chunks(&lengths));
+        assert_eq!(outputs.len(), 4);
         assert_eq!(
-            capture.replay_records_with_notification_chunks(&[
-                NotificationChunkLen::new(2),
-                NotificationChunkLen::new(1),
-            ]),
-            vec![
-                CaptureRecord::LinkUp(LinkInfo {
-                    monotonic_ms: 0,
-                    max_write_len: Some(128),
-                }),
-                CaptureRecord::notification(characteristic, b"ab".to_vec(), 9),
-                CaptureRecord::notification(characteristic, b"c".to_vec(), 9),
-                CaptureRecord::notification(characteristic, b"d".to_vec(), 9),
-            ]
+            replayed_bytes(&capture, TestReplayMode::Chunks(&lengths)),
+            b"abcd"
         );
+        assert!(matches!(
+            outputs[1],
+            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
+                if evidence.len == NotificationByteLen::new(2)
+        ));
     }
 
     proptest! {
@@ -2237,25 +2448,10 @@ mod tests {
                 .collect::<Vec<_>>();
 
             prop_assert_eq!(
-                notification_payloads(capture.replay_records_with_notification_chunks(&chunk_lengths)),
-                vec![payload],
+                replayed_bytes(&capture, TestReplayMode::Chunks(&chunk_lengths)),
+                payload,
             );
         }
-    }
-
-    fn notification_payloads(records: Vec<CaptureRecord>) -> Vec<Vec<u8>> {
-        let mut payloads = Vec::new();
-        let mut current = Vec::new();
-        for record in records {
-            let CaptureRecord::Notification { bytes, .. } = record else {
-                continue;
-            };
-            current.extend(bytes);
-        }
-        if !current.is_empty() {
-            payloads.push(current);
-        }
-        payloads
     }
 
     #[cfg(feature = "serde")]
