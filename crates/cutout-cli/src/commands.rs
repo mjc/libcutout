@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    fmt, fs,
     future::Future,
     sync::mpsc,
     thread,
@@ -1856,129 +1856,167 @@ fn render_identity(report: &SessionBridgeReport) -> Option<String> {
 }
 
 fn render_telemetry_snapshot(snapshot: &TelemetrySnapshot) -> Option<String> {
-    let mut fields = Vec::new();
-    push_measured_i32(&mut fields, "speed_mm_s", snapshot.speed_mm_s);
-    push_measured_i32(&mut fields, "voltage_mv", snapshot.voltage_mv);
-    push_measured_i32(
-        &mut fields,
-        "battery_current_ma",
-        snapshot.battery_current_ma,
-    );
-    push_measured_i32(&mut fields, "motor_current_ma", snapshot.motor_current_ma);
-    push_measured_i64(&mut fields, "power_mw", snapshot.power_mw);
-    push_measured_i32(
-        &mut fields,
-        "controller_temperature_mc",
-        snapshot.controller_temperature_mc,
-    );
-    push_measured_i32(
-        &mut fields,
-        "motor_temperature_mc",
-        snapshot.motor_temperature_mc,
-    );
-    push_measured_i32(
-        &mut fields,
-        "battery_temperature_mc",
-        snapshot.battery_temperature_mc,
-    );
-    push_measured_i16(&mut fields, "pwm_permille", snapshot.pwm_permille);
-    push_measured_u64(&mut fields, "distance_mm", snapshot.distance_mm);
-    push_measured_i32(&mut fields, "pitch_mdeg", snapshot.pitch_mdeg);
-    push_measured_i32(&mut fields, "roll_mdeg", snapshot.roll_mdeg);
-    push_measured_u8(
-        &mut fields,
-        "battery_percent_reported",
-        snapshot.battery_percent_reported,
-    );
-    push_measured_u8(
-        &mut fields,
-        "battery_percent_estimated",
-        snapshot.battery_percent_estimated,
-    );
-
-    (!fields.is_empty()).then(|| format!("telemetry {}", fields.join(" ")))
-}
-
-fn push_measured_i16(
-    fields: &mut Vec<String>,
-    name: &'static str,
-    measured: Option<Measured<i16>>,
-) {
-    if let Some(measured) = measured {
-        fields.push(format!("{name}={}", measured.value));
-    }
-}
-
-fn push_measured_i32(
-    fields: &mut Vec<String>,
-    name: &'static str,
-    measured: Option<Measured<i32>>,
-) {
-    if let Some(measured) = measured {
-        fields.push(format!("{name}={}", measured.value));
-    }
-}
-
-fn push_measured_i64(
-    fields: &mut Vec<String>,
-    name: &'static str,
-    measured: Option<Measured<i64>>,
-) {
-    if let Some(measured) = measured {
-        fields.push(format!("{name}={}", measured.value));
-    }
-}
-
-fn push_measured_u8(fields: &mut Vec<String>, name: &'static str, measured: Option<Measured<u8>>) {
-    if let Some(measured) = measured {
-        fields.push(format!("{name}={}", measured.value));
-    }
-}
-
-fn push_measured_u64(
-    fields: &mut Vec<String>,
-    name: &'static str,
-    measured: Option<Measured<u64>>,
-) {
-    if let Some(measured) = measured {
-        fields.push(format!("{name}={}", measured.value));
-    }
+    TelemetrySnapshotLine(*snapshot)
+        .has_fields()
+        .then(|| TelemetrySnapshotLine(*snapshot).to_string())
 }
 
 fn render_firmware_info(firmware: Option<FirmwareInfo>) -> Option<String> {
     let firmware = firmware?;
-    let mut fields = Vec::new();
-    push_measured_u16(&mut fields, "firmware_major", firmware.firmware_major);
-    push_measured_u16(&mut fields, "firmware_minor", firmware.firmware_minor);
-    push_measured_u16(&mut fields, "firmware_patch", firmware.firmware_patch);
-    if let Some(build_id) = firmware.build_id {
-        fields.push(format!("raw_{:04x}={}", build_id.id, build_id.value));
-    }
-
-    (!fields.is_empty()).then(|| format!("firmware {}", fields.join(" ")))
+    FirmwareLine(firmware)
+        .has_fields()
+        .then(|| FirmwareLine(firmware).to_string())
 }
 
 fn render_settings_readbacks(settings: &[SettingsReadback]) -> Vec<String> {
     settings
         .iter()
-        .filter_map(|settings| {
-            let mut fields = Vec::new();
-            for entry in settings.entries.into_iter().flatten() {
-                fields.push(format!("raw_{:04x}={}", entry.field.id, entry.field.value));
-            }
-
-            (!fields.is_empty()).then(|| format!("settings {}", fields.join(" ")))
-        })
+        .copied()
+        .filter(|settings| SettingsLine(*settings).has_fields())
+        .map(|settings| SettingsLine(settings).to_string())
         .collect()
 }
 
-fn push_measured_u16(
-    fields: &mut Vec<String>,
-    name: &'static str,
-    measured: Option<Measured<u16>>,
-) {
-    if let Some(measured) = measured {
-        fields.push(format!("{name}={}", measured.value));
+struct TelemetrySnapshotLine(TelemetrySnapshot);
+
+impl TelemetrySnapshotLine {
+    const fn has_fields(self) -> bool {
+        let snapshot = self.0;
+        snapshot.speed_mm_s.is_some()
+            || snapshot.voltage_mv.is_some()
+            || snapshot.battery_current_ma.is_some()
+            || snapshot.motor_current_ma.is_some()
+            || snapshot.power_mw.is_some()
+            || snapshot.controller_temperature_mc.is_some()
+            || snapshot.motor_temperature_mc.is_some()
+            || snapshot.battery_temperature_mc.is_some()
+            || snapshot.pwm_permille.is_some()
+            || snapshot.distance_mm.is_some()
+            || snapshot.pitch_mdeg.is_some()
+            || snapshot.roll_mdeg.is_some()
+            || snapshot.battery_percent_reported.is_some()
+            || snapshot.battery_percent_estimated.is_some()
+    }
+}
+
+impl fmt::Display for TelemetrySnapshotLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let snapshot = self.0;
+        let mut fields = CommandFieldWriter::new(f, "telemetry");
+        fields.write_measured("speed_mm_s", snapshot.speed_mm_s)?;
+        fields.write_measured("voltage_mv", snapshot.voltage_mv)?;
+        fields.write_measured("battery_current_ma", snapshot.battery_current_ma)?;
+        fields.write_measured("motor_current_ma", snapshot.motor_current_ma)?;
+        fields.write_measured("power_mw", snapshot.power_mw)?;
+        fields.write_measured(
+            "controller_temperature_mc",
+            snapshot.controller_temperature_mc,
+        )?;
+        fields.write_measured("motor_temperature_mc", snapshot.motor_temperature_mc)?;
+        fields.write_measured("battery_temperature_mc", snapshot.battery_temperature_mc)?;
+        fields.write_measured("pwm_permille", snapshot.pwm_permille)?;
+        fields.write_measured("distance_mm", snapshot.distance_mm)?;
+        fields.write_measured("pitch_mdeg", snapshot.pitch_mdeg)?;
+        fields.write_measured("roll_mdeg", snapshot.roll_mdeg)?;
+        fields.write_measured(
+            "battery_percent_reported",
+            snapshot.battery_percent_reported,
+        )?;
+        fields.write_measured(
+            "battery_percent_estimated",
+            snapshot.battery_percent_estimated,
+        )
+    }
+}
+
+struct FirmwareLine(FirmwareInfo);
+
+impl FirmwareLine {
+    const fn has_fields(self) -> bool {
+        self.0.firmware_major.is_some()
+            || self.0.firmware_minor.is_some()
+            || self.0.firmware_patch.is_some()
+            || self.0.build_id.is_some()
+    }
+}
+
+impl fmt::Display for FirmwareLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let firmware = self.0;
+        let mut fields = CommandFieldWriter::new(f, "firmware");
+        fields.write_measured("firmware_major", firmware.firmware_major)?;
+        fields.write_measured("firmware_minor", firmware.firmware_minor)?;
+        fields.write_measured("firmware_patch", firmware.firmware_patch)?;
+        if let Some(build_id) = firmware.build_id {
+            fields.write_raw_field(build_id)?;
+        }
+        Ok(())
+    }
+}
+
+struct SettingsLine(SettingsReadback);
+
+impl SettingsLine {
+    fn has_fields(self) -> bool {
+        self.0.entries.into_iter().any(|entry| entry.is_some())
+    }
+}
+
+impl fmt::Display for SettingsLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut fields = CommandFieldWriter::new(f, "settings");
+        for entry in self.0.entries.into_iter().flatten() {
+            fields.write_raw_field(entry.field)?;
+        }
+        Ok(())
+    }
+}
+
+struct CommandFieldWriter<'formatter, 'output> {
+    output: &'formatter mut fmt::Formatter<'output>,
+    prefix: &'static str,
+    fields: usize,
+}
+
+impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
+    const fn new(output: &'formatter mut fmt::Formatter<'output>, prefix: &'static str) -> Self {
+        Self {
+            output,
+            prefix,
+            fields: 0,
+        }
+    }
+
+    fn write_measured<T: fmt::Display>(
+        &mut self,
+        name: &'static str,
+        measured: Option<Measured<T>>,
+    ) -> fmt::Result {
+        if let Some(measured) = measured {
+            self.write_field_name(name)?;
+            write!(self.output, "{}", measured.value)?;
+        }
+        Ok(())
+    }
+
+    fn write_raw_field(&mut self, field: cutout_core::RawFieldValue) -> fmt::Result {
+        if self.fields == 0 {
+            write!(self.output, "{} ", self.prefix)?;
+        } else {
+            write!(self.output, " ")?;
+        }
+        self.fields += 1;
+        write!(self.output, "raw_{:04x}={}", field.id, field.value)
+    }
+
+    fn write_field_name(&mut self, name: &'static str) -> fmt::Result {
+        if self.fields == 0 {
+            write!(self.output, "{} {name}=", self.prefix)?;
+        } else {
+            write!(self.output, " {name}=")?;
+        }
+        self.fields += 1;
+        Ok(())
     }
 }
 
