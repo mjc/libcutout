@@ -2933,14 +2933,14 @@ mod tests {
                 .read_only
                 .settings
                 .iter()
-                .any(|setting| setting.contains("hardware_verified"))
+                .any(|setting| setting.verification == VerificationStatus::HardwareVerified)
         );
         assert!(
             state
                 .read_only
                 .bms_pages
                 .iter()
-                .any(|page| page.contains("selector=3 kind=temperature"))
+                .any(|page| page.page().kind == BatteryPageKind::Temperature)
         );
         assert_eq!(state.read_only.unknown_raw_pages, 0);
     }

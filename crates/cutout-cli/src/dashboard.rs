@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    fmt,
+    fmt::{self, Write as FmtWrite},
     io::{self, Read, Write},
     sync::{
         Arc, OnceLock,
@@ -16,8 +16,8 @@ use cutout_btle::{
     ConnectionSummary, ConnectionTarget, ServiceSummary, SessionBridgeEvent, SessionBridgeReport,
 };
 use cutout_core::{
-    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, ReadOnlyResponse,
-    SettingsReadback, TelemetryDelta, TelemetrySnapshot,
+    BatteryPagePayload, FirmwareInfo, NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily,
+    ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
 };
 use cutout_protocols::VeteranModelProfile;
 use ratatui::termina::{
@@ -173,10 +173,10 @@ pub(crate) struct LogEntry {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ReadOnlyDashboardState {
-    pub(crate) firmware: Option<String>,
-    pub(crate) settings: VecDeque<String>,
-    pub(crate) bms_pages: VecDeque<String>,
-    pub(crate) latest_bms_temperature: Option<String>,
+    pub(crate) firmware: Option<FirmwareInfo>,
+    pub(crate) settings: VecDeque<SettingsEntry>,
+    pub(crate) bms_pages: VecDeque<BatteryPagePayload>,
+    pub(crate) latest_bms_temperature: Option<BatteryPagePayload>,
     pub(crate) diagnostics: u64,
     pub(crate) raw_telemetry: u64,
     pub(crate) unknown_raw_pages: u64,
@@ -186,20 +186,11 @@ impl ReadOnlyDashboardState {
     fn apply_response(&mut self, response: ReadOnlyResponse) {
         match response {
             ReadOnlyResponse::Firmware(firmware) => {
-                self.firmware = Some(format_firmware_summary(firmware));
+                self.firmware = Some(firmware);
             }
             ReadOnlyResponse::Settings(settings) => {
                 for entry in settings.entries.into_iter().flatten() {
-                    push_bounded(
-                        &mut self.settings,
-                        format!(
-                            "field={} value={} quality={} verification={}",
-                            entry.field.id,
-                            entry.field.value,
-                            quality_name(entry.quality),
-                            verification_name(entry.verification)
-                        ),
-                    );
+                    push_bounded(&mut self.settings, entry);
                 }
             }
             ReadOnlyResponse::Battery(payload) => {
@@ -210,27 +201,10 @@ impl ReadOnlyDashboardState {
                 ) {
                     self.unknown_raw_pages = self.unknown_raw_pages.saturating_add(1);
                 }
-                let temperature_summary = bms_temperature_summary(payload);
-                let current_summary = bms_current_summary(payload);
-                if let Some(summary) = temperature_summary.as_ref() {
-                    self.latest_bms_temperature = Some(format!(
-                        "selector={} verification={}{}",
-                        page.selector,
-                        verification_name(page.verification),
-                        summary
-                    ));
+                if BmsTemperatureValues(payload).has_values() {
+                    self.latest_bms_temperature = Some(payload);
                 }
-                push_bounded(
-                    &mut self.bms_pages,
-                    format!(
-                        "selector={} kind={} verification={}{}{}",
-                        page.selector,
-                        battery_page_kind_name(page.kind),
-                        verification_name(page.verification),
-                        temperature_summary.as_deref().unwrap_or(""),
-                        current_summary.as_deref().unwrap_or("")
-                    ),
-                );
+                push_bounded(&mut self.bms_pages, payload);
             }
             ReadOnlyResponse::Diagnostics(_) => {
                 self.diagnostics = self.diagnostics.saturating_add(1);
@@ -855,17 +829,43 @@ fn push_bounded<T>(items: &mut VecDeque<T>, item: T) {
     items.push_back(item);
 }
 
-fn format_firmware_summary(firmware: cutout_core::FirmwareInfo) -> String {
-    let major = firmware
-        .firmware_major
-        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
-    let minor = firmware
-        .firmware_minor
-        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
-    let patch = firmware
-        .firmware_patch
-        .map_or_else(|| "?".to_owned(), |value| value.value.to_string());
-    format!("{major}.{minor}.{patch}")
+struct FirmwareSummary(FirmwareInfo);
+
+impl fmt::Display for FirmwareSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_optional_measured_u16(f, self.0.firmware_major)?;
+        write!(f, ".")?;
+        write_optional_measured_u16(f, self.0.firmware_minor)?;
+        write!(f, ".")?;
+        write_optional_measured_u16(f, self.0.firmware_patch)
+    }
+}
+
+fn write_optional_measured_u16(
+    f: &mut fmt::Formatter<'_>,
+    value: Option<cutout_core::Measured<u16>>,
+) -> fmt::Result {
+    if let Some(value) = value {
+        write!(f, "{}", value.value)
+    } else {
+        write!(f, "?")
+    }
+}
+
+struct SettingsEntrySummary(SettingsEntry);
+
+impl fmt::Display for SettingsEntrySummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let entry = self.0;
+        write!(
+            f,
+            "field={} value={} quality={} verification={}",
+            entry.field.id,
+            entry.field.value,
+            quality_name(entry.quality),
+            verification_name(entry.verification)
+        )
+    }
 }
 
 const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static str {
@@ -877,30 +877,75 @@ const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static 
     }
 }
 
-fn bms_temperature_summary(payload: cutout_core::BatteryPagePayload) -> Option<String> {
-    let temperatures = payload.temperatures_mc();
-    if !matches!(payload, cutout_core::BatteryPagePayload::Temperature(_)) {
-        return None;
-    }
+struct BmsTemperatureValues(BatteryPagePayload);
 
-    let mut summary = String::from(" temps_c=");
-    let mut wrote = false;
-    for temperature in temperatures.into_iter().flatten() {
-        if wrote {
-            summary.push(',');
-        }
-        wrote = true;
-        summary.push_str(&millicelsius_to_celsius_signed(temperature.value).to_string());
+impl BmsTemperatureValues {
+    fn has_values(self) -> bool {
+        matches!(self.0, BatteryPagePayload::Temperature(_))
+            && self
+                .0
+                .temperatures_mc()
+                .into_iter()
+                .any(|value| value.is_some())
     }
-
-    wrote.then_some(summary)
 }
 
-fn bms_current_summary(payload: cutout_core::BatteryPagePayload) -> Option<String> {
-    payload
-        .battery()
-        .current_ma
-        .map(|current| format!(" current={}A", milliamps_to_amps(current.value)))
+impl fmt::Display for BmsTemperatureValues {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut wrote = false;
+        for temperature in self.0.temperatures_mc().into_iter().flatten() {
+            if wrote {
+                write!(f, ",")?;
+            } else {
+                write!(f, " temps_c=")?;
+            }
+            wrote = true;
+            write!(f, "{}", millicelsius_to_celsius_signed(temperature.value))?;
+        }
+        Ok(())
+    }
+}
+
+struct BmsCurrentSummary(BatteryPagePayload);
+
+impl fmt::Display for BmsCurrentSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.battery().current_ma.map_or(Ok(()), |current| {
+            write!(f, " current={}A", milliamps_to_amps(current.value))
+        })
+    }
+}
+
+struct BmsPageSummary(BatteryPagePayload);
+
+impl fmt::Display for BmsPageSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let page = self.0.page();
+        write!(
+            f,
+            "selector={} kind={} verification={}{}{}",
+            page.selector,
+            battery_page_kind_name(page.kind),
+            verification_name(page.verification),
+            BmsTemperatureValues(self.0),
+            BmsCurrentSummary(self.0)
+        )
+    }
+}
+
+struct LatestBmsTemperatureSummary(BatteryPagePayload);
+
+impl fmt::Display for LatestBmsTemperatureSummary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let page = self.0.page();
+        write!(
+            f,
+            "selector={} verification={}{}",
+            page.selector,
+            verification_name(page.verification),
+            BmsTemperatureValues(self.0)
+        )
+    }
 }
 
 const fn quality_name(quality: cutout_core::ValueQuality) -> &'static str {
@@ -1321,7 +1366,7 @@ fn optional_u16(value: Option<u16>) -> String {
 fn format_read_only_response(response: ReadOnlyResponse) -> String {
     match response {
         ReadOnlyResponse::Firmware(firmware) => {
-            format!("read-only firmware {}", format_firmware_summary(firmware))
+            format!("read-only firmware {}", FirmwareSummary(firmware))
         }
         ReadOnlyResponse::Settings(settings) => SettingsReadbackLog(settings).to_string(),
         ReadOnlyResponse::Battery(payload) => {
@@ -1332,12 +1377,12 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
                 battery_page_kind_name(page.kind),
                 verification_name(page.verification)
             );
-            if let Some(temperature_summary) = bms_temperature_summary(payload) {
-                summary.push_str(&temperature_summary);
-            }
-            if let Some(current_summary) = bms_current_summary(payload) {
-                summary.push_str(&current_summary);
-            }
+            let _ = write!(
+                summary,
+                "{}{}",
+                BmsTemperatureValues(payload),
+                BmsCurrentSummary(payload)
+            );
             summary
         }
         ReadOnlyResponse::Diagnostics(diagnostics) => {
@@ -1965,13 +2010,16 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
         Span::styled("firmware ", Style::new().fg(Color::Gray)),
-        Span::raw(read_only.firmware.as_deref().unwrap_or("unknown")),
+        read_only.firmware.map_or_else(
+            || Span::raw("unknown"),
+            |firmware| Span::raw(FirmwareSummary(firmware).to_string()),
+        ),
     ]));
 
-    if let Some(temperature) = read_only.latest_bms_temperature.as_deref() {
+    if let Some(temperature) = read_only.latest_bms_temperature {
         lines.push(Line::from(vec![
             Span::styled("bms temp ", Style::new().fg(Color::Gray)),
-            Span::raw(temperature),
+            Span::raw(LatestBmsTemperatureSummary(temperature).to_string()),
         ]));
     }
 
@@ -1992,7 +2040,9 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         lines.push(Line::from(vec![Span::raw("none observed")]));
     } else {
         for setting in read_only.settings.iter().rev().take(4) {
-            lines.push(Line::from(vec![Span::raw(setting.as_str())]));
+            lines.push(Line::from(vec![Span::raw(
+                SettingsEntrySummary(*setting).to_string(),
+            )]));
         }
     }
 
@@ -2001,7 +2051,9 @@ fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         Style::new().fg(Color::Gray),
     )]));
     for page in read_only.bms_pages.iter().rev().take(4) {
-        lines.push(Line::from(vec![Span::raw(page.as_str())]));
+        lines.push(Line::from(vec![Span::raw(
+            BmsPageSummary(*page).to_string(),
+        )]));
     }
 
     let panel = Paragraph::new(lines).block(panel_block("Read-only responses"));
@@ -2272,11 +2324,12 @@ mod tests {
     use super::*;
     use cutout_btle::{ConnectionTarget, PeripheralObservation};
     use cutout_core::{
-        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback, FirmwareInfo,
-        GattChannel, Measured, NotificationByteLen, NotificationIngestOutcome, ParserError,
-        ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue,
-        RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
-        SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback,
+        FirmwareInfo, GattChannel, Measured, NotificationByteLen, NotificationIngestOutcome,
+        ParserError, ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector,
+        RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
+        SettingsEntry, SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource,
+        VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -2309,6 +2362,65 @@ mod tests {
             .draw(|frame| render_dashboard(frame, state))
             .expect("dashboard renders");
         terminal.backend().buffer().clone()
+    }
+
+    fn firmware_43_2_54() -> FirmwareInfo {
+        FirmwareInfo {
+            firmware_major: Some(Measured::reported(43)),
+            firmware_minor: Some(Measured::reported(2)),
+            firmware_patch: Some(Measured::reported(54)),
+            ..FirmwareInfo::default()
+        }
+    }
+
+    fn firmware_summary_text(state: &DashboardState) -> Option<String> {
+        state
+            .read_only
+            .firmware
+            .map(FirmwareSummary)
+            .map(|firmware| firmware.to_string())
+    }
+
+    fn hardware_setting(field: u16, value: i64) -> SettingsEntry {
+        SettingsEntry {
+            field: RawFieldValue::new(field, value),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
+
+    fn sample_aero_read_only_responses() -> Vec<ReadOnlyResponse> {
+        vec![
+            ReadOnlyResponse::Firmware(firmware_43_2_54()),
+            ReadOnlyResponse::Settings(SettingsReadback {
+                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
+            }),
+            ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            )),
+            ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+                BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
+                BatteryInfo {
+                    temperature_mc: Some(Measured::reported(16_730)),
+                    ..BatteryInfo::default()
+                },
+                [
+                    Some(Measured::reported(16_730)),
+                    Some(Measured::reported(17_840)),
+                    Some(Measured::reported(18_100)),
+                    Some(Measured::reported(17_800)),
+                    Some(Measured::reported(17_700)),
+                    Some(Measured::reported(19_100)),
+                ],
+            )),
+            ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            )),
+            ReadOnlyResponse::RawTelemetry(RawTelemetryReadback::default()),
+        ]
     }
 
     fn buffer_text(buffer: &Buffer) -> String {
@@ -3125,51 +3237,7 @@ mod tests {
             telemetry: 0,
             telemetry_snapshot: TelemetrySnapshot::default(),
             read_only_responses: 5,
-            read_only_response_events: vec![
-                ReadOnlyResponse::Firmware(FirmwareInfo {
-                    firmware_major: Some(Measured::reported(43)),
-                    firmware_minor: Some(Measured::reported(2)),
-                    firmware_patch: Some(Measured::reported(54)),
-                    ..FirmwareInfo::default()
-                }),
-                ReadOnlyResponse::Settings(SettingsReadback {
-                    entries: [
-                        Some(SettingsEntry {
-                            field: RawFieldValue::new(0x20, 540),
-                            source: ValueSource::Reported,
-                            quality: ValueQuality::Known,
-                            verification: VerificationStatus::HardwareVerified,
-                        }),
-                        None,
-                        None,
-                        None,
-                    ],
-                }),
-                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-                    BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
-                    BatteryInfo::default(),
-                )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-                    BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
-                    BatteryInfo {
-                        temperature_mc: Some(Measured::reported(16_730)),
-                        ..BatteryInfo::default()
-                    },
-                    [
-                        Some(Measured::reported(16_730)),
-                        Some(Measured::reported(17_840)),
-                        Some(Measured::reported(18_100)),
-                        Some(Measured::reported(17_800)),
-                        Some(Measured::reported(17_700)),
-                        Some(Measured::reported(19_100)),
-                    ],
-                )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
-                    BatteryInfo::default(),
-                )),
-                ReadOnlyResponse::RawTelemetry(RawTelemetryReadback::default()),
-            ],
+            read_only_response_events: sample_aero_read_only_responses(),
             firmware: None,
             settings: Vec::new(),
             diagnostics: 0,
@@ -3182,22 +3250,40 @@ mod tests {
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.read_only.firmware.as_deref(), Some("43.2.54"));
+        assert_eq!(firmware_summary_text(&state), Some("43.2.54".to_owned()));
         assert_eq!(state.read_only.settings.len(), 1);
-        assert!(
-            state.read_only.settings[0].contains("field=32")
-                && state.read_only.settings[0].contains("value=540")
-                && state.read_only.settings[0].contains("hardware_verified")
+        assert_eq!(
+            state.read_only.settings[0].field,
+            RawFieldValue::new(0x20, 540)
+        );
+        assert_eq!(
+            state.read_only.settings[0].verification,
+            VerificationStatus::HardwareVerified
         );
         assert_eq!(state.read_only.bms_pages.len(), 3);
-        assert!(state.read_only.bms_pages[0].contains("selector=2 kind=cell_voltage"));
-        assert!(state.read_only.bms_pages[1].contains(
-            "selector=3 kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
-        ));
-        assert!(state.read_only.bms_pages[2].contains("selector=8 kind=raw"));
         assert_eq!(
-            state.read_only.latest_bms_temperature.as_deref(),
-            Some("selector=3 verification=hardware_verified temps_c=16,17,18,17,17,19")
+            state.read_only.bms_pages[0].page().kind,
+            BatteryPageKind::CellVoltage
+        );
+        assert_eq!(
+            state.read_only.bms_pages[1].page().kind,
+            BatteryPageKind::Temperature
+        );
+        assert_eq!(
+            BmsPageSummary(state.read_only.bms_pages[1]).to_string(),
+            "selector=3 kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
+        );
+        assert_eq!(
+            state.read_only.bms_pages[2].page().kind,
+            BatteryPageKind::Raw
+        );
+        assert_eq!(
+            state
+                .read_only
+                .latest_bms_temperature
+                .map(LatestBmsTemperatureSummary)
+                .map(|summary| summary.to_string()),
+            Some("selector=3 verification=hardware_verified temps_c=16,17,18,17,17,19".to_owned())
         );
         assert_eq!(state.read_only.unknown_raw_pages, 1);
         assert_eq!(state.read_only.raw_telemetry, 1);
@@ -3321,7 +3407,7 @@ mod tests {
         assert_eq!(state.telemetry.latest_speed_mph, Some(10));
         assert_eq!(state.telemetry.latest_voltage_v, Some(109));
         assert_eq!(state.telemetry.battery_pct, Some(47));
-        assert_eq!(state.read_only.firmware.as_deref(), Some("43.2.54"));
+        assert_eq!(firmware_summary_text(&state), Some("43.2.54".to_owned()));
         assert_eq!(state.read_only.settings.len(), 1);
         assert_eq!(state.read_only.bms_pages.len(), 2);
         assert_eq!(state.read_only.unknown_raw_pages, 1);
@@ -3371,8 +3457,13 @@ mod tests {
         state.apply_session_report(&report);
 
         assert_eq!(state.read_only.bms_pages.len(), READ_ONLY_SUMMARY_LIMIT);
-        assert!(state.read_only.bms_pages[0].contains("selector=4"));
-        assert!(state.read_only.bms_pages[READ_ONLY_SUMMARY_LIMIT - 1].contains("selector=19"));
+        assert_eq!(state.read_only.bms_pages[0].page().selector, sel(4));
+        assert_eq!(
+            state.read_only.bms_pages[READ_ONLY_SUMMARY_LIMIT - 1]
+                .page()
+                .selector,
+            sel(19)
+        );
         assert_eq!(state.read_only.unknown_raw_pages, 20);
     }
 
@@ -3418,8 +3509,12 @@ mod tests {
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert_eq!(
-            state.read_only.latest_bms_temperature.as_deref(),
-            Some("selector=3 verification=hardware_verified temps_c=17,17,17,18,19,19")
+            state
+                .read_only
+                .latest_bms_temperature
+                .map(LatestBmsTemperatureSummary)
+                .map(|summary| summary.to_string()),
+            Some("selector=3 verification=hardware_verified temps_c=17,17,17,18,19,19".to_owned())
         );
         assert!(text.contains("bms temp"));
         assert!(text.contains("temps_c=17,17,17,18,19,19"));
@@ -3648,25 +3743,33 @@ mod tests {
         state
             .telemetry
             .apply_snapshot(live_aero_telemetry_snapshot());
-        state.read_only.firmware = Some("43.2.54".to_owned());
-        state.read_only.settings.push_back(
-            "field=36 value=1920 quality=known verification=hardware_verified".to_owned(),
-        );
-        state.read_only.settings.push_back(
-            "field=37 value=1940 quality=known verification=hardware_verified".to_owned(),
-        );
+        state.read_only.firmware = Some(firmware_43_2_54());
+        state
+            .read_only
+            .settings
+            .push_back(hardware_setting(36, 1920));
+        state
+            .read_only
+            .settings
+            .push_back(hardware_setting(37, 1940));
         state
             .read_only
             .bms_pages
-            .push_back("selector=2 kind=cell_voltage verification=hardware_verified".to_owned());
+            .push_back(BatteryPagePayload::cell_voltage(
+                BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            ));
+        state.read_only.bms_pages.push_back(BatteryPagePayload::raw(
+            BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
+            BatteryInfo::default(),
+        ));
         state
             .read_only
             .bms_pages
-            .push_back("selector=8 kind=raw verification=hardware_verified".to_owned());
-        state
-            .read_only
-            .bms_pages
-            .push_back("selector=47 kind=temperature verification=hardware_verified".to_owned());
+            .push_back(BatteryPagePayload::temperature(
+                BatteryPageMetadata::temperature(sel(47), VerificationStatus::HardwareVerified),
+                BatteryInfo::default(),
+            ));
         state.read_only.unknown_raw_pages = 1;
         state.read_only.diagnostics = 1;
 
