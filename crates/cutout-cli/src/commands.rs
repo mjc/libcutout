@@ -2173,8 +2173,8 @@ mod tests {
     };
     use cutout_core::{
         CaptureRecord, GattChannel, LinkInfo, NotificationByteLen, PayloadBodyLen, PevcapHeader,
-        PevcapRecord, ProtocolFamily, ProtocolSelector, VerificationStatus, VerifiedValue,
-        WriteMode,
+        PevcapRecord, ProtocolFamily, ProtocolSelector, SemanticEventCount, VerificationStatus,
+        VerifiedValue, WriteMode,
     };
     use cutout_protocols::{
         BEGODE_FALCON_REGISTRY_ENTRY, DeviceFamily, IdentityConfidence,
@@ -2825,9 +2825,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: 1,
-                one_byte_semantic_events: 1,
-                arbitrary_semantic_events: 1,
+                whole_semantic_events: SemanticEventCount::new(1),
+                one_byte_semantic_events: SemanticEventCount::new(1),
+                arbitrary_semantic_events: SemanticEventCount::new(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },
@@ -2857,9 +2857,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: 0,
-                one_byte_semantic_events: 0,
-                arbitrary_semantic_events: 0,
+                whole_semantic_events: SemanticEventCount::new(0),
+                one_byte_semantic_events: SemanticEventCount::new(0),
+                arbitrary_semantic_events: SemanticEventCount::new(0),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },
@@ -3056,9 +3056,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: 1,
-                one_byte_semantic_events: 1,
-                arbitrary_semantic_events: 1,
+                whole_semantic_events: SemanticEventCount::new(1),
+                one_byte_semantic_events: SemanticEventCount::new(1),
+                arbitrary_semantic_events: SemanticEventCount::new(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },

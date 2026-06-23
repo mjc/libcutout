@@ -3406,13 +3406,13 @@ pub fn replay_capture_into<S>(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReplayChunkComparison {
     /// Semantic event count from whole-notification replay.
-    pub whole_semantic_events: usize,
+    pub whole_semantic_events: SemanticEventCount,
 
     /// Semantic event count from one-byte notification replay.
-    pub one_byte_semantic_events: usize,
+    pub one_byte_semantic_events: SemanticEventCount,
 
     /// Semantic event count from arbitrary notification chunk replay.
-    pub arbitrary_semantic_events: usize,
+    pub arbitrary_semantic_events: SemanticEventCount,
 
     /// Whether one-byte replay produced the same semantic events as whole
     /// replay.
@@ -3487,9 +3487,9 @@ where
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
 
     ReplayChunkComparison {
-        whole_semantic_events: whole.len(),
-        one_byte_semantic_events: one_byte.len(),
-        arbitrary_semantic_events: arbitrary.len(),
+        whole_semantic_events: SemanticEventCount::new(whole.len()),
+        one_byte_semantic_events: SemanticEventCount::new(one_byte.len()),
+        arbitrary_semantic_events: SemanticEventCount::new(arbitrary.len()),
         one_byte_matches: one_byte == whole,
         arbitrary_matches: arbitrary == whole,
     }
@@ -6389,9 +6389,9 @@ mod tests {
         assert_eq!(
             comparison,
             crate::ReplayChunkComparison {
-                whole_semantic_events: 1,
-                one_byte_semantic_events: 1,
-                arbitrary_semantic_events: 1,
+                whole_semantic_events: crate::SemanticEventCount::new(1),
+                one_byte_semantic_events: crate::SemanticEventCount::new(1),
+                arbitrary_semantic_events: crate::SemanticEventCount::new(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             }
