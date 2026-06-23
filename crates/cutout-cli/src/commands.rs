@@ -186,6 +186,19 @@ type ReplayDiagnosticCount = ReplayCount<ReplayDiagnosticCountTag>;
 type ReplayChunkPlanLen = ReplayCount<ReplayChunkPlanLenTag>;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct JsonSequence(usize);
+
+impl JsonSequence {
+    const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    const fn get(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ReplayCount<Tag> {
     value: usize,
     tag: PhantomData<fn() -> Tag>,
@@ -535,10 +548,9 @@ fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<Notificatio
 fn render_diagnostic_snapshots_jsonl(
     snapshots: &[DiagnosticSnapshot],
 ) -> impl Iterator<Item = Result<String, serde_json::Error>> + '_ {
-    snapshots
-        .iter()
-        .enumerate()
-        .map(|(sequence, snapshot)| render_diagnostic_snapshot_jsonl(sequence, *snapshot))
+    snapshots.iter().enumerate().map(|(sequence, snapshot)| {
+        render_diagnostic_snapshot_jsonl(JsonSequence::new(sequence), *snapshot)
+    })
 }
 
 fn render_diagnostic_errors_jsonl(
@@ -547,16 +559,16 @@ fn render_diagnostic_errors_jsonl(
     errors
         .iter()
         .enumerate()
-        .map(|(sequence, error)| render_diagnostic_error_jsonl(sequence, *error))
+        .map(|(sequence, error)| render_diagnostic_error_jsonl(JsonSequence::new(sequence), *error))
 }
 
 fn render_diagnostic_snapshot_jsonl(
-    sequence: usize,
+    sequence: JsonSequence,
     snapshot: DiagnosticSnapshot,
 ) -> Result<String, serde_json::Error> {
     serde_json::to_string(&serde_json::json!({
         "type": "diagnostic_snapshot",
-        "sequence": sequence,
+        "sequence": sequence.get(),
         "dropped_bytes": snapshot.dropped_bytes,
         "resyncs": snapshot.resyncs,
         "bad_checksums": snapshot.bad_checksums,
@@ -568,12 +580,12 @@ fn render_diagnostic_snapshot_jsonl(
 }
 
 fn render_diagnostic_error_jsonl(
-    sequence: usize,
+    sequence: JsonSequence,
     error: DiagnosticError,
 ) -> Result<String, serde_json::Error> {
     serde_json::to_string(&serde_json::json!({
         "type": "diagnostic_error",
-        "sequence": sequence,
+        "sequence": sequence.get(),
         "kind": diagnostic_error_kind_name(error.kind),
         "claimed_len": error.claimed_len,
         "max_len": error.max_len,
@@ -1706,21 +1718,20 @@ fn render_reconnect_attempt_diagnostics_jsonl(
 fn render_read_only_responses_jsonl(
     responses: &[ReadOnlyResponse],
 ) -> impl Iterator<Item = Result<String, serde_json::Error>> + '_ {
-    responses
-        .iter()
-        .enumerate()
-        .map(|(sequence, response)| render_read_only_response_jsonl(sequence, *response))
+    responses.iter().enumerate().map(|(sequence, response)| {
+        render_read_only_response_jsonl(JsonSequence::new(sequence), *response)
+    })
 }
 
 fn render_read_only_response_jsonl(
-    sequence: usize,
+    sequence: JsonSequence,
     response: ReadOnlyResponse,
 ) -> Result<String, serde_json::Error> {
     match response {
         ReadOnlyResponse::Battery(payload) => render_battery_response_jsonl(sequence, payload),
         ReadOnlyResponse::Firmware(firmware) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
-            "sequence": sequence,
+            "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "firmware",
             "firmware_major": measured_u16_json(firmware.firmware_major),
@@ -1731,21 +1742,21 @@ fn render_read_only_response_jsonl(
         })),
         ReadOnlyResponse::Settings(settings) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
-            "sequence": sequence,
+            "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "settings",
             "entries": settings.entries.into_iter().flatten().map(settings_entry_json).collect::<Vec<_>>(),
         })),
         ReadOnlyResponse::Diagnostics(diagnostics) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
-            "sequence": sequence,
+            "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "diagnostics",
             "details": diagnostics.details.into_iter().flatten().map(diagnostic_detail_json).collect::<Vec<_>>(),
         })),
         ReadOnlyResponse::RawTelemetry(raw) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
-            "sequence": sequence,
+            "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "raw_telemetry",
             "fields": raw.fields.into_iter().flatten().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
@@ -1754,13 +1765,13 @@ fn render_read_only_response_jsonl(
 }
 
 fn render_battery_response_jsonl(
-    sequence: usize,
+    sequence: JsonSequence,
     payload: BatteryPagePayload,
 ) -> Result<String, serde_json::Error> {
     let page = payload.page();
     serde_json::to_string(&serde_json::json!({
         "type": "read_only_response",
-        "sequence": sequence,
+        "sequence": sequence.get(),
         "command_kind": command_kind_name(ReadOnlyResponse::Battery(payload).command_kind()),
         "response": "battery",
         "page": {
@@ -2663,7 +2674,7 @@ mod tests {
     #[test]
     fn diagnostic_snapshot_jsonl_uses_stable_snake_case_fields() {
         let line = render_diagnostic_snapshot_jsonl(
-            7,
+            JsonSequence::new(7),
             DiagnosticSnapshot {
                 dropped_bytes: 11,
                 resyncs: 2,
@@ -2709,7 +2720,7 @@ mod tests {
             .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
         );
 
-        let line = render_read_only_response_jsonl(2, response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(2), response)
             .expect("read-only battery response serializes");
 
         let value: serde_json::Value =
@@ -2765,7 +2776,7 @@ mod tests {
             temperatures,
         ));
 
-        let line = render_read_only_response_jsonl(3, response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(3), response)
             .expect("read-only temperature battery response serializes");
 
         let value: serde_json::Value =
@@ -3002,7 +3013,8 @@ mod tests {
             timeout_ms: 5_000,
         });
 
-        let line = render_diagnostic_error_jsonl(3, error).expect("diagnostic error serializes");
+        let line = render_diagnostic_error_jsonl(JsonSequence::new(3), error)
+            .expect("diagnostic error serializes");
 
         let value: serde_json::Value =
             serde_json::from_str(&line).expect("diagnostic error JSONL is JSON");
