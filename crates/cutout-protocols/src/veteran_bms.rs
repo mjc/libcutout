@@ -25,6 +25,38 @@ pub const VETERAN_BMS_TEMPERATURE_VALUES_OFFSET: usize = 47;
 /// Absolute offset of the first pack-current value in complete Veteran BMS frames.
 pub const VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET: usize = 69;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FrameByteOffset(usize);
+
+impl FrameByteOffset {
+    const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    const fn to_body_offset(self) -> BodyByteOffset {
+        BodyByteOffset(self.0 - VeteranBmsPageEvidence::BODY_OFFSET)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct BodyByteOffset(usize);
+
+impl BodyByteOffset {
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    const fn end_after(self, len: usize) -> usize {
+        self.0 + len
+    }
+}
+
+const CELL_VALUES_OFFSET: FrameByteOffset = FrameByteOffset::new(VETERAN_BMS_CELL_VALUES_OFFSET);
+const TEMPERATURE_VALUES_OFFSET: FrameByteOffset =
+    FrameByteOffset::new(VETERAN_BMS_TEMPERATURE_VALUES_OFFSET);
+const PACK_CURRENT_VALUES_OFFSET: FrameByteOffset =
+    FrameByteOffset::new(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
+
 /// Classifies a Veteran/NOSFET BMS page selector from hardware-backed Aero captures.
 #[must_use]
 pub const fn classify_veteran_bms_selector(selector: ProtocolSelector) -> BatteryPageKind {
@@ -113,10 +145,10 @@ impl VeteranBmsCellPage {
             });
         }
 
-        let offset = body_offset(VETERAN_BMS_CELL_VALUES_OFFSET);
-        let end = offset + usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE) * 2;
+        let offset = CELL_VALUES_OFFSET.to_body_offset();
+        let end = offset.end_after(usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE) * 2);
         let values = body
-            .get(offset..end)
+            .get(offset.get()..end)
             .ok_or(VeteranBmsPageError::PageBodyTooShort {
                 selector: selector.get(),
                 expected: end,
@@ -159,10 +191,10 @@ impl VeteranBmsTemperaturePage {
             });
         }
 
-        let offset = body_offset(VETERAN_BMS_TEMPERATURE_VALUES_OFFSET);
-        let end = offset + VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE * 2;
+        let offset = TEMPERATURE_VALUES_OFFSET.to_body_offset();
+        let end = offset.end_after(VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE * 2);
         let values = body
-            .get(offset..end)
+            .get(offset.get()..end)
             .ok_or(VeteranBmsPageError::PageBodyTooShort {
                 selector: selector.get(),
                 expected: end,
@@ -211,10 +243,10 @@ impl VeteranBmsMetadataPage {
             });
         }
 
-        let offset = body_offset(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
-        let end = offset + 4;
+        let offset = PACK_CURRENT_VALUES_OFFSET.to_body_offset();
+        let end = offset.end_after(4);
         let values = body
-            .get(offset..end)
+            .get(offset.get()..end)
             .ok_or(VeteranBmsPageError::PageBodyTooShort {
                 selector: selector.get(),
                 expected: end,
@@ -235,8 +267,9 @@ impl VeteranBmsMetadataPage {
     }
 }
 
+#[cfg(test)]
 const fn body_offset(absolute_offset: usize) -> usize {
-    absolute_offset - VeteranBmsPageEvidence::BODY_OFFSET
+    FrameByteOffset::new(absolute_offset).to_body_offset().get()
 }
 
 /// Error returned when a typed Veteran/NOSFET BMS page violates invariants.
