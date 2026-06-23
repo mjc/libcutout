@@ -709,7 +709,12 @@ impl PevcapCapture {
                     if header.is_none() {
                         return Err(PevcapJsonlError::MissingHeader);
                     }
-                    records.push(record.into_record());
+                    records.push(record.try_into_record().map_err(|source| {
+                        PevcapJsonlError::Record {
+                            line: line_number,
+                            source,
+                        }
+                    })?);
                 }
             }
         }
@@ -804,7 +809,8 @@ impl PevcapCapture {
                         section: PevcapBinarySection::Record,
                         source,
                     })?
-                    .into_record(),
+                    .try_into_record()
+                    .map_err(PevcapBinaryError::Record)?,
             );
         }
 
@@ -917,6 +923,16 @@ pub enum PevcapJsonlError {
     /// Header metadata violated bounded PEVCAP limits.
     #[error(transparent)]
     Header(#[from] PevcapHeaderError),
+
+    /// A record line decoded as JSON but violated PEVCAP record invariants.
+    #[error("malformed PEVCAP JSONL record at line {line}: {source}")]
+    Record {
+        /// One-based line number.
+        line: usize,
+
+        /// Record invariant failure.
+        source: PevcapRecordError,
+    },
 }
 
 /// PEVCAP encoding/decoding error for format-dispatched tooling.
@@ -992,6 +1008,10 @@ pub enum PevcapBinaryError {
     /// Header metadata violated bounded PEVCAP limits.
     #[error(transparent)]
     Header(#[from] PevcapHeaderError),
+
+    /// A record payload decoded as JSON but violated PEVCAP record invariants.
+    #[error("malformed PEVCAP binary record payload: {0}")]
+    Record(PevcapRecordError),
 }
 
 /// PEVCAP binary container section identifier for error reporting.
@@ -1012,6 +1032,39 @@ pub enum PevcapBinarySection {
 
     /// Capture record payload.
     Record,
+}
+
+/// PEVCAP record-level invariant failure after raw file decoding.
+#[cfg(feature = "serde")]
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum PevcapRecordError {
+    /// An inbound notification record did not carry the required service UUID.
+    #[error("inbound PEVCAP record is missing service UUID")]
+    MissingInboundService,
+
+    /// A non-inbound record carried service metadata.
+    #[error("non-inbound PEVCAP record carried service UUID")]
+    UnexpectedService,
+
+    /// An outbound write record did not carry the required write mode.
+    #[error("outbound PEVCAP record is missing write mode")]
+    MissingOutboundWriteMode,
+
+    /// A non-outbound record carried write-mode metadata.
+    #[error("non-outbound PEVCAP record carried write mode")]
+    UnexpectedWriteMode,
+
+    /// A non-link-up record carried link maximum write length metadata.
+    #[error("non-link-up PEVCAP record carried link max write length")]
+    UnexpectedLinkMaxWriteLen,
+
+    /// A non-outbound record carried request-target metadata.
+    #[error("non-outbound PEVCAP record carried request target metadata")]
+    UnexpectedTarget,
+
+    /// A link lifecycle record carried payload bytes.
+    #[error("link lifecycle PEVCAP record carried payload bytes")]
+    UnexpectedLinkBytes,
 }
 
 #[cfg(feature = "serde")]
@@ -1420,8 +1473,9 @@ impl From<&PevcapRecord> for PevcapRecordJson {
 
 #[cfg(feature = "serde")]
 impl PevcapRecordJson {
-    fn into_record(self) -> PevcapRecord {
-        PevcapRecord {
+    fn try_into_record(self) -> Result<PevcapRecord, PevcapRecordError> {
+        self.validate()?;
+        Ok(PevcapRecord {
             monotonic_ms: self.monotonic_ms,
             direction: self.direction.into_direction(),
             characteristic: GattChannel::from_bytes(self.characteristic),
@@ -1429,8 +1483,58 @@ impl PevcapRecordJson {
             write_mode: self.write_mode.map(WriteModeJson::into_mode),
             link_max_write_len: self.link_max_write_len,
             target: self.target.map(PevcapRequestTargetJson::into_target),
-            bytes: self.bytes.into(),
+            bytes: self.bytes,
+        })
+    }
+
+    fn validate(&self) -> Result<(), PevcapRecordError> {
+        match self.direction {
+            PevcapDirectionJson::LinkUp | PevcapDirectionJson::LinkDown => {
+                if self.service.is_some() {
+                    return Err(PevcapRecordError::UnexpectedService);
+                }
+                if self.write_mode.is_some() {
+                    return Err(PevcapRecordError::UnexpectedWriteMode);
+                }
+                if self.target.is_some() {
+                    return Err(PevcapRecordError::UnexpectedTarget);
+                }
+                if !self.bytes.is_empty() {
+                    return Err(PevcapRecordError::UnexpectedLinkBytes);
+                }
+                if matches!(self.direction, PevcapDirectionJson::LinkDown)
+                    && self.link_max_write_len.is_some()
+                {
+                    return Err(PevcapRecordError::UnexpectedLinkMaxWriteLen);
+                }
+            }
+            PevcapDirectionJson::Inbound => {
+                if self.service.is_none() {
+                    return Err(PevcapRecordError::MissingInboundService);
+                }
+                if self.write_mode.is_some() {
+                    return Err(PevcapRecordError::UnexpectedWriteMode);
+                }
+                if self.link_max_write_len.is_some() {
+                    return Err(PevcapRecordError::UnexpectedLinkMaxWriteLen);
+                }
+                if self.target.is_some() {
+                    return Err(PevcapRecordError::UnexpectedTarget);
+                }
+            }
+            PevcapDirectionJson::Outbound => {
+                if self.service.is_some() {
+                    return Err(PevcapRecordError::UnexpectedService);
+                }
+                if self.write_mode.is_none() {
+                    return Err(PevcapRecordError::MissingOutboundWriteMode);
+                }
+                if self.link_max_write_len.is_some() {
+                    return Err(PevcapRecordError::UnexpectedLinkMaxWriteLen);
+                }
+            }
         }
+        Ok(())
     }
 }
 
@@ -2217,6 +2321,31 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
+    fn pevcap_jsonl_rejects_malformed_inbound_record_before_replay() {
+        let source = sample_pevcap_capture()
+            .to_jsonl()
+            .expect("capture serializes");
+        let mut lines = source.lines().map(str::to_owned).collect::<Vec<_>>();
+        lines[2] = lines[2].replace(
+            r#""service":[254,254,254,254,254,254,254,254,254,254,254,254,254,254,254,254]"#,
+            r#""service":null"#,
+        );
+        let jsonl = lines.join("\n");
+
+        let err = PevcapCapture::from_jsonl(&jsonl)
+            .expect_err("inbound notification without service is malformed");
+
+        assert!(matches!(
+            err,
+            PevcapJsonlError::Record {
+                line: 3,
+                source: PevcapRecordError::MissingInboundService,
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
     fn pevcap_binary_round_trips_header_and_ordered_records() {
         let mut capture = sample_pevcap_capture();
         let target = RequestTarget::VescCanController {
@@ -2230,6 +2359,21 @@ mod tests {
         assert!(binary.starts_with(&PEVCAP_MAGIC));
         assert_eq!(decoded, capture);
         assert_eq!(decoded.records[0].target, Some(target));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_binary_rejects_malformed_record_payload_before_replay() {
+        let mut capture = sample_pevcap_capture();
+        capture.records[1].service = None;
+
+        let binary = capture.to_binary().expect("malformed capture serializes");
+        let error = PevcapCapture::from_binary(&binary).expect_err("record should be rejected");
+
+        assert!(matches!(
+            error,
+            PevcapBinaryError::Record(PevcapRecordError::MissingInboundService)
+        ));
     }
 
     #[cfg(feature = "serde")]
