@@ -52,7 +52,8 @@ pub use fixture::*;
 mod identification;
 pub use identification::{
     IdentityConfidence, IdentityEvidence, IdentityParser, ParsedModelBanner, StagedIdentityInput,
-    StagedIdentityResolution, identify_known_model, identify_model, parse_model_banner,
+    StagedIdentityOutcome, StagedIdentityResolution, identify_known_model, identify_model,
+    parse_model_banner,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};

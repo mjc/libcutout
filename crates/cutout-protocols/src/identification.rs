@@ -22,6 +22,31 @@ pub enum IdentityConfidence {
     Model,
 }
 
+/// Defensive staged identity outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StagedIdentityOutcome {
+    /// A concrete registry model matched the evidence.
+    Matched,
+
+    /// No registry candidate matched the supplied evidence.
+    NoMatch,
+
+    /// Only weak advertisement or GATT hints matched.
+    HintsOnly,
+
+    /// Passive wire evidence identified a protocol family, but not a model.
+    FamilyOnly,
+
+    /// More than one registry candidate matched equally.
+    Ambiguous,
+
+    /// Evidence contradicted a registry candidate or family claim.
+    Conflict,
+
+    /// Identity evidence was syntactically malformed.
+    Malformed,
+}
+
 /// Bitset of evidence that contributed to a staged identity decision.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct IdentityEvidence(u8);
@@ -101,6 +126,9 @@ pub struct StagedIdentityResolution {
     /// Resolved model entry when model confidence is high enough.
     pub model: Option<&'static ModelRegistryEntry>,
 
+    /// Defensive typed outcome for the decision.
+    pub outcome: StagedIdentityOutcome,
+
     /// Confidence level for the decision.
     pub confidence: IdentityConfidence,
 
@@ -150,6 +178,7 @@ pub fn parse_model_banner(bytes: &[u8]) -> Option<ParsedModelBanner<'_>> {
 impl StagedIdentityResolution {
     const NO_MATCH: Self = Self {
         model: None,
+        outcome: StagedIdentityOutcome::NoMatch,
         confidence: IdentityConfidence::NoMatch,
         evidence: IdentityEvidence::empty(),
     };
@@ -165,13 +194,13 @@ pub fn identify_model(
         return hints_only_resolution(input, registry);
     };
 
-    registry
-        .iter()
-        .copied()
-        .filter(|entry| entry.protocol_family == expected_family)
-        .map(|entry| family_resolution(input, entry))
-        .max_by_key(|resolution| resolution.confidence)
-        .unwrap_or(StagedIdentityResolution::NO_MATCH)
+    best_resolution(
+        registry
+            .iter()
+            .copied()
+            .filter(|entry| entry.protocol_family == expected_family)
+            .map(|entry| family_resolution(input, entry)),
+    )
 }
 
 /// Identifies the best known model from the crate-owned compile-time registry.
@@ -191,6 +220,7 @@ fn hints_only_resolution(
         .copied()
         .map(|entry| StagedIdentityResolution {
             model: None,
+            outcome: StagedIdentityOutcome::HintsOnly,
             confidence: IdentityConfidence::HintsOnly,
             evidence: candidate_hints(input, entry),
         })
@@ -207,23 +237,68 @@ where
     GattEvidence: Clone + IntoIterator,
     GattEvidence::Item: Borrow<GattFingerprint>,
 {
-    input
-        .banner_model
-        .filter(|name| model_name_matches(name, entry))
-        .map_or_else(
-            || StagedIdentityResolution {
-                model: None,
-                confidence: IdentityConfidence::FamilyOnly,
-                evidence: candidate_hints(input, entry).with_passive_family_match(),
-            },
-            |_| StagedIdentityResolution {
-                model: Some(entry),
-                confidence: IdentityConfidence::Model,
-                evidence: candidate_hints(input, entry)
-                    .with_passive_family_match()
-                    .with_banner_model_match(),
-            },
-        )
+    let evidence = candidate_hints(input, entry).with_passive_family_match();
+    match input.banner_model {
+        Some(name) if model_name_matches(name, entry) => StagedIdentityResolution {
+            model: Some(entry),
+            outcome: StagedIdentityOutcome::Matched,
+            confidence: IdentityConfidence::Model,
+            evidence: evidence.with_banner_model_match(),
+        },
+        Some(_) => StagedIdentityResolution {
+            model: None,
+            outcome: StagedIdentityOutcome::Conflict,
+            confidence: IdentityConfidence::NoMatch,
+            evidence,
+        },
+        None => StagedIdentityResolution {
+            model: None,
+            outcome: StagedIdentityOutcome::FamilyOnly,
+            confidence: IdentityConfidence::FamilyOnly,
+            evidence,
+        },
+    }
+}
+
+fn best_resolution(
+    resolutions: impl IntoIterator<Item = StagedIdentityResolution>,
+) -> StagedIdentityResolution {
+    let mut best = StagedIdentityResolution::NO_MATCH;
+    let mut ambiguous = false;
+    for resolution in resolutions {
+        match resolution_rank(resolution).cmp(&resolution_rank(best)) {
+            core::cmp::Ordering::Greater => {
+                best = resolution;
+                ambiguous = false;
+            }
+            core::cmp::Ordering::Equal if resolution_rank(resolution) > 0 => {
+                ambiguous = true;
+            }
+            core::cmp::Ordering::Equal | core::cmp::Ordering::Less => {}
+        }
+    }
+    if ambiguous {
+        StagedIdentityResolution {
+            model: None,
+            outcome: StagedIdentityOutcome::Ambiguous,
+            confidence: best.confidence,
+            evidence: best.evidence,
+        }
+    } else {
+        best
+    }
+}
+
+const fn resolution_rank(resolution: StagedIdentityResolution) -> u8 {
+    match resolution.outcome {
+        StagedIdentityOutcome::NoMatch => 0,
+        StagedIdentityOutcome::Malformed => 1,
+        StagedIdentityOutcome::Conflict => 2,
+        StagedIdentityOutcome::HintsOnly => 3,
+        StagedIdentityOutcome::FamilyOnly => 4,
+        StagedIdentityOutcome::Matched => 5,
+        StagedIdentityOutcome::Ambiguous => 6,
+    }
 }
 
 fn candidate_hints<GattEvidence>(
@@ -326,12 +401,15 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use cutout_core::{GattFingerprint, GattRoles, VerificationStatus};
+    use cutout_core::{
+        Capabilities, GattFingerprint, GattRoles, ModelRegistryEntry, ProtocolFamily,
+        VerificationStatus,
+    };
 
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL, DeviceFamily,
         IdentityConfidence, IdentityEvidence, ProtocolFamilyClassification, StagedIdentityInput,
-        identify_known_model, identify_model, parse_model_banner,
+        StagedIdentityOutcome, identify_known_model, identify_model, parse_model_banner,
     };
 
     const BEGODE_GATT: [GattFingerprint; 1] = [GattFingerprint {
@@ -356,6 +434,7 @@ mod tests {
         );
 
         assert_eq!(resolution.confidence, IdentityConfidence::HintsOnly);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::HintsOnly);
         assert_eq!(resolution.model, None);
         assert!(resolution.evidence.has_advertised_name_hint());
         assert!(resolution.evidence.has_gatt_hint());
@@ -374,6 +453,7 @@ mod tests {
         );
 
         assert_eq!(resolution.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::FamilyOnly);
         assert_eq!(resolution.model, None);
         assert!(resolution.evidence.has_passive_family_match());
     }
@@ -391,6 +471,7 @@ mod tests {
 
         assert_eq!(known_resolution, resolution);
         assert_eq!(resolution.confidence, IdentityConfidence::Model);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Matched);
         assert_eq!(resolution.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
         assert!(resolution.evidence.has_banner_model_match());
     }
@@ -405,6 +486,7 @@ mod tests {
         });
 
         assert_eq!(resolution.confidence, IdentityConfidence::Model);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Matched);
         assert_eq!(resolution.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
         assert!(resolution.evidence.has_banner_model_match());
     }
@@ -419,6 +501,7 @@ mod tests {
         });
 
         assert_eq!(resolution.confidence, IdentityConfidence::HintsOnly);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::HintsOnly);
         assert!(resolution.evidence.has_gatt_hint());
     }
 
@@ -444,12 +527,13 @@ mod tests {
         );
 
         assert_eq!(resolution.confidence, IdentityConfidence::NoMatch);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::NoMatch);
         assert_eq!(resolution.model, None);
         assert_eq!(resolution.evidence, IdentityEvidence::empty());
     }
 
     #[test]
-    fn different_name_banner_keeps_begode_resolution_at_family_level() {
+    fn different_name_banner_reports_conflict() {
         let resolution = identify_model(
             &StagedIdentityInput {
                 advertised_name: Some("Begode_Master"),
@@ -460,9 +544,40 @@ mod tests {
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
 
-        assert_eq!(resolution.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(resolution.confidence, IdentityConfidence::NoMatch);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Conflict);
         assert_eq!(resolution.model, None);
         assert!(resolution.evidence.has_passive_family_match());
         assert!(!resolution.evidence.has_banner_model_match());
+    }
+
+    #[test]
+    fn duplicate_matching_models_report_ambiguity() {
+        static OTHER_FALCON: ModelRegistryEntry = ModelRegistryEntry {
+            manufacturer: "Other",
+            model: "Falcon",
+            protocol_family: ProtocolFamily::BegodeGotway,
+            advertised_name_hints: &["Falcon"],
+            wire_model_id: None,
+            battery: None,
+            bms: None,
+            gatt: &BEGODE_GATT,
+            capabilities: Capabilities::from_supported_commands([]),
+            verification: VerificationStatus::Inferred,
+        };
+        let resolution = identify_model(
+            &StagedIdentityInput {
+                advertised_name: Some("Falcon"),
+                gatt: &BEGODE_GATT,
+                stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+                banner_model: Some("Falcon"),
+            },
+            &[&BEGODE_FALCON_REGISTRY_ENTRY, &OTHER_FALCON],
+        );
+
+        assert_eq!(resolution.confidence, IdentityConfidence::Model);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Ambiguous);
+        assert_eq!(resolution.model, None);
+        assert!(resolution.evidence.has_banner_model_match());
     }
 }
