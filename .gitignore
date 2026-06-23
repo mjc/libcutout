@@ -7,3 +7,5 @@ debug.log
 .direnv/
 .tmp/
 .DS_Store
+# br doctor per-run artifacts
+.doctor/
