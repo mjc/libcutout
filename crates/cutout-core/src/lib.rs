@@ -3435,6 +3435,37 @@ impl BmsPackCurrents {
     }
 }
 
+/// Device charging state decoded from protocol-specific status fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChargeMode {
+    /// The device reports that charging is not active.
+    NotCharging,
+
+    /// The device reports that charging is active.
+    Charging,
+}
+
+impl ChargeMode {
+    /// Converts a protocol-specific active/inactive charging flag.
+    #[must_use]
+    pub const fn from_active(active: bool) -> Self {
+        if active {
+            Self::Charging
+        } else {
+            Self::NotCharging
+        }
+    }
+}
+
+impl core::fmt::Display for ChargeMode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotCharging => f.write_str("not_charging"),
+            Self::Charging => f.write_str("charging"),
+        }
+    }
+}
+
 /// Generic battery or BMS information.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatteryInfo {
