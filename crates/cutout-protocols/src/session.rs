@@ -253,6 +253,20 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     ));
                     return;
                 }
+                Err(VeteranReassemblyError::OversizedFrame { claimed, max }) => {
+                    let error = ParserError::OversizedFrame { claimed, max };
+                    push_parser_error(error, output);
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::new(bytes.len()),
+                            monotonic_ms,
+                            error,
+                        ),
+                    ));
+                    return;
+                }
                 Err(VeteranReassemblyError::InvalidFrame) => {
                     push_parser_error(ParserError::MalformedFrame, output);
                     output.push(SessionOutput::NotificationIngest(
@@ -2294,6 +2308,36 @@ mod tests {
             diagnostic_error_events(&output)
                 .iter()
                 .any(|error| error.kind == cutout_core::DiagnosticErrorKind::BadChecksum)
+        );
+    }
+
+    #[test]
+    fn nosfet_aero_decoder_reports_oversized_frame_as_parser_diagnostic_ingest() {
+        let mut decoder = VeteranNotificationDecoder {
+            reassembler: VeteranFrameReassembler::saturated_candidate_for_test(),
+        };
+        let mut output = Vec::new();
+
+        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], 42, &mut output);
+
+        let error = ParserError::OversizedFrame {
+            claimed: crate::MAX_VETERAN_FRAME_LEN + 1,
+            max: crate::MAX_VETERAN_FRAME_LEN,
+        };
+        assert_eq!(
+            notification_ingest_outcomes(&output),
+            vec![NotificationIngestOutcome::parser_diagnostic(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                VETERAN_DATA_CHANNEL,
+                NotificationByteLen::new(1),
+                42,
+                error,
+            )]
+        );
+        assert!(
+            diagnostic_error_events(&output)
+                .iter()
+                .any(|event| event.kind == cutout_core::DiagnosticErrorKind::OversizedFrame)
         );
     }
 

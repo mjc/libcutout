@@ -1761,6 +1761,39 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
 }
 
 #[tokio::test]
+async fn capture_reconnecting_session_preserves_partial_capture_when_reconnect_fails() {
+    let first = RecordingPeripheral::default();
+    let mut host = FakeReconnectHost::new(vec![first.clone()]);
+    let mut session = ReconnectOnceSession::default();
+
+    let reconnecting_capture = crate::capture_reconnecting_session_with_summaries(
+        &mut host,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        crate::NotificationWindow::from_millis(0),
+        crate::MaxReconnectLinks::at_least_one(2),
+        crate::WriteProvenance::Stable,
+    )
+    .await
+    .expect("partial reconnect evidence is preserved when the next link fails");
+    let capture = reconnecting_capture.capture;
+
+    assert_eq!(host.connects, 2);
+    assert_eq!(reconnecting_capture.attempts.len(), 1);
+    assert_eq!(capture.report.subscribes, subscribes(1));
+    assert_eq!(capture.report.disconnects, disconnects(1));
+    assert_eq!(*session.link_ups.lock().expect("link ups"), 1);
+    assert_eq!(*session.link_downs.lock().expect("link downs"), 1);
+    assert_eq!(*first.disconnects.lock().expect("first disconnects"), 1);
+    assert!(
+        capture
+            .records
+            .iter()
+            .any(|record| matches!(record, crate::SessionCaptureRecord::LinkDown { .. }))
+    );
+}
+
+#[tokio::test]
 async fn capture_reconnecting_session_retries_after_external_notification_stream_end() {
     let first = RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
         Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),

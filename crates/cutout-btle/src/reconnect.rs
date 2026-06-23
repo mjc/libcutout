@@ -176,7 +176,15 @@ where
     let mut monotonic_start = MonotonicMs::default();
 
     for attempt in max_links.attempts() {
-        let (peripheral, summary) = host.connect().await?;
+        let (peripheral, summary) = match host.connect().await {
+            Ok(connection) => connection,
+            Err(error) => {
+                if reconnecting_capture.capture.records.is_empty() {
+                    return Err(error);
+                }
+                break;
+            }
+        };
         let endpoints = summary
             .select_session_endpoints()
             .ok_or(SessionBridgeError::MissingSessionEndpoint)?;

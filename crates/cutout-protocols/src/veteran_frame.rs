@@ -82,6 +82,16 @@ impl VeteranFrame {
 /// Error emitted while reassembling Veteran/LeaperKim/NOSFET frames.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum VeteranReassemblyError {
+    /// A candidate frame exceeded the bounded parser buffer.
+    #[error("Veteran frame exceeded maximum length")]
+    OversizedFrame {
+        /// Observed frame length.
+        claimed: usize,
+
+        /// Configured maximum accepted frame length.
+        max: usize,
+    },
+
     /// A complete long frame failed CRC32 validation.
     #[error("Veteran frame CRC mismatch")]
     CrcMismatch,
@@ -125,6 +135,14 @@ impl Default for VeteranFrameReassembler {
 }
 
 impl VeteranFrameReassembler {
+    #[cfg(test)]
+    pub(crate) fn saturated_candidate_for_test() -> Self {
+        Self {
+            buffer: ArrayVec::from([0x80; MAX_VETERAN_FRAME_LEN]),
+            state: VeteranFrameParseState::Collecting,
+        }
+    }
+
     /// Feeds one notification byte and returns a parser-owned typed result.
     ///
     /// # Errors
@@ -135,7 +153,13 @@ impl VeteranFrameReassembler {
         &mut self,
         byte: u8,
     ) -> Result<VeteranFrameParseResult, VeteranReassemblyError> {
-        let (state, frame) = self.state.feed_byte(byte, &mut self.buffer)?;
+        let (state, frame) = match self.state.feed_byte(byte, &mut self.buffer) {
+            Ok(result) => result,
+            Err(error) => {
+                self.reset();
+                return Err(error);
+            }
+        };
         self.state = state;
         Ok(frame.map_or_else(
             || {
@@ -174,19 +198,19 @@ impl VeteranFrameParseState {
         match self {
             Self::SeekingMagic0 => Ok(if byte == VETERAN_MAGIC[0] {
                 buffer.clear();
-                debug_assert!(buffer.try_push(byte).is_ok());
+                push_candidate_byte(buffer, byte)?;
                 (Self::SeekingMagic1, None)
             } else {
                 (Self::SeekingMagic0, None)
             }),
             Self::SeekingMagic1 => Ok(match byte {
                 0x5a => {
-                    debug_assert!(buffer.try_push(byte).is_ok());
+                    push_candidate_byte(buffer, byte)?;
                     (Self::SeekingMagic2, None)
                 }
                 0xdc => {
                     buffer.clear();
-                    debug_assert!(buffer.try_push(byte).is_ok());
+                    push_candidate_byte(buffer, byte)?;
                     (Self::SeekingMagic1, None)
                 }
                 _ => {
@@ -196,7 +220,7 @@ impl VeteranFrameParseState {
             }),
             Self::SeekingMagic2 => {
                 if byte == VETERAN_MAGIC[2] {
-                    debug_assert!(buffer.try_push(byte).is_ok());
+                    push_candidate_byte(buffer, byte)?;
                     let frame = Self::try_finish(buffer)?;
                     Ok((
                         if frame.is_some() {
@@ -208,7 +232,7 @@ impl VeteranFrameParseState {
                     ))
                 } else if byte == VETERAN_MAGIC[0] {
                     buffer.clear();
-                    debug_assert!(buffer.try_push(byte).is_ok());
+                    push_candidate_byte(buffer, byte)?;
                     Ok((Self::SeekingMagic1, None))
                 } else {
                     buffer.clear();
@@ -216,7 +240,7 @@ impl VeteranFrameParseState {
                 }
             }
             Self::Collecting => {
-                debug_assert!(buffer.try_push(byte).is_ok());
+                push_candidate_byte(buffer, byte)?;
                 let frame = Self::try_finish(buffer)?;
                 Ok((
                     if frame.is_some() {
@@ -248,6 +272,22 @@ impl VeteranFrameParseState {
         let frame = VeteranFrame::try_from_slice(buffer.as_slice())?;
         buffer.clear();
         Ok(Some(frame))
+    }
+}
+
+fn push_candidate_byte(
+    buffer: &mut ArrayVec<u8, MAX_VETERAN_FRAME_LEN>,
+    byte: u8,
+) -> Result<(), VeteranReassemblyError> {
+    if buffer.try_push(byte).is_err() {
+        let claimed = buffer.len().saturating_add(1);
+        buffer.clear();
+        Err(VeteranReassemblyError::OversizedFrame {
+            claimed,
+            max: MAX_VETERAN_FRAME_LEN,
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -555,7 +595,40 @@ mod tests {
         assert_eq!(error, VeteranReassemblyError::CrcMismatch);
     }
 
+    #[test]
+    fn reassembler_reports_oversized_candidate_without_panicking() {
+        let mut reassembler = VeteranFrameReassembler {
+            buffer: ArrayVec::from([0x80; MAX_VETERAN_FRAME_LEN]),
+            state: VeteranFrameParseState::Collecting,
+        };
+
+        let error = reassembler
+            .feed_byte_result(0x80)
+            .expect_err("saturated candidate is a typed parser error");
+
+        assert_eq!(
+            error,
+            VeteranReassemblyError::OversizedFrame {
+                claimed: MAX_VETERAN_FRAME_LEN + 1,
+                max: MAX_VETERAN_FRAME_LEN,
+            }
+        );
+        assert_eq!(
+            reassembler.feed_byte_result(0x00),
+            Ok(VeteranFrameParseResult::Seeking)
+        );
+    }
+
     proptest! {
+        #[test]
+        fn arbitrary_noisy_streams_do_not_panic(bytes in proptest::collection::vec(any::<u8>(), 0..2048)) {
+            let mut reassembler = VeteranFrameReassembler::default();
+
+            for byte in bytes {
+                let _ = reassembler.feed_byte_result(byte);
+            }
+        }
+
         #[test]
         fn arbitrary_fragmentation_matches_whole_frame(chunk_sizes in proptest::collection::vec(1usize..16, 1..16)) {
             let frame = long_veteran_frame();
