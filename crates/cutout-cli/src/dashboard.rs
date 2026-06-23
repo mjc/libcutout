@@ -556,7 +556,7 @@ impl DashboardState {
 
         if report.telemetry > 0 {
             let snapshot = report.telemetry_snapshot;
-            self.push_log("info", &format_mapped_telemetry_event(snapshot));
+            self.push_log_with_display("info", MappedTelemetryLog(snapshot));
             self.telemetry.apply_snapshot(snapshot);
         }
         for response in &report.read_only_response_events {
@@ -650,6 +650,14 @@ impl DashboardState {
         }
     }
 
+    fn push_log_with_display(&mut self, level: &str, message: impl fmt::Display) {
+        let rendered = message.to_string();
+        log_dashboard_recent_event(level, &rendered);
+        if !dashboard_log_sink_installed() {
+            self.push_log_entry(level, &rendered);
+        }
+    }
+
     fn push_notification_ingest_log(
         &mut self,
         monotonic_ms: cutout_btle::MonotonicMs,
@@ -660,11 +668,7 @@ impl DashboardState {
             outcome,
         };
         let level = message.level();
-        let rendered = message.to_string();
-        log_dashboard_recent_event(level, &rendered);
-        if !dashboard_log_sink_installed() {
-            self.push_log_entry(level, &rendered);
-        }
+        self.push_log_with_display(level, message);
     }
 
     fn push_log_from_tracing(&mut self, level: &str, message: &str) {
@@ -994,49 +998,106 @@ fn classify_device_identity(name: &str) -> DeviceIdentity {
     }
 }
 
-fn format_mapped_telemetry_event(snapshot: TelemetrySnapshot) -> String {
-    let mut fields = Vec::new();
-    if let Some(speed) = snapshot.speed_mm_s {
-        fields.push(format!("speed={}mph", mm_s_to_mph(speed.value)));
+struct MappedTelemetryLog(TelemetrySnapshot);
+
+impl fmt::Display for MappedTelemetryLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut fields = TelemetryFieldWriter::new(f);
+        let snapshot = self.0;
+
+        if let Some(speed) = snapshot.speed_mm_s {
+            fields.write("speed", mm_s_to_mph(speed.value), "mph")?;
+        }
+        if let Some(voltage) = snapshot.voltage_mv {
+            fields.write("voltage", millivolts_to_volts(voltage.value), "V")?;
+        }
+        if let Some(percent) = snapshot
+            .battery_percent_reported
+            .or(snapshot.battery_percent_estimated)
+        {
+            fields.write("battery", percent.value, "%")?;
+        }
+        if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
+            fields.write("current", milliamps_to_amps(current.value), "A")?;
+        }
+        if let Some(temperature) = snapshot
+            .controller_temperature_mc
+            .or(snapshot.motor_temperature_mc)
+            .or(snapshot.battery_temperature_mc)
+        {
+            fields.write(
+                "temperature",
+                millicelsius_to_celsius_signed(temperature.value),
+                "C",
+            )?;
+        }
+        if let Some(pwm) = snapshot.pwm_permille {
+            fields.write("pwm", permille_to_percent(pwm.value), "%")?;
+        }
+        if let Some(distance) = snapshot.distance_mm {
+            fields.write_display("distance", DistanceMmDisplay(distance.value))?;
+        }
+        if let Some(pitch) = snapshot.pitch_mdeg {
+            fields.write("pitch", millidegrees_to_degrees(pitch.value), "deg")?;
+        }
+        if let Some(roll) = snapshot.roll_mdeg {
+            fields.write("roll", millidegrees_to_degrees(roll.value), "deg")?;
+        }
+
+        fields.finish()
     }
-    if let Some(voltage) = snapshot.voltage_mv {
-        fields.push(format!("voltage={}V", millivolts_to_volts(voltage.value)));
+}
+
+struct TelemetryFieldWriter<'formatter, 'output> {
+    output: &'formatter mut fmt::Formatter<'output>,
+    fields: usize,
+}
+
+impl<'formatter, 'output> TelemetryFieldWriter<'formatter, 'output> {
+    const fn new(output: &'formatter mut fmt::Formatter<'output>) -> Self {
+        Self { output, fields: 0 }
     }
-    if let Some(percent) = snapshot
-        .battery_percent_reported
-        .or(snapshot.battery_percent_estimated)
-    {
-        fields.push(format!("battery={}%", percent.value));
+
+    fn write<T: fmt::Display>(&mut self, name: &str, value: T, unit: &str) -> fmt::Result {
+        self.write_prefix(name)?;
+        write!(self.output, "{value}{unit}")
     }
-    if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
-        fields.push(format!("current={}A", milliamps_to_amps(current.value)));
+
+    fn write_display<T: fmt::Display>(&mut self, name: &str, value: T) -> fmt::Result {
+        self.write_prefix(name)?;
+        write!(self.output, "{value}")
     }
-    if let Some(temperature) = snapshot
-        .controller_temperature_mc
-        .or(snapshot.motor_temperature_mc)
-        .or(snapshot.battery_temperature_mc)
-    {
-        fields.push(format!(
-            "temperature={}C",
-            millicelsius_to_celsius_signed(temperature.value)
-        ));
+
+    fn write_prefix(&mut self, name: &str) -> fmt::Result {
+        if self.fields == 0 {
+            write!(self.output, "telemetry mapped {name}=")?;
+        } else {
+            write!(self.output, " {name}=")?;
+        }
+        self.fields += 1;
+        Ok(())
     }
-    if let Some(pwm) = snapshot.pwm_permille {
-        fields.push(format!("pwm={}%", permille_to_percent(pwm.value)));
+
+    fn finish(self) -> fmt::Result {
+        if self.fields == 0 {
+            write!(self.output, "telemetry mapped none")
+        } else {
+            Ok(())
+        }
     }
-    if let Some(distance) = snapshot.distance_mm {
-        fields.push(format!("distance={}", format_distance_mm(distance.value)));
-    }
-    if let Some(pitch) = snapshot.pitch_mdeg {
-        fields.push(format!("pitch={}deg", millidegrees_to_degrees(pitch.value)));
-    }
-    if let Some(roll) = snapshot.roll_mdeg {
-        fields.push(format!("roll={}deg", millidegrees_to_degrees(roll.value)));
-    }
-    if fields.is_empty() {
-        "telemetry mapped none".to_owned()
-    } else {
-        format!("telemetry mapped {}", fields.join(" "))
+}
+
+struct DistanceMmDisplay(u64);
+
+impl fmt::Display for DistanceMmDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let meters = self.0 / 1_000;
+        if meters < 1_000 {
+            return write!(f, "{meters} m");
+        }
+
+        let km_tenths = meters.saturating_mul(10).saturating_add(500) / 1_000;
+        write!(f, "{}.{} km", km_tenths / 10, km_tenths % 10)
     }
 }
 
@@ -2676,6 +2737,31 @@ mod tests {
         assert_eq!(
             log.to_string(),
             "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75"
+        );
+    }
+
+    #[test]
+    fn mapped_telemetry_log_keeps_snapshot_structured_until_render_edge() {
+        let snapshot = TelemetrySnapshot {
+            speed_mm_s: Some(Measured::reported(12_000)),
+            voltage_mv: Some(Measured::reported(119_600)),
+            battery_percent_reported: Some(Measured::reported(87)),
+            motor_current_ma: Some(Measured::reported(-18_500)),
+            controller_temperature_mc: Some(Measured::reported(36_000)),
+            pwm_permille: Some(Measured::reported(420)),
+            distance_mm: Some(Measured::reported(1_551_169_000)),
+            pitch_mdeg: Some(Measured::reported(-2_000)),
+            roll_mdeg: Some(Measured::reported(1_000)),
+            ..TelemetrySnapshot::default()
+        };
+
+        assert_eq!(
+            MappedTelemetryLog(snapshot).to_string(),
+            "telemetry mapped speed=27mph voltage=120V battery=87% current=-18A temperature=36C pwm=42% distance=1551.2 km pitch=-2deg roll=1deg"
+        );
+        assert_eq!(
+            MappedTelemetryLog(TelemetrySnapshot::default()).to_string(),
+            "telemetry mapped none"
         );
     }
 
