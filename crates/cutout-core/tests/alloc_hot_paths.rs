@@ -60,12 +60,12 @@ impl ProtocolSession for NoOpSession {
                 bytes,
                 monotonic_ms,
             } => {
-                output.push(SessionOutput::Event(
-                    cutout_core::DeviceEvent::NotificationReceived {
+                output.push(SessionOutput::NotificationIngest(
+                    cutout_core::NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
+                        bytes.len(),
                         monotonic_ms,
-                        len: bytes.len(),
-                    },
+                    ),
                 ));
             }
             SessionInput::Tick { monotonic_ms } => {

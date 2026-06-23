@@ -93,6 +93,9 @@ pub enum MobileSessionOutputKindDto {
 
     /// Disconnect transport action.
     Disconnect,
+
+    /// Typed protocol notification ingest outcome.
+    NotificationIngest,
 }
 
 /// Mobile output DTO.
@@ -691,6 +694,11 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 channel: Vec::new(),
                 bytes: Vec::new(),
             },
+            SessionOutputDto::NotificationIngest(_) => Self {
+                kind: MobileSessionOutputKindDto::NotificationIngest,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+            },
         }
     }
 }
@@ -917,6 +925,14 @@ mod tests {
         });
 
         assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output
+                == &MobileSessionOutputDto {
+                    kind: MobileSessionOutputKindDto::NotificationIngest,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                }
+        }));
         assert_eq!(session.current_snapshot().voltage_mv, Some(108_760));
     }
 

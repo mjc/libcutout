@@ -1184,18 +1184,6 @@ pub enum SessionEventDto {
     /// Link-down event accepted by the session.
     LinkDown,
 
-    /// Notification metadata accepted by the session.
-    NotificationReceived {
-        /// Transport endpoint that produced the bytes.
-        channel: [u8; 16],
-
-        /// Host monotonic receive timestamp.
-        monotonic_ms: u64,
-
-        /// Number of notification bytes observed.
-        len: u64,
-    },
-
     /// Tick event accepted by the session.
     Tick {
         /// Host monotonic tick timestamp.
@@ -1226,15 +1214,6 @@ impl From<DeviceEvent> for SessionEventDto {
                 max_write_len: link.max_write_len,
             },
             DeviceEvent::LinkDown => Self::LinkDown,
-            DeviceEvent::NotificationReceived {
-                channel,
-                monotonic_ms,
-                len,
-            } => Self::NotificationReceived {
-                channel: channel.as_bytes(),
-                monotonic_ms,
-                len: len as u64,
-            },
             DeviceEvent::Tick { monotonic_ms } => Self::Tick { monotonic_ms },
             DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
             DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnlyResponse(response.into()),

@@ -1249,7 +1249,6 @@ impl DiagnosticSnapshot {
             }
             DeviceEvent::LinkUp(_)
             | DeviceEvent::LinkDown
-            | DeviceEvent::NotificationReceived { .. }
             | DeviceEvent::Tick { .. }
             | DeviceEvent::Telemetry(_)
             | DeviceEvent::ReadOnlyResponse(_)
@@ -2892,18 +2891,6 @@ pub enum DeviceEvent {
     /// Link-down event accepted by the session.
     LinkDown,
 
-    /// Notification metadata accepted by the session.
-    NotificationReceived {
-        /// Transport endpoint that produced the bytes.
-        channel: GattChannel,
-
-        /// Host monotonic receive timestamp.
-        monotonic_ms: MonotonicMillis,
-
-        /// Number of notification bytes observed.
-        len: usize,
-    },
-
     /// Tick event accepted by the session.
     Tick {
         /// Host monotonic tick timestamp.
@@ -3072,7 +3059,6 @@ where
                     | DeviceEvent::DiagnosticError(_)
                     | DeviceEvent::LinkUp(_)
                     | DeviceEvent::LinkDown
-                    | DeviceEvent::NotificationReceived { .. }
                     | DeviceEvent::Tick { .. } => {}
                 }
             }
@@ -3277,9 +3263,9 @@ pub struct NotificationImpairmentReplayCase {
 
 /// Replays a capture and returns semantic events only.
 ///
-/// Raw [`DeviceEvent::NotificationReceived`] metadata is intentionally
-/// excluded because notification lengths differ between chunking modes even
-/// when decoded protocol behavior is equivalent.
+/// Typed ingest outcomes are intentionally excluded because notification
+/// boundaries differ between chunking modes even when decoded protocol behavior
+/// is equivalent.
 #[must_use]
 pub fn replay_capture_semantic_events<S>(
     host: &mut HostSession<S>,
@@ -3291,9 +3277,7 @@ where
     replay_capture(host, records)
         .into_iter()
         .filter_map(|output| match output {
-            SessionOutput::Event(DeviceEvent::NotificationReceived { .. })
-            | SessionOutput::Transport(_)
-            | SessionOutput::NotificationIngest(_) => None,
+            SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
             SessionOutput::Event(event) => Some(event),
         })
         .collect()
@@ -3842,11 +3826,13 @@ mod tests {
                     monotonic_ms,
                 } => {
                     self.last_notification_len = bytes.len();
-                    output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
-                        channel,
-                        monotonic_ms,
-                        len: bytes.len(),
-                    }));
+                    output.push(SessionOutput::NotificationIngest(
+                        crate::NotificationIngestOutcome::ignored_wrong_channel(
+                            channel,
+                            bytes.len(),
+                            monotonic_ms,
+                        ),
+                    ));
                 }
                 SessionInput::Tick { monotonic_ms } => {
                     output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
@@ -3913,11 +3899,9 @@ mod tests {
         assert_eq!(session.last_notification_len, 3);
         assert_eq!(
             output.as_slice(),
-            &[SessionOutput::Event(DeviceEvent::NotificationReceived {
-                channel,
-                monotonic_ms: 20,
-                len: 3
-            })]
+            &[SessionOutput::NotificationIngest(
+                crate::NotificationIngestOutcome::ignored_wrong_channel(channel, 3, 20)
+            )]
         );
     }
 
@@ -5882,11 +5866,9 @@ mod tests {
 
         assert_eq!(
             host.drain_outputs().as_slice(),
-            &[SessionOutput::Event(DeviceEvent::NotificationReceived {
-                channel,
-                monotonic_ms: 20,
-                len: 3,
-            })]
+            &[SessionOutput::NotificationIngest(
+                crate::NotificationIngestOutcome::ignored_wrong_channel(channel, 3, 20)
+            )]
         );
     }
 
@@ -5904,11 +5886,9 @@ mod tests {
 
         assert_eq!(
             host.drain_outputs().as_slice(),
-            &[SessionOutput::Event(DeviceEvent::NotificationReceived {
-                channel,
-                monotonic_ms: 42,
-                len: 4,
-            })]
+            &[SessionOutput::NotificationIngest(
+                crate::NotificationIngestOutcome::ignored_wrong_channel(channel, 4, 42)
+            )]
         );
     }
 

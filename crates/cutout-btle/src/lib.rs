@@ -1599,12 +1599,9 @@ where
                     },
                     outputs,
                 );
-                let notification_accepted = outputs.iter().any(|output| {
-                    matches!(
-                        output,
-                        SessionOutput::Event(DeviceEvent::NotificationReceived { .. })
-                    )
-                });
+                let notification_accepted = outputs
+                    .iter()
+                    .any(|output| matches!(output, SessionOutput::NotificationIngest(_)));
                 process_session_outputs(
                     SessionOutputContext {
                         peripheral: context.peripheral,
@@ -2017,10 +2014,7 @@ where
 
 fn process_device_event(report: &mut SessionBridgeReport, event: DeviceEvent, monotonic_ms: u64) {
     match event {
-        DeviceEvent::NotificationReceived { .. }
-        | DeviceEvent::LinkUp(_)
-        | DeviceEvent::Tick { .. }
-        | DeviceEvent::ControlRefusal(_) => {}
+        DeviceEvent::LinkUp(_) | DeviceEvent::Tick { .. } | DeviceEvent::ControlRefusal(_) => {}
         DeviceEvent::LinkDown => {
             report
                 .events
@@ -3250,17 +3244,17 @@ mod tests {
     fn drive_session_reports_fragment_notifications_as_accepted_without_semantics() {
         let mut report = crate::SessionBridgeReport::default();
         let event_count_before = report.events.len();
-        let output = [SessionOutput::Event(DeviceEvent::NotificationReceived {
-            channel: GattChannel::from_bytes([0xA1; 16]),
-            monotonic_ms: 3,
-            len: 20,
-        })];
-        let notification_accepted = output.iter().any(|output| {
-            matches!(
-                output,
-                SessionOutput::Event(DeviceEvent::NotificationReceived { .. })
-            )
-        });
+        let output = [SessionOutput::NotificationIngest(
+            cutout_core::NotificationIngestOutcome::buffered_fragment(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                GattChannel::from_bytes([0xA1; 16]),
+                20,
+                3,
+            ),
+        )];
+        let notification_accepted = output
+            .iter()
+            .any(|output| matches!(output, SessionOutput::NotificationIngest(_)));
 
         for output in output {
             if let SessionOutput::Event(event) = output {
@@ -3275,19 +3269,10 @@ mod tests {
     }
 
     #[test]
-    fn semantic_notifications_suppress_transport_logging_even_after_notification_received_event() {
+    fn semantic_notifications_suppress_transport_logging_without_raw_notification_event() {
         let mut report = crate::SessionBridgeReport::default();
         let event_count_before = report.events.len();
 
-        crate::process_device_event(
-            &mut report,
-            DeviceEvent::NotificationReceived {
-                channel: GattChannel::from_bytes([0xA1; 16]),
-                monotonic_ms: 3,
-                len: 20,
-            },
-            3,
-        );
         crate::process_device_event(
             &mut report,
             DeviceEvent::Telemetry(TelemetryDelta {
@@ -3874,11 +3859,15 @@ mod tests {
                         .last_notification_channel
                         .lock()
                         .expect("notification channel") = Some(channel);
-                    output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
-                        channel: GattChannel::from_bytes([0xA1; 16]),
-                        monotonic_ms: 0,
-                        len: 2,
-                    }));
+                    output.push(SessionOutput::NotificationIngest(
+                        cutout_core::NotificationIngestOutcome::semantic_events(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            GattChannel::from_bytes([0xA1; 16]),
+                            2,
+                            0,
+                            1,
+                        ),
+                    ));
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta {
                             speed_mm_s: Some(Measured::reported(1_200)),

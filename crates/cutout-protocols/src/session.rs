@@ -923,11 +923,6 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             monotonic_ms,
         } => {
             if *connected && (ACCEPT_ANY_NOTIFICATION || channel == M::SUBSCRIBE_CHANNEL) {
-                output.push(SessionOutput::Event(DeviceEvent::NotificationReceived {
-                    channel,
-                    monotonic_ms,
-                    len: bytes.len(),
-                }));
                 decoder.handle_notification(channel, bytes, monotonic_ms, output);
             }
         }
@@ -1477,8 +1472,8 @@ mod tests {
 
         assert!(output.iter().any(|item| matches!(
             item,
-            SessionOutput::Event(DeviceEvent::NotificationReceived { channel, monotonic_ms, len })
-                if *channel == TEST_CHANNEL && *monotonic_ms == 11 && *len == 3
+            SessionOutput::NotificationIngest(NotificationIngestOutcome::Ignored(evidence))
+                if evidence.channel == TEST_CHANNEL && evidence.monotonic_ms == 11 && evidence.len == 3
         )));
     }
 
