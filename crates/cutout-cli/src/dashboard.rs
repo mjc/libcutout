@@ -1527,18 +1527,26 @@ fn format_telemetry_delta(delta: TelemetryDelta) -> String {
 }
 
 fn format_unmapped_telemetry_event(report: &SessionBridgeReport) -> String {
-    let latest = report
-        .latest_notification_len
-        .map_or_else(|| "none".to_owned(), |len| len.to_string());
     let diagnostics = format_parser_diagnostics(report.diagnostics_snapshot);
     format!(
         "telemetry unmapped notifications={} bytes={} latest_len={} diagnostics={} {}",
         report.notifications,
         report.notification_bytes.get(),
-        latest,
+        OptionalNotificationLen(report.latest_notification_len),
         report.diagnostics,
         diagnostics
     )
+}
+
+struct OptionalNotificationLen(Option<cutout_core::NotificationByteLen>);
+
+impl fmt::Display for OptionalNotificationLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(len) => len.fmt(f),
+            None => f.write_str("none"),
+        }
+    }
 }
 
 fn format_parser_diagnostics(diagnostics: ParserDiagnostics) -> String {
