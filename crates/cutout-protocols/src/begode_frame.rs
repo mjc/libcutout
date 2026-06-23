@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use cutout_core::MonotonicMillis;
+use cutout_core::{MonotonicMillis, ProtocolSelector, ProtocolTag};
 use thiserror::Error;
 
 /// Complete fixed-size Begode/Gotway frame length.
@@ -43,14 +43,14 @@ impl BegodeFrame {
 
     /// Returns the Begode frame tag at offset 18.
     #[must_use]
-    pub fn tag(&self) -> u8 {
-        self.bytes.get(18).copied().unwrap_or_default()
+    pub fn tag(&self) -> ProtocolTag {
+        ProtocolTag::new(u16::from(self.bytes.get(18).copied().unwrap_or_default()))
     }
 
     /// Returns the Begode sub-index byte at offset 19.
     #[must_use]
-    pub fn sub_index(&self) -> u8 {
-        self.bytes.get(19).copied().unwrap_or_default()
+    pub fn sub_index(&self) -> ProtocolSelector {
+        ProtocolSelector::new(self.bytes.get(19).copied().unwrap_or_default())
     }
 }
 
@@ -199,8 +199,8 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("live frame is valid");
 
         assert_eq!(frame.as_slice(), &LIVE_A);
-        assert_eq!(frame.tag(), 0x00);
-        assert_eq!(frame.sub_index(), 0x18);
+        assert_eq!(frame.tag(), ProtocolTag::new(0x00));
+        assert_eq!(frame.sub_index(), ProtocolSelector::new(0x18));
     }
 
     #[test]

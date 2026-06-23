@@ -629,7 +629,7 @@ fn push_begode_frame(
     monotonic_ms: MonotonicMillis,
     output: &mut Vec<SessionOutput>,
 ) {
-    match frame.tag() {
+    match frame.tag().get() {
         0x00 => match BegodeLiveATelemetry::decode(frame, pack_voltage_profile) {
             Ok(telemetry) => output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 context.live_a_to_delta(telemetry, monotonic_ms),

@@ -1,12 +1,15 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryInfo, BatteryPageMetadata, BatteryPagePayload, Measured, MonotonicMillis,
-    ProtocolSelector, ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource,
+    ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource,
     VerificationStatus,
 };
 use thiserror::Error;
 
-use crate::BegodeFrame;
+use crate::{
+    BegodeFrame,
+    parser::{ByteCursor, ByteOffset},
+};
 
 /// Cell-voltage count carried by one Begode/Gotway BMS cell page.
 pub const BEGODE_BMS_CELL_VALUES_PER_PAGE: usize = 8;
@@ -17,7 +20,7 @@ const BEGODE_BMS_CELL_VALUES_PER_PAGE_U16: u16 = 8;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeBmsSummary {
     /// Raw BMS sub-index from frame offset 19.
-    pub sub_index: u8,
+    pub sub_index: ProtocolSelector,
 
     /// Zero-based BMS pack index inferred from sub-index.
     pub bms_index: u8,
@@ -53,18 +56,19 @@ impl BegodeBmsSummary {
     /// not `0x01`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeBmsPageError> {
         require_tag(frame, 0x01)?;
-        let bytes = frame.as_slice();
+        let cursor = ByteCursor::new(frame.as_slice());
         let sub_index = frame.sub_index();
+        let sub_index_value = sub_index.get();
         Ok(Self {
             sub_index,
-            bms_index: u8::from(sub_index >= 2),
-            half_index: sub_index & 1,
-            pwm_limit_centi_percent: read_be_u16(bytes, 2),
-            pack_voltage_mv: i32::from(read_be_u16(bytes, 6)) * 100,
-            current_ma: i32::from(read_be_i16(bytes, 8)) * 100,
-            temperature_0_mc: i32::from(read_be_i16(bytes, 10)) * 1_000,
-            temperature_1_mc: i32::from(read_be_i16(bytes, 12)) * 1_000,
-            half_pack_voltage_mv: i32::from(read_be_i16(bytes, 14)) * 100,
+            bms_index: u8::from(sub_index_value >= 2),
+            half_index: sub_index_value & 1,
+            pwm_limit_centi_percent: be_u16(cursor, 2),
+            pack_voltage_mv: i32::from(be_u16(cursor, 6)) * 100,
+            current_ma: i32::from(be_i16(cursor, 8)) * 100,
+            temperature_0_mc: i32::from(be_i16(cursor, 10)) * 1_000,
+            temperature_1_mc: i32::from(be_i16(cursor, 12)) * 1_000,
+            half_pack_voltage_mv: i32::from(be_i16(cursor, 14)) * 100,
         })
     }
 
@@ -83,10 +87,7 @@ impl BegodeBmsSummary {
     #[must_use]
     pub fn to_battery_response(self) -> ReadOnlyResponse {
         ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::metadata(
-                ProtocolSelector::new(self.sub_index),
-                VerificationStatus::SourceVerified,
-            ),
+            BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
             BatteryInfo {
                 voltage_mv: Some(source_reported(self.pack_voltage_mv)),
                 current_ma: Some(source_reported(self.current_ma)),
@@ -101,13 +102,13 @@ impl BegodeBmsSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BegodeBmsCellPage {
     /// Frame tag, either `0x02` or `0x03`.
-    pub tag: u8,
+    pub tag: ProtocolTag,
 
     /// Zero-based BMS pack index from the frame tag.
     pub bms_index: u8,
 
     /// Page index from frame offset 19.
-    pub page_index: u8,
+    pub page_index: ProtocolSelector,
 
     /// First cell index represented by this page.
     pub first_cell_index: u16,
@@ -125,25 +126,25 @@ impl BegodeBmsCellPage {
     /// not `0x02` or `0x03`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeBmsPageError> {
         let tag = frame.tag();
-        if !matches!(tag, 0x02 | 0x03) {
+        if !matches!(tag.get(), 0x02 | 0x03) {
             return Err(BegodeBmsPageError::UnexpectedFrameTag {
                 expected: 0x02,
-                actual: tag,
+                actual: tag_byte(tag),
             });
         }
 
-        let bytes = frame.as_slice();
+        let cursor = ByteCursor::new(frame.as_slice());
         let page_index = frame.sub_index();
         let mut cell_mv = ArrayVec::new();
         for offset in (2..18).step_by(2) {
-            cell_mv.push(read_be_u16(bytes, offset));
+            cell_mv.push(be_u16(cursor, offset));
         }
 
         Ok(Self {
             tag,
-            bms_index: tag - 0x02,
+            bms_index: u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or_default(),
             page_index,
-            first_cell_index: u16::from(page_index) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
+            first_cell_index: u16::from(page_index.get()) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
             cell_mv,
         })
     }
@@ -152,10 +153,7 @@ impl BegodeBmsCellPage {
     #[must_use]
     pub fn to_battery_response(&self) -> ReadOnlyResponse {
         ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-            BatteryPageMetadata::cell_voltage(
-                ProtocolSelector::new(self.page_index),
-                VerificationStatus::SourceVerified,
-            ),
+            BatteryPageMetadata::cell_voltage(self.page_index, VerificationStatus::SourceVerified),
             BatteryInfo::default(),
         ))
     }
@@ -177,25 +175,26 @@ pub enum BegodeBmsPageError {
 
 fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeBmsPageError> {
     let actual = frame.tag();
-    if actual == expected {
+    if actual.get() == u16::from(expected) {
         Ok(())
     } else {
-        Err(BegodeBmsPageError::UnexpectedFrameTag { expected, actual })
+        Err(BegodeBmsPageError::UnexpectedFrameTag {
+            expected,
+            actual: tag_byte(actual),
+        })
     }
 }
 
-fn read_be_u16(bytes: &[u8; 24], offset: usize) -> u16 {
-    match bytes.get(offset..offset + 2) {
-        Some([b0, b1]) => u16::from_be_bytes([*b0, *b1]),
-        _ => 0,
-    }
+fn tag_byte(tag: ProtocolTag) -> u8 {
+    u8::try_from(tag.get()).unwrap_or_default()
 }
 
-fn read_be_i16(bytes: &[u8; 24], offset: usize) -> i16 {
-    match bytes.get(offset..offset + 2) {
-        Some([b0, b1]) => i16::from_be_bytes([*b0, *b1]),
-        _ => 0,
-    }
+fn be_u16(cursor: ByteCursor<'_>, offset: usize) -> u16 {
+    cursor.be_u16(ByteOffset::new(offset)).unwrap_or_default()
+}
+
+fn be_i16(cursor: ByteCursor<'_>, offset: usize) -> i16 {
+    cursor.be_i16(ByteOffset::new(offset)).unwrap_or_default()
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {
@@ -230,7 +229,7 @@ mod tests {
         assert_eq!(
             summary,
             BegodeBmsSummary {
-                sub_index: 3,
+                sub_index: ProtocolSelector::new(3),
                 bms_index: 1,
                 half_index: 1,
                 pwm_limit_centi_percent: 10_000,
@@ -302,9 +301,9 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&CELL_PAGE).expect("cell frame is valid");
         let page = BegodeBmsCellPage::decode(&frame).expect("cell page decodes");
 
-        assert_eq!(page.tag, 0x02);
+        assert_eq!(page.tag, ProtocolTag::new(0x02));
         assert_eq!(page.bms_index, 0);
-        assert_eq!(page.page_index, 2);
+        assert_eq!(page.page_index, ProtocolSelector::new(2));
         assert_eq!(page.first_cell_index, 16);
         assert_eq!(
             page.cell_mv.as_slice(),

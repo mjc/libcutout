@@ -1070,10 +1070,13 @@ pub fn estimate_begode_battery_percent(voltage_mv: i32, profile: BegodePackVolta
 
 fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryError> {
     let actual = frame.tag();
-    if actual == expected {
+    if actual.get() == u16::from(expected) {
         Ok(())
     } else {
-        Err(BegodeTelemetryError::UnexpectedFrameTag { expected, actual })
+        Err(BegodeTelemetryError::UnexpectedFrameTag {
+            expected,
+            actual: u8::try_from(actual.get()).unwrap_or_default(),
+        })
     }
 }
 
