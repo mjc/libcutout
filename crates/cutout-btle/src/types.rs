@@ -22,6 +22,12 @@ pub type AdvertisedServices = SmallVec<[Uuid; 4]>;
 /// Manufacturer data summaries carried inline for the common small advertisement set.
 pub type ManufacturerDataSummaries = SmallVec<[ManufacturerDataSummary; 4]>;
 
+/// Service summaries carried inline for the common single-GATT-service devices.
+pub type ServiceSummaries = SmallVec<[ServiceSummary; 4]>;
+
+/// Characteristic summaries carried inline for the common small service shape.
+pub type CharacteristicSummaries = SmallVec<[CharacteristicSummary; 8]>;
+
 /// A peripheral observation gathered from a scan or connection pass.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeripheralObservation {
@@ -302,7 +308,7 @@ pub struct ServiceSummary {
     pub primary: bool,
 
     /// Discovered characteristics for the service.
-    pub characteristics: Vec<CharacteristicSummary>,
+    pub characteristics: CharacteristicSummaries,
 }
 
 impl ServiceSummary {
@@ -332,7 +338,7 @@ pub struct ConnectionSummary {
     pub observation: PeripheralObservation,
 
     /// Discovered GATT services and characteristics.
-    pub services: Vec<ServiceSummary>,
+    pub services: ServiceSummaries,
 }
 
 impl fmt::Display for ConnectionSummary {

@@ -45,10 +45,10 @@ pub use gatt::{
     StandardBatteryService,
 };
 pub use types::{
-    AdvertisedServices, BluetoothAddress, CharacteristicSummary, ConnectedPeripheral,
-    ConnectionSummary, ConnectionTarget, ManufacturerDataSummaries, ManufacturerDataSummary,
-    NullBluetoothAddress, PeripheralIdentifier, PeripheralObservation, ServiceSummary,
-    SessionEndpoints,
+    AdvertisedServices, BluetoothAddress, CharacteristicSummaries, CharacteristicSummary,
+    ConnectedPeripheral, ConnectionSummary, ConnectionTarget, ManufacturerDataSummaries,
+    ManufacturerDataSummary, NullBluetoothAddress, PeripheralIdentifier, PeripheralObservation,
+    ServiceSummaries, ServiceSummary, SessionEndpoints,
 };
 
 const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -1295,7 +1295,7 @@ mod tests {
         let battery_service = crate::ServiceSummary {
             uuid: <crate::StandardBatteryService as crate::KnownGattUuid>::UUID,
             primary: true,
-            characteristics: Vec::new(),
+            characteristics: Vec::new().into(),
         };
         let battery_level = crate::CharacteristicSummary {
             uuid: <crate::StandardBatteryLevelCharacteristic as crate::KnownGattUuid>::UUID,
@@ -1610,8 +1610,10 @@ mod tests {
                     uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                     properties: CharPropFlags::WRITE | CharPropFlags::NOTIFY,
-                }],
-            }],
+                }]
+                .into(),
+            }]
+            .into(),
         };
 
         assert!(summary.to_string().contains("AA:BB:CC:DD:EE:FF"));
@@ -1646,8 +1648,10 @@ mod tests {
                         service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                         properties: CharPropFlags::NOTIFY,
                     },
-                ],
-            }],
+                ]
+                .into(),
+            }]
+            .into(),
         };
 
         assert_eq!(
@@ -1684,8 +1688,10 @@ mod tests {
                         service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                         properties: CharPropFlags::NOTIFY,
                     },
-                ],
-            }],
+                ]
+                .into(),
+            }]
+            .into(),
         };
 
         assert!(
@@ -1758,8 +1764,10 @@ mod tests {
                     uuid: Uuid::from_u128(0x0000_2a19_0000_1000_8000_0080_5f9b_34fb),
                     service_uuid: Uuid::from_u128(0x0000_180f_0000_1000_8000_0080_5f9b_34fb),
                     properties: CharPropFlags::READ,
-                }],
-            }],
+                }]
+                .into(),
+            }]
+            .into(),
         };
 
         assert_eq!(
@@ -1781,7 +1789,7 @@ mod tests {
                 advertised_services: smallvec![],
                 manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
-            services: vec![],
+            services: vec![].into(),
         };
 
         assert!(summary.to_string().contains("id=cb-uuid-1234"));
@@ -1839,8 +1847,10 @@ mod tests {
                     uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                     properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
-                }],
-            }],
+                }]
+                .into(),
+            }]
+            .into(),
         };
         let capture = crate::SessionCapture {
             records: vec![
@@ -1915,10 +1925,8 @@ mod tests {
         );
         assert_eq!(pevcap.records[1].bytes, b"N");
         assert_eq!(pevcap.records[2].direction, PevcapDirection::Inbound);
-        assert_eq!(
-            pevcap.records[2].service,
-            pevcap.header.advertised_services.first().copied()
-        );
+        let advertised_service = pevcap.header.advertised_services.first().copied();
+        assert_eq!(pevcap.records[2].service, advertised_service);
         assert_eq!(pevcap.records[2].bytes, b"NAME=NF2557");
         assert_eq!(pevcap.records[3].direction, PevcapDirection::LinkDown);
         assert_eq!(pevcap.records[3].monotonic_ms, 4);
@@ -1935,7 +1943,7 @@ mod tests {
                 advertised_services: smallvec![],
                 manufacturer_data: crate::ManufacturerDataSummaries::new(),
             },
-            services: vec![],
+            services: vec![].into(),
         };
         let capture = crate::SessionCapture {
             records: vec![
@@ -2004,8 +2012,10 @@ mod tests {
                         service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                         properties: CharPropFlags::READ,
                     },
-                ],
-            }],
+                ]
+                .into(),
+            }]
+            .into(),
         };
 
         assert_eq!(summary.write_candidates().count(), 1);
@@ -2037,8 +2047,10 @@ mod tests {
                         service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                         properties: CharPropFlags::INDICATE,
                     },
-                ],
-            }],
+                ]
+                .into(),
+            }]
+            .into(),
         };
 
         let endpoints = summary
@@ -2156,8 +2168,10 @@ mod tests {
                         service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                         properties: CharPropFlags::NOTIFY,
                     },
-                ],
-            }],
+                ]
+                .into(),
+            }]
+            .into(),
         };
 
         let report = crate::drive_session(
@@ -3141,8 +3155,10 @@ mod tests {
                     uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                     properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
-                }],
-            }],
+                }]
+                .into(),
+            }]
+            .into(),
         }
     }
 
@@ -3170,8 +3186,10 @@ mod tests {
                         service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                         properties: CharPropFlags::NOTIFY,
                     },
-                ],
-            }],
+                ]
+                .into(),
+            }]
+            .into(),
         }
     }
 

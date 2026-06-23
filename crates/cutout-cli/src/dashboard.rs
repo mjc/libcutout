@@ -2268,7 +2268,7 @@ mod tests {
                 advertised_services: vec![].into(),
                 manufacturer_data: Vec::new().into(),
             },
-            services: Vec::new(),
+            services: Vec::new().into(),
         };
 
         let state = DashboardState::live_connected(&target, &summary);

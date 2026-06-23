@@ -2203,8 +2203,10 @@ mod tests {
                     uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                     properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
-                }],
-            }],
+                }]
+                .into(),
+            }]
+            .into(),
         };
         let capture = SessionCapture {
             records: vec![
@@ -2319,8 +2321,10 @@ mod tests {
                     uuid: ffe1,
                     service_uuid: ffe0,
                     properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
-                }],
-            }],
+                }]
+                .into(),
+            }]
+            .into(),
         };
         let second = ConnectionSummary {
             observation: PeripheralObservation {
@@ -2339,7 +2343,8 @@ mod tests {
                         uuid: ffe2,
                         service_uuid: ffe0,
                         properties: CharPropFlags::READ,
-                    }],
+                    }]
+                    .into(),
                 },
                 ServiceSummary {
                     uuid: battery,
@@ -2348,9 +2353,11 @@ mod tests {
                         uuid: battery_level,
                         service_uuid: battery,
                         properties: CharPropFlags::READ,
-                    }],
+                    }]
+                    .into(),
                 },
-            ],
+            ]
+            .into(),
         };
 
         let merged = merge_reconnect_summaries([&first, &second]).expect("summaries merge");
@@ -2399,8 +2406,10 @@ mod tests {
                     uuid: characteristic,
                     service_uuid: service,
                     properties: CharPropFlags::NOTIFY,
-                }],
-            }],
+                }]
+                .into(),
+            }]
+            .into(),
         };
         let records = [RawNotificationRecord {
             monotonic_ms: 7,
@@ -2769,7 +2778,7 @@ mod tests {
                     advertised_services: Vec::new().into(),
                     manufacturer_data: Vec::new().into(),
                 },
-                services: Vec::new(),
+                services: Vec::new().into(),
             },
             report: SessionBridgeReport {
                 protocol_writes: 2,
