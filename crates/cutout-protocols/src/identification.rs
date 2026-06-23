@@ -658,4 +658,37 @@ mod tests {
         assert_eq!(resolution.model, None);
         assert!(resolution.evidence.has_banner_model_match());
     }
+
+    #[test]
+    fn overlapping_gatt_and_family_without_model_evidence_is_ambiguous() {
+        static OTHER_BEGODE: ModelRegistryEntry = ModelRegistryEntry {
+            manufacturer: "Other",
+            model: "Shared Pipe",
+            protocol_family: ProtocolFamily::BegodeGotway,
+            advertised_name_hints: &["Shared"],
+            wire_model_id: None,
+            battery: None,
+            bms: None,
+            gatt: &BEGODE_GATT,
+            capabilities: Capabilities::from_supported_commands([]),
+            verification: VerificationStatus::Inferred,
+        };
+
+        let resolution = identify_model(
+            &StagedIdentityInput {
+                advertised_name: Some("Shared"),
+                gatt: &BEGODE_GATT,
+                stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+                banner_model: IdentityBannerEvidence::Missing,
+            },
+            &[&BEGODE_FALCON_REGISTRY_ENTRY, &OTHER_BEGODE],
+        );
+
+        assert_eq!(resolution.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Ambiguous);
+        assert_eq!(resolution.model, None);
+        assert!(resolution.evidence.has_gatt_hint());
+        assert!(resolution.evidence.has_passive_family_match());
+        assert!(!resolution.evidence.has_banner_model_match());
+    }
 }
