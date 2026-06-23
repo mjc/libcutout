@@ -240,18 +240,15 @@ fn replay_pevcap_capture(
     capture: &PevcapCapture,
     profile: SelectedSessionProfile,
 ) -> Result<PevcapReplayReport> {
-    let mut report = match profile {
-        SelectedSessionProfile::Aero => {
-            replay_pevcap_with_session(capture, profile.session_registration()?.construct())
-        }
-        SelectedSessionProfile::Falcon => {
-            replay_pevcap_with_session(capture, falcon_replay_session(capture)?)
-        }
+    let mut report = if profile.is_falcon() {
+        replay_pevcap_with_session(capture, falcon_replay_session(capture)?)
+    } else {
+        replay_pevcap_with_session(capture, profile.session_registration()?.construct())
     };
     report.capacity =
         select_begode_pack_capacity_from_annotations(capture.header.annotations.iter());
     report.layout = select_begode_pack_layout_from_annotations(capture.header.annotations.iter());
-    if profile == SelectedSessionProfile::Falcon {
+    if profile.is_falcon() {
         report.pack_evidence_consistency = Some(validate_begode_pack_evidence(
             select_falcon_replay_voltage_profile(capture),
             report.capacity,
@@ -421,7 +418,7 @@ const fn notification_ingest_monotonic_ms(
 }
 
 fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<DashboardState> {
-    let report = replay_pevcap_capture(capture, SelectedSessionProfile::Aero)?;
+    let report = replay_pevcap_capture(capture, selected_aero_session_profile())?;
     if !(report.chunk_one_byte_matches && report.chunk_arbitrary_matches) {
         bail!("Aero PEVCAP replay chunks did not produce equivalent dashboard state");
     }
@@ -867,7 +864,7 @@ async fn run_dashboard_live_updates(
     info!("dashboard live update selected session endpoints");
 
     info!("dashboard live update constructing registered Aero read-only session");
-    let registration = match SelectedSessionProfile::Aero.session_registration() {
+    let registration = match selected_session_profile(SessionProfile::Aero).session_registration() {
         Ok(registration) => registration,
         Err(error) => {
             let _ = tx.send(DashboardUpdate::Log {
@@ -1386,31 +1383,38 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectedSessionProfile {
-    Aero,
-    Falcon,
-}
+struct SelectedSessionProfile(SessionKey);
 
 impl SelectedSessionProfile {
     fn from_session_key(key: SessionKey) -> Option<Self> {
-        if key == NOSFET_AERO_SESSION_KEY {
-            Some(Self::Aero)
-        } else if key == BEGODE_FALCON_SESSION_KEY {
-            Some(Self::Falcon)
+        if find_session_registration(key).is_some() {
+            Some(Self(key))
         } else {
             None
         }
     }
 
     const fn session_key(self) -> SessionKey {
-        match self {
-            Self::Aero => NOSFET_AERO_SESSION_KEY,
-            Self::Falcon => BEGODE_FALCON_SESSION_KEY,
-        }
+        self.0
     }
 
     fn session_registration(self) -> Result<&'static cutout_protocols::SessionRegistration> {
         session_registration_by_key(self.session_key())
+    }
+
+    fn catalog_entry(self) -> Result<&'static cutout_core::ModelCatalogEntry> {
+        ModelCatalog::new(&MODEL_CATALOG)
+            .find_session(self.session_key())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "selected session has no catalog entry: {}",
+                    self.session_key().as_str()
+                )
+            })
+    }
+
+    fn is_falcon(self) -> bool {
+        self.0 == BEGODE_FALCON_SESSION_KEY
     }
 }
 
@@ -1436,9 +1440,20 @@ impl SessionBinding {
 
 const fn selected_session_profile(profile: SessionProfile) -> SelectedSessionProfile {
     match profile {
-        SessionProfile::Auto | SessionProfile::Aero => SelectedSessionProfile::Aero,
-        SessionProfile::Falcon => SelectedSessionProfile::Falcon,
+        SessionProfile::Auto | SessionProfile::Aero => {
+            SelectedSessionProfile(NOSFET_AERO_SESSION_KEY)
+        }
+        SessionProfile::Falcon => SelectedSessionProfile(BEGODE_FALCON_SESSION_KEY),
     }
+}
+
+const fn selected_aero_session_profile() -> SelectedSessionProfile {
+    selected_session_profile(SessionProfile::Aero)
+}
+
+#[cfg(test)]
+const fn selected_falcon_session_profile() -> SelectedSessionProfile {
+    selected_session_profile(SessionProfile::Falcon)
 }
 
 fn selected_pevcap_replay_profile(
@@ -1498,21 +1513,18 @@ fn selected_session_profile_for_catalog_entry(
 }
 
 fn pevcap_identity_for_profile(profile: SelectedSessionProfile) -> PevcapResolvedIdentity {
-    match profile {
-        SelectedSessionProfile::Aero => PevcapResolvedIdentity {
-            protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+    match profile.catalog_entry() {
+        Ok(entry) => PevcapResolvedIdentity {
+            protocol_family: Some(entry.registry.protocol_family),
             model: Some(VerifiedValue {
-                value: "NOSFET Aero".to_owned(),
+                value: entry.registry.model.to_owned(),
                 verification: VerificationStatus::Inferred,
             }),
             firmware: None,
         },
-        SelectedSessionProfile::Falcon => PevcapResolvedIdentity {
-            protocol_family: Some(ProtocolFamily::BegodeGotway),
-            model: Some(VerifiedValue {
-                value: "Begode Falcon".to_owned(),
-                verification: VerificationStatus::Inferred,
-            }),
+        Err(_) => PevcapResolvedIdentity {
+            protocol_family: None,
+            model: None,
             firmware: None,
         },
     }
@@ -2496,7 +2508,7 @@ mod tests {
             &summary,
             PevcapFormat::Binary,
             42,
-            SelectedSessionProfile::Aero,
+            selected_aero_session_profile(),
             &["capture_label=charging", "capture_privacy=private"],
         )
         .expect("capture encodes");
@@ -2988,7 +3000,7 @@ mod tests {
         records: &[CaptureRecord],
     ) -> Vec<cutout_core::NotificationIngestOutcome> {
         let mut host = HostSession::new(
-            SelectedSessionProfile::Aero
+            selected_aero_session_profile()
                 .session_registration()
                 .expect("registered Aero session exists")
                 .construct(),
@@ -3150,7 +3162,7 @@ mod tests {
     fn pevcap_replay_drives_selected_aero_session() {
         let capture = sample_aero_replay_capture();
 
-        let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero)
+        let report = replay_pevcap_capture(&capture, selected_aero_session_profile())
             .expect("Aero replay does not require Falcon battery evidence");
 
         assert_eq!(report.replay_records, ReplayRecordCount::new(2));
@@ -3247,7 +3259,7 @@ mod tests {
     #[test]
     fn pevcap_replay_dashboard_state_requires_equivalent_chunk_modes() {
         let capture = sample_aero_replay_capture();
-        let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero)
+        let report = replay_pevcap_capture(&capture, selected_aero_session_profile())
             .expect("Aero replay does not require Falcon battery evidence");
 
         assert!(report.chunk_one_byte_matches);
@@ -3262,7 +3274,7 @@ mod tests {
         let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
             .expect("Falcon identity selects Falcon replay");
 
-        assert_eq!(profile, SelectedSessionProfile::Falcon);
+        assert_eq!(profile, selected_falcon_session_profile());
     }
 
     #[test]
@@ -3280,7 +3292,7 @@ mod tests {
         let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
             .expect("Aero identity selects Aero replay");
 
-        assert_eq!(profile, SelectedSessionProfile::Aero);
+        assert_eq!(profile, selected_aero_session_profile());
     }
 
     #[test]
@@ -3326,7 +3338,7 @@ mod tests {
         let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Falcon)
             .expect("explicit profile does not require metadata");
 
-        assert_eq!(profile, SelectedSessionProfile::Falcon);
+        assert_eq!(profile, selected_falcon_session_profile());
     }
 
     #[test]
@@ -3631,13 +3643,13 @@ mod tests {
         PevcapReplayCorpusCase {
             name: "aero-veteran-live",
             jsonl: include_str!("../fixtures/pevcap/aero-veteran-live.jsonl"),
-            profile: SelectedSessionProfile::Aero,
+            profile: selected_aero_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(5),
         },
         PevcapReplayCorpusCase {
             name: "falcon-begode-banner",
             jsonl: include_str!("../fixtures/pevcap/falcon-begode-banner.jsonl"),
-            profile: SelectedSessionProfile::Falcon,
+            profile: selected_falcon_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(4),
         },
     ];
@@ -3719,7 +3731,7 @@ mod tests {
         let auto = selected_session_profile(SessionProfile::Auto);
         let aero = selected_session_profile(SessionProfile::Aero);
 
-        assert_eq!(auto, SelectedSessionProfile::Aero);
+        assert_eq!(auto, selected_aero_session_profile());
         assert_eq!(auto.session_key(), NOSFET_AERO_SESSION_KEY);
         assert_eq!(
             auto.session_registration()
@@ -3727,7 +3739,7 @@ mod tests {
                 .data_channel,
             VETERAN_DATA_CHANNEL
         );
-        assert_eq!(aero, SelectedSessionProfile::Aero);
+        assert_eq!(aero, selected_aero_session_profile());
         assert_eq!(aero.session_key(), NOSFET_AERO_SESSION_KEY);
     }
 
@@ -3735,7 +3747,7 @@ mod tests {
     fn selected_session_profile_allows_explicit_falcon_verification_path() {
         let falcon = selected_session_profile(SessionProfile::Falcon);
 
-        assert_eq!(falcon, SelectedSessionProfile::Falcon);
+        assert_eq!(falcon, selected_falcon_session_profile());
         assert_eq!(falcon.session_key(), BEGODE_FALCON_SESSION_KEY);
         assert_eq!(
             falcon
@@ -3971,7 +3983,7 @@ mod tests {
             log_tx,
             log_rx,
             move |_tx| async move {
-                let session = SelectedSessionProfile::Aero
+                let session = selected_aero_session_profile()
                     .session_registration()
                     .expect("registered Aero session exists")
                     .construct();
