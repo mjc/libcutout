@@ -874,6 +874,23 @@ impl<'a> ModelCatalog<'a> {
         }
     }
 
+    /// Resolves a BLE advertised name against catalog model hints.
+    #[must_use]
+    pub fn resolve_advertised_name(self, name: &str) -> CatalogModelResolution<'a> {
+        let mut matches = self
+            .entries
+            .iter()
+            .filter(|entry| registry_entry_matches_advertised_name(entry.registry, name));
+        let Some(first) = matches.next() else {
+            return CatalogModelResolution::NoMatch;
+        };
+        if matches.next().is_some() {
+            CatalogModelResolution::Ambiguous
+        } else {
+            CatalogModelResolution::Matched(first)
+        }
+    }
+
     /// Finds the first catalog entry registered for a parser key.
     #[must_use]
     pub fn find_parser(self, parser: ParserKey) -> Option<&'a ModelCatalogEntry> {
@@ -920,6 +937,35 @@ fn registry_entry_matches_display_model(entry: &ModelRegistryEntry, display_mode
             .strip_prefix(entry.manufacturer)
             .and_then(|suffix| suffix.strip_prefix(' '))
             == Some(entry.model)
+}
+
+fn registry_entry_matches_advertised_name(entry: &ModelRegistryEntry, name: &str) -> bool {
+    contains_ascii_ignore_case(name, entry.manufacturer)
+        || contains_ascii_ignore_case(name, entry.model)
+        || entry
+            .advertised_name_hints
+            .iter()
+            .copied()
+            .any(|hint| contains_ascii_ignore_case(name, hint))
+}
+
+fn contains_ascii_ignore_case(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+
+    !needle.is_empty()
+        && haystack.len() >= needle.len()
+        && haystack
+            .windows(needle.len())
+            .any(|window| ascii_eq_ignore_case(window, needle))
+}
+
+fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
 /// Registry data validation error.
@@ -5106,6 +5152,34 @@ mod tests {
     }
 
     #[test]
+    fn catalog_resolves_advertised_name_hints_without_allocating_keys() {
+        let entries = [crate::ModelCatalogEntry {
+            registry: &STATIC_AERO_REGISTRY_ENTRY,
+            registration: crate::ModelRuntimeRegistration {
+                parser: Some(crate::ParserKey::new("test-parser")),
+                session: Some(crate::SessionKey::new("test-session")),
+            },
+        }];
+        let catalog = crate::ModelCatalog::new(&entries);
+
+        let crate::CatalogModelResolution::Matched(entry) =
+            catalog.resolve_advertised_name("Aero NF2557")
+        else {
+            panic!("advertised name should resolve through registry hints");
+        };
+
+        assert_eq!(
+            entry.manufacturer_key(),
+            crate::ManufacturerKey::new("NOSFET")
+        );
+        assert_eq!(entry.model_key(), crate::ModelKey::new("Aero"));
+        assert!(matches!(
+            catalog.resolve_advertised_name("mystery device"),
+            crate::CatalogModelResolution::NoMatch
+        ));
+    }
+
+    #[test]
     fn catalog_display_model_resolution_reports_ambiguity() {
         static OTHER_AERO_REGISTRY_ENTRY: crate::ModelRegistryEntry = crate::ModelRegistryEntry {
             manufacturer: "Other",
@@ -5139,6 +5213,44 @@ mod tests {
 
         assert!(matches!(
             catalog.resolve_display_model(crate::ProtocolFamily::VeteranLeaperkimNosfet, "Aero"),
+            crate::CatalogModelResolution::Ambiguous
+        ));
+    }
+
+    #[test]
+    fn catalog_advertised_name_resolution_reports_ambiguity() {
+        static OTHER_AERO_REGISTRY_ENTRY: crate::ModelRegistryEntry = crate::ModelRegistryEntry {
+            manufacturer: "Other",
+            model: "Shared",
+            protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            advertised_name_hints: &["NF2557"],
+            wire_model_id: None,
+            battery: None,
+            bms: None,
+            gatt: STATIC_AERO_REGISTRY_ENTRY.gatt,
+            capabilities: STATIC_AERO_REGISTRY_ENTRY.capabilities,
+            verification: VerificationStatus::Inferred,
+        };
+        let entries = [
+            crate::ModelCatalogEntry {
+                registry: &STATIC_AERO_REGISTRY_ENTRY,
+                registration: crate::ModelRuntimeRegistration {
+                    parser: Some(crate::ParserKey::new("test-parser")),
+                    session: Some(crate::SessionKey::new("test-session")),
+                },
+            },
+            crate::ModelCatalogEntry {
+                registry: &OTHER_AERO_REGISTRY_ENTRY,
+                registration: crate::ModelRuntimeRegistration {
+                    parser: Some(crate::ParserKey::new("other-parser")),
+                    session: Some(crate::SessionKey::new("other-session")),
+                },
+            },
+        ];
+        let catalog = crate::ModelCatalog::new(&entries);
+
+        assert!(matches!(
+            catalog.resolve_advertised_name("NF2557"),
             crate::CatalogModelResolution::Ambiguous
         ));
     }

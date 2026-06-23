@@ -18,11 +18,12 @@ use cutout_btle::{
     SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    BatteryPagePayload, DiagnosticReadback, FirmwareInfo, NotificationByteLen,
-    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback,
-    ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
+    BatteryPagePayload, CatalogModelResolution, DiagnosticReadback, FirmwareInfo, ModelCatalog,
+    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily,
+    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta,
+    TelemetrySnapshot,
 };
-use cutout_protocols::VeteranModelProfile;
+use cutout_protocols::{MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VeteranModelProfile};
 use ratatui::termina::{
     PlatformTerminal, Terminal as _,
     escape::csi::{self},
@@ -1298,17 +1299,15 @@ struct DeviceIdentity {
 }
 
 fn classify_device_identity(name: &str) -> DeviceIdentity {
-    let normalized = name.to_ascii_lowercase();
-    if normalized.contains("aero") || normalized.starts_with("nf") {
-        return DeviceIdentity {
-            make: "NOSFET".to_owned(),
-            model: "Aero".to_owned(),
-        };
-    }
-
-    DeviceIdentity {
-        make: "unknown".to_owned(),
-        model: "unknown".to_owned(),
+    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
+        CatalogModelResolution::Matched(entry) => DeviceIdentity {
+            make: entry.registry.manufacturer.to_owned(),
+            model: entry.registry.model.to_owned(),
+        },
+        CatalogModelResolution::NoMatch | CatalogModelResolution::Ambiguous => DeviceIdentity {
+            make: "unknown".to_owned(),
+            model: "unknown".to_owned(),
+        },
     }
 }
 
@@ -2256,8 +2255,9 @@ fn voltage_range_percent(sample_v: u64, min_mv: i32, max_mv: i32) -> u64 {
 }
 
 fn dashboard_voltage_range_mv(state: &DashboardState) -> Option<(i32, i32)> {
-    if state.device.make == "NOSFET"
-        && state.device.model == "Aero"
+    if ModelCatalog::new(&MODEL_CATALOG)
+        .find_model_names(&state.device.make, &state.device.model)
+        .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY))
         && let Some(profile) = VeteranModelProfile::from_model_id(43)
     {
         return Some((
@@ -2851,7 +2851,7 @@ mod tests {
             Some("demo state: aero-nf2557.v1")
         );
         assert_eq!(state.device.make, "NOSFET");
-        assert_eq!(state.device.model, "Aero");
+        assert_eq!(state.device.model, "NOSFET Aero");
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.scan_browser.selected, ScanSelection::first());
         assert_eq!(state.scan_browser.observations.len(), 3);
@@ -2901,7 +2901,7 @@ mod tests {
 
         assert_eq!(state.source, DashboardSource::Live);
         assert_eq!(state.device.make, "NOSFET");
-        assert_eq!(state.device.model, "Aero");
+        assert_eq!(state.device.model, "NOSFET Aero");
         assert_eq!(state.device.name, "NF2557");
         assert_eq!(state.device.connection_state, "target selected");
         assert_eq!(
@@ -2912,6 +2912,17 @@ mod tests {
         assert!(state.scan_browser.observations.is_empty());
         assert!(state.profiles.is_empty());
         assert!(state.logs.is_empty());
+    }
+
+    #[test]
+    fn live_target_identity_comes_from_model_catalog_hints() {
+        let state = DashboardState::live_target("Begode Falcon".to_owned());
+
+        assert_eq!(state.source, DashboardSource::Live);
+        assert_eq!(state.device.make, "Begode");
+        assert_eq!(state.device.model, "Falcon");
+        assert_eq!(state.device.name, "Begode Falcon");
+        assert_eq!(state.device.connection_state, "target selected");
     }
 
     #[test]
@@ -2937,7 +2948,7 @@ mod tests {
 
         assert_eq!(state.source, DashboardSource::Live);
         assert_eq!(state.device.make, "NOSFET");
-        assert_eq!(state.device.model, "Aero");
+        assert_eq!(state.device.model, "NOSFET Aero");
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.device.address, "AA:BB:CC:DD:EE:FF");
         assert_eq!(state.device.connection_state, "connected");
@@ -3050,7 +3061,7 @@ mod tests {
     fn voltage_sparkline_uses_connected_device_voltage_range() {
         let mut state = DashboardState::empty();
         state.device.make = "NOSFET".to_owned();
-        state.device.model = "Aero".to_owned();
+        state.device.model = "NOSFET Aero".to_owned();
         state.telemetry.latest_voltage_v = Some(120);
         state.telemetry.voltage_v = vec![109, 120, 126];
         state.telemetry.battery_pct = Some(DashboardBatteryPercent::new(85));
