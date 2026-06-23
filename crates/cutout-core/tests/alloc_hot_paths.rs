@@ -4,11 +4,46 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_core::{
-    CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ProtocolSession, RequestKey,
-    RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency, SessionInput, SessionOutput,
+    CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
+    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeFactories, ProtocolFamily,
+    ProtocolSession, RequestKey, RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency,
+    SessionInput, SessionOutput, VerificationStatus,
 };
 
 struct CountingAllocator;
+
+const CATALOG_GATT: [cutout_core::GattFingerprint; 1] = [cutout_core::GattFingerprint {
+    service: GattChannel::from_bytes([0x11; 16]),
+    characteristic: GattChannel::from_bytes([0x22; 16]),
+    roles: cutout_core::GattRoles::empty()
+        .with_write_without_response()
+        .with_notify(),
+    verification: VerificationStatus::SourceVerified,
+}];
+
+static CATALOG_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
+    manufacturer: "NOSFET",
+    model: "Aero",
+    protocol_family: ProtocolFamily::VeteranLeaperkimNosfet,
+    advertised_name_hints: &["NF"],
+    wire_model_id: None,
+    battery: None,
+    bms: None,
+    gatt: &CATALOG_GATT,
+    capabilities: cutout_core::Capabilities::from_supported_commands([
+        CommandKind::RequestIdentity,
+        CommandKind::RequestTelemetry,
+    ]),
+    verification: VerificationStatus::Inferred,
+};
+
+static CATALOG_ENTRIES: [ModelCatalogEntry; 1] = [ModelCatalogEntry {
+    registry: &CATALOG_REGISTRY_ENTRY,
+    factories: ModelRuntimeFactories {
+        parser: None,
+        session: None,
+    },
+}];
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static REALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -162,6 +197,15 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
         assert_eq!(scheduler.enqueue_by_urgency(firmware), Ok(()));
         assert_eq!(scheduler.pop_next(), Some(firmware));
         assert_eq!(scheduler.pop_next(), Some(telemetry));
+    });
+
+    assert_no_allocations("model catalog lookup", || {
+        let catalog = ModelCatalog::new(&CATALOG_ENTRIES);
+        let entry = catalog
+            .find_model(ManufacturerKey::new("NOSFET"), ModelKey::new("Aero"))
+            .expect("static catalog entry exists");
+
+        assert_eq!(entry.registry.model, "Aero");
     });
 
     let mut replay_host = HostSession::new(NoOpSession);

@@ -58,7 +58,9 @@ mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
 mod registry;
-pub use registry::{BEGODE_FALCON_REGISTRY_ENTRY, MODEL_REGISTRY};
+pub use registry::{
+    BEGODE_FALCON_REGISTRY_ENTRY, MODEL_CATALOG, MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY,
+};
 mod request_encoder;
 mod session;
 mod vesc_codec;

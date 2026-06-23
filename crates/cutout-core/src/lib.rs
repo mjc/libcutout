@@ -388,7 +388,7 @@ const fn str_eq(left: &str, right: &str) -> bool {
 }
 
 /// Protocol family identifier used by registry data.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProtocolFamily {
     /// Veteran/LeaperKim/NOSFET `dc5a5c` frame family.
     VeteranLeaperkimNosfet,
@@ -495,6 +495,12 @@ impl GattRoles {
     #[must_use]
     pub const fn empty() -> Self {
         Self(0)
+    }
+
+    /// Returns whether no roles are set.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
     }
 
     /// Adds read support.
@@ -670,6 +676,171 @@ pub struct ModelRegistryEntry {
     pub verification: VerificationStatus,
 }
 
+/// Stable manufacturer key used by catalog lookup and validation.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ManufacturerKey(&'static str);
+
+impl ManufacturerKey {
+    /// Builds a manufacturer key from static registry data.
+    #[must_use]
+    pub const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    /// Returns the key text.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+/// Stable model key used by catalog lookup and validation.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ModelKey(&'static str);
+
+impl ModelKey {
+    /// Builds a model key from static registry data.
+    #[must_use]
+    pub const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    /// Returns the key text.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+/// Stable protocol-family key used by catalog lookup and validation.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FamilyKey(ProtocolFamily);
+
+impl FamilyKey {
+    /// Builds a family key.
+    #[must_use]
+    pub const fn new(value: ProtocolFamily) -> Self {
+        Self(value)
+    }
+
+    /// Returns the protocol family.
+    #[must_use]
+    pub const fn protocol_family(self) -> ProtocolFamily {
+        self.0
+    }
+}
+
+/// Opaque parser factory marker for a registered model.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
+pub struct ParserFactory(fn());
+
+impl ParserFactory {
+    /// Builds a parser factory marker.
+    #[must_use]
+    pub const fn new(factory: fn()) -> Self {
+        Self(factory)
+    }
+}
+
+/// Opaque session factory marker for a registered model.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
+pub struct SessionFactory(fn());
+
+impl SessionFactory {
+    /// Builds a session factory marker.
+    #[must_use]
+    pub const fn new(factory: fn()) -> Self {
+        Self(factory)
+    }
+}
+
+/// Runtime factories attached to an active catalog model.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ModelRuntimeFactories {
+    /// Parser factory for model notifications/responses.
+    pub parser: Option<ParserFactory>,
+
+    /// Session factory for model command/session handling.
+    pub session: Option<SessionFactory>,
+}
+
+/// Static catalog entry combining data-only metadata with runtime registration.
+#[derive(Clone, Copy, Debug)]
+pub struct ModelCatalogEntry {
+    /// Data-only registry entry.
+    pub registry: &'static ModelRegistryEntry,
+
+    /// Runtime factories used by hosts/protocol adapters.
+    pub factories: ModelRuntimeFactories,
+}
+
+impl ModelCatalogEntry {
+    /// Manufacturer key for this catalog entry.
+    #[must_use]
+    pub const fn manufacturer_key(self) -> ManufacturerKey {
+        ManufacturerKey::new(self.registry.manufacturer)
+    }
+
+    /// Model key for this catalog entry.
+    #[must_use]
+    pub const fn model_key(self) -> ModelKey {
+        ModelKey::new(self.registry.model)
+    }
+
+    /// Family key for this catalog entry.
+    #[must_use]
+    pub const fn family_key(self) -> FamilyKey {
+        FamilyKey::new(self.registry.protocol_family)
+    }
+}
+
+/// Borrowed model catalog for allocation-free lookup over static entries.
+#[derive(Clone, Copy, Debug)]
+pub struct ModelCatalog<'a> {
+    entries: &'a [ModelCatalogEntry],
+}
+
+impl<'a> ModelCatalog<'a> {
+    /// Builds a borrowed model catalog.
+    #[must_use]
+    pub const fn new(entries: &'a [ModelCatalogEntry]) -> Self {
+        Self { entries }
+    }
+
+    /// Returns the underlying catalog entries.
+    #[must_use]
+    pub const fn entries(self) -> &'a [ModelCatalogEntry] {
+        self.entries
+    }
+
+    /// Finds an entry by typed manufacturer/model keys.
+    #[must_use]
+    pub fn find_model(
+        self,
+        manufacturer: ManufacturerKey,
+        model: ModelKey,
+    ) -> Option<&'a ModelCatalogEntry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.manufacturer_key() == manufacturer && entry.model_key() == model)
+    }
+
+    /// Iterates entries for a protocol family without allocating.
+    pub fn family_entries(
+        self,
+        family: FamilyKey,
+    ) -> impl Clone + Iterator<Item = &'a ModelCatalogEntry> {
+        self.entries
+            .iter()
+            .filter(move |entry| entry.family_key() == family)
+    }
+}
+
 /// Registry data validation error.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum RegistryValidationError {
@@ -697,6 +868,18 @@ pub enum RegistryValidationError {
         first_index: usize,
     },
 
+    /// Registry entry duplicates a wire model id in the same protocol family.
+    #[error(
+        "registry entry at index {index} conflicts with entry at index {first_index} for a protocol wire model id"
+    )]
+    ConflictingWireModelId {
+        /// Conflicting entry index.
+        index: usize,
+
+        /// First entry index with the same family and wire model id.
+        first_index: usize,
+    },
+
     /// Registry entry has no observed GATT fingerprints.
     #[error("registry entry at index {index} has no GATT fingerprints")]
     MissingGattFingerprint {
@@ -704,9 +887,35 @@ pub enum RegistryValidationError {
         index: usize,
     },
 
+    /// Registry entry has a GATT fingerprint with no characteristic roles.
+    #[error(
+        "registry entry at index {index} has invalid GATT fingerprint at index {fingerprint_index}"
+    )]
+    InvalidGattFingerprint {
+        /// Entry index in the validated slice.
+        index: usize,
+
+        /// GATT fingerprint index in the entry.
+        fingerprint_index: usize,
+    },
+
     /// Registry entry exposes no supported commands.
     #[error("registry entry at index {index} exposes no command capabilities")]
     EmptyCapabilities {
+        /// Entry index in the validated slice.
+        index: usize,
+    },
+
+    /// Active catalog entry has no parser factory.
+    #[error("catalog entry at index {index} has active capabilities but no parser factory")]
+    MissingParserFactory {
+        /// Entry index in the validated slice.
+        index: usize,
+    },
+
+    /// Active catalog entry has no session factory.
+    #[error("catalog entry at index {index} has active capabilities but no session factory")]
+    MissingSessionFactory {
         /// Entry index in the validated slice.
         index: usize,
     },
@@ -726,6 +935,38 @@ pub fn validate_registry_entries(
         validate_registry_entry(index, entry)?;
         if let Some(first_index) = first_duplicate_model_index(entries, index, entry) {
             return Err(RegistryValidationError::DuplicateModel { index, first_index });
+        }
+        if let Some(first_index) = first_conflicting_wire_model_id_index(entries, index, entry) {
+            return Err(RegistryValidationError::ConflictingWireModelId { index, first_index });
+        }
+    }
+    Ok(())
+}
+
+/// Validates catalog entries before hosts use registry metadata or factories.
+///
+/// # Errors
+///
+/// Returns [`RegistryValidationError`] for the first structural inconsistency
+/// found in the supplied entries.
+pub fn validate_model_catalog(
+    entries: &[ModelCatalogEntry],
+) -> Result<(), RegistryValidationError> {
+    for (index, entry) in entries.iter().enumerate() {
+        validate_registry_entry(index, entry.registry)?;
+        if entry.factories.parser.is_none() {
+            return Err(RegistryValidationError::MissingParserFactory { index });
+        }
+        if entry.factories.session.is_none() {
+            return Err(RegistryValidationError::MissingSessionFactory { index });
+        }
+        if let Some(first_index) = first_duplicate_catalog_model_index(entries, index, entry) {
+            return Err(RegistryValidationError::DuplicateModel { index, first_index });
+        }
+        if let Some(first_index) =
+            first_conflicting_catalog_wire_model_id_index(entries, index, entry)
+        {
+            return Err(RegistryValidationError::ConflictingWireModelId { index, first_index });
         }
     }
     Ok(())
@@ -759,6 +1000,12 @@ fn validate_registry_entry(
     if entry.gatt.is_empty() {
         return Err(RegistryValidationError::MissingGattFingerprint { index });
     }
+    if let Some(fingerprint_index) = first_invalid_gatt_fingerprint_index(entry.gatt) {
+        return Err(RegistryValidationError::InvalidGattFingerprint {
+            index,
+            fingerprint_index,
+        });
+    }
     if capabilities_are_empty(entry.capabilities) {
         return Err(RegistryValidationError::EmptyCapabilities { index });
     }
@@ -775,10 +1022,55 @@ fn first_duplicate_model_index(
     })
 }
 
+fn first_conflicting_wire_model_id_index(
+    entries: &[&ModelRegistryEntry],
+    index: usize,
+    entry: &ModelRegistryEntry,
+) -> Option<usize> {
+    let wire_model_id = entry.wire_model_id?.value;
+    entries[..index].iter().position(|candidate| {
+        candidate.protocol_family == entry.protocol_family
+            && candidate
+                .wire_model_id
+                .is_some_and(|candidate_id| candidate_id.value == wire_model_id)
+    })
+}
+
+fn first_duplicate_catalog_model_index(
+    entries: &[ModelCatalogEntry],
+    index: usize,
+    entry: &ModelCatalogEntry,
+) -> Option<usize> {
+    entries[..index].iter().position(|candidate| {
+        candidate.registry.manufacturer == entry.registry.manufacturer
+            && candidate.registry.model == entry.registry.model
+    })
+}
+
+fn first_conflicting_catalog_wire_model_id_index(
+    entries: &[ModelCatalogEntry],
+    index: usize,
+    entry: &ModelCatalogEntry,
+) -> Option<usize> {
+    let wire_model_id = entry.registry.wire_model_id?.value;
+    entries[..index].iter().position(|candidate| {
+        candidate.registry.protocol_family == entry.registry.protocol_family
+            && candidate
+                .registry
+                .wire_model_id
+                .is_some_and(|candidate_id| candidate_id.value == wire_model_id)
+    })
+}
+
 fn capabilities_are_empty(capabilities: Capabilities) -> bool {
     ALL_COMMAND_KINDS
         .iter()
         .all(|command| !capabilities.supports_command_kind(*command))
+}
+
+fn first_invalid_gatt_fingerprint_index(gatt: &[GattFingerprint]) -> Option<usize> {
+    gatt.iter()
+        .position(|fingerprint| fingerprint.roles.is_empty())
 }
 
 struct RegistryHashBuilder {
@@ -4548,6 +4840,28 @@ mod tests {
     }
 
     #[test]
+    fn registry_validation_rejects_conflicting_wire_model_claims() {
+        let mut first = sample_registry_entry("NOSFET", "Aero");
+        first.wire_model_id = Some(crate::VerifiedValue {
+            value: 43,
+            verification: VerificationStatus::HardwareVerified,
+        });
+        let mut duplicate_wire_id = sample_registry_entry("NOSFET", "Aero Pro");
+        duplicate_wire_id.wire_model_id = Some(crate::VerifiedValue {
+            value: 43,
+            verification: VerificationStatus::Inferred,
+        });
+
+        assert_eq!(
+            crate::validate_registry_entries(&[&first, &duplicate_wire_id]),
+            Err(crate::RegistryValidationError::ConflictingWireModelId {
+                index: 1,
+                first_index: 0,
+            })
+        );
+    }
+
+    #[test]
     fn registry_validation_rejects_missing_gatt_fingerprint() {
         let mut entry = sample_registry_entry("NOSFET", "Aero");
         entry.gatt = &[];
@@ -4566,6 +4880,111 @@ mod tests {
         assert_eq!(
             crate::validate_registry_entries(&[&entry]),
             Err(crate::RegistryValidationError::EmptyCapabilities { index: 0 })
+        );
+    }
+
+    #[test]
+    fn catalog_entry_exposes_typed_keys_for_common_model_path() {
+        fn parser_factory() {}
+        fn session_factory() {}
+
+        let catalog = crate::ModelCatalogEntry {
+            registry: &STATIC_AERO_REGISTRY_ENTRY,
+            factories: crate::ModelRuntimeFactories {
+                parser: Some(crate::ParserFactory::new(parser_factory)),
+                session: Some(crate::SessionFactory::new(session_factory)),
+            },
+        };
+
+        assert_eq!(catalog.manufacturer_key().as_str(), "NOSFET");
+        assert_eq!(catalog.model_key().as_str(), "Aero");
+        assert_eq!(
+            catalog.family_key().protocol_family(),
+            crate::ProtocolFamily::VeteranLeaperkimNosfet
+        );
+        assert_eq!(crate::validate_model_catalog(&[catalog]), Ok(()));
+    }
+
+    #[test]
+    fn catalog_validation_rejects_missing_active_factories() {
+        fn parser_factory() {}
+        fn session_factory() {}
+
+        let missing_parser = crate::ModelCatalogEntry {
+            registry: &STATIC_AERO_REGISTRY_ENTRY,
+            factories: crate::ModelRuntimeFactories {
+                parser: None,
+                session: Some(crate::SessionFactory::new(session_factory)),
+            },
+        };
+        let missing_session = crate::ModelCatalogEntry {
+            registry: &STATIC_AERO_REGISTRY_ENTRY,
+            factories: crate::ModelRuntimeFactories {
+                parser: Some(crate::ParserFactory::new(parser_factory)),
+                session: None,
+            },
+        };
+
+        assert_eq!(
+            crate::validate_model_catalog(&[missing_parser]),
+            Err(crate::RegistryValidationError::MissingParserFactory { index: 0 })
+        );
+        assert_eq!(
+            crate::validate_model_catalog(&[missing_session]),
+            Err(crate::RegistryValidationError::MissingSessionFactory { index: 0 })
+        );
+    }
+
+    #[test]
+    fn catalog_lookup_uses_typed_keys_over_static_entries() {
+        fn parser_factory() {}
+        fn session_factory() {}
+
+        const CATALOG: [crate::ModelCatalogEntry; 1] = [crate::ModelCatalogEntry {
+            registry: &STATIC_AERO_REGISTRY_ENTRY,
+            factories: crate::ModelRuntimeFactories {
+                parser: Some(crate::ParserFactory::new(parser_factory)),
+                session: Some(crate::SessionFactory::new(session_factory)),
+            },
+        }];
+        let catalog = crate::ModelCatalog::new(&CATALOG);
+
+        assert_eq!(
+            catalog
+                .find_model(
+                    crate::ManufacturerKey::new("NOSFET"),
+                    crate::ModelKey::new("Aero")
+                )
+                .map(|entry| entry.registry.model),
+            Some("Aero")
+        );
+        assert_eq!(
+            catalog
+                .family_entries(crate::FamilyKey::new(
+                    crate::ProtocolFamily::VeteranLeaperkimNosfet
+                ))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn registry_validation_rejects_invalid_gatt_fingerprints() {
+        const INVALID_GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
+            service: GattChannel::from_bytes([0x11; 16]),
+            characteristic: GattChannel::from_bytes([0x22; 16]),
+            roles: crate::GattRoles::empty(),
+            verification: VerificationStatus::SourceVerified,
+        }];
+        let mut entry = sample_registry_entry("NOSFET", "Aero");
+        entry.gatt = &INVALID_GATT;
+
+        assert_eq!(
+            crate::validate_registry_entries(&[&entry]),
+            Err(crate::RegistryValidationError::InvalidGattFingerprint {
+                index: 0,
+                fingerprint_index: 0,
+            })
         );
     }
 
@@ -4757,6 +5176,31 @@ mod tests {
         });
         entry
     }
+
+    const STATIC_SAMPLE_GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
+        service: GattChannel::from_bytes([0x11; 16]),
+        characteristic: GattChannel::from_bytes([0x22; 16]),
+        roles: crate::GattRoles::empty()
+            .with_write_without_response()
+            .with_notify(),
+        verification: VerificationStatus::SourceVerified,
+    }];
+
+    static STATIC_AERO_REGISTRY_ENTRY: crate::ModelRegistryEntry = crate::ModelRegistryEntry {
+        manufacturer: "NOSFET",
+        model: "Aero",
+        protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
+        advertised_name_hints: &["NF"],
+        wire_model_id: None,
+        battery: None,
+        bms: None,
+        gatt: &STATIC_SAMPLE_GATT,
+        capabilities: crate::Capabilities::from_supported_commands([
+            crate::CommandKind::RequestIdentity,
+            crate::CommandKind::RequestTelemetry,
+        ]),
+        verification: VerificationStatus::Inferred,
+    };
 
     #[test]
     fn read_only_response_reports_matching_command_kind() {

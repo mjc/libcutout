@@ -1,13 +1,13 @@
 use core::marker::PhantomData;
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, Capabilities, CommandKind, DeviceCommand, DeviceEvent, DiagnosticDetail,
-    DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, GattFingerprint, GattRoles,
-    Measured, ModelRegistryEntry, MonotonicMillis, NotificationByteLen, NotificationIngestOutcome,
-    ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
-    TransportAction, ValueQuality, VerificationStatus, WritePayload,
+    BatteryPagePayload, BatterySpec, Capabilities, CommandKind, DeviceCommand, DeviceEvent,
+    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
+    GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
+    ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput,
+    SessionOutput, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, WritePayload,
 };
 
 use crate::{
@@ -904,10 +904,44 @@ fn gate_read_only_command<M: SupportsReadRequests>(command: DeviceCommand) -> Re
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NosfetAeroModel;
 
+const NOSFET_AERO_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
+    service: VETERAN_DATA_CHANNEL,
+    characteristic: VETERAN_DATA_CHANNEL,
+    roles: GattRoles::empty()
+        .with_read()
+        .with_write()
+        .with_write_without_response()
+        .with_notify(),
+    verification: VerificationStatus::HardwareVerified,
+}];
+
 impl ProtocolModelSpec for NosfetAeroModel {
     const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
     const MODEL: &'static str = "NOSFET Aero";
     const PROTOCOL: ProtocolFamily = ProtocolFamily::VeteranLeaperkimNosfet;
+}
+
+impl RegisteredModelSpec for NosfetAeroModel {
+    const REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
+        manufacturer: "NOSFET",
+        model: Self::MODEL,
+        protocol_family: Self::PROTOCOL,
+        advertised_name_hints: &["NF2557", "Aero", "NOSFET"],
+        wire_model_id: Some(VerifiedValue {
+            value: 43,
+            verification: VerificationStatus::HardwareVerified,
+        }),
+        battery: Some(BatterySpec {
+            series_cells: 30,
+            nominal_capacity_mah: None,
+            voltage_range_mv: 91_000..=126_000,
+            verification: VerificationStatus::HardwareVerified,
+        }),
+        bms: None,
+        gatt: &NOSFET_AERO_MODEL_GATT,
+        capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES,
+        verification: VerificationStatus::HardwareVerified,
+    };
 }
 
 impl SupportsReadRequests for NosfetAeroModel {
