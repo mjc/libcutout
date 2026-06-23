@@ -3,7 +3,8 @@ use std::borrow::Borrow;
 use cutout_core::{GattFingerprint, ModelRegistryEntry, ProtocolFamily};
 
 use crate::{
-    BegodeBanner, DeviceFamily, ProtocolFamilyClassification, classify_begode_ascii_banner,
+    BegodeBanner, BegodeBannerParse, DeviceFamily, ProtocolFamilyClassification,
+    classify_begode_ascii_banner,
 };
 
 /// Confidence level for staged model identification.
@@ -116,8 +117,8 @@ pub struct StagedIdentityInput<'a, GattEvidence = &'a [GattFingerprint]> {
     /// Passive stream-family classification from notification bytes.
     pub stream_family: ProtocolFamilyClassification,
 
-    /// Most recent parsed model banner text.
-    pub banner_model: Option<&'a str>,
+    /// Most recent parsed model banner evidence.
+    pub banner_model: IdentityBannerEvidence<'a>,
 }
 
 /// Result of staged identity detection.
@@ -143,36 +144,59 @@ pub struct ParsedModelBanner<'a> {
     pub model: &'a str,
 }
 
+/// Parsed identity banner evidence from untrusted bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdentityBannerEvidence<'a> {
+    /// No identity banner was present.
+    Missing,
+
+    /// A recognized model-name banner was present.
+    Model(ParsedModelBanner<'a>),
+
+    /// The bytes looked like identity evidence but were malformed.
+    Malformed,
+}
+
+impl<'a> IdentityBannerEvidence<'a> {
+    /// Creates model-name banner evidence.
+    #[must_use]
+    pub const fn model(model: &'a str) -> Self {
+        Self::Model(ParsedModelBanner { model })
+    }
+}
+
 /// Parser for model identity bytes emitted by a protocol family.
 #[derive(Clone, Copy, Debug)]
 pub struct IdentityParser {
-    parse_model_banner: for<'a> fn(&'a [u8]) -> Option<ParsedModelBanner<'a>>,
+    parse_model_banner: for<'a> fn(&'a [u8]) -> IdentityBannerEvidence<'a>,
 }
 
 impl IdentityParser {
     /// Creates a parser from a model-banner parser function.
     #[must_use]
     pub const fn new(
-        parse_model_banner: for<'a> fn(&'a [u8]) -> Option<ParsedModelBanner<'a>>,
+        parse_model_banner: for<'a> fn(&'a [u8]) -> IdentityBannerEvidence<'a>,
     ) -> Self {
         Self { parse_model_banner }
     }
 
     /// Parses untrusted identity bytes as model banner evidence.
     #[must_use]
-    pub fn parse_model_banner(self, bytes: &[u8]) -> Option<ParsedModelBanner<'_>> {
+    pub fn parse_model_banner(self, bytes: &[u8]) -> IdentityBannerEvidence<'_> {
         (self.parse_model_banner)(bytes)
     }
 }
 
 const IDENTITY_PARSERS: [IdentityParser; 1] = [IdentityParser::new(parse_begode_model_banner)];
 
-/// Iterates known identity parsers and returns the first model banner they recognize.
+/// Iterates known identity parsers and returns the first identity evidence they recognize.
 #[must_use]
-pub fn parse_model_banner(bytes: &[u8]) -> Option<ParsedModelBanner<'_>> {
+pub fn parse_model_banner(bytes: &[u8]) -> IdentityBannerEvidence<'_> {
     IDENTITY_PARSERS
         .into_iter()
-        .find_map(|parser| parser.parse_model_banner(bytes))
+        .map(|parser| parser.parse_model_banner(bytes))
+        .find(|evidence| !matches!(evidence, IdentityBannerEvidence::Missing))
+        .unwrap_or(IdentityBannerEvidence::Missing)
 }
 
 impl StagedIdentityResolution {
@@ -239,24 +263,40 @@ where
 {
     let evidence = candidate_hints(input, entry).with_passive_family_match();
     match input.banner_model {
-        Some(name) if model_name_matches(name, entry) => StagedIdentityResolution {
-            model: Some(entry),
-            outcome: StagedIdentityOutcome::Matched,
-            confidence: IdentityConfidence::Model,
-            evidence: evidence.with_banner_model_match(),
-        },
-        Some(_) => StagedIdentityResolution {
+        IdentityBannerEvidence::Model(ParsedModelBanner { model })
+            if model_name_matches(model, entry) =>
+        {
+            StagedIdentityResolution {
+                model: Some(entry),
+                outcome: StagedIdentityOutcome::Matched,
+                confidence: IdentityConfidence::Model,
+                evidence: evidence.with_banner_model_match(),
+            }
+        }
+        IdentityBannerEvidence::Model(_) => StagedIdentityResolution {
             model: None,
             outcome: StagedIdentityOutcome::Conflict,
             confidence: IdentityConfidence::NoMatch,
             evidence,
         },
-        None => StagedIdentityResolution {
+        IdentityBannerEvidence::Malformed => StagedIdentityResolution {
+            model: None,
+            outcome: StagedIdentityOutcome::Malformed,
+            confidence: IdentityConfidence::NoMatch,
+            evidence,
+        },
+        IdentityBannerEvidence::Missing => StagedIdentityResolution {
             model: None,
             outcome: StagedIdentityOutcome::FamilyOnly,
             confidence: IdentityConfidence::FamilyOnly,
             evidence,
         },
+    }
+}
+
+impl<'a> From<ParsedModelBanner<'a>> for IdentityBannerEvidence<'a> {
+    fn from(banner: ParsedModelBanner<'a>) -> Self {
+        Self::Model(banner)
     }
 }
 
@@ -347,13 +387,20 @@ fn model_name_matches(name: &str, entry: &ModelRegistryEntry) -> bool {
             .any(|hint| contains_ascii_ignore_case(name, hint))
 }
 
-fn parse_begode_model_banner(bytes: &[u8]) -> Option<ParsedModelBanner<'_>> {
-    classify_begode_ascii_banner(bytes)
-        .banner()
-        .and_then(|banner| match banner {
-            BegodeBanner::ModelName(model) => Some(ParsedModelBanner { model }),
-            BegodeBanner::Firmware { .. } | BegodeBanner::Imu(_) => None,
-        })
+fn parse_begode_model_banner(bytes: &[u8]) -> IdentityBannerEvidence<'_> {
+    match classify_begode_ascii_banner(bytes) {
+        BegodeBannerParse::Banner(BegodeBanner::ModelName(model)) => {
+            IdentityBannerEvidence::model(model)
+        }
+        BegodeBannerParse::NonAscii if bytes.starts_with(b"NAME") => {
+            IdentityBannerEvidence::Malformed
+        }
+        BegodeBannerParse::Banner(BegodeBanner::Firmware { .. } | BegodeBanner::Imu(_))
+        | BegodeBannerParse::Empty
+        | BegodeBannerParse::BinaryFrame
+        | BegodeBannerParse::NonAscii
+        | BegodeBannerParse::UnknownText => IdentityBannerEvidence::Missing,
+    }
 }
 
 fn gatt_matches<GattEvidence>(observed: GattEvidence, expected: &[GattFingerprint]) -> bool
@@ -408,8 +455,9 @@ mod tests {
 
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL, DeviceFamily,
-        IdentityConfidence, IdentityEvidence, ProtocolFamilyClassification, StagedIdentityInput,
-        StagedIdentityOutcome, identify_known_model, identify_model, parse_model_banner,
+        IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, ProtocolFamilyClassification,
+        StagedIdentityInput, StagedIdentityOutcome, identify_known_model, identify_model,
+        parse_model_banner,
     };
 
     const BEGODE_GATT: [GattFingerprint; 1] = [GattFingerprint {
@@ -428,7 +476,7 @@ mod tests {
                 advertised_name: Some("Falcon"),
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Pending,
-                banner_model: None,
+                banner_model: IdentityBannerEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -447,7 +495,7 @@ mod tests {
                 advertised_name: None,
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner_model: None,
+                banner_model: IdentityBannerEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -464,7 +512,7 @@ mod tests {
             advertised_name: Some("Begode_Falcon"),
             gatt: &BEGODE_GATT,
             stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-            banner_model: Some("Falcon"),
+            banner_model: IdentityBannerEvidence::model("Falcon"),
         };
         let resolution = identify_model(&input, &[&BEGODE_FALCON_REGISTRY_ENTRY]);
         let known_resolution = identify_known_model(&input);
@@ -482,7 +530,7 @@ mod tests {
             advertised_name: Some("Begode_Falcon"),
             gatt: &BEGODE_GATT,
             stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-            banner_model: Some("Falcon"),
+            banner_model: IdentityBannerEvidence::model("Falcon"),
         });
 
         assert_eq!(resolution.confidence, IdentityConfidence::Model);
@@ -497,7 +545,7 @@ mod tests {
             advertised_name: None,
             gatt: BEGODE_GATT.iter().copied(),
             stream_family: ProtocolFamilyClassification::Pending,
-            banner_model: None,
+            banner_model: IdentityBannerEvidence::Missing,
         });
 
         assert_eq!(resolution.confidence, IdentityConfidence::HintsOnly);
@@ -509,9 +557,39 @@ mod tests {
     fn identity_parsers_find_model_banner_without_transport_knowing_family_type() {
         assert_eq!(
             parse_model_banner(b"NAME=Falcon"),
-            Some(super::ParsedModelBanner { model: "Falcon" })
+            IdentityBannerEvidence::model("Falcon")
         );
-        assert_eq!(parse_model_banner(&[0x55, 0xaa, 0x20, 0x20]), None);
+        assert_eq!(
+            parse_model_banner(&[0x55, 0xaa, 0x20, 0x20]),
+            IdentityBannerEvidence::Missing
+        );
+    }
+
+    #[test]
+    fn identity_parsers_tag_malformed_model_banner() {
+        assert_eq!(
+            parse_model_banner(b"NAME=Falcon\x00"),
+            IdentityBannerEvidence::Malformed
+        );
+    }
+
+    #[test]
+    fn malformed_banner_evidence_reports_malformed_identity() {
+        let resolution = identify_model(
+            &StagedIdentityInput {
+                advertised_name: Some("Begode_Falcon"),
+                gatt: &BEGODE_GATT,
+                stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+                banner_model: IdentityBannerEvidence::Malformed,
+            },
+            &[&BEGODE_FALCON_REGISTRY_ENTRY],
+        );
+
+        assert_eq!(resolution.confidence, IdentityConfidence::NoMatch);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Malformed);
+        assert_eq!(resolution.model, None);
+        assert!(resolution.evidence.has_passive_family_match());
+        assert!(!resolution.evidence.has_banner_model_match());
     }
 
     #[test]
@@ -521,7 +599,7 @@ mod tests {
                 advertised_name: Some("Falcon"),
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero),
-                banner_model: Some("Falcon"),
+                banner_model: IdentityBannerEvidence::model("Falcon"),
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -539,7 +617,7 @@ mod tests {
                 advertised_name: Some("Begode_Master"),
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner_model: Some("Master"),
+                banner_model: IdentityBannerEvidence::model("Master"),
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -570,7 +648,7 @@ mod tests {
                 advertised_name: Some("Falcon"),
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner_model: Some("Falcon"),
+                banner_model: IdentityBannerEvidence::model("Falcon"),
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY, &OTHER_FALCON],
         );
