@@ -3123,6 +3123,11 @@ where
         core::mem::take(&mut self.output)
     }
 
+    /// Moves accumulated session outputs into an existing buffer.
+    pub fn drain_outputs_into(&mut self, output: &mut Vec<SessionOutput>) {
+        output.append(&mut self.output);
+    }
+
     /// Returns the latest telemetry snapshot.
     #[must_use]
     pub const fn current_snapshot(&self) -> TelemetrySnapshot {
@@ -3296,6 +3301,18 @@ where
     S: ProtocolSession,
 {
     let mut outputs = Vec::new();
+    replay_capture_into(host, records, &mut outputs);
+    outputs
+}
+
+/// Replays captured host inputs through a host session into an existing buffer.
+pub fn replay_capture_into<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+    outputs: &mut Vec<SessionOutput>,
+) where
+    S: ProtocolSession,
+{
     for record in records {
         match record {
             CaptureRecord::LinkUp(link) => host.ingest_link_up(*link),
@@ -3304,15 +3321,18 @@ where
                 channel,
                 bytes,
                 monotonic_ms,
-            } => host.ingest_notification_owned(*channel, bytes.clone(), *monotonic_ms),
+            } => host.ingest(SessionInput::Notification {
+                channel: *channel,
+                bytes,
+                monotonic_ms: *monotonic_ms,
+            }),
             CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
             CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
                 host.issue_command(*command);
             }
         }
-        outputs.extend(host.drain_outputs());
+        host.drain_outputs_into(outputs);
     }
-    outputs
 }
 
 /// Summary of deterministic replay equivalence across notification chunking

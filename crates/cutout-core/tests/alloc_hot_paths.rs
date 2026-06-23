@@ -4,8 +4,8 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_core::{
-    CommandKind, GattChannel, HostSession, LinkInfo, ProtocolSession, RequestKey, RequestPolicy,
-    RequestQueue, RequestScheduler, RequestUrgency, SessionInput, SessionOutput,
+    CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ProtocolSession, RequestKey,
+    RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency, SessionInput, SessionOutput,
 };
 
 struct CountingAllocator;
@@ -162,5 +162,18 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
         assert_eq!(scheduler.enqueue_by_urgency(firmware), Ok(()));
         assert_eq!(scheduler.pop_next(), Some(firmware));
         assert_eq!(scheduler.pop_next(), Some(telemetry));
+    });
+
+    let mut replay_host = HostSession::new(NoOpSession);
+    let mut replay_outputs = Vec::with_capacity(4);
+    let replay_records = [CaptureRecord::notification(
+        GattChannel::from_bytes([0x44; 16]),
+        vec![0x11, 0x22, 0x33],
+        30,
+    )];
+    assert_no_allocations("borrowed replay capture notification", || {
+        cutout_core::replay_capture_into(&mut replay_host, &replay_records, &mut replay_outputs);
+
+        assert_eq!(replay_outputs.len(), 1);
     });
 }
