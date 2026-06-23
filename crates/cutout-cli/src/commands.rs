@@ -1458,9 +1458,7 @@ fn pevcap_identity_for_profile(profile: SelectedSessionProfile) -> PevcapResolve
 fn print_session_endpoints(endpoints: SessionEndpoints<'_>) {
     info!(
         write = %endpoints.write.uuid,
-        notify = %endpoints
-            .notify
-            .map_or_else(|| "<none>".to_owned(), |notify| notify.uuid.to_string()),
+        notify = %OptionalUuid(endpoints.notify.map(|notify| notify.uuid)),
         "session endpoints"
     );
 }
