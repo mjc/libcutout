@@ -8,9 +8,10 @@ use std::{
 
 use anyhow::{Result, bail};
 use cutout_btle::{
-    BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, PevcapSessionMetadata,
-    RawNotificationRecord, ReconnectAttemptReport, SessionBridgeEvent, SessionBridgeReport,
-    SessionCapture, SessionEndpoints, SessionPeripheral, capture_raw_notifications,
+    BtleError, BtleplugReconnectHost, ConnectedPeripheral, ConnectionTarget, MaxReconnectLinks,
+    MonotonicMs, NotificationWindow, PevcapSessionMetadata, RawNotificationRecord,
+    ReconnectAttemptReport, ScanWindow, SessionBridgeEvent, SessionBridgeReport, SessionCapture,
+    SessionEndpoints, SessionPeripheral, WriteProvenance, capture_raw_notifications,
     capture_reconnecting_session_with_commands, capture_session_with_commands,
     connect_and_discover, drive_session, drive_session_with_commands, read_battery_level,
     scan_peripherals,
@@ -327,8 +328,10 @@ fn summarize_pevcap_replay(
     report
 }
 
-const fn notification_ingest_monotonic_ms(outcome: cutout_core::NotificationIngestOutcome) -> u64 {
-    match outcome {
+const fn notification_ingest_monotonic_ms(
+    outcome: cutout_core::NotificationIngestOutcome,
+) -> MonotonicMs {
+    MonotonicMs::new(match outcome {
         cutout_core::NotificationIngestOutcome::SemanticEvents { notification, .. }
         | cutout_core::NotificationIngestOutcome::ParserDiagnostic { notification, .. }
         | cutout_core::NotificationIngestOutcome::KnownReserved { notification, .. }
@@ -337,7 +340,7 @@ const fn notification_ingest_monotonic_ms(outcome: cutout_core::NotificationInge
         | cutout_core::NotificationIngestOutcome::Ignored(notification) => {
             notification.monotonic_ms
         }
-    }
+    })
 }
 
 fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<DashboardState> {
@@ -596,7 +599,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
         seconds = args.seconds(),
         "scanning for dashboard device"
     );
-    let connection = connect_and_discover(&target, Duration::from_secs(args.seconds())).await?;
+    let connection = connect_and_discover(&target, ScanWindow::from_secs(args.seconds())).await?;
     info!(
         observation = %connection.summary.observation,
         "connected dashboard device"
@@ -604,8 +607,8 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
     let mut state = DashboardState::live_connected(&target, &connection.summary);
     match read_battery_level(&connection.peripheral, &connection.summary).await? {
         Some(percent) => {
-            info!(percent, "read dashboard battery level");
-            state.apply_battery_percent(percent);
+            info!(percent = percent.get(), "read dashboard battery level");
+            state.apply_battery_percent(percent.get());
         }
         None => {
             info!("dashboard battery level unavailable from standard BLE characteristic");
@@ -808,7 +811,7 @@ async fn run_dashboard_live_iteration(
         VETERAN_DATA_CHANNEL,
         &connection.summary,
         endpoints,
-        DASHBOARD_LIVE_WINDOW,
+        DASHBOARD_LIVE_WINDOW.into(),
     )
     .await
     {
@@ -877,8 +880,13 @@ async fn refresh_dashboard_battery(
     info!(iteration, "dashboard battery refresh starting");
     match read_battery_level(&connection.peripheral, &connection.summary).await {
         Ok(Some(percent)) => {
-            info!(iteration, percent, "dashboard battery refresh succeeded");
-            tx.send(DashboardUpdate::BatteryPercent(percent)).is_ok()
+            info!(
+                iteration,
+                percent = percent.get(),
+                "dashboard battery refresh succeeded"
+            );
+            tx.send(DashboardUpdate::BatteryPercent(percent.get()))
+                .is_ok()
         }
         Ok(None) => {
             info!(iteration, "dashboard battery refresh unavailable");
@@ -896,7 +904,7 @@ async fn refresh_dashboard_battery(
 }
 
 async fn scan(seconds: u64) -> Result<(), BtleError> {
-    for observation in scan_peripherals(Duration::from_secs(seconds)).await? {
+    for observation in scan_peripherals(ScanWindow::from_secs(seconds)).await? {
         info!("{observation}");
     }
     Ok(())
@@ -913,7 +921,7 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
         ..
     } = args;
     let output = pevcap_output.map(|path| (path, pevcap_format));
-    let connection = connect_and_discover(&target.into(), Duration::from_secs(seconds)).await?;
+    let connection = connect_and_discover(&target.into(), ScanWindow::from_secs(seconds)).await?;
     info!("{}", connection.summary);
     let Some(characteristic) = connection.summary.select_notify_characteristic(requested) else {
         if let Some(uuid) = requested {
@@ -930,7 +938,7 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
     let records = capture_raw_notifications(
         &connection.peripheral,
         characteristic,
-        Duration::from_secs(seconds),
+        NotificationWindow::from_secs(seconds),
     )
     .await?;
     match output {
@@ -950,7 +958,7 @@ async fn subscribe_raw(args: RawSubscribeArgs) -> Result<()> {
         None => {
             for record in records {
                 info!(
-                    t_ms = record.monotonic_ms,
+                    t_ms = record.monotonic_ms.get(),
                     characteristic = %record.characteristic,
                     service = %record.service,
                     bytes = %encode_hex(&record.bytes),
@@ -999,7 +1007,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let diagnostics_jsonl = args.diagnostics_jsonl();
     let read_only_jsonl = args.read_only_jsonl();
     let connection =
-        connect_and_discover(&args.into_target(), Duration::from_secs(seconds)).await?;
+        connect_and_discover(&args.into_target(), ScanWindow::from_secs(seconds)).await?;
 
     info!("{}", connection.summary);
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
@@ -1010,7 +1018,7 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
             profile,
             SessionRunOptions {
                 commands: &commands,
-                window: Duration::from_secs(seconds),
+                window: NotificationWindow::from_secs(seconds),
                 diagnostics_jsonl,
                 read_only_jsonl,
             },
@@ -1050,16 +1058,16 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
     let read_only_jsonl = args.target.read_only_jsonl();
     let mut host =
-        BtleplugReconnectHost::new(args.target.into_target(), Duration::from_secs(seconds));
+        BtleplugReconnectHost::new(args.target.into_target(), ScanWindow::from_secs(seconds));
     let reconnecting_capture = match profile {
         SelectedSessionProfile::Aero => {
             capture_reconnecting_session_with_commands(
                 &mut host,
                 &mut ReadOnlySession::<NosfetAeroModel, false>::default(),
                 VETERAN_DATA_CHANNEL,
-                Duration::from_secs(seconds),
-                args.reconnect_attempts,
-                false,
+                NotificationWindow::from_secs(seconds),
+                MaxReconnectLinks::at_least_one(args.reconnect_attempts),
+                WriteProvenance::Stable,
                 &commands,
             )
             .await?
@@ -1069,9 +1077,9 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
                 &mut host,
                 &mut ReadOnlySession::<BegodeFalconModel, true>::default(),
                 BEGODE_DATA_CHANNEL,
-                Duration::from_secs(seconds),
-                args.reconnect_attempts,
-                false,
+                NotificationWindow::from_secs(seconds),
+                MaxReconnectLinks::at_least_one(args.reconnect_attempts),
+                WriteProvenance::Stable,
                 &commands,
             )
             .await?
@@ -1168,7 +1176,7 @@ enum CaptureOutput {
 #[derive(Clone, Copy, Debug)]
 struct SessionRunOptions<'a> {
     commands: &'a [DeviceCommand],
-    window: Duration,
+    window: NotificationWindow,
     diagnostics_jsonl: bool,
     read_only_jsonl: bool,
 }
@@ -1453,14 +1461,17 @@ fn encode_raw_capture_pevcap(
     pevcap_records.push(PevcapRecord::link_up(0, write_limit));
     pevcap_records.extend(records.iter().map(|record| {
         PevcapRecord::inbound_notification(
-            record.monotonic_ms,
+            record.monotonic_ms.get(),
             gatt_channel_from_uuid(record.characteristic),
             gatt_channel_from_uuid(record.service),
             record.bytes.clone(),
         )
     }));
     pevcap_records.push(PevcapRecord::link_down(
-        records.last().map_or(0, |record| record.monotonic_ms),
+        records
+            .last()
+            .map_or(MonotonicMs::default(), |record| record.monotonic_ms)
+            .get(),
     ));
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
     capture_annotations.push("cutout-cli subscribe-raw");
@@ -1580,7 +1591,7 @@ fn render_reconnect_attempt_diagnostics_jsonl(
         DiagnosticSnapshot::from_parser_diagnostics(attempt.report.diagnostics_snapshot);
     serde_json::to_string(&serde_json::json!({
         "type": "reconnect_attempt",
-        "attempt": attempt.attempt,
+        "attempt": attempt.attempt.get(),
         "identifier": attempt.summary.observation.identifier,
         "name": attempt.summary.observation.name,
         "rssi": attempt.summary.observation.rssi,
@@ -2211,18 +2222,18 @@ mod tests {
         let capture = SessionCapture {
             records: vec![
                 SessionCaptureRecord::Link {
-                    monotonic_ms: 0,
-                    max_write_len: Some(23),
+                    monotonic_ms: MonotonicMs::new(0),
+                    max_write_len: Some(cutout_btle::NegotiatedWriteLen::from_mtu(23)),
                 },
                 SessionCaptureRecord::Write {
-                    monotonic_ms: 2,
+                    monotonic_ms: MonotonicMs::new(2),
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     mode: WriteMode::WithoutResponse,
                     bytes: b"N".to_vec(),
-                    provisional: false,
+                    provenance: WriteProvenance::Stable,
                 },
                 SessionCaptureRecord::Notification {
-                    monotonic_ms: 3,
+                    monotonic_ms: MonotonicMs::new(3),
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                     service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                     bytes: b"NAME=NF2557".to_vec(),
@@ -2412,7 +2423,7 @@ mod tests {
             .into(),
         };
         let records = [RawNotificationRecord {
-            monotonic_ms: 7,
+            monotonic_ms: MonotonicMs::new(7),
             characteristic,
             service,
             bytes: vec![0xde, 0xad, 0xbe, 0xef],
@@ -2664,7 +2675,7 @@ mod tests {
         assert_eq!(
             report.events.as_slice(),
             &[SessionBridgeEvent::NotificationIngest {
-                monotonic_ms: 42,
+                monotonic_ms: MonotonicMs::new(42),
                 outcome,
             }]
         );
@@ -2768,7 +2779,7 @@ mod tests {
     #[test]
     fn reconnect_attempt_diagnostics_jsonl_distinguishes_link_attempts() {
         let attempt = ReconnectAttemptReport {
-            attempt: 2,
+            attempt: cutout_btle::ReconnectAttempt::new(2),
             summary: ConnectionSummary {
                 observation: PeripheralObservation {
                     identifier: "NF2557".to_owned(),

@@ -3,7 +3,7 @@ use cutout_core::{
     ReadOnlyResponse, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
 };
 
-use crate::BridgeIdentityResolution;
+use crate::{BridgeIdentityResolution, MonotonicMs};
 
 /// Report produced by a protocol bridge run.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -69,13 +69,13 @@ pub enum SessionBridgeEvent {
     /// Link-down event emitted by the protocol session after transport disconnect.
     LinkDown {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
     },
 
     /// Decoded telemetry emitted by the protocol session.
     ProcessedTelemetry {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Telemetry delta emitted by the protocol session.
         delta: TelemetryDelta,
@@ -84,7 +84,7 @@ pub enum SessionBridgeEvent {
     /// Read-only response emitted by the protocol session.
     ReadOnlyResponse {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Read-only response emitted by the protocol session.
         response: ReadOnlyResponse,
@@ -93,7 +93,7 @@ pub enum SessionBridgeEvent {
     /// Parser diagnostics emitted by the protocol session.
     Diagnostics {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Parser diagnostic counters emitted at this timestamp.
         diagnostics: ParserDiagnostics,
@@ -102,7 +102,7 @@ pub enum SessionBridgeEvent {
     /// Detailed parser diagnostic error emitted by the protocol session.
     DiagnosticError {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Detailed parser error emitted at this timestamp.
         error: DiagnosticError,
@@ -111,7 +111,7 @@ pub enum SessionBridgeEvent {
     /// Typed protocol notification ingest outcome emitted by the session.
     NotificationIngest {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Protocol ingest outcome emitted at this timestamp.
         outcome: NotificationIngestOutcome,
@@ -147,7 +147,7 @@ pub(crate) fn merge_session_report(into: &mut SessionBridgeReport, report: Sessi
 pub(crate) fn process_notification_ingest_outcome(
     report: &mut SessionBridgeReport,
     outcome: NotificationIngestOutcome,
-    monotonic_ms: u64,
+    monotonic_ms: MonotonicMs,
 ) {
     report.events.push(SessionBridgeEvent::NotificationIngest {
         monotonic_ms,
@@ -158,7 +158,7 @@ pub(crate) fn process_notification_ingest_outcome(
 pub(crate) fn process_device_event(
     report: &mut SessionBridgeReport,
     event: DeviceEvent,
-    monotonic_ms: u64,
+    monotonic_ms: MonotonicMs,
 ) {
     match event {
         DeviceEvent::LinkUp(_) | DeviceEvent::Tick { .. } | DeviceEvent::ControlRefusal(_) => {}

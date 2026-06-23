@@ -1,14 +1,12 @@
-use std::{
-    fmt::{self, Write as _},
-    time::Duration,
-};
+use std::fmt::{self, Write as _};
 
 use cutout_core::{PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord, WriteMode};
 use futures_util::StreamExt;
 use uuid::Uuid;
 
 use crate::{
-    BtleError, CharacteristicSummary, ConnectionSummary, SessionBridgeReport, SessionPeripheral,
+    BtleError, CharacteristicSummary, ConnectionSummary, MonotonicMs, NegotiatedWriteLen,
+    NotificationWindow, SessionBridgeReport, SessionPeripheral, WriteProvenance,
     gatt::gatt_channel_from_uuid, types::characteristic_from_summary,
 };
 
@@ -18,22 +16,22 @@ pub enum SessionCaptureRecord {
     /// Link-up metadata observed before protocol outputs were processed.
     Link {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Negotiated maximum write length, when known.
-        max_write_len: Option<u16>,
+        max_write_len: Option<NegotiatedWriteLen>,
     },
 
     /// Link-down event observed after the session requested disconnect.
     LinkDown {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
     },
 
     /// Notification subscription issued by the session.
     Subscribe {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Concrete characteristic subscribed through BTLE.
         characteristic: Uuid,
@@ -42,7 +40,7 @@ pub enum SessionCaptureRecord {
     /// Outbound write issued by the session.
     Write {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Concrete characteristic written through BTLE.
         characteristic: Uuid,
@@ -54,13 +52,13 @@ pub enum SessionCaptureRecord {
         bytes: Vec<u8>,
 
         /// Whether the bytes come from provisional protocol encoders.
-        provisional: bool,
+        provenance: WriteProvenance,
     },
 
     /// Inbound notification observed from the device.
     Notification {
         /// Relative monotonic timestamp in milliseconds.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMs,
 
         /// Characteristic that emitted the notification.
         characteristic: Uuid,
@@ -99,7 +97,7 @@ impl fmt::Display for SessionCaptureRecord {
                 characteristic,
                 mode,
                 bytes,
-                provisional,
+                provenance,
             } => {
                 write!(
                     f,
@@ -107,7 +105,7 @@ impl fmt::Display for SessionCaptureRecord {
                     format_write_mode(*mode),
                 )?;
                 write_hex(f, bytes)?;
-                write!(f, " provisional={provisional}")
+                write!(f, " provisional={}", provenance.is_provisional())
             }
             Self::Notification {
                 monotonic_ms,
@@ -140,7 +138,7 @@ pub struct SessionCapture {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RawNotificationRecord {
     /// Monotonic capture time relative to the start of the raw subscription.
-    pub monotonic_ms: u64,
+    pub monotonic_ms: MonotonicMs,
 
     /// Characteristic UUID that emitted the notification.
     pub characteristic: Uuid,
@@ -184,7 +182,7 @@ pub struct PevcapSessionMetadata<'a> {
 pub async fn capture_raw_notifications<P>(
     peripheral: &P,
     characteristic: &CharacteristicSummary,
-    notification_window: Duration,
+    notification_window: NotificationWindow,
 ) -> Result<Vec<RawNotificationRecord>, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -197,15 +195,16 @@ where
 
     let mut notifications = peripheral.notifications().await?;
     let started_at = tokio::time::Instant::now();
-    let deadline = started_at + notification_window;
+    let deadline = started_at + notification_window.as_duration();
     let mut records = Vec::new();
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match tokio::time::timeout(remaining, notifications.next()).await {
             Ok(Some(notification)) if notification.uuid == characteristic.uuid => {
                 records.push(RawNotificationRecord {
-                    monotonic_ms: u64::try_from(started_at.elapsed().as_millis())
-                        .unwrap_or(u64::MAX),
+                    monotonic_ms: MonotonicMs::from_elapsed_millis(
+                        started_at.elapsed().as_millis(),
+                    ),
                     characteristic: notification.uuid,
                     service: notification.service_uuid,
                     bytes: notification.value,
@@ -253,7 +252,7 @@ impl SessionCapture {
         let header = PevcapHeader::new(
             metadata.wall_clock_start_unix_ms,
             metadata.platform_id,
-            write_limit,
+            write_limit.map(NegotiatedWriteLen::get),
             &advertised_services,
             &gatt_fingerprints,
             metadata.resolved_identity,
@@ -271,7 +270,7 @@ impl SessionCapture {
     }
 }
 
-pub(crate) fn session_record_monotonic_ms(record: &SessionCaptureRecord) -> u64 {
+pub(crate) fn session_record_monotonic_ms(record: &SessionCaptureRecord) -> MonotonicMs {
     match record {
         SessionCaptureRecord::Link { monotonic_ms, .. }
         | SessionCaptureRecord::LinkDown { monotonic_ms }
@@ -286,18 +285,21 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
         SessionCaptureRecord::Link {
             monotonic_ms,
             max_write_len,
-        } => Some(PevcapRecord::link_up(*monotonic_ms, *max_write_len)),
+        } => Some(PevcapRecord::link_up(
+            monotonic_ms.get(),
+            max_write_len.map(NegotiatedWriteLen::get),
+        )),
         SessionCaptureRecord::LinkDown { monotonic_ms } => {
-            Some(PevcapRecord::link_down(*monotonic_ms))
+            Some(PevcapRecord::link_down(monotonic_ms.get()))
         }
         SessionCaptureRecord::Write {
             monotonic_ms,
             characteristic,
             mode,
             bytes,
-            provisional: _,
+            provenance: _,
         } => Some(PevcapRecord::outbound_write(
-            *monotonic_ms,
+            monotonic_ms.get(),
             gatt_channel_from_uuid(*characteristic),
             *mode,
             bytes.clone(),
@@ -308,7 +310,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             service,
             bytes,
         } => Some(PevcapRecord::inbound_notification(
-            *monotonic_ms,
+            monotonic_ms.get(),
             gatt_channel_from_uuid(*characteristic),
             gatt_channel_from_uuid(*service),
             bytes.clone(),

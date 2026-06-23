@@ -1,4 +1,4 @@
-use std::{future::Future, time::Duration};
+use std::future::Future;
 
 use btleplug::{
     api::{Central, Manager as _, Peripheral as _, ScanFilter},
@@ -7,10 +7,12 @@ use btleplug::{
 
 use crate::{
     AdvertisedServices, BtleError, ConnectedPeripheral, ConnectionSummary, ConnectionTarget,
-    ManufacturerDataSummaries, PeripheralObservation, ServiceSummary, error::backend_call,
+    ManufacturerDataSummaries, PeripheralObservation, ServiceSummary,
+    error::backend_call,
+    units::{ScanPollInterval, ScanWindow},
 };
 
-const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const TARGETED_SCAN_POLL_INTERVAL: ScanPollInterval = ScanPollInterval::from_millis(100);
 
 /// Scans for peripherals and returns what was observed.
 ///
@@ -18,10 +20,12 @@ const TARGETED_SCAN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 ///
 /// Returns [`BtleError::NoAdapterAvailable`] when the platform exposes no
 /// adapters, or [`BtleError::Backend`] when the BTLE backend reports a failure.
-pub async fn scan_peripherals(scan_for: Duration) -> Result<Vec<PeripheralObservation>, BtleError> {
+pub async fn scan_peripherals(
+    scan_for: ScanWindow,
+) -> Result<Vec<PeripheralObservation>, BtleError> {
     let adapter = first_adapter().await?;
     backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
-    tokio::time::sleep(scan_for).await;
+    tokio::time::sleep(scan_for.as_duration()).await;
     let observations = collect_observations(&adapter).await?;
     let _ = backend_call("stop scan", adapter.stop_scan()).await;
     Ok(observations)
@@ -36,7 +40,7 @@ pub async fn scan_peripherals(scan_for: Duration) -> Result<Vec<PeripheralObserv
 /// target, or [`BtleError::Backend`] if the BTLE backend fails.
 pub async fn connect_and_discover(
     target: &ConnectionTarget,
-    scan_for: Duration,
+    scan_for: ScanWindow,
 ) -> Result<ConnectedPeripheral, BtleError> {
     let adapter = first_adapter().await?;
     backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
@@ -127,8 +131,8 @@ async fn find_peripheral(
 }
 
 pub(crate) async fn wait_for_scan_match<T, F, Fut>(
-    scan_for: Duration,
-    poll_interval: Duration,
+    scan_for: ScanWindow,
+    poll_interval: ScanPollInterval,
     mut find: F,
 ) -> Result<T, BtleError>
 where
@@ -136,13 +140,14 @@ where
     Fut: Future<Output = Result<T, BtleError>>,
 {
     let started = tokio::time::Instant::now();
-    let deadline = started + scan_for;
+    let deadline = started + scan_for.as_duration();
 
     loop {
         match find().await {
             Ok(value) => return Ok(value),
             Err(BtleError::NoPeripheralMatched) if tokio::time::Instant::now() < deadline => {
-                let next_poll = (tokio::time::Instant::now() + poll_interval).min(deadline);
+                let next_poll =
+                    (tokio::time::Instant::now() + poll_interval.as_duration()).min(deadline);
                 tokio::time::sleep_until(next_poll).await;
             }
             Err(error) => return Err(error),

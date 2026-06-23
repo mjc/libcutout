@@ -160,10 +160,10 @@ fn btleplug_reconnect_host_reuses_target_and_scan_duration() {
         name_contains: Some("NF2557".to_owned()),
     };
 
-    let host = crate::BtleplugReconnectHost::new(target.clone(), Duration::from_secs(7));
+    let host = crate::BtleplugReconnectHost::new(target.clone(), crate::ScanWindow::from_secs(7));
 
     assert_eq!(host.target(), &target);
-    assert_eq!(host.scan_for(), Duration::from_secs(7));
+    assert_eq!(host.scan_for(), crate::ScanWindow::from_secs(7));
 }
 
 #[tokio::test]
@@ -172,8 +172,8 @@ async fn targeted_scan_wait_returns_as_soon_as_match_is_found() {
     let mut attempts = 0_u8;
 
     let result = crate::scan::wait_for_scan_match(
-        Duration::from_millis(200),
-        Duration::from_millis(5),
+        crate::ScanWindow::from_millis(200),
+        crate::units::ScanPollInterval::from_millis(5),
         || {
             attempts += 1;
             async move {
@@ -202,8 +202,8 @@ async fn targeted_scan_wait_times_out_without_match() {
     let mut attempts = 0_u8;
 
     let result = crate::scan::wait_for_scan_match::<(), _, _>(
-        Duration::from_millis(15),
-        Duration::from_millis(5),
+        crate::ScanWindow::from_millis(15),
+        crate::units::ScanPollInterval::from_millis(5),
         || {
             attempts += 1;
             async { Err(crate::BtleError::NoPeripheralMatched) }
@@ -213,7 +213,7 @@ async fn targeted_scan_wait_times_out_without_match() {
 
     assert!(matches!(result, Err(crate::BtleError::NoPeripheralMatched)));
     assert!(attempts >= 2);
-    assert!(started.elapsed() >= Duration::from_millis(15));
+    assert!(started.elapsed() >= crate::ScanWindow::from_millis(15).as_duration());
 }
 
 #[tokio::test]
@@ -222,8 +222,8 @@ async fn targeted_scan_wait_returns_non_match_errors_immediately() {
     let mut attempts = 0_u8;
 
     let result = crate::scan::wait_for_scan_match::<(), _, _>(
-        Duration::from_millis(200),
-        Duration::from_millis(5),
+        crate::ScanWindow::from_millis(200),
+        crate::units::ScanPollInterval::from_millis(5),
         || {
             attempts += 1;
             async {
@@ -463,10 +463,13 @@ async fn raw_notification_capture_subscribes_and_filters_selected_characteristic
         properties: CharPropFlags::NOTIFY,
     };
 
-    let records =
-        crate::capture_raw_notifications(&peripheral, &characteristic, Duration::from_millis(5))
-            .await
-            .expect("raw notification capture succeeds");
+    let records = crate::capture_raw_notifications(
+        &peripheral,
+        &characteristic,
+        crate::NotificationWindow::from_millis(5),
+    )
+    .await
+    .expect("raw notification capture succeeds");
 
     assert_eq!(
         peripheral
@@ -535,11 +538,11 @@ fn connection_summary_uses_identifier_when_address_is_unavailable() {
 #[test]
 fn capture_record_formats_write_bytes_with_provenance() {
     let record = crate::SessionCaptureRecord::Write {
-        monotonic_ms: 7,
+        monotonic_ms: crate::MonotonicMs::new(7),
         characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
         mode: WriteMode::WithoutResponse,
         bytes: vec![0x01, 0x23, 0xab, 0xcd],
-        provisional: true,
+        provenance: crate::WriteProvenance::Provisional,
     };
 
     assert_eq!(
@@ -551,7 +554,7 @@ fn capture_record_formats_write_bytes_with_provenance() {
 #[test]
 fn capture_record_formats_notification_bytes_with_service() {
     let record = crate::SessionCaptureRecord::Notification {
-        monotonic_ms: 11,
+        monotonic_ms: crate::MonotonicMs::new(11),
         characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
         service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
         bytes: vec![0xde, 0xad, 0xbe, 0xef],
@@ -589,30 +592,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         .into(),
     };
     let capture = crate::SessionCapture {
-        records: vec![
-            crate::SessionCaptureRecord::Link {
-                monotonic_ms: 0,
-                max_write_len: Some(23),
-            },
-            crate::SessionCaptureRecord::Subscribe {
-                monotonic_ms: 1,
-                characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-            },
-            crate::SessionCaptureRecord::Write {
-                monotonic_ms: 2,
-                characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                mode: WriteMode::WithoutResponse,
-                bytes: b"N".to_vec(),
-                provisional: false,
-            },
-            crate::SessionCaptureRecord::Notification {
-                monotonic_ms: 3,
-                characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                bytes: b"NAME=NF2557".to_vec(),
-            },
-            crate::SessionCaptureRecord::LinkDown { monotonic_ms: 4 },
-        ],
+        records: pevcap_conversion_capture_records(),
         report: crate::SessionBridgeReport::default(),
     };
 
@@ -668,6 +648,37 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     assert_eq!(pevcap.records[3].monotonic_ms, 4);
 }
 
+fn pevcap_conversion_capture_records() -> Vec<crate::SessionCaptureRecord> {
+    let characteristic = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+    let service = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+    vec![
+        crate::SessionCaptureRecord::Link {
+            monotonic_ms: crate::MonotonicMs::new(0),
+            max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(23)),
+        },
+        crate::SessionCaptureRecord::Subscribe {
+            monotonic_ms: crate::MonotonicMs::new(1),
+            characteristic,
+        },
+        crate::SessionCaptureRecord::Write {
+            monotonic_ms: crate::MonotonicMs::new(2),
+            characteristic,
+            mode: WriteMode::WithoutResponse,
+            bytes: b"N".to_vec(),
+            provenance: crate::WriteProvenance::Stable,
+        },
+        crate::SessionCaptureRecord::Notification {
+            monotonic_ms: crate::MonotonicMs::new(3),
+            characteristic,
+            service,
+            bytes: b"NAME=NF2557".to_vec(),
+        },
+        crate::SessionCaptureRecord::LinkDown {
+            monotonic_ms: crate::MonotonicMs::new(4),
+        },
+    ]
+}
+
 #[test]
 fn session_capture_pevcap_conversion_preserves_write_response_mode() {
     let summary = crate::ConnectionSummary {
@@ -684,19 +695,19 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
     let capture = crate::SessionCapture {
         records: vec![
             crate::SessionCaptureRecord::Link {
-                monotonic_ms: 0,
+                monotonic_ms: crate::MonotonicMs::new(0),
                 max_write_len: None,
             },
             crate::SessionCaptureRecord::Subscribe {
-                monotonic_ms: 1,
+                monotonic_ms: crate::MonotonicMs::new(1),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
             crate::SessionCaptureRecord::Write {
-                monotonic_ms: 2,
+                monotonic_ms: crate::MonotonicMs::new(2),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithResponse,
                 bytes: vec![0x01, 0x02],
-                provisional: true,
+                provenance: crate::WriteProvenance::Provisional,
             },
         ],
         report: crate::SessionBridgeReport::default(),
@@ -821,7 +832,7 @@ async fn drive_session_reports_hints_only_identity_from_name_and_shared_gatt() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::ZERO,
+        crate::NotificationWindow::from_millis(0),
     )
     .await
     .expect("bridge reports staged identity hints");
@@ -862,7 +873,7 @@ async fn drive_session_resolves_falcon_after_family_and_name_banner_notification
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::from_millis(10),
+        crate::NotificationWindow::from_millis(10),
     )
     .await
     .expect("bridge resolves Falcon identity");
@@ -918,7 +929,7 @@ async fn drive_session_subscribes_and_writes_matching_transport_channels() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::from_millis(10),
+        crate::NotificationWindow::from_millis(10),
     )
     .await
     .expect("bridge accepts matching transport outputs");
@@ -963,7 +974,7 @@ async fn drive_session_relays_notifications_back_into_session() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::from_millis(10),
+        crate::NotificationWindow::from_millis(10),
     )
     .await
     .expect("bridge consumes notifications");
@@ -1024,37 +1035,39 @@ async fn drive_session_relays_notifications_back_into_session() {
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::ProcessedTelemetry {
-            monotonic_ms: 2,
+            monotonic_ms,
             ..
-        }
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::Diagnostics {
-            monotonic_ms: 2,
+            monotonic_ms,
             diagnostics,
-        } if diagnostics.malformed_frames == 1
+        } if *monotonic_ms == crate::MonotonicMs::new(2) && diagnostics.malformed_frames == 1
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
-            monotonic_ms: 2,
+            monotonic_ms,
             response: ReadOnlyResponse::Firmware(firmware),
-        } if firmware.firmware_major == Some(Measured::reported(43))
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && firmware.firmware_major == Some(Measured::reported(43))
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
-            monotonic_ms: 2,
+            monotonic_ms,
             response: ReadOnlyResponse::Settings(settings),
-        } if settings.entries[0].is_some()
+        } if *monotonic_ms == crate::MonotonicMs::new(2) && settings.entries[0].is_some()
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::DiagnosticError {
-            monotonic_ms: 2,
+            monotonic_ms,
             error,
-        } if error.kind == cutout_core::DiagnosticErrorKind::MalformedFrame
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && error.kind == cutout_core::DiagnosticErrorKind::MalformedFrame
     )));
     assert_eq!(*session.notification_count.lock().expect("count"), 1);
 }
@@ -1120,12 +1133,16 @@ fn drive_session_reports_fragment_notifications_as_typed_ingest_events() {
         3,
     );
 
-    crate::report::process_notification_ingest_outcome(&mut report, outcome, 3);
+    crate::report::process_notification_ingest_outcome(
+        &mut report,
+        outcome,
+        crate::MonotonicMs::new(3),
+    );
 
     assert_eq!(
         report.events.as_slice(),
         &[crate::SessionBridgeEvent::NotificationIngest {
-            monotonic_ms: 3,
+            monotonic_ms: crate::MonotonicMs::new(3),
             outcome,
         }]
     );
@@ -1225,8 +1242,8 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::from_millis(10),
-        true,
+        crate::NotificationWindow::from_millis(10),
+        crate::WriteProvenance::Provisional,
     )
     .await
     .expect("capture consumes bridge outputs");
@@ -1236,22 +1253,22 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
         capture.records,
         vec![
             crate::SessionCaptureRecord::Link {
-                monotonic_ms: 0,
-                max_write_len: Some(185),
+                monotonic_ms: crate::MonotonicMs::new(0),
+                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
-                monotonic_ms: 0,
+                monotonic_ms: crate::MonotonicMs::new(0),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
             crate::SessionCaptureRecord::Write {
-                monotonic_ms: 1,
+                monotonic_ms: crate::MonotonicMs::new(1),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithResponse,
                 bytes: b"bridge:write".to_vec(),
-                provisional: true,
+                provenance: crate::WriteProvenance::Provisional,
             },
             crate::SessionCaptureRecord::Notification {
-                monotonic_ms: 2,
+                monotonic_ms: crate::MonotonicMs::new(2),
                 characteristic: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
                 service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
                 bytes: vec![0x13, 0x37],
@@ -1276,7 +1293,7 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::ZERO,
+        crate::NotificationWindow::from_millis(0),
         &[
             DeviceCommand::RequestIdentity,
             DeviceCommand::RequestFirmwareInfo,
@@ -1290,26 +1307,26 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
         capture.records,
         vec![
             crate::SessionCaptureRecord::Link {
-                monotonic_ms: 0,
-                max_write_len: Some(185),
+                monotonic_ms: crate::MonotonicMs::new(0),
+                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
-                monotonic_ms: 0,
+                monotonic_ms: crate::MonotonicMs::new(0),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
             crate::SessionCaptureRecord::Write {
-                monotonic_ms: 1,
+                monotonic_ms: crate::MonotonicMs::new(1),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithoutResponse,
                 bytes: b"N".to_vec(),
-                provisional: false,
+                provenance: crate::WriteProvenance::Stable,
             },
             crate::SessionCaptureRecord::Write {
-                monotonic_ms: 2,
+                monotonic_ms: crate::MonotonicMs::new(2),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
                 mode: WriteMode::WithoutResponse,
                 bytes: b"V".to_vec(),
-                provisional: false,
+                provenance: crate::WriteProvenance::Stable,
             },
         ]
     );
@@ -1329,8 +1346,8 @@ async fn capture_session_chunks_writes_by_negotiated_write_limit() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::ZERO,
-        false,
+        crate::NotificationWindow::from_millis(0),
+        crate::WriteProvenance::Stable,
     )
     .await
     .expect("capture chunks oversized bridge writes");
@@ -1394,7 +1411,7 @@ async fn drive_session_feeds_link_down_after_intentional_disconnect() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::ZERO,
+        crate::NotificationWindow::from_millis(0),
     )
     .await
     .expect("bridge handles intentional disconnect");
@@ -1402,7 +1419,9 @@ async fn drive_session_feeds_link_down_after_intentional_disconnect() {
     assert_eq!(report.disconnects, 1);
     assert_eq!(
         report.events.as_slice(),
-        &[crate::SessionBridgeEvent::LinkDown { monotonic_ms: 1 }]
+        &[crate::SessionBridgeEvent::LinkDown {
+            monotonic_ms: crate::MonotonicMs::new(1)
+        }]
     );
     assert_eq!(*session.link_down_count.lock().expect("count"), 1);
     assert_eq!(*peripheral.disconnects.lock().expect("disconnect log"), 1);
@@ -1422,8 +1441,8 @@ async fn capture_session_records_link_down_after_intentional_disconnect() {
         summary
             .select_session_endpoints()
             .expect("summary has session endpoints"),
-        Duration::ZERO,
-        false,
+        crate::NotificationWindow::from_millis(0),
+        crate::WriteProvenance::Stable,
     )
     .await
     .expect("capture records intentional disconnect");
@@ -1432,10 +1451,12 @@ async fn capture_session_records_link_down_after_intentional_disconnect() {
         capture.records,
         vec![
             crate::SessionCaptureRecord::Link {
-                monotonic_ms: 0,
-                max_write_len: Some(185),
+                monotonic_ms: crate::MonotonicMs::new(0),
+                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
             },
-            crate::SessionCaptureRecord::LinkDown { monotonic_ms: 1 },
+            crate::SessionCaptureRecord::LinkDown {
+                monotonic_ms: crate::MonotonicMs::new(1)
+            },
         ]
     );
     assert_eq!(capture.report.disconnects, 1);
@@ -1452,9 +1473,9 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
         &mut host,
         &mut session,
         GattChannel::from_bytes([0xA1; 16]),
-        Duration::ZERO,
-        2,
-        false,
+        crate::NotificationWindow::from_millis(0),
+        crate::MaxReconnectLinks::at_least_one(2),
+        crate::WriteProvenance::Stable,
     )
     .await
     .expect("fake host reconnects once");
@@ -1462,10 +1483,16 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
 
     assert_eq!(host.connects, 2);
     assert_eq!(reconnecting_capture.attempts.len(), 2);
-    assert_eq!(reconnecting_capture.attempts[0].attempt, 1);
+    assert_eq!(
+        reconnecting_capture.attempts[0].attempt,
+        crate::ReconnectAttempt::new(1)
+    );
     assert_eq!(reconnecting_capture.attempts[0].report.subscribes, 1);
     assert_eq!(reconnecting_capture.attempts[0].report.disconnects, 1);
-    assert_eq!(reconnecting_capture.attempts[1].attempt, 2);
+    assert_eq!(
+        reconnecting_capture.attempts[1].attempt,
+        crate::ReconnectAttempt::new(2)
+    );
     assert_eq!(reconnecting_capture.attempts[1].report.subscribes, 1);
     assert_eq!(reconnecting_capture.attempts[1].report.disconnects, 0);
     assert_eq!(
@@ -1499,20 +1526,22 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
         capture.records,
         vec![
             crate::SessionCaptureRecord::Link {
-                monotonic_ms: 0,
-                max_write_len: Some(185),
+                monotonic_ms: crate::MonotonicMs::new(0),
+                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
-                monotonic_ms: 0,
+                monotonic_ms: crate::MonotonicMs::new(0),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
-            crate::SessionCaptureRecord::LinkDown { monotonic_ms: 1 },
+            crate::SessionCaptureRecord::LinkDown {
+                monotonic_ms: crate::MonotonicMs::new(1)
+            },
             crate::SessionCaptureRecord::Link {
-                monotonic_ms: 2,
-                max_write_len: Some(185),
+                monotonic_ms: crate::MonotonicMs::new(2),
+                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
-                monotonic_ms: 2,
+                monotonic_ms: crate::MonotonicMs::new(2),
                 characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
             },
         ]
@@ -1530,9 +1559,9 @@ async fn capture_reconnecting_session_cancels_commands_after_reconnect() {
         &mut host,
         &mut session,
         GattChannel::from_bytes([0xA1; 16]),
-        Duration::ZERO,
-        2,
-        false,
+        crate::NotificationWindow::from_millis(0),
+        crate::MaxReconnectLinks::at_least_one(2),
+        crate::WriteProvenance::Stable,
         &[
             DeviceCommand::RequestIdentity,
             DeviceCommand::RequestFirmwareInfo,

@@ -1058,7 +1058,7 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
         SessionBridgeEvent::NotificationIngest {
             monotonic_ms,
             outcome,
-        } => format_notification_ingest_event(*monotonic_ms, *outcome),
+        } => format_notification_ingest_event(monotonic_ms.get(), *outcome),
     }
 }
 
@@ -2404,14 +2404,16 @@ mod tests {
             identity: None,
             events: vec![
                 SessionBridgeEvent::Diagnostics {
-                    monotonic_ms: 18,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(18),
                     diagnostics: ParserDiagnostics {
                         malformed_frames: 2,
                         unmatched_replies: 1,
                         ..ParserDiagnostics::default()
                     },
                 },
-                SessionBridgeEvent::LinkDown { monotonic_ms: 19 },
+                SessionBridgeEvent::LinkDown {
+                    monotonic_ms: cutout_btle::MonotonicMs::new(19),
+                },
             ],
             disconnects: 1,
         };
@@ -2473,7 +2475,7 @@ mod tests {
             diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 42,
+                monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
                     speed_mm_s: Some(Measured::reported(4_470)),
                     voltage_mv: Some(Measured::reported(84_400)),
@@ -2536,7 +2538,7 @@ mod tests {
                 ..TelemetrySnapshot::default()
             },
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage_mv: Some(Measured::reported(117_600)),
                     battery_percent_estimated: Some(Measured::estimated(78)),
@@ -2616,7 +2618,7 @@ mod tests {
             latest_notification_len: Some(77),
             events: vec![
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 3,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(3),
                     outcome: NotificationIngestOutcome::buffered_fragment(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2625,7 +2627,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 4,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(4),
                     outcome: NotificationIngestOutcome::known_reserved(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2640,7 +2642,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 5,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(5),
                     outcome: NotificationIngestOutcome::parser_gap(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2654,7 +2656,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 6,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(6),
                     outcome: NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
@@ -2664,7 +2666,7 @@ mod tests {
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: 7,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(7),
                     outcome: NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
                         NotificationByteLen::new(20),
@@ -2714,7 +2716,7 @@ mod tests {
             read_only_responses: 1,
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
             }],
             ..empty_session_bridge_report()
@@ -2755,7 +2757,7 @@ mod tests {
             read_only_responses: 1,
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
             }],
             ..empty_session_bridge_report()
@@ -2797,7 +2799,7 @@ mod tests {
             diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage_mv: Some(Measured::reported(108_760)),
                     battery_percent_estimated: Some(Measured::estimated(47)),
@@ -2929,7 +2931,7 @@ mod tests {
             read_only_responses: 1,
             read_only_response_events: vec![read_only_response],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
-                monotonic_ms: 7,
+                monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
             }],
             ..empty_session_bridge_report()
@@ -3008,11 +3010,11 @@ mod tests {
             identity: None,
             events: vec![
                 SessionBridgeEvent::ProcessedTelemetry {
-                    monotonic_ms: 42,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(42),
                     delta: telemetry,
                 },
                 SessionBridgeEvent::Diagnostics {
-                    monotonic_ms: 43,
+                    monotonic_ms: cutout_btle::MonotonicMs::new(43),
                     diagnostics: ParserDiagnostics {
                         malformed_frames: 1,
                         ..ParserDiagnostics::default()
@@ -3231,7 +3233,7 @@ mod tests {
             diagnostic_errors: Vec::new(),
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: 42,
+                monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
                     speed_mm_s: Some(Measured::reported(0)),
                     voltage_mv: Some(Measured::reported(108_760)),

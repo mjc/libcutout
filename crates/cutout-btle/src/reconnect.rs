@@ -1,11 +1,10 @@
-use std::time::Duration;
-
 use async_trait::async_trait;
 use cutout_core::{DeviceCommand, GattChannel, ProtocolSession};
 
 use crate::{
-    BtleError, ConnectionSummary, ConnectionTarget, SessionBridgeError, SessionBridgeReport,
-    SessionCapture, SessionCaptureRecord, SessionPeripheral,
+    BtleError, ConnectionSummary, ConnectionTarget, MaxReconnectLinks, MonotonicMs,
+    NotificationWindow, ReconnectAttempt, ScanWindow, SessionBridgeError, SessionBridgeReport,
+    SessionCapture, SessionCaptureRecord, SessionPeripheral, WriteProvenance,
     bridge::{DriveSessionConfig, drive_session_inner},
     capture::session_record_monotonic_ms,
     connect_and_discover,
@@ -26,14 +25,14 @@ pub trait ReconnectingSessionHost: Send {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BtleplugReconnectHost {
     target: ConnectionTarget,
-    scan_for: Duration,
+    scan_for: ScanWindow,
 }
 
 impl BtleplugReconnectHost {
     /// Creates a reconnect host that reuses the same target and scan duration
     /// for every link attempt.
     #[must_use]
-    pub const fn new(target: ConnectionTarget, scan_for: Duration) -> Self {
+    pub const fn new(target: ConnectionTarget, scan_for: ScanWindow) -> Self {
         Self { target, scan_for }
     }
 
@@ -45,7 +44,7 @@ impl BtleplugReconnectHost {
 
     /// Returns the scan duration reused for each reconnect attempt.
     #[must_use]
-    pub const fn scan_for(&self) -> Duration {
+    pub const fn scan_for(&self) -> ScanWindow {
         self.scan_for
     }
 }
@@ -74,7 +73,7 @@ pub struct ReconnectingSessionCapture {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReconnectAttemptReport {
     /// One-based link attempt number.
-    pub attempt: usize,
+    pub attempt: ReconnectAttempt,
 
     /// Connection summary observed for this link attempt.
     pub summary: ConnectionSummary,
@@ -97,9 +96,9 @@ pub async fn capture_reconnecting_session<H, S>(
     host: &mut H,
     session: &mut S,
     channel: GattChannel,
-    notification_window: Duration,
-    max_links: usize,
-    provisional_writes: bool,
+    notification_window: NotificationWindow,
+    max_links: MaxReconnectLinks,
+    write_provenance: WriteProvenance,
 ) -> Result<SessionCapture, BtleError>
 where
     H: ReconnectingSessionHost,
@@ -111,7 +110,7 @@ where
         channel,
         notification_window,
         max_links,
-        provisional_writes,
+        write_provenance,
         &[],
     )
     .await?
@@ -128,9 +127,9 @@ pub async fn capture_reconnecting_session_with_summaries<H, S>(
     host: &mut H,
     session: &mut S,
     channel: GattChannel,
-    notification_window: Duration,
-    max_links: usize,
-    provisional_writes: bool,
+    notification_window: NotificationWindow,
+    max_links: MaxReconnectLinks,
+    write_provenance: WriteProvenance,
 ) -> Result<ReconnectingSessionCapture, BtleError>
 where
     H: ReconnectingSessionHost,
@@ -142,7 +141,7 @@ where
         channel,
         notification_window,
         max_links,
-        provisional_writes,
+        write_provenance,
         &[],
     )
     .await
@@ -162,9 +161,9 @@ pub async fn capture_reconnecting_session_with_commands<H, S>(
     host: &mut H,
     session: &mut S,
     channel: GattChannel,
-    notification_window: Duration,
-    max_links: usize,
-    provisional_writes: bool,
+    notification_window: NotificationWindow,
+    max_links: MaxReconnectLinks,
+    write_provenance: WriteProvenance,
     commands: &[DeviceCommand],
 ) -> Result<ReconnectingSessionCapture, BtleError>
 where
@@ -172,9 +171,9 @@ where
     S: ProtocolSession + Send,
 {
     let mut reconnecting_capture = ReconnectingSessionCapture::default();
-    let mut monotonic_start = 0;
+    let mut monotonic_start = MonotonicMs::default();
 
-    for attempt in 1..=max_links {
+    for attempt in max_links.attempts() {
         let (peripheral, summary) = host.connect().await?;
         let endpoints = summary
             .select_session_endpoints()
@@ -188,8 +187,8 @@ where
                 summary: &summary,
                 endpoints,
                 notification_window,
-                commands: if attempt == 1 { commands } else { &[] },
-                provisional_writes,
+                commands: if attempt.is_first() { commands } else { &[] },
+                write_provenance,
                 monotonic_start,
             },
             Some(&mut records),
@@ -200,7 +199,7 @@ where
             .map(session_record_monotonic_ms)
             .max()
             .unwrap_or(monotonic_start)
-            .saturating_add(1);
+            .next();
         merge_session_report(&mut reconnecting_capture.capture.report, report.clone());
         let should_reconnect = report.disconnects > 0
             && records

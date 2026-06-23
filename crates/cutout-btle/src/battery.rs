@@ -1,7 +1,8 @@
 use btleplug::api::Peripheral as _;
 
 use crate::{
-    BtleError, ConnectionSummary, error::backend_call, types::characteristic_from_summary,
+    BatteryLevelPercent, BtleError, ConnectionSummary, error::backend_call,
+    types::characteristic_from_summary,
 };
 
 /// Reads the standard BLE Battery Level characteristic from a connected peripheral.
@@ -15,7 +16,7 @@ use crate::{
 pub async fn read_battery_level(
     peripheral: &btleplug::platform::Peripheral,
     summary: &ConnectionSummary,
-) -> Result<Option<u8>, BtleError> {
+) -> Result<Option<BatteryLevelPercent>, BtleError> {
     let Some(characteristic) = summary.battery_level_characteristic() else {
         return Ok(None);
     };
@@ -25,5 +26,8 @@ pub async fn read_battery_level(
         peripheral.read(&characteristic_from_summary(characteristic)),
     )
     .await?;
-    Ok(value.first().copied().map(|percent| percent.min(100)))
+    Ok(value
+        .first()
+        .copied()
+        .map(BatteryLevelPercent::from_backend_byte))
 }

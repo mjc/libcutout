@@ -1,5 +1,3 @@
-use std::{collections::VecDeque, time::Duration};
-
 use btleplug::api::{Characteristic, ValueNotification};
 use cutout_core::{
     DeviceCommand, GattChannel, LinkInfo, NotificationIngestOutcome, ProtocolSession, SessionInput,
@@ -14,6 +12,7 @@ use crate::{
     identity::{IdentityContext, IdentityState, update_identity_report},
     report::{process_device_event, process_notification_ingest_outcome},
     types::characteristic_from_summary,
+    units::{MonotonicMs, NegotiatedWriteLen, NotificationWindow, WriteProvenance},
 };
 
 /// Drives a protocol session against the selected BTLE endpoints.
@@ -29,7 +28,7 @@ pub async fn drive_session<P, S>(
     channel: GattChannel,
     summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
-    notification_window: Duration,
+    notification_window: NotificationWindow,
 ) -> Result<SessionBridgeReport, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -63,7 +62,7 @@ pub async fn drive_session_with_commands<P, S>(
     channel: GattChannel,
     summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
-    notification_window: Duration,
+    notification_window: NotificationWindow,
     commands: &[DeviceCommand],
 ) -> Result<SessionBridgeReport, BtleError>
 where
@@ -79,8 +78,8 @@ where
             endpoints,
             notification_window,
             commands,
-            provisional_writes: false,
-            monotonic_start: 0,
+            write_provenance: WriteProvenance::Stable,
+            monotonic_start: MonotonicMs::default(),
         },
         None,
     )
@@ -100,8 +99,8 @@ pub async fn capture_session<P, S>(
     channel: GattChannel,
     summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
-    notification_window: Duration,
-    provisional_writes: bool,
+    notification_window: NotificationWindow,
+    write_provenance: WriteProvenance,
 ) -> Result<SessionCapture, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
@@ -117,8 +116,8 @@ where
             endpoints,
             notification_window,
             commands: &[],
-            provisional_writes,
-            monotonic_start: 0,
+            write_provenance,
+            monotonic_start: MonotonicMs::default(),
         },
         Some(&mut records),
     )
@@ -139,7 +138,7 @@ pub async fn capture_session_with_commands<P, S>(
     channel: GattChannel,
     summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
-    notification_window: Duration,
+    notification_window: NotificationWindow,
     commands: &[DeviceCommand],
 ) -> Result<SessionCapture, BtleError>
 where
@@ -156,8 +155,8 @@ where
             endpoints,
             notification_window,
             commands,
-            provisional_writes: false,
-            monotonic_start: 0,
+            write_provenance: WriteProvenance::Stable,
+            monotonic_start: MonotonicMs::default(),
         },
         Some(&mut records),
     )
@@ -169,10 +168,10 @@ pub(crate) struct DriveSessionConfig<'a> {
     pub(crate) channel: GattChannel,
     pub(crate) summary: &'a ConnectionSummary,
     pub(crate) endpoints: SessionEndpoints<'a>,
-    pub(crate) notification_window: Duration,
+    pub(crate) notification_window: NotificationWindow,
     pub(crate) commands: &'a [DeviceCommand],
-    pub(crate) provisional_writes: bool,
-    pub(crate) monotonic_start: u64,
+    pub(crate) write_provenance: WriteProvenance,
+    pub(crate) monotonic_start: MonotonicMs,
 }
 
 pub(crate) async fn drive_session_inner<P, S>(
@@ -186,7 +185,7 @@ where
     S: ProtocolSession + Send,
 {
     info!(
-        window_ms = config.notification_window.as_millis(),
+        window_ms = config.notification_window.as_duration().as_millis(),
         channel = ?config.channel,
         "session bridge drive inner entered"
     );
@@ -208,7 +207,7 @@ where
             bindings: &bindings,
             report: &mut report,
             capture: capture.as_deref_mut(),
-            provisional_writes: config.provisional_writes,
+            write_provenance: config.write_provenance,
         },
         session,
         &mut outputs,
@@ -217,7 +216,7 @@ where
     .await?;
 
     for command in config.commands {
-        monotonic_ms += 1;
+        monotonic_ms = monotonic_ms.next();
         session.handle(SessionInput::Command(*command), &mut outputs);
         process_session_outputs(
             SessionOutputContext {
@@ -227,7 +226,7 @@ where
                 notify_characteristic: bindings.notify_characteristic.as_ref(),
                 report: &mut report,
                 capture: capture.as_deref_mut(),
-                provisional_writes: config.provisional_writes,
+                write_provenance: config.write_provenance,
             },
             session,
             &mut outputs,
@@ -236,8 +235,13 @@ where
         .await?;
     }
 
-    monotonic_ms += 1;
-    session.handle(SessionInput::Tick { monotonic_ms }, &mut outputs);
+    monotonic_ms = monotonic_ms.next();
+    session.handle(
+        SessionInput::Tick {
+            monotonic_ms: monotonic_ms.get(),
+        },
+        &mut outputs,
+    );
     process_session_outputs(
         SessionOutputContext {
             peripheral,
@@ -246,7 +250,7 @@ where
             notify_characteristic: bindings.notify_characteristic.as_ref(),
             report: &mut report,
             capture: capture.as_deref_mut(),
-            provisional_writes: config.provisional_writes,
+            write_provenance: config.write_provenance,
         },
         session,
         &mut outputs,
@@ -267,7 +271,7 @@ where
             identity_state: &mut identity_state,
             report: &mut report,
             capture,
-            provisional_writes: config.provisional_writes,
+            write_provenance: config.write_provenance,
         },
         session,
         &mut outputs,
@@ -290,26 +294,26 @@ struct LinkUpContext<'a, P: ?Sized> {
     bindings: &'a BridgeBindings,
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
-    provisional_writes: bool,
+    write_provenance: WriteProvenance,
 }
 
 async fn process_link_up_outputs<P, S>(
     mut context: LinkUpContext<'_, P>,
     session: &mut S,
     outputs: &mut Vec<SessionOutput>,
-    monotonic_ms: u64,
+    monotonic_ms: MonotonicMs,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
-    let max_write_len = Some(context.peripheral.mtu());
+    let max_write_len = Some(NegotiatedWriteLen::from_mtu(context.peripheral.mtu()));
 
     info!("session bridge link-up handling starting");
     session.handle(
         SessionInput::LinkUp(LinkInfo {
-            monotonic_ms,
-            max_write_len,
+            monotonic_ms: monotonic_ms.get(),
+            max_write_len: max_write_len.map(NegotiatedWriteLen::get),
         }),
         outputs,
     );
@@ -335,7 +339,7 @@ where
             notify_characteristic: context.bindings.notify_characteristic.as_ref(),
             report: context.report,
             capture: context.capture.as_deref_mut(),
-            provisional_writes: context.provisional_writes,
+            write_provenance: context.write_provenance,
         },
         session,
         outputs,
@@ -355,28 +359,28 @@ struct NotificationLoopContext<'a, P: ?Sized> {
     identity_state: &'a mut IdentityState,
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
-    provisional_writes: bool,
+    write_provenance: WriteProvenance,
 }
 
 async fn process_notification_window<P, S>(
     mut context: NotificationLoopContext<'_, P>,
     session: &mut S,
     outputs: &mut Vec<SessionOutput>,
-    monotonic_ms: &mut u64,
-    notification_window: Duration,
+    monotonic_ms: &mut MonotonicMs,
+    notification_window: NotificationWindow,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
     info!(
-        window_ms = notification_window.as_millis(),
+        window_ms = notification_window.as_duration().as_millis(),
         "session notification window starting"
     );
     info!("session notifications stream await starting");
     let mut notifications = context.peripheral.notifications().await?;
     info!("session notifications stream await completed");
-    let deadline = tokio::time::Instant::now() + notification_window;
+    let deadline = tokio::time::Instant::now() + notification_window.as_duration();
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         debug!(
@@ -385,7 +389,7 @@ where
         );
         match tokio::time::timeout(remaining, notifications.next()).await {
             Ok(Some(notification)) => {
-                *monotonic_ms += 1;
+                *monotonic_ms = monotonic_ms.next();
                 if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Notification {
                         monotonic_ms: *monotonic_ms,
@@ -404,7 +408,7 @@ where
                     SessionInput::Notification {
                         channel: context.channel,
                         bytes: &notification.value,
-                        monotonic_ms: *monotonic_ms,
+                        monotonic_ms: monotonic_ms.get(),
                     },
                     outputs,
                 );
@@ -417,7 +421,7 @@ where
                         notify_characteristic: context.bindings.notify_characteristic.as_ref(),
                         report: context.report,
                         capture: context.capture.as_deref_mut(),
-                        provisional_writes: context.provisional_writes,
+                        write_provenance: context.write_provenance,
                     },
                     session,
                     outputs,
@@ -546,108 +550,108 @@ struct SessionOutputContext<'a, P: ?Sized> {
     notify_characteristic: Option<&'a Characteristic>,
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
-    provisional_writes: bool,
+    write_provenance: WriteProvenance,
 }
 
 async fn process_session_outputs<P, S>(
     mut context: SessionOutputContext<'_, P>,
     session: &mut S,
     outputs: &mut Vec<SessionOutput>,
-    monotonic_ms: u64,
+    monotonic_ms: MonotonicMs,
 ) -> Result<(), BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
-    let mut pending = outputs.drain(..).collect::<VecDeque<_>>();
-    while let Some(output) = pending.pop_front() {
-        match output {
-            SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
-                info!(
-                    expected = ?context.channel,
-                    observed = ?observed,
-                    monotonic_ms,
-                    "session bridge processing subscribe output"
-                );
-                if observed != context.channel {
-                    return Err(SessionBridgeError::UnexpectedChannel {
-                        expected: context.channel,
-                        observed,
+    while !outputs.is_empty() {
+        for output in std::mem::take(outputs) {
+            match output {
+                SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
+                    info!(
+                        expected = ?context.channel,
+                        observed = ?observed,
+                        monotonic_ms = monotonic_ms.get(),
+                        "session bridge processing subscribe output"
+                    );
+                    if observed != context.channel {
+                        return Err(SessionBridgeError::UnexpectedChannel {
+                            expected: context.channel,
+                            observed,
+                        }
+                        .into());
                     }
-                    .into());
-                }
-                let Some(notify_characteristic) = context.notify_characteristic else {
-                    return Err(SessionBridgeError::MissingNotifyEndpoint {
-                        channel: context.channel,
-                    }
-                    .into());
-                };
-                info!(
-                    characteristic = %notify_characteristic.uuid,
-                    service = %notify_characteristic.service_uuid,
-                    monotonic_ms,
-                    "session subscribe await starting"
-                );
-                context.peripheral.subscribe(notify_characteristic).await?;
-                info!(
-                    characteristic = %notify_characteristic.uuid,
-                    service = %notify_characteristic.service_uuid,
-                    monotonic_ms,
-                    "session subscribe await completed"
-                );
-                if let Some(records) = context.capture.as_deref_mut() {
-                    records.push(SessionCaptureRecord::Subscribe {
-                        monotonic_ms,
-                        characteristic: notify_characteristic.uuid,
-                    });
-                }
-                context.report.subscribes += 1;
-            }
-            SessionOutput::Transport(TransportAction::Write {
-                channel: observed,
-                bytes,
-                mode,
-            }) => {
-                if observed != context.channel {
-                    return Err(SessionBridgeError::UnexpectedChannel {
-                        expected: context.channel,
-                        observed,
-                    }
-                    .into());
-                }
-                context.report.protocol_writes += 1;
-                let write_limit = usize::from(context.peripheral.mtu()).max(1);
-                for chunk in bytes.as_slice().chunks(write_limit) {
-                    context
-                        .peripheral
-                        .write(context.write_characteristic, chunk, mode)
-                        .await?;
+                    let Some(notify_characteristic) = context.notify_characteristic else {
+                        return Err(SessionBridgeError::MissingNotifyEndpoint {
+                            channel: context.channel,
+                        }
+                        .into());
+                    };
+                    info!(
+                        characteristic = %notify_characteristic.uuid,
+                        service = %notify_characteristic.service_uuid,
+                        monotonic_ms = monotonic_ms.get(),
+                        "session subscribe await starting"
+                    );
+                    context.peripheral.subscribe(notify_characteristic).await?;
+                    info!(
+                        characteristic = %notify_characteristic.uuid,
+                        service = %notify_characteristic.service_uuid,
+                        monotonic_ms = monotonic_ms.get(),
+                        "session subscribe await completed"
+                    );
                     if let Some(records) = context.capture.as_deref_mut() {
-                        records.push(SessionCaptureRecord::Write {
+                        records.push(SessionCaptureRecord::Subscribe {
                             monotonic_ms,
-                            characteristic: context.write_characteristic.uuid,
-                            mode,
-                            bytes: chunk.to_vec(),
-                            provisional: context.provisional_writes,
+                            characteristic: notify_characteristic.uuid,
                         });
                     }
-                    context.report.writes += 1;
+                    context.report.subscribes += 1;
                 }
-            }
-            SessionOutput::Transport(TransportAction::Disconnect) => {
-                context.peripheral.disconnect().await?;
-                if let Some(records) = context.capture.as_deref_mut() {
-                    records.push(SessionCaptureRecord::LinkDown { monotonic_ms });
+                SessionOutput::Transport(TransportAction::Write {
+                    channel: observed,
+                    bytes,
+                    mode,
+                }) => {
+                    if observed != context.channel {
+                        return Err(SessionBridgeError::UnexpectedChannel {
+                            expected: context.channel,
+                            observed,
+                        }
+                        .into());
+                    }
+                    context.report.protocol_writes += 1;
+                    let write_limit = NegotiatedWriteLen::from_mtu(context.peripheral.mtu());
+                    for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
+                        context
+                            .peripheral
+                            .write(context.write_characteristic, chunk, mode)
+                            .await?;
+                        if let Some(records) = context.capture.as_deref_mut() {
+                            records.push(SessionCaptureRecord::Write {
+                                monotonic_ms,
+                                characteristic: context.write_characteristic.uuid,
+                                mode,
+                                bytes: chunk.to_vec(),
+                                provenance: context.write_provenance,
+                            });
+                        }
+                        context.report.writes += 1;
+                    }
                 }
-                context.report.disconnects += 1;
-                session.handle(SessionInput::LinkDown, outputs);
-                pending.extend(outputs.drain(..));
-            }
-            SessionOutput::Event(event) => {
-                process_device_event(context.report, event, monotonic_ms);
-            }
-            SessionOutput::NotificationIngest(outcome) => {
-                process_notification_ingest_outcome(context.report, outcome, monotonic_ms);
+                SessionOutput::Transport(TransportAction::Disconnect) => {
+                    context.peripheral.disconnect().await?;
+                    if let Some(records) = context.capture.as_deref_mut() {
+                        records.push(SessionCaptureRecord::LinkDown { monotonic_ms });
+                    }
+                    context.report.disconnects += 1;
+                    session.handle(SessionInput::LinkDown, outputs);
+                }
+                SessionOutput::Event(event) => {
+                    process_device_event(context.report, event, monotonic_ms);
+                }
+                SessionOutput::NotificationIngest(outcome) => {
+                    process_notification_ingest_outcome(context.report, outcome, monotonic_ms);
+                }
             }
         }
     }

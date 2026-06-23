@@ -21,6 +21,7 @@ mod report;
 mod scan;
 mod target;
 mod types;
+mod units;
 
 pub use battery::read_battery_level;
 /// Single-link protocol session drivers.
@@ -63,6 +64,11 @@ pub use target::{BluetoothAddress, ConnectionTarget, NullBluetoothAddress};
 pub use types::{
     CharacteristicSummaries, CharacteristicSummary, ConnectedPeripheral, ConnectionSummary,
     PeripheralIdentifier, ServiceSummaries, ServiceSummary, SessionEndpoints,
+};
+/// Parsed BTLE adapter units used instead of naked primitives.
+pub use units::{
+    BatteryLevelPercent, MaxReconnectLinks, MonotonicMs, NegotiatedWriteLen, NotificationWindow,
+    ReconnectAttempt, ScanWindow, WriteProvenance,
 };
 
 /// Returns the crate name used by setup smoke tests.
