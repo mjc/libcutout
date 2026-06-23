@@ -1675,7 +1675,7 @@ fn render_battery_response_jsonl(
         "command_kind": command_kind_name(ReadOnlyResponse::Battery(payload).command_kind()),
         "response": "battery",
         "page": {
-            "selector": page.selector,
+            "selector": page.selector.get(),
             "kind": battery_page_kind_name(page.kind),
             "verification": verification_status_name(page.verification),
         },
@@ -2540,7 +2540,10 @@ mod tests {
     #[test]
     fn read_only_battery_jsonl_preserves_page_metadata_and_measured_values() {
         let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            cutout_core::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            cutout_core::BatteryPageMetadata::raw(
+                ProtocolSelector::new(8),
+                VerificationStatus::SourceVerified,
+            ),
             BatteryInfo {
                 voltage_mv: Some(Measured::reported(80_000)),
                 current_ma: Some(Measured::reported(-10_000)),
@@ -2594,7 +2597,10 @@ mod tests {
             Some(Measured::reported(17_830)),
         ];
         let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-            cutout_core::BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+            cutout_core::BatteryPageMetadata::temperature(
+                ProtocolSelector::new(3),
+                VerificationStatus::HardwareVerified,
+            ),
             BatteryInfo {
                 temperature_mc: temperatures[0],
                 ..BatteryInfo::default()
@@ -2620,7 +2626,10 @@ mod tests {
     #[test]
     fn pevcap_replay_summary_collects_read_only_response_events() {
         let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            cutout_core::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            cutout_core::BatteryPageMetadata::raw(
+                ProtocolSelector::new(8),
+                VerificationStatus::SourceVerified,
+            ),
             BatteryInfo::default(),
         ));
         let outputs = [SessionOutput::Event(DeviceEvent::ReadOnlyResponse(

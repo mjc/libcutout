@@ -2122,6 +2122,10 @@ mod tests {
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
+    const fn sel(value: u8) -> ProtocolSelector {
+        ProtocolSelector::new(value)
+    }
+
     fn live_aero_telemetry_snapshot() -> TelemetrySnapshot {
         let frame = VeteranFrame::try_from_slice(&hex_literal::hex!(
             "dc5a5c532a7c000000000000ab41001700000cff\
@@ -2698,7 +2702,7 @@ mod tests {
     fn read_only_response_events_render_as_parsed_aero_events() {
         let mut state = DashboardState::empty();
         let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-            BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+            BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
             BatteryInfo {
                 temperature_mc: Some(Measured::reported(17_600)),
                 ..BatteryInfo::default()
@@ -2747,7 +2751,7 @@ mod tests {
     fn read_only_metadata_current_renders_as_parsed_aero_event() {
         let mut state = DashboardState::empty();
         let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::metadata(0, VerificationStatus::HardwareVerified),
+            BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
             BatteryInfo {
                 current_ma: Some(Measured::reported(2_010)),
                 ..BatteryInfo::default()
@@ -2856,11 +2860,11 @@ mod tests {
                     ],
                 }),
                 ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-                    BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                     BatteryInfo {
                         temperature_mc: Some(Measured::reported(16_730)),
                         ..BatteryInfo::default()
@@ -2875,7 +2879,7 @@ mod tests {
                     ],
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::RawTelemetry(RawTelemetryReadback::default()),
@@ -2923,7 +2927,7 @@ mod tests {
     fn read_only_session_report_does_not_warn_about_missing_telemetry_samples() {
         let mut state = DashboardState::empty();
         let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+            BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
             BatteryInfo::default(),
         ));
         let report = SessionBridgeReport {
@@ -2990,11 +2994,11 @@ mod tests {
                     ],
                 }),
                 ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Diagnostics(DiagnosticReadback::default()),
@@ -3052,7 +3056,7 @@ mod tests {
         let pages: Vec<_> = (0_u8..20)
             .map(|selector| {
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(selector, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::raw(sel(selector), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 ))
             })
@@ -3093,7 +3097,7 @@ mod tests {
             read_only_responses: 4,
             read_only_response_events: vec![
                 ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
-                    BatteryPageMetadata::temperature(3, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                     BatteryInfo {
                         temperature_mc: Some(Measured::reported(17_600)),
                         ..BatteryInfo::default()
@@ -3108,15 +3112,15 @@ mod tests {
                     ],
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::raw(8, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-                    BatteryPageMetadata::metadata(0, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-                    BatteryPageMetadata::cell_voltage(2, VerificationStatus::HardwareVerified),
+                    BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
             ],

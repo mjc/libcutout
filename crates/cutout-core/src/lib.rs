@@ -1392,6 +1392,12 @@ macro_rules! typed_protocol_value {
                 f.debug_tuple(stringify!($name)).field(&self.value).finish()
             }
         }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.value.fmt(f)
+            }
+        }
     };
 }
 
@@ -4203,13 +4209,19 @@ mod tests {
             raw_state: None,
         };
         let response = crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
-            crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            crate::BatteryPageMetadata::raw(
+                crate::ProtocolSelector::new(8),
+                VerificationStatus::SourceVerified,
+            ),
             battery,
         ));
 
         assert_eq!(
             response.page(),
-            crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified)
+            crate::BatteryPageMetadata::raw(
+                crate::ProtocolSelector::new(8),
+                VerificationStatus::SourceVerified,
+            )
         );
         assert_eq!(response.battery().current_ma, Some(Measured::reported(0)));
         assert_eq!(
@@ -4646,7 +4658,10 @@ mod tests {
         let firmware = crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo::default());
         let battery = crate::ReadOnlyResponse::Battery(crate::BatteryPagePayload::Raw(
             crate::BatteryRawPage::new(
-                crate::BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+                crate::BatteryPageMetadata::raw(
+                    crate::ProtocolSelector::new(8),
+                    VerificationStatus::SourceVerified,
+                ),
                 crate::BatteryInfo::default(),
             ),
         ));

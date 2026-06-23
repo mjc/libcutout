@@ -1,6 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, VerificationStatus,
+    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, ProtocolSelector,
+    VerificationStatus,
 };
 use thiserror::Error;
 
@@ -26,8 +27,8 @@ pub const VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET: usize = 69;
 
 /// Classifies a Veteran/NOSFET BMS page selector from hardware-backed Aero captures.
 #[must_use]
-pub const fn classify_veteran_bms_selector(selector: u8) -> BatteryPageKind {
-    match selector {
+pub const fn classify_veteran_bms_selector(selector: ProtocolSelector) -> BatteryPageKind {
+    match selector.get() {
         0 | 4 => BatteryPageKind::Metadata,
         1 | 2 | 5 | 6 => BatteryPageKind::CellVoltage,
         3 | 7 => BatteryPageKind::Temperature,
@@ -39,7 +40,7 @@ pub const fn classify_veteran_bms_selector(selector: u8) -> BatteryPageKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VeteranBmsPageEvidence<'frame> {
     /// BMS page selector observed in the frame.
-    pub selector: u8,
+    pub selector: ProtocolSelector,
 
     /// Current conservative page classification.
     pub kind: BatteryPageKind,
@@ -59,7 +60,7 @@ impl<'frame> VeteranBmsPageEvidence<'frame> {
     #[must_use]
     pub fn from_frame(frame: &'frame VeteranFrame) -> Option<Self> {
         let cursor = ByteCursor::new(frame.as_slice());
-        let selector = cursor.byte(ByteOffset::new(Self::SELECTOR_OFFSET))?;
+        let selector = ProtocolSelector::new(cursor.byte(ByteOffset::new(Self::SELECTOR_OFFSET))?);
         let body_start = Self::SELECTOR_OFFSET + 1;
         let body_len = frame
             .as_slice()
@@ -86,7 +87,7 @@ impl<'frame> VeteranBmsPageEvidence<'frame> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranBmsCellPage {
     /// BMS page selector.
-    pub selector: u8,
+    pub selector: ProtocolSelector,
 
     /// Cell voltage values in millivolts.
     pub cell_mv: ArrayVec<u16, { VETERAN_BMS_CELL_VALUES_PER_PAGE as usize }>,
@@ -100,13 +101,13 @@ impl VeteranBmsCellPage {
     /// Returns [`VeteranBmsPageError::InvalidCellCount`] when `selector` is not
     /// a cell page or [`VeteranBmsPageError::PageBodyTooShort`] when the body
     /// cannot contain the documented absolute cell offset and 15 values.
-    pub fn from_body(selector: u8, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
+    pub fn from_body(selector: ProtocolSelector, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
         if !matches!(
             classify_veteran_bms_selector(selector),
             BatteryPageKind::CellVoltage
         ) {
             return Err(VeteranBmsPageError::InvalidCellCount {
-                selector,
+                selector: selector.get(),
                 observed: 0,
                 expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
             });
@@ -117,7 +118,7 @@ impl VeteranBmsCellPage {
         let values = body
             .get(offset..end)
             .ok_or(VeteranBmsPageError::PageBodyTooShort {
-                selector,
+                selector: selector.get(),
                 expected: end,
                 observed: body.len(),
             })?;
@@ -137,7 +138,7 @@ impl VeteranBmsCellPage {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranBmsTemperaturePage {
     /// BMS page selector.
-    pub selector: u8,
+    pub selector: ProtocolSelector,
 
     /// Temperature values in millicelsius.
     pub temperatures_mc: ArrayVec<i32, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
@@ -151,9 +152,11 @@ impl VeteranBmsTemperaturePage {
     /// Returns [`VeteranBmsPageError::InvalidTemperaturePage`] for selectors
     /// other than 3/7, or [`VeteranBmsPageError::PageBodyTooShort`] when the
     /// body cannot contain the documented values.
-    pub fn from_body(selector: u8, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
-        if !matches!(selector, 3 | 7) {
-            return Err(VeteranBmsPageError::InvalidTemperaturePage { selector });
+    pub fn from_body(selector: ProtocolSelector, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
+        if !matches!(selector.get(), 3 | 7) {
+            return Err(VeteranBmsPageError::InvalidTemperaturePage {
+                selector: selector.get(),
+            });
         }
 
         let offset = body_offset(VETERAN_BMS_TEMPERATURE_VALUES_OFFSET);
@@ -161,7 +164,7 @@ impl VeteranBmsTemperaturePage {
         let values = body
             .get(offset..end)
             .ok_or(VeteranBmsPageError::PageBodyTooShort {
-                selector,
+                selector: selector.get(),
                 expected: end,
                 observed: body.len(),
             })?;
@@ -184,7 +187,7 @@ impl VeteranBmsTemperaturePage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VeteranBmsMetadataPage {
     /// BMS page selector.
-    pub selector: u8,
+    pub selector: ProtocolSelector,
 
     /// First documented pack current value in milliamps.
     pub current_0_ma: i32,
@@ -201,9 +204,11 @@ impl VeteranBmsMetadataPage {
     /// Returns [`VeteranBmsPageError::InvalidMetadataPage`] for selectors other
     /// than 0/4, or [`VeteranBmsPageError::PageBodyTooShort`] when the body
     /// cannot contain both current values.
-    pub fn from_body(selector: u8, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
-        if !matches!(selector, 0 | 4) {
-            return Err(VeteranBmsPageError::InvalidMetadataPage { selector });
+    pub fn from_body(selector: ProtocolSelector, body: &[u8]) -> Result<Self, VeteranBmsPageError> {
+        if !matches!(selector.get(), 0 | 4) {
+            return Err(VeteranBmsPageError::InvalidMetadataPage {
+                selector: selector.get(),
+            });
         }
 
         let offset = body_offset(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
@@ -211,7 +216,7 @@ impl VeteranBmsMetadataPage {
         let values = body
             .get(offset..end)
             .ok_or(VeteranBmsPageError::PageBodyTooShort {
-                selector,
+                selector: selector.get(),
                 expected: end,
                 observed: body.len(),
             })?;
@@ -288,7 +293,7 @@ pub enum VeteranBmsPageError {
 /// Returns [`VeteranBmsPageError::InvalidCellCount`] when a selector classified
 /// as a typed cell-voltage page does not carry the observed fixed count.
 pub const fn decode_veteran_bms_page(
-    selector: u8,
+    selector: ProtocolSelector,
     observed_cell_values: u8,
     battery: BatteryInfo,
     verification: VerificationStatus,
@@ -298,7 +303,7 @@ pub const fn decode_veteran_bms_page(
         && observed_cell_values != VETERAN_BMS_CELL_VALUES_PER_PAGE
     {
         return Err(VeteranBmsPageError::InvalidCellCount {
-            selector,
+            selector: selector.get(),
             observed: observed_cell_values,
             expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
         });
@@ -318,6 +323,10 @@ mod tests {
 
     const PAGE_8_BODY: [u8; 24] =
         hex_literal::hex!("0000803200364f371e00000100808028062e796480008080");
+
+    const fn sel(value: u8) -> ProtocolSelector {
+        ProtocolSelector::new(value)
+    }
 
     fn fixture_bytes(input: &str) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -382,7 +391,7 @@ mod tests {
     fn hardware_observed_selectors_classify_known_cell_pages() {
         for selector in [1, 2, 5, 6] {
             assert_eq!(
-                classify_veteran_bms_selector(selector),
+                classify_veteran_bms_selector(sel(selector)),
                 BatteryPageKind::CellVoltage
             );
         }
@@ -390,20 +399,26 @@ mod tests {
 
     #[test]
     fn hardware_observed_selectors_keep_metadata_and_unknown_pages_raw() {
-        assert_eq!(classify_veteran_bms_selector(0), BatteryPageKind::Metadata);
-        assert_eq!(classify_veteran_bms_selector(4), BatteryPageKind::Metadata);
-        assert_eq!(classify_veteran_bms_selector(8), BatteryPageKind::Raw);
-        assert_eq!(classify_veteran_bms_selector(9), BatteryPageKind::Raw);
+        assert_eq!(
+            classify_veteran_bms_selector(sel(0)),
+            BatteryPageKind::Metadata
+        );
+        assert_eq!(
+            classify_veteran_bms_selector(sel(4)),
+            BatteryPageKind::Metadata
+        );
+        assert_eq!(classify_veteran_bms_selector(sel(8)), BatteryPageKind::Raw);
+        assert_eq!(classify_veteran_bms_selector(sel(9)), BatteryPageKind::Raw);
     }
 
     #[test]
     fn hardware_verified_temperature_selectors_are_typed() {
         assert_eq!(
-            classify_veteran_bms_selector(3),
+            classify_veteran_bms_selector(sel(3)),
             BatteryPageKind::Temperature
         );
         assert_eq!(
-            classify_veteran_bms_selector(7),
+            classify_veteran_bms_selector(sel(7)),
             BatteryPageKind::Temperature
         );
     }
@@ -414,7 +429,7 @@ mod tests {
         let evidence = VeteranBmsPageEvidence::from_frame(&frame)
             .expect("selector 3 fixture has BMS evidence");
 
-        assert_eq!(evidence.selector, 3);
+        assert_eq!(evidence.selector, sel(3));
         assert_eq!(evidence.kind, BatteryPageKind::Temperature);
         assert_eq!(evidence.body.len(), 48);
         assert_eq!(
@@ -429,7 +444,7 @@ mod tests {
         let evidence = VeteranBmsPageEvidence::from_frame(&frame)
             .expect("selector 8 fixture has BMS evidence");
 
-        assert_eq!(evidence.selector, 8);
+        assert_eq!(evidence.selector, sel(8));
         assert_eq!(evidence.kind, BatteryPageKind::Raw);
         assert_eq!(evidence.body, PAGE_8_BODY);
     }
@@ -446,7 +461,7 @@ mod tests {
             .collect();
 
         assert_eq!(page_8.len(), 14);
-        assert!(page_8.iter().all(|evidence| evidence.selector == 8));
+        assert!(page_8.iter().all(|evidence| evidence.selector == sel(8)));
         assert!(
             page_8
                 .iter()
@@ -474,9 +489,9 @@ mod tests {
             slot.copy_from_slice(&(3700 + u16::try_from(index).unwrap()).to_be_bytes());
         }
 
-        let page = VeteranBmsCellPage::from_body(1, &body).expect("documented body decodes");
+        let page = VeteranBmsCellPage::from_body(sel(1), &body).expect("documented body decodes");
 
-        assert_eq!(page.selector, 1);
+        assert_eq!(page.selector, sel(1));
         assert_eq!(page.cell_mv.len(), 15);
         assert_eq!(page.cell_mv[0], 3700);
         assert_eq!(page.cell_mv[14], 3714);
@@ -488,7 +503,7 @@ mod tests {
         let sixteen_value_body = [0_u8; body_offset(VETERAN_BMS_CELL_VALUES_OFFSET) + 16 * 2];
 
         assert_eq!(
-            VeteranBmsCellPage::from_body(2, &fourteen_value_body),
+            VeteranBmsCellPage::from_body(sel(2), &fourteen_value_body),
             Err(VeteranBmsPageError::PageBodyTooShort {
                 selector: 2,
                 expected: body_offset(VETERAN_BMS_CELL_VALUES_OFFSET)
@@ -497,7 +512,7 @@ mod tests {
             })
         );
         assert_eq!(
-            VeteranBmsCellPage::from_body(2, &sixteen_value_body)
+            VeteranBmsCellPage::from_body(sel(2), &sixteen_value_body)
                 .expect("extra trailing data after 15 documented values is ignored")
                 .cell_mv
                 .len(),
@@ -509,10 +524,10 @@ mod tests {
     fn documented_temperature_pages_start_at_absolute_offset_47() {
         let body = hex_literal::hex!("0689065706a20686067c06f7");
 
-        let page = VeteranBmsTemperaturePage::from_body(3, &body)
+        let page = VeteranBmsTemperaturePage::from_body(sel(3), &body)
             .expect("documented temperature body decodes");
 
-        assert_eq!(page.selector, 3);
+        assert_eq!(page.selector, sel(3));
         assert_eq!(
             page.temperatures_mc.as_slice(),
             &[16730, 16230, 16980, 16700, 16600, 17830]
@@ -526,19 +541,19 @@ mod tests {
         body[offset..offset + 2].copy_from_slice(&(-123_i16).to_be_bytes());
         body[offset + 2..offset + 4].copy_from_slice(&(45_i16).to_be_bytes());
 
-        let page = VeteranBmsMetadataPage::from_body(0, &body)
+        let page = VeteranBmsMetadataPage::from_body(sel(0), &body)
             .expect("documented metadata current body decodes");
 
-        assert_eq!(page.selector, 0);
+        assert_eq!(page.selector, sel(0));
         assert_eq!(page.current_0_ma, -1230);
         assert_eq!(page.current_1_ma, 450);
     }
 
     #[test]
     fn documented_aero_page_8_stays_reserved_without_typed_decoder() {
-        assert_eq!(classify_veteran_bms_selector(8), BatteryPageKind::Raw);
+        assert_eq!(classify_veteran_bms_selector(sel(8)), BatteryPageKind::Raw);
         assert_eq!(
-            VeteranBmsCellPage::from_body(8, &PAGE_8_BODY),
+            VeteranBmsCellPage::from_body(sel(8), &PAGE_8_BODY),
             Err(VeteranBmsPageError::InvalidCellCount {
                 selector: 8,
                 observed: 0,
@@ -546,11 +561,11 @@ mod tests {
             })
         );
         assert_eq!(
-            VeteranBmsTemperaturePage::from_body(8, &PAGE_8_BODY),
+            VeteranBmsTemperaturePage::from_body(sel(8), &PAGE_8_BODY),
             Err(VeteranBmsPageError::InvalidTemperaturePage { selector: 8 })
         );
         assert_eq!(
-            VeteranBmsMetadataPage::from_body(8, &PAGE_8_BODY),
+            VeteranBmsMetadataPage::from_body(sel(8), &PAGE_8_BODY),
             Err(VeteranBmsPageError::InvalidMetadataPage { selector: 8 })
         );
     }
@@ -558,7 +573,7 @@ mod tests {
     #[test]
     fn typed_cell_pages_require_fifteen_cell_values() {
         let decoded = decode_veteran_bms_page(
-            1,
+            sel(1),
             VETERAN_BMS_CELL_VALUES_PER_PAGE,
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
@@ -566,7 +581,7 @@ mod tests {
         .expect("hardware-backed cell page count should decode");
 
         assert!(matches!(decoded, BatteryPagePayload::CellVoltage(_)));
-        assert_eq!(decoded.page().selector, 1);
+        assert_eq!(decoded.page().selector, sel(1));
         assert_eq!(
             decoded.page().verification,
             VerificationStatus::HardwareVerified
@@ -577,7 +592,7 @@ mod tests {
     fn typed_cell_pages_reject_wrong_cell_counts() {
         assert_eq!(
             decode_veteran_bms_page(
-                2,
+                sel(2),
                 VETERAN_BMS_CELL_VALUES_PER_PAGE - 1,
                 BatteryInfo::default(),
                 VerificationStatus::HardwareVerified,
@@ -593,21 +608,21 @@ mod tests {
     #[test]
     fn raw_metadata_and_temperature_pages_do_not_claim_cell_voltage_typing() {
         let raw = decode_veteran_bms_page(
-            8,
+            sel(8),
             0,
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
         )
         .expect("raw pages should preserve evidence without typing");
         let metadata = decode_veteran_bms_page(
-            0,
+            sel(0),
             0,
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
         )
         .expect("metadata pages should preserve evidence without cell typing");
         let temperature = decode_veteran_bms_page(
-            3,
+            sel(3),
             0,
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
@@ -625,6 +640,7 @@ mod tests {
     proptest! {
         #[test]
         fn unknown_selectors_never_become_typed_cell_pages(selector in 9u8..) {
+            let selector = sel(selector);
             prop_assert_eq!(classify_veteran_bms_selector(selector), BatteryPageKind::Raw);
 
             let decoded = decode_veteran_bms_page(
@@ -641,6 +657,7 @@ mod tests {
 
         #[test]
         fn cell_page_selectors_only_accept_exact_cell_count(selector in prop_oneof![Just(1u8), Just(2), Just(5), Just(6)], count in 0u8..32) {
+            let selector = sel(selector);
             let decoded = decode_veteran_bms_page(
                 selector,
                 count,
@@ -656,7 +673,7 @@ mod tests {
                 prop_assert_eq!(
                     decoded,
                     Err(VeteranBmsPageError::InvalidCellCount {
-                        selector,
+                        selector: selector.get(),
                         observed: count,
                         expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
                     })
@@ -666,6 +683,7 @@ mod tests {
 
         #[test]
         fn raw_metadata_and_temperature_selectors_preserve_evidence_for_any_count(selector in prop_oneof![Just(0u8), Just(3), Just(4), Just(7), Just(8)], count in 0u8..32) {
+            let selector = sel(selector);
             let decoded = decode_veteran_bms_page(
                 selector,
                 count,
@@ -677,7 +695,7 @@ mod tests {
             prop_assert_eq!(decoded.page().selector, selector);
             prop_assert_eq!(decoded.page().kind, classify_veteran_bms_selector(selector));
             prop_assert_eq!(decoded.page().verification, VerificationStatus::HardwareVerified);
-            if matches!(selector, 3 | 7) {
+            if matches!(selector.get(), 3 | 7) {
                 prop_assert!(matches!(decoded, BatteryPagePayload::Temperature(_)));
             } else {
                 prop_assert!(matches!(decoded, BatteryPagePayload::Raw(_)));

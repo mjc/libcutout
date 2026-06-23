@@ -1,4 +1,4 @@
-use crate::{BatteryInfo, Measured, VerificationStatus};
+use crate::{BatteryInfo, Measured, ProtocolSelector, VerificationStatus};
 
 /// Fixed number of temperature values carried by typed BMS temperature pages.
 pub const BATTERY_TEMPERATURE_VALUES_PER_PAGE: usize = 6;
@@ -23,7 +23,7 @@ pub enum BatteryPageKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatteryPageMetadata {
     /// BMS page selector.
-    pub selector: u8,
+    pub selector: ProtocolSelector,
 
     /// Current interpretation of the page.
     pub kind: BatteryPageKind,
@@ -36,7 +36,7 @@ impl BatteryPageMetadata {
     /// Creates a page metadata record.
     #[must_use]
     pub const fn new(
-        selector: u8,
+        selector: ProtocolSelector,
         kind: BatteryPageKind,
         verification: VerificationStatus,
     ) -> Self {
@@ -49,25 +49,28 @@ impl BatteryPageMetadata {
 
     /// Creates metadata for an interpreted metadata page.
     #[must_use]
-    pub const fn metadata(selector: u8, verification: VerificationStatus) -> Self {
+    pub const fn metadata(selector: ProtocolSelector, verification: VerificationStatus) -> Self {
         Self::new(selector, BatteryPageKind::Metadata, verification)
     }
 
     /// Creates metadata for a typed cell-voltage page.
     #[must_use]
-    pub const fn cell_voltage(selector: u8, verification: VerificationStatus) -> Self {
+    pub const fn cell_voltage(
+        selector: ProtocolSelector,
+        verification: VerificationStatus,
+    ) -> Self {
         Self::new(selector, BatteryPageKind::CellVoltage, verification)
     }
 
     /// Creates metadata for a typed temperature/status page.
     #[must_use]
-    pub const fn temperature(selector: u8, verification: VerificationStatus) -> Self {
+    pub const fn temperature(selector: ProtocolSelector, verification: VerificationStatus) -> Self {
         Self::new(selector, BatteryPageKind::Temperature, verification)
     }
 
     /// Creates metadata for a raw or reserved page.
     #[must_use]
-    pub const fn raw(selector: u8, verification: VerificationStatus) -> Self {
+    pub const fn raw(selector: ProtocolSelector, verification: VerificationStatus) -> Self {
         Self::new(selector, BatteryPageKind::Raw, verification)
     }
 }
@@ -269,15 +272,19 @@ impl BatteryPagePayload {
 mod tests {
     use super::*;
 
+    const fn sel(value: u8) -> ProtocolSelector {
+        ProtocolSelector::new(value)
+    }
+
     #[test]
     fn page_metadata_preserves_selector_kind_and_verification() {
         let page = BatteryPageMetadata::new(
-            8,
+            sel(8),
             BatteryPageKind::Metadata,
             VerificationStatus::SourceVerified,
         );
 
-        assert_eq!(page.selector, 8);
+        assert_eq!(page.selector, sel(8));
         assert_eq!(page.kind, BatteryPageKind::Metadata);
         assert_eq!(page.verification, VerificationStatus::SourceVerified);
     }
@@ -285,19 +292,19 @@ mod tests {
     #[test]
     fn page_metadata_constructors_choose_expected_kinds() {
         assert_eq!(
-            BatteryPageMetadata::metadata(1, VerificationStatus::HardwareVerified).kind,
+            BatteryPageMetadata::metadata(sel(1), VerificationStatus::HardwareVerified).kind,
             BatteryPageKind::Metadata
         );
         assert_eq!(
-            BatteryPageMetadata::cell_voltage(3, VerificationStatus::HardwareVerified).kind,
+            BatteryPageMetadata::cell_voltage(sel(3), VerificationStatus::HardwareVerified).kind,
             BatteryPageKind::CellVoltage
         );
         assert_eq!(
-            BatteryPageMetadata::temperature(7, VerificationStatus::SourceVerified).kind,
+            BatteryPageMetadata::temperature(sel(7), VerificationStatus::SourceVerified).kind,
             BatteryPageKind::Temperature
         );
         assert_eq!(
-            BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified).kind,
+            BatteryPageMetadata::raw(sel(8), VerificationStatus::SourceVerified).kind,
             BatteryPageKind::Raw
         );
     }
@@ -312,7 +319,7 @@ mod tests {
             temperature_mc: None,
             raw_state: None,
         };
-        let page = BatteryPageMetadata::cell_voltage(3, VerificationStatus::HardwareVerified);
+        let page = BatteryPageMetadata::cell_voltage(sel(3), VerificationStatus::HardwareVerified);
         let payload = BatteryPagePayload::CellVoltage(BatteryCellVoltagePage::new(page, battery));
 
         assert_eq!(payload.page(), page);
@@ -329,7 +336,7 @@ mod tests {
             temperature_mc: Some(Measured::reported(16_730)),
             raw_state: None,
         };
-        let page = BatteryPageMetadata::temperature(3, VerificationStatus::SourceVerified);
+        let page = BatteryPageMetadata::temperature(sel(3), VerificationStatus::SourceVerified);
         let payload = BatteryPagePayload::Temperature(BatteryTemperaturePage::new(page, battery));
 
         assert_eq!(payload.page(), page);
@@ -339,7 +346,7 @@ mod tests {
     #[test]
     fn payload_conversion_chooses_raw_for_reserved_pages() {
         let battery = BatteryInfo::default();
-        let page = BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified);
+        let page = BatteryPageMetadata::raw(sel(8), VerificationStatus::SourceVerified);
         let payload = BatteryPagePayload::from_page(page, battery);
 
         assert!(matches!(payload, BatteryPagePayload::Raw(_)));
@@ -349,7 +356,7 @@ mod tests {
     #[test]
     fn payload_conversion_chooses_raw_for_metadata_pages() {
         let battery = BatteryInfo::default();
-        let page = BatteryPageMetadata::metadata(8, VerificationStatus::SourceVerified);
+        let page = BatteryPageMetadata::metadata(sel(8), VerificationStatus::SourceVerified);
         let payload = BatteryPagePayload::from_page(page, battery);
 
         assert!(matches!(payload, BatteryPagePayload::Raw(_)));
@@ -359,7 +366,7 @@ mod tests {
     #[test]
     fn payload_conversion_chooses_typed_variant_for_cell_pages() {
         let battery = BatteryInfo::default();
-        let page = BatteryPageMetadata::cell_voltage(3, VerificationStatus::HardwareVerified);
+        let page = BatteryPageMetadata::cell_voltage(sel(3), VerificationStatus::HardwareVerified);
         let payload = BatteryPagePayload::from_page(page, battery);
 
         assert!(matches!(payload, BatteryPagePayload::CellVoltage(_)));
@@ -369,7 +376,7 @@ mod tests {
     #[test]
     fn payload_conversion_chooses_typed_variant_for_temperature_pages() {
         let battery = BatteryInfo::default();
-        let page = BatteryPageMetadata::temperature(7, VerificationStatus::SourceVerified);
+        let page = BatteryPageMetadata::temperature(sel(7), VerificationStatus::SourceVerified);
         let payload = BatteryPagePayload::from_page(page, battery);
 
         assert!(matches!(payload, BatteryPagePayload::Temperature(_)));
@@ -382,7 +389,7 @@ mod tests {
             temperature_mc: Some(Measured::reported(17_830)),
             ..BatteryInfo::default()
         };
-        let page = BatteryPageMetadata::temperature(3, VerificationStatus::SourceVerified);
+        let page = BatteryPageMetadata::temperature(sel(3), VerificationStatus::SourceVerified);
         let payload = BatteryPagePayload::temperature(page, battery);
 
         assert!(matches!(payload, BatteryPagePayload::Temperature(_)));

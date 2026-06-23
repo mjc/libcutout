@@ -1,7 +1,8 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryInfo, BatteryPageMetadata, BatteryPagePayload, Measured, MonotonicMillis,
-    ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
+    ProtocolSelector, ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource,
+    VerificationStatus,
 };
 use thiserror::Error;
 
@@ -82,7 +83,10 @@ impl BegodeBmsSummary {
     #[must_use]
     pub fn to_battery_response(self) -> ReadOnlyResponse {
         ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
+            BatteryPageMetadata::metadata(
+                ProtocolSelector::new(self.sub_index),
+                VerificationStatus::SourceVerified,
+            ),
             BatteryInfo {
                 voltage_mv: Some(source_reported(self.pack_voltage_mv)),
                 current_ma: Some(source_reported(self.current_ma)),
@@ -148,7 +152,10 @@ impl BegodeBmsCellPage {
     #[must_use]
     pub fn to_battery_response(&self) -> ReadOnlyResponse {
         ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-            BatteryPageMetadata::cell_voltage(self.page_index, VerificationStatus::SourceVerified),
+            BatteryPageMetadata::cell_voltage(
+                ProtocolSelector::new(self.page_index),
+                VerificationStatus::SourceVerified,
+            ),
             BatteryInfo::default(),
         ))
     }
@@ -280,7 +287,7 @@ mod tests {
             panic!("expected battery response");
         };
 
-        assert_eq!(payload.page().selector, 3);
+        assert_eq!(payload.page().selector, ProtocolSelector::new(3));
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
         assert_eq!(
             payload.page().verification,
@@ -314,7 +321,7 @@ mod tests {
             panic!("expected battery response");
         };
 
-        assert_eq!(payload.page().selector, 2);
+        assert_eq!(payload.page().selector, ProtocolSelector::new(2));
         assert_eq!(payload.page().kind, BatteryPageKind::CellVoltage);
         assert_eq!(
             payload.page().verification,

@@ -280,7 +280,7 @@ fn push_veteran_ingest_outcome_for_frame(
     if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
         && evidence.kind == BatteryPageKind::Raw
     {
-        if evidence.selector == 8 {
+        if evidence.selector == ProtocolSelector::new(8) {
             output.push(SessionOutput::NotificationIngest(
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
@@ -288,7 +288,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     frame_len,
                     monotonic_ms,
                     ReservedPayloadEvidence {
-                        selector: Some(ProtocolSelector::new(evidence.selector)),
+                        selector: Some(evidence.selector),
                         tag: None,
                         body_len: PayloadBodyLen::new(evidence.body.len()),
                         verification: VerificationStatus::HardwareVerified,
@@ -303,7 +303,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     frame_len,
                     monotonic_ms,
                     ParserGapEvidence {
-                        selector: Some(ProtocolSelector::new(evidence.selector)),
+                        selector: Some(evidence.selector),
                         tag: None,
                         body_len: PayloadBodyLen::new(evidence.body.len()),
                     },
@@ -2008,7 +2008,7 @@ mod tests {
         assert!(responses.iter().any(|response| matches!(
             response,
             ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == 2
+                if payload.page().selector == ProtocolSelector::new(2)
                     && payload.page().kind == BatteryPageKind::CellVoltage
         )));
     }
@@ -2020,7 +2020,7 @@ mod tests {
         assert!(responses.iter().any(|response| matches!(
             response,
             ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == 3
+                if payload.page().selector == ProtocolSelector::new(3)
                     && payload.page().kind == BatteryPageKind::Temperature
                     && payload.page().verification == VerificationStatus::HardwareVerified
                     && payload.battery().temperature_mc.expect("representative temperature").value == 16_730
@@ -2035,7 +2035,7 @@ mod tests {
         assert!(responses.iter().any(|response| matches!(
             response,
             ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == 2
+                if payload.page().selector == ProtocolSelector::new(2)
                     && payload.page().kind == BatteryPageKind::CellVoltage
                     && payload.page().verification == VerificationStatus::HardwareVerified
         )));
@@ -2048,7 +2048,7 @@ mod tests {
         assert!(responses.iter().any(|response| matches!(
             response,
             ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == 0
+                if payload.page().selector == ProtocolSelector::new(0)
                     && payload.page().kind == BatteryPageKind::Metadata
                     && payload.page().verification == VerificationStatus::HardwareVerified
                     && payload.battery().current_ma == Some(Measured::reported(20))
@@ -2063,7 +2063,8 @@ mod tests {
             !matches!(
                 response,
                 ReadOnlyResponse::Battery(payload)
-                    if payload.page().selector == 8 && payload.page().kind == BatteryPageKind::Raw
+                    if payload.page().selector == ProtocolSelector::new(8)
+                        && payload.page().kind == BatteryPageKind::Raw
             )
         }));
     }
@@ -2155,7 +2156,8 @@ mod tests {
             !matches!(
                 response,
                 ReadOnlyResponse::Battery(payload)
-                    if payload.page().selector == 9 && payload.page().kind == BatteryPageKind::Raw
+                    if payload.page().selector == ProtocolSelector::new(9)
+                        && payload.page().kind == BatteryPageKind::Raw
             )
         }));
     }

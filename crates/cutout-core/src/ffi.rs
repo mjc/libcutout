@@ -555,7 +555,7 @@ pub struct BatteryPageMetadataDto {
 impl From<BatteryPageMetadata> for BatteryPageMetadataDto {
     fn from(page: BatteryPageMetadata) -> Self {
         Self {
-            selector: page.selector,
+            selector: page.selector.get(),
             kind: page.kind.into(),
             verification: page.verification.into(),
         }
@@ -1530,9 +1530,9 @@ mod tests {
     use crate::{
         BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DeviceCommand, DeviceEvent,
         DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
-        LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput,
-        SettingsEntry, SettingsReadback, TelemetrySnapshot, TransportAction, ValueQuality,
-        ValueSource, VerificationStatus, WriteMode, WritePayload,
+        LinkInfo, Measured, ProtocolSelector, RawFieldValue, ReadOnlyResponse, SessionInput,
+        SessionOutput, SettingsEntry, SettingsReadback, TelemetrySnapshot, TransportAction,
+        ValueQuality, ValueSource, VerificationStatus, WriteMode, WritePayload,
     };
 
     use super::*;
@@ -1540,7 +1540,7 @@ mod tests {
     #[test]
     fn read_only_battery_dto_preserves_page_and_unknown_values() {
         let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::raw(8, VerificationStatus::SourceVerified),
+            BatteryPageMetadata::raw(ProtocolSelector::new(8), VerificationStatus::SourceVerified),
             BatteryInfo {
                 voltage_mv: Some(Measured::reported(80_000)),
                 current_ma: None,
