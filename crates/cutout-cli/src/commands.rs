@@ -602,83 +602,101 @@ const fn diagnostic_error_kind_name(kind: DiagnosticErrorKind) -> &'static str {
     }
 }
 
-fn render_pevcap_replay_report(report: &PevcapReplayReport) -> String {
-    let mut rendered = format!(
-        "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={} arbitrary_chunk_plan_len={} chunk_one_byte_matches={} chunk_arbitrary_matches={}",
-        report.replay_records,
-        report.outputs,
-        report.telemetry,
-        report.read_only_responses,
-        report.diagnostics,
-        report.arbitrary_chunk_plan_len,
-        report.chunk_one_byte_matches,
-        report.chunk_arbitrary_matches
-    );
-    append_capacity_evidence(&mut rendered, report.capacity);
-    append_layout_evidence(&mut rendered, report.layout);
-    append_pack_evidence_consistency(&mut rendered, report.pack_evidence_consistency);
-    rendered
+fn render_pevcap_replay_report(report: &PevcapReplayReport) -> PevcapReplayReportLine<'_> {
+    PevcapReplayReportLine(report)
 }
 
-fn append_pack_evidence_consistency(
-    rendered: &mut String,
+struct PevcapReplayReportLine<'a>(&'a PevcapReplayReport);
+
+impl fmt::Display for PevcapReplayReportLine<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let report = self.0;
+        write!(
+            f,
+            "pevcap replay records={} outputs={} telemetry={} read_only_responses={} diagnostics={} arbitrary_chunk_plan_len={} chunk_one_byte_matches={} chunk_arbitrary_matches={}",
+            report.replay_records,
+            report.outputs,
+            report.telemetry,
+            report.read_only_responses,
+            report.diagnostics,
+            report.arbitrary_chunk_plan_len,
+            report.chunk_one_byte_matches,
+            report.chunk_arbitrary_matches
+        )?;
+        write_capacity_evidence(f, report.capacity)?;
+        write_layout_evidence(f, report.layout)?;
+        write_pack_evidence_consistency(f, report.pack_evidence_consistency)
+    }
+}
+
+fn write_pack_evidence_consistency(
+    output: &mut fmt::Formatter<'_>,
     consistency: Option<BegodePackEvidenceConsistency>,
-) {
+) -> fmt::Result {
     match consistency {
-        None | Some(BegodePackEvidenceConsistency::Consistent) => {}
+        None | Some(BegodePackEvidenceConsistency::Consistent) => Ok(()),
         Some(BegodePackEvidenceConsistency::Incomplete) => {
-            rendered.push_str(" pack_evidence_incomplete=true");
+            output.write_str(" pack_evidence_incomplete=true")
         }
         Some(BegodePackEvidenceConsistency::Inconsistent) => {
-            rendered.push_str(" pack_evidence_inconsistent=true");
+            output.write_str(" pack_evidence_inconsistent=true")
         }
     }
 }
 
-fn append_capacity_evidence(rendered: &mut String, capacity: BegodeCapacitySelection) {
+fn write_capacity_evidence(
+    output: &mut fmt::Formatter<'_>,
+    capacity: BegodeCapacitySelection,
+) -> fmt::Result {
     match capacity {
-        BegodeCapacitySelection::Missing => {}
-        BegodeCapacitySelection::Conflicting => rendered.push_str(" capacity_conflict=true"),
+        BegodeCapacitySelection::Missing => Ok(()),
+        BegodeCapacitySelection::Conflicting => output.write_str(" capacity_conflict=true"),
         BegodeCapacitySelection::Selected(evidence) => {
-            append_selected_capacity_evidence(rendered, evidence);
+            write_selected_capacity_evidence(output, evidence)
         }
     }
 }
 
-fn append_selected_capacity_evidence(rendered: &mut String, evidence: BegodeCapacityEvidence) {
+fn write_selected_capacity_evidence(
+    output: &mut fmt::Formatter<'_>,
+    evidence: BegodeCapacityEvidence,
+) -> fmt::Result {
     if let Some(nominal_capacity_mah) = evidence.nominal_capacity_mah {
-        rendered.push_str(" capacity_nominal_mah=");
-        rendered.push_str(&nominal_capacity_mah.to_string());
+        write!(output, " capacity_nominal_mah={nominal_capacity_mah}")?;
     }
     if let Some(reported_wh) = evidence.reported_wh {
-        rendered.push_str(" capacity_reported_wh=");
-        rendered.push_str(&reported_wh.to_string());
+        write!(output, " capacity_reported_wh={reported_wh}")?;
     }
+    Ok(())
 }
 
-fn append_layout_evidence(rendered: &mut String, layout: BegodePackLayoutSelection) {
+fn write_layout_evidence(
+    output: &mut fmt::Formatter<'_>,
+    layout: BegodePackLayoutSelection,
+) -> fmt::Result {
     match layout {
-        BegodePackLayoutSelection::Missing => {}
-        BegodePackLayoutSelection::Conflicting => rendered.push_str(" layout_conflict=true"),
+        BegodePackLayoutSelection::Missing => Ok(()),
+        BegodePackLayoutSelection::Conflicting => output.write_str(" layout_conflict=true"),
         BegodePackLayoutSelection::Selected(evidence) => {
-            append_selected_layout_evidence(rendered, evidence);
+            write_selected_layout_evidence(output, evidence)
         }
     }
 }
 
-fn append_selected_layout_evidence(rendered: &mut String, evidence: BegodePackLayoutEvidence) {
+fn write_selected_layout_evidence(
+    output: &mut fmt::Formatter<'_>,
+    evidence: BegodePackLayoutEvidence,
+) -> fmt::Result {
     if let Some(cell_model) = evidence.cell_model {
-        rendered.push_str(" layout_cell_model=");
-        rendered.push_str(cell_model.label());
+        write!(output, " layout_cell_model={}", cell_model.label())?;
     }
     if let Some(series_cells) = evidence.series_cells {
-        rendered.push_str(" layout_series_cells=");
-        rendered.push_str(&series_cells.to_string());
+        write!(output, " layout_series_cells={series_cells}")?;
     }
     if let Some(parallel_count) = evidence.parallel_count {
-        rendered.push_str(" layout_parallel_count=");
-        rendered.push_str(&parallel_count.to_string());
+        write!(output, " layout_parallel_count={parallel_count}")?;
     }
+    Ok(())
 }
 
 async fn dashboard(args: DashboardArgs) -> Result<()> {
@@ -2689,7 +2707,7 @@ mod tests {
         };
 
         assert_eq!(
-            render_pevcap_replay_report(&report),
+            render_pevcap_replay_report(&report).to_string(),
             "pevcap replay records=2 outputs=3 telemetry=1 read_only_responses=1 diagnostics=1 arbitrary_chunk_plan_len=3 chunk_one_byte_matches=true chunk_arbitrary_matches=true"
         );
     }
@@ -3290,6 +3308,7 @@ mod tests {
 
         assert!(
             render_pevcap_replay_report(&report)
+                .to_string()
                 .contains("capacity_nominal_mah=10000 capacity_reported_wh=672")
         );
     }
@@ -3306,7 +3325,11 @@ mod tests {
         let report = replay_pevcap_capture(&capture, profile)
             .expect("capacity conflict does not block voltage replay");
 
-        assert!(render_pevcap_replay_report(&report).contains("capacity_conflict=true"));
+        assert!(
+            render_pevcap_replay_report(&report)
+                .to_string()
+                .contains("capacity_conflict=true")
+        );
     }
 
     #[test]
@@ -3321,7 +3344,7 @@ mod tests {
             .expect("Falcon identity selects replay profile");
         let report = replay_pevcap_capture(&capture, profile).expect("voltage evidence is present");
 
-        assert!(render_pevcap_replay_report(&report).contains(
+        assert!(render_pevcap_replay_report(&report).to_string().contains(
             "layout_cell_model=Samsung 50S layout_series_cells=20 layout_parallel_count=1"
         ));
     }
@@ -3338,7 +3361,11 @@ mod tests {
         let report = replay_pevcap_capture(&capture, profile)
             .expect("layout conflict does not block replay");
 
-        assert!(render_pevcap_replay_report(&report).contains("layout_conflict=true"));
+        assert!(
+            render_pevcap_replay_report(&report)
+                .to_string()
+                .contains("layout_conflict=true")
+        );
     }
 
     #[test]
@@ -3354,7 +3381,11 @@ mod tests {
             .expect("Falcon identity selects replay profile");
         let report = replay_pevcap_capture(&capture, profile).expect("voltage evidence is present");
 
-        assert!(render_pevcap_replay_report(&report).contains("pack_evidence_inconsistent=true"));
+        assert!(
+            render_pevcap_replay_report(&report)
+                .to_string()
+                .contains("pack_evidence_inconsistent=true")
+        );
     }
 
     #[test]
@@ -3369,7 +3400,11 @@ mod tests {
             .expect("Falcon identity selects replay profile");
         let report = replay_pevcap_capture(&capture, profile).expect("voltage evidence is present");
 
-        assert!(render_pevcap_replay_report(&report).contains("pack_evidence_incomplete=true"));
+        assert!(
+            render_pevcap_replay_report(&report)
+                .to_string()
+                .contains("pack_evidence_incomplete=true")
+        );
     }
 
     #[test]
