@@ -1,6 +1,7 @@
 use std::{
     fmt, fs,
     future::Future,
+    marker::PhantomData,
     sync::mpsc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -140,12 +141,12 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PevcapReplayReport {
-    replay_records: usize,
-    outputs: usize,
-    telemetry: usize,
-    read_only_responses: usize,
-    diagnostics: usize,
-    arbitrary_chunk_plan_len: usize,
+    replay_records: ReplayRecordCount,
+    outputs: ReplayOutputCount,
+    telemetry: ReplayTelemetryCount,
+    read_only_responses: ReplayReadOnlyResponseCount,
+    diagnostics: ReplayDiagnosticCount,
+    arbitrary_chunk_plan_len: ReplayChunkPlanLen,
     chunk_one_byte_matches: bool,
     chunk_arbitrary_matches: bool,
     telemetry_snapshot: TelemetrySnapshot,
@@ -157,6 +158,66 @@ struct PevcapReplayReport {
     diagnostic_errors: Vec<DiagnosticError>,
     read_only_response_events: Vec<ReadOnlyResponse>,
     events: Vec<SessionBridgeEvent>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReplayRecordCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReplayOutputCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReplayTelemetryCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReplayReadOnlyResponseCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReplayDiagnosticCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReplayChunkPlanLenTag;
+
+type ReplayRecordCount = ReplayCount<ReplayRecordCountTag>;
+type ReplayOutputCount = ReplayCount<ReplayOutputCountTag>;
+type ReplayTelemetryCount = ReplayCount<ReplayTelemetryCountTag>;
+type ReplayReadOnlyResponseCount = ReplayCount<ReplayReadOnlyResponseCountTag>;
+type ReplayDiagnosticCount = ReplayCount<ReplayDiagnosticCountTag>;
+type ReplayChunkPlanLen = ReplayCount<ReplayChunkPlanLenTag>;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ReplayCount<Tag> {
+    value: usize,
+    tag: PhantomData<fn() -> Tag>,
+}
+
+impl<Tag> Default for ReplayCount<Tag> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl<Tag> ReplayCount<Tag> {
+    const fn new(value: usize) -> Self {
+        Self {
+            value,
+            tag: PhantomData,
+        }
+    }
+
+    const fn get(self) -> usize {
+        self.value
+    }
+
+    const fn increment(self) -> Self {
+        Self::new(self.value.saturating_add(1))
+    }
+}
+
+impl<Tag> fmt::Display for ReplayCount<Tag> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
 }
 
 fn replay_pevcap_capture(
@@ -260,21 +321,26 @@ where
         &records,
         &arbitrary_chunks,
     );
-    summarize_pevcap_replay(records.len(), arbitrary_chunks.len(), &outputs, comparison)
+    summarize_pevcap_replay(
+        ReplayRecordCount::new(records.len()),
+        ReplayChunkPlanLen::new(arbitrary_chunks.len()),
+        &outputs,
+        comparison,
+    )
 }
 
 fn summarize_pevcap_replay(
-    replay_records: usize,
-    arbitrary_chunk_plan_len: usize,
+    replay_records: ReplayRecordCount,
+    arbitrary_chunk_plan_len: ReplayChunkPlanLen,
     outputs: &[SessionOutput],
     chunk_comparison: ReplayChunkComparison,
 ) -> PevcapReplayReport {
     let mut report = PevcapReplayReport {
         replay_records,
-        outputs: outputs.len(),
-        telemetry: 0,
-        read_only_responses: 0,
-        diagnostics: 0,
+        outputs: ReplayOutputCount::new(outputs.len()),
+        telemetry: ReplayTelemetryCount::default(),
+        read_only_responses: ReplayReadOnlyResponseCount::default(),
+        diagnostics: ReplayDiagnosticCount::default(),
         arbitrary_chunk_plan_len,
         chunk_one_byte_matches: chunk_comparison.one_byte_matches,
         chunk_arbitrary_matches: chunk_comparison.arbitrary_matches,
@@ -292,18 +358,18 @@ fn summarize_pevcap_replay(
     for output in outputs {
         match output {
             SessionOutput::Event(DeviceEvent::Telemetry(delta)) => {
-                report.telemetry += 1;
+                report.telemetry = report.telemetry.increment();
                 report.telemetry_snapshot.apply_delta(*delta);
             }
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
-                report.read_only_responses += 1;
+                report.read_only_responses = report.read_only_responses.increment();
                 report.read_only_response_events.push(*response);
                 if let ReadOnlyResponse::Firmware(firmware) = response {
                     report.firmware = Some(*firmware);
                 }
             }
             SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => {
-                report.diagnostics += 1;
+                report.diagnostics = report.diagnostics.increment();
                 report
                     .diagnostic_snapshots
                     .push(DiagnosticSnapshot::from_parser_diagnostics(*diagnostics));
@@ -380,13 +446,13 @@ fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<Dashboard
         notifications: replay_notification_count(capture),
         notification_bytes: replay_notification_bytes(capture),
         latest_notification_len: latest_replay_notification_len(capture),
-        telemetry: TelemetryEventCount::new(report.telemetry),
+        telemetry: TelemetryEventCount::new(report.telemetry.get()),
         telemetry_snapshot: report.telemetry_snapshot,
-        read_only_responses: ReadOnlyResponseCount::new(report.read_only_responses),
+        read_only_responses: ReadOnlyResponseCount::new(report.read_only_responses.get()),
         read_only_response_events: report.read_only_response_events,
         firmware: report.firmware,
         settings: Vec::new(),
-        diagnostics: DiagnosticEventCount::new(report.diagnostics),
+        diagnostics: DiagnosticEventCount::new(report.diagnostics.get()),
         diagnostics_snapshot: ParserDiagnostics::default(),
         diagnostic_errors: report.diagnostic_errors,
         identity: None,
@@ -2550,12 +2616,12 @@ mod tests {
     #[test]
     fn pevcap_replay_report_renders_counts() {
         let report = PevcapReplayReport {
-            replay_records: 2,
-            outputs: 3,
-            telemetry: 1,
-            read_only_responses: 1,
-            diagnostics: 1,
-            arbitrary_chunk_plan_len: 3,
+            replay_records: ReplayRecordCount::new(2),
+            outputs: ReplayOutputCount::new(3),
+            telemetry: ReplayTelemetryCount::new(1),
+            read_only_responses: ReplayReadOnlyResponseCount::new(1),
+            diagnostics: ReplayDiagnosticCount::new(1),
+            arbitrary_chunk_plan_len: ReplayChunkPlanLen::new(3),
             chunk_one_byte_matches: true,
             chunk_arbitrary_matches: true,
             telemetry_snapshot: TelemetrySnapshot::default(),
@@ -2709,8 +2775,8 @@ mod tests {
         ))];
 
         let report = summarize_pevcap_replay(
-            1,
-            1,
+            ReplayRecordCount::new(1),
+            ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
                 whole_semantic_events: 1,
@@ -2741,8 +2807,8 @@ mod tests {
         let outputs = [SessionOutput::NotificationIngest(outcome)];
 
         let report = summarize_pevcap_replay(
-            1,
-            1,
+            ReplayRecordCount::new(1),
+            ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
                 whole_semantic_events: 0,
@@ -2938,8 +3004,8 @@ mod tests {
         let outputs = [SessionOutput::Event(DeviceEvent::DiagnosticError(error))];
 
         let report = summarize_pevcap_replay(
-            1,
-            1,
+            ReplayRecordCount::new(1),
+            ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
                 whole_semantic_events: 1,
@@ -2961,12 +3027,12 @@ mod tests {
         let report = replay_pevcap_capture(&capture, SelectedSessionProfile::Aero)
             .expect("Aero replay does not require Falcon battery evidence");
 
-        assert_eq!(report.replay_records, 2);
-        assert!(report.arbitrary_chunk_plan_len > 3);
+        assert_eq!(report.replay_records, ReplayRecordCount::new(2));
+        assert!(report.arbitrary_chunk_plan_len.get() > 3);
         assert!(report.chunk_one_byte_matches);
         assert!(report.chunk_arbitrary_matches);
-        assert!(report.telemetry >= 1);
-        assert!(report.read_only_responses >= 1);
+        assert!(report.telemetry.get() >= 1);
+        assert!(report.read_only_responses.get() >= 1);
         assert_eq!(
             report
                 .telemetry_snapshot
@@ -3356,7 +3422,11 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{} should replay: {error}", case.name));
 
             assert_eq!(profile, case.profile, "{} profile", case.name);
-            assert!(report.replay_records >= 2, "{} replay records", case.name);
+            assert!(
+                report.replay_records.get() >= 2,
+                "{} replay records",
+                case.name
+            );
             assert!(
                 report.chunk_one_byte_matches,
                 "{} one-byte chunks",
@@ -3368,7 +3438,7 @@ mod tests {
                 case.name
             );
             assert!(
-                report.arbitrary_chunk_plan_len >= case.minimum_chunk_plan_len,
+                report.arbitrary_chunk_plan_len.get() >= case.minimum_chunk_plan_len,
                 "{} chunk plan length",
                 case.name
             );
