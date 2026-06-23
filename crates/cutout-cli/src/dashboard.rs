@@ -2,6 +2,7 @@ use std::{
     collections::VecDeque,
     fmt::{self, Write as FmtWrite},
     io::{self, Read, Write},
+    marker::PhantomData,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -206,10 +207,54 @@ impl ScanBrowser {
     }
 }
 
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DashboardCount<Tag> {
+    value: u64,
+    tag: PhantomData<fn() -> Tag>,
+}
+
+impl<Tag> Clone for DashboardCount<Tag> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Tag> Copy for DashboardCount<Tag> {}
+
+impl<Tag> Default for DashboardCount<Tag> {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl<Tag> DashboardCount<Tag> {
+    const fn new(value: u64) -> Self {
+        Self {
+            value,
+            tag: PhantomData,
+        }
+    }
+}
+
+impl<Tag> fmt::Display for DashboardCount<Tag> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DiscoveredDeviceCountTag;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ConnectedDeviceCountTag;
+
+pub(crate) type DiscoveredDeviceCount = DashboardCount<DiscoveredDeviceCountTag>;
+pub(crate) type ConnectedDeviceCount = DashboardCount<ConnectedDeviceCountTag>;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SessionCounters {
-    pub(crate) discovered: u64,
-    pub(crate) connected: u64,
+    pub(crate) discovered: DiscoveredDeviceCount,
+    pub(crate) connected: ConnectedDeviceCount,
     pub(crate) subscriptions: SubscribeCount,
     pub(crate) notifications: NotificationCount,
     pub(crate) notification_bytes: NotificationByteTotal,
@@ -422,8 +467,8 @@ impl DashboardState {
             false,
         );
         self.counters = SessionCounters {
-            discovered: 8,
-            connected: 1,
+            discovered: DiscoveredDeviceCount::new(8),
+            connected: ConnectedDeviceCount::new(1),
             subscriptions: SubscribeCount::new(4),
             notifications: NotificationCount::new(27),
             notification_bytes: NotificationByteTotal::default(),
@@ -509,8 +554,8 @@ impl DashboardState {
             firmware: "unknown".to_owned(),
             connection_state: "connected".to_owned(),
         };
-        state.counters.discovered = 1;
-        state.counters.connected = 1;
+        state.counters.discovered = DiscoveredDeviceCount::new(1);
+        state.counters.connected = ConnectedDeviceCount::new(1);
         state.telemetry.signal_pct = observation.rssi.map_or(0, rssi_to_signal_percent);
         state.scan_browser.push_observation(
             ScanObservation {
@@ -2692,7 +2737,7 @@ mod tests {
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.device.address, "AA:BB:CC:DD:EE:FF");
         assert_eq!(state.device.connection_state, "connected");
-        assert_eq!(state.counters.connected, 1);
+        assert_eq!(state.counters.connected, ConnectedDeviceCount::new(1));
         assert_eq!(state.telemetry.battery_pct, None);
         assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
         assert_eq!(state.telemetry.signal_pct, 65);
