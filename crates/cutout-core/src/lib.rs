@@ -433,7 +433,7 @@ pub struct VerifiedValue<T> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatterySpec {
     /// Series cell count.
-    pub series_cells: u8,
+    pub series_cells: PackSeriesCells,
 
     /// Nominal pack capacity in milliamp-hours, when known.
     pub nominal_capacity_mah: Option<u32>,
@@ -462,16 +462,16 @@ pub struct BmsPageSelectorSpec {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsLayoutSpec {
     /// Series-connected cell count covered by this BMS layout.
-    pub series_cells: u8,
+    pub series_cells: PackSeriesCells,
 
     /// Parallel pack count for this model.
-    pub parallel_packs: u8,
+    pub parallel_packs: BmsParallelPacks,
 
     /// Cell-voltage values decoded from a full cell-voltage page.
-    pub cell_values_per_page: u8,
+    pub cell_values_per_page: BmsCellValuesPerPage,
 
     /// Temperature values decoded from a full temperature page.
-    pub temperature_values_per_page: u8,
+    pub temperature_values_per_page: BmsTemperatureValuesPerPage,
 
     /// Static selector interpretation table.
     pub selectors: &'static [BmsPageSelectorSpec],
@@ -1572,7 +1572,7 @@ impl RegistryHashBuilder {
         match battery {
             Some(battery) => {
                 self.write_u8(1);
-                self.write_u8(battery.series_cells);
+                self.write_u8(battery.series_cells.get());
                 self.write_optional_u32(battery.nominal_capacity_mah);
                 self.write_u32(*battery.voltage_range_mv.start());
                 self.write_u32(*battery.voltage_range_mv.end());
@@ -1586,10 +1586,10 @@ impl RegistryHashBuilder {
         match bms {
             Some(bms) => {
                 self.write_u8(1);
-                self.write_u8(bms.series_cells);
-                self.write_u8(bms.parallel_packs);
-                self.write_u8(bms.cell_values_per_page);
-                self.write_u8(bms.temperature_values_per_page);
+                self.write_u8(bms.series_cells.get());
+                self.write_u8(bms.parallel_packs.get());
+                self.write_u8(bms.cell_values_per_page.get());
+                self.write_u8(bms.temperature_values_per_page.get());
                 self.write_usize(bms.selectors.len());
                 for selector in bms.selectors {
                     self.write_u8(selector.selector.get());
@@ -2093,6 +2093,10 @@ enum SemanticEventCountUnit {}
 enum ProtocolSelectorUnit {}
 enum ProtocolTagUnit {}
 enum VescControllerIdUnit {}
+enum PackSeriesCellsUnit {}
+enum BmsParallelPacksUnit {}
+enum BmsCellValuesPerPageUnit {}
+enum BmsTemperatureValuesPerPageUnit {}
 
 macro_rules! typed_protocol_value {
     ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
@@ -2203,6 +2207,34 @@ typed_protocol_value!(
     VescControllerIdUnit,
     u8,
     "VESC CAN controller identifier used for forwarded read-only requests."
+);
+
+typed_protocol_value!(
+    PackSeriesCells,
+    PackSeriesCellsUnit,
+    u8,
+    "Series-connected cell count for model battery and BMS metadata."
+);
+
+typed_protocol_value!(
+    BmsParallelPacks,
+    BmsParallelPacksUnit,
+    u8,
+    "Parallel pack count for model BMS metadata."
+);
+
+typed_protocol_value!(
+    BmsCellValuesPerPage,
+    BmsCellValuesPerPageUnit,
+    u8,
+    "Cell-voltage value count decoded from a full BMS cell page."
+);
+
+typed_protocol_value!(
+    BmsTemperatureValuesPerPage,
+    BmsTemperatureValuesPerPageUnit,
+    u8,
+    "Temperature value count decoded from a full BMS temperature page."
 );
 
 /// Bounded notification evidence shared by protocol ingest outcomes.
@@ -4617,6 +4649,13 @@ mod tests {
         assert_eq!(size_of::<crate::SemanticEventCount>(), size_of::<usize>());
         assert_eq!(size_of::<crate::ProtocolSelector>(), size_of::<u8>());
         assert_eq!(size_of::<crate::ProtocolTag>(), size_of::<u16>());
+        assert_eq!(size_of::<crate::PackSeriesCells>(), size_of::<u8>());
+        assert_eq!(size_of::<crate::BmsParallelPacks>(), size_of::<u8>());
+        assert_eq!(size_of::<crate::BmsCellValuesPerPage>(), size_of::<u8>());
+        assert_eq!(
+            size_of::<crate::BmsTemperatureValuesPerPage>(),
+            size_of::<u8>()
+        );
         assert_eq!(size_of::<crate::ParserDiagnostics>(), 56);
         assert_eq!(size_of::<crate::DiagnosticSnapshot>(), 56);
         assert!(size_of::<crate::DiagnosticError>() <= 80);
@@ -5165,16 +5204,16 @@ mod tests {
                 verification: VerificationStatus::HardwareVerified,
             }),
             battery: Some(crate::BatterySpec {
-                series_cells: 30,
+                series_cells: crate::PackSeriesCells::new(30),
                 nominal_capacity_mah: Some(10_000),
                 voltage_range_mv: 99_180..=123_370,
                 verification: VerificationStatus::SourceAndHardwareVerified,
             }),
             bms: Some(crate::BmsLayoutSpec {
-                series_cells: 30,
-                parallel_packs: 2,
-                cell_values_per_page: 15,
-                temperature_values_per_page: 6,
+                series_cells: crate::PackSeriesCells::new(30),
+                parallel_packs: crate::BmsParallelPacks::new(2),
+                cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
+                temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
                 selectors: &AERO_BMS_SELECTORS,
                 verification: VerificationStatus::HardwareVerified,
             }),
@@ -5213,8 +5252,8 @@ mod tests {
         let bms = entry
             .bms
             .expect("Aero registry entry should carry BMS layout");
-        assert_eq!(bms.series_cells, 30);
-        assert_eq!(bms.parallel_packs, 2);
+        assert_eq!(bms.series_cells, crate::PackSeriesCells::new(30));
+        assert_eq!(bms.parallel_packs, crate::BmsParallelPacks::new(2));
         assert_eq!(bms.selectors[1].kind, crate::BatteryPageKind::CellVoltage);
     }
 
@@ -5704,10 +5743,10 @@ mod tests {
             },
         ];
         let layout = crate::BmsLayoutSpec {
-            series_cells: 30,
-            parallel_packs: 2,
-            cell_values_per_page: 15,
-            temperature_values_per_page: 6,
+            series_cells: crate::PackSeriesCells::new(30),
+            parallel_packs: crate::BmsParallelPacks::new(2),
+            cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
+            temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
             selectors: &SELECTORS,
             verification: VerificationStatus::HardwareVerified,
         };
@@ -5861,10 +5900,10 @@ mod tests {
         }];
         let mut entry = sample_registry_entry(manufacturer, model);
         entry.bms = Some(crate::BmsLayoutSpec {
-            series_cells,
-            parallel_packs,
-            cell_values_per_page: 15,
-            temperature_values_per_page: 6,
+            series_cells: crate::PackSeriesCells::new(series_cells),
+            parallel_packs: crate::BmsParallelPacks::new(parallel_packs),
+            cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
+            temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
             selectors: &SELECTORS,
             verification: VerificationStatus::Inferred,
         });

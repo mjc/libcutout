@@ -1,8 +1,9 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
-    BmsLayoutSpec, BmsPageSelectorSpec, FirmwareInfo, Measured, MonotonicMillis, ProtocolSelector,
-    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality,
-    ValueSource, VerificationStatus,
+    BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsParallelPacks,
+    BmsTemperatureValuesPerPage, FirmwareInfo, Measured, MonotonicMillis, PackSeriesCells,
+    ProtocolSelector, RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+    TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
 };
 use thiserror::Error;
 
@@ -52,10 +53,12 @@ const fn bms_page_selector(selector: u8) -> BmsPageSelectorSpec {
 
 const fn veteran_bms_layout(series_cells: u8, parallel_packs: u8) -> BmsLayoutSpec {
     BmsLayoutSpec {
-        series_cells,
-        parallel_packs,
-        cell_values_per_page: VETERAN_BMS_CELL_VALUES_PER_PAGE,
-        temperature_values_per_page: VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE_U8,
+        series_cells: PackSeriesCells::new(series_cells),
+        parallel_packs: BmsParallelPacks::new(parallel_packs),
+        cell_values_per_page: BmsCellValuesPerPage::new(VETERAN_BMS_CELL_VALUES_PER_PAGE),
+        temperature_values_per_page: BmsTemperatureValuesPerPage::new(
+            VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE_U8,
+        ),
         selectors: &VETERAN_BMS_SELECTORS,
         verification: VETERAN_BMS_LAYOUT_VERIFICATION,
     }
@@ -876,10 +879,13 @@ mod tests {
             let layout = profile.bms_layout.expect("smart-BMS layout is known");
 
             assert_eq!(profile.name, name);
-            assert_eq!(layout.series_cells, series_cells);
-            assert_eq!(layout.parallel_packs, parallel_packs);
-            assert_eq!(layout.cell_values_per_page, 15);
-            assert_eq!(layout.temperature_values_per_page, 6);
+            assert_eq!(layout.series_cells, PackSeriesCells::new(series_cells));
+            assert_eq!(layout.parallel_packs, BmsParallelPacks::new(parallel_packs));
+            assert_eq!(layout.cell_values_per_page, BmsCellValuesPerPage::new(15));
+            assert_eq!(
+                layout.temperature_values_per_page,
+                BmsTemperatureValuesPerPage::new(6)
+            );
             assert_eq!(layout.verification, VerificationStatus::Inferred);
         }
     }
