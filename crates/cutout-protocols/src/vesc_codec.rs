@@ -1,4 +1,5 @@
 use arrayvec::{ArrayString, ArrayVec};
+use cutout_core::VescControllerId;
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -104,7 +105,7 @@ pub enum VescReadOnlyRequest {
     /// Forward a nested read-only request to a CAN controller.
     ForwardCan {
         /// Target VESC controller id on CAN.
-        controller_id: u8,
+        controller_id: VescControllerId,
 
         /// Nested read-only request.
         request: VescCanReadOnlyRequest,
@@ -411,7 +412,10 @@ fn encode_request_frame(
             request,
         } => {
             let nested = command_for_can_request(request);
-            vesc::encode(vesc::Command::ForwardCan(controller_id, &nested), frame)
+            vesc::encode(
+                vesc::Command::ForwardCan(controller_id.get(), &nested),
+                frame,
+            )
         }
     }
     .map_err(|_err| VescCodecError::EncodeFailed)
@@ -619,7 +623,7 @@ mod tests {
 
         VescReadOnlyCodec::encode_request(
             VescReadOnlyRequest::ForwardCan {
-                controller_id: 7,
+                controller_id: VescControllerId::new(7),
                 request: VescCanReadOnlyRequest::Values,
             },
             &mut output,

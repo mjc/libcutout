@@ -8,6 +8,8 @@ use thiserror::Error;
 use crate::GattRoles;
 #[cfg(feature = "serde")]
 use crate::VerificationStatus;
+#[cfg(any(feature = "serde", test))]
+use crate::VescControllerId;
 use crate::{
     CaptureRecord, GattChannel, GattFingerprint, LinkInfo, MonotonicMillis, NotificationChunkLen,
     ProtocolFamily, RequestTarget, VerifiedValue, WriteMode,
@@ -1397,7 +1399,7 @@ struct PevcapRecordJson {
     link_max_write_len: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PevcapRequestTargetJson>,
-    bytes: Vec<u8>,
+    bytes: Bytes,
 }
 
 #[cfg(feature = "serde")]
@@ -1411,7 +1413,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             write_mode: record.write_mode.map(WriteModeJson::from),
             link_max_write_len: record.link_max_write_len,
             target: record.target.map(PevcapRequestTargetJson::from),
-            bytes: record.bytes.to_vec(),
+            bytes: record.bytes.clone(),
         }
     }
 }
@@ -1445,9 +1447,9 @@ impl From<RequestTarget> for PevcapRequestTargetJson {
     fn from(target: RequestTarget) -> Self {
         match target {
             RequestTarget::Local => Self::Local,
-            RequestTarget::VescCanController { controller_id } => {
-                Self::VescCanController { controller_id }
-            }
+            RequestTarget::VescCanController { controller_id } => Self::VescCanController {
+                controller_id: controller_id.get(),
+            },
         }
     }
 }
@@ -1457,9 +1459,9 @@ impl PevcapRequestTargetJson {
     const fn into_target(self) -> RequestTarget {
         match self {
             Self::Local => RequestTarget::Local,
-            Self::VescCanController { controller_id } => {
-                RequestTarget::VescCanController { controller_id }
-            }
+            Self::VescCanController { controller_id } => RequestTarget::VescCanController {
+                controller_id: VescControllerId::new(controller_id),
+            },
         }
     }
 }
@@ -1773,13 +1775,13 @@ mod tests {
             7,
             characteristic,
             WriteMode::WithoutResponse,
-            vec![0x01, 0x23, 0xab],
+            Bytes::from_static(&[0x01, 0x23, 0xab]),
         );
         let notification = PevcapRecord::inbound_notification(
             9,
             characteristic,
             service,
-            vec![0xde, 0xad, 0xbe, 0xef],
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
         );
 
         assert_eq!(write.direction, PevcapDirection::Outbound);
@@ -1797,12 +1799,14 @@ mod tests {
     #[test]
     fn pevcap_records_preserve_optional_request_target() {
         let characteristic = GattChannel::from_bytes([0x33; 16]);
-        let target = RequestTarget::VescCanController { controller_id: 7 };
+        let target = RequestTarget::VescCanController {
+            controller_id: VescControllerId::new(7),
+        };
         let write = PevcapRecord::targeted_outbound_write(
             7,
             characteristic,
             WriteMode::WithoutResponse,
-            vec![0x01, 0x23],
+            Bytes::from_static(&[0x01, 0x23]),
             target,
         );
 
@@ -1829,7 +1833,7 @@ mod tests {
             1,
             GattChannel::from_bytes([0x55; 16]),
             WriteMode::WithResponse,
-            vec![0x10],
+            Bytes::from_static(&[0x10]),
         )];
 
         let capture = PevcapCapture::new(header.clone(), records.clone());
@@ -1862,15 +1866,20 @@ mod tests {
                     7,
                     characteristic,
                     WriteMode::WithoutResponse,
-                    b"N".to_vec(),
+                    Bytes::from_static(b"N"),
                 ),
                 PevcapRecord::inbound_notification(
                     9,
                     characteristic,
                     service,
-                    b"NAME=Falcon".to_vec(),
+                    Bytes::from_static(b"NAME=Falcon"),
                 ),
-                PevcapRecord::inbound_notification(11, characteristic, service, b"55aa".to_vec()),
+                PevcapRecord::inbound_notification(
+                    11,
+                    characteristic,
+                    service,
+                    Bytes::from_static(b"55aa"),
+                ),
             ],
         );
 
@@ -1911,11 +1920,16 @@ mod tests {
                     9,
                     characteristic,
                     service,
-                    b"NAME=Falcon".to_vec(),
+                    Bytes::from_static(b"NAME=Falcon"),
                 ),
                 PevcapRecord::link_down(12),
                 PevcapRecord::link_up(20, Some(23)),
-                PevcapRecord::inbound_notification(21, characteristic, service, b"55aa".to_vec()),
+                PevcapRecord::inbound_notification(
+                    21,
+                    characteristic,
+                    service,
+                    Bytes::from_static(b"55aa"),
+                ),
             ],
         );
 
@@ -1948,7 +1962,7 @@ mod tests {
                 7,
                 characteristic,
                 WriteMode::WithoutResponse,
-                b"N".to_vec(),
+                Bytes::from_static(b"N"),
             )],
         );
 
@@ -1982,7 +1996,7 @@ mod tests {
                 9,
                 characteristic,
                 characteristic,
-                b"abc".to_vec(),
+                Bytes::from_static(b"abc"),
             )],
         );
 
@@ -2021,7 +2035,7 @@ mod tests {
                 9,
                 characteristic,
                 characteristic,
-                b"abcd".to_vec(),
+                Bytes::from_static(b"abcd"),
             )],
         );
 
@@ -2103,7 +2117,9 @@ mod tests {
     fn pevcap_jsonl_round_trips_header_and_ordered_records() {
         let service = GattChannel::from_bytes([0xFE; 16]);
         let characteristic = GattChannel::from_bytes([0xE1; 16]);
-        let can_target = RequestTarget::VescCanController { controller_id: 7 };
+        let can_target = RequestTarget::VescCanController {
+            controller_id: VescControllerId::new(7),
+        };
         let header = PevcapHeader::new(
             1_725_000_123_456,
             "darwin",
@@ -2137,14 +2153,14 @@ mod tests {
                     7,
                     characteristic,
                     WriteMode::WithoutResponse,
-                    b"N".to_vec(),
+                    Bytes::from_static(b"N"),
                     can_target,
                 ),
                 PevcapRecord::inbound_notification(
                     9,
                     characteristic,
                     service,
-                    b"NAME=Falcon".to_vec(),
+                    Bytes::from_static(b"NAME=Falcon"),
                 ),
             ],
         );
@@ -2203,7 +2219,9 @@ mod tests {
     #[test]
     fn pevcap_binary_round_trips_header_and_ordered_records() {
         let mut capture = sample_pevcap_capture();
-        let target = RequestTarget::VescCanController { controller_id: 9 };
+        let target = RequestTarget::VescCanController {
+            controller_id: VescControllerId::new(9),
+        };
         capture.records[0].target = Some(target);
 
         let binary = capture.to_binary().expect("capture serializes");
@@ -2416,13 +2434,13 @@ mod tests {
                     7,
                     characteristic,
                     WriteMode::WithoutResponse,
-                    b"N".to_vec(),
+                    Bytes::from_static(b"N"),
                 ),
                 PevcapRecord::inbound_notification(
                     9,
                     characteristic,
                     service,
-                    b"NAME=Falcon".to_vec(),
+                    Bytes::from_static(b"NAME=Falcon"),
                 ),
             ],
         )

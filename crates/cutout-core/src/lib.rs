@@ -2092,6 +2092,7 @@ enum PayloadBodyLenUnit {}
 enum SemanticEventCountUnit {}
 enum ProtocolSelectorUnit {}
 enum ProtocolTagUnit {}
+enum VescControllerIdUnit {}
 
 macro_rules! typed_protocol_value {
     ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
@@ -2195,6 +2196,13 @@ typed_protocol_value!(
     ProtocolTagUnit,
     u16,
     "Protocol tag or opcode carried by a parsed family payload."
+);
+
+typed_protocol_value!(
+    VescControllerId,
+    VescControllerIdUnit,
+    u8,
+    "VESC CAN controller identifier used for forwarded read-only requests."
 );
 
 /// Bounded notification evidence shared by protocol ingest outcomes.
@@ -2409,7 +2417,7 @@ pub enum RequestTarget {
     /// Request forwarded to a VESC CAN controller id.
     VescCanController {
         /// VESC CAN controller id.
-        controller_id: u8,
+        controller_id: VescControllerId,
     },
 }
 
@@ -6085,7 +6093,9 @@ mod tests {
         let local = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
         let can = crate::RequestKey::for_target(
             crate::CommandKind::RequestTelemetry,
-            crate::RequestTarget::VescCanController { controller_id: 42 },
+            crate::RequestTarget::VescCanController {
+                controller_id: crate::VescControllerId::new(42),
+            },
         );
 
         assert_eq!(local.command, crate::CommandKind::RequestTelemetry);
@@ -6093,7 +6103,9 @@ mod tests {
         assert_eq!(can.command, crate::CommandKind::RequestTelemetry);
         assert_eq!(
             can.target,
-            crate::RequestTarget::VescCanController { controller_id: 42 }
+            crate::RequestTarget::VescCanController {
+                controller_id: crate::VescControllerId::new(42),
+            }
         );
         assert_ne!(local, can);
     }
@@ -6553,7 +6565,9 @@ mod tests {
         let local = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
         let can = crate::RequestKey::for_target(
             crate::CommandKind::RequestTelemetry,
-            crate::RequestTarget::VescCanController { controller_id: 7 },
+            crate::RequestTarget::VescCanController {
+                controller_id: crate::VescControllerId::new(7),
+            },
         );
         let mut diagnostics = crate::ParserDiagnostics::default();
 
@@ -7473,7 +7487,9 @@ mod tests {
 
     #[test]
     fn capture_record_preserves_targeted_command_metadata() {
-        let target = crate::RequestTarget::VescCanController { controller_id: 7 };
+        let target = crate::RequestTarget::VescCanController {
+            controller_id: crate::VescControllerId::new(7),
+        };
         let record =
             crate::CaptureRecord::targeted_command(DeviceCommand::RequestTelemetry, target);
 
@@ -7522,7 +7538,9 @@ mod tests {
 
     #[test]
     fn replay_capture_drives_targeted_command_as_underlying_command() {
-        let target = crate::RequestTarget::VescCanController { controller_id: 7 };
+        let target = crate::RequestTarget::VescCanController {
+            controller_id: crate::VescControllerId::new(7),
+        };
         let records = [crate::CaptureRecord::targeted_command(
             DeviceCommand::RequestTelemetry,
             target,
@@ -7539,7 +7557,9 @@ mod tests {
 
     #[test]
     fn targeted_command_survives_notification_chunking_helpers() {
-        let target = crate::RequestTarget::VescCanController { controller_id: 7 };
+        let target = crate::RequestTarget::VescCanController {
+            controller_id: crate::VescControllerId::new(7),
+        };
         let record =
             crate::CaptureRecord::targeted_command(DeviceCommand::RequestTelemetry, target);
 
