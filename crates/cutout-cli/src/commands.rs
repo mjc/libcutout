@@ -1973,17 +1973,17 @@ fn render_identity(report: &SessionBridgeReport) -> Option<String> {
     ))
 }
 
-fn render_telemetry_snapshot(snapshot: &TelemetrySnapshot) -> Option<String> {
+fn render_telemetry_snapshot(snapshot: &TelemetrySnapshot) -> Option<TelemetrySnapshotLine> {
     TelemetrySnapshotLine(*snapshot)
         .has_fields()
-        .then(|| TelemetrySnapshotLine(*snapshot).to_string())
+        .then_some(TelemetrySnapshotLine(*snapshot))
 }
 
-fn render_firmware_info(firmware: Option<FirmwareInfo>) -> Option<String> {
+fn render_firmware_info(firmware: Option<FirmwareInfo>) -> Option<FirmwareLine> {
     let firmware = firmware?;
     FirmwareLine(firmware)
         .has_fields()
-        .then(|| FirmwareLine(firmware).to_string())
+        .then_some(FirmwareLine(firmware))
 }
 
 fn render_settings_readbacks(
@@ -3529,19 +3529,16 @@ mod tests {
         });
 
         assert_eq!(
-            render_telemetry_snapshot(&snapshot).as_deref(),
+            render_telemetry_snapshot(&snapshot).map(|telemetry| telemetry.to_string()),
             Some(
-                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=47"
+                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=47".to_owned()
             )
         );
     }
 
     #[test]
     fn telemetry_snapshot_renderer_omits_empty_snapshot() {
-        assert_eq!(
-            render_telemetry_snapshot(&TelemetrySnapshot::default()),
-            None
-        );
+        assert!(render_telemetry_snapshot(&TelemetrySnapshot::default()).is_none());
     }
 
     #[test]
@@ -3555,8 +3552,11 @@ mod tests {
         };
 
         assert_eq!(
-            render_firmware_info(Some(firmware)).as_deref(),
-            Some("firmware firmware_major=43 firmware_minor=2 firmware_patch=54 raw_001c=43254")
+            render_firmware_info(Some(firmware)).map(|firmware| firmware.to_string()),
+            Some(
+                "firmware firmware_major=43 firmware_minor=2 firmware_patch=54 raw_001c=43254"
+                    .to_owned()
+            )
         );
     }
 
