@@ -304,6 +304,34 @@ pub(crate) type ReadOnlyDiagnosticResponseCount =
     ReadOnlySummaryCount<ReadOnlyDiagnosticResponseCountTag>;
 pub(crate) type RawTelemetryResponseCount = ReadOnlySummaryCount<RawTelemetryResponseCountTag>;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DashboardBatteryPercent(u64);
+
+impl DashboardBatteryPercent {
+    const fn new(value: u64) -> Self {
+        Self(if value > 100 { 100 } else { value })
+    }
+
+    fn from_u8(value: u8) -> Self {
+        Self::new(u64::from(value))
+    }
+
+    const fn decrement_for_demo(self) -> Self {
+        let value = self.0.saturating_sub(1);
+        if value < 10 { Self(10) } else { Self(value) }
+    }
+
+    fn ratio(self) -> f64 {
+        f64::from(u32::try_from(self.0).unwrap_or(100)) / 100.0
+    }
+}
+
+impl fmt::Display for DashboardBatteryPercent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SignalPercent(u64);
 
@@ -445,7 +473,7 @@ pub(crate) enum DashboardUpdate {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TelemetryWindow {
-    pub(crate) battery_pct: Option<u64>,
+    pub(crate) battery_pct: Option<DashboardBatteryPercent>,
     pub(crate) battery_source: BatterySource,
     pub(crate) signal_pct: SignalPercent,
     pub(crate) latest_speed_mph: Option<u64>,
@@ -599,7 +627,7 @@ impl DashboardState {
             latest_notification_len: None,
         };
         self.telemetry.load_window(
-            74,
+            DashboardBatteryPercent::new(74),
             SignalPercent::new(81),
             DEMO_SPEED_MPH,
             DEMO_VOLTAGE_V,
@@ -784,8 +812,8 @@ impl DashboardState {
     }
 
     pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
-        let percent = percent.min(100);
-        self.telemetry.battery_pct = Some(u64::from(percent));
+        let percent = DashboardBatteryPercent::from_u8(percent);
+        self.telemetry.battery_pct = Some(percent);
         self.telemetry.battery_source = BatterySource::StandardBle;
         self.push_log("info", &format!("battery level {percent}%"));
     }
@@ -908,7 +936,7 @@ impl TelemetryWindow {
 
     fn load_window(
         &mut self,
-        battery_pct: u64,
+        battery_pct: DashboardBatteryPercent,
         signal_pct: SignalPercent,
         speed_mph: &'static [u64],
         voltage_v: &'static [u64],
@@ -940,7 +968,7 @@ impl TelemetryWindow {
         let next_temperature = 30 + ((self.temperature_c.last().copied().unwrap_or(32) + 1) % 9);
 
         if let Some(battery_pct) = self.battery_pct.as_mut() {
-            *battery_pct = battery_pct.saturating_sub(1).max(10);
+            *battery_pct = battery_pct.decrement_for_demo();
         }
         self.signal_pct = self.signal_pct.increment();
         push_sample(&mut self.speed_mph, next_speed);
@@ -973,10 +1001,10 @@ impl TelemetryWindow {
 
     fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
         if let Some(percent) = snapshot.battery_percent_reported {
-            self.battery_pct = Some(u64::from(percent.value));
+            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value));
             self.battery_source = BatterySource::TelemetryReported;
         } else if let Some(percent) = snapshot.battery_percent_estimated {
-            self.battery_pct = Some(u64::from(percent.value));
+            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value));
             self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed_mm_s {
@@ -2131,7 +2159,7 @@ fn render_battery_cluster(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
 fn render_battery_gauge(
     frame: &mut Frame<'_>,
     area: Rect,
-    battery_pct: Option<u64>,
+    battery_pct: Option<DashboardBatteryPercent>,
     source: BatterySource,
     latest_voltage_v: Option<u64>,
 ) {
@@ -2139,7 +2167,7 @@ fn render_battery_gauge(
         let battery = Gauge::default()
             .block(Block::bordered().title(source.label()))
             .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
-            .ratio(percent_ratio(battery_pct));
+            .ratio(battery_pct.ratio());
         frame.render_widget(battery, area);
     } else {
         let message = latest_voltage_v.map_or_else(
@@ -2425,7 +2453,7 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
                     OptionalU64Display::new(state.telemetry.latest_voltage_v, " V").to_string(),
                 ),
                 Span::styled(" battery ", Style::new().fg(Color::Gray)),
-                Span::raw(OptionalU64Display::new(state.telemetry.battery_pct, "%").to_string()),
+                Span::raw(OptionalBatteryPercentDisplay(state.telemetry.battery_pct).to_string()),
             ]),
             Line::from(vec![
                 Span::styled("current ", Style::new().fg(Color::Gray)),
@@ -2469,6 +2497,17 @@ impl fmt::Display for OptionalU64Display<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.value {
             Some(value) => write!(f, "{}{}", value, self.suffix),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+struct OptionalBatteryPercentDisplay(Option<DashboardBatteryPercent>);
+
+impl fmt::Display for OptionalBatteryPercentDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(percent) => write!(f, "{percent}%"),
             None => f.write_str("unknown"),
         }
     }
@@ -2606,10 +2645,6 @@ fn panel_block(title: &str) -> Block<'_> {
     Block::bordered().title(title)
 }
 
-fn percent_ratio(value: u64) -> f64 {
-    f64::from(u32::try_from(value).unwrap_or(u32::MAX)) / 100.0
-}
-
 fn to_f64(value: u64) -> f64 {
     f64::from(u32::try_from(value).unwrap_or(u32::MAX))
 }
@@ -2686,6 +2721,12 @@ mod tests {
         let delta = VeteranTelemetry::decode(&frame)
             .expect("fixture telemetry decodes")
             .to_delta(42);
+        let mut snapshot = TelemetrySnapshot::default();
+        snapshot.apply_delta(delta);
+        snapshot
+    }
+
+    fn snapshot_from_delta(delta: TelemetryDelta) -> TelemetrySnapshot {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(delta);
         snapshot
@@ -2994,6 +3035,11 @@ mod tests {
         assert_eq!(OptionalU64Display::new(Some(47), "%").to_string(), "47%");
         assert_eq!(OptionalU64Display::new(None, " V").to_string(), "unknown");
         assert_eq!(
+            OptionalBatteryPercentDisplay(Some(DashboardBatteryPercent::new(47))).to_string(),
+            "47%"
+        );
+        assert_eq!(OptionalBatteryPercentDisplay(None).to_string(), "unknown");
+        assert_eq!(
             OptionalI64Display::new(Some(-18), " A").to_string(),
             "-18 A"
         );
@@ -3007,7 +3053,7 @@ mod tests {
         state.device.model = "Aero".to_owned();
         state.telemetry.latest_voltage_v = Some(120);
         state.telemetry.voltage_v = vec![109, 120, 126];
-        state.telemetry.battery_pct = Some(85);
+        state.telemetry.battery_pct = Some(DashboardBatteryPercent::new(85));
 
         assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
         assert_eq!(voltage_sparkline_max_v(&state), 126);
@@ -3153,7 +3199,10 @@ mod tests {
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.telemetry.battery_pct, Some(77));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(77))
+        );
         assert_eq!(
             state.telemetry.battery_source,
             BatterySource::TelemetryReported
@@ -3832,11 +3881,7 @@ mod tests {
             notification_bytes: NotificationByteTotal::new(400),
             latest_notification_len: Some(NotificationByteLen::new(100)),
             telemetry: telemetry_events(1),
-            telemetry_snapshot: {
-                let mut snapshot = TelemetrySnapshot::default();
-                snapshot.apply_delta(telemetry);
-                snapshot
-            },
+            telemetry_snapshot: snapshot_from_delta(telemetry),
             read_only_responses: read_only_responses(5),
             read_only_response_events: vec![
                 ReadOnlyResponse::Firmware(FirmwareInfo {
@@ -3899,7 +3944,10 @@ mod tests {
         assert_eq!(state.counters.notifications, notifications(4));
         assert_eq!(state.telemetry.latest_speed_mph, Some(10));
         assert_eq!(state.telemetry.latest_voltage_v, Some(109));
-        assert_eq!(state.telemetry.battery_pct, Some(47));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(47))
+        );
         assert_eq!(firmware_summary_text(&state), Some("43.2.54".to_owned()));
         assert_eq!(state.read_only.settings.len(), 1);
         assert_eq!(state.read_only.bms_pages.len(), 2);
@@ -4028,7 +4076,10 @@ mod tests {
 
         state.apply_battery_percent(88);
 
-        assert_eq!(state.telemetry.battery_pct, Some(88));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(88))
+        );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
             state
@@ -4039,7 +4090,10 @@ mod tests {
 
         state.apply_battery_percent(150);
 
-        assert_eq!(state.telemetry.battery_pct, Some(100));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(100))
+        );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
             state
@@ -4059,7 +4113,10 @@ mod tests {
             message: "live dashboard update received".to_owned(),
         });
 
-        assert_eq!(state.telemetry.battery_pct, Some(45));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(45))
+        );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(state.logs.iter().any(|entry| {
             entry.level == "info" && entry.message == "live dashboard update received"
@@ -4144,7 +4201,10 @@ mod tests {
 
         state.apply_session_report(&report);
 
-        assert_eq!(state.telemetry.battery_pct, Some(47));
+        assert_eq!(
+            state.telemetry.battery_pct,
+            Some(DashboardBatteryPercent::new(47))
+        );
         assert_eq!(
             state.telemetry.battery_source,
             BatterySource::TelemetryEstimated
