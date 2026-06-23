@@ -514,13 +514,11 @@ impl fmt::Display for OptionalUuid {
 }
 
 fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
-    NotificationCount::new(
-        capture
-            .records
-            .iter()
-            .filter(|record| record.direction == PevcapDirection::Inbound)
-            .count(),
-    )
+    capture
+        .records
+        .iter()
+        .filter(|record| record.direction == PevcapDirection::Inbound)
+        .fold(NotificationCount::default(), |count, _| count.increment())
 }
 
 fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationByteTotal {

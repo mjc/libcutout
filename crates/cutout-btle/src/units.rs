@@ -202,7 +202,9 @@ impl<Tag> SessionCount<Tag> {
         !self.has_no_events()
     }
 
-    pub(crate) const fn increment(self) -> Self {
+    /// Adds one observed event, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn increment(self) -> Self {
         Self::new(self.value.saturating_add(1))
     }
 
