@@ -1329,8 +1329,8 @@ impl fmt::Display for NotificationIngestLog {
                 "t={}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                optional_u8(payload.selector.map(cutout_core::ProtocolSelector::get)),
-                optional_u16(payload.tag.map(cutout_core::ProtocolTag::get)),
+                OptionalU8(payload.selector.map(cutout_core::ProtocolSelector::get)),
+                OptionalU16(payload.tag.map(cutout_core::ProtocolTag::get)),
                 payload.body_len.get(),
                 verification_name(payload.verification),
                 notification.len.get()
@@ -1340,8 +1340,8 @@ impl fmt::Display for NotificationIngestLog {
                 "t={}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                optional_u8(gap.selector.map(cutout_core::ProtocolSelector::get)),
-                optional_u16(gap.tag.map(cutout_core::ProtocolTag::get)),
+                OptionalU8(gap.selector.map(cutout_core::ProtocolSelector::get)),
+                OptionalU16(gap.tag.map(cutout_core::ProtocolTag::get)),
                 gap.body_len.get(),
                 notification.len.get()
             ),
@@ -1356,6 +1356,28 @@ impl fmt::Display for NotificationIngestLog {
     }
 }
 
+struct OptionalU8(Option<u8>);
+
+impl fmt::Display for OptionalU8 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "{value}"),
+            None => write!(f, "none"),
+        }
+    }
+}
+
+struct OptionalU16(Option<u16>);
+
+impl fmt::Display for OptionalU16 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "{value}"),
+            None => write!(f, "none"),
+        }
+    }
+}
+
 fn family_name(family: Option<ProtocolFamily>) -> &'static str {
     match family {
         Some(ProtocolFamily::VeteranLeaperkimNosfet) => "VeteranLeaperkimNosfet",
@@ -1363,14 +1385,6 @@ fn family_name(family: Option<ProtocolFamily>) -> &'static str {
         Some(ProtocolFamily::Vesc) => "Vesc",
         None => "unknown",
     }
-}
-
-fn optional_u8(value: Option<u8>) -> String {
-    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
-}
-
-fn optional_u16(value: Option<u16>) -> String {
-    value.map_or_else(|| "none".to_owned(), |value| value.to_string())
 }
 
 fn format_read_only_response(response: ReadOnlyResponse) -> String {
@@ -3051,6 +3065,24 @@ mod tests {
         assert_display_preserves_capacity(
             ingest,
             "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75",
+        );
+        let parser_gap = NotificationIngestLog {
+            monotonic_ms: 9,
+            outcome: NotificationIngestOutcome::parser_gap(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                channel,
+                NotificationByteLen::new(75),
+                9,
+                ParserGapEvidence {
+                    selector: None,
+                    tag: Some(cutout_core::ProtocolTag::new(0x1234)),
+                    body_len: PayloadBodyLen::new(12),
+                },
+            ),
+        };
+        assert_display_preserves_capacity(
+            parser_gap,
+            "t=9ms protocol parser gap family=VeteranLeaperkimNosfet selector=none tag=4660 body_len=12 len=75",
         );
 
         assert_display_preserves_capacity(
