@@ -48,7 +48,7 @@ pub use observation::{
     AdvertisedServices, ManufacturerDataSummaries, ManufacturerDataSummary, PeripheralObservation,
 };
 /// Transport boundary implemented by BTLE peripherals and tests.
-pub use peripheral::SessionPeripheral;
+pub use peripheral::{BtleNotification, BtleWriteChunk, SessionPeripheral};
 /// Multi-link reconnect session orchestration.
 pub use reconnect::{
     BtleplugReconnectHost, ReconnectAttemptReport, ReconnectingSessionCapture,

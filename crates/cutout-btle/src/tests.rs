@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant as StdInstant},
 };
 
-use btleplug::api::{CharPropFlags, Characteristic, ValueNotification};
+use btleplug::api::{CharPropFlags, Characteristic};
 use bytes::Bytes;
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
@@ -23,9 +23,9 @@ use uuid::Uuid;
 
 use super::crate_name;
 
-type WriteRecord = (Uuid, Vec<u8>, WriteMode);
+type WriteRecord = (Uuid, Bytes, WriteMode);
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
-type NotificationLog = Arc<Mutex<Vec<ValueNotification>>>;
+type NotificationLog = Arc<Mutex<Vec<crate::BtleNotification>>>;
 
 static OVERSIZED_BTLE_VALUE: [u8; 513] = [0; 513];
 
@@ -495,16 +495,12 @@ async fn raw_notification_capture_subscribes_and_filters_selected_characteristic
     let selected = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
     let other = Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb);
     let peripheral = RecordingPeripheral::with_notifications(vec![
-        ValueNotification {
-            uuid: other,
-            service_uuid: service,
-            value: vec![0x99],
-        },
-        ValueNotification {
-            uuid: selected,
-            service_uuid: service,
-            value: vec![0x01, 0x02, 0x03],
-        },
+        crate::BtleNotification::from_raw_bytes(other, service, Bytes::from_static(b"\x99")),
+        crate::BtleNotification::from_raw_bytes(
+            selected,
+            service,
+            Bytes::from_static(b"\x01\x02\x03"),
+        ),
     ]);
     let characteristic = crate::CharacteristicSummary {
         uuid: selected,
@@ -950,16 +946,16 @@ async fn drive_session_reports_hints_only_identity_from_name_and_shared_gatt() {
 #[tokio::test]
 async fn drive_session_resolves_falcon_after_family_and_name_banner_notifications() {
     let peripheral = RecordingPeripheral::with_notifications(vec![
-        ValueNotification {
-            uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-            service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-            value: vec![0x55, 0xaa, 0, 0],
-        },
-        ValueNotification {
-            uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-            service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-            value: b"NAME=Falcon".to_vec(),
-        },
+        crate::BtleNotification::from_raw_bytes(
+            Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+            Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            Bytes::from_static(b"\x55\xaa\0\0"),
+        ),
+        crate::BtleNotification::from_raw_bytes(
+            Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+            Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            Bytes::from_static(b"NAME=Falcon"),
+        ),
     ]);
     let mut session = SubscribeOnlySession;
     let summary = begode_falcon_summary("Begode_Falcon");
@@ -1050,7 +1046,7 @@ async fn drive_session_subscribes_and_writes_matching_transport_channels() {
         peripheral.writes.lock().expect("write log").as_slice(),
         &[(
             Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-            b"bridge:write".to_vec(),
+            Bytes::from_static(b"bridge:write"),
             WriteMode::WithResponse,
         )]
     );
@@ -1059,11 +1055,12 @@ async fn drive_session_subscribes_and_writes_matching_transport_channels() {
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn drive_session_relays_notifications_back_into_session() {
-    let peripheral = RecordingPeripheral::with_notification(ValueNotification {
-        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
-        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-        value: vec![0x13, 0x37],
-    });
+    let peripheral =
+        RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+            Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            Bytes::from_static(b"\x13\x37"),
+        ));
     let mut session = BridgeSession::default();
     let summary = shared_write_notify_summary("NOSFET Aero");
 
@@ -1382,11 +1379,12 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
 
 #[tokio::test]
 async fn capture_session_records_subscribe_write_and_notification_bytes() {
-    let peripheral = RecordingPeripheral::with_notification(ValueNotification {
-        uuid: Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
-        service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-        value: vec![0x13, 0x37],
-    });
+    let peripheral =
+        RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+            Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            Bytes::from_static(b"\x13\x37"),
+        ));
     let mut session = BridgeSession::default();
     let summary = shared_write_notify_summary("NOSFET Aero");
 
@@ -1517,17 +1515,17 @@ async fn capture_session_chunks_writes_by_negotiated_write_limit() {
         &[
             (
                 Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                b"0123".to_vec(),
+                Bytes::from_static(b"0123"),
                 WriteMode::WithoutResponse,
             ),
             (
                 Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                b"4567".to_vec(),
+                Bytes::from_static(b"4567"),
                 WriteMode::WithoutResponse,
             ),
             (
                 Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                b"89".to_vec(),
+                Bytes::from_static(b"89"),
                 WriteMode::WithoutResponse,
             ),
         ]
@@ -1748,12 +1746,12 @@ async fn capture_reconnecting_session_cancels_commands_after_reconnect() {
         &[
             (
                 Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                b"N".to_vec(),
+                Bytes::from_static(b"N"),
                 WriteMode::WithoutResponse,
             ),
             (
                 Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                b"V".to_vec(),
+                Bytes::from_static(b"V"),
                 WriteMode::WithoutResponse,
             ),
         ]
@@ -2059,11 +2057,11 @@ impl RecordingPeripheral {
         }
     }
 
-    fn with_notification(notification: ValueNotification) -> Self {
+    fn with_notification(notification: crate::BtleNotification) -> Self {
         Self::with_notifications(vec![notification])
     }
 
-    fn with_notifications(notifications: Vec<ValueNotification>) -> Self {
+    fn with_notifications(notifications: Vec<crate::BtleNotification>) -> Self {
         Self {
             notifications: Arc::new(Mutex::new(notifications)),
             ..Self::default()
@@ -2145,19 +2143,20 @@ impl crate::SessionPeripheral for RecordingPeripheral {
     async fn write(
         &self,
         characteristic: &Characteristic,
-        bytes: &[u8],
+        chunk: crate::BtleWriteChunk<'_>,
         mode: WriteMode,
     ) -> Result<(), crate::BtleError> {
-        self.writes
-            .lock()
-            .expect("write log")
-            .push((characteristic.uuid, bytes.to_vec(), mode));
+        self.writes.lock().expect("write log").push((
+            characteristic.uuid,
+            Bytes::copy_from_slice(chunk.as_slice()),
+            mode,
+        ));
         Ok(())
     }
 
     async fn notifications(
         &self,
-    ) -> Result<Pin<Box<dyn stream::Stream<Item = ValueNotification> + Send>>, crate::BtleError>
+    ) -> Result<Pin<Box<dyn stream::Stream<Item = crate::BtleNotification> + Send>>, crate::BtleError>
     {
         let notifications = self.notifications.lock().expect("notification log").clone();
         Ok(Box::pin(stream::iter(notifications)))

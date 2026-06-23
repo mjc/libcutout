@@ -91,7 +91,12 @@ impl PeripheralObservation {
             name: properties.local_name,
             rssi: properties.rssi,
             advertised_services: properties.services.into_iter().collect(),
-            manufacturer_data: manufacturer_data_summary(properties.manufacturer_data),
+            manufacturer_data: sorted_manufacturer_data_summaries(
+                properties
+                    .manufacturer_data
+                    .into_iter()
+                    .map(ManufacturerDataSummary::from_backend_payload),
+            ),
         }
     }
 
@@ -103,6 +108,18 @@ impl PeripheralObservation {
             rssi: None,
             advertised_services: AdvertisedServices::new(),
             manufacturer_data: ManufacturerDataSummaries::new(),
+        }
+    }
+}
+
+impl ManufacturerDataSummary {
+    fn from_backend_payload<B>((company_id, bytes): (u16, B)) -> Self
+    where
+        B: AsRef<[u8]>,
+    {
+        Self {
+            company_id,
+            len: ManufacturerDataLen::new(bytes.as_ref().len()),
         }
     }
 }
@@ -135,15 +152,11 @@ fn write_observation_identity(
     }
 }
 
-fn manufacturer_data_summary(
-    manufacturer_data: std::collections::HashMap<u16, Vec<u8>>,
+fn sorted_manufacturer_data_summaries(
+    manufacturer_data: impl IntoIterator<Item = ManufacturerDataSummary>,
 ) -> ManufacturerDataSummaries {
     let mut summary = manufacturer_data
         .into_iter()
-        .map(|(company_id, bytes)| ManufacturerDataSummary {
-            company_id,
-            len: ManufacturerDataLen::new(bytes.len()),
-        })
         .collect::<ManufacturerDataSummaries>();
     summary.sort_unstable_by_key(|value| value.company_id);
     summary
@@ -151,17 +164,21 @@ fn manufacturer_data_summary(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use super::manufacturer_data_summary;
+    use super::sorted_manufacturer_data_summaries;
     use crate::{ManufacturerDataLen, ManufacturerDataSummary};
 
     #[test]
-    fn manufacturer_data_summary_sorts_without_retaining_payloads() {
-        let summary = manufacturer_data_summary(HashMap::from([
-            (0x004c, vec![1, 2, 3, 4]),
-            (0x000f, vec![5, 6]),
-        ]));
+    fn manufacturer_data_summary_sorts_already_summarized_backend_payloads() {
+        let summary = sorted_manufacturer_data_summaries([
+            ManufacturerDataSummary {
+                company_id: 0x004c,
+                len: ManufacturerDataLen::new(4),
+            },
+            ManufacturerDataSummary {
+                company_id: 0x000f,
+                len: ManufacturerDataLen::new(2),
+            },
+        ]);
 
         assert_eq!(
             summary.as_slice(),

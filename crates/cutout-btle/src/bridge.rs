@@ -1,15 +1,14 @@
-use btleplug::api::{Characteristic, ValueNotification};
-use bytes::Bytes;
+use btleplug::api::Characteristic;
 use cutout_core::{
-    DeviceCommand, GattChannel, LinkInfo, NotificationByteLen, NotificationEvidence,
-    NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput, TransportAction,
+    DeviceCommand, GattChannel, LinkInfo, NotificationEvidence, NotificationIngestOutcome,
+    ProtocolSession, SessionInput, SessionOutput, TransportAction, WriteMode, WritePayload,
 };
 use futures_util::StreamExt;
 use tracing::{debug, info};
 
 use crate::{
-    BtleError, CapturedBtlePacket, ConnectionSummary, SessionBridgeError, SessionBridgeReport,
-    SessionCapture, SessionCaptureRecord, SessionEndpoints, SessionPeripheral,
+    BtleError, BtleNotification, BtleWriteChunk, ConnectionSummary, SessionBridgeError,
+    SessionBridgeReport, SessionCapture, SessionCaptureRecord, SessionEndpoints, SessionPeripheral,
     identity::{IdentityContext, IdentityState, update_identity_report},
     report::{process_device_event, process_notification_ingest_outcome},
     types::characteristic_from_summary,
@@ -394,14 +393,12 @@ where
                 if let Some(records) = context.capture.as_deref_mut() {
                     records.push(SessionCaptureRecord::Notification {
                         monotonic_ms: *monotonic_ms,
-                        characteristic: notification.uuid,
-                        service: notification.service_uuid,
-                        bytes: CapturedBtlePacket::from_raw_bytes(Bytes::copy_from_slice(
-                            &notification.value,
-                        )),
+                        characteristic: notification.characteristic,
+                        service: notification.service,
+                        bytes: notification.bytes.clone(),
                     });
                 }
-                context.identity_state.observe(&notification.value);
+                context.identity_state.observe(notification.as_raw_bytes());
                 update_identity_report(
                     context.report,
                     context.identity_context,
@@ -410,7 +407,7 @@ where
                 session.handle(
                     SessionInput::Notification {
                         channel: context.channel,
-                        bytes: &notification.value,
+                        bytes: notification.as_raw_bytes(),
                         monotonic_ms: monotonic_ms.get(),
                     },
                     outputs,
@@ -433,7 +430,7 @@ where
                 .await?;
                 log_notification_decode_outcome(decode_outcome, &notification, context.channel);
                 context.report.notifications = context.report.notifications.increment();
-                let notification_len = NotificationByteLen::new(notification.value.len());
+                let notification_len = notification.len();
                 context.report.notification_bytes = context
                     .report
                     .notification_bytes
@@ -533,7 +530,7 @@ impl NotificationDecodeOutcome {
 
 fn log_notification_decode_outcome(
     outcome: Option<NotificationDecodeOutcome>,
-    notification: &ValueNotification,
+    notification: &BtleNotification,
     channel: GattChannel,
 ) {
     match outcome {
@@ -568,9 +565,9 @@ fn log_notification_decode_outcome(
         }
         Some(NotificationDecodeOutcome::Ignored(_)) | None => {
             debug!(
-                uuid = %notification.uuid,
-                service = %notification.service_uuid,
-                len = notification.value.len(),
+                uuid = %notification.characteristic,
+                service = %notification.service,
+                len = notification.len().get(),
                 channel = ?channel,
                 "session notification ignored by protocol session"
             );
@@ -647,31 +644,8 @@ where
                     bytes,
                     mode,
                 }) => {
-                    if observed != context.channel {
-                        return Err(SessionBridgeError::UnexpectedChannel {
-                            expected: context.channel,
-                            observed,
-                        }
-                        .into());
-                    }
-                    context.report.protocol_writes = context.report.protocol_writes.increment();
-                    let write_limit = NegotiatedWriteLen::from_mtu(context.peripheral.mtu());
-                    for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
-                        context
-                            .peripheral
-                            .write(context.write_characteristic, chunk, mode)
-                            .await?;
-                        if let Some(records) = context.capture.as_deref_mut() {
-                            records.push(SessionCaptureRecord::Write {
-                                monotonic_ms,
-                                characteristic: context.write_characteristic.uuid,
-                                mode,
-                                bytes: Bytes::copy_from_slice(chunk).into(),
-                                provenance: context.write_provenance,
-                            });
-                        }
-                        context.report.writes = context.report.writes.increment();
-                    }
+                    process_transport_write(&mut context, observed, &bytes, mode, monotonic_ms)
+                        .await?;
                 }
                 SessionOutput::Transport(TransportAction::Disconnect) => {
                     context.peripheral.disconnect().await?;
@@ -689,6 +663,51 @@ where
                 }
             }
         }
+    }
+    Ok(())
+}
+
+async fn process_transport_write<P>(
+    context: &mut SessionOutputContext<'_, P>,
+    observed: GattChannel,
+    bytes: &WritePayload,
+    mode: WriteMode,
+    monotonic_ms: MonotonicMs,
+) -> Result<(), BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+{
+    if observed != context.channel {
+        return Err(SessionBridgeError::UnexpectedChannel {
+            expected: context.channel,
+            observed,
+        }
+        .into());
+    }
+
+    context.report.protocol_writes = context.report.protocol_writes.increment();
+    let write_limit = NegotiatedWriteLen::from_mtu(context.peripheral.mtu());
+    for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
+        let chunk = BtleWriteChunk::new(chunk, write_limit).ok_or(
+            SessionBridgeError::WriteChunkTooLong {
+                len: cutout_core::NotificationByteLen::new(chunk.len()),
+                limit: write_limit,
+            },
+        )?;
+        context
+            .peripheral
+            .write(context.write_characteristic, chunk, mode)
+            .await?;
+        if let Some(records) = context.capture.as_deref_mut() {
+            records.push(SessionCaptureRecord::Write {
+                monotonic_ms,
+                characteristic: context.write_characteristic.uuid,
+                mode,
+                bytes: bytes::Bytes::copy_from_slice(chunk.as_slice()).into(),
+                provenance: context.write_provenance,
+            });
+        }
+        context.report.writes = context.report.writes.increment();
     }
     Ok(())
 }

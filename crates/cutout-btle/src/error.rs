@@ -1,7 +1,9 @@
 use std::{future::Future, time::Duration};
 
-use cutout_core::GattChannel;
+use cutout_core::{GattChannel, NotificationByteLen};
 use thiserror::Error;
+
+use crate::NegotiatedWriteLen;
 
 const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -28,6 +30,16 @@ pub enum SessionBridgeError {
     /// The discovered GATT tree did not contain a writable session endpoint.
     #[error("bridge needs a writable session endpoint")]
     MissingSessionEndpoint,
+
+    /// A write chunk exceeded the negotiated BTLE write limit.
+    #[error("bridge write chunk length {len} exceeded negotiated limit {limit}")]
+    WriteChunkTooLong {
+        /// Observed chunk length.
+        len: NotificationByteLen,
+
+        /// Negotiated write limit.
+        limit: NegotiatedWriteLen,
+    },
 }
 
 /// Errors surfaced by the BTLE adapter.
@@ -82,6 +94,9 @@ impl BtleError {
             }
             Self::Bridge(SessionBridgeError::UnexpectedChannel { .. }) => {
                 "report this protocol binding mismatch with the selected profile, GATT inventory, and capture logs"
+            }
+            Self::Bridge(SessionBridgeError::WriteChunkTooLong { .. }) => {
+                "report this negotiated write chunking bug with the selected profile, MTU, and capture logs"
             }
             Self::Backend(_) => {
                 "check OS Bluetooth permissions, adapter state, and whether another app is already connected"

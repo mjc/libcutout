@@ -354,14 +354,14 @@ where
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match tokio::time::timeout(remaining, notifications.next()).await {
-            Ok(Some(notification)) if notification.uuid == characteristic.uuid => {
+            Ok(Some(notification)) if notification.characteristic == characteristic.uuid => {
                 records.push(RawNotificationRecord {
                     monotonic_ms: MonotonicMs::from_elapsed_millis(
                         started_at.elapsed().as_millis(),
                     ),
-                    characteristic: notification.uuid,
-                    service: notification.service_uuid,
-                    bytes: CapturedBtlePacket::from_raw_bytes(notification.value),
+                    characteristic: notification.characteristic,
+                    service: notification.service,
+                    bytes: notification.bytes,
                 });
             }
             Ok(Some(_)) => {}
