@@ -12,7 +12,9 @@ use std::{
 };
 
 use anyhow::Result;
-use cutout_btle::{ConnectionSummary, ConnectionTarget, SessionBridgeEvent, SessionBridgeReport};
+use cutout_btle::{
+    ConnectionSummary, ConnectionTarget, ServiceSummary, SessionBridgeEvent, SessionBridgeReport,
+};
 use cutout_core::{
     NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, ReadOnlyResponse,
     SettingsReadback, TelemetryDelta, TelemetrySnapshot,
@@ -1416,16 +1418,34 @@ fn format_parser_diagnostics(diagnostics: ParserDiagnostics) -> String {
 }
 
 fn services_summary(summary: &ConnectionSummary) -> String {
-    if summary.services.is_empty() {
-        return "none discovered".to_owned();
-    }
+    CompactServicesSummary(summary.services.as_slice()).to_string()
+}
 
-    summary
-        .services
-        .iter()
-        .map(|service| format!("{}:{} chars", service.uuid, service.characteristics.len()))
-        .collect::<Vec<_>>()
-        .join(", ")
+struct CompactServicesSummary<'services>(&'services [ServiceSummary]);
+
+impl fmt::Display for CompactServicesSummary<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut services = self.0.iter();
+        let Some(first) = services.next() else {
+            return write!(f, "none discovered");
+        };
+
+        write_service_summary(f, first)?;
+        for service in services {
+            write!(f, ", ")?;
+            write_service_summary(f, service)?;
+        }
+        Ok(())
+    }
+}
+
+fn write_service_summary(f: &mut fmt::Formatter<'_>, service: &ServiceSummary) -> fmt::Result {
+    write!(
+        f,
+        "{}:{} chars",
+        service.uuid,
+        service.characteristics.len()
+    )
 }
 
 pub(crate) fn run_dashboard_with_updates(
@@ -2434,6 +2454,28 @@ mod tests {
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("65% / -61 dBm"));
         assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
+    }
+
+    #[test]
+    fn compact_services_summary_streams_service_entries() {
+        let services = vec![
+            ServiceSummary {
+                uuid: uuid::Uuid::from_u128(0x0000180f_0000_1000_8000_00805f9b34fb),
+                primary: true,
+                characteristics: Vec::new().into(),
+            },
+            ServiceSummary {
+                uuid: uuid::Uuid::from_u128(0x0000ffe0_0000_1000_8000_00805f9b34fb),
+                primary: true,
+                characteristics: Vec::new().into(),
+            },
+        ];
+
+        assert_eq!(
+            CompactServicesSummary(&services).to_string(),
+            "0000180f-0000-1000-8000-00805f9b34fb:0 chars, 0000ffe0-0000-1000-8000-00805f9b34fb:0 chars"
+        );
+        assert_eq!(CompactServicesSummary(&[]).to_string(), "none discovered");
     }
 
     #[test]
