@@ -134,11 +134,15 @@ impl NotificationByteTotal {
         self.0
     }
 
-    pub(crate) const fn saturating_add(self, other: Self) -> Self {
+    /// Adds another typed byte total, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
         Self(self.0.saturating_add(other.0))
     }
 
-    pub(crate) const fn saturating_add_len(self, len: NotificationByteLen) -> Self {
+    /// Adds one typed notification length, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add_len(self, len: NotificationByteLen) -> Self {
         Self(self.0.saturating_add(len.get()))
     }
 }

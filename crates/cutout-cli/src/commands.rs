@@ -524,14 +524,14 @@ fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
 }
 
 fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationByteTotal {
-    NotificationByteTotal::new(
-        capture
-            .records
-            .iter()
-            .filter(|record| record.direction == PevcapDirection::Inbound)
-            .map(|record| record.bytes.len())
-            .sum::<usize>(),
-    )
+    capture
+        .records
+        .iter()
+        .filter(|record| record.direction == PevcapDirection::Inbound)
+        .map(|record| NotificationByteLen::new(record.bytes.len()))
+        .fold(NotificationByteTotal::default(), |total, len| {
+            total.saturating_add_len(len)
+        })
 }
 
 fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<NotificationByteLen> {
