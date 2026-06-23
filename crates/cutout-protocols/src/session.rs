@@ -192,6 +192,19 @@ pub struct VeteranNotificationDecoder {
     reassembler: VeteranFrameReassembler,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct CompletedFrameCount(usize);
+
+impl CompletedFrameCount {
+    const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+
+    const fn is_zero(self) -> bool {
+        self.0 == 0
+    }
+}
+
 impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     fn reset(&mut self) {
         self.reassembler.reset();
@@ -204,12 +217,12 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         monotonic_ms: MonotonicMillis,
         output: &mut Vec<SessionOutput>,
     ) {
-        let mut completed_frames = 0usize;
+        let mut completed_frames = CompletedFrameCount::default();
         let mut buffered = false;
         for byte in bytes {
             match self.reassembler.feed_byte_result(*byte) {
                 Ok(VeteranFrameParseResult::Complete(frame)) => {
-                    completed_frames += 1;
+                    completed_frames = completed_frames.next();
                     buffered = false;
                     let event_count = push_veteran_frame(&frame, monotonic_ms, output);
                     push_veteran_ingest_outcome_for_frame(
@@ -255,7 +268,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
             }
         }
 
-        if completed_frames == 0 {
+        if completed_frames.is_zero() {
             output.push(SessionOutput::NotificationIngest(if buffered {
                 NotificationIngestOutcome::buffered_fragment(
                     ProtocolFamily::VeteranLeaperkimNosfet,
