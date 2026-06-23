@@ -40,6 +40,10 @@ pub enum SessionBridgeError {
         /// Negotiated write limit.
         limit: NegotiatedWriteLen,
     },
+
+    /// Session tried to emit transport work while handling an externally lost link.
+    #[error("bridge cannot process transport actions after external link loss")]
+    ExternalLinkDownTransportAction,
 }
 
 /// Errors surfaced by the BTLE adapter.
@@ -97,6 +101,9 @@ impl BtleError {
             }
             Self::Bridge(SessionBridgeError::WriteChunkTooLong { .. }) => {
                 "report this negotiated write chunking bug with the selected profile, MTU, and capture logs"
+            }
+            Self::Bridge(SessionBridgeError::ExternalLinkDownTransportAction) => {
+                "report this session lifecycle bug with the selected profile and capture logs"
             }
             Self::Backend(_) => {
                 "check OS Bluetooth permissions, adapter state, and whether another app is already connected"

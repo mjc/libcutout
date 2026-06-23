@@ -1165,8 +1165,8 @@ impl fmt::Display for BmsCurrentSummary {
             write!(
                 f,
                 " bms_current_0={}A bms_current_1={}A",
-                milliamps_to_amps(currents.current_0_ma.get()),
-                milliamps_to_amps(currents.current_1_ma.get())
+                milliamps_to_amps(currents.current_0_ma().get()),
+                milliamps_to_amps(currents.current_1_ma().get())
             )?;
         }
         Ok(())
@@ -1606,8 +1606,18 @@ impl fmt::Display for NotificationIngestLog {
                 "t={}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                OptionalU8(payload.selector.map(cutout_core::ProtocolSelector::get)),
-                OptionalU16(payload.tag.map(cutout_core::ProtocolTag::get)),
+                OptionalU8(
+                    payload
+                        .classifier
+                        .selector_value()
+                        .map(cutout_core::ProtocolSelector::get)
+                ),
+                OptionalU16(
+                    payload
+                        .classifier
+                        .tag_value()
+                        .map(cutout_core::ProtocolTag::get)
+                ),
                 payload.body_len.get(),
                 verification_name(payload.verification),
                 notification.len.get()
@@ -1617,8 +1627,16 @@ impl fmt::Display for NotificationIngestLog {
                 "t={}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                OptionalU8(gap.selector.map(cutout_core::ProtocolSelector::get)),
-                OptionalU16(gap.tag.map(cutout_core::ProtocolTag::get)),
+                OptionalU8(
+                    gap.classifier
+                        .selector_value()
+                        .map(cutout_core::ProtocolSelector::get)
+                ),
+                OptionalU16(
+                    gap.classifier
+                        .tag_value()
+                        .map(cutout_core::ProtocolTag::get)
+                ),
                 gap.body_len.get(),
                 notification.len.get()
             ),
@@ -3342,8 +3360,7 @@ mod tests {
                 NotificationByteLen::new(75),
                 4,
                 ReservedPayloadEvidence {
-                    selector: Some(ProtocolSelector::new(8)),
-                    tag: None,
+                    classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::new(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
@@ -3489,8 +3506,7 @@ mod tests {
                 NotificationByteLen::new(75),
                 4,
                 ReservedPayloadEvidence {
-                    selector: Some(sel(8)),
-                    tag: None,
+                    classifier: cutout_core::PayloadClassifier::selector(sel(8)),
                     body_len: PayloadBodyLen::new(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
@@ -3508,8 +3524,9 @@ mod tests {
                 NotificationByteLen::new(75),
                 9,
                 ParserGapEvidence {
-                    selector: None,
-                    tag: Some(cutout_core::ProtocolTag::new(0x1234)),
+                    classifier: cutout_core::PayloadClassifier::tag(cutout_core::ProtocolTag::new(
+                        0x1234,
+                    )),
                     body_len: PayloadBodyLen::new(12),
                 },
             ),
@@ -3576,8 +3593,9 @@ mod tests {
                         NotificationByteLen::new(75),
                         4,
                         ReservedPayloadEvidence {
-                            selector: Some(ProtocolSelector::new(8)),
-                            tag: None,
+                            classifier: cutout_core::PayloadClassifier::selector(
+                                ProtocolSelector::new(8),
+                            ),
                             body_len: PayloadBodyLen::new(24),
                             verification: VerificationStatus::HardwareVerified,
                         },
@@ -3591,8 +3609,9 @@ mod tests {
                         NotificationByteLen::new(77),
                         5,
                         ParserGapEvidence {
-                            selector: Some(ProtocolSelector::new(9)),
-                            tag: None,
+                            classifier: cutout_core::PayloadClassifier::selector(
+                                ProtocolSelector::new(9),
+                            ),
                             body_len: PayloadBodyLen::new(26),
                         },
                     ),

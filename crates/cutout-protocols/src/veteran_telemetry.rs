@@ -1,9 +1,9 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
     BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsParallelPacks,
-    BmsTemperatureValuesPerPage, FirmwareInfo, Measured, MonotonicMillis, PackSeriesCells,
-    ProtocolSelector, RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-    TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
+    BmsTemperatureValuesPerPage, ChargeMode, FirmwareInfo, Measured, MonotonicMillis,
+    PackSeriesCells, ProtocolSelector, RawFieldValue, ReadOnlyResponse, SettingsEntry,
+    SettingsReadback, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
 };
 use thiserror::Error;
 
@@ -91,8 +91,11 @@ pub struct VeteranTelemetry {
     /// Auto shutdown time remaining field in seconds.
     pub auto_shutdown_time_remaining_seconds: u16,
 
-    /// Raw charge-mode field.
-    pub charge_mode: u16,
+    /// Raw charge-mode field retained for protocol evidence and settings readback.
+    pub raw_charge_mode: VeteranRawChargeMode,
+
+    /// Decoded charging state.
+    pub charge_mode: ChargeMode,
 
     /// Speed alert threshold in protocol-native deci-km/h.
     pub speed_alert_deci_kmh: u16,
@@ -111,6 +114,24 @@ pub struct VeteranTelemetry {
 
     /// Cutout-estimated battery percentage from capture-backed pack range.
     pub battery_percent_estimated: u8,
+}
+
+/// Raw Veteran charge-mode field retained for protocol evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VeteranRawChargeMode(u16);
+
+impl VeteranRawChargeMode {
+    /// Creates a raw charge-mode evidence value from the wire field.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the protocol-native raw field value.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
 }
 
 /// Static Veteran/LeaperKim/NOSFET model mapping derived from firmware model id.
@@ -333,6 +354,10 @@ fn pack_voltage_mv(cell_voltage_uv: i32, series_cells: i32) -> i32 {
     (cell_voltage_uv.saturating_mul(series_cells) + 500) / 1_000
 }
 
+const fn veteran_charge_mode(raw: VeteranRawChargeMode) -> ChargeMode {
+    ChargeMode::from_active(raw.get() != 0)
+}
+
 impl VeteranTelemetry {
     /// Decodes the verified fixed telemetry header from a complete Veteran frame.
     ///
@@ -351,6 +376,12 @@ impl VeteranTelemetry {
                 .be_u16(ByteOffset::new(4))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
         ) * 10;
+
+        let raw_charge_mode = VeteranRawChargeMode::new(
+            cursor
+                .be_u16(ByteOffset::new(22))
+                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+        );
 
         Ok(Self {
             firmware,
@@ -375,9 +406,8 @@ impl VeteranTelemetry {
             auto_shutdown_time_remaining_seconds: cursor
                 .be_u16(ByteOffset::new(20))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            charge_mode: cursor
-                .be_u16(ByteOffset::new(22))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            raw_charge_mode,
+            charge_mode: veteran_charge_mode(raw_charge_mode),
             speed_alert_deci_kmh: cursor
                 .be_u16(ByteOffset::new(24))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -452,7 +482,7 @@ impl VeteranTelemetry {
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_CHARGE_MODE,
-                        i64::from(self.charge_mode),
+                        i64::from(self.raw_charge_mode.get()),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
@@ -637,7 +667,8 @@ mod tests {
                 phase_current_deci_a: 0,
                 mosfet_temperature_mc: 33_270,
                 auto_shutdown_time_remaining_seconds: 0,
-                charge_mode: 0,
+                raw_charge_mode: VeteranRawChargeMode::new(0),
+                charge_mode: ChargeMode::NotCharging,
                 speed_alert_deci_kmh: 550,
                 speed_tiltback_deci_kmh: 540,
                 pedals_mode: 1_920,
@@ -653,6 +684,19 @@ mod tests {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
         assert_eq!(telemetry.battery_percent_estimated, 47);
+    }
+
+    #[test]
+    fn veteran_telemetry_decodes_charge_mode_from_raw_field() {
+        let mut bytes = [0_u8; 42];
+        bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        bytes[22..24].copy_from_slice(&1_u16.to_be_bytes());
+        let frame = VeteranFrame::try_from_slice(&bytes).expect("synthetic frame is valid");
+
+        let telemetry = VeteranTelemetry::decode(&frame).expect("telemetry decodes");
+
+        assert_eq!(telemetry.raw_charge_mode, VeteranRawChargeMode::new(1));
+        assert_eq!(telemetry.charge_mode, ChargeMode::Charging);
     }
 
     #[test]

@@ -5,8 +5,8 @@ use cutout_core::{
     DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
     GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis, NotificationByteLen,
     NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics, ParserError, ParserGapEvidence,
-    PayloadBodyLen, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
+    PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession,
+    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
     SemanticEventCount, SessionInput, SessionOutput, TransportAction, ValueQuality,
     VerificationStatus, VerifiedValue, WritePayload,
 };
@@ -253,6 +253,20 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     ));
                     return;
                 }
+                Err(VeteranReassemblyError::OversizedFrame { claimed, max }) => {
+                    let error = ParserError::OversizedFrame { claimed, max };
+                    push_parser_error(error, output);
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::parser_diagnostic(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::new(bytes.len()),
+                            monotonic_ms,
+                            error,
+                        ),
+                    ));
+                    return;
+                }
                 Err(VeteranReassemblyError::InvalidFrame) => {
                     push_parser_error(ParserError::MalformedFrame, output);
                     output.push(SessionOutput::NotificationIngest(
@@ -307,8 +321,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     frame_len,
                     monotonic_ms,
                     ReservedPayloadEvidence {
-                        selector: Some(evidence.selector),
-                        tag: None,
+                        classifier: PayloadClassifier::selector(evidence.selector),
                         body_len: PayloadBodyLen::new(evidence.body.len()),
                         verification: VerificationStatus::HardwareVerified,
                     },
@@ -322,8 +335,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     frame_len,
                     monotonic_ms,
                     ParserGapEvidence {
-                        selector: Some(evidence.selector),
-                        tag: None,
+                        classifier: PayloadClassifier::selector(evidence.selector),
                         body_len: PayloadBodyLen::new(evidence.body.len()),
                     },
                 ),
@@ -830,17 +842,14 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
     let battery = BatteryInfo {
-        current_ma: Some(Measured::reported(page.current_0_ma)),
+        current_ma: Some(Measured::reported(page.currents.current_0_ma().get())),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::raw(
         BatteryPageMetadata::metadata(page.selector, VerificationStatus::HardwareVerified),
         battery,
     )
-    .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-        page.current_0_ma,
-        page.current_1_ma,
-    ))
+    .with_bms_pack_currents(page.currents)
 }
 
 fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
@@ -2155,8 +2164,7 @@ mod tests {
     fn veteran_bms_metadata_payload_preserves_two_distinct_pack_currents() {
         let payload = veteran_bms_metadata_payload(VeteranBmsMetadataPage {
             selector: ProtocolSelector::new(4),
-            current_0_ma: -1_230,
-            current_1_ma: 450,
+            currents: cutout_core::BmsPackCurrents::reported(-1_230, 450),
         });
 
         let battery = payload.battery();
@@ -2235,8 +2243,7 @@ mod tests {
                 NotificationByteLen::new(frame.len()),
                 42,
                 ReservedPayloadEvidence {
-                    selector: Some(ProtocolSelector::new(8)),
-                    tag: None,
+                    classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::new(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
@@ -2259,8 +2266,7 @@ mod tests {
                 NotificationByteLen::new(frame.len()),
                 42,
                 ParserGapEvidence {
-                    selector: Some(ProtocolSelector::new(9)),
-                    tag: None,
+                    classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                     body_len: PayloadBodyLen::new(26),
                 },
             )]
@@ -2298,6 +2304,36 @@ mod tests {
             diagnostic_error_events(&output)
                 .iter()
                 .any(|error| error.kind == cutout_core::DiagnosticErrorKind::BadChecksum)
+        );
+    }
+
+    #[test]
+    fn nosfet_aero_decoder_reports_oversized_frame_as_parser_diagnostic_ingest() {
+        let mut decoder = VeteranNotificationDecoder {
+            reassembler: VeteranFrameReassembler::saturated_candidate_for_test(),
+        };
+        let mut output = Vec::new();
+
+        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], 42, &mut output);
+
+        let error = ParserError::OversizedFrame {
+            claimed: crate::MAX_VETERAN_FRAME_LEN + 1,
+            max: crate::MAX_VETERAN_FRAME_LEN,
+        };
+        assert_eq!(
+            notification_ingest_outcomes(&output),
+            vec![NotificationIngestOutcome::parser_diagnostic(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                VETERAN_DATA_CHANNEL,
+                NotificationByteLen::new(1),
+                42,
+                error,
+            )]
+        );
+        assert!(
+            diagnostic_error_events(&output)
+                .iter()
+                .any(|event| event.kind == cutout_core::DiagnosticErrorKind::OversizedFrame)
         );
     }
 
@@ -2346,7 +2382,10 @@ mod tests {
                         notification.family,
                         Some(ProtocolFamily::VeteranLeaperkimNosfet)
                     );
-                    assert_eq!(payload.selector, Some(ProtocolSelector::new(8)));
+                    assert_eq!(
+                        payload.classifier,
+                        PayloadClassifier::selector(ProtocolSelector::new(8))
+                    );
                     assert_eq!(payload.body_len, PayloadBodyLen::new(26));
                     assert_eq!(payload.verification, VerificationStatus::HardwareVerified);
                 }
@@ -2390,8 +2429,7 @@ mod tests {
                     NotificationByteLen::new(reserved_frame.len()),
                     42,
                     ReservedPayloadEvidence {
-                        selector: Some(ProtocolSelector::new(8)),
-                        tag: None,
+                        classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                         body_len: PayloadBodyLen::new(24),
                         verification: VerificationStatus::HardwareVerified,
                     },

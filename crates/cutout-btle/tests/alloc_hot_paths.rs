@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_btle::{MonotonicMs, SessionBridgeEvent, SessionBridgeReport};
 use cutout_core::{
-    GattChannel, NotificationByteLen, NotificationIngestOutcome, PayloadBodyLen, ProtocolFamily,
-    ProtocolSelector, ReservedPayloadEvidence, VerificationStatus,
+    GattChannel, NotificationByteLen, NotificationIngestOutcome, PayloadBodyLen, PayloadClassifier,
+    ProtocolFamily, ProtocolSelector, ReservedPayloadEvidence, VerificationStatus,
 };
 
 struct CountingAllocator;
@@ -67,8 +67,7 @@ fn btle_report_records_typed_ingest_outcomes_without_allocating_after_setup() {
         NotificationByteLen::new(75),
         4,
         ReservedPayloadEvidence {
-            selector: Some(ProtocolSelector::new(8)),
-            tag: None,
+            classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
             body_len: PayloadBodyLen::new(24),
             verification: VerificationStatus::HardwareVerified,
         },

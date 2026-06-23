@@ -11,6 +11,8 @@ use crate::{
     report::merge_session_report,
 };
 
+const EXTERNAL_LINK_LOSS_IDLE_WINDOW: NotificationWindow = NotificationWindow::from_millis(1_500);
+
 /// Host boundary that can create fresh connected peripherals for reconnecting sessions.
 #[async_trait]
 pub trait ReconnectingSessionHost: Send {
@@ -85,8 +87,8 @@ pub struct ReconnectAttemptReport {
 /// Captures a session across reconnect attempts supplied by a host boundary.
 ///
 /// The host owns platform-specific connect/discover work. This bridge repeats
-/// one bounded session run only when the previous link intentionally
-/// disconnected.
+/// one bounded session run when the previous link intentionally disconnected or
+/// the notification stream ended before the capture window elapsed.
 ///
 /// # Errors
 ///
@@ -174,7 +176,15 @@ where
     let mut monotonic_start = MonotonicMs::default();
 
     for attempt in max_links.attempts() {
-        let (peripheral, summary) = host.connect().await?;
+        let (peripheral, summary) = match host.connect().await {
+            Ok(connection) => connection,
+            Err(error) => {
+                if reconnecting_capture.capture.records.is_empty() {
+                    return Err(error);
+                }
+                break;
+            }
+        };
         let endpoints = summary
             .select_session_endpoints()
             .ok_or(SessionBridgeError::MissingSessionEndpoint)?;
@@ -190,6 +200,8 @@ where
                 commands: if attempt.is_first() { commands } else { &[] },
                 write_provenance,
                 monotonic_start,
+                stream_end_is_link_down: true,
+                link_loss_idle_window: Some(EXTERNAL_LINK_LOSS_IDLE_WINDOW),
             },
             Some(&mut records),
             None,

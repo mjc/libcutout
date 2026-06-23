@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, ProtocolSelector,
-    VerificationStatus,
+    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrents,
+    ProtocolSelector, VerificationStatus,
 };
 use thiserror::Error;
 
@@ -221,11 +221,8 @@ pub struct VeteranBmsMetadataPage {
     /// BMS page selector.
     pub selector: ProtocolSelector,
 
-    /// First documented pack current value in milliamps.
-    pub current_0_ma: i32,
-
-    /// Second documented pack current value in milliamps.
-    pub current_1_ma: i32,
+    /// Page-specific paired BMS pack-current values.
+    pub currents: BmsPackCurrents,
 }
 
 impl VeteranBmsMetadataPage {
@@ -257,12 +254,14 @@ impl VeteranBmsMetadataPage {
 
         Ok(Self {
             selector,
-            current_0_ma: cursor
-                .be_i16(ByteOffset::new(0))
-                .map_or(0, |value| i32::from(value) * 10),
-            current_1_ma: cursor
-                .be_i16(ByteOffset::new(2))
-                .map_or(0, |value| i32::from(value) * 10),
+            currents: BmsPackCurrents::reported(
+                cursor
+                    .be_i16(ByteOffset::new(0))
+                    .map_or(0, |value| i32::from(value) * 10),
+                cursor
+                    .be_i16(ByteOffset::new(2))
+                    .map_or(0, |value| i32::from(value) * 10),
+            ),
         })
     }
 }
@@ -586,8 +585,7 @@ mod tests {
             .expect("documented metadata current body decodes");
 
         assert_eq!(page.selector, sel(0));
-        assert_eq!(page.current_0_ma, -1230);
-        assert_eq!(page.current_1_ma, 450);
+        assert_eq!(page.currents, BmsPackCurrents::reported(-1230, 450));
     }
 
     #[test]

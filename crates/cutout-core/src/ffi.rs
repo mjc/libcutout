@@ -1,12 +1,12 @@
 use crate::{
     BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrentMa,
-    BmsPackCurrents, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    FirmwareInfo, LightState, Measured, NotificationEvidence, NotificationIngestOutcome,
-    ParserDiagnostics, ParserError, ParserGapEvidence, ProtocolFamily, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput,
-    SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
-    TransportAction, ValueQuality, ValueSource, VerificationStatus, WriteMode,
+    BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
+    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
+    DiagnosticSeverity, FirmwareInfo, LightState, Measured, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, ProtocolFamily,
+    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
+    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta,
+    TelemetrySnapshot, TransportAction, ValueQuality, ValueSource, VerificationStatus, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -358,6 +358,25 @@ impl From<DiagnosticSeverity> for DiagnosticSeverityDto {
     }
 }
 
+/// UniFFI-ready charging state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChargeModeDto {
+    /// The device reports that charging is active.
+    Charging,
+
+    /// The device reports that charging is not active.
+    NotCharging,
+}
+
+impl From<ChargeMode> for ChargeModeDto {
+    fn from(mode: ChargeMode) -> Self {
+        match mode {
+            ChargeMode::Charging => Self::Charging,
+            ChargeMode::NotCharging => Self::NotCharging,
+        }
+    }
+}
+
 /// UniFFI-ready measured i32 value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MeasuredI32Dto {
@@ -392,6 +411,33 @@ impl MeasuredI32Dto {
             source: currents.source.into(),
             quality: currents.quality.into(),
             verification: currents.verification.into(),
+        }
+    }
+}
+
+/// UniFFI-ready measured charging state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MeasuredChargeModeDto {
+    /// Charging state value.
+    pub value: ChargeModeDto,
+
+    /// Value source.
+    pub source: ValueSourceDto,
+
+    /// Value quality.
+    pub quality: ValueQualityDto,
+
+    /// Value verification status.
+    pub verification: VerificationStatusDto,
+}
+
+impl From<Measured<ChargeMode>> for MeasuredChargeModeDto {
+    fn from(measured: Measured<ChargeMode>) -> Self {
+        Self {
+            value: measured.value.into(),
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
         }
     }
 }
@@ -636,10 +682,10 @@ impl BatteryInfoDto {
             voltage_mv: battery.voltage_mv.map(Into::into),
             current_ma: battery.current_ma.map(Into::into),
             bms_pack_current_0_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_0_ma, currents)
+                MeasuredI32Dto::from_bms_pack_current(currents.current_0_ma(), currents)
             }),
             bms_pack_current_1_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_1_ma, currents)
+                MeasuredI32Dto::from_bms_pack_current(currents.current_1_ma(), currents)
             }),
             percent_reported: battery.percent_reported.map(Into::into),
             percent_estimated: battery.percent_estimated.map(Into::into),
@@ -1103,8 +1149,11 @@ pub struct ReservedPayloadEvidenceDto {
 impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
     fn from(evidence: ReservedPayloadEvidence) -> Self {
         Self {
-            selector: evidence.selector.map(super::ProtocolSelector::get),
-            tag: evidence.tag.map(super::ProtocolTag::get),
+            selector: evidence
+                .classifier
+                .selector_value()
+                .map(super::ProtocolSelector::get),
+            tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: evidence.body_len.get(),
             verification: evidence.verification.into(),
         }
@@ -1127,8 +1176,11 @@ pub struct ParserGapEvidenceDto {
 impl From<ParserGapEvidence> for ParserGapEvidenceDto {
     fn from(evidence: ParserGapEvidence) -> Self {
         Self {
-            selector: evidence.selector.map(super::ProtocolSelector::get),
-            tag: evidence.tag.map(super::ProtocolTag::get),
+            selector: evidence
+                .classifier
+                .selector_value()
+                .map(super::ProtocolSelector::get),
+            tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: evidence.body_len.get(),
         }
     }

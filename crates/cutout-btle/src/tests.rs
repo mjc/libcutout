@@ -10,13 +10,13 @@ use bytes::Bytes;
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
-    ParserGapEvidence, PayloadBodyLen, PevcapDirection, PevcapResolvedIdentity, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, RawFieldValue, ReadOnlyResponse, ReservedPayloadEvidence,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    TelemetryDelta, TransportAction, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
-    WriteMode,
+    ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection, PevcapResolvedIdentity,
+    ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue, ReadOnlyResponse,
+    ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
+    SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
+    VerificationStatus, VerifiedValue, WriteMode,
 };
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
 use smallvec::smallvec;
 use uuid::Uuid;
 
@@ -1363,8 +1363,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             NotificationByteLen::new(75),
             4,
             ReservedPayloadEvidence {
-                selector: Some(ProtocolSelector::new(8)),
-                tag: None,
+                classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::new(24),
                 verification: VerificationStatus::HardwareVerified,
             },
@@ -1377,8 +1376,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             NotificationByteLen::new(77),
             5,
             ParserGapEvidence {
-                selector: Some(ProtocolSelector::new(9)),
-                tag: None,
+                classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                 body_len: PayloadBodyLen::new(26),
             },
         ),
@@ -1763,6 +1761,171 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
 }
 
 #[tokio::test]
+async fn capture_reconnecting_session_preserves_partial_capture_when_reconnect_fails() {
+    let first = RecordingPeripheral::default();
+    let mut host = FakeReconnectHost::new(vec![first.clone()]);
+    let mut session = ReconnectOnceSession::default();
+
+    let reconnecting_capture = crate::capture_reconnecting_session_with_summaries(
+        &mut host,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        crate::NotificationWindow::from_millis(0),
+        crate::MaxReconnectLinks::at_least_one(2),
+        crate::WriteProvenance::Stable,
+    )
+    .await
+    .expect("partial reconnect evidence is preserved when the next link fails");
+    let capture = reconnecting_capture.capture;
+
+    assert_eq!(host.connects, 2);
+    assert_eq!(reconnecting_capture.attempts.len(), 1);
+    assert_eq!(capture.report.subscribes, subscribes(1));
+    assert_eq!(capture.report.disconnects, disconnects(1));
+    assert_eq!(*session.link_ups.lock().expect("link ups"), 1);
+    assert_eq!(*session.link_downs.lock().expect("link downs"), 1);
+    assert_eq!(*first.disconnects.lock().expect("first disconnects"), 1);
+    assert!(
+        capture
+            .records
+            .iter()
+            .any(|record| matches!(record, crate::SessionCaptureRecord::LinkDown { .. }))
+    );
+}
+
+#[tokio::test]
+async fn capture_reconnecting_session_retries_after_external_notification_stream_end() {
+    let first = RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+        Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+        Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+        Bytes::from_static(b"\x13\x37"),
+    ));
+    let second = RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+        Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+        Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+        Bytes::from_static(b"\x24\x68"),
+    ));
+    let mut host = FakeReconnectHost::new(vec![first.clone(), second.clone()]);
+    let mut session = ExternalLinkLossSession::default();
+
+    let reconnecting_capture = crate::capture_reconnecting_session_with_summaries(
+        &mut host,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        crate::NotificationWindow::from_millis(10),
+        crate::MaxReconnectLinks::at_least_one(2),
+        crate::WriteProvenance::Stable,
+    )
+    .await
+    .expect("fake host reconnects after external link loss");
+    let capture = reconnecting_capture.capture;
+
+    assert_eq!(host.connects, 2);
+    assert_eq!(reconnecting_capture.attempts.len(), 2);
+    assert_eq!(
+        reconnecting_capture.attempts[0].report.notifications,
+        notifications(1)
+    );
+    assert_eq!(
+        reconnecting_capture.attempts[0].report.disconnects,
+        disconnects(1)
+    );
+    assert_eq!(
+        reconnecting_capture.attempts[1].report.notifications,
+        notifications(1)
+    );
+    assert_eq!(
+        reconnecting_capture.attempts[1].report.disconnects,
+        disconnects(1)
+    );
+    assert_eq!(capture.report.notifications, notifications(2));
+    assert_eq!(capture.report.disconnects, disconnects(2));
+    assert_eq!(*session.link_ups.lock().expect("link ups"), 2);
+    assert_eq!(*session.link_downs.lock().expect("link downs"), 2);
+    assert_eq!(*first.disconnects.lock().expect("first disconnects"), 0);
+    assert_eq!(*second.disconnects.lock().expect("second disconnects"), 0);
+    assert!(capture.records.iter().any(|record| matches!(
+        record,
+        crate::SessionCaptureRecord::Notification {
+            monotonic_ms,
+            ..
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+    )));
+    assert!(capture.records.iter().any(|record| matches!(
+        record,
+        crate::SessionCaptureRecord::LinkDown {
+            monotonic_ms,
+        } if *monotonic_ms == crate::MonotonicMs::new(3)
+    )));
+    assert!(capture.records.iter().any(|record| matches!(
+        record,
+        crate::SessionCaptureRecord::Link {
+            monotonic_ms,
+            ..
+        } if *monotonic_ms == crate::MonotonicMs::new(4)
+    )));
+}
+
+#[tokio::test]
+async fn capture_reconnecting_session_retries_after_external_notification_idle() {
+    let first = RecordingPeripheral::with_open_notifications(vec![
+        crate::BtleNotification::from_raw_bytes(
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+            Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            Bytes::from_static(b"\x13\x37"),
+        ),
+    ]);
+    let second = RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+        Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+        Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+        Bytes::from_static(b"\x24\x68"),
+    ));
+    let mut host = FakeReconnectHost::new(vec![first.clone(), second]);
+    let mut session = ExternalLinkLossSession::default();
+
+    let reconnecting_capture = crate::capture_reconnecting_session_with_summaries(
+        &mut host,
+        &mut session,
+        GattChannel::from_bytes([0xA1; 16]),
+        crate::NotificationWindow::from_millis(2_000),
+        crate::MaxReconnectLinks::at_least_one(2),
+        crate::WriteProvenance::Stable,
+    )
+    .await
+    .expect("fake host reconnects after idle link loss");
+    let capture = reconnecting_capture.capture;
+
+    assert_eq!(host.connects, 2);
+    assert_eq!(reconnecting_capture.attempts.len(), 2);
+    assert_eq!(
+        reconnecting_capture.attempts[0].report.notifications,
+        notifications(1)
+    );
+    assert_eq!(
+        reconnecting_capture.attempts[0].report.disconnects,
+        disconnects(1)
+    );
+    assert_eq!(capture.report.notifications, notifications(2));
+    assert_eq!(capture.report.disconnects, disconnects(2));
+    assert_eq!(*session.link_ups.lock().expect("link ups"), 2);
+    assert_eq!(*session.link_downs.lock().expect("link downs"), 2);
+    assert_eq!(*first.disconnects.lock().expect("first disconnects"), 0);
+    assert!(capture.records.iter().any(|record| matches!(
+        record,
+        crate::SessionCaptureRecord::LinkDown {
+            monotonic_ms,
+        } if *monotonic_ms == crate::MonotonicMs::new(3)
+    )));
+    assert!(capture.records.iter().any(|record| matches!(
+        record,
+        crate::SessionCaptureRecord::Link {
+            monotonic_ms,
+            ..
+        } if *monotonic_ms == crate::MonotonicMs::new(4)
+    )));
+}
+
+#[tokio::test]
 async fn capture_reconnecting_session_cancels_commands_after_reconnect() {
     let first = RecordingPeripheral::default();
     let second = RecordingPeripheral::default();
@@ -1845,6 +2008,12 @@ struct DisconnectOnTickSession {
 
 #[derive(Default)]
 struct ReconnectOnceSession {
+    link_ups: Arc<Mutex<usize>>,
+    link_downs: Arc<Mutex<usize>>,
+}
+
+#[derive(Default)]
+struct ExternalLinkLossSession {
     link_ups: Arc<Mutex<usize>>,
     link_downs: Arc<Mutex<usize>>,
 }
@@ -1996,6 +2165,26 @@ impl ProtocolSession for ReconnectOnceSession {
     }
 }
 
+impl ProtocolSession for ExternalLinkLossSession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::LinkUp(_) => {
+                *self.link_ups.lock().expect("link ups") += 1;
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: GattChannel::from_bytes([0xA1; 16]),
+                }));
+            }
+            SessionInput::LinkDown => {
+                *self.link_downs.lock().expect("link downs") += 1;
+                output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+            }
+            SessionInput::Command(_)
+            | SessionInput::Notification { .. }
+            | SessionInput::Tick { .. } => {}
+        }
+    }
+}
+
 impl ProtocolSession for BridgeSession {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         match input {
@@ -2081,6 +2270,7 @@ struct RecordingPeripheral {
     notifications: NotificationLog,
     disconnects: Arc<Mutex<usize>>,
     mtu: u16,
+    keep_notifications_open: bool,
 }
 
 impl Default for RecordingPeripheral {
@@ -2091,6 +2281,7 @@ impl Default for RecordingPeripheral {
             notifications: Arc::new(Mutex::new(Vec::new())),
             disconnects: Arc::new(Mutex::new(0)),
             mtu: 185,
+            keep_notifications_open: false,
         }
     }
 }
@@ -2110,6 +2301,14 @@ impl RecordingPeripheral {
     fn with_notifications(notifications: Vec<crate::BtleNotification>) -> Self {
         Self {
             notifications: Arc::new(Mutex::new(notifications)),
+            ..Self::default()
+        }
+    }
+
+    fn with_open_notifications(notifications: Vec<crate::BtleNotification>) -> Self {
+        Self {
+            notifications: Arc::new(Mutex::new(notifications)),
+            keep_notifications_open: true,
             ..Self::default()
         }
     }
@@ -2205,7 +2404,13 @@ impl crate::SessionPeripheral for RecordingPeripheral {
     ) -> Result<Pin<Box<dyn stream::Stream<Item = crate::BtleNotification> + Send>>, crate::BtleError>
     {
         let notifications = self.notifications.lock().expect("notification log").clone();
-        Ok(Box::pin(stream::iter(notifications)))
+        if self.keep_notifications_open {
+            Ok(Box::pin(
+                stream::iter(notifications).chain(stream::pending()),
+            ))
+        } else {
+            Ok(Box::pin(stream::iter(notifications)))
+        }
     }
 
     async fn disconnect(&self) -> Result<(), crate::BtleError> {

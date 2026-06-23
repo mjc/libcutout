@@ -76,6 +76,8 @@ where
             commands: &[],
             write_provenance: WriteProvenance::Stable,
             monotonic_start: MonotonicMs::default(),
+            stream_end_is_link_down: false,
+            link_loss_idle_window: None,
         },
         None,
         Some(identity_observer),
@@ -117,6 +119,8 @@ where
             commands,
             write_provenance: WriteProvenance::Stable,
             monotonic_start: MonotonicMs::default(),
+            stream_end_is_link_down: false,
+            link_loss_idle_window: None,
         },
         None,
         None,
@@ -156,6 +160,8 @@ where
             commands: &[],
             write_provenance,
             monotonic_start: MonotonicMs::default(),
+            stream_end_is_link_down: false,
+            link_loss_idle_window: None,
         },
         Some(&mut records),
         None,
@@ -196,6 +202,8 @@ where
             commands,
             write_provenance: WriteProvenance::Stable,
             monotonic_start: MonotonicMs::default(),
+            stream_end_is_link_down: false,
+            link_loss_idle_window: None,
         },
         Some(&mut records),
         None,
@@ -212,6 +220,8 @@ pub(crate) struct DriveSessionConfig<'a> {
     pub(crate) commands: &'a [DeviceCommand],
     pub(crate) write_provenance: WriteProvenance,
     pub(crate) monotonic_start: MonotonicMs,
+    pub(crate) stream_end_is_link_down: bool,
+    pub(crate) link_loss_idle_window: Option<NotificationWindow>,
 }
 
 pub(crate) async fn drive_session_inner<P, S>(
@@ -313,6 +323,8 @@ where
             report: &mut report,
             capture,
             write_provenance: config.write_provenance,
+            stream_end_is_link_down: config.stream_end_is_link_down,
+            link_loss_idle_window: config.link_loss_idle_window,
         },
         session,
         &mut outputs,
@@ -400,6 +412,8 @@ struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
     write_provenance: WriteProvenance,
+    stream_end_is_link_down: bool,
+    link_loss_idle_window: Option<NotificationWindow>,
 }
 
 async fn process_notification_window<P, S>(
@@ -423,34 +437,22 @@ where
     let deadline = tokio::time::Instant::now() + notification_window.as_duration();
     while tokio::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = link_loss_next_wait(remaining, context.link_loss_idle_window);
         debug!(
             remaining_ms = remaining.as_millis(),
+            wait_ms = wait.as_millis(),
             "session notification next await starting"
         );
-        match tokio::time::timeout(remaining, notifications.next()).await {
+        match tokio::time::timeout(wait, notifications.next()).await {
             Ok(Some(notification)) => {
                 *monotonic_ms = monotonic_ms.next();
-                if let Some(records) = context.capture.as_deref_mut() {
-                    records.push(SessionCaptureRecord::Notification {
-                        monotonic_ms: *monotonic_ms,
-                        characteristic: notification.characteristic,
-                        service: notification.service,
-                        bytes: notification.bytes.clone(),
-                    });
-                }
-                if let Some(observer) = context.identity_observer.as_deref_mut() {
-                    observer.observe_notification(&notification);
-                    context.report.identity = observer.resolution();
-                }
-                session.handle(
-                    SessionInput::Notification {
-                        channel: context.channel,
-                        bytes: notification.as_raw_bytes(),
-                        monotonic_ms: monotonic_ms.get(),
-                    },
+                let decode_outcome = ingest_notification(
+                    &mut context,
+                    session,
                     outputs,
+                    &notification,
+                    *monotonic_ms,
                 );
-                let decode_outcome = notification_decode_outcome(outputs);
                 process_session_outputs(
                     SessionOutputContext {
                         peripheral: context.peripheral,
@@ -477,10 +479,32 @@ where
             }
             Ok(None) => {
                 debug!("session notification stream ended");
+                if context.stream_end_is_link_down {
+                    *monotonic_ms = monotonic_ms.next();
+                    record_external_link_down(
+                        context.report,
+                        context.capture.as_deref_mut(),
+                        session,
+                        outputs,
+                        *monotonic_ms,
+                    )?;
+                }
                 break;
             }
             Err(_) => {
-                debug!("session notification window elapsed");
+                if link_loss_idle_elapsed(remaining, context.link_loss_idle_window) {
+                    debug!("session notification idle window elapsed; recording link down");
+                    *monotonic_ms = monotonic_ms.next();
+                    record_external_link_down(
+                        context.report,
+                        context.capture.as_deref_mut(),
+                        session,
+                        outputs,
+                        *monotonic_ms,
+                    )?;
+                } else {
+                    debug!("session notification window elapsed");
+                }
                 break;
             }
         }
@@ -492,6 +516,87 @@ where
         "session notification window completed"
     );
 
+    Ok(())
+}
+
+fn ingest_notification<P, S>(
+    context: &mut NotificationLoopContext<'_, '_, P>,
+    session: &mut S,
+    outputs: &mut Vec<SessionOutput>,
+    notification: &BtleNotification,
+    monotonic_ms: MonotonicMs,
+) -> Option<NotificationDecodeOutcome>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
+    if let Some(records) = context.capture.as_deref_mut() {
+        records.push(SessionCaptureRecord::Notification {
+            monotonic_ms,
+            characteristic: notification.characteristic,
+            service: notification.service,
+            bytes: notification.bytes.clone(),
+        });
+    }
+    if let Some(observer) = context.identity_observer.as_deref_mut() {
+        observer.observe_notification(notification);
+        context.report.identity = observer.resolution();
+    }
+    session.handle(
+        SessionInput::Notification {
+            channel: context.channel,
+            bytes: notification.as_raw_bytes(),
+            monotonic_ms: monotonic_ms.get(),
+        },
+        outputs,
+    );
+    notification_decode_outcome(outputs)
+}
+
+fn link_loss_next_wait(
+    remaining: std::time::Duration,
+    link_loss_idle_window: Option<NotificationWindow>,
+) -> std::time::Duration {
+    link_loss_idle_window.map_or(remaining, |idle_window| {
+        remaining.min(idle_window.as_duration())
+    })
+}
+
+fn link_loss_idle_elapsed(
+    remaining: std::time::Duration,
+    link_loss_idle_window: Option<NotificationWindow>,
+) -> bool {
+    link_loss_idle_window.is_some_and(|idle_window| idle_window.as_duration() < remaining)
+}
+
+fn record_external_link_down<S>(
+    report: &mut SessionBridgeReport,
+    capture: Option<&mut Vec<SessionCaptureRecord>>,
+    session: &mut S,
+    outputs: &mut Vec<SessionOutput>,
+    monotonic_ms: MonotonicMs,
+) -> Result<(), BtleError>
+where
+    S: ProtocolSession + Send,
+{
+    if let Some(records) = capture {
+        records.push(SessionCaptureRecord::LinkDown { monotonic_ms });
+    }
+    report.disconnects = report.disconnects.increment();
+    session.handle(SessionInput::LinkDown, outputs);
+    while !outputs.is_empty() {
+        for output in std::mem::take(outputs) {
+            match output {
+                SessionOutput::Event(event) => process_device_event(report, event, monotonic_ms),
+                SessionOutput::NotificationIngest(outcome) => {
+                    process_notification_ingest_outcome(report, outcome, monotonic_ms);
+                }
+                SessionOutput::Transport(_) => {
+                    return Err(SessionBridgeError::ExternalLinkDownTransportAction.into());
+                }
+            }
+        }
+    }
     Ok(())
 }
 

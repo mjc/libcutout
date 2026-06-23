@@ -1873,11 +1873,11 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
         "current_ma": measured_i32_json(battery.current_ma),
         "bms_pack_current_0_ma": bms_pack_current_json(
             payload.bms_pack_currents(),
-            |currents| currents.current_0_ma,
+            cutout_core::BmsPackCurrents::current_0_ma,
         ),
         "bms_pack_current_1_ma": bms_pack_current_json(
             payload.bms_pack_currents(),
-            |currents| currents.current_1_ma,
+            cutout_core::BmsPackCurrents::current_1_ma,
         ),
         "percent_reported": measured_u8_json(battery.percent_reported),
         "percent_estimated": measured_u8_json(battery.percent_estimated),
@@ -2243,7 +2243,7 @@ impl FieldCount {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::{collections::BTreeSet, thread};
 
     use btleplug::api::CharPropFlags;
     use clap::Parser;
@@ -2959,8 +2959,7 @@ mod tests {
             NotificationByteLen::new(75),
             42,
             cutout_core::ReservedPayloadEvidence {
-                selector: Some(ProtocolSelector::new(8)),
-                tag: None,
+                classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::new(24),
                 verification: VerificationStatus::HardwareVerified,
             },
@@ -3019,7 +3018,7 @@ mod tests {
         assert!(matches!(
             whole.as_slice(),
             [cutout_core::NotificationIngestOutcome::KnownReserved { payload, .. }]
-                if payload.selector == Some(ProtocolSelector::new(8))
+                if payload.classifier.selector_value() == Some(ProtocolSelector::new(8))
         ));
     }
 
@@ -3676,6 +3675,126 @@ mod tests {
         }
     }
 
+    #[test]
+    fn pevcap_replay_lifted_wheel_exposes_typed_aero_bms_metadata_currents() {
+        let capture = PevcapCapture::decode(
+            include_str!(
+                "../../cutout-protocols/fixtures/nosfet-aero/pevcap/nf2557-lifted-wheel-120s.pevcap.jsonl"
+            )
+            .as_bytes(),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("lifted-wheel Aero PEVCAP decodes");
+
+        let report = replay_pevcap_capture(&capture, selected_aero_session_profile())
+            .expect("lifted-wheel Aero PEVCAP replays");
+
+        let mut observed = BTreeSet::new();
+        for response in &report.read_only_response_events {
+            if let ReadOnlyResponse::Battery(payload) = response
+                && payload.page().kind == BatteryPageKind::Metadata
+            {
+                let currents = payload
+                    .bms_pack_currents()
+                    .expect("metadata page should carry typed BMS currents");
+                assert_eq!(
+                    payload.battery().current_ma,
+                    Some(Measured::reported(currents.current_0_ma().get()))
+                );
+                observed.insert((
+                    payload.page().selector.get(),
+                    currents.current_0_ma().get(),
+                    currents.current_1_ma().get(),
+                ));
+            }
+        }
+
+        assert!(observed.contains(&(0, 10, 10)));
+        assert!(observed.contains(&(0, 20, 10)));
+        assert!(observed.contains(&(4, 10, 10)));
+        assert!(observed.contains(&(4, 20, 10)));
+    }
+
+    #[test]
+    fn pevcap_replay_dashboard_verification_capture_matches_live_aero_fields() {
+        let capture = PevcapCapture::decode(
+            include_str!(
+                "../../cutout-protocols/fixtures/nosfet-aero/pevcap/nf2557-dashboard-verification-120s.pevcap.jsonl"
+            )
+            .as_bytes(),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("dashboard verification Aero PEVCAP decodes");
+
+        let report = replay_pevcap_capture(&capture, selected_aero_session_profile())
+            .expect("dashboard verification Aero PEVCAP replays");
+
+        assert_eq!(report.telemetry, ReplayTelemetryCount::new(591));
+        assert_eq!(
+            report.read_only_responses,
+            ReplayReadOnlyResponseCount::new(2_335)
+        );
+        assert_eq!(report.diagnostics, ReplayDiagnosticCount::default());
+        assert!(report.chunk_one_byte_matches);
+        assert!(report.chunk_arbitrary_matches);
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .speed_mm_s
+                .map(|speed| speed.value),
+            Some(0)
+        );
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .voltage_mv
+                .map(|voltage| voltage.value),
+            Some(125_230)
+        );
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .distance_mm
+                .map(|distance| distance.value),
+            Some(1_551_216_000)
+        );
+        assert_eq!(
+            report
+                .firmware
+                .and_then(|firmware| firmware.firmware_major.map(|major| major.value)),
+            Some(43)
+        );
+
+        let mut observed_pages = Vec::new();
+        let mut observed_currents = BTreeSet::new();
+        for response in &report.read_only_response_events {
+            if let ReadOnlyResponse::Battery(payload) = response {
+                observed_pages.push((payload.page().kind, payload.page().selector.get()));
+                if payload.page().kind == BatteryPageKind::Metadata {
+                    let currents = payload
+                        .bms_pack_currents()
+                        .expect("metadata page should carry typed BMS currents");
+                    observed_currents.insert((
+                        payload.page().selector.get(),
+                        currents.current_0_ma().get(),
+                        currents.current_1_ma().get(),
+                    ));
+                }
+            }
+        }
+
+        assert!(observed_pages.contains(&(BatteryPageKind::Metadata, 0)));
+        assert!(observed_pages.contains(&(BatteryPageKind::CellVoltage, 1)));
+        assert!(observed_pages.contains(&(BatteryPageKind::CellVoltage, 2)));
+        assert!(observed_pages.contains(&(BatteryPageKind::Temperature, 3)));
+        assert!(observed_pages.contains(&(BatteryPageKind::Metadata, 4)));
+        assert!(observed_pages.contains(&(BatteryPageKind::CellVoltage, 5)));
+        assert!(observed_pages.contains(&(BatteryPageKind::CellVoltage, 6)));
+        assert!(observed_pages.contains(&(BatteryPageKind::Temperature, 7)));
+        assert!(observed_currents.contains(&(0, 20, 20)));
+        assert!(observed_currents.contains(&(4, 20, 10)));
+    }
+
     #[derive(Clone, Copy)]
     struct PevcapReplayCorpusCase {
         name: &'static str,
@@ -3690,6 +3809,14 @@ mod tests {
             jsonl: include_str!("../fixtures/pevcap/aero-veteran-live.jsonl"),
             profile: selected_aero_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(5),
+        },
+        PevcapReplayCorpusCase {
+            name: "nf2557-dashboard-verification",
+            jsonl: include_str!(
+                "../../cutout-protocols/fixtures/nosfet-aero/pevcap/nf2557-dashboard-verification-120s.pevcap.jsonl"
+            ),
+            profile: selected_aero_session_profile(),
+            minimum_chunk_plan_len: ReplayChunkPlanLen::new(6),
         },
         PevcapReplayCorpusCase {
             name: "falcon-begode-banner",
