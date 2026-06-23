@@ -4,9 +4,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, ParserDiagnosticsDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto, TransportActionDto, VerificationStatus, VerifiedValue,
+    GattRoles, NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticsDto,
+    ParserErrorDto, ParserGapEvidenceDto, PevcapCapture, PevcapEncoding, PevcapHeader,
+    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
+    ReservedPayloadEvidenceDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
+    TransportActionDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -109,6 +111,136 @@ pub struct MobileSessionOutputDto {
 
     /// Transport payload bytes.
     pub bytes: Vec<u8>,
+
+    /// Typed parser-first ingest outcome.
+    pub ingest: Option<MobileNotificationIngestOutcomeDto>,
+}
+
+/// Mobile notification ingest outcome kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileNotificationIngestOutcomeKindDto {
+    /// Notification produced semantic protocol events.
+    SemanticEvents,
+
+    /// Notification bytes are a valid partial frame.
+    BufferedFragment,
+
+    /// Notification was recognized but failed parser validation.
+    ParserDiagnostic,
+
+    /// Notification carried a known reserved/opaque payload.
+    KnownReserved,
+
+    /// Notification reached a known parser gap.
+    ParserGap,
+
+    /// Notification was intentionally ignored.
+    Ignored,
+}
+
+/// Mobile parser error kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileParserErrorKindDto {
+    /// A frame claimed or accumulated more bytes than allowed.
+    OversizedFrame,
+
+    /// A frame checksum did not match its payload.
+    BadChecksum,
+
+    /// Input bytes could not form a valid frame.
+    MalformedFrame,
+
+    /// A parser deadline elapsed before the expected data arrived.
+    Timeout,
+
+    /// A reply could not be matched to an in-flight request.
+    UnmatchedReply,
+}
+
+/// Mobile parser error DTO.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserErrorDto {
+    /// Error kind.
+    pub kind: MobileParserErrorKindDto,
+
+    /// Claimed or observed frame length.
+    pub claimed: Option<u64>,
+
+    /// Configured maximum accepted frame length.
+    pub max: Option<u64>,
+
+    /// Elapsed monotonic milliseconds.
+    pub elapsed_ms: Option<u64>,
+
+    /// Timeout threshold in monotonic milliseconds.
+    pub timeout_ms: Option<u64>,
+}
+
+/// Mobile reserved payload evidence DTO.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileReservedPayloadEvidenceDto {
+    /// Selector/page identifier when present.
+    pub selector: Option<u8>,
+
+    /// Tag/opcode when present.
+    pub tag: Option<u16>,
+
+    /// Reserved payload body length.
+    pub body_len: u64,
+
+    /// Evidence verification status.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Mobile parser gap evidence DTO.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserGapEvidenceDto {
+    /// Selector/page identifier when present.
+    pub selector: Option<u8>,
+
+    /// Tag/opcode when present.
+    pub tag: Option<u16>,
+
+    /// Unparsed body length.
+    pub body_len: u64,
+}
+
+/// Mobile notification evidence DTO.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNotificationEvidenceDto {
+    /// Protocol family that accepted or classified the notification.
+    pub family: Option<MobileProtocolFamilyDto>,
+
+    /// GATT channel UUID bytes.
+    pub channel: Vec<u8>,
+
+    /// Notification payload length without retaining payload bytes.
+    pub len: u64,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: u64,
+}
+
+/// Mobile parser-first notification ingest outcome DTO.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNotificationIngestOutcomeDto {
+    /// Outcome kind.
+    pub kind: MobileNotificationIngestOutcomeKindDto,
+
+    /// Shared notification evidence without raw payload bytes.
+    pub notification: MobileNotificationEvidenceDto,
+
+    /// Number of semantic events emitted from this notification.
+    pub event_count: Option<u64>,
+
+    /// Parser error for diagnostic outcomes.
+    pub parser_error: Option<MobileParserErrorDto>,
+
+    /// Reserved payload evidence for known-reserved outcomes.
+    pub reserved: Option<MobileReservedPayloadEvidenceDto>,
+
+    /// Parser gap evidence for parser-gap outcomes.
+    pub gap: Option<MobileParserGapEvidenceDto>,
 }
 
 /// Mobile step-error kind.
@@ -471,6 +603,28 @@ impl From<MobileProtocolFamilyDto> for ProtocolFamily {
     }
 }
 
+impl From<ProtocolFamilyDto> for MobileProtocolFamilyDto {
+    fn from(family: ProtocolFamilyDto) -> Self {
+        match family {
+            ProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
+            ProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
+            ProtocolFamilyDto::Vesc => Self::Vesc,
+        }
+    }
+}
+
+impl From<VerificationStatusDto> for MobileVerificationStatusDto {
+    fn from(status: VerificationStatusDto) -> Self {
+        match status {
+            VerificationStatusDto::Unverified => Self::Unverified,
+            VerificationStatusDto::Inferred => Self::Inferred,
+            VerificationStatusDto::SourceVerified => Self::SourceVerified,
+            VerificationStatusDto::HardwareVerified => Self::HardwareVerified,
+            VerificationStatusDto::SourceAndHardwareVerified => Self::SourceAndHardwareVerified,
+        }
+    }
+}
+
 impl From<MobileVerificationStatusDto> for VerificationStatus {
     fn from(status: MobileVerificationStatusDto) -> Self {
         match status {
@@ -678,27 +832,173 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 kind: MobileSessionOutputKindDto::Subscribe,
                 channel: channel.to_vec(),
                 bytes: Vec::new(),
+                ingest: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
                 kind: MobileSessionOutputKindDto::Write,
                 channel: channel.to_vec(),
                 bytes,
+                ingest: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
                 kind: MobileSessionOutputKindDto::Disconnect,
                 channel: Vec::new(),
                 bytes: Vec::new(),
+                ingest: None,
             },
             SessionOutputDto::Event(_) => Self {
                 kind: MobileSessionOutputKindDto::Event,
                 channel: Vec::new(),
                 bytes: Vec::new(),
+                ingest: None,
             },
-            SessionOutputDto::NotificationIngest(_) => Self {
+            SessionOutputDto::NotificationIngest(outcome) => Self {
                 kind: MobileSessionOutputKindDto::NotificationIngest,
                 channel: Vec::new(),
                 bytes: Vec::new(),
+                ingest: Some(outcome.into()),
             },
+        }
+    }
+}
+
+impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
+    fn from(outcome: NotificationIngestOutcomeDto) -> Self {
+        match outcome {
+            NotificationIngestOutcomeDto::SemanticEvents {
+                notification,
+                event_count,
+            } => Self {
+                kind: MobileNotificationIngestOutcomeKindDto::SemanticEvents,
+                notification: notification.into(),
+                event_count: Some(event_count as u64),
+                parser_error: None,
+                reserved: None,
+                gap: None,
+            },
+            NotificationIngestOutcomeDto::BufferedFragment(notification) => Self {
+                kind: MobileNotificationIngestOutcomeKindDto::BufferedFragment,
+                notification: notification.into(),
+                event_count: None,
+                parser_error: None,
+                reserved: None,
+                gap: None,
+            },
+            NotificationIngestOutcomeDto::ParserDiagnostic {
+                notification,
+                error,
+            } => Self {
+                kind: MobileNotificationIngestOutcomeKindDto::ParserDiagnostic,
+                notification: notification.into(),
+                event_count: None,
+                parser_error: Some(error.into()),
+                reserved: None,
+                gap: None,
+            },
+            NotificationIngestOutcomeDto::KnownReserved {
+                notification,
+                payload,
+            } => Self {
+                kind: MobileNotificationIngestOutcomeKindDto::KnownReserved,
+                notification: notification.into(),
+                event_count: None,
+                parser_error: None,
+                reserved: Some(payload.into()),
+                gap: None,
+            },
+            NotificationIngestOutcomeDto::ParserGap { notification, gap } => Self {
+                kind: MobileNotificationIngestOutcomeKindDto::ParserGap,
+                notification: notification.into(),
+                event_count: None,
+                parser_error: None,
+                reserved: None,
+                gap: Some(gap.into()),
+            },
+            NotificationIngestOutcomeDto::Ignored(notification) => Self {
+                kind: MobileNotificationIngestOutcomeKindDto::Ignored,
+                notification: notification.into(),
+                event_count: None,
+                parser_error: None,
+                reserved: None,
+                gap: None,
+            },
+        }
+    }
+}
+
+impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
+    fn from(evidence: NotificationEvidenceDto) -> Self {
+        Self {
+            family: evidence.family.map(Into::into),
+            channel: evidence.channel.to_vec(),
+            len: evidence.len as u64,
+            monotonic_ms: evidence.monotonic_ms,
+        }
+    }
+}
+
+impl From<ParserErrorDto> for MobileParserErrorDto {
+    fn from(error: ParserErrorDto) -> Self {
+        match error {
+            ParserErrorDto::OversizedFrame { claimed, max } => Self {
+                kind: MobileParserErrorKindDto::OversizedFrame,
+                claimed: Some(claimed as u64),
+                max: Some(max as u64),
+                elapsed_ms: None,
+                timeout_ms: None,
+            },
+            ParserErrorDto::BadChecksum => Self {
+                kind: MobileParserErrorKindDto::BadChecksum,
+                claimed: None,
+                max: None,
+                elapsed_ms: None,
+                timeout_ms: None,
+            },
+            ParserErrorDto::MalformedFrame => Self {
+                kind: MobileParserErrorKindDto::MalformedFrame,
+                claimed: None,
+                max: None,
+                elapsed_ms: None,
+                timeout_ms: None,
+            },
+            ParserErrorDto::Timeout {
+                elapsed_ms,
+                timeout_ms,
+            } => Self {
+                kind: MobileParserErrorKindDto::Timeout,
+                claimed: None,
+                max: None,
+                elapsed_ms: Some(elapsed_ms),
+                timeout_ms: Some(timeout_ms),
+            },
+            ParserErrorDto::UnmatchedReply => Self {
+                kind: MobileParserErrorKindDto::UnmatchedReply,
+                claimed: None,
+                max: None,
+                elapsed_ms: None,
+                timeout_ms: None,
+            },
+        }
+    }
+}
+
+impl From<ReservedPayloadEvidenceDto> for MobileReservedPayloadEvidenceDto {
+    fn from(evidence: ReservedPayloadEvidenceDto) -> Self {
+        Self {
+            selector: evidence.selector,
+            tag: evidence.tag,
+            body_len: evidence.body_len as u64,
+            verification: evidence.verification.into(),
+        }
+    }
+}
+
+impl From<ParserGapEvidenceDto> for MobileParserGapEvidenceDto {
+    fn from(evidence: ParserGapEvidenceDto) -> Self {
+        Self {
+            selector: evidence.selector,
+            tag: evidence.tag,
+            body_len: evidence.body_len as u64,
         }
     }
 }
@@ -850,6 +1150,114 @@ impl FalconReadOnlySession {
 mod tests {
     use super::*;
 
+    fn notification_fixture() -> NotificationEvidenceDto {
+        NotificationEvidenceDto {
+            family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
+            channel: [0x7a; 16],
+            len: 17,
+            monotonic_ms: 42,
+        }
+    }
+
+    fn mobile_ingest(output: NotificationIngestOutcomeDto) -> MobileNotificationIngestOutcomeDto {
+        let mobile = MobileSessionOutputDto::from(SessionOutputDto::NotificationIngest(output));
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::NotificationIngest);
+        assert!(mobile.channel.is_empty());
+        assert!(mobile.bytes.is_empty());
+        mobile.ingest.expect("ingest output carries typed outcome")
+    }
+
+    #[test]
+    fn mobile_notification_ingest_dto_preserves_each_typed_outcome_class() {
+        let semantic = mobile_ingest(NotificationIngestOutcomeDto::SemanticEvents {
+            notification: notification_fixture(),
+            event_count: 3,
+        });
+        assert_eq!(
+            semantic.kind,
+            MobileNotificationIngestOutcomeKindDto::SemanticEvents
+        );
+        assert_eq!(
+            semantic.notification.family,
+            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+        );
+        assert_eq!(semantic.notification.channel, vec![0x7a; 16]);
+        assert_eq!(semantic.notification.len, 17);
+        assert_eq!(semantic.event_count, Some(3));
+        assert_eq!(semantic.parser_error, None);
+
+        let buffered = mobile_ingest(NotificationIngestOutcomeDto::BufferedFragment(
+            notification_fixture(),
+        ));
+        assert_eq!(
+            buffered.kind,
+            MobileNotificationIngestOutcomeKindDto::BufferedFragment
+        );
+        assert_eq!(buffered.event_count, None);
+
+        let diagnostic = mobile_ingest(NotificationIngestOutcomeDto::ParserDiagnostic {
+            notification: notification_fixture(),
+            error: ParserErrorDto::OversizedFrame {
+                claimed: 257,
+                max: 256,
+            },
+        });
+        assert_eq!(
+            diagnostic.parser_error,
+            Some(MobileParserErrorDto {
+                kind: MobileParserErrorKindDto::OversizedFrame,
+                claimed: Some(257),
+                max: Some(256),
+                elapsed_ms: None,
+                timeout_ms: None,
+            })
+        );
+
+        let reserved = mobile_ingest(NotificationIngestOutcomeDto::KnownReserved {
+            notification: notification_fixture(),
+            payload: ReservedPayloadEvidenceDto {
+                selector: Some(8),
+                tag: Some(0x5a5c),
+                body_len: 84,
+                verification: VerificationStatusDto::SourceVerified,
+            },
+        });
+        assert_eq!(
+            reserved.reserved,
+            Some(MobileReservedPayloadEvidenceDto {
+                selector: Some(8),
+                tag: Some(0x5a5c),
+                body_len: 84,
+                verification: MobileVerificationStatusDto::SourceVerified,
+            })
+        );
+
+        let gap = mobile_ingest(NotificationIngestOutcomeDto::ParserGap {
+            notification: notification_fixture(),
+            gap: ParserGapEvidenceDto {
+                selector: Some(9),
+                tag: None,
+                body_len: 11,
+            },
+        });
+        assert_eq!(
+            gap.gap,
+            Some(MobileParserGapEvidenceDto {
+                selector: Some(9),
+                tag: None,
+                body_len: 11,
+            })
+        );
+
+        let ignored = mobile_ingest(NotificationIngestOutcomeDto::Ignored(notification_fixture()));
+        assert_eq!(
+            ignored.kind,
+            MobileNotificationIngestOutcomeKindDto::Ignored
+        );
+        assert_eq!(ignored.event_count, None);
+    }
+
     #[test]
     fn aero_wrapper_constructs_and_exposes_diagnostics() {
         let session = AeroReadOnlySession::new();
@@ -925,14 +1333,26 @@ mod tests {
         });
 
         assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| {
-            output
-                == &MobileSessionOutputDto {
-                    kind: MobileSessionOutputKindDto::NotificationIngest,
-                    channel: Vec::new(),
-                    bytes: Vec::new(),
-                }
-        }));
+        let ingest = result
+            .outputs
+            .iter()
+            .find_map(|output| output.ingest.as_ref())
+            .expect("notification should emit typed ingest outcome");
+        assert_eq!(
+            ingest.kind,
+            MobileNotificationIngestOutcomeKindDto::SemanticEvents
+        );
+        assert_eq!(
+            ingest.notification.family,
+            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+        );
+        assert_eq!(ingest.notification.len, 87);
+        assert_eq!(ingest.notification.monotonic_ms, 2);
+        assert_eq!(ingest.event_count, Some(5));
+        assert_eq!(ingest.parser_error, None);
+        assert_eq!(ingest.reserved, None);
+        assert_eq!(ingest.gap, None);
+        assert!(result.outputs.iter().all(|output| output.bytes.is_empty()));
         assert_eq!(session.current_snapshot().voltage_mv, Some(108_760));
     }
 
