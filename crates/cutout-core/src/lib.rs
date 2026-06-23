@@ -2274,12 +2274,52 @@ impl NotificationEvidence {
 /// Bounded evidence for protocol payloads that are known but intentionally not
 /// decoded as stable telemetry yet.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ReservedPayloadEvidence {
-    /// Protocol selector/page id, when the family has one.
-    pub selector: Option<ProtocolSelector>,
+pub enum PayloadClassifier {
+    /// Protocol selector/page id.
+    Selector(ProtocolSelector),
 
-    /// Protocol tag/opcode, when observed.
-    pub tag: Option<ProtocolTag>,
+    /// Protocol tag/opcode.
+    Tag(ProtocolTag),
+}
+
+impl PayloadClassifier {
+    /// Creates selector-based payload evidence.
+    #[must_use]
+    pub const fn selector(selector: ProtocolSelector) -> Self {
+        Self::Selector(selector)
+    }
+
+    /// Creates tag-based payload evidence.
+    #[must_use]
+    pub const fn tag(tag: ProtocolTag) -> Self {
+        Self::Tag(tag)
+    }
+
+    /// Returns the selector value when this evidence is selector-based.
+    #[must_use]
+    pub const fn selector_value(self) -> Option<ProtocolSelector> {
+        match self {
+            Self::Selector(selector) => Some(selector),
+            Self::Tag(_) => None,
+        }
+    }
+
+    /// Returns the tag value when this evidence is tag-based.
+    #[must_use]
+    pub const fn tag_value(self) -> Option<ProtocolTag> {
+        match self {
+            Self::Selector(_) => None,
+            Self::Tag(tag) => Some(tag),
+        }
+    }
+}
+
+/// Bounded evidence for protocol payloads that are known but intentionally not
+/// decoded as stable telemetry yet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReservedPayloadEvidence {
+    /// Typed payload classifier for the family.
+    pub classifier: PayloadClassifier,
 
     /// Length of the classified body, without retaining raw bytes.
     pub body_len: PayloadBodyLen,
@@ -2292,11 +2332,8 @@ pub struct ReservedPayloadEvidence {
 /// mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParserGapEvidence {
-    /// Protocol tag/opcode, when observed.
-    pub tag: Option<ProtocolTag>,
-
-    /// Protocol selector/page id, when observed.
-    pub selector: Option<ProtocolSelector>,
+    /// Typed payload classifier for the family.
+    pub classifier: PayloadClassifier,
 
     /// Length of the unparsed body, without retaining raw bytes.
     pub body_len: PayloadBodyLen,
@@ -4661,6 +4698,7 @@ mod tests {
         assert!(size_of::<crate::DiagnosticError>() <= 80);
         assert!(size_of::<crate::NotificationIngestOutcome>() <= 128);
         assert!(size_of::<crate::NotificationEvidence>() <= 64);
+        assert!(size_of::<crate::PayloadClassifier>() <= 4);
         assert!(size_of::<crate::ReservedPayloadEvidence>() <= 64);
         assert!(size_of::<TelemetrySnapshot>() <= 256);
         assert!(size_of::<crate::CaptureRecord>() <= 48);
@@ -4722,8 +4760,7 @@ mod tests {
             crate::NotificationByteLen::new(75),
             12,
             crate::ReservedPayloadEvidence {
-                selector: Some(crate::ProtocolSelector::new(8)),
-                tag: Some(crate::ProtocolTag::new(0x42)),
+                classifier: crate::PayloadClassifier::selector(crate::ProtocolSelector::new(8)),
                 body_len: crate::PayloadBodyLen::new(68),
                 verification: VerificationStatus::HardwareVerified,
             },
@@ -4738,7 +4775,8 @@ mod tests {
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::new(75)
                 && notification.monotonic_ms == 12
-                && payload.selector == Some(crate::ProtocolSelector::new(8))
+                && payload.classifier.selector_value() == Some(crate::ProtocolSelector::new(8))
+                && payload.classifier.tag_value().is_none()
                 && payload.body_len == crate::PayloadBodyLen::new(68)
                 && payload.verification == VerificationStatus::HardwareVerified
         ));
@@ -4795,8 +4833,7 @@ mod tests {
             crate::NotificationByteLen::new(77),
             15,
             crate::ParserGapEvidence {
-                tag: Some(crate::ProtocolTag::new(0x5c)),
-                selector: Some(crate::ProtocolSelector::new(8)),
+                classifier: crate::PayloadClassifier::tag(crate::ProtocolTag::new(0x5c)),
                 body_len: crate::PayloadBodyLen::new(70),
             },
         );

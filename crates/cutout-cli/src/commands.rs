@@ -2959,8 +2959,7 @@ mod tests {
             NotificationByteLen::new(75),
             42,
             cutout_core::ReservedPayloadEvidence {
-                selector: Some(ProtocolSelector::new(8)),
-                tag: None,
+                classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::new(24),
                 verification: VerificationStatus::HardwareVerified,
             },
@@ -3019,7 +3018,7 @@ mod tests {
         assert!(matches!(
             whole.as_slice(),
             [cutout_core::NotificationIngestOutcome::KnownReserved { payload, .. }]
-                if payload.selector == Some(ProtocolSelector::new(8))
+                if payload.classifier.selector_value() == Some(ProtocolSelector::new(8))
         ));
     }
 

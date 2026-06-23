@@ -1103,8 +1103,11 @@ pub struct ReservedPayloadEvidenceDto {
 impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
     fn from(evidence: ReservedPayloadEvidence) -> Self {
         Self {
-            selector: evidence.selector.map(super::ProtocolSelector::get),
-            tag: evidence.tag.map(super::ProtocolTag::get),
+            selector: evidence
+                .classifier
+                .selector_value()
+                .map(super::ProtocolSelector::get),
+            tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: evidence.body_len.get(),
             verification: evidence.verification.into(),
         }
@@ -1127,8 +1130,11 @@ pub struct ParserGapEvidenceDto {
 impl From<ParserGapEvidence> for ParserGapEvidenceDto {
     fn from(evidence: ParserGapEvidence) -> Self {
         Self {
-            selector: evidence.selector.map(super::ProtocolSelector::get),
-            tag: evidence.tag.map(super::ProtocolTag::get),
+            selector: evidence
+                .classifier
+                .selector_value()
+                .map(super::ProtocolSelector::get),
+            tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: evidence.body_len.get(),
         }
     }

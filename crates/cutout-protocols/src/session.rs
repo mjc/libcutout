@@ -5,8 +5,8 @@ use cutout_core::{
     DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
     GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis, NotificationByteLen,
     NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics, ParserError, ParserGapEvidence,
-    PayloadBodyLen, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
+    PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession,
+    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
     SemanticEventCount, SessionInput, SessionOutput, TransportAction, ValueQuality,
     VerificationStatus, VerifiedValue, WritePayload,
 };
@@ -307,8 +307,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     frame_len,
                     monotonic_ms,
                     ReservedPayloadEvidence {
-                        selector: Some(evidence.selector),
-                        tag: None,
+                        classifier: PayloadClassifier::selector(evidence.selector),
                         body_len: PayloadBodyLen::new(evidence.body.len()),
                         verification: VerificationStatus::HardwareVerified,
                     },
@@ -322,8 +321,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     frame_len,
                     monotonic_ms,
                     ParserGapEvidence {
-                        selector: Some(evidence.selector),
-                        tag: None,
+                        classifier: PayloadClassifier::selector(evidence.selector),
                         body_len: PayloadBodyLen::new(evidence.body.len()),
                     },
                 ),
@@ -2235,8 +2233,7 @@ mod tests {
                 NotificationByteLen::new(frame.len()),
                 42,
                 ReservedPayloadEvidence {
-                    selector: Some(ProtocolSelector::new(8)),
-                    tag: None,
+                    classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::new(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
@@ -2259,8 +2256,7 @@ mod tests {
                 NotificationByteLen::new(frame.len()),
                 42,
                 ParserGapEvidence {
-                    selector: Some(ProtocolSelector::new(9)),
-                    tag: None,
+                    classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                     body_len: PayloadBodyLen::new(26),
                 },
             )]
@@ -2346,7 +2342,10 @@ mod tests {
                         notification.family,
                         Some(ProtocolFamily::VeteranLeaperkimNosfet)
                     );
-                    assert_eq!(payload.selector, Some(ProtocolSelector::new(8)));
+                    assert_eq!(
+                        payload.classifier,
+                        PayloadClassifier::selector(ProtocolSelector::new(8))
+                    );
                     assert_eq!(payload.body_len, PayloadBodyLen::new(26));
                     assert_eq!(payload.verification, VerificationStatus::HardwareVerified);
                 }
@@ -2390,8 +2389,7 @@ mod tests {
                     NotificationByteLen::new(reserved_frame.len()),
                     42,
                     ReservedPayloadEvidence {
-                        selector: Some(ProtocolSelector::new(8)),
-                        tag: None,
+                        classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                         body_len: PayloadBodyLen::new(24),
                         verification: VerificationStatus::HardwareVerified,
                     },

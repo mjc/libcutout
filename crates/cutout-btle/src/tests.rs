@@ -10,11 +10,11 @@ use bytes::Bytes;
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
-    ParserGapEvidence, PayloadBodyLen, PevcapDirection, PevcapResolvedIdentity, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, RawFieldValue, ReadOnlyResponse, ReservedPayloadEvidence,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    TelemetryDelta, TransportAction, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
-    WriteMode,
+    ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection, PevcapResolvedIdentity,
+    ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue, ReadOnlyResponse,
+    ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
+    SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
+    VerificationStatus, VerifiedValue, WriteMode,
 };
 use futures_util::stream;
 use smallvec::smallvec;
@@ -1363,8 +1363,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             NotificationByteLen::new(75),
             4,
             ReservedPayloadEvidence {
-                selector: Some(ProtocolSelector::new(8)),
-                tag: None,
+                classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::new(24),
                 verification: VerificationStatus::HardwareVerified,
             },
@@ -1377,8 +1376,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             NotificationByteLen::new(77),
             5,
             ParserGapEvidence {
-                selector: Some(ProtocolSelector::new(9)),
-                tag: None,
+                classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                 body_len: PayloadBodyLen::new(26),
             },
         ),
