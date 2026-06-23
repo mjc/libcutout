@@ -304,6 +304,39 @@ pub(crate) type ReadOnlyDiagnosticResponseCount =
     ReadOnlySummaryCount<ReadOnlyDiagnosticResponseCountTag>;
 pub(crate) type RawTelemetryResponseCount = ReadOnlySummaryCount<RawTelemetryResponseCountTag>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct SignalPercent(u64);
+
+impl SignalPercent {
+    const fn new(value: u64) -> Self {
+        Self(if value > 100 { 100 } else { value })
+    }
+
+    fn from_rssi_dbm(rssi_dbm: i16) -> Self {
+        let clamped = rssi_dbm.clamp(-100, -40);
+        Self::new(
+            u64::try_from(i32::from(clamped) + 100)
+                .unwrap_or(0)
+                .saturating_mul(100)
+                / 60,
+        )
+    }
+
+    const fn increment(self) -> Self {
+        Self::new(self.0.saturating_add(1))
+    }
+
+    fn ratio(self) -> f64 {
+        f64::from(u32::try_from(self.0).unwrap_or(100)) / 100.0
+    }
+}
+
+impl fmt::Display for SignalPercent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct PopulatedDiagnosticDetailCount(usize);
 
@@ -414,7 +447,7 @@ pub(crate) enum DashboardUpdate {
 pub(crate) struct TelemetryWindow {
     pub(crate) battery_pct: Option<u64>,
     pub(crate) battery_source: BatterySource,
-    pub(crate) signal_pct: u64,
+    pub(crate) signal_pct: SignalPercent,
     pub(crate) latest_speed_mph: Option<u64>,
     pub(crate) latest_voltage_v: Option<u64>,
     pub(crate) latest_current_a: Option<i64>,
@@ -567,7 +600,7 @@ impl DashboardState {
         };
         self.telemetry.load_window(
             74,
-            81,
+            SignalPercent::new(81),
             DEMO_SPEED_MPH,
             DEMO_VOLTAGE_V,
             DEMO_CURRENT_A,
@@ -647,7 +680,9 @@ impl DashboardState {
         };
         state.counters.discovered = DiscoveredDeviceCount::new(1);
         state.counters.connected = ConnectedDeviceCount::new(1);
-        state.telemetry.signal_pct = observation.rssi.map_or(0, rssi_to_signal_percent);
+        state.telemetry.signal_pct = observation
+            .rssi
+            .map_or_else(SignalPercent::default, SignalPercent::from_rssi_dbm);
         state.scan_browser.push_observation(
             ScanObservation {
                 name: state.device.name.clone(),
@@ -854,7 +889,7 @@ impl TelemetryWindow {
         Self {
             battery_pct: None,
             battery_source: BatterySource::Unknown,
-            signal_pct: 0,
+            signal_pct: SignalPercent::default(),
             latest_speed_mph: None,
             latest_voltage_v: None,
             latest_current_a: None,
@@ -874,7 +909,7 @@ impl TelemetryWindow {
     fn load_window(
         &mut self,
         battery_pct: u64,
-        signal_pct: u64,
+        signal_pct: SignalPercent,
         speed_mph: &'static [u64],
         voltage_v: &'static [u64],
         current_a: &'static [u64],
@@ -907,7 +942,7 @@ impl TelemetryWindow {
         if let Some(battery_pct) = self.battery_pct.as_mut() {
             *battery_pct = battery_pct.saturating_sub(1).max(10);
         }
-        self.signal_pct = (self.signal_pct + 1).min(100);
+        self.signal_pct = self.signal_pct.increment();
         push_sample(&mut self.speed_mph, next_speed);
         push_sample(&mut self.voltage_v, next_voltage);
         push_sample(&mut self.current_a, next_current);
@@ -2125,16 +2160,8 @@ fn render_signal_gauge(frame: &mut Frame<'_>, area: Rect, state: &DashboardState
         .block(Block::bordered().title("Signal"))
         .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
         .label(format!("{}% / {rssi}", state.telemetry.signal_pct))
-        .ratio(percent_ratio(state.telemetry.signal_pct));
+        .ratio(state.telemetry.signal_pct.ratio());
     frame.render_widget(signal, area);
-}
-
-fn rssi_to_signal_percent(rssi_dbm: i16) -> u64 {
-    let clamped = rssi_dbm.clamp(-100, -40);
-    u64::try_from(i32::from(clamped) + 100)
-        .unwrap_or(0)
-        .saturating_mul(100)
-        / 60
 }
 
 fn render_voltage_sparkline(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -2876,7 +2903,7 @@ mod tests {
         assert_eq!(state.counters.connected, ConnectedDeviceCount::new(1));
         assert_eq!(state.telemetry.battery_pct, None);
         assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
-        assert_eq!(state.telemetry.signal_pct, 65);
+        assert_eq!(state.telemetry.signal_pct, SignalPercent::new(65));
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
@@ -2911,12 +2938,12 @@ mod tests {
 
     #[test]
     fn rssi_signal_percent_clamps_to_reasonable_ble_range() {
-        assert_eq!(rssi_to_signal_percent(-40), 100);
-        assert_eq!(rssi_to_signal_percent(-61), 65);
-        assert_eq!(rssi_to_signal_percent(-74), 43);
-        assert_eq!(rssi_to_signal_percent(-100), 0);
-        assert_eq!(rssi_to_signal_percent(-120), 0);
-        assert_eq!(rssi_to_signal_percent(-20), 100);
+        assert_eq!(SignalPercent::from_rssi_dbm(-40), SignalPercent::new(100));
+        assert_eq!(SignalPercent::from_rssi_dbm(-61), SignalPercent::new(65));
+        assert_eq!(SignalPercent::from_rssi_dbm(-74), SignalPercent::new(43));
+        assert_eq!(SignalPercent::from_rssi_dbm(-100), SignalPercent::new(0));
+        assert_eq!(SignalPercent::from_rssi_dbm(-120), SignalPercent::new(0));
+        assert_eq!(SignalPercent::from_rssi_dbm(-20), SignalPercent::new(100));
     }
 
     #[test]
