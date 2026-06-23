@@ -5256,6 +5256,55 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_catalog_scales_to_one_thousand_models() {
+        const MODEL_COUNT: usize = 1_000;
+        let entries: Vec<_> = (0..MODEL_COUNT).map(synthetic_catalog_entry).collect();
+        let registry_entries: Vec<_> = entries.iter().map(|entry| entry.registry).collect();
+        let catalog = crate::ModelCatalog::new(&entries);
+
+        assert_eq!(crate::validate_registry_entries(&registry_entries), Ok(()));
+        assert_eq!(crate::validate_model_catalog(&entries), Ok(()));
+        assert_eq!(
+            catalog
+                .find_model_names("Synthetic", "Model0999")
+                .map(|entry| entry.registration.session),
+            Some(Some(crate::SessionKey::new("synthetic-session-0999")))
+        );
+        let crate::CatalogModelResolution::Matched(entry) =
+            catalog.resolve_advertised_name("PEV-0999")
+        else {
+            panic!("unique synthetic advertised hint should resolve");
+        };
+        assert_eq!(entry.registry.model, "Model0999");
+    }
+
+    #[test]
+    fn catalog_ambiguity_is_independent_of_registration_order() {
+        let mut forward = vec![
+            synthetic_catalog_entry_with_hint(1, "shared-hint"),
+            synthetic_catalog_entry_with_hint(2, "shared-hint"),
+        ];
+        let mut reversed = forward.clone();
+        reversed.reverse();
+
+        assert!(matches!(
+            crate::ModelCatalog::new(&forward).resolve_advertised_name("shared-hint"),
+            crate::CatalogModelResolution::Ambiguous
+        ));
+        assert!(matches!(
+            crate::ModelCatalog::new(&reversed).resolve_advertised_name("shared-hint"),
+            crate::CatalogModelResolution::Ambiguous
+        ));
+
+        forward.reverse();
+        assert_eq!(
+            crate::validate_model_catalog(&forward),
+            Ok(()),
+            "shared advertised hints are ambiguous identity evidence, not invalid metadata"
+        );
+    }
+
+    #[test]
     fn registry_validation_rejects_invalid_gatt_fingerprints() {
         const INVALID_GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
             service: GattChannel::from_bytes([0x11; 16]),
@@ -5462,6 +5511,50 @@ mod tests {
             verification: VerificationStatus::Inferred,
         });
         entry
+    }
+
+    fn synthetic_catalog_entry(index: usize) -> crate::ModelCatalogEntry {
+        let hint = leak_static_str(format!("PEV-{index:04}"));
+        synthetic_catalog_entry_with_hint(index, hint)
+    }
+
+    fn synthetic_catalog_entry_with_hint(
+        index: usize,
+        hint: &'static str,
+    ) -> crate::ModelCatalogEntry {
+        let model = leak_static_str(format!("Model{index:04}"));
+        let hints = Box::leak(Box::new([hint]));
+        let registry = Box::leak(Box::new(crate::ModelRegistryEntry {
+            manufacturer: "Synthetic",
+            model,
+            protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            advertised_name_hints: hints,
+            wire_model_id: None,
+            battery: None,
+            bms: None,
+            gatt: &STATIC_SAMPLE_GATT,
+            capabilities: crate::Capabilities::from_supported_commands([
+                crate::CommandKind::RequestIdentity,
+                crate::CommandKind::RequestTelemetry,
+            ]),
+            verification: VerificationStatus::Inferred,
+        }));
+
+        crate::ModelCatalogEntry {
+            registry,
+            registration: crate::ModelRuntimeRegistration {
+                parser: Some(crate::ParserKey::new(leak_static_str(format!(
+                    "synthetic-parser-{index:04}"
+                )))),
+                session: Some(crate::SessionKey::new(leak_static_str(format!(
+                    "synthetic-session-{index:04}"
+                )))),
+            },
+        }
+    }
+
+    fn leak_static_str(value: String) -> &'static str {
+        Box::leak(value.into_boxed_str())
     }
 
     const STATIC_SAMPLE_GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
