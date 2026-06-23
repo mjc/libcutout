@@ -2265,8 +2265,8 @@ mod tests {
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("Aero NF2557".to_owned()),
                 rssi: Some(-61),
-                advertised_services: vec![],
-                manufacturer_data: Vec::new(),
+                advertised_services: vec![].into(),
+                manufacturer_data: Vec::new().into(),
             },
             services: Vec::new(),
         };

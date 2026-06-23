@@ -2,25 +2,25 @@ use core::marker::PhantomData;
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
     BatteryPagePayload, Capabilities, CommandKind, DeviceCommand, DeviceEvent, DiagnosticDetail,
-    DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
-    ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, ProtocolSession,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, TransportAction, ValueQuality,
-    VerificationStatus, WritePayload,
+    DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel, GattFingerprint, GattRoles,
+    Measured, ModelRegistryEntry, MonotonicMillis, NotificationByteLen, NotificationIngestOutcome,
+    ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen, ProtocolFamily,
+    ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
+    TransportAction, ValueQuality, VerificationStatus, WritePayload,
 };
 
 use crate::{
-    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BegodeBmsCellPage, BegodeBmsPageError,
-    BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameReassembler, BegodeLiveATelemetry,
-    BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError,
-    FalconProbe, FalconRequestEncoder, RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL,
-    VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply,
-    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry,
-    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence,
-    VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError,
-    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
-    decode_veteran_bms_page,
+    AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage,
+    BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameReassembler,
+    BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile, BegodeTelemetryContext,
+    BegodeTelemetryError, FalconProbe, FalconRequestEncoder, RequestDisposition,
+    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile,
+    VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescRequestEncoder, VescStatsTelemetry, VescValuesTelemetry,
+    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
+    VeteranFrame, VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry,
+    VeteranTelemetryError, begode_falcon_target_voltage_profile, decode_veteran_bms_page,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -70,6 +70,12 @@ pub trait ProtocolModelSpec {
 
     /// Stable model name.
     const MODEL: &'static str;
+}
+
+/// Model spec that owns its compile-time registry metadata.
+pub trait RegisteredModelSpec: ProtocolModelSpec {
+    /// Registry entry exported by this model type.
+    const REGISTRY_ENTRY: ModelRegistryEntry;
 }
 
 /// Type-level operation class marker.
@@ -867,10 +873,34 @@ impl SupportsReadRequests for NosfetAeroModel {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFalconModel;
 
+const BEGODE_FALCON_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
+    service: BEGODE_SERVICE_CHANNEL,
+    characteristic: BEGODE_DATA_CHANNEL,
+    roles: GattRoles::empty()
+        .with_write_without_response()
+        .with_notify(),
+    verification: VerificationStatus::SourceVerified,
+}];
+
 impl ProtocolModelSpec for BegodeFalconModel {
     const MANUFACTURER: Manufacturer = Manufacturer::Begode;
-    const MODEL: &'static str = "Begode Falcon";
+    const MODEL: &'static str = "Falcon";
     const PROTOCOL: ProtocolFamily = ProtocolFamily::BegodeGotway;
+}
+
+impl RegisteredModelSpec for BegodeFalconModel {
+    const REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
+        manufacturer: "Begode",
+        model: Self::MODEL,
+        protocol_family: Self::PROTOCOL,
+        advertised_name_hints: &["Falcon", "Begode", "Gotway"],
+        wire_model_id: None,
+        battery: None,
+        bms: None,
+        gatt: &BEGODE_FALCON_MODEL_GATT,
+        capabilities: <Self as SupportsReadRequests>::READ_CAPABILITIES,
+        verification: VerificationStatus::Inferred,
+    };
 }
 
 impl SupportsReadRequests for BegodeFalconModel {
@@ -2318,7 +2348,7 @@ mod tests {
         );
         assert_eq!(
             ReadOnlySession::<BegodeFalconModel, true>::model(),
-            "Begode Falcon"
+            "Falcon"
         );
     }
 

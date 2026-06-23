@@ -462,6 +462,7 @@ dependencies = [
 name = "cutout-btle"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "async-trait",
  "btleplug",
  "cutout-core",

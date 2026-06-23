@@ -362,14 +362,19 @@ impl fmt::Display for ConnectionSummary {
 }
 
 impl ConnectionSummary {
-    /// Returns observed GATT fingerprints for PEVCAP and registry evidence.
-    #[must_use]
-    pub fn gatt_fingerprints(&self) -> Vec<GattFingerprint> {
+    /// Iterates observed GATT fingerprints without allocating an intermediate
+    /// flattened collection.
+    pub fn iter_gatt_fingerprints(&self) -> impl Clone + Iterator<Item = GattFingerprint> + '_ {
         self.services
             .iter()
             .flat_map(|service| service.characteristics.iter())
             .map(CharacteristicSummary::gatt_fingerprint)
-            .collect()
+    }
+
+    /// Returns observed GATT fingerprints for PEVCAP and registry evidence.
+    #[must_use]
+    pub fn gatt_fingerprints(&self) -> Vec<GattFingerprint> {
+        self.iter_gatt_fingerprints().collect()
     }
 
     /// Selects the standard BLE Battery Level characteristic when present.

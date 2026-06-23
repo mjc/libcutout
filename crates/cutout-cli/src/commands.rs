@@ -1975,7 +1975,7 @@ fn push_measured_u16(
 mod tests {
     use std::thread;
 
-    use btleplug::api::{CharPropFlags, WriteType};
+    use btleplug::api::CharPropFlags;
     use clap::Parser;
     use cutout_btle::{
         BridgeIdentityResolution, ConnectionSummary, ConnectionTarget, PeripheralObservation,
@@ -1987,7 +1987,7 @@ mod tests {
         WriteMode,
     };
     use cutout_protocols::{
-        BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, DeviceFamily, IdentityConfidence,
+        BEGODE_FALCON_REGISTRY_ENTRY, DeviceFamily, IdentityConfidence,
         ProtocolFamilyClassification, StagedIdentityInput, identify_model,
     };
     use uuid::Uuid;
@@ -2192,8 +2192,9 @@ mod tests {
                 rssi: Some(-67),
                 advertised_services: vec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
-                )],
-                manufacturer_data: Vec::new(),
+                )]
+                .into(),
+                manufacturer_data: Vec::new().into(),
             },
             services: vec![ServiceSummary {
                 uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
@@ -2214,7 +2215,7 @@ mod tests {
                 SessionCaptureRecord::Write {
                     monotonic_ms: 2,
                     characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    mode: WriteType::WithoutResponse,
+                    mode: WriteMode::WithoutResponse,
                     bytes: b"N".to_vec(),
                     provisional: false,
                 },
@@ -2308,8 +2309,8 @@ mod tests {
                 address: None,
                 name: Some("NF2557".to_owned()),
                 rssi: Some(-67),
-                advertised_services: vec![ffe0],
-                manufacturer_data: Vec::new(),
+                advertised_services: vec![ffe0].into(),
+                manufacturer_data: Vec::new().into(),
             },
             services: vec![ServiceSummary {
                 uuid: ffe0,
@@ -2327,8 +2328,8 @@ mod tests {
                 address: None,
                 name: Some("NF2557".to_owned()),
                 rssi: Some(-70),
-                advertised_services: vec![ffe0, battery],
-                manufacturer_data: Vec::new(),
+                advertised_services: vec![ffe0, battery].into(),
+                manufacturer_data: Vec::new().into(),
             },
             services: vec![
                 ServiceSummary {
@@ -2355,7 +2356,10 @@ mod tests {
         let merged = merge_reconnect_summaries([&first, &second]).expect("summaries merge");
 
         assert_eq!(merged.observation.identifier, "first-link");
-        assert_eq!(merged.observation.advertised_services, vec![ffe0, battery]);
+        assert_eq!(
+            merged.observation.advertised_services.as_slice(),
+            [ffe0, battery]
+        );
         assert_eq!(merged.services.len(), 2);
         assert_eq!(
             merged
@@ -2385,8 +2389,8 @@ mod tests {
                 address: None,
                 name: Some("Unknown PEV".to_owned()),
                 rssi: Some(-67),
-                advertised_services: vec![service],
-                manufacturer_data: Vec::new(),
+                advertised_services: vec![service].into(),
+                manufacturer_data: Vec::new().into(),
             },
             services: vec![ServiceSummary {
                 uuid: service,
@@ -2762,8 +2766,8 @@ mod tests {
                     address: None,
                     name: Some("NF2557".to_owned()),
                     rssi: Some(-71),
-                    advertised_services: Vec::new(),
-                    manufacturer_data: Vec::new(),
+                    advertised_services: Vec::new().into(),
+                    manufacturer_data: Vec::new().into(),
                 },
                 services: Vec::new(),
             },
@@ -3344,11 +3348,11 @@ mod tests {
     #[test]
     fn identity_renderer_includes_confidence_and_evidence() {
         let resolution = identify_model(
-            StagedIdentityInput {
+            &StagedIdentityInput {
                 advertised_name: Some("Begode_Falcon"),
                 gatt: BEGODE_FALCON_REGISTRY_ENTRY.gatt,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
-                banner: Some(BegodeBanner::ModelName("Falcon")),
+                banner_model: Some("Falcon"),
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );

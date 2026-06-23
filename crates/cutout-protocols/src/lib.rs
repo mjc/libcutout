@@ -49,14 +49,14 @@ mod fixture;
 pub use fixture::*;
 mod identification;
 pub use identification::{
-    IdentityConfidence, IdentityEvidence, StagedIdentityInput, StagedIdentityResolution,
-    identify_model,
+    IdentityConfidence, IdentityEvidence, IdentityParser, ParsedModelBanner, StagedIdentityInput,
+    StagedIdentityResolution, identify_known_model, identify_model, parse_model_banner,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
 mod registry;
-pub use registry::BEGODE_FALCON_REGISTRY_ENTRY;
+pub use registry::{BEGODE_FALCON_REGISTRY_ENTRY, MODEL_REGISTRY};
 mod request_encoder;
 mod session;
 mod vesc_codec;
@@ -73,13 +73,13 @@ pub use session::{
     BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
-    ReadOnlyOperation, ReadOnlySession, SettingsWriteOperation, SupportsBenignControls,
-    SupportsDangerousActuation, SupportsReadRequests, SupportsSettingsWrites,
-    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID, VESC_RAW_FAULT_CODE_FIELD_ID,
-    VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-    VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
-    VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
-    VeteranNotificationDecoder,
+    ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
+    SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
+    SupportsSettingsWrites, VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
+    VESC_RAW_FAULT_CODE_FIELD_ID, VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
+    VESC_RAW_STATS_CURRENT_AVG_FIELD_ID, VESC_RAW_STATS_POWER_AVG_FIELD_ID,
+    VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel,
+    VescNotificationDecoder, VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
     VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN, VESC_MAX_STREAM_REPLIES, VescBoardProfile,

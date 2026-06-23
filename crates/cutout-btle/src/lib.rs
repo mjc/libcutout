@@ -16,13 +16,8 @@ use btleplug::{
     platform::{Adapter, Manager},
 };
 use cutout_core::{
-    DeviceCommand, DeviceEvent, GattChannel, GattFingerprint, LinkInfo, NotificationIngestOutcome,
-    ProtocolSession, ReadOnlyResponse, SessionInput, SessionOutput, TransportAction, WriteMode,
-};
-use cutout_protocols::{
-    BEGODE_FALCON_REGISTRY_ENTRY, BegodeBanner, IdentityConfidence, ProtocolFamilyClassification,
-    ProtocolFamilyClassifier, StagedIdentityInput, StagedIdentityResolution, identify_model,
-    parse_begode_ascii_banner,
+    DeviceCommand, DeviceEvent, GattChannel, LinkInfo, NotificationIngestOutcome, ProtocolSession,
+    ReadOnlyResponse, SessionInput, SessionOutput, TransportAction, WriteMode,
 };
 use futures_util::{StreamExt, stream::Stream};
 use tracing::{debug, info};
@@ -30,11 +25,13 @@ use tracing::{debug, info};
 mod capture;
 mod error;
 mod gatt;
+mod identity;
 mod observation;
 mod types;
 
 use capture::{merge_session_report, session_record_monotonic_ms};
 use gatt::gatt_channel_from_uuid;
+use identity::{IdentityContext, IdentityState, update_identity_report};
 use types::characteristic_from_summary;
 
 pub use capture::{
@@ -830,14 +827,14 @@ where
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum NotificationDecodeOutcome {
-    SemanticEvents,
-    BufferedFragment,
-    ParserDiagnostic,
-    KnownReserved,
-    ParserGap,
     Ignored,
+    BufferedFragment,
+    ParserGap,
+    KnownReserved,
+    ParserDiagnostic,
+    SemanticEvents,
 }
 
 fn notification_decode_outcome(outputs: &[SessionOutput]) -> NotificationDecodeOutcome {
@@ -847,55 +844,29 @@ fn notification_decode_outcome(outputs: &[SessionOutput]) -> NotificationDecodeO
             SessionOutput::NotificationIngest(outcome) => Some(outcome),
             SessionOutput::Transport(_) | SessionOutput::Event(_) => None,
         })
-        .fold(NotificationDecodeOutcome::Ignored, strongest_decode_outcome)
+        .map(NotificationDecodeOutcome::from)
+        .max()
+        .unwrap_or(NotificationDecodeOutcome::Ignored)
 }
 
-const fn strongest_decode_outcome(
-    current: NotificationDecodeOutcome,
-    outcome: &NotificationIngestOutcome,
-) -> NotificationDecodeOutcome {
-    match outcome {
-        NotificationIngestOutcome::SemanticEvents { .. } => {
-            NotificationDecodeOutcome::SemanticEvents
-        }
-        NotificationIngestOutcome::ParserDiagnostic { .. } => {
-            if matches!(current, NotificationDecodeOutcome::SemanticEvents) {
-                current
-            } else {
+impl From<&NotificationIngestOutcome> for NotificationDecodeOutcome {
+    fn from(outcome: &NotificationIngestOutcome) -> Self {
+        match outcome {
+            NotificationIngestOutcome::SemanticEvents { .. } => {
+                NotificationDecodeOutcome::SemanticEvents
+            }
+            NotificationIngestOutcome::ParserDiagnostic { .. } => {
                 NotificationDecodeOutcome::ParserDiagnostic
             }
-        }
-        NotificationIngestOutcome::KnownReserved { .. } => {
-            if matches!(
-                current,
-                NotificationDecodeOutcome::SemanticEvents
-                    | NotificationDecodeOutcome::ParserDiagnostic
-            ) {
-                current
-            } else {
+            NotificationIngestOutcome::KnownReserved { .. } => {
                 NotificationDecodeOutcome::KnownReserved
             }
-        }
-        NotificationIngestOutcome::ParserGap { .. } => {
-            if matches!(
-                current,
-                NotificationDecodeOutcome::SemanticEvents
-                    | NotificationDecodeOutcome::ParserDiagnostic
-                    | NotificationDecodeOutcome::KnownReserved
-            ) {
-                current
-            } else {
-                NotificationDecodeOutcome::ParserGap
-            }
-        }
-        NotificationIngestOutcome::BufferedFragment(_) => {
-            if matches!(current, NotificationDecodeOutcome::Ignored) {
+            NotificationIngestOutcome::ParserGap { .. } => NotificationDecodeOutcome::ParserGap,
+            NotificationIngestOutcome::BufferedFragment(_) => {
                 NotificationDecodeOutcome::BufferedFragment
-            } else {
-                current
             }
+            NotificationIngestOutcome::Ignored(_) => NotificationDecodeOutcome::Ignored,
         }
-        NotificationIngestOutcome::Ignored(_) => current,
     }
 }
 
@@ -944,90 +915,6 @@ fn log_notification_decode_outcome(
             );
         }
     }
-}
-
-struct IdentityContext<'a> {
-    advertised_name: Option<&'a str>,
-    gatt: Vec<GattFingerprint>,
-}
-
-impl<'a> IdentityContext<'a> {
-    fn new(summary: &'a ConnectionSummary) -> Self {
-        Self {
-            advertised_name: summary.observation.name.as_deref(),
-            gatt: summary.gatt_fingerprints(),
-        }
-    }
-}
-
-struct IdentityState {
-    stream_family: ProtocolFamilyClassification,
-    banner_model: Option<String>,
-}
-
-impl Default for IdentityState {
-    fn default() -> Self {
-        Self {
-            stream_family: ProtocolFamilyClassification::Pending,
-            banner_model: None,
-        }
-    }
-}
-
-impl IdentityState {
-    fn observe(&mut self, bytes: &[u8]) {
-        if !matches!(
-            self.stream_family,
-            ProtocolFamilyClassification::Known(
-                cutout_protocols::DeviceFamily::BegodeFalcon
-                    | cutout_protocols::DeviceFamily::NosfetAero
-            )
-        ) {
-            let classification = ProtocolFamilyClassifier::classify(bytes);
-            if classification != ProtocolFamilyClassification::Unknown {
-                self.stream_family = classification;
-            }
-        }
-
-        if let Some(BegodeBanner::ModelName(model)) = parse_begode_ascii_banner(bytes) {
-            self.banner_model = Some(model.to_owned());
-        }
-    }
-
-    fn banner(&self) -> Option<BegodeBanner<'_>> {
-        self.banner_model.as_deref().map(BegodeBanner::ModelName)
-    }
-}
-
-fn update_identity_report(
-    report: &mut SessionBridgeReport,
-    context: &IdentityContext<'_>,
-    state: &IdentityState,
-) {
-    let resolution = identify_model(
-        StagedIdentityInput {
-            advertised_name: context.advertised_name,
-            gatt: &context.gatt,
-            stream_family: state.stream_family,
-            banner: state.banner(),
-        },
-        &[&BEGODE_FALCON_REGISTRY_ENTRY],
-    );
-    report.identity = bridge_identity_resolution(resolution);
-}
-
-fn bridge_identity_resolution(
-    resolution: StagedIdentityResolution,
-) -> Option<BridgeIdentityResolution> {
-    (resolution.confidence != IdentityConfidence::NoMatch).then(|| {
-        let model = resolution.model;
-        BridgeIdentityResolution {
-            manufacturer: model.map(|entry| entry.manufacturer),
-            model: model.map(|entry| entry.model),
-            confidence: resolution.confidence,
-            evidence: resolution.evidence,
-        }
-    })
 }
 
 struct SessionOutputContext<'a, P: ?Sized> {
@@ -2198,24 +2085,6 @@ mod tests {
         assert!(identity.evidence.has_advertised_name_hint());
         assert!(identity.evidence.has_gatt_hint());
         assert_eq!(peripheral.writes.lock().expect("write log").len(), 0);
-    }
-
-    #[test]
-    fn identity_context_preserves_advertised_name_and_gatt_roles() {
-        let summary = begode_falcon_summary("Falcon");
-
-        let context = crate::IdentityContext::new(&summary);
-
-        assert_eq!(context.advertised_name, Some("Falcon"));
-        assert_eq!(context.gatt.len(), 1);
-        assert_eq!(
-            context.gatt[0].service,
-            GattChannel::from_bytes(
-                *Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
-            )
-        );
-        assert!(context.gatt[0].roles.supports_write_without_response());
-        assert!(context.gatt[0].roles.supports_notify());
     }
 
     #[tokio::test]
