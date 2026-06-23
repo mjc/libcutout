@@ -34,20 +34,14 @@ pub const MODEL_REGISTRY: [&ModelRegistryEntry; 2] =
 
 /// Compile-time model catalog entries known to this crate.
 pub const MODEL_CATALOG: [ModelCatalogEntry; 2] = [
-    ModelCatalogEntry {
-        registry: &NOSFET_AERO_REGISTRY_ENTRY,
-        registration: ModelRuntimeRegistration {
-            parser: Some(VETERAN_PARSER_KEY),
-            session: Some(NOSFET_AERO_SESSION_KEY),
-        },
-    },
-    ModelCatalogEntry {
-        registry: &BEGODE_FALCON_REGISTRY_ENTRY,
-        registration: ModelRuntimeRegistration {
-            parser: Some(BEGODE_PARSER_KEY),
-            session: Some(BEGODE_FALCON_SESSION_KEY),
-        },
-    },
+    ModelCatalogEntry::new(
+        &NOSFET_AERO_REGISTRY_ENTRY,
+        ModelRuntimeRegistration::active(VETERAN_PARSER_KEY, NOSFET_AERO_SESSION_KEY),
+    ),
+    ModelCatalogEntry::new(
+        &BEGODE_FALCON_REGISTRY_ENTRY,
+        ModelRuntimeRegistration::active(BEGODE_PARSER_KEY, BEGODE_FALCON_SESSION_KEY),
+    ),
 ];
 
 /// Session constructor registered for a model catalog entry.
@@ -140,15 +134,16 @@ pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegi
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, ManufacturerKey, ModelCatalog, ModelKey, ProtocolFamily, SessionKey,
-        VerificationStatus,
+        CommandKind, GattFingerprint, GattRoles, ManufacturerKey, ModelCatalog, ModelCatalogEntry,
+        ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey, ProtocolFamily,
+        RegistryValidationError, SessionKey, VerificationStatus,
     };
 
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY,
         BEGODE_SERVICE_CHANNEL, BegodeFalconModel, BegodePackVoltageProfile, MODEL_CATALOG,
         MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, NosfetAeroModel,
-        RegisteredModelSpec, RegisteredReadOnlySession, VETERAN_DATA_CHANNEL,
+        RegisteredModelSpec, RegisteredReadOnlySession, VETERAN_DATA_CHANNEL, VETERAN_PARSER_KEY,
         begode_falcon_target_voltage_profile, find_session_registration,
     };
 
@@ -195,6 +190,105 @@ mod tests {
             RegisteredReadOnlySession::BegodeFalcon(_)
         ));
         assert!(find_session_registration(SessionKey::new("missing")).is_none());
+    }
+
+    #[test]
+    fn model_authoring_workflow_registers_fake_and_real_models() {
+        const FAKE_PARSER_KEY: ParserKey = ParserKey::new("fake-parser");
+        const FAKE_SESSION_KEY: SessionKey = SessionKey::new("fake-read-only");
+        const FAKE_GATT: [GattFingerprint; 1] = [GattFingerprint {
+            service: BEGODE_SERVICE_CHANNEL,
+            characteristic: BEGODE_DATA_CHANNEL,
+            roles: GattRoles::empty()
+                .with_write_without_response()
+                .with_notify(),
+            verification: VerificationStatus::Inferred,
+        }];
+        static FAKE_MODEL: ModelRegistryEntry = ModelRegistryEntry {
+            manufacturer: "FakeCo",
+            model: "Fixture Wheel",
+            protocol_family: ProtocolFamily::BegodeGotway,
+            advertised_name_hints: &["FixtureWheel"],
+            wire_model_id: None,
+            battery: None,
+            bms: None,
+            gatt: &FAKE_GATT,
+            capabilities: cutout_core::Capabilities::from_supported_commands([
+                CommandKind::RequestIdentity,
+                CommandKind::RequestTelemetry,
+            ]),
+            verification: VerificationStatus::Inferred,
+        };
+        let catalog = [
+            MODEL_CATALOG[0],
+            MODEL_CATALOG[1],
+            ModelCatalogEntry::new(
+                &FAKE_MODEL,
+                ModelRuntimeRegistration::active(FAKE_PARSER_KEY, FAKE_SESSION_KEY),
+            ),
+        ];
+        let registry = [
+            MODEL_CATALOG[0].registry,
+            MODEL_CATALOG[1].registry,
+            &FAKE_MODEL,
+        ];
+
+        assert_eq!(cutout_core::validate_registry_entries(&registry), Ok(()));
+        assert_eq!(cutout_core::validate_model_catalog(&catalog), Ok(()));
+        let catalog = ModelCatalog::new(&catalog);
+        assert_eq!(
+            catalog
+                .find_model(
+                    ManufacturerKey::new("FakeCo"),
+                    ModelKey::new("Fixture Wheel")
+                )
+                .map(|entry| entry.registration.session),
+            Some(Some(FAKE_SESSION_KEY))
+        );
+        assert_eq!(
+            catalog
+                .find_parser(FAKE_PARSER_KEY)
+                .map(|entry| entry.registry.model),
+            Some("Fixture Wheel")
+        );
+        assert!(matches!(
+            catalog.resolve_advertised_name("FixtureWheel BLE"),
+            cutout_core::CatalogModelResolution::Matched(entry)
+                if entry.registry.model == "Fixture Wheel"
+        ));
+        assert_eq!(
+            catalog
+                .find_model(ManufacturerKey::new("NOSFET"), ModelKey::new("NOSFET Aero"))
+                .map(|entry| entry.registration.session),
+            Some(Some(NOSFET_AERO_SESSION_KEY))
+        );
+    }
+
+    #[test]
+    fn model_authoring_validation_errors_name_missing_registration() {
+        let missing_parser = ModelCatalogEntry::new(
+            &NOSFET_AERO_REGISTRY_ENTRY,
+            ModelRuntimeRegistration {
+                parser: None,
+                session: Some(NOSFET_AERO_SESSION_KEY),
+            },
+        );
+        let missing_session = ModelCatalogEntry::new(
+            &NOSFET_AERO_REGISTRY_ENTRY,
+            ModelRuntimeRegistration {
+                parser: Some(VETERAN_PARSER_KEY),
+                session: None,
+            },
+        );
+
+        assert_eq!(
+            cutout_core::validate_model_catalog(&[missing_parser]),
+            Err(RegistryValidationError::MissingParserRegistration { index: 0 })
+        );
+        assert_eq!(
+            cutout_core::validate_model_catalog(&[missing_session]),
+            Err(RegistryValidationError::MissingSessionRegistration { index: 0 })
+        );
     }
 
     #[test]

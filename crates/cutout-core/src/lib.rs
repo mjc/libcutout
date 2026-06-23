@@ -781,6 +781,17 @@ pub struct ModelRuntimeRegistration {
     pub session: Option<SessionKey>,
 }
 
+impl ModelRuntimeRegistration {
+    /// Builds an active parser/session registration pair.
+    #[must_use]
+    pub const fn active(parser: ParserKey, session: SessionKey) -> Self {
+        Self {
+            parser: Some(parser),
+            session: Some(session),
+        }
+    }
+}
+
 /// Static catalog entry combining data-only metadata with runtime registration.
 #[derive(Clone, Copy, Debug)]
 pub struct ModelCatalogEntry {
@@ -792,6 +803,18 @@ pub struct ModelCatalogEntry {
 }
 
 impl ModelCatalogEntry {
+    /// Builds a catalog entry from registry metadata and runtime registrations.
+    #[must_use]
+    pub const fn new(
+        registry: &'static ModelRegistryEntry,
+        registration: ModelRuntimeRegistration,
+    ) -> Self {
+        Self {
+            registry,
+            registration,
+        }
+    }
+
     /// Manufacturer key for this catalog entry.
     #[must_use]
     pub const fn manufacturer_key(self) -> ManufacturerKey {
