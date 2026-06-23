@@ -18,9 +18,9 @@ use cutout_btle::{
     SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    BatteryPagePayload, FirmwareInfo, NotificationByteLen, NotificationIngestOutcome,
-    ParserDiagnostics, ProtocolFamily, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-    TelemetryDelta, TelemetrySnapshot,
+    BatteryPagePayload, DiagnosticReadback, FirmwareInfo, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback,
+    ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
 };
 use cutout_protocols::VeteranModelProfile;
 use ratatui::termina::{
@@ -303,6 +303,44 @@ pub(crate) type RawReadOnlyPageCount = ReadOnlySummaryCount<RawReadOnlyPageCount
 pub(crate) type ReadOnlyDiagnosticResponseCount =
     ReadOnlySummaryCount<ReadOnlyDiagnosticResponseCountTag>;
 pub(crate) type RawTelemetryResponseCount = ReadOnlySummaryCount<RawTelemetryResponseCountTag>;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PopulatedDiagnosticDetailCount(usize);
+
+impl PopulatedDiagnosticDetailCount {
+    const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    fn from_diagnostics(diagnostics: DiagnosticReadback) -> Self {
+        Self::new(diagnostics.details.into_iter().flatten().count())
+    }
+}
+
+impl fmt::Display for PopulatedDiagnosticDetailCount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct PopulatedRawTelemetryFieldCount(usize);
+
+impl PopulatedRawTelemetryFieldCount {
+    const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    fn from_raw_telemetry(raw: RawTelemetryReadback) -> Self {
+        Self::new(raw.fields.into_iter().flatten().count())
+    }
+}
+
+impl fmt::Display for PopulatedRawTelemetryFieldCount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SessionCounters {
@@ -1572,11 +1610,11 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
             summary
         }
         ReadOnlyResponse::Diagnostics(diagnostics) => {
-            let populated = diagnostics.details.into_iter().flatten().count();
+            let populated = PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics);
             format!("read-only diagnostics details={populated}")
         }
         ReadOnlyResponse::RawTelemetry(raw) => {
-            let populated = raw.fields.into_iter().flatten().count();
+            let populated = PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw);
             format!("read-only raw telemetry fields={populated}")
         }
     }
@@ -2518,12 +2556,11 @@ mod tests {
         SubscribeCount, TelemetryEventCount, TransportWriteCount,
     };
     use cutout_core::{
-        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticReadback,
-        FirmwareInfo, GattChannel, Measured, NotificationByteLen, NotificationIngestOutcome,
-        ParserError, ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector,
-        RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-        SettingsEntry, SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource,
-        VerificationStatus,
+        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticDetail,
+        DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, NotificationByteLen,
+        NotificationIngestOutcome, ParserError, ParserGapEvidence, PayloadBodyLen, ProtocolFamily,
+        ProtocolSelector, RawFieldValue, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
+        SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -3226,6 +3263,48 @@ mod tests {
         assert_eq!(
             SettingsReadbackLog(SettingsReadback::default()).to_string(),
             "read-only settings none observed"
+        );
+    }
+
+    #[test]
+    fn read_only_response_summary_counts_use_typed_units() {
+        let diagnostics = DiagnosticReadback {
+            details: [
+                None,
+                Some(DiagnosticDetail {
+                    field: RawFieldValue::new(0x30, 7),
+                    severity: DiagnosticSeverity::Info,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                None,
+            ],
+        };
+        let raw = RawTelemetryReadback {
+            fields: [
+                Some(RawFieldValue::new(0x8001, 989)),
+                None,
+                Some(RawFieldValue::new(0x8002, -21_973)),
+                None,
+            ],
+        };
+
+        assert_eq!(
+            PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics),
+            PopulatedDiagnosticDetailCount::new(1)
+        );
+        assert_eq!(
+            PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw),
+            PopulatedRawTelemetryFieldCount::new(2)
+        );
+        assert_eq!(
+            format_read_only_response(ReadOnlyResponse::Diagnostics(diagnostics)),
+            "read-only diagnostics details=1"
+        );
+        assert_eq!(
+            format_read_only_response(ReadOnlyResponse::RawTelemetry(raw)),
+            "read-only raw telemetry fields=2"
         );
     }
 
