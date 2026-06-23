@@ -1,13 +1,20 @@
 use cutout_core::{
-    ModelCatalogEntry, ModelRegistryEntry, ModelRuntimeFactories, ParserFactory, SessionFactory,
+    ModelCatalogEntry, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey, SessionKey,
 };
 
 use crate::{BegodeFalconModel, NosfetAeroModel, RegisteredModelSpec};
 
-fn veteran_parser_factory_marker() {}
-fn begode_parser_factory_marker() {}
-fn veteran_session_factory_marker() {}
-fn begode_session_factory_marker() {}
+/// Parser registration key for Veteran/LeaperKim/NOSFET notifications.
+pub const VETERAN_PARSER_KEY: ParserKey = ParserKey::new("veteran");
+
+/// Parser registration key for Begode/Gotway notifications.
+pub const BEGODE_PARSER_KEY: ParserKey = ParserKey::new("begode");
+
+/// Session registration key for the NOSFET Aero read-only session.
+pub const NOSFET_AERO_SESSION_KEY: SessionKey = SessionKey::new("nosfet-aero-read-only");
+
+/// Session registration key for the Begode Falcon read-only session.
+pub const BEGODE_FALCON_SESSION_KEY: SessionKey = SessionKey::new("begode-falcon-read-only");
 
 /// Hardware-backed registry entry for the NOSFET Aero.
 pub const NOSFET_AERO_REGISTRY_ENTRY: ModelRegistryEntry =
@@ -25,16 +32,16 @@ pub const MODEL_REGISTRY: [&ModelRegistryEntry; 2] =
 pub const MODEL_CATALOG: [ModelCatalogEntry; 2] = [
     ModelCatalogEntry {
         registry: &NOSFET_AERO_REGISTRY_ENTRY,
-        factories: ModelRuntimeFactories {
-            parser: Some(ParserFactory::new(veteran_parser_factory_marker)),
-            session: Some(SessionFactory::new(veteran_session_factory_marker)),
+        registration: ModelRuntimeRegistration {
+            parser: Some(VETERAN_PARSER_KEY),
+            session: Some(NOSFET_AERO_SESSION_KEY),
         },
     },
     ModelCatalogEntry {
         registry: &BEGODE_FALCON_REGISTRY_ENTRY,
-        factories: ModelRuntimeFactories {
-            parser: Some(ParserFactory::new(begode_parser_factory_marker)),
-            session: Some(SessionFactory::new(begode_session_factory_marker)),
+        registration: ModelRuntimeRegistration {
+            parser: Some(BEGODE_PARSER_KEY),
+            session: Some(BEGODE_FALCON_SESSION_KEY),
         },
     },
 ];
@@ -57,7 +64,7 @@ mod tests {
         cutout_core::validate_registry_entries(&MODEL_REGISTRY)
             .expect("protocol registry entries are structurally valid");
         cutout_core::validate_model_catalog(&MODEL_CATALOG)
-            .expect("protocol catalog entries have runtime factory markers");
+            .expect("protocol catalog entries have runtime registration tokens");
 
         let catalog = ModelCatalog::new(&MODEL_CATALOG);
 

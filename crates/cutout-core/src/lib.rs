@@ -733,40 +733,52 @@ impl FamilyKey {
     }
 }
 
-/// Opaque parser factory marker for a registered model.
+/// Opaque parser registration key for a registered model.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug)]
-pub struct ParserFactory(fn());
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ParserKey(&'static str);
 
-impl ParserFactory {
-    /// Builds a parser factory marker.
+impl ParserKey {
+    /// Builds a parser registration key.
     #[must_use]
-    pub const fn new(factory: fn()) -> Self {
-        Self(factory)
+    pub const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    /// Returns the key text.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
     }
 }
 
-/// Opaque session factory marker for a registered model.
+/// Opaque session registration key for a registered model.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug)]
-pub struct SessionFactory(fn());
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SessionKey(&'static str);
 
-impl SessionFactory {
-    /// Builds a session factory marker.
+impl SessionKey {
+    /// Builds a session registration key.
     #[must_use]
-    pub const fn new(factory: fn()) -> Self {
-        Self(factory)
+    pub const fn new(value: &'static str) -> Self {
+        Self(value)
+    }
+
+    /// Returns the key text.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
     }
 }
 
-/// Runtime factories attached to an active catalog model.
+/// Runtime registrations attached to an active catalog model.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ModelRuntimeFactories {
-    /// Parser factory for model notifications/responses.
-    pub parser: Option<ParserFactory>,
+pub struct ModelRuntimeRegistration {
+    /// Parser registration for model notifications/responses.
+    pub parser: Option<ParserKey>,
 
-    /// Session factory for model command/session handling.
-    pub session: Option<SessionFactory>,
+    /// Session registration for model command/session handling.
+    pub session: Option<SessionKey>,
 }
 
 /// Static catalog entry combining data-only metadata with runtime registration.
@@ -775,8 +787,8 @@ pub struct ModelCatalogEntry {
     /// Data-only registry entry.
     pub registry: &'static ModelRegistryEntry,
 
-    /// Runtime factories used by hosts/protocol adapters.
-    pub factories: ModelRuntimeFactories,
+    /// Runtime registrations used by hosts/protocol adapters.
+    pub registration: ModelRuntimeRegistration,
 }
 
 impl ModelCatalogEntry {
@@ -906,16 +918,16 @@ pub enum RegistryValidationError {
         index: usize,
     },
 
-    /// Active catalog entry has no parser factory.
-    #[error("catalog entry at index {index} has active capabilities but no parser factory")]
-    MissingParserFactory {
+    /// Active catalog entry has no parser registration.
+    #[error("catalog entry at index {index} has active capabilities but no parser registration")]
+    MissingParserRegistration {
         /// Entry index in the validated slice.
         index: usize,
     },
 
-    /// Active catalog entry has no session factory.
-    #[error("catalog entry at index {index} has active capabilities but no session factory")]
-    MissingSessionFactory {
+    /// Active catalog entry has no session registration.
+    #[error("catalog entry at index {index} has active capabilities but no session registration")]
+    MissingSessionRegistration {
         /// Entry index in the validated slice.
         index: usize,
     },
@@ -954,11 +966,11 @@ pub fn validate_model_catalog(
 ) -> Result<(), RegistryValidationError> {
     for (index, entry) in entries.iter().enumerate() {
         validate_registry_entry(index, entry.registry)?;
-        if entry.factories.parser.is_none() {
-            return Err(RegistryValidationError::MissingParserFactory { index });
+        if entry.registration.parser.is_none() {
+            return Err(RegistryValidationError::MissingParserRegistration { index });
         }
-        if entry.factories.session.is_none() {
-            return Err(RegistryValidationError::MissingSessionFactory { index });
+        if entry.registration.session.is_none() {
+            return Err(RegistryValidationError::MissingSessionRegistration { index });
         }
         if let Some(first_index) = first_duplicate_catalog_model_index(entries, index, entry) {
             return Err(RegistryValidationError::DuplicateModel { index, first_index });
@@ -4885,14 +4897,11 @@ mod tests {
 
     #[test]
     fn catalog_entry_exposes_typed_keys_for_common_model_path() {
-        fn parser_factory() {}
-        fn session_factory() {}
-
         let catalog = crate::ModelCatalogEntry {
             registry: &STATIC_AERO_REGISTRY_ENTRY,
-            factories: crate::ModelRuntimeFactories {
-                parser: Some(crate::ParserFactory::new(parser_factory)),
-                session: Some(crate::SessionFactory::new(session_factory)),
+            registration: crate::ModelRuntimeRegistration {
+                parser: Some(crate::ParserKey::new("test-parser")),
+                session: Some(crate::SessionKey::new("test-session")),
             },
         };
 
@@ -4906,45 +4915,39 @@ mod tests {
     }
 
     #[test]
-    fn catalog_validation_rejects_missing_active_factories() {
-        fn parser_factory() {}
-        fn session_factory() {}
-
+    fn catalog_validation_rejects_missing_active_registrations() {
         let missing_parser = crate::ModelCatalogEntry {
             registry: &STATIC_AERO_REGISTRY_ENTRY,
-            factories: crate::ModelRuntimeFactories {
+            registration: crate::ModelRuntimeRegistration {
                 parser: None,
-                session: Some(crate::SessionFactory::new(session_factory)),
+                session: Some(crate::SessionKey::new("test-session")),
             },
         };
         let missing_session = crate::ModelCatalogEntry {
             registry: &STATIC_AERO_REGISTRY_ENTRY,
-            factories: crate::ModelRuntimeFactories {
-                parser: Some(crate::ParserFactory::new(parser_factory)),
+            registration: crate::ModelRuntimeRegistration {
+                parser: Some(crate::ParserKey::new("test-parser")),
                 session: None,
             },
         };
 
         assert_eq!(
             crate::validate_model_catalog(&[missing_parser]),
-            Err(crate::RegistryValidationError::MissingParserFactory { index: 0 })
+            Err(crate::RegistryValidationError::MissingParserRegistration { index: 0 })
         );
         assert_eq!(
             crate::validate_model_catalog(&[missing_session]),
-            Err(crate::RegistryValidationError::MissingSessionFactory { index: 0 })
+            Err(crate::RegistryValidationError::MissingSessionRegistration { index: 0 })
         );
     }
 
     #[test]
     fn catalog_lookup_uses_typed_keys_over_static_entries() {
-        fn parser_factory() {}
-        fn session_factory() {}
-
         const CATALOG: [crate::ModelCatalogEntry; 1] = [crate::ModelCatalogEntry {
             registry: &STATIC_AERO_REGISTRY_ENTRY,
-            factories: crate::ModelRuntimeFactories {
-                parser: Some(crate::ParserFactory::new(parser_factory)),
-                session: Some(crate::SessionFactory::new(session_factory)),
+            registration: crate::ModelRuntimeRegistration {
+                parser: Some(crate::ParserKey::new("test-parser")),
+                session: Some(crate::SessionKey::new("test-session")),
             },
         }];
         let catalog = crate::ModelCatalog::new(&CATALOG);

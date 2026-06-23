@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
-    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeFactories, ProtocolFamily,
+    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ProtocolFamily,
     ProtocolSession, RequestKey, RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency,
     SessionInput, SessionOutput, VerificationStatus,
 };
@@ -39,7 +39,7 @@ static CATALOG_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
 
 static CATALOG_ENTRIES: [ModelCatalogEntry; 1] = [ModelCatalogEntry {
     registry: &CATALOG_REGISTRY_ENTRY,
-    factories: ModelRuntimeFactories {
+    registration: ModelRuntimeRegistration {
         parser: None,
         session: None,
     },
