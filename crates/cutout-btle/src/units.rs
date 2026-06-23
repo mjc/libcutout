@@ -389,3 +389,27 @@ impl BatteryLevelPercent {
         self.0
     }
 }
+
+/// Length of opaque manufacturer advertisement data.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ManufacturerDataLen(usize);
+
+impl ManufacturerDataLen {
+    /// Creates a manufacturer data length from backend advertisement bytes.
+    #[must_use]
+    pub const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    /// Returns the primitive value for display or serialization edges.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for ManufacturerDataLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}

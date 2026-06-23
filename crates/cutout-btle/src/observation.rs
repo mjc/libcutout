@@ -8,8 +8,8 @@ use smallvec::SmallVec;
 use uuid::Uuid;
 
 use crate::{
-    BluetoothAddress, GattUuid, KnownGattUuid, PeripheralIdentifier, target::normalize_address,
-    types::write_delimited,
+    BluetoothAddress, GattUuid, KnownGattUuid, ManufacturerDataLen, PeripheralIdentifier,
+    target::normalize_address, types::write_delimited,
 };
 
 /// Advertised service UUIDs carried inline for the common small advertisement set.
@@ -47,7 +47,7 @@ pub struct ManufacturerDataSummary {
     pub company_id: u16,
 
     /// Payload length in bytes.
-    pub len: usize,
+    pub len: ManufacturerDataLen,
 }
 
 impl PeripheralObservation {
@@ -131,7 +131,7 @@ fn manufacturer_data_summary(
         .into_iter()
         .map(|(company_id, bytes)| ManufacturerDataSummary {
             company_id,
-            len: bytes.len(),
+            len: ManufacturerDataLen::new(bytes.len()),
         })
         .collect::<ManufacturerDataSummaries>();
     summary.sort_unstable_by_key(|value| value.company_id);
@@ -143,7 +143,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::manufacturer_data_summary;
-    use crate::ManufacturerDataSummary;
+    use crate::{ManufacturerDataLen, ManufacturerDataSummary};
 
     #[test]
     fn manufacturer_data_summary_sorts_without_retaining_payloads() {
@@ -157,11 +157,11 @@ mod tests {
             [
                 ManufacturerDataSummary {
                     company_id: 0x000f,
-                    len: 2
+                    len: ManufacturerDataLen::new(2)
                 },
                 ManufacturerDataSummary {
                     company_id: 0x004c,
-                    len: 4
+                    len: ManufacturerDataLen::new(4)
                 },
             ]
         );

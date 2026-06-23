@@ -317,11 +317,11 @@ fn peripheral_observation_renders_manufacturer_data_without_payload_bytes() {
         manufacturer_data: smallvec![
             crate::ManufacturerDataSummary {
                 company_id: 0x004c,
-                len: 6,
+                len: crate::ManufacturerDataLen::new(6),
             },
             crate::ManufacturerDataSummary {
                 company_id: 0x000f,
-                len: 2,
+                len: crate::ManufacturerDataLen::new(2),
             },
         ],
     };
