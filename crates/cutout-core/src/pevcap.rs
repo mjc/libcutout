@@ -617,7 +617,10 @@ impl PevcapCapture {
     /// Empty and zero lengths are ignored by the underlying capture record
     /// splitter; remaining bytes are appended as a final chunk.
     #[must_use]
-    pub fn replay_records_with_notification_chunks(&self, lengths: &[usize]) -> Vec<CaptureRecord> {
+    pub fn replay_records_with_notification_chunks(
+        &self,
+        lengths: &[NotificationChunkLen],
+    ) -> Vec<CaptureRecord> {
         self.replay_records()
             .into_iter()
             .flat_map(|record| record.split_notification_by_lengths(lengths))
@@ -2022,7 +2025,10 @@ mod tests {
         );
 
         assert_eq!(
-            capture.replay_records_with_notification_chunks(&[2, 1]),
+            capture.replay_records_with_notification_chunks(&[
+                NotificationChunkLen::new(2),
+                NotificationChunkLen::new(1),
+            ]),
             vec![
                 CaptureRecord::LinkUp(LinkInfo {
                     monotonic_ms: 0,
@@ -2064,8 +2070,13 @@ mod tests {
                 )],
             );
 
+            let chunk_lengths = lengths
+                .into_iter()
+                .map(NotificationChunkLen::new)
+                .collect::<Vec<_>>();
+
             prop_assert_eq!(
-                notification_payloads(capture.replay_records_with_notification_chunks(&lengths)),
+                notification_payloads(capture.replay_records_with_notification_chunks(&chunk_lengths)),
                 vec![payload],
             );
         }

@@ -3341,7 +3341,7 @@ impl CaptureRecord {
     /// Extra bytes are appended as a final chunk. Non-notification records are
     /// returned unchanged.
     #[must_use]
-    pub fn split_notification_by_lengths(self, lengths: &[usize]) -> Vec<Self> {
+    pub fn split_notification_by_lengths(self, lengths: &[NotificationChunkLen]) -> Vec<Self> {
         let Self::Notification {
             channel,
             bytes,
@@ -3353,11 +3353,11 @@ impl CaptureRecord {
 
         let mut records = Vec::new();
         let mut offset = 0;
-        for length in lengths.iter().copied().filter(|length| *length > 0) {
+        for length in lengths.iter().copied().filter(|length| !length.is_whole()) {
             if offset >= bytes.len() {
                 break;
             }
-            let end = offset.saturating_add(length).min(bytes.len());
+            let end = offset.saturating_add(length.get()).min(bytes.len());
             records.push(Self::notification(
                 channel,
                 bytes[offset..end].to_vec(),
@@ -3488,7 +3488,7 @@ where
 pub fn compare_replay_capture_chunks<S, F>(
     mut make_session: F,
     records: &[CaptureRecord],
-    arbitrary_lengths: &[usize],
+    arbitrary_lengths: &[NotificationChunkLen],
 ) -> ReplayChunkComparison
 where
     S: ProtocolSession,
@@ -3519,7 +3519,7 @@ where
 /// repeating 2/3/5 byte pattern. Shorter notifications ignore extra chunk
 /// lengths during replay.
 #[must_use]
-pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<usize> {
+pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<NotificationChunkLen> {
     let max_notification_len = records
         .iter()
         .filter_map(|record| match record {
@@ -3541,7 +3541,7 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<usize> {
         }
         let remaining = max_notification_len - covered;
         let next = chunk_len.min(remaining);
-        lengths.push(next);
+        lengths.push(NotificationChunkLen::new(next));
         covered += next;
     }
     lengths
@@ -3559,7 +3559,7 @@ pub fn notification_boundary_replay_cases(
     channel: GattChannel,
     frames: &[&[u8]],
     monotonic_ms: MonotonicMillis,
-    arbitrary_lengths: &[usize],
+    arbitrary_lengths: &[NotificationChunkLen],
 ) -> Vec<NotificationBoundaryReplayCase> {
     let whole_records = notification_records(channel, frames, monotonic_ms);
     let one_byte_records =
@@ -3734,7 +3734,7 @@ fn split_capture_notifications_by_len(
 
 fn split_capture_notifications_by_lengths(
     records: &[CaptureRecord],
-    lengths: &[usize],
+    lengths: &[NotificationChunkLen],
 ) -> Vec<CaptureRecord> {
     records
         .iter()
@@ -6376,7 +6376,10 @@ mod tests {
             vec![record.clone()]
         );
         assert_eq!(
-            record.clone().split_notification_by_lengths(&[1, 2]),
+            record.clone().split_notification_by_lengths(&[
+                crate::NotificationChunkLen::new(1),
+                crate::NotificationChunkLen::new(2),
+            ]),
             vec![record]
         );
     }
@@ -6404,8 +6407,14 @@ mod tests {
             10,
         )];
 
-        let comparison =
-            crate::compare_replay_capture_chunks(FramedCaptureSession::default, &records, &[2, 1]);
+        let comparison = crate::compare_replay_capture_chunks(
+            FramedCaptureSession::default,
+            &records,
+            &[
+                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::new(1),
+            ],
+        );
 
         assert_eq!(
             comparison,
@@ -6453,8 +6462,14 @@ mod tests {
             10,
         )];
 
-        let comparison =
-            crate::compare_replay_capture_chunks(|| NotificationLengthSession, &records, &[2, 2]);
+        let comparison = crate::compare_replay_capture_chunks(
+            || NotificationLengthSession,
+            &records,
+            &[
+                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::new(2),
+            ],
+        );
 
         assert!(!comparison.one_byte_matches);
         assert!(!comparison.arbitrary_matches);
@@ -6472,7 +6487,11 @@ mod tests {
 
         assert_eq!(
             crate::replay_arbitrary_chunk_lengths(&records),
-            vec![2, 3, 5]
+            vec![
+                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::new(3),
+                crate::NotificationChunkLen::new(5),
+            ]
         );
     }
 
@@ -6482,7 +6501,7 @@ mod tests {
             crate::replay_arbitrary_chunk_lengths(&[crate::CaptureRecord::Tick {
                 monotonic_ms: 1
             }]),
-            Vec::<usize>::new()
+            Vec::<crate::NotificationChunkLen>::new()
         );
     }
 
@@ -6496,7 +6515,7 @@ mod tests {
             channel,
             &[frame_a.as_slice(), frame_b.as_slice()],
             10,
-            &[2],
+            &[crate::NotificationChunkLen::new(2)],
         );
 
         assert_eq!(
@@ -6553,8 +6572,12 @@ mod tests {
             let mut payload = payload_prefix;
             payload.push(0xff);
             let whole = [crate::CaptureRecord::notification(channel, payload.clone(), 20)];
+            let chunk_lengths = lengths
+                .into_iter()
+                .map(crate::NotificationChunkLen::new)
+                .collect::<Vec<_>>();
             let chunks = crate::CaptureRecord::notification(channel, payload, 20)
-                .split_notification_by_lengths(&lengths);
+                .split_notification_by_lengths(&chunk_lengths);
 
             prop_assert_eq!(replay_events(&chunks), replay_events(&whole));
         }
