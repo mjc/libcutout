@@ -1422,6 +1422,20 @@ typed_protocol_value!(
     "Number of semantic events emitted from one protocol ingest operation."
 );
 
+impl SemanticEventCount {
+    /// Adds one observed semantic event, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self::new(self.value.saturating_add(1))
+    }
+
+    /// Adds another semantic event count, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::new(self.value.saturating_add(other.value))
+    }
+}
+
 typed_protocol_value!(
     ProtocolSelector,
     ProtocolSelectorUnit,
