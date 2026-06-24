@@ -74,20 +74,20 @@ pub struct VeteranTelemetry {
     /// Pack voltage.
     pub voltage: Voltage,
 
-    /// Speed in protocol-native deci-km/h.
-    pub speed_deci_kmh: i16,
+    /// Speed.
+    pub speed: Speed,
 
-    /// Trip distance in meters.
-    pub trip_distance_m: u32,
+    /// Trip distance.
+    pub trip_distance: Distance,
 
-    /// Total distance in meters.
-    pub total_distance_m: u32,
+    /// Total distance.
+    pub total_distance: Distance,
 
     /// Phase current reported by the realtime frame.
     pub phase_current: PhaseCurrent,
 
-    /// MOSFET/controller temperature in millicelsius.
-    pub mosfet_temperature_mc: i32,
+    /// MOSFET/controller temperature.
+    pub mosfet_temperature: Temperature,
 
     /// Auto shutdown time remaining field in seconds.
     pub auto_shutdown_time_remaining_seconds: u16,
@@ -107,14 +107,14 @@ pub struct VeteranTelemetry {
     /// Raw pedals-mode field.
     pub pedals_mode: u16,
 
-    /// Pitch in millidegrees.
-    pub pitch_mdeg: i32,
+    /// Pitch.
+    pub pitch: Angle,
 
     /// Raw hardware PWM field.
     pub hardware_pwm_raw: u16,
 
     /// Cutout-estimated battery percentage from capture-backed pack range.
-    pub battery_percent_estimated: u8,
+    pub battery_percent_estimated: Percent,
 }
 
 /// Raw Veteran charge-mode field retained for protocol evidence.
@@ -301,13 +301,14 @@ impl VeteranModelProfile {
 
     /// Estimates battery percentage from this model's pack voltage.
     #[must_use]
-    pub fn estimate_battery_percent(&self, voltage_mv: i32) -> u8 {
+    pub fn estimate_battery_percent(&self, voltage_mv: Voltage) -> u8 {
         if let Some(battery_profile) = self.battery_profile {
             return battery_profile.estimate_percent_from_pack_voltage(voltage_mv, self.cell_count);
         }
 
         let start = *self.voltage_range_mv.start();
         let end = *self.voltage_range_mv.end();
+        let voltage_mv = voltage_mv.as_millivolts();
         if voltage_mv <= start {
             return 0;
         }
@@ -389,15 +390,25 @@ impl VeteranTelemetry {
         Ok(Self {
             firmware,
             voltage,
-            speed_deci_kmh: cursor
-                .be_i16(ByteOffset::new(6))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            trip_distance_m: cursor
-                .veteran_swapped_u32(ByteOffset::new(8))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            total_distance_m: cursor
-                .veteran_swapped_u32(ByteOffset::new(12))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            speed: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(
+                cursor
+                    .be_i16(ByteOffset::new(6))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            trip_distance: Distance::from_millimetres(
+                u64::from(
+                    cursor
+                        .veteran_swapped_u32(ByteOffset::new(8))
+                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
+                ) * 1_000,
+            ),
+            total_distance: Distance::from_millimetres(
+                u64::from(
+                    cursor
+                        .veteran_swapped_u32(ByteOffset::new(12))
+                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
+                ) * 1_000,
+            ),
             phase_current: PhaseCurrent::from_milliamps(
                 i32::from(
                     cursor
@@ -405,11 +416,13 @@ impl VeteranTelemetry {
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 100,
             ),
-            mosfet_temperature_mc: i32::from(
-                cursor
-                    .be_i16(ByteOffset::new(18))
-                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ) * 10,
+            mosfet_temperature: Temperature::from_millicelsius(
+                i32::from(
+                    cursor
+                        .be_i16(ByteOffset::new(18))
+                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
+                ) * 10,
+            ),
             auto_shutdown_time_remaining_seconds: cursor
                 .be_u16(ByteOffset::new(20))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -424,18 +437,20 @@ impl VeteranTelemetry {
             pedals_mode: cursor
                 .be_u16(ByteOffset::new(30))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            pitch_mdeg: i32::from(
-                cursor
-                    .be_i16(ByteOffset::new(32))
-                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ) * 10,
+            pitch: Angle::from_millidegrees(
+                i32::from(
+                    cursor
+                        .be_i16(ByteOffset::new(32))
+                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
+                ) * 10,
+            ),
             hardware_pwm_raw: cursor
                 .be_u16(ByteOffset::new(34))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            battery_percent_estimated: estimate_veteran_battery_percent(
+            battery_percent_estimated: Percent::from_percent(estimate_veteran_battery_percent(
                 firmware.model_id,
-                voltage.as_millivolts(),
-            ),
+                voltage,
+            )),
         })
     }
 
@@ -445,26 +460,20 @@ impl VeteranTelemetry {
         let power_mw = Power::from_voltage_current(self.voltage, self.phase_current);
         TelemetryDelta {
             speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
-                deci_kmh_to_mm_s(self.speed_deci_kmh),
+                self.speed.as_millimetres_per_second(),
             ))),
             voltage_mv: Some(Measured::reported(self.voltage)),
             motor_current_ma: Some(Measured::reported(self.phase_current)),
             power_mw: Some(Measured::calculated(power_mw)),
-            controller_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
-                self.mosfet_temperature_mc,
-            ))),
+            controller_temperature_mc: Some(Measured::reported(self.mosfet_temperature)),
             pwm_permille: Some(Measured::reported(DutyCycle::from_permille(
                 veteran_pwm_permille(self.hardware_pwm_raw),
             ))),
             distance_mm: Some(Measured::reported(Distance::from_millimetres(
-                u64::from(self.total_distance_m) * 1_000,
+                self.total_distance.as_millimetres(),
             ))),
-            pitch_mdeg: Some(Measured::reported(Angle::from_millidegrees(
-                self.pitch_mdeg,
-            ))),
-            battery_percent_estimated: Some(Measured::estimated(Percent::from_percent(
-                self.battery_percent_estimated,
-            ))),
+            pitch_mdeg: Some(Measured::reported(self.pitch)),
+            battery_percent_estimated: Some(Measured::estimated(self.battery_percent_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -588,13 +597,13 @@ impl VeteranFirmwareVersion {
 
 /// Estimates Aero battery percent from its model's Samsung 50S battery profile.
 #[must_use]
-pub fn estimate_nosfet_aero_battery_percent(voltage_mv: i32) -> u8 {
+pub fn estimate_nosfet_aero_battery_percent(voltage_mv: Voltage) -> u8 {
     estimate_veteran_battery_percent(43, voltage_mv)
 }
 
 /// Estimates Veteran battery percent using the known model profile when possible.
 #[must_use]
-pub fn estimate_veteran_battery_percent(model_id: u16, voltage_mv: i32) -> u8 {
+pub fn estimate_veteran_battery_percent(model_id: u16, voltage_mv: Voltage) -> u8 {
     VeteranModelProfile::from_model_id(model_id)
         .map_or(0, |profile| profile.estimate_battery_percent(voltage_mv))
 }
@@ -671,20 +680,20 @@ mod tests {
                     revision: 54,
                 },
                 voltage: Voltage::from_millivolts(108_760),
-                speed_deci_kmh: 0,
-                trip_distance_m: 0,
-                total_distance_m: 1_551_169,
+                speed: Speed::from_millimetres_per_second(0),
+                trip_distance: Distance::from_millimetres(0),
+                total_distance: Distance::from_millimetres(1_551_169_000),
                 phase_current: PhaseCurrent::from_milliamps(0),
-                mosfet_temperature_mc: 33_270,
+                mosfet_temperature: Temperature::from_millicelsius(33_270),
                 auto_shutdown_time_remaining_seconds: 0,
                 raw_charge_mode: VeteranRawChargeMode::new(0),
                 charge_mode: ChargeMode::NotCharging,
                 speed_alert_deci_kmh: 550,
                 speed_tiltback_deci_kmh: 540,
                 pedals_mode: 1_920,
-                pitch_mdeg: 69_060,
+                pitch: Angle::from_millidegrees(69_060),
                 hardware_pwm_raw: 0,
-                battery_percent_estimated: 47,
+                battery_percent_estimated: Percent::from_percent(47),
             }
         );
     }
@@ -693,7 +702,10 @@ mod tests {
     fn veteran_telemetry_estimates_live_aero_battery_percent() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
-        assert_eq!(telemetry.battery_percent_estimated, 47);
+        assert_eq!(
+            telemetry.battery_percent_estimated,
+            Percent::from_percent(47)
+        );
     }
 
     #[test]
@@ -715,7 +727,10 @@ mod tests {
             VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
 
         assert_eq!(telemetry.voltage.as_millivolts(), 107_610);
-        assert_eq!(telemetry.battery_percent_estimated, 42);
+        assert_eq!(
+            telemetry.battery_percent_estimated,
+            Percent::from_percent(42)
+        );
         assert_eq!(telemetry.auto_shutdown_time_remaining_seconds, 1_117);
         assert_eq!(telemetry.firmware.model_id, 43);
         assert_eq!(telemetry.firmware.minor, 2);
@@ -725,11 +740,15 @@ mod tests {
     #[test]
     fn aero_battery_percent_estimate_clamps_to_pack_range() {
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(NOSFET_AERO_MIN_VOLTAGE_MV - 1),
+            estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(
+                NOSFET_AERO_MIN_VOLTAGE_MV - 1,
+            )),
             0
         );
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(NOSFET_AERO_MAX_VOLTAGE_MV + 1),
+            estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(
+                NOSFET_AERO_MAX_VOLTAGE_MV + 1,
+            )),
             100
         );
     }
@@ -784,9 +803,7 @@ mod tests {
         assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
         assert_eq!(
             delta.distance_mm.map(|distance| distance.value),
-            Some(Distance::from_millimetres(
-                u64::from(telemetry.total_distance_m) * 1_000
-            ))
+            Some(telemetry.total_distance)
         );
     }
 
@@ -852,7 +869,10 @@ mod tests {
         ];
 
         for (pack_mv, percent) in sticker_points {
-            assert_eq!(aero.estimate_battery_percent(pack_mv), percent);
+            assert_eq!(
+                aero.estimate_battery_percent(Voltage::from_millivolts(pack_mv)),
+                percent
+            );
         }
     }
 
@@ -864,8 +884,11 @@ mod tests {
             .expect("Aero has a cell battery profile");
 
         assert_eq!(
-            aero.estimate_battery_percent(107_950),
-            profile.estimate_percent_from_pack_voltage(107_950, aero.cell_count)
+            aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
+            profile.estimate_percent_from_pack_voltage(
+                Voltage::from_millivolts(107_950),
+                aero.cell_count,
+            )
         );
     }
 
@@ -873,10 +896,22 @@ mod tests {
     fn aero_model_profile_uses_samsung_50s_curve_for_battery_percent() {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
 
-        assert_eq!(aero.estimate_battery_percent(91_000), 0);
-        assert_eq!(aero.estimate_battery_percent(107_950), 44);
-        assert_eq!(aero.estimate_battery_percent(108_760), 47);
-        assert_eq!(aero.estimate_battery_percent(126_000), 100);
+        assert_eq!(
+            aero.estimate_battery_percent(Voltage::from_millivolts(91_000)),
+            0
+        );
+        assert_eq!(
+            aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
+            44
+        );
+        assert_eq!(
+            aero.estimate_battery_percent(Voltage::from_millivolts(108_760)),
+            47
+        );
+        assert_eq!(
+            aero.estimate_battery_percent(Voltage::from_millivolts(126_000)),
+            100
+        );
     }
 
     #[test]
@@ -977,9 +1012,18 @@ mod tests {
         let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
         let oryx = VeteranModelProfile::from_model_id(8).expect("Oryx profile is known");
 
-        assert_eq!(aero.estimate_battery_percent(107_950), 44);
-        assert_eq!(lynx.estimate_battery_percent(129_540), 44);
-        assert_eq!(oryx.estimate_battery_percent(151_130), 44);
+        assert_eq!(
+            aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
+            44
+        );
+        assert_eq!(
+            lynx.estimate_battery_percent(Voltage::from_millivolts(129_540)),
+            44
+        );
+        assert_eq!(
+            oryx.estimate_battery_percent(Voltage::from_millivolts(151_130)),
+            44
+        );
     }
 
     #[test]
@@ -1003,23 +1047,41 @@ mod tests {
     fn veteran_model_profile_estimates_battery_percent_from_profile_range() {
         let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
 
-        assert_eq!(lynx.estimate_battery_percent(109_200), 0);
-        assert_eq!(lynx.estimate_battery_percent(151_200), 100);
-        assert_eq!(lynx.estimate_battery_percent(129_540), 44);
+        assert_eq!(
+            lynx.estimate_battery_percent(Voltage::from_millivolts(109_200)),
+            0
+        );
+        assert_eq!(
+            lynx.estimate_battery_percent(Voltage::from_millivolts(151_200)),
+            100
+        );
+        assert_eq!(
+            lynx.estimate_battery_percent(Voltage::from_millivolts(129_540)),
+            44
+        );
     }
 
     #[test]
     fn veteran_battery_estimation_uses_model_specific_strategy() {
-        assert_eq!(estimate_veteran_battery_percent(43, 107_950), 44);
-        assert_eq!(estimate_veteran_battery_percent(5, 129_540), 44);
-        assert_eq!(estimate_veteran_battery_percent(99, 133_535), 0);
+        assert_eq!(
+            estimate_veteran_battery_percent(43, Voltage::from_millivolts(107_950)),
+            44
+        );
+        assert_eq!(
+            estimate_veteran_battery_percent(5, Voltage::from_millivolts(129_540)),
+            44
+        );
+        assert_eq!(
+            estimate_veteran_battery_percent(99, Voltage::from_millivolts(133_535)),
+            0
+        );
     }
 
     #[test]
     fn aero_battery_estimation_delegates_to_model_profile() {
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(107_950),
-            estimate_veteran_battery_percent(43, 107_950)
+            estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(107_950)),
+            estimate_veteran_battery_percent(43, Voltage::from_millivolts(107_950))
         );
     }
 
@@ -1029,7 +1091,10 @@ mod tests {
             .expect("synthetic Lynx frame decodes");
 
         assert_eq!(telemetry.firmware.model_id, 5);
-        assert_eq!(telemetry.battery_percent_estimated, 44);
+        assert_eq!(
+            telemetry.battery_percent_estimated,
+            Percent::from_percent(44)
+        );
     }
 
     #[test]
@@ -1131,7 +1196,7 @@ mod tests {
     fn veteran_telemetry_delta_scales_nonzero_speed_and_current() {
         let mut telemetry =
             VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
-        telemetry.speed_deci_kmh = 36;
+        telemetry.speed = Speed::from_millimetres_per_second(deci_kmh_to_mm_s(36));
         telemetry.phase_current = PhaseCurrent::from_milliamps(-1_700);
 
         let delta = telemetry.to_delta(42);
