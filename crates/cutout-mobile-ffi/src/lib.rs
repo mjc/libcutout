@@ -4,12 +4,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, MonotonicMillis, MonotonicMillisDto, NotificationEvidenceDto,
-    NotificationIngestOutcomeDto, ParserDiagnosticsDto, ParserErrorDto, ParserGapEvidenceDto,
-    PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
-    ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto, SessionInputDto,
-    SessionOutputDto, TelemetrySnapshotDto, TransportActionDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, WallClockUnixMillis,
+    GattRoles, MonotonicMillis, MonotonicMillisDto, NotificationByteLenDto,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticsDto, ParserErrorDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
+    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
+    ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto, TransportActionDto, VerificationStatus, VerificationStatusDto,
+    VerifiedValue, WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -120,6 +121,51 @@ impl MobileWallClockUnixMillisDto {
     }
 }
 
+/// Mobile notification payload length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNotificationByteLenDto {
+    /// Length in bytes.
+    pub bytes: u64,
+}
+
+impl From<NotificationByteLenDto> for MobileNotificationByteLenDto {
+    fn from(value: NotificationByteLenDto) -> Self {
+        Self {
+            bytes: value.bytes as u64,
+        }
+    }
+}
+
+/// Mobile protocol payload body length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePayloadBodyLenDto {
+    /// Length in bytes.
+    pub bytes: u64,
+}
+
+impl From<PayloadBodyLenDto> for MobilePayloadBodyLenDto {
+    fn from(value: PayloadBodyLenDto) -> Self {
+        Self {
+            bytes: value.bytes as u64,
+        }
+    }
+}
+
+/// Mobile semantic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSemanticEventCountDto {
+    /// Count of emitted semantic events.
+    pub count: u64,
+}
+
+impl From<SemanticEventCountDto> for MobileSemanticEventCountDto {
+    fn from(value: SemanticEventCountDto) -> Self {
+        Self {
+            count: value.count as u64,
+        }
+    }
+}
+
 /// Mobile output kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSessionOutputKindDto {
@@ -225,7 +271,7 @@ pub struct MobileReservedPayloadEvidenceDto {
     pub tag: Option<u16>,
 
     /// Reserved payload body length.
-    pub body_len: u64,
+    pub body_len: MobilePayloadBodyLenDto,
 
     /// Evidence verification status.
     pub verification: MobileVerificationStatusDto,
@@ -241,7 +287,7 @@ pub struct MobileParserGapEvidenceDto {
     pub tag: Option<u16>,
 
     /// Unparsed body length.
-    pub body_len: u64,
+    pub body_len: MobilePayloadBodyLenDto,
 }
 
 /// Mobile notification evidence DTO.
@@ -254,7 +300,7 @@ pub struct MobileNotificationEvidenceDto {
     pub channel: Vec<u8>,
 
     /// Notification payload length without retaining payload bytes.
-    pub len: u64,
+    pub len: MobileNotificationByteLenDto,
 
     /// Host monotonic receive timestamp.
     pub monotonic_ms: MobileMonotonicMillisDto,
@@ -270,7 +316,7 @@ pub struct MobileNotificationIngestOutcomeDto {
     pub notification: MobileNotificationEvidenceDto,
 
     /// Number of semantic events emitted from this notification.
-    pub event_count: Option<u64>,
+    pub event_count: Option<MobileSemanticEventCountDto>,
 
     /// Parser error for diagnostic outcomes.
     pub parser_error: Option<MobileParserErrorDto>,
@@ -917,7 +963,7 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::SemanticEvents,
                 notification: notification.into(),
-                event_count: Some(event_count as u64),
+                event_count: Some(event_count.into()),
                 parser_error: None,
                 reserved: None,
                 gap: None,
@@ -977,7 +1023,7 @@ impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
         Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.to_vec(),
-            len: evidence.len as u64,
+            len: evidence.len.into(),
             monotonic_ms: MobileMonotonicMillisDto::from_core_ffi_timestamp(evidence.monotonic_ms),
         }
     }
@@ -1037,7 +1083,7 @@ impl From<ReservedPayloadEvidenceDto> for MobileReservedPayloadEvidenceDto {
         Self {
             selector: evidence.selector,
             tag: evidence.tag,
-            body_len: evidence.body_len as u64,
+            body_len: evidence.body_len.into(),
             verification: evidence.verification.into(),
         }
     }
@@ -1048,7 +1094,7 @@ impl From<ParserGapEvidenceDto> for MobileParserGapEvidenceDto {
         Self {
             selector: evidence.selector,
             tag: evidence.tag,
-            body_len: evidence.body_len as u64,
+            body_len: evidence.body_len.into(),
         }
     }
 }
@@ -1214,11 +1260,35 @@ mod tests {
         }
     }
 
+    const fn notification_len(value: usize) -> NotificationByteLenDto {
+        NotificationByteLenDto { bytes: value }
+    }
+
+    const fn mobile_notification_len(value: u64) -> MobileNotificationByteLenDto {
+        MobileNotificationByteLenDto { bytes: value }
+    }
+
+    const fn body_len(value: usize) -> PayloadBodyLenDto {
+        PayloadBodyLenDto { bytes: value }
+    }
+
+    const fn mobile_body_len(value: u64) -> MobilePayloadBodyLenDto {
+        MobilePayloadBodyLenDto { bytes: value }
+    }
+
+    const fn event_count(value: usize) -> SemanticEventCountDto {
+        SemanticEventCountDto { count: value }
+    }
+
+    const fn mobile_event_count(value: u64) -> MobileSemanticEventCountDto {
+        MobileSemanticEventCountDto { count: value }
+    }
+
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
             family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
             channel: [0x7a; 16],
-            len: 17,
+            len: notification_len(17),
             monotonic_ms: MonotonicMillisDto { milliseconds: 42 },
         }
     }
@@ -1236,7 +1306,7 @@ mod tests {
     fn mobile_notification_ingest_dto_preserves_each_typed_outcome_class() {
         let semantic = mobile_ingest(NotificationIngestOutcomeDto::SemanticEvents {
             notification: notification_fixture(),
-            event_count: 3,
+            event_count: event_count(3),
         });
         assert_eq!(
             semantic.kind,
@@ -1247,8 +1317,8 @@ mod tests {
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         );
         assert_eq!(semantic.notification.channel, vec![0x7a; 16]);
-        assert_eq!(semantic.notification.len, 17);
-        assert_eq!(semantic.event_count, Some(3));
+        assert_eq!(semantic.notification.len, mobile_notification_len(17));
+        assert_eq!(semantic.event_count, Some(mobile_event_count(3)));
         assert_eq!(semantic.parser_error, None);
 
         let buffered = mobile_ingest(NotificationIngestOutcomeDto::BufferedFragment(
@@ -1283,7 +1353,7 @@ mod tests {
             payload: ReservedPayloadEvidenceDto {
                 selector: Some(8),
                 tag: Some(0x5a5c),
-                body_len: 84,
+                body_len: body_len(84),
                 verification: VerificationStatusDto::SourceVerified,
             },
         });
@@ -1292,7 +1362,7 @@ mod tests {
             Some(MobileReservedPayloadEvidenceDto {
                 selector: Some(8),
                 tag: Some(0x5a5c),
-                body_len: 84,
+                body_len: mobile_body_len(84),
                 verification: MobileVerificationStatusDto::SourceVerified,
             })
         );
@@ -1302,7 +1372,7 @@ mod tests {
             gap: ParserGapEvidenceDto {
                 selector: Some(9),
                 tag: None,
-                body_len: 11,
+                body_len: body_len(11),
             },
         });
         assert_eq!(
@@ -1310,7 +1380,7 @@ mod tests {
             Some(MobileParserGapEvidenceDto {
                 selector: Some(9),
                 tag: None,
-                body_len: 11,
+                body_len: mobile_body_len(11),
             })
         );
 
@@ -1410,9 +1480,9 @@ mod tests {
             ingest.notification.family,
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         );
-        assert_eq!(ingest.notification.len, 87);
+        assert_eq!(ingest.notification.len, mobile_notification_len(87));
         assert_eq!(ingest.notification.monotonic_ms, ms(2));
-        assert_eq!(ingest.event_count, Some(5));
+        assert_eq!(ingest.event_count, Some(mobile_event_count(5)));
         assert_eq!(ingest.parser_error, None);
         assert_eq!(ingest.reserved, None);
         assert_eq!(ingest.gap, None);

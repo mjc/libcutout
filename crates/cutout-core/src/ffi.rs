@@ -3,12 +3,12 @@ use crate::{
     BmsPackCurrent, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason,
     DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind,
     DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState,
-    Measured, MonotonicMillis, NotificationEvidence, NotificationIngestOutcome, ParserDiagnostics,
-    ParserError, ParserGapEvidence, Percent, Power, ProtocolFamily, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput,
-    SessionOutput, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot,
-    Temperature, TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage,
-    WriteMode,
+    Measured, MonotonicMillis, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
+    Percent, Power, ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
+    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
+    TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -46,6 +46,45 @@ impl MonotonicMillisDto {
 
     fn into_core(self) -> MonotonicMillis {
         MonotonicMillis::new(self.milliseconds)
+    }
+}
+
+/// UniFFI-ready notification payload length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationByteLenDto {
+    /// Length in bytes.
+    pub bytes: usize,
+}
+
+impl NotificationByteLenDto {
+    fn from_core(value: NotificationByteLen) -> Self {
+        Self { bytes: value.get() }
+    }
+}
+
+/// UniFFI-ready protocol payload body length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PayloadBodyLenDto {
+    /// Length in bytes.
+    pub bytes: usize,
+}
+
+impl PayloadBodyLenDto {
+    fn from_core(value: PayloadBodyLen) -> Self {
+        Self { bytes: value.get() }
+    }
+}
+
+/// UniFFI-ready semantic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SemanticEventCountDto {
+    /// Count of emitted semantic events.
+    pub count: usize,
+}
+
+impl SemanticEventCountDto {
+    fn from_core(value: SemanticEventCount) -> Self {
+        Self { count: value.get() }
     }
 }
 
@@ -1033,7 +1072,7 @@ pub enum NotificationIngestOutcomeDto {
         notification: NotificationEvidenceDto,
 
         /// Number of semantic events emitted from this notification.
-        event_count: usize,
+        event_count: SemanticEventCountDto,
     },
 
     /// Notification bytes are a valid partial frame.
@@ -1078,7 +1117,7 @@ impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
                 event_count,
             } => Self::SemanticEvents {
                 notification: notification.into(),
-                event_count: event_count.get(),
+                event_count: SemanticEventCountDto::from_core(event_count),
             },
             NotificationIngestOutcome::BufferedFragment(notification) => {
                 Self::BufferedFragment(notification.into())
@@ -1116,7 +1155,7 @@ pub struct NotificationEvidenceDto {
     pub channel: [u8; 16],
 
     /// Notification payload length.
-    pub len: usize,
+    pub len: NotificationByteLenDto,
 
     /// Host monotonic receive timestamp.
     pub monotonic_ms: MonotonicMillisDto,
@@ -1127,7 +1166,7 @@ impl From<NotificationEvidence> for NotificationEvidenceDto {
         Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.as_bytes(),
-            len: evidence.len.get(),
+            len: NotificationByteLenDto::from_core(evidence.len),
             monotonic_ms: MonotonicMillisDto::from_core(evidence.monotonic_ms),
         }
     }
@@ -1215,7 +1254,7 @@ pub struct ReservedPayloadEvidenceDto {
     pub tag: Option<u16>,
 
     /// Reserved payload body length.
-    pub body_len: usize,
+    pub body_len: PayloadBodyLenDto,
 
     /// Evidence verification status.
     pub verification: VerificationStatusDto,
@@ -1229,7 +1268,7 @@ impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
                 .selector_value()
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
-            body_len: evidence.body_len.get(),
+            body_len: PayloadBodyLenDto::from_core(evidence.body_len),
             verification: evidence.verification.into(),
         }
     }
@@ -1245,7 +1284,7 @@ pub struct ParserGapEvidenceDto {
     pub tag: Option<u16>,
 
     /// Unparsed body length.
-    pub body_len: usize,
+    pub body_len: PayloadBodyLenDto,
 }
 
 impl From<ParserGapEvidence> for ParserGapEvidenceDto {
@@ -1256,7 +1295,7 @@ impl From<ParserGapEvidence> for ParserGapEvidenceDto {
                 .selector_value()
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
-            body_len: evidence.body_len.get(),
+            body_len: PayloadBodyLenDto::from_core(evidence.body_len),
         }
     }
 }
