@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, Measured,
+    BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DutyCycle, Measured,
     MonotonicMillis, ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature,
     ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
@@ -28,8 +28,8 @@ pub struct BegodeBmsSummary {
     /// Zero-based half-pack index inferred from sub-index bit 0.
     pub half_index: u8,
 
-    /// PWM limit in centi-percent.
-    pub pwm_limit_centi_percent: u16,
+    /// PWM limit.
+    pub pwm_limit: DutyCycle,
 
     /// BMS-authoritative pack voltage in millivolts.
     pub pack_voltage_mv: Voltage,
@@ -63,7 +63,7 @@ impl BegodeBmsSummary {
             sub_index,
             bms_index: u8::from(sub_index_value >= 2),
             half_index: sub_index_value & 1,
-            pwm_limit_centi_percent: be_u16(cursor, ByteOffset::new(2)),
+            pwm_limit: centi_percent_to_permille(be_u16(cursor, ByteOffset::new(2))),
             pack_voltage_mv: Voltage::from_millivolts(
                 i32::from(be_u16(cursor, ByteOffset::new(6))) * 100,
             ),
@@ -207,6 +207,10 @@ fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
     cursor.be_i16(offset).unwrap_or_default()
 }
 
+fn centi_percent_to_permille(value: u16) -> DutyCycle {
+    DutyCycle::from_permille(i16::try_from(value / 10).unwrap_or(i16::MAX))
+}
+
 const fn source_reported<T>(value: T) -> Measured<T> {
     Measured {
         value,
@@ -242,7 +246,7 @@ mod tests {
                 sub_index: ProtocolSelector::new(3),
                 bms_index: 1,
                 half_index: 1,
-                pwm_limit_centi_percent: 10_000,
+                pwm_limit: DutyCycle::from_permille(1_000),
                 pack_voltage_mv: Voltage::from_millivolts(80_000),
                 current_ma: BatteryCurrent::from_milliamps(-10_000),
                 temperature_0_mc: Temperature::from_millicelsius(25_000),
