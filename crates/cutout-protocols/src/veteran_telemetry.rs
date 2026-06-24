@@ -98,11 +98,11 @@ pub struct VeteranTelemetry {
     /// Decoded charging state.
     pub charge_mode: ChargeMode,
 
-    /// Speed alert threshold in protocol-native deci-km/h.
-    pub speed_alert_deci_kmh: u16,
+    /// Speed alert threshold.
+    pub speed_alert: Speed,
 
-    /// Speed tiltback threshold in protocol-native deci-km/h.
-    pub speed_tiltback_deci_kmh: u16,
+    /// Speed tiltback threshold.
+    pub speed_tiltback: Speed,
 
     /// Raw pedals-mode field.
     pub pedals_mode: u16,
@@ -110,8 +110,8 @@ pub struct VeteranTelemetry {
     /// Pitch.
     pub pitch: Angle,
 
-    /// Raw hardware PWM field.
-    pub hardware_pwm_raw: u16,
+    /// Hardware PWM duty cycle.
+    pub hardware_pwm: DutyCycle,
 
     /// Cutout-estimated battery percentage from capture-backed pack range.
     pub battery_percent_estimated: Percent,
@@ -390,11 +390,11 @@ impl VeteranTelemetry {
         Ok(Self {
             firmware,
             voltage,
-            speed: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(
+            speed: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(i32::from(
                 cursor
                     .be_i16(ByteOffset::new(6))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            )),
+            ))),
             trip_distance: Distance::from_millimetres(
                 u64::from(
                     cursor
@@ -428,12 +428,16 @@ impl VeteranTelemetry {
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
             raw_charge_mode,
             charge_mode: veteran_charge_mode(raw_charge_mode),
-            speed_alert_deci_kmh: cursor
-                .be_u16(ByteOffset::new(24))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            speed_tiltback_deci_kmh: cursor
-                .be_u16(ByteOffset::new(26))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            speed_alert: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(i32::from(
+                cursor
+                    .be_u16(ByteOffset::new(24))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            ))),
+            speed_tiltback: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(i32::from(
+                cursor
+                    .be_u16(ByteOffset::new(26))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            ))),
             pedals_mode: cursor
                 .be_u16(ByteOffset::new(30))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -444,9 +448,11 @@ impl VeteranTelemetry {
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 10,
             ),
-            hardware_pwm_raw: cursor
-                .be_u16(ByteOffset::new(34))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            hardware_pwm: DutyCycle::from_permille(veteran_pwm_permille(
+                cursor
+                    .be_u16(ByteOffset::new(34))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
             battery_percent_estimated: Percent::from_percent(estimate_veteran_battery_percent(
                 firmware.model_id,
                 voltage,
@@ -466,9 +472,7 @@ impl VeteranTelemetry {
             motor_current_ma: Some(Measured::reported(self.phase_current)),
             power_mw: Some(Measured::calculated(power_mw)),
             controller_temperature_mc: Some(Measured::reported(self.mosfet_temperature)),
-            pwm_permille: Some(Measured::reported(DutyCycle::from_permille(
-                veteran_pwm_permille(self.hardware_pwm_raw),
-            ))),
+            pwm_permille: Some(Measured::reported(self.hardware_pwm)),
             distance_mm: Some(Measured::reported(Distance::from_millimetres(
                 self.total_distance.as_millimetres(),
             ))),
@@ -509,11 +513,15 @@ impl VeteranTelemetry {
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-                        i64::from(self.speed_alert_deci_kmh),
+                        i64::from(speed_to_deci_kmh(
+                            self.speed_alert.as_millimetres_per_second(),
+                        )),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-                        i64::from(self.speed_tiltback_deci_kmh),
+                        i64::from(speed_to_deci_kmh(
+                            self.speed_tiltback.as_millimetres_per_second(),
+                        )),
                     )),
                 ],
             }),
@@ -608,8 +616,21 @@ pub fn estimate_veteran_battery_percent(model_id: u16, voltage_mv: Voltage) -> u
         .map_or(0, |profile| profile.estimate_battery_percent(voltage_mv))
 }
 
-fn deci_kmh_to_mm_s(value: i16) -> i32 {
-    i32::from(value) * 250 / 9
+fn deci_kmh_to_mm_s(value: i32) -> i32 {
+    value * 250 / 9
+}
+
+fn speed_to_deci_kmh(value: i32) -> i32 {
+    let numerator = i64::from(value) * 36;
+    let rounded = if numerator >= 0 {
+        (numerator + 500) / 1_000
+    } else {
+        (numerator - 500) / 1_000
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        rounded as i32
+    }
 }
 
 fn veteran_pwm_permille(raw_pwm: u16) -> i16 {
@@ -688,11 +709,11 @@ mod tests {
                 auto_shutdown_time_remaining_seconds: 0,
                 raw_charge_mode: VeteranRawChargeMode::new(0),
                 charge_mode: ChargeMode::NotCharging,
-                speed_alert_deci_kmh: 550,
-                speed_tiltback_deci_kmh: 540,
+                speed_alert: Speed::from_millimetres_per_second(15_277),
+                speed_tiltback: Speed::from_millimetres_per_second(15_000),
                 pedals_mode: 1_920,
                 pitch: Angle::from_millidegrees(69_060),
-                hardware_pwm_raw: 0,
+                hardware_pwm: DutyCycle::from_permille(-1_000),
                 battery_percent_estimated: Percent::from_percent(47),
             }
         );
@@ -1166,9 +1187,8 @@ mod tests {
 
     #[test]
     fn veteran_telemetry_maps_fixed_header_settings_to_read_only_response() {
-        let responses = VeteranTelemetry::decode(&live_aero_frame())
-            .expect("telemetry decodes")
-            .to_settings_responses();
+        let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
+        let responses = telemetry.to_settings_responses();
 
         let present: Vec<_> = responses
             .into_iter()
@@ -1190,6 +1210,9 @@ mod tests {
                 RawFieldValue::new(VETERAN_FIELD_PEDALS_MODE, 1_920),
             ]
         );
+
+        assert_eq!(telemetry.speed_alert.as_millimetres_per_second(), 15_277);
+        assert_eq!(telemetry.speed_tiltback.as_millimetres_per_second(), 15_000);
     }
 
     #[test]
@@ -1232,6 +1255,12 @@ mod tests {
     #[test]
     fn veteran_speed_conversion_scales_nonzero_deci_kmh() {
         assert_eq!(deci_kmh_to_mm_s(36), 1_000);
+    }
+
+    #[test]
+    fn veteran_speed_conversion_round_trips_deci_kmh_thresholds() {
+        assert_eq!(speed_to_deci_kmh(15_277), 550);
+        assert_eq!(speed_to_deci_kmh(15_000), 540);
     }
 
     #[test]
