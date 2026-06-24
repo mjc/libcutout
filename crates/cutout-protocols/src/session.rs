@@ -2763,7 +2763,7 @@ mod tests {
             DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
                 model: TestModel::MODEL,
                 max_current: BatteryCurrent::from_milliamps(5_000),
-                arm_duration: Duration::from_milliseconds(1_000),
+                arm_duration: cutout_core::Duration::from_milliseconds(1_000),
             });
         let mut output = Vec::new();
 
@@ -2795,7 +2795,7 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration: Duration::from_milliseconds(1_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
@@ -2834,12 +2834,12 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration: Duration::from_milliseconds(1_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let wrong_model_policy = cutout_core::DangerousActuationPolicy {
             model: "other model",
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration: Duration::from_milliseconds(1_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
@@ -2873,7 +2873,7 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration: Duration::from_milliseconds(1_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
