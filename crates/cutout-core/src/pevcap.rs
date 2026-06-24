@@ -13,7 +13,7 @@ use crate::VescControllerId;
 use crate::{
     DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicMillis,
     NotificationChunkLen, ProtocolFamily, ProtocolSession, ReplayChunkComparison, RequestTarget,
-    SemanticEventCount, SessionInput, SessionOutput, VerifiedValue, WriteMode,
+    SemanticEventCount, SessionInput, SessionOutput, VerifiedValue, WallClockUnixMillis, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -285,7 +285,7 @@ pub struct PevcapResolvedIdentity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapHeader {
     /// Wall-clock start time in Unix milliseconds.
-    pub wall_clock_start_unix_ms: u64,
+    pub wall_clock_start_unix_ms: WallClockUnixMillis,
 
     /// Platform identifier recorded by the capture producer.
     pub platform_id: String,
@@ -322,7 +322,7 @@ impl PevcapHeader {
     /// fingerprints and annotations.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        wall_clock_start_unix_ms: u64,
+        wall_clock_start_unix_ms: WallClockUnixMillis,
         platform_id: impl Into<String>,
         write_limit: Option<u16>,
         advertised_services: &[GattChannel],
@@ -1317,7 +1317,7 @@ struct PevcapHeaderJson {
 impl From<&PevcapHeader> for PevcapHeaderJson {
     fn from(header: &PevcapHeader) -> Self {
         Self {
-            wall_clock_start_unix_ms: header.wall_clock_start_unix_ms,
+            wall_clock_start_unix_ms: header.wall_clock_start_unix_ms.as_milliseconds(),
             platform_id: header.platform_id.clone(),
             write_limit: header.write_limit,
             advertised_services: header
@@ -1361,7 +1361,7 @@ impl PevcapHeaderJson {
             .collect::<Vec<_>>();
 
         PevcapHeader::new(
-            self.wall_clock_start_unix_ms,
+            WallClockUnixMillis::from_milliseconds(self.wall_clock_start_unix_ms),
             self.platform_id,
             self.write_limit,
             &advertised_services,
@@ -1793,6 +1793,10 @@ mod tests {
         MonotonicMillis::new(value)
     }
 
+    const fn wc(value: u64) -> WallClockUnixMillis {
+        WallClockUnixMillis::new(value)
+    }
+
     #[derive(Clone, Default)]
     struct RecordingSession {
         bytes: Rc<RefCell<Vec<u8>>>,
@@ -1878,7 +1882,7 @@ mod tests {
     fn capture_session_label_annotations_are_stable_pevcap_metadata() {
         let label = CaptureSessionLabel::Charging.annotation();
         let header = PevcapHeader::new(
-            1_725_000_000_000,
+            wc(1_725_000_000_000),
             "darwin",
             None,
             &[],
@@ -1925,7 +1929,7 @@ mod tests {
         let distribution = CaptureDistribution::Redistributable.annotation();
         let evidence = CaptureEvidence::HardwareTested.annotation();
         let header = PevcapHeader::new(
-            1_725_000_000_000,
+            wc(1_725_000_000_000),
             "darwin",
             None,
             &[],
@@ -1958,7 +1962,7 @@ mod tests {
             verification: VerificationStatus::HardwareVerified,
         };
         let header = PevcapHeader::new(
-            1_725_000_000_000,
+            wc(1_725_000_000_000),
             "darwin",
             Some(185),
             &[service],
@@ -1980,7 +1984,7 @@ mod tests {
         )
         .expect("header should validate");
 
-        assert_eq!(header.wall_clock_start_unix_ms, 1_725_000_000_000);
+        assert_eq!(header.wall_clock_start_unix_ms, wc(1_725_000_000_000));
         assert_eq!(header.platform_id, "darwin");
         assert_eq!(header.write_limit, Some(185));
         assert_eq!(header.advertised_services.as_slice(), &[service]);
@@ -2031,7 +2035,7 @@ mod tests {
         }
 
         let header = PevcapHeader::new(
-            1_725_000_000_000,
+            wc(1_725_000_000_000),
             "8de871ff-6aa1-a767-34dd-608e584b610e",
             Some(185),
             &[service],
@@ -2057,7 +2061,7 @@ mod tests {
     fn pevcap_header_rejects_oversized_annotations() {
         let annotations = ["note"; PEVCAP_MAX_ANNOTATIONS + 1];
         let error = PevcapHeader::new(
-            0,
+            wc(0),
             "linux",
             None,
             &[],
@@ -2130,7 +2134,7 @@ mod tests {
     #[test]
     fn pevcap_capture_wraps_header_and_records() {
         let header = PevcapHeader::new(
-            1,
+            wc(1),
             "darwin",
             Some(185),
             &[],
@@ -2160,7 +2164,7 @@ mod tests {
         let service = GattChannel::from_bytes([0x44; 16]);
         let characteristic = GattChannel::from_bytes([0x55; 16]);
         let header = PevcapHeader::new(
-            1,
+            wc(1),
             "darwin",
             Some(23),
             &[service],
@@ -2225,7 +2229,7 @@ mod tests {
         let service = GattChannel::from_bytes([0x44; 16]);
         let characteristic = GattChannel::from_bytes([0x55; 16]);
         let header = PevcapHeader::new(
-            1,
+            wc(1),
             "darwin",
             Some(23),
             &[service],
@@ -2286,8 +2290,9 @@ mod tests {
     #[test]
     fn pevcap_capture_without_inbound_records_has_only_link_replay_input() {
         let characteristic = GattChannel::from_bytes([0x55; 16]);
-        let header = PevcapHeader::new(1, "darwin", None, &[], &[], None, "0.1.0", [0; 32], &[])
-            .expect("header should validate");
+        let header =
+            PevcapHeader::new(wc(1), "darwin", None, &[], &[], None, "0.1.0", [0; 32], &[])
+                .expect("header should validate");
         let capture = PevcapCapture::new(
             header,
             vec![PevcapRecord::outbound_write(
@@ -2313,7 +2318,7 @@ mod tests {
     fn pevcap_capture_replay_records_can_split_notifications_to_single_bytes() {
         let characteristic = GattChannel::from_bytes([0x55; 16]);
         let header = PevcapHeader::new(
-            1,
+            wc(1),
             "darwin",
             Some(128),
             &[],
@@ -2351,7 +2356,7 @@ mod tests {
     fn pevcap_capture_replay_records_can_apply_arbitrary_notification_chunks() {
         let characteristic = GattChannel::from_bytes([0x66; 16]);
         let header = PevcapHeader::new(
-            1,
+            wc(1),
             "darwin",
             Some(128),
             &[],
@@ -2394,7 +2399,7 @@ mod tests {
         ) {
             let characteristic = GattChannel::from_bytes([0x77; 16]);
             let header = PevcapHeader::new(
-                1,
+            wc(1),
                 "darwin",
                 Some(128),
                 &[],
@@ -2435,7 +2440,7 @@ mod tests {
             controller_id: VescControllerId::new(7),
         };
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
             Some(182),
             &[service],
@@ -2491,7 +2496,7 @@ mod tests {
     #[test]
     fn pevcap_jsonl_round_trips_link_lifecycle_records() {
         let header = PevcapHeader::new(
-            1,
+            wc(1),
             "darwin",
             Some(23),
             &[],
@@ -2756,7 +2761,7 @@ mod tests {
         let service = GattChannel::from_bytes([0xFE; 16]);
         let characteristic = GattChannel::from_bytes([0xE1; 16]);
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
             Some(182),
             &[service],

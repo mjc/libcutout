@@ -73,6 +73,43 @@ impl fmt::Display for MonotonicMillis {
     }
 }
 
+/// Wall-clock timestamp represented as Unix epoch milliseconds.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WallClockUnixMillis(u64);
+
+impl WallClockUnixMillis {
+    /// Creates a wall-clock timestamp from Unix epoch milliseconds.
+    #[must_use]
+    pub const fn from_milliseconds(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Creates a wall-clock timestamp from Unix epoch milliseconds.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self::from_milliseconds(value)
+    }
+
+    /// Returns the timestamp as Unix epoch milliseconds.
+    #[must_use]
+    pub const fn as_milliseconds(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the timestamp as Unix epoch milliseconds.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.as_milliseconds()
+    }
+}
+
+impl fmt::Display for WallClockUnixMillis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Maximum payload bytes accepted for a single GATT write value.
 pub const MAX_TRANSPORT_WRITE_LEN: usize = 512;
 

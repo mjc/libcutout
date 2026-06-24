@@ -9,6 +9,7 @@ use cutout_core::{
     PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
     ReservedPayloadEvidenceDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
     TransportActionDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -99,6 +100,19 @@ impl MobileMonotonicMillisDto {
 
     fn into_core(self) -> MonotonicMillis {
         MonotonicMillis::new(self.milliseconds)
+    }
+}
+
+/// Mobile DTO wall-clock Unix timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileWallClockUnixMillisDto {
+    /// Timestamp value in Unix epoch milliseconds.
+    pub milliseconds: u64,
+}
+
+impl MobileWallClockUnixMillisDto {
+    fn into_core(self) -> WallClockUnixMillis {
+        WallClockUnixMillis::new(self.milliseconds)
     }
 }
 
@@ -456,7 +470,7 @@ pub enum MobileCaptureExportError {
 /// Mobile-facing builder for a PEVCAP capture export.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePevcapCaptureBuilder {
-    wall_clock_start_unix_ms: u64,
+    wall_clock_start_unix_ms: WallClockUnixMillis,
     platform_id: String,
     write_limit: Option<u16>,
     advertised_services: Mutex<Vec<GattChannel>>,
@@ -472,12 +486,12 @@ impl MobilePevcapCaptureBuilder {
     #[uniffi::constructor]
     #[must_use]
     pub fn new(
-        wall_clock_start_unix_ms: u64,
+        wall_clock_start_unix_ms: MobileWallClockUnixMillisDto,
         platform_id: String,
         write_limit: Option<u16>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            wall_clock_start_unix_ms,
+            wall_clock_start_unix_ms: wall_clock_start_unix_ms.into_core(),
             platform_id,
             write_limit,
             advertised_services: Mutex::new(Vec::new()),
@@ -1184,6 +1198,12 @@ mod tests {
         }
     }
 
+    const fn wc(value: u64) -> MobileWallClockUnixMillisDto {
+        MobileWallClockUnixMillisDto {
+            milliseconds: value,
+        }
+    }
+
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
             family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
@@ -1393,7 +1413,7 @@ mod tests {
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
         let builder = MobilePevcapCaptureBuilder::new(
-            1_700_000_000_000,
+            wc(1_700_000_000_000),
             "ios-corebluetooth".into(),
             Some(185),
         );
@@ -1431,8 +1451,11 @@ mod tests {
 
     #[test]
     fn mobile_capture_builder_exports_ble_inventory_metadata() {
-        let builder =
-            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
         let service = vec![0x22; 16];
         let characteristic = vec![0x11; 16];
 
@@ -1471,8 +1494,11 @@ mod tests {
 
     #[test]
     fn mobile_capture_builder_exports_resolved_identity_metadata() {
-        let builder =
-            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
 
         builder.set_resolved_identity(MobileResolvedIdentityDto {
             protocol_family: Some(MobileProtocolFamilyDto::BegodeGotway),
@@ -1503,8 +1529,11 @@ mod tests {
 
     #[test]
     fn mobile_capture_builder_exports_binary_container() {
-        let builder =
-            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
         builder.record_link_down(ms(9));
 
         let bytes = builder

@@ -27,7 +27,7 @@ use cutout_core::{
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
     ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
     SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
-    VerifiedValue,
+    VerifiedValue, WallClockUnixMillis,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -1645,7 +1645,7 @@ fn encode_session_capture_pevcap(
     capture: &SessionCapture,
     summary: &cutout_btle::ConnectionSummary,
     format: PevcapFormat,
-    wall_clock_start_unix_ms: u64,
+    wall_clock_start_unix_ms: WallClockUnixMillis,
     profile: SelectedSessionProfile,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
@@ -1671,7 +1671,7 @@ fn encode_raw_capture_pevcap(
     summary: &cutout_btle::ConnectionSummary,
     write_limit: Option<u16>,
     format: PevcapFormat,
-    wall_clock_start_unix_ms: u64,
+    wall_clock_start_unix_ms: WallClockUnixMillis,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
     let advertised_services = summary
@@ -1719,12 +1719,14 @@ fn gatt_channel_from_uuid(uuid: uuid::Uuid) -> GattChannel {
     GattChannel::from_uuid(uuid)
 }
 
-fn capture_wall_clock_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        })
+fn capture_wall_clock_unix_ms() -> WallClockUnixMillis {
+    WallClockUnixMillis::from_milliseconds(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| {
+                u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+            }),
+    )
 }
 
 fn print_session_report(report: &SessionBridgeReport) {
@@ -2327,6 +2329,10 @@ mod tests {
         MonotonicMillis::new(value)
     }
 
+    const fn wc(value: u64) -> WallClockUnixMillis {
+        WallClockUnixMillis::new(value)
+    }
+
     struct DropSignal(mpsc::Sender<()>);
 
     impl Drop for DropSignal {
@@ -2380,7 +2386,7 @@ mod tests {
         let service = GattChannel::from_bytes([0xFE; 16]);
         let characteristic = GattChannel::from_bytes([0xE1; 16]);
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
             Some(182),
             &[service],
@@ -2435,7 +2441,7 @@ mod tests {
         records: Vec<PevcapRecord>,
     ) -> PevcapCapture {
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
             Some(182),
             &[BEGODE_DATA_CHANNEL],
@@ -2459,7 +2465,7 @@ mod tests {
 
     fn sample_aero_replay_capture() -> PevcapCapture {
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
             Some(23),
             &[VETERAN_DATA_CHANNEL],
@@ -2490,7 +2496,7 @@ mod tests {
 
     fn sample_aero_reserved_replay_capture() -> PevcapCapture {
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
             Some(23),
             &[VETERAN_DATA_CHANNEL],
@@ -2600,7 +2606,7 @@ mod tests {
             &capture,
             &summary,
             PevcapFormat::Binary,
-            42,
+            wc(42),
             selected_aero_session_profile(),
             &["capture_label=charging", "capture_privacy=private"],
         )
@@ -2608,7 +2614,7 @@ mod tests {
         let decoded =
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
-        assert_eq!(decoded.header.wall_clock_start_unix_ms, 42);
+        assert_eq!(decoded.header.wall_clock_start_unix_ms, wc(42));
         assert_eq!(decoded.header.write_limit, Some(23));
         assert_eq!(
             decoded.header.annotations.as_slice(),
@@ -2790,7 +2796,7 @@ mod tests {
             &summary,
             Some(185),
             PevcapFormat::Binary,
-            99,
+            wc(99),
             &[
                 "capture_label=powered_on_stationary",
                 "capture_privacy=private",
@@ -2800,7 +2806,7 @@ mod tests {
         let decoded =
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
-        assert_eq!(decoded.header.wall_clock_start_unix_ms, 99);
+        assert_eq!(decoded.header.wall_clock_start_unix_ms, wc(99));
         assert_eq!(decoded.header.write_limit, Some(185));
         assert_eq!(
             decoded.header.advertised_services.as_slice(),

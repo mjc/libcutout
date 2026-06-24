@@ -752,7 +752,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         .to_pevcap(
             &summary,
             crate::PevcapSessionMetadata {
-                wall_clock_start_unix_ms: 1_725_000_123_456,
+                wall_clock_start_unix_ms: cutout_core::WallClockUnixMillis::new(1_725_000_123_456),
                 platform_id: "darwin",
                 library_version: "0.1.0",
                 registry_hash: [0x42; 32],
@@ -769,7 +769,10 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         )
         .expect("session capture converts to PEVCAP");
 
-    assert_eq!(pevcap.header.wall_clock_start_unix_ms, 1_725_000_123_456);
+    assert_eq!(
+        pevcap.header.wall_clock_start_unix_ms,
+        cutout_core::WallClockUnixMillis::new(1_725_000_123_456)
+    );
     assert_eq!(pevcap.header.platform_id, "darwin");
     assert_eq!(pevcap.header.write_limit, Some(23));
     assert_eq!(pevcap.header.advertised_services.len(), 1);
@@ -869,7 +872,7 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
         .to_pevcap(
             &summary,
             crate::PevcapSessionMetadata {
-                wall_clock_start_unix_ms: 1,
+                wall_clock_start_unix_ms: cutout_core::WallClockUnixMillis::new(1),
                 platform_id: "test",
                 library_version: "0.1.0",
                 registry_hash: [0; 32],
