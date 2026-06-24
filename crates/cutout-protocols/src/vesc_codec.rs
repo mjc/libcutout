@@ -1,6 +1,6 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
-use cutout_core::{BatteryCurrent, Distance, Power, Speed, Voltage};
+use cutout_core::{BatteryCurrent, Distance, Duration, Power, Speed, Voltage};
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -203,8 +203,8 @@ pub struct VescStatsTelemetry {
     /// Maximum current.
     pub current_max_ma: BatteryCurrent,
 
-    /// Statistics accumulation time in milliseconds.
-    pub count_time_ms: u32,
+    /// Statistics accumulation time.
+    pub count_time: Duration,
 }
 
 /// Verified VESC board geometry used to calculate road speed from eRPM.
@@ -534,7 +534,9 @@ impl From<vesc::Stats> for VescStatsTelemetry {
             current_max_ma: BatteryCurrent::from_milliamps(round_f32_to_i32(
                 stats.current_max * 1_000.0,
             )),
-            count_time_ms: round_f32_to_u32(stats.count_time * 1_000.0),
+            count_time: Duration::from_milliseconds(u64::from(round_f32_to_u32(
+                stats.count_time * 1_000.0,
+            ))),
         }
     }
 }
@@ -711,7 +713,7 @@ mod tests {
         assert_eq!(stats.power_max_mw.as_milliwatts(), 4_000);
         assert_eq!(stats.current_avg_ma.as_milliamps(), 5_000);
         assert_eq!(stats.current_max_ma.as_milliamps(), 6_000);
-        assert_eq!(stats.count_time_ms, 11_000);
+        assert_eq!(stats.count_time, Duration::from_seconds(11));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
     Angle, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsParallelPacks,
-    BmsTemperatureValuesPerPage, ChargeMode, Distance, DutyCycle, FirmwareInfo, Measured,
+    BmsTemperatureValuesPerPage, ChargeMode, Distance, Duration, DutyCycle, FirmwareInfo, Measured,
     MonotonicMillis, PackSeriesCells, Percent, PhaseCurrent, Power, ProtocolSelector,
     RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
     Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
@@ -89,8 +89,8 @@ pub struct VeteranTelemetry {
     /// MOSFET/controller temperature.
     pub mosfet_temperature: Temperature,
 
-    /// Auto shutdown time remaining field in seconds.
-    pub auto_shutdown_time_remaining_seconds: u16,
+    /// Auto shutdown time remaining.
+    pub auto_shutdown_time_remaining: Duration,
 
     /// Raw charge-mode field retained for protocol evidence and settings readback.
     pub raw_charge_mode: VeteranRawChargeMode,
@@ -422,9 +422,11 @@ impl VeteranTelemetry {
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 10,
             ),
-            auto_shutdown_time_remaining_seconds: cursor
-                .be_u16(ByteOffset::new(20))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            auto_shutdown_time_remaining: Duration::from_seconds(u64::from(
+                cursor
+                    .be_u16(ByteOffset::new(20))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
             raw_charge_mode,
             charge_mode: veteran_charge_mode(raw_charge_mode),
             speed_alert: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(i32::from(
@@ -504,7 +506,8 @@ impl VeteranTelemetry {
                 entries: [
                     Some(settings_entry(
                         VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-                        i64::from(self.auto_shutdown_time_remaining_seconds),
+                        i64::try_from(self.auto_shutdown_time_remaining.as_seconds())
+                            .unwrap_or(i64::MAX),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_CHARGE_MODE,
@@ -705,7 +708,7 @@ mod tests {
                 total_distance: Distance::from_millimetres(1_551_169_000),
                 phase_current: PhaseCurrent::from_milliamps(0),
                 mosfet_temperature: Temperature::from_millicelsius(33_270),
-                auto_shutdown_time_remaining_seconds: 0,
+                auto_shutdown_time_remaining: Duration::from_seconds(0),
                 raw_charge_mode: VeteranRawChargeMode::new(0),
                 charge_mode: ChargeMode::NotCharging,
                 speed_alert: Speed::from_millimetres_per_second(15_277),
@@ -751,7 +754,10 @@ mod tests {
             telemetry.battery_percent_estimated,
             Percent::from_percent(42)
         );
-        assert_eq!(telemetry.auto_shutdown_time_remaining_seconds, 1_117);
+        assert_eq!(
+            telemetry.auto_shutdown_time_remaining,
+            Duration::from_seconds(1_117)
+        );
         assert_eq!(telemetry.firmware.model_id, 43);
         assert_eq!(telemetry.firmware.minor, 2);
         assert_eq!(telemetry.firmware.revision, 54);

@@ -651,7 +651,7 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-                i64::from(stats.count_time_ms),
+                i64::try_from(stats.count_time.as_milliseconds()).unwrap_or(i64::MAX),
             )),
         ],
     }

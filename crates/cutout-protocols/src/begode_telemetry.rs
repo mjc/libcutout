@@ -1,10 +1,10 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    BatteryCurrent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle,
-    Measured, MonotonicMillis, Percent, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse,
-    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
-    VerificationStatus, Voltage,
+    BatteryCurrent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance, Duration,
+    DutyCycle, Measured, MonotonicMillis, Percent, PhaseCurrent, Power, RawFieldValue,
+    ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature,
+    ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -890,8 +890,8 @@ pub struct BegodeLiveBTelemetry {
     /// Raw settings bitfield.
     pub settings_bits: u16,
 
-    /// Power-off timer in minutes.
-    pub power_off_timer_minutes: u16,
+    /// Power-off timer.
+    pub power_off_timer: Duration,
 
     /// Tiltback / max-speed field in km/h.
     pub tiltback_speed: Speed,
@@ -923,7 +923,7 @@ impl BegodeLiveBTelemetry {
                 unit_mode.distance_m_to_mm(be_u32(cursor, ByteOffset::new(2))),
             ),
             settings_bits,
-            power_off_timer_minutes: be_u16(cursor, ByteOffset::new(8)),
+            power_off_timer: Duration::from_minutes(u64::from(be_u16(cursor, ByteOffset::new(8)))),
             tiltback_speed: Speed::from_millimetres_per_second(milli_kmh_to_mm_s(
                 i32::from(unit_mode.speed_kmh_u16(be_u16(cursor, ByteOffset::new(10)))) * 1_000,
             )),
@@ -967,7 +967,7 @@ impl BegodeLiveBTelemetry {
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
-                    i64::from(self.power_off_timer_minutes),
+                    i64::try_from(self.power_off_timer.as_minutes()).unwrap_or(i64::MAX),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
@@ -1274,6 +1274,7 @@ mod tests {
         BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
         estimate_begode_battery_percent, validate_begode_pack_evidence,
     };
+    use cutout_core::Duration;
     use cutout_core::{
         DiagnosticSeverity, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
         ValueQuality, ValueSource, VerificationStatus, Voltage,
@@ -1312,7 +1313,7 @@ mod tests {
 
         assert_eq!(telemetry.total_distance.as_millimetres(), 50_000);
         assert_eq!(telemetry.settings_bits, 0);
-        assert_eq!(telemetry.power_off_timer_minutes, 15);
+        assert_eq!(telemetry.power_off_timer, Duration::from_minutes(15));
         assert_eq!(telemetry.tiltback_speed.as_millimetres_per_second(), 13_888);
         assert_eq!(telemetry.led_mode, 3);
         assert_eq!(telemetry.alert_flags, 5);
@@ -2091,7 +2092,7 @@ mod tests {
             let telemetry = BegodeLiveBTelemetry {
                 total_distance: cutout_core::Distance::from_millimetres(0),
                 settings_bits,
-                power_off_timer_minutes: 0,
+                power_off_timer: Duration::from_minutes(0),
                 tiltback_speed: cutout_core::Speed::from_millimetres_per_second(0),
                 led_mode: 0,
                 alert_flags: 0,

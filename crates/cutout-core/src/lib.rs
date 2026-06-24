@@ -3408,6 +3408,12 @@ pub struct Ratio;
 
 impl Dimension for Ratio {}
 
+/// Time duration dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Time;
+
+impl Dimension for Time {}
+
 /// Marker trait for zero-sized quantity units.
 pub trait Unit: Copy + Eq {
     /// Dimension measured by this unit.
@@ -3460,6 +3466,14 @@ pub struct Millimetre;
 
 impl Unit for Millimetre {
     type Dimension = Length;
+}
+
+/// Millisecond storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Millisecond;
+
+impl Unit for Millisecond {
+    type Dimension = Time;
 }
 
 /// Millicelsius storage unit.
@@ -3698,6 +3712,47 @@ impl Distance {
     #[must_use]
     pub const fn as_millimetres(self) -> u64 {
         self.unit_value()
+    }
+}
+
+/// Time duration stored in milliseconds.
+pub type Duration = Quantity<Time, Millisecond, u64>;
+
+impl Duration {
+    /// Creates a duration from milliseconds.
+    #[must_use]
+    pub const fn from_milliseconds(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a duration from seconds.
+    #[must_use]
+    pub const fn from_seconds(value: u64) -> Self {
+        Self::from_milliseconds(value.saturating_mul(1_000))
+    }
+
+    /// Creates a duration from minutes.
+    #[must_use]
+    pub const fn from_minutes(value: u64) -> Self {
+        Self::from_seconds(value.saturating_mul(60))
+    }
+
+    /// Returns this duration in milliseconds.
+    #[must_use]
+    pub const fn as_milliseconds(self) -> u64 {
+        self.unit_value()
+    }
+
+    /// Returns this duration in whole seconds.
+    #[must_use]
+    pub const fn as_seconds(self) -> u64 {
+        self.as_milliseconds() / 1_000
+    }
+
+    /// Returns this duration in whole minutes.
+    #[must_use]
+    pub const fn as_minutes(self) -> u64 {
+        self.as_seconds() / 60
     }
 }
 
@@ -5048,8 +5103,8 @@ pub const fn crate_name() -> &'static str {
 mod tests {
     use super::crate_name;
     use crate::{
-        BatteryCurrent, DeviceCommand, DeviceEvent, Distance, GattChannel, LinkInfo, Measured,
-        Percent, ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta,
+        BatteryCurrent, DeviceCommand, DeviceEvent, Distance, Duration, GattChannel, LinkInfo,
+        Measured, Percent, ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta,
         TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
         ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
@@ -5518,6 +5573,15 @@ mod tests {
             Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
         assert_eq!(snapshot.motor_current_ma, None);
+    }
+
+    #[test]
+    fn duration_quantity_converts_protocol_time_units_to_milliseconds() {
+        assert_eq!(Duration::from_milliseconds(750).as_milliseconds(), 750);
+        assert_eq!(Duration::from_seconds(11).as_milliseconds(), 11_000);
+        assert_eq!(Duration::from_minutes(15).as_milliseconds(), 900_000);
+        assert_eq!(Duration::from_minutes(15).as_seconds(), 900);
+        assert_eq!(Duration::from_minutes(15).as_minutes(), 15);
     }
 
     #[test]
