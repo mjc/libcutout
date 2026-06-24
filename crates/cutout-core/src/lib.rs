@@ -3422,6 +3422,14 @@ impl Unit for MilliVolt {
     type Dimension = ElectricPotential;
 }
 
+/// Microvolt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MicroVolt;
+
+impl Unit for MicroVolt {
+    type Dimension = ElectricPotential;
+}
+
 /// Milliamp storage unit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MilliAmp;
@@ -3570,6 +3578,23 @@ impl Voltage {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_volts(self) -> f32 {
         self.as_millivolts() as f32 / 1_000.0
+    }
+}
+
+/// Single-cell voltage stored in microvolts.
+pub type CellVoltage = Quantity<ElectricPotential, MicroVolt, i32>;
+
+impl CellVoltage {
+    /// Creates a cell voltage from microvolts.
+    #[must_use]
+    pub const fn from_microvolts(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this cell voltage in microvolts.
+    #[must_use]
+    pub const fn as_microvolts(self) -> i32 {
+        self.unit_value()
     }
 }
 

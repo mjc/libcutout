@@ -344,16 +344,15 @@ fn battery_profile_pack_range(
     let start = battery_profile
         .points
         .first()
-        .map_or(0, |point| pack_voltage_mv(point.cell_uv, series_cells));
-    let end = battery_profile
-        .points
-        .last()
-        .map_or(start, |point| pack_voltage_mv(point.cell_uv, series_cells));
+        .map_or(0, |point| pack_voltage_mv(point.cell_voltage, series_cells));
+    let end = battery_profile.points.last().map_or(start, |point| {
+        pack_voltage_mv(point.cell_voltage, series_cells)
+    });
     start..=end
 }
 
-fn pack_voltage_mv(cell_voltage_uv: i32, series_cells: i32) -> i32 {
-    (cell_voltage_uv.saturating_mul(series_cells) + 500) / 1_000
+fn pack_voltage_mv(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> i32 {
+    (cell_voltage.as_microvolts().saturating_mul(series_cells) + 500) / 1_000
 }
 
 const fn veteran_charge_mode(raw: VeteranRawChargeMode) -> ChargeMode {
@@ -839,8 +838,8 @@ mod tests {
 
         assert_eq!(
             aero.voltage_range_mv,
-            pack_voltage_mv(first.cell_uv, i32::from(aero.cell_count))
-                ..=pack_voltage_mv(last.cell_uv, i32::from(aero.cell_count))
+            pack_voltage_mv(first.cell_voltage, i32::from(aero.cell_count))
+                ..=pack_voltage_mv(last.cell_voltage, i32::from(aero.cell_count))
         );
         assert_eq!(aero.voltage_range_mv, 91_000..=126_000);
     }
@@ -866,11 +865,21 @@ mod tests {
         assert_eq!(aero.parallel_cells, 2);
         assert_eq!(profile.cell_model, "Samsung 50S");
         assert_eq!(
-            profile.points.first().expect("low point").cell_uv,
+            profile
+                .points
+                .first()
+                .expect("low point")
+                .cell_voltage
+                .as_microvolts(),
             3_033_333
         );
         assert_eq!(
-            profile.points.last().expect("high point").cell_uv,
+            profile
+                .points
+                .last()
+                .expect("high point")
+                .cell_voltage
+                .as_microvolts(),
             4_200_000
         );
     }

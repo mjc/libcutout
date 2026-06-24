@@ -1,10 +1,10 @@
-use cutout_core::Voltage;
+use cutout_core::{CellVoltage, Voltage};
 
 /// A measured voltage/percentage point for a battery profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatteryVoltagePoint {
-    /// Single-cell voltage in microvolts.
-    pub cell_uv: i32,
+    /// Single-cell voltage.
+    pub cell_voltage: CellVoltage,
 
     /// Battery percentage associated with the voltage.
     pub percent: u8,
@@ -31,7 +31,7 @@ impl BatteryVoltageProfile {
         pack_voltage_mv: Voltage,
         series_cells: u8,
     ) -> u8 {
-        self.estimate_percent_from_cell_voltage(normalize_cell_voltage_uv(
+        self.estimate_percent_from_cell_voltage(normalize_cell_voltage(
             pack_voltage_mv,
             series_cells,
         ))
@@ -39,11 +39,11 @@ impl BatteryVoltageProfile {
 
     /// Estimates battery percentage from a single-cell voltage.
     #[must_use]
-    pub fn estimate_percent_from_cell_voltage(self, cell_voltage_uv: i32) -> u8 {
+    pub fn estimate_percent_from_cell_voltage(self, cell_voltage: CellVoltage) -> u8 {
         let Some(first) = self.points.first() else {
             return 0;
         };
-        if cell_voltage_uv <= first.cell_uv {
+        if cell_voltage.as_microvolts() <= first.cell_voltage.as_microvolts() {
             return first.percent;
         }
 
@@ -51,8 +51,8 @@ impl BatteryVoltageProfile {
             let [low, high] = window else {
                 continue;
             };
-            if cell_voltage_uv <= high.cell_uv {
-                return interpolate_percent(cell_voltage_uv, *low, *high);
+            if cell_voltage.as_microvolts() <= high.cell_voltage.as_microvolts() {
+                return interpolate_percent(cell_voltage, *low, *high);
             }
         }
 
@@ -63,35 +63,35 @@ impl BatteryVoltageProfile {
 /// Sticker-backed Samsung 50S single-cell voltage curve.
 pub const SAMSUNG_50S_CELL_POINTS: [BatteryVoltagePoint; 8] = [
     BatteryVoltagePoint {
-        cell_uv: 3_033_333,
+        cell_voltage: CellVoltage::from_microvolts(3_033_333),
         percent: 0,
     },
     BatteryVoltagePoint {
-        cell_uv: 3_200_000,
+        cell_voltage: CellVoltage::from_microvolts(3_200_000),
         percent: 7,
     },
     BatteryVoltagePoint {
-        cell_uv: 3_333_333,
+        cell_voltage: CellVoltage::from_microvolts(3_333_333),
         percent: 15,
     },
     BatteryVoltagePoint {
-        cell_uv: 3_433_333,
+        cell_voltage: CellVoltage::from_microvolts(3_433_333),
         percent: 25,
     },
     BatteryVoltagePoint {
-        cell_uv: 3_566_667,
+        cell_voltage: CellVoltage::from_microvolts(3_566_667),
         percent: 40,
     },
     BatteryVoltagePoint {
-        cell_uv: 3_733_333,
+        cell_voltage: CellVoltage::from_microvolts(3_733_333),
         percent: 60,
     },
     BatteryVoltagePoint {
-        cell_uv: 3_866_667,
+        cell_voltage: CellVoltage::from_microvolts(3_866_667),
         percent: 75,
     },
     BatteryVoltagePoint {
-        cell_uv: 4_200_000,
+        cell_voltage: CellVoltage::from_microvolts(4_200_000),
         percent: 100,
     },
 ];
@@ -103,27 +103,32 @@ pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     points: &SAMSUNG_50S_CELL_POINTS,
 };
 
-fn normalize_cell_voltage_uv(pack_voltage_mv: Voltage, series_cells: u8) -> i32 {
+fn normalize_cell_voltage(pack_voltage_mv: Voltage, series_cells: u8) -> CellVoltage {
     let series_cells = i32::from(series_cells);
     if series_cells <= 0 {
-        return 0;
+        return CellVoltage::from_microvolts(0);
     }
 
-    ((pack_voltage_mv.as_millivolts() * 1_000) + (series_cells / 2)) / series_cells
+    CellVoltage::from_microvolts(
+        ((pack_voltage_mv.as_millivolts() * 1_000) + (series_cells / 2)) / series_cells,
+    )
 }
 
 fn interpolate_percent(
-    cell_voltage_uv: i32,
+    cell_voltage: CellVoltage,
     low: BatteryVoltagePoint,
     high: BatteryVoltagePoint,
 ) -> u8 {
-    let voltage_span = high.cell_uv - low.cell_uv;
+    let cell_voltage_uv = cell_voltage.as_microvolts();
+    let low_uv = low.cell_voltage.as_microvolts();
+    let high_uv = high.cell_voltage.as_microvolts();
+    let voltage_span = high_uv - low_uv;
     if voltage_span <= 0 {
         return low.percent;
     }
 
     let percent_span = i32::from(high.percent) - i32::from(low.percent);
-    let numerator = (cell_voltage_uv - low.cell_uv) * percent_span;
+    let numerator = (cell_voltage_uv - low_uv) * percent_span;
     u8::try_from(i32::from(low.percent) + ((numerator + (voltage_span / 2)) / voltage_span))
         .unwrap_or(high.percent)
 }
@@ -136,7 +141,7 @@ mod tests {
     fn samsung_50s_profile_uses_single_cell_curve_points() {
         for point in SAMSUNG_50S_CELL_POINTS {
             assert_eq!(
-                SAMSUNG_50S_PROFILE.estimate_percent_from_cell_voltage(point.cell_uv),
+                SAMSUNG_50S_PROFILE.estimate_percent_from_cell_voltage(point.cell_voltage),
                 point.percent
             );
         }
@@ -149,7 +154,7 @@ mod tests {
                 continue;
             };
 
-            assert!(low.cell_uv < high.cell_uv);
+            assert!(low.cell_voltage.as_microvolts() < high.cell_voltage.as_microvolts());
             assert!(low.percent < high.percent);
         }
     }
@@ -181,7 +186,7 @@ mod tests {
         assert!(
             SAMSUNG_50S_CELL_POINTS
                 .iter()
-                .all(|point| (3_000_000..=4_300_000).contains(&point.cell_uv))
+                .all(|point| (3_000_000..=4_300_000).contains(&point.cell_voltage.as_microvolts()))
         );
     }
 
@@ -229,10 +234,12 @@ mod tests {
     fn samsung_50s_profile_interpolates_midpoint_between_adjacent_cell_points() {
         let low = SAMSUNG_50S_CELL_POINTS[3];
         let high = SAMSUNG_50S_CELL_POINTS[4];
-        let midpoint_uv = (low.cell_uv + high.cell_uv) / 2;
+        let midpoint_uv =
+            (low.cell_voltage.as_microvolts() + high.cell_voltage.as_microvolts()) / 2;
 
         assert_eq!(
-            SAMSUNG_50S_PROFILE.estimate_percent_from_cell_voltage(midpoint_uv),
+            SAMSUNG_50S_PROFILE
+                .estimate_percent_from_cell_voltage(CellVoltage::from_microvolts(midpoint_uv)),
             33
         );
     }
@@ -267,7 +274,8 @@ mod tests {
     #[test]
     fn samsung_50s_profile_interpolates_single_cell_voltages() {
         assert_eq!(
-            SAMSUNG_50S_PROFILE.estimate_percent_from_cell_voltage(3_598_333),
+            SAMSUNG_50S_PROFILE
+                .estimate_percent_from_cell_voltage(CellVoltage::from_microvolts(3_598_333)),
             44
         );
     }
