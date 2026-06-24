@@ -4,14 +4,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, MonotonicMillis, MonotonicMillisDto, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
+    GattRoles, MeasuredI32Dto, MeasuredU8Dto, MonotonicMillis, MonotonicMillisDto,
+    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
+    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
+    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
+    PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
     ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto, TransportActionDto, TransportWriteLenDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, WallClockUnixMillis,
+    TelemetrySnapshotDto, TransportActionDto, TransportWriteLenDto, ValueQualityDto,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -421,10 +421,42 @@ pub struct MobileTelemetrySnapshotDto {
     pub at_ms: Option<MobileMonotonicMillisDto>,
 
     /// Reported voltage in millivolts.
-    pub voltage: Option<i32>,
+    pub voltage: Option<MobileMeasuredI32Dto>,
 
     /// Estimated battery percent.
-    pub battery_percent_estimated: Option<u8>,
+    pub battery_percent_estimated: Option<MobileMeasuredU8Dto>,
+}
+
+/// Mobile measured i32 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMeasuredI32Dto {
+    /// Fixed-unit value.
+    pub value: i32,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Mobile measured u8 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMeasuredU8Dto {
+    /// Fixed-unit value.
+    pub value: u8,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
 }
 
 /// Mobile parser diagnostics DTO.
@@ -483,6 +515,29 @@ pub enum MobileProtocolFamilyDto {
 
     /// VESC UART/CAN-derived family.
     Vesc,
+}
+
+/// Mobile value source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileValueSourceDto {
+    /// Value was reported directly by the device.
+    Reported,
+
+    /// Value was calculated from other values.
+    Calculated,
+
+    /// Value was estimated from incomplete evidence.
+    Estimated,
+}
+
+/// Mobile value quality.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileValueQualityDto {
+    /// Value is directly supported by observed data.
+    Known,
+
+    /// Value is inferred from partial or indirect evidence.
+    Inferred,
 }
 
 /// Mobile verification status.
@@ -766,6 +821,25 @@ impl From<ProtocolFamilyDto> for MobileProtocolFamilyDto {
             ProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             ProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
             ProtocolFamilyDto::Vesc => Self::Vesc,
+        }
+    }
+}
+
+impl From<ValueSourceDto> for MobileValueSourceDto {
+    fn from(source: ValueSourceDto) -> Self {
+        match source {
+            ValueSourceDto::Reported => Self::Reported,
+            ValueSourceDto::Calculated => Self::Calculated,
+            ValueSourceDto::Estimated => Self::Estimated,
+        }
+    }
+}
+
+impl From<ValueQualityDto> for MobileValueQualityDto {
+    fn from(quality: ValueQualityDto) -> Self {
+        match quality {
+            ValueQualityDto::Known => Self::Known,
+            ValueQualityDto::Inferred => Self::Inferred,
         }
     }
 }
@@ -1085,6 +1159,28 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
     }
 }
 
+impl From<MeasuredI32Dto> for MobileMeasuredI32Dto {
+    fn from(measured: MeasuredI32Dto) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
+impl From<MeasuredU8Dto> for MobileMeasuredU8Dto {
+    fn from(measured: MeasuredU8Dto) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
@@ -1206,8 +1302,8 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             at_ms: snapshot
                 .at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
-            voltage: snapshot.voltage.map(|value| value.value),
-            battery_percent_estimated: snapshot.battery_percent_estimated.map(|value| value.value),
+            voltage: snapshot.voltage.map(Into::into),
+            battery_percent_estimated: snapshot.battery_percent_estimated.map(Into::into),
         }
     }
 }
@@ -1582,7 +1678,15 @@ mod tests {
         assert_eq!(ingest.reserved, None);
         assert_eq!(ingest.gap, None);
         assert!(result.outputs.iter().all(|output| output.bytes.is_empty()));
-        assert_eq!(session.current_snapshot().voltage, Some(108_760));
+        assert_eq!(
+            session.current_snapshot().voltage,
+            Some(MobileMeasuredI32Dto {
+                value: 108_760,
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            })
+        );
     }
 
     #[test]
