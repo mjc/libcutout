@@ -872,7 +872,7 @@ impl BegodeLiveATelemetry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeLiveBTelemetry {
     /// Lifetime total distance in meters.
-    pub total_distance_m: u32,
+    pub total_distance: Distance,
 
     /// Raw settings bitfield.
     pub settings_bits: u16,
@@ -881,7 +881,7 @@ pub struct BegodeLiveBTelemetry {
     pub power_off_timer_minutes: u16,
 
     /// Tiltback / max-speed field in km/h.
-    pub tiltback_speed_kmh: u16,
+    pub tiltback_speed: Speed,
 
     /// LED mode.
     pub led_mode: u8,
@@ -903,11 +903,17 @@ impl BegodeLiveBTelemetry {
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x04)?;
         let cursor = ByteCursor::new(frame.as_slice());
+        let settings_bits = be_u16(cursor, ByteOffset::new(6));
+        let unit_mode = BegodeUnitMode::from_settings_bits(settings_bits);
         Ok(Self {
-            total_distance_m: be_u32(cursor, ByteOffset::new(2)),
-            settings_bits: be_u16(cursor, ByteOffset::new(6)),
+            total_distance: Distance::from_millimetres(
+                unit_mode.distance_m_to_mm(be_u32(cursor, ByteOffset::new(2))),
+            ),
+            settings_bits,
             power_off_timer_minutes: be_u16(cursor, ByteOffset::new(8)),
-            tiltback_speed_kmh: be_u16(cursor, ByteOffset::new(10)),
+            tiltback_speed: Speed::from_millimetres_per_second(milli_kmh_to_mm_s(
+                i32::from(unit_mode.speed_kmh_u16(be_u16(cursor, ByteOffset::new(10)))) * 1_000,
+            )),
             led_mode: byte(cursor, ByteOffset::new(13)),
             alert_flags: byte(cursor, ByteOffset::new(14)),
             light_mode: byte(cursor, ByteOffset::new(15)) & 0x03,
@@ -925,7 +931,7 @@ impl BegodeLiveBTelemetry {
     pub fn to_delta_with_units(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
             distance_mm: Some(source_reported(Distance::from_millimetres(
-                self.unit_mode().distance_m_to_mm(self.total_distance_m),
+                self.total_distance.as_millimetres(),
             ))),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -952,7 +958,9 @@ impl BegodeLiveBTelemetry {
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(self.unit_mode().speed_kmh_u16(self.tiltback_speed_kmh)),
+                    i64::from(speed_mm_s_to_kmh_u16(
+                        self.tiltback_speed.as_millimetres_per_second(),
+                    )),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -1121,6 +1129,11 @@ fn milli_kmh_to_mm_s(value: i32) -> i32 {
     value * 5 / 18
 }
 
+fn speed_mm_s_to_kmh_u16(value: i32) -> u16 {
+    let kmh = div_round(value * 18, 5_000);
+    u16::try_from(kmh).unwrap_or(u16::MAX)
+}
+
 fn power_mw(voltage_mv: Voltage, current_ma: PhaseCurrent) -> Power {
     Power::from_voltage_current(voltage_mv, current_ma)
 }
@@ -1280,10 +1293,10 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
 
-        assert_eq!(telemetry.total_distance_m, 50);
+        assert_eq!(telemetry.total_distance.as_millimetres(), 50_000);
         assert_eq!(telemetry.settings_bits, 0);
         assert_eq!(telemetry.power_off_timer_minutes, 15);
-        assert_eq!(telemetry.tiltback_speed_kmh, 50);
+        assert_eq!(telemetry.tiltback_speed.as_millimetres_per_second(), 13_888);
         assert_eq!(telemetry.led_mode, 3);
         assert_eq!(telemetry.alert_flags, 5);
         assert_eq!(telemetry.light_mode, 2);
@@ -2059,10 +2072,10 @@ mod tests {
         #[test]
         fn live_b_unit_mode_follows_settings_bit_zero(settings_bits in any::<u16>()) {
             let telemetry = BegodeLiveBTelemetry {
-                total_distance_m: 0,
+                total_distance: cutout_core::Distance::from_millimetres(0),
                 settings_bits,
                 power_off_timer_minutes: 0,
-                tiltback_speed_kmh: 0,
+                tiltback_speed: cutout_core::Speed::from_millimetres_per_second(0),
                 led_mode: 0,
                 alert_flags: 0,
                 light_mode: 0,
