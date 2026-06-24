@@ -89,6 +89,10 @@ pub struct MobileMonotonicMillisDto {
 }
 
 impl MobileMonotonicMillisDto {
+    const fn from_core_ffi(milliseconds: u64) -> Self {
+        Self { milliseconds }
+    }
+
     fn into_core_ffi(self) -> u64 {
         self.milliseconds
     }
@@ -186,11 +190,11 @@ pub struct MobileParserErrorDto {
     /// Configured maximum accepted frame length.
     pub max: Option<u64>,
 
-    /// Elapsed monotonic milliseconds.
-    pub elapsed_ms: Option<u64>,
+    /// Elapsed monotonic time.
+    pub elapsed_ms: Option<MobileMonotonicMillisDto>,
 
-    /// Timeout threshold in monotonic milliseconds.
-    pub timeout_ms: Option<u64>,
+    /// Timeout threshold in monotonic time.
+    pub timeout_ms: Option<MobileMonotonicMillisDto>,
 }
 
 /// Mobile reserved payload evidence DTO.
@@ -235,7 +239,7 @@ pub struct MobileNotificationEvidenceDto {
     pub len: u64,
 
     /// Host monotonic receive timestamp.
-    pub monotonic_ms: u64,
+    pub monotonic_ms: MobileMonotonicMillisDto,
 }
 
 /// Mobile parser-first notification ingest outcome DTO.
@@ -296,8 +300,8 @@ pub struct MobileSessionStepResultDto {
 /// Mobile telemetry snapshot DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileTelemetrySnapshotDto {
-    /// Snapshot timestamp in monotonic milliseconds.
-    pub at_ms: Option<u64>,
+    /// Snapshot timestamp.
+    pub at_ms: Option<MobileMonotonicMillisDto>,
 
     /// Reported voltage in millivolts.
     pub voltage: Option<i32>,
@@ -956,7 +960,7 @@ impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.to_vec(),
             len: evidence.len as u64,
-            monotonic_ms: evidence.monotonic_ms,
+            monotonic_ms: MobileMonotonicMillisDto::from_core_ffi(evidence.monotonic_ms),
         }
     }
 }
@@ -992,8 +996,8 @@ impl From<ParserErrorDto> for MobileParserErrorDto {
                 kind: MobileParserErrorKindDto::Timeout,
                 claimed: None,
                 max: None,
-                elapsed_ms: Some(elapsed_ms),
-                timeout_ms: Some(timeout_ms),
+                elapsed_ms: Some(MobileMonotonicMillisDto::from_core_ffi(elapsed_ms)),
+                timeout_ms: Some(MobileMonotonicMillisDto::from_core_ffi(timeout_ms)),
             },
             ParserErrorDto::UnmatchedReply => Self {
                 kind: MobileParserErrorKindDto::UnmatchedReply,
@@ -1056,7 +1060,7 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
         Self {
-            at_ms: snapshot.at_ms,
+            at_ms: snapshot.at_ms.map(MobileMonotonicMillisDto::from_core_ffi),
             voltage: snapshot.voltage.map(|value| value.value),
             battery_percent_estimated: snapshot.battery_percent_estimated.map(|value| value.value),
         }
@@ -1377,7 +1381,7 @@ mod tests {
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         );
         assert_eq!(ingest.notification.len, 87);
-        assert_eq!(ingest.notification.monotonic_ms, 2);
+        assert_eq!(ingest.notification.monotonic_ms, ms(2));
         assert_eq!(ingest.event_count, Some(5));
         assert_eq!(ingest.parser_error, None);
         assert_eq!(ingest.reserved, None);
