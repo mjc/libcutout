@@ -788,8 +788,8 @@ pub struct BegodeLiveATelemetry {
     /// Default MPU6050 IMU temperature.
     pub imu_temperature_mc: Temperature,
 
-    /// Raw hardware PWM field.
-    pub hardware_pwm_raw: i16,
+    /// Hardware PWM as a signed duty-cycle percentage.
+    pub hardware_pwm_permille: DutyCycle,
 
     /// Estimated battery percent derived from voltage.
     pub battery_percent_estimated: Percent,
@@ -819,7 +819,10 @@ impl BegodeLiveATelemetry {
                 i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
             ),
             imu_temperature_mc: mpu6050_temperature_mc(be_i16(cursor, ByteOffset::new(12))),
-            hardware_pwm_raw: be_i16(cursor, ByteOffset::new(14)),
+            hardware_pwm_permille: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
+                cursor,
+                ByteOffset::new(14),
+            ))),
             battery_percent_estimated: Percent::from_percent(estimate_begode_battery_percent(
                 scaled_voltage_mv(raw_voltage_centivolts, profile),
                 profile,
@@ -854,7 +857,7 @@ impl BegodeLiveATelemetry {
             ))),
             controller_temperature_mc: Some(source_reported(self.imu_temperature_mc)),
             pwm_permille: Some(source_reported(DutyCycle::from_permille(
-                raw_pwm_to_permille(self.hardware_pwm_raw),
+                self.hardware_pwm_permille.as_permille(),
             ))),
             distance_mm: Some(source_reported(Distance::from_millimetres(
                 unit_mode.distance_m_to_mm(u32::from(self.trip_distance_low_m)),
@@ -1000,8 +1003,8 @@ pub struct BegodeExtraTelemetry {
     /// Motor temperature.
     pub motor_temperature_mc: Temperature,
 
-    /// True PWM raw field.
-    pub true_pwm_raw: i16,
+    /// True PWM as a signed duty-cycle percentage.
+    pub true_pwm_permille: DutyCycle,
 }
 
 impl BegodeExtraTelemetry {
@@ -1021,7 +1024,10 @@ impl BegodeExtraTelemetry {
             motor_temperature_mc: Temperature::from_millicelsius(
                 i32::from(be_i16(cursor, ByteOffset::new(6))) * 1_000,
             ),
-            true_pwm_raw: be_i16(cursor, ByteOffset::new(8)),
+            true_pwm_permille: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
+                cursor,
+                ByteOffset::new(8),
+            ))),
         })
     }
 
@@ -1031,9 +1037,7 @@ impl BegodeExtraTelemetry {
         TelemetryDelta {
             battery_current_ma: Some(source_reported(self.battery_current_ma)),
             motor_temperature_mc: Some(source_reported(self.motor_temperature_mc)),
-            pwm_permille: Some(source_reported(DutyCycle::from_permille(
-                raw_pwm_to_permille(self.true_pwm_raw),
-            ))),
+            pwm_permille: Some(source_reported(self.true_pwm_permille)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1267,7 +1271,7 @@ mod tests {
         assert_eq!(telemetry.trip_distance_low_m, 750);
         assert_eq!(telemetry.phase_current_ma.as_milliamps(), -11_800);
         assert_eq!(telemetry.imu_temperature_mc.as_millicelsius(), 27_930);
-        assert_eq!(telemetry.hardware_pwm_raw, 0x1481);
+        assert_eq!(telemetry.hardware_pwm_permille.as_permille(), 0x1481 / 10);
         assert_eq!(telemetry.battery_percent_estimated.get(), 50);
     }
 
@@ -1292,7 +1296,7 @@ mod tests {
 
         assert_eq!(telemetry.battery_current_ma.as_milliamps(), -1_000);
         assert_eq!(telemetry.motor_temperature_mc.as_millicelsius(), 42_000);
-        assert_eq!(telemetry.true_pwm_raw, -40);
+        assert_eq!(telemetry.true_pwm_permille.as_permille(), -4);
     }
 
     #[test]
