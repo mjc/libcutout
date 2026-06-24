@@ -176,7 +176,7 @@ pub struct VeteranBmsTemperaturePage {
     pub selector: ProtocolSelector,
 
     /// Temperature values in millicelsius.
-    pub temperatures_mc: ArrayVec<Temperature, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
+    pub temperatures: ArrayVec<Temperature, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
 }
 
 impl VeteranBmsTemperaturePage {
@@ -203,17 +203,17 @@ impl VeteranBmsTemperaturePage {
                 expected: end,
                 observed: body.len(),
             })?;
-        let mut temperatures_mc = ArrayVec::new();
+        let mut temperatures = ArrayVec::new();
         let cursor = ByteCursor::new(values);
         for offset in (0..values.len()).step_by(2) {
             if let Some(value) = cursor.be_i16(ByteOffset::new(offset)) {
-                temperatures_mc.push(Temperature::from_millicelsius(i32::from(value) * 10));
+                temperatures.push(Temperature::from_millicelsius(i32::from(value) * 10));
             }
         }
 
         Ok(Self {
             selector,
-            temperatures_mc,
+            temperatures,
         })
     }
 }
@@ -572,7 +572,7 @@ mod tests {
 
         assert_eq!(page.selector, sel(3));
         assert_eq!(
-            page.temperatures_mc.as_slice(),
+            page.temperatures.as_slice(),
             &[
                 Temperature::from_millicelsius(16_730),
                 Temperature::from_millicelsius(16_230),

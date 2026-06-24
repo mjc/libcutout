@@ -827,12 +827,12 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
 
 fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPagePayload {
     let first_temperature_mc = page
-        .temperatures_mc
+        .temperatures
         .first()
         .copied()
         .unwrap_or(Temperature::from_millicelsius(0));
     let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
-    for (slot, temperature_mc) in temperatures.iter_mut().zip(page.temperatures_mc) {
+    for (slot, temperature_mc) in temperatures.iter_mut().zip(page.temperatures) {
         *slot = Some(Measured::reported(temperature_mc));
     }
     let battery = BatteryInfo {
