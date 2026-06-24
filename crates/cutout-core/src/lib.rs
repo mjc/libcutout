@@ -3490,6 +3490,14 @@ impl Unit for MilliVolt {
     type Dimension = ElectricPotential;
 }
 
+/// Centivolt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CentiVolt;
+
+impl Unit for CentiVolt {
+    type Dimension = ElectricPotential;
+}
+
 /// Microvolt storage unit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MicroVolt;
@@ -3692,6 +3700,29 @@ impl Voltage {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_volts(self) -> f32 {
         self.as_millivolts() as f32 / 1_000.0
+    }
+}
+
+/// Electrical voltage stored in centivolts.
+pub type CentiVoltage = Quantity<ElectricPotential, CentiVolt, u16>;
+
+impl CentiVoltage {
+    /// Creates a voltage from centivolts.
+    #[must_use]
+    pub const fn from_centivolts(value: u16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this voltage in centivolts.
+    #[must_use]
+    pub const fn as_centivolts(self) -> u16 {
+        self.unit_value()
+    }
+
+    /// Converts this centivolt quantity into millivolts.
+    #[must_use]
+    pub const fn as_millivolts(self) -> i32 {
+        self.as_centivolts() as i32 * 10
     }
 }
 
@@ -5286,6 +5317,14 @@ mod tests {
                 max: crate::MAX_TRANSPORT_WRITE_LEN,
             })
         );
+    }
+
+    #[test]
+    fn centivoltage_keeps_protocol_voltage_units_explicit() {
+        let voltage = crate::CentiVoltage::from_centivolts(6_005);
+
+        assert_eq!(voltage.as_centivolts(), 6_005);
+        assert_eq!(voltage.as_millivolts(), 60_050);
     }
 
     #[test]
