@@ -254,7 +254,7 @@ pub struct DangerousActuationPolicy {
     pub max_current: BatteryCurrent,
 
     /// Duration of newly issued arming tokens.
-    pub arm_duration_ms: MonotonicMillis,
+    pub arm_duration: Duration,
 }
 
 impl DangerousActuationPolicy {
@@ -263,7 +263,7 @@ impl DangerousActuationPolicy {
     pub const fn arm(self, monotonic_ms: MonotonicMillis) -> DangerousActuationArm {
         DangerousActuationArm {
             model: self.model,
-            expires_at_ms: monotonic_ms.saturating_add(self.arm_duration_ms),
+            expires_at_ms: monotonic_ms.saturating_add(self.arm_duration.as_milliseconds()),
         }
     }
 
@@ -2521,22 +2521,22 @@ impl RequestKey {
 /// Retry, timeout, and pacing policy for one scheduled request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestPolicy {
-    /// Deadline for one attempt in monotonic milliseconds.
-    pub timeout_ms: MonotonicMillis,
+    /// Deadline duration for one attempt.
+    pub timeout: Duration,
 
     /// Maximum retries after the first attempt.
     pub max_retries: u8,
 
     /// Minimum interval between starts for the same key.
-    pub min_interval_ms: MonotonicMillis,
+    pub min_interval: Duration,
 }
 
 impl Default for RequestPolicy {
     fn default() -> Self {
         Self {
-            timeout_ms: 1_000,
+            timeout: Duration::from_milliseconds(1_000),
             max_retries: 0,
-            min_interval_ms: 0,
+            min_interval: Duration::from_milliseconds(0),
         }
     }
 }
@@ -2661,7 +2661,7 @@ impl RequestTracker {
         }
 
         if let Some((last_key, started_at_ms)) = self.last_started {
-            let ready_at_ms = started_at_ms.saturating_add(policy.min_interval_ms);
+            let ready_at_ms = started_at_ms.saturating_add(policy.min_interval.as_milliseconds());
             if last_key == key && now_ms < ready_at_ms {
                 return Err(RequestStartError::Pacing { ready_at_ms });
             }
@@ -2685,7 +2685,7 @@ impl RequestTracker {
         };
         let deadline_ms = active
             .started_at_ms
-            .saturating_add(active.policy.timeout_ms);
+            .saturating_add(active.policy.timeout.as_milliseconds());
         if now_ms < deadline_ms {
             RequestTick::Waiting
         } else if active.retries < active.policy.max_retries {
@@ -6893,7 +6893,7 @@ mod tests {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration_ms: 1_000,
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
 
@@ -6908,12 +6908,12 @@ mod tests {
         let falcon = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration_ms: 1_000,
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let aero = crate::DangerousActuationPolicy {
             model: "NOSFET Aero",
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration_ms: 1_000,
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
         let falcon_arm = falcon.arm(10);
@@ -6934,7 +6934,7 @@ mod tests {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration_ms: 1_000,
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let arm = policy.arm(10);
 
@@ -6957,7 +6957,7 @@ mod tests {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
             max_current: BatteryCurrent::from_milliamps(5_000),
-            arm_duration_ms: 1_000,
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let command = DeviceCommand::SetRawMotorCurrent { current: -5_000 };
         let arm = policy.arm(10);
@@ -7191,7 +7191,7 @@ mod tests {
     #[test]
     fn request_tracker_enforces_write_pacing() {
         let policy = crate::RequestPolicy {
-            min_interval_ms: 100,
+            min_interval: Duration::from_milliseconds(100),
             ..crate::RequestPolicy::default()
         };
         let mut tracker = crate::RequestTracker::default();
@@ -7212,7 +7212,7 @@ mod tests {
     #[test]
     fn request_tracker_reports_retry_after_timeout() {
         let policy = crate::RequestPolicy {
-            timeout_ms: 250,
+            timeout: Duration::from_milliseconds(250),
             max_retries: 2,
             ..crate::RequestPolicy::default()
         };
@@ -7739,9 +7739,9 @@ mod tests {
     #[test]
     fn poll_request_converts_read_only_command_to_queued_request() {
         let policy = crate::RequestPolicy {
-            timeout_ms: 250,
+            timeout: Duration::from_milliseconds(250),
             max_retries: 2,
-            min_interval_ms: 50,
+            min_interval: Duration::from_milliseconds(50),
         };
         let request = crate::PollRequest::new(
             crate::CommandKind::RequestIdentity,
