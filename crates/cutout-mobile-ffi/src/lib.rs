@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, MonotonicMillis, NotificationEvidenceDto, NotificationIngestOutcomeDto,
-    ParserDiagnosticsDto, ParserErrorDto, ParserGapEvidenceDto, PevcapCapture, PevcapEncoding,
-    PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
-    ReservedPayloadEvidenceDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
-    TransportActionDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    WallClockUnixMillis,
+    GattRoles, MonotonicMillis, MonotonicMillisDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticsDto, ParserErrorDto, ParserGapEvidenceDto,
+    PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
+    ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto, SessionInputDto,
+    SessionOutputDto, TelemetrySnapshotDto, TransportActionDto, VerificationStatus,
+    VerificationStatusDto, VerifiedValue, WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -94,8 +94,16 @@ impl MobileMonotonicMillisDto {
         Self { milliseconds }
     }
 
-    fn into_core_ffi(self) -> u64 {
-        self.milliseconds
+    const fn from_core_ffi_timestamp(timestamp: MonotonicMillisDto) -> Self {
+        Self {
+            milliseconds: timestamp.milliseconds,
+        }
+    }
+
+    fn into_core_ffi(self) -> MonotonicMillisDto {
+        MonotonicMillisDto {
+            milliseconds: self.milliseconds,
+        }
     }
 
     fn into_core(self) -> MonotonicMillis {
@@ -974,7 +982,7 @@ impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.to_vec(),
             len: evidence.len as u64,
-            monotonic_ms: MobileMonotonicMillisDto::from_core_ffi(evidence.monotonic_ms),
+            monotonic_ms: MobileMonotonicMillisDto::from_core_ffi_timestamp(evidence.monotonic_ms),
         }
     }
 }
@@ -1074,7 +1082,9 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
         Self {
-            at_ms: snapshot.at_ms.map(MobileMonotonicMillisDto::from_core_ffi),
+            at_ms: snapshot
+                .at_ms
+                .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             voltage: snapshot.voltage.map(|value| value.value),
             battery_percent_estimated: snapshot.battery_percent_estimated.map(|value| value.value),
         }
@@ -1209,7 +1219,7 @@ mod tests {
             family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
             channel: [0x7a; 16],
             len: 17,
-            monotonic_ms: 42,
+            monotonic_ms: MonotonicMillisDto { milliseconds: 42 },
         }
     }
 

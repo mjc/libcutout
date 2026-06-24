@@ -266,8 +266,8 @@ where
 mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        MonotonicMillis, SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto,
-        TransportActionDto,
+        MonotonicMillis, MonotonicMillisDto, SafetyClassDto, SessionEventDto, SessionInputDto,
+        SessionOutputDto, TransportActionDto,
     };
 
     use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -277,12 +277,18 @@ mod tests {
         new_nosfet_aero_read_only_session, try_new_begode_falcon_read_only_session,
     };
 
+    const fn ms(value: u64) -> MonotonicMillisDto {
+        MonotonicMillisDto {
+            milliseconds: value,
+        }
+    }
+
     #[test]
     fn concrete_aero_session_drives_link_up_and_drains_owned_outputs() {
         let mut session = new_nosfet_aero_read_only_session();
 
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
+            monotonic_ms: ms(1),
             max_write_len: Some(185),
         });
 
@@ -297,7 +303,7 @@ mod tests {
     fn concrete_falcon_session_maps_command_dto_to_write_output() {
         let mut session = new_begode_falcon_read_only_session();
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
+            monotonic_ms: ms(1),
             max_write_len: Some(185),
         });
         let _ = session.drain_outputs();
@@ -315,7 +321,7 @@ mod tests {
     fn checked_ingest_surfaces_unsupported_command_as_error_dto() {
         let mut session = new_begode_falcon_read_only_session();
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
+            monotonic_ms: ms(1),
             max_write_len: Some(185),
         });
         let _ = session.drain_outputs();
@@ -357,7 +363,7 @@ mod tests {
                 .expect("default Falcon profile should construct");
 
         let result = session.ingest_checked(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
+            monotonic_ms: ms(1),
             max_write_len: Some(185),
         });
 
@@ -377,7 +383,7 @@ mod tests {
         malformed[20] = 0;
 
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
+            monotonic_ms: ms(1),
             max_write_len: Some(185),
         });
         let _ = session.drain_outputs();
@@ -385,7 +391,7 @@ mod tests {
         session.ingest(&SessionInputDto::Notification {
             channel,
             bytes: malformed.to_vec(),
-            monotonic_ms: 42,
+            monotonic_ms: ms(42),
         });
 
         assert_eq!(session.current_snapshot().at_ms, None);

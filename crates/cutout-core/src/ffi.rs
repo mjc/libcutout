@@ -30,6 +30,25 @@ impl From<ReadOnlyResponse> for ReadOnlyResponseDto {
     }
 }
 
+/// UniFFI-ready monotonic timestamp in milliseconds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MonotonicMillisDto {
+    /// Milliseconds on the host monotonic clock.
+    pub milliseconds: u64,
+}
+
+impl MonotonicMillisDto {
+    fn from_core(value: MonotonicMillis) -> Self {
+        Self {
+            milliseconds: value.get(),
+        }
+    }
+
+    fn into_core(self) -> MonotonicMillis {
+        MonotonicMillis::new(self.milliseconds)
+    }
+}
+
 /// UniFFI-ready owned read-only response payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadOnlyResponsePayloadDto {
@@ -896,7 +915,7 @@ pub enum SessionInputDto {
     /// The underlying transport link is available.
     LinkUp {
         /// Host monotonic connection timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
 
         /// Maximum write payload length reported by the host, when known.
         max_write_len: Option<u16>,
@@ -914,13 +933,13 @@ pub enum SessionInputDto {
         bytes: Vec<u8>,
 
         /// Host monotonic receive timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
     },
 
     /// Timer tick supplied by the host.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
     },
 
     /// Command requested by the host application.
@@ -931,7 +950,7 @@ impl From<SessionInput<'_>> for SessionInputDto {
     fn from(input: SessionInput<'_>) -> Self {
         match input {
             SessionInput::LinkUp(link) => Self::LinkUp {
-                monotonic_ms: link.monotonic_ms.get(),
+                monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
                 max_write_len: link.max_write_len,
             },
             SessionInput::LinkDown => Self::LinkDown,
@@ -942,10 +961,10 @@ impl From<SessionInput<'_>> for SessionInputDto {
             } => Self::Notification {
                 channel: channel.as_bytes(),
                 bytes: bytes.to_vec(),
-                monotonic_ms: monotonic_ms.get(),
+                monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
             },
             SessionInput::Tick { monotonic_ms } => Self::Tick {
-                monotonic_ms: monotonic_ms.get(),
+                monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
             },
             SessionInput::Command(command) => Self::Command(command.into()),
         }
@@ -961,7 +980,7 @@ impl SessionInputDto {
                 monotonic_ms,
                 max_write_len,
             } => SessionInput::LinkUp(crate::LinkInfo {
-                monotonic_ms: MonotonicMillis::new(*monotonic_ms),
+                monotonic_ms: (*monotonic_ms).into_core(),
                 max_write_len: *max_write_len,
             }),
             Self::LinkDown => SessionInput::LinkDown,
@@ -972,10 +991,10 @@ impl SessionInputDto {
             } => SessionInput::Notification {
                 channel: crate::GattChannel::from_bytes(*channel),
                 bytes: bytes.as_slice(),
-                monotonic_ms: MonotonicMillis::new(*monotonic_ms),
+                monotonic_ms: (*monotonic_ms).into_core(),
             },
             Self::Tick { monotonic_ms } => SessionInput::Tick {
-                monotonic_ms: MonotonicMillis::new(*monotonic_ms),
+                monotonic_ms: (*monotonic_ms).into_core(),
             },
             Self::Command(command) => SessionInput::Command((*command).into()),
         }
@@ -1100,7 +1119,7 @@ pub struct NotificationEvidenceDto {
     pub len: usize,
 
     /// Host monotonic receive timestamp.
-    pub monotonic_ms: u64,
+    pub monotonic_ms: MonotonicMillisDto,
 }
 
 impl From<NotificationEvidence> for NotificationEvidenceDto {
@@ -1109,7 +1128,7 @@ impl From<NotificationEvidence> for NotificationEvidenceDto {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.as_bytes(),
             len: evidence.len.get(),
-            monotonic_ms: evidence.monotonic_ms.get(),
+            monotonic_ms: MonotonicMillisDto::from_core(evidence.monotonic_ms),
         }
     }
 }
@@ -1312,7 +1331,7 @@ pub enum SessionEventDto {
     /// Link-up event accepted by the session.
     LinkUp {
         /// Host monotonic connection timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
 
         /// Maximum write payload length reported by the host, when known.
         max_write_len: Option<u16>,
@@ -1324,7 +1343,7 @@ pub enum SessionEventDto {
     /// Tick event accepted by the session.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
     },
 
     /// Telemetry update emitted by a protocol session.
@@ -1347,12 +1366,12 @@ impl From<DeviceEvent> for SessionEventDto {
     fn from(event: DeviceEvent) -> Self {
         match event {
             DeviceEvent::LinkUp(link) => Self::LinkUp {
-                monotonic_ms: link.monotonic_ms.get(),
+                monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
                 max_write_len: link.max_write_len,
             },
             DeviceEvent::LinkDown => Self::LinkDown,
             DeviceEvent::Tick { monotonic_ms } => Self::Tick {
-                monotonic_ms: monotonic_ms.get(),
+                monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
             },
             DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
             DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnlyResponse(response.into()),
@@ -1367,7 +1386,7 @@ impl From<DeviceEvent> for SessionEventDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetryDeltaDto {
     /// Host monotonic timestamp for this update.
-    pub at_ms: u64,
+    pub at_ms: MonotonicMillisDto,
 
     /// Reported or calculated speed in millimeters per second.
     pub speed: Option<MeasuredI32Dto>,
@@ -1415,7 +1434,7 @@ pub struct TelemetryDeltaDto {
 impl From<TelemetryDelta> for TelemetryDeltaDto {
     fn from(delta: TelemetryDelta) -> Self {
         Self {
-            at_ms: delta.at_ms.get(),
+            at_ms: MonotonicMillisDto::from_core(delta.at_ms),
             speed: delta.speed.map(Into::into),
             voltage: delta.voltage.map(Into::into),
             battery_current: delta.battery_current.map(Into::into),
@@ -1438,7 +1457,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetrySnapshotDto {
     /// Host monotonic timestamp for the latest update, when known.
-    pub at_ms: Option<u64>,
+    pub at_ms: Option<MonotonicMillisDto>,
 
     /// Reported or calculated speed in millimeters per second.
     pub speed: Option<MeasuredI32Dto>,
@@ -1486,7 +1505,7 @@ pub struct TelemetrySnapshotDto {
 impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshot) -> Self {
         Self {
-            at_ms: snapshot.at_ms.map(MonotonicMillis::get),
+            at_ms: snapshot.at_ms.map(MonotonicMillisDto::from_core),
             speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
@@ -1646,10 +1665,10 @@ pub struct DiagnosticErrorDto {
     pub max_len: Option<u64>,
 
     /// Elapsed monotonic milliseconds for timeout errors.
-    pub elapsed_ms: Option<u64>,
+    pub elapsed_ms: Option<MonotonicMillisDto>,
 
     /// Timeout threshold in monotonic milliseconds for timeout errors.
-    pub timeout_ms: Option<u64>,
+    pub timeout_ms: Option<MonotonicMillisDto>,
 }
 
 impl From<DiagnosticError> for DiagnosticErrorDto {
@@ -1658,8 +1677,8 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
             kind: error.kind.into(),
             claimed_len: error.claimed_len.map(|len| len as u64),
             max_len: error.max_len.map(|len| len as u64),
-            elapsed_ms: error.elapsed_ms.map(MonotonicMillis::get),
-            timeout_ms: error.timeout_ms.map(MonotonicMillis::get),
+            elapsed_ms: error.elapsed_ms.map(MonotonicMillisDto::from_core),
+            timeout_ms: error.timeout_ms.map(MonotonicMillisDto::from_core),
         }
     }
 }
@@ -1676,6 +1695,12 @@ mod tests {
     };
 
     use super::*;
+
+    const fn ms(value: u64) -> MonotonicMillisDto {
+        MonotonicMillisDto {
+            milliseconds: value,
+        }
+    }
 
     #[test]
     fn read_only_battery_dto_preserves_page_and_unknown_values() {
@@ -1874,7 +1899,7 @@ mod tests {
             SessionInputDto::Notification {
                 channel: [0xA1; 16],
                 bytes: vec![0xde, 0xad, 0xbe, 0xef],
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             }
         );
         assert_eq!(
@@ -1888,7 +1913,7 @@ mod tests {
         let dto = SessionInputDto::Notification {
             channel: [0xA1; 16],
             bytes: vec![0xde, 0xad, 0xbe, 0xef],
-            monotonic_ms: 42,
+            monotonic_ms: ms(42),
         };
 
         assert_eq!(
@@ -1938,7 +1963,7 @@ mod tests {
         assert_eq!(
             event,
             SessionOutputDto::Event(SessionEventDto::LinkUp {
-                monotonic_ms: 7,
+                monotonic_ms: ms(7),
                 max_write_len: Some(182),
             })
         );
@@ -1970,7 +1995,7 @@ mod tests {
 
         let dto = TelemetrySnapshotDto::from(snapshot);
 
-        assert_eq!(dto.at_ms, Some(42));
+        assert_eq!(dto.at_ms, Some(ms(42)));
         assert_eq!(dto.speed.expect("speed").value, 1_200);
         assert_eq!(dto.voltage.expect("voltage").value, 84_000);
         assert_eq!(dto.battery_current, None);
