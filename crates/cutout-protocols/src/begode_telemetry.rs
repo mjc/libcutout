@@ -1,10 +1,10 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    BatteryCurrent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance, Duration,
-    DutyCycle, Measured, MonotonicMillis, Percent, PhaseCurrent, Power, RawFieldValue,
-    ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature,
-    ValueQuality, ValueSource, VerificationStatus, Voltage,
+    BatteryCurrent, Capacity, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance,
+    Duration, DutyCycle, Energy, Measured, MonotonicMillis, Percent, PhaseCurrent, Power,
+    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
+    Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -161,11 +161,11 @@ pub enum BegodeVoltageProfileSelection {
 /// Explicit Begode pack capacity evidence from capture/app/pack labels.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeCapacityEvidence {
-    /// Nominal pack capacity in milliamp-hours, when explicitly reported.
-    pub nominal_capacity_mah: Option<u32>,
+    /// Nominal pack capacity, when explicitly reported.
+    pub nominal_capacity: Option<Capacity>,
 
-    /// Pack energy in watt-hours, when explicitly reported.
-    pub reported_wh: Option<u32>,
+    /// Pack energy, when explicitly reported.
+    pub reported_energy: Option<Energy>,
 }
 
 /// Result of selecting Begode pack capacity evidence from explicit inputs.
@@ -283,19 +283,19 @@ impl BegodeFalconBatteryVariant {
 
     /// Nominal pack capacity selected for this Falcon variant, when evidence-backed.
     #[must_use]
-    pub const fn nominal_capacity_mah(self) -> Option<u32> {
+    pub const fn nominal_capacity(self) -> Option<Capacity> {
         match self {
             Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(10_000),
+            Self::Planned100V24S900WhSamsung50S => Some(Capacity::from_milliamp_hours(10_000)),
         }
     }
 
     /// Pack energy selected for this Falcon variant, when evidence-backed.
     #[must_use]
-    pub const fn reported_wh(self) -> Option<u32> {
+    pub const fn reported_energy(self) -> Option<Energy> {
         match self {
             Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(900),
+            Self::Planned100V24S900WhSamsung50S => Some(Energy::from_watt_hours(900)),
         }
     }
 }
@@ -332,7 +332,7 @@ impl BegodePackVoltageProfile {
 
     /// Nominal pack capacity in milliamp-hours, when known.
     #[must_use]
-    pub const fn nominal_capacity_mah(self) -> Option<u32> {
+    pub const fn nominal_capacity(self) -> Option<Capacity> {
         match self {
             Self::Begode84VFullCharge | Self::Begode100VFullCharge => None,
         }
@@ -359,7 +359,7 @@ pub const fn begode_falcon_target_voltage_profile() -> BegodePackVoltageProfile 
 
 /// Selects a Falcon-specific battery variant from already parsed evidence.
 #[must_use]
-pub const fn select_begode_falcon_battery_variant(
+pub fn select_begode_falcon_battery_variant(
     profile: BegodeVoltageProfileSelection,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
@@ -432,7 +432,7 @@ where
         .filter_map(|annotation| capacity_evidence_from_annotation(annotation.as_ref()))
         .try_fold(BegodeCapacityEvidence::default(), merge_capacity_evidence)
         .map_or(BegodeCapacitySelection::Conflicting, |evidence| {
-            if evidence.nominal_capacity_mah.is_some() || evidence.reported_wh.is_some() {
+            if evidence.nominal_capacity.is_some() || evidence.reported_energy.is_some() {
                 BegodeCapacitySelection::Selected(evidence)
             } else {
                 BegodeCapacitySelection::Missing
@@ -465,7 +465,7 @@ where
 
 /// Cross-checks selected Begode pack evidence for internal consistency.
 #[must_use]
-pub const fn validate_begode_pack_evidence(
+pub fn validate_begode_pack_evidence(
     profile: BegodeVoltageProfileSelection,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
@@ -486,7 +486,7 @@ pub const fn validate_begode_pack_evidence(
     }
 }
 
-const fn validate_selected_begode_pack_evidence(
+fn validate_selected_begode_pack_evidence(
     profile: BegodePackVoltageProfile,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutEvidence,
@@ -506,7 +506,7 @@ const fn validate_selected_begode_pack_evidence(
     }
 }
 
-const fn validate_selected_begode_pack_capacity(
+fn validate_selected_begode_pack_capacity(
     capacity: BegodeCapacityEvidence,
     layout: BegodePackLayoutEvidence,
 ) -> BegodePackEvidenceConsistency {
@@ -522,21 +522,24 @@ const fn validate_selected_begode_pack_capacity(
     }
 }
 
-const fn validate_samsung_50s_capacity(
+fn validate_samsung_50s_capacity(
     capacity: BegodeCapacityEvidence,
     series_cells: u8,
     parallel_count: u8,
 ) -> BegodePackEvidenceConsistency {
-    let expected_mah = parallel_count as u32 * 5_000;
-    if let Some(nominal_capacity_mah) = capacity.nominal_capacity_mah
-        && nominal_capacity_mah != expected_mah
+    let expected_capacity =
+        Capacity::from_milliamp_hours(u32::from(parallel_count).saturating_mul(5_000));
+    if let Some(nominal_capacity) = capacity.nominal_capacity
+        && nominal_capacity != expected_capacity
     {
         return BegodePackEvidenceConsistency::Inconsistent;
     }
 
-    if let Some(reported_wh) = capacity.reported_wh {
-        let expected_wh = series_cells as u32 * parallel_count as u32 * 18;
-        if !within_percent(reported_wh, expected_wh, 5) {
+    if let Some(reported_energy) = capacity.reported_energy {
+        let expected_wh = u32::from(series_cells)
+            .saturating_mul(u32::from(parallel_count))
+            .saturating_mul(18);
+        if !within_percent(reported_energy.as_watt_hours(), expected_wh, 5) {
             return BegodePackEvidenceConsistency::Inconsistent;
         }
     }
@@ -544,7 +547,7 @@ const fn validate_samsung_50s_capacity(
     BegodePackEvidenceConsistency::Consistent
 }
 
-const fn select_consistent_begode_falcon_battery_variant(
+fn select_consistent_begode_falcon_battery_variant(
     profile: BegodeVoltageProfileSelection,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
@@ -562,18 +565,19 @@ const fn select_consistent_begode_falcon_battery_variant(
         }
         (
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge),
-            BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(10_000),
-                reported_wh: Some(900),
-            }),
+            BegodeCapacitySelection::Selected(capacity),
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                 cell_model: Some(BegodeCellModel::Samsung50S),
                 series_cells: Some(24),
                 parallel_count: Some(2),
             }),
-        ) => BegodeFalconBatteryVariantSelection::Selected(
-            BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
-        ),
+        ) if capacity.nominal_capacity == Some(Capacity::from_milliamp_hours(10_000))
+            && capacity.reported_energy == Some(Energy::from_watt_hours(900)) =>
+        {
+            BegodeFalconBatteryVariantSelection::Selected(
+                BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
+            )
+        }
         _ => BegodeFalconBatteryVariantSelection::Missing,
     }
 }
@@ -600,15 +604,15 @@ fn capacity_evidence_from_annotation(annotation: &str) -> Option<BegodeCapacityE
     let (key, value) = annotation.split_once('=')?;
     let parsed = value.trim().parse::<u32>().ok()?;
     match key.trim() {
-        "nominal_capacity_mah" | "capacity_mah" | "pack_capacity_mah" => {
+        "nominal_capacity_mah" | "nominal_capacity" | "capacity_mah" | "pack_capacity_mah" => {
             Some(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(parsed),
-                reported_wh: None,
+                nominal_capacity: Some(Capacity::from_milliamp_hours(parsed)),
+                reported_energy: None,
             })
         }
-        "reported_wh" | "pack_wh" => Some(BegodeCapacityEvidence {
-            nominal_capacity_mah: None,
-            reported_wh: Some(parsed),
+        "reported_wh" | "reported_energy" | "pack_wh" => Some(BegodeCapacityEvidence {
+            nominal_capacity: None,
+            reported_energy: Some(Energy::from_watt_hours(parsed)),
         }),
         _ => None,
     }
@@ -726,11 +730,14 @@ fn merge_capacity_evidence(
     evidence: BegodeCapacityEvidence,
 ) -> Result<BegodeCapacityEvidence, ()> {
     Ok(BegodeCapacityEvidence {
-        nominal_capacity_mah: merge_optional_u32(
-            selected.nominal_capacity_mah,
-            evidence.nominal_capacity_mah,
+        nominal_capacity: merge_optional_quantity(
+            selected.nominal_capacity,
+            evidence.nominal_capacity,
         )?,
-        reported_wh: merge_optional_u32(selected.reported_wh, evidence.reported_wh)?,
+        reported_energy: merge_optional_quantity(
+            selected.reported_energy,
+            evidence.reported_energy,
+        )?,
     })
 }
 
@@ -766,7 +773,10 @@ const fn merge_optional_u8(left: Option<u8>, right: Option<u8>) -> Result<Option
     }
 }
 
-const fn merge_optional_u32(left: Option<u32>, right: Option<u32>) -> Result<Option<u32>, ()> {
+fn merge_optional_quantity<T: Copy + Eq>(
+    left: Option<T>,
+    right: Option<T>,
+) -> Result<Option<T>, ()> {
     match (left, right) {
         (None, None) => Ok(None),
         (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
@@ -1274,7 +1284,7 @@ mod tests {
         BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
         estimate_begode_battery_percent, validate_begode_pack_evidence,
     };
-    use cutout_core::Duration;
+    use cutout_core::{Capacity, Duration, Energy};
     use cutout_core::{
         DiagnosticSeverity, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
         ValueQuality, ValueSource, VerificationStatus, Voltage,
@@ -1553,7 +1563,7 @@ mod tests {
 
         assert_eq!(profile.series_cells(), 20);
         assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
@@ -1562,7 +1572,7 @@ mod tests {
 
         assert_eq!(profile.series_cells(), 20);
         assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
@@ -1573,7 +1583,7 @@ mod tests {
         assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
         assert_eq!(profile.series_cells(), 20);
         assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
@@ -1582,7 +1592,7 @@ mod tests {
 
         assert_eq!(profile.series_cells(), 24);
         assert_eq!(profile.voltage_range_mv(), 72_000..=100_800);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
@@ -1721,22 +1731,22 @@ mod tests {
                 "nominal_capacity_mah=10000",
             ]),
             BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(10_000),
-                reported_wh: None,
+                nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                reported_energy: None,
             })
         );
     }
 
     #[test]
-    fn capacity_evidence_from_annotations_preserves_reported_wh_separately() {
+    fn capacity_evidence_from_annotations_preserves_reported_energy_separately() {
         assert_eq!(
             select_begode_pack_capacity_from_annotations([
                 "reported_wh=900",
                 "nominal_capacity_mah=9000",
             ]),
             BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(9_000),
-                reported_wh: Some(900),
+                nominal_capacity: Some(Capacity::from_milliamp_hours(9_000)),
+                reported_energy: Some(Energy::from_watt_hours(900)),
             })
         );
     }
@@ -1745,13 +1755,16 @@ mod tests {
     fn capacity_evidence_from_annotations_rejects_conflicting_values() {
         assert_eq!(
             select_begode_pack_capacity_from_annotations([
-                "nominal_capacity_mah=10000",
-                "nominal_capacity_mah=9000",
+                "nominal_capacity=10000",
+                "nominal_capacity=9000",
             ]),
             BegodeCapacitySelection::Conflicting
         );
         assert_eq!(
-            select_begode_pack_capacity_from_annotations(["reported_wh=672", "reported_wh=900",]),
+            select_begode_pack_capacity_from_annotations([
+                "reported_energy=672",
+                "reported_energy=900",
+            ]),
             BegodeCapacitySelection::Conflicting
         );
     }
@@ -1789,7 +1802,7 @@ mod tests {
     #[test]
     fn pack_layout_evidence_from_annotations_reports_missing_and_conflicts() {
         assert_eq!(
-            select_begode_pack_layout_from_annotations(["battery=84v", "reported_wh=672"]),
+            select_begode_pack_layout_from_annotations(["battery=84v", "reported_energy=672"]),
             BegodePackLayoutSelection::Missing
         );
         assert_eq!(
@@ -1864,8 +1877,8 @@ mod tests {
                     BegodePackVoltageProfile::Begode84VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: None,
-                    reported_wh: Some(900),
+                    nominal_capacity: None,
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
@@ -1885,8 +1898,8 @@ mod tests {
                     BegodePackVoltageProfile::Begode100VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
@@ -1906,8 +1919,8 @@ mod tests {
                     BegodePackVoltageProfile::Begode84VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: None,
-                    reported_wh: Some(900),
+                    nominal_capacity: None,
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
@@ -1945,8 +1958,8 @@ mod tests {
                     BegodePackVoltageProfile::Begode100VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
@@ -1966,8 +1979,8 @@ mod tests {
             select_begode_falcon_battery_variant(
                 BegodeVoltageProfileSelection::Missing,
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
@@ -1987,8 +2000,8 @@ mod tests {
                     BegodePackVoltageProfile::Begode84VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
@@ -2011,8 +2024,8 @@ mod tests {
         assert_eq!(variant.series_cells(), 20);
         assert_eq!(variant.cell_model(), None);
         assert_eq!(variant.parallel_count(), None);
-        assert_eq!(variant.nominal_capacity_mah(), None);
-        assert_eq!(variant.reported_wh(), None);
+        assert_eq!(variant.nominal_capacity(), None);
+        assert_eq!(variant.reported_energy(), None);
     }
 
     #[test]
@@ -2026,8 +2039,14 @@ mod tests {
         assert_eq!(variant.series_cells(), 24);
         assert_eq!(variant.cell_model(), Some(BegodeCellModel::Samsung50S));
         assert_eq!(variant.parallel_count(), Some(2));
-        assert_eq!(variant.nominal_capacity_mah(), Some(10_000));
-        assert_eq!(variant.reported_wh(), Some(900));
+        assert_eq!(
+            variant.nominal_capacity(),
+            Some(Capacity::from_milliamp_hours(10_000))
+        );
+        assert_eq!(
+            variant.reported_energy(),
+            Some(Energy::from_watt_hours(900))
+        );
     }
 
     proptest! {

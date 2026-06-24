@@ -696,11 +696,19 @@ fn write_selected_capacity_evidence(
     output: &mut fmt::Formatter<'_>,
     evidence: BegodeCapacityEvidence,
 ) -> fmt::Result {
-    if let Some(nominal_capacity_mah) = evidence.nominal_capacity_mah {
-        write!(output, " capacity_nominal_mah={nominal_capacity_mah}")?;
+    if let Some(nominal_capacity) = evidence.nominal_capacity {
+        write!(
+            output,
+            " capacity_nominal_mah={}",
+            nominal_capacity.as_milliamp_hours()
+        )?;
     }
-    if let Some(reported_wh) = evidence.reported_wh {
-        write!(output, " capacity_reported_wh={reported_wh}")?;
+    if let Some(reported_energy) = evidence.reported_energy {
+        write!(
+            output,
+            " capacity_reported_wh={}",
+            reported_energy.as_watt_hours()
+        )?;
     }
     Ok(())
 }

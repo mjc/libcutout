@@ -1,4 +1,4 @@
-use cutout_core::{CellVoltage, Voltage};
+use cutout_core::{Capacity, CellVoltage, Voltage};
 
 /// A measured voltage/percentage point for a battery profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,8 +16,8 @@ pub struct BatteryVoltageProfile {
     /// Human-readable cell model.
     pub cell_model: &'static str,
 
-    /// Nominal cell capacity in milliamp-hours.
-    pub nominal_capacity_mah: u16,
+    /// Nominal cell capacity.
+    pub nominal_capacity: Capacity,
 
     /// Ordered single-cell voltage curve from empty to full.
     pub points: &'static [BatteryVoltagePoint],
@@ -99,7 +99,7 @@ pub const SAMSUNG_50S_CELL_POINTS: [BatteryVoltagePoint; 8] = [
 /// Samsung 50S single-cell profile.
 pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     cell_model: "Samsung 50S",
-    nominal_capacity_mah: 5_000,
+    nominal_capacity: Capacity::from_milliamp_hours(5_000),
     points: &SAMSUNG_50S_CELL_POINTS,
 };
 
@@ -258,7 +258,10 @@ mod tests {
     #[test]
     fn samsung_50s_profile_does_not_encode_parallel_count() {
         assert_eq!(SAMSUNG_50S_PROFILE.cell_model, "Samsung 50S");
-        assert_eq!(SAMSUNG_50S_PROFILE.nominal_capacity_mah, 5_000);
+        assert_eq!(
+            SAMSUNG_50S_PROFILE.nominal_capacity,
+            Capacity::from_milliamp_hours(5_000)
+        );
         assert_eq!(SAMSUNG_50S_PROFILE.points.len(), 8);
     }
 

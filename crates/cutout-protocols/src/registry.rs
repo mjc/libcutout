@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
         assert_eq!(profile.series_cells(), 20);
         assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
     Angle, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsParallelPacks,
-    BmsTemperatureValuesPerPage, ChargeMode, Distance, Duration, DutyCycle, FirmwareInfo, Measured,
-    MonotonicMillis, PackSeriesCells, Percent, PhaseCurrent, Power, ProtocolSelector,
+    BmsTemperatureValuesPerPage, Capacity, ChargeMode, Distance, Duration, DutyCycle, FirmwareInfo,
+    Measured, MonotonicMillis, PackSeriesCells, Percent, PhaseCurrent, Power, ProtocolSelector,
     RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
     Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
@@ -150,8 +150,8 @@ pub struct VeteranModelProfile {
     /// Parallel cell count for model pack configuration.
     pub parallel_cells: u8,
 
-    /// Nominal pack capacity in milliamp-hours, when known.
-    pub nominal_capacity_mah: Option<u32>,
+    /// Nominal pack capacity, when known.
+    pub nominal_capacity: Option<Capacity>,
 
     /// Single-cell battery curve used for estimated battery percent, when known.
     pub battery_profile: Option<&'static BatteryVoltageProfile>,
@@ -255,7 +255,7 @@ impl VeteranModelProfile {
             name,
             cell_count,
             parallel_cells: 1,
-            nominal_capacity_mah: None,
+            nominal_capacity: None,
             battery_profile: None,
             voltage_range_mv,
             has_pwm_readback: model_id >= 2,
@@ -278,9 +278,12 @@ impl VeteranModelProfile {
             name,
             cell_count,
             parallel_cells,
-            nominal_capacity_mah: Some(
-                u32::from(battery_profile.nominal_capacity_mah) * u32::from(parallel_cells),
-            ),
+            nominal_capacity: Some(Capacity::from_milliamp_hours(
+                battery_profile
+                    .nominal_capacity
+                    .as_milliamp_hours()
+                    .saturating_mul(u32::from(parallel_cells)),
+            )),
             battery_profile: Some(battery_profile),
             voltage_range_mv: battery_profile_pack_range(battery_profile, cell_count),
             has_pwm_readback: model_id >= 2,
@@ -788,7 +791,10 @@ mod tests {
         assert_eq!(aero.name, "NOSFET Aero");
         assert_eq!(aero.cell_count, 30);
         assert_eq!(aero.parallel_cells, 2);
-        assert_eq!(aero.nominal_capacity_mah, Some(10_000));
+        assert_eq!(
+            aero.nominal_capacity,
+            Some(Capacity::from_milliamp_hours(10_000))
+        );
         assert_eq!(
             aero.battery_profile.map(|profile| profile.cell_model),
             Some("Samsung 50S")
@@ -801,7 +807,10 @@ mod tests {
         assert_eq!(oryx.name, "Veteran Oryx");
         assert_eq!(oryx.cell_count, 42);
         assert_eq!(oryx.parallel_cells, 6);
-        assert_eq!(oryx.nominal_capacity_mah, Some(30_000));
+        assert_eq!(
+            oryx.nominal_capacity,
+            Some(Capacity::from_milliamp_hours(30_000))
+        );
         assert_eq!(
             oryx.battery_profile.map(|profile| profile.cell_model),
             Some("Samsung 50S")
@@ -811,7 +820,7 @@ mod tests {
 
         assert_eq!(sherman.cell_count, 24);
         assert_eq!(sherman.parallel_cells, 1);
-        assert_eq!(sherman.nominal_capacity_mah, None);
+        assert_eq!(sherman.nominal_capacity, None);
         assert_eq!(sherman.battery_profile, None);
         assert_eq!(sherman.voltage_range_mv, 79_350..=98_700);
         assert!(!sherman.has_pwm_readback);
@@ -971,7 +980,7 @@ mod tests {
             (44, "NOSFET Aeon", 36, 2, Some(10_000), 109_200..=151_200),
         ];
 
-        for (model_id, name, cell_count, parallel_cells, nominal_capacity_mah, voltage_range_mv) in
+        for (model_id, name, cell_count, parallel_cells, nominal_capacity, voltage_range_mv) in
             models
         {
             let profile =
@@ -980,7 +989,10 @@ mod tests {
             assert_eq!(profile.name, name);
             assert_eq!(profile.cell_count, cell_count);
             assert_eq!(profile.parallel_cells, parallel_cells);
-            assert_eq!(profile.nominal_capacity_mah, nominal_capacity_mah);
+            assert_eq!(
+                profile.nominal_capacity,
+                nominal_capacity.map(Capacity::from_milliamp_hours)
+            );
             assert_eq!(profile.battery_profile, Some(&SAMSUNG_50S_PROFILE));
             assert_eq!(profile.voltage_range_mv, voltage_range_mv);
         }
@@ -1070,7 +1082,7 @@ mod tests {
 
             assert_eq!(profile.battery_profile, None);
             assert_eq!(profile.parallel_cells, 1);
-            assert_eq!(profile.nominal_capacity_mah, None);
+            assert_eq!(profile.nominal_capacity, None);
         }
     }
 

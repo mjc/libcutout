@@ -950,7 +950,7 @@ impl RegisteredModelSpec for NosfetAeroModel {
         }),
         battery: Some(BatterySpec {
             series_cells: PackSeriesCells::new(30),
-            nominal_capacity_mah: None,
+            nominal_capacity: None,
             voltage_range_mv: 91_000..=126_000,
             verification: VerificationStatus::HardwareVerified,
         }),

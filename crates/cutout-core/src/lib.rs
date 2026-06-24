@@ -435,8 +435,8 @@ pub struct BatterySpec {
     /// Series cell count.
     pub series_cells: PackSeriesCells,
 
-    /// Nominal pack capacity in milliamp-hours, when known.
-    pub nominal_capacity_mah: Option<u32>,
+    /// Nominal pack capacity, when known.
+    pub nominal_capacity: Option<Capacity>,
 
     /// Expected pack voltage range in millivolts.
     pub voltage_range_mv: RangeInclusive<u32>,
@@ -1573,7 +1573,7 @@ impl RegistryHashBuilder {
             Some(battery) => {
                 self.write_u8(1);
                 self.write_u8(battery.series_cells.get());
-                self.write_optional_u32(battery.nominal_capacity_mah);
+                self.write_optional_u32(battery.nominal_capacity.map(Capacity::as_milliamp_hours));
                 self.write_u32(*battery.voltage_range_mv.start());
                 self.write_u32(*battery.voltage_range_mv.end());
                 self.write_u8(verification_code(battery.verification));
@@ -3378,6 +3378,18 @@ pub struct ElectricPower;
 
 impl Dimension for ElectricPower {}
 
+/// Electrical energy dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricEnergy;
+
+impl Dimension for ElectricEnergy {}
+
+/// Electrical charge capacity dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricCharge;
+
+impl Dimension for ElectricCharge {}
+
 /// Linear velocity dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Velocity;
@@ -3450,6 +3462,22 @@ pub struct MilliWatt;
 
 impl Unit for MilliWatt {
     type Dimension = ElectricPower;
+}
+
+/// Watt-hour storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WattHour;
+
+impl Unit for WattHour {
+    type Dimension = ElectricEnergy;
+}
+
+/// Milliamp-hour storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliAmpHour;
+
+impl Unit for MilliAmpHour {
+    type Dimension = ElectricCharge;
 }
 
 /// Millimetres per second storage unit.
@@ -3671,6 +3699,40 @@ impl Power {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_watts(self) -> f32 {
         self.as_milliwatts() as f32 / 1_000.0
+    }
+}
+
+/// Electrical energy stored in watt-hours.
+pub type Energy = Quantity<ElectricEnergy, WattHour, u32>;
+
+impl Energy {
+    /// Creates an energy value from watt-hours.
+    #[must_use]
+    pub const fn from_watt_hours(value: u32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this energy in watt-hours.
+    #[must_use]
+    pub const fn as_watt_hours(self) -> u32 {
+        self.unit_value()
+    }
+}
+
+/// Electrical charge capacity stored in milliamp-hours.
+pub type Capacity = Quantity<ElectricCharge, MilliAmpHour, u32>;
+
+impl Capacity {
+    /// Creates a capacity value from milliamp-hours.
+    #[must_use]
+    pub const fn from_milliamp_hours(value: u32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this capacity in milliamp-hours.
+    #[must_use]
+    pub const fn as_milliamp_hours(self) -> u32 {
+        self.unit_value()
     }
 }
 
@@ -5585,6 +5647,15 @@ mod tests {
     }
 
     #[test]
+    fn battery_quantity_types_preserve_capacity_and_energy_units() {
+        assert_eq!(
+            crate::Capacity::from_milliamp_hours(10_000).as_milliamp_hours(),
+            10_000
+        );
+        assert_eq!(crate::Energy::from_watt_hours(900).as_watt_hours(), 900);
+    }
+
+    #[test]
     fn measured_constructors_preserve_provenance_and_verification() {
         let reported = Measured::reported(7);
         let calculated = Measured::calculated(11);
@@ -5820,7 +5891,7 @@ mod tests {
             }),
             battery: Some(crate::BatterySpec {
                 series_cells: crate::PackSeriesCells::new(30),
-                nominal_capacity_mah: Some(10_000),
+                nominal_capacity: Some(crate::Capacity::from_milliamp_hours(10_000)),
                 voltage_range_mv: 99_180..=123_370,
                 verification: VerificationStatus::SourceAndHardwareVerified,
             }),
