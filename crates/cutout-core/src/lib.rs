@@ -1959,59 +1959,149 @@ pub enum ParserError {
     UnmatchedReply,
 }
 
+enum NotificationByteLenUnit {}
+enum NotificationChunkLenUnit {}
+enum PayloadBodyLenUnit {}
+enum SemanticEventCountUnit {}
+enum ParserDroppedBytesUnit {}
+enum ParserDiagnosticCountUnit {}
+enum ProtocolSelectorUnit {}
+enum ProtocolTagUnit {}
+enum VescControllerIdUnit {}
+enum PackSeriesCellsUnit {}
+enum BmsParallelPacksUnit {}
+enum BmsCellValuesPerPageUnit {}
+enum BmsTemperatureValuesPerPageUnit {}
+
+macro_rules! typed_protocol_value {
+    ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name {
+            value: $inner,
+            _unit: PhantomData<fn() -> $unit>,
+        }
+
+        impl $name {
+            /// Creates the typed protocol value.
+            #[must_use]
+            pub const fn new(value: $inner) -> Self {
+                Self {
+                    value,
+                    _unit: PhantomData,
+                }
+            }
+
+            /// Returns the underlying primitive value for FFI/rendering edges.
+            #[must_use]
+            pub const fn get(self) -> $inner {
+                self.value
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_tuple(stringify!($name)).field(&self.value).finish()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.value.fmt(f)
+            }
+        }
+    };
+}
+
+typed_protocol_value!(
+    ParserDroppedBytes,
+    ParserDroppedBytesUnit,
+    u64,
+    "Bytes dropped while recovering from malformed or excessive parser input."
+);
+
+impl ParserDroppedBytes {
+    /// Adds dropped bytes, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::new(self.value.saturating_add(other.value))
+    }
+}
+
+typed_protocol_value!(
+    ParserDiagnosticCount,
+    ParserDiagnosticCountUnit,
+    u64,
+    "Saturating count for one class of parser diagnostic event."
+);
+
+impl ParserDiagnosticCount {
+    /// Adds one diagnostic event, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self::new(self.value.saturating_add(1))
+    }
+
+    /// Adds diagnostic events, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::new(self.value.saturating_add(other.value))
+    }
+}
+
 /// Saturating parser diagnostics counters.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ParserDiagnostics {
     /// Bytes dropped while recovering from malformed or excessive input.
-    pub dropped_bytes: u64,
+    pub dropped_bytes: ParserDroppedBytes,
 
     /// Parser resynchronization attempts.
-    pub resyncs: u64,
+    pub resyncs: ParserDiagnosticCount,
 
     /// Frames rejected because their checksum did not match.
-    pub bad_checksums: u64,
+    pub bad_checksums: ParserDiagnosticCount,
 
     /// Parser deadlines that elapsed before expected data arrived.
-    pub timeouts: u64,
+    pub timeouts: ParserDiagnosticCount,
 
     /// Frames rejected because they exceeded parser limits.
-    pub oversized_frames: u64,
+    pub oversized_frames: ParserDiagnosticCount,
 
     /// Frames rejected because their structure was invalid.
-    pub malformed_frames: u64,
+    pub malformed_frames: ParserDiagnosticCount,
 
     /// Replies that could not be matched to an in-flight request.
-    pub unmatched_replies: u64,
+    pub unmatched_replies: ParserDiagnosticCount,
 }
 
 impl ParserDiagnostics {
     /// Adds dropped bytes using saturating arithmetic.
-    pub const fn add_dropped_bytes(&mut self, count: u64) {
+    pub const fn add_dropped_bytes(&mut self, count: ParserDroppedBytes) {
         self.dropped_bytes = self.dropped_bytes.saturating_add(count);
     }
 
     /// Records one parser resynchronization attempt.
     pub const fn record_resync(&mut self) {
-        saturating_increment(&mut self.resyncs);
+        self.resyncs = self.resyncs.next();
     }
 
     /// Records one parser error in the corresponding diagnostics counter.
     pub const fn record_error(&mut self, error: ParserError) {
         match error {
             ParserError::OversizedFrame { .. } => {
-                saturating_increment(&mut self.oversized_frames);
+                self.oversized_frames = self.oversized_frames.next();
             }
             ParserError::BadChecksum => {
-                saturating_increment(&mut self.bad_checksums);
+                self.bad_checksums = self.bad_checksums.next();
             }
             ParserError::MalformedFrame => {
-                saturating_increment(&mut self.malformed_frames);
+                self.malformed_frames = self.malformed_frames.next();
             }
             ParserError::Timeout { .. } => {
-                saturating_increment(&mut self.timeouts);
+                self.timeouts = self.timeouts.next();
             }
             ParserError::UnmatchedReply => {
-                saturating_increment(&mut self.unmatched_replies);
+                self.unmatched_replies = self.unmatched_replies.next();
             }
         }
     }
@@ -2030,33 +2120,29 @@ impl ParserDiagnostics {
     }
 }
 
-const fn saturating_increment(counter: &mut u64) {
-    *counter = counter.saturating_add(1);
-}
-
 /// Stable host-facing diagnostic counter snapshot.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticSnapshot {
     /// Bytes dropped while recovering from malformed or excessive input.
-    pub dropped_bytes: u64,
+    pub dropped_bytes: ParserDroppedBytes,
 
     /// Parser resynchronization attempts.
-    pub resyncs: u64,
+    pub resyncs: ParserDiagnosticCount,
 
     /// Frames rejected because their checksum did not match.
-    pub bad_checksums: u64,
+    pub bad_checksums: ParserDiagnosticCount,
 
     /// Parser deadlines that elapsed before expected data arrived.
-    pub timeouts: u64,
+    pub timeouts: ParserDiagnosticCount,
 
     /// Frames rejected because they exceeded parser limits.
-    pub oversized_frames: u64,
+    pub oversized_frames: ParserDiagnosticCount,
 
     /// Frames rejected because their structure was invalid.
-    pub malformed_frames: u64,
+    pub malformed_frames: ParserDiagnosticCount,
 
     /// Replies that could not be matched to an in-flight request.
-    pub unmatched_replies: u64,
+    pub unmatched_replies: ParserDiagnosticCount,
 }
 
 impl DiagnosticSnapshot {
@@ -2171,58 +2257,6 @@ impl DiagnosticError {
             timeout_ms: None,
         }
     }
-}
-
-enum NotificationByteLenUnit {}
-enum NotificationChunkLenUnit {}
-enum PayloadBodyLenUnit {}
-enum SemanticEventCountUnit {}
-enum ProtocolSelectorUnit {}
-enum ProtocolTagUnit {}
-enum VescControllerIdUnit {}
-enum PackSeriesCellsUnit {}
-enum BmsParallelPacksUnit {}
-enum BmsCellValuesPerPageUnit {}
-enum BmsTemperatureValuesPerPageUnit {}
-
-macro_rules! typed_protocol_value {
-    ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
-        #[doc = $doc]
-        #[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name {
-            value: $inner,
-            _unit: PhantomData<fn() -> $unit>,
-        }
-
-        impl $name {
-            /// Creates the typed protocol value.
-            #[must_use]
-            pub const fn new(value: $inner) -> Self {
-                Self {
-                    value,
-                    _unit: PhantomData,
-                }
-            }
-
-            /// Returns the underlying primitive value for FFI/rendering edges.
-            #[must_use]
-            pub const fn get(self) -> $inner {
-                self.value
-            }
-        }
-
-        impl fmt::Debug for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.debug_tuple(stringify!($name)).field(&self.value).finish()
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.value.fmt(f)
-            }
-        }
-    };
 }
 
 typed_protocol_value!(
@@ -4699,15 +4733,7 @@ where
                 battery_percent_reported: None,
                 battery_percent_estimated: None,
             },
-            diagnostics: ParserDiagnostics {
-                dropped_bytes: 0,
-                resyncs: 0,
-                bad_checksums: 0,
-                timeouts: 0,
-                oversized_frames: 0,
-                malformed_frames: 0,
-                unmatched_replies: 0,
-            },
+            diagnostics: ParserDiagnostics::default(),
         }
     }
 
@@ -5317,6 +5343,14 @@ mod tests {
 
     const fn ms(value: u64) -> MonotonicMillis {
         MonotonicMillis::new(value)
+    }
+
+    const fn dropped_bytes(value: u64) -> crate::ParserDroppedBytes {
+        crate::ParserDroppedBytes::new(value)
+    }
+
+    const fn diag_count(value: u64) -> crate::ParserDiagnosticCount {
+        crate::ParserDiagnosticCount::new(value)
     }
 
     #[test]
@@ -7161,37 +7195,37 @@ mod tests {
     #[test]
     fn parser_diagnostics_saturate_counters() {
         let mut diagnostics = crate::ParserDiagnostics {
-            dropped_bytes: u64::MAX,
+            dropped_bytes: dropped_bytes(u64::MAX),
             ..crate::ParserDiagnostics::default()
         };
 
-        diagnostics.add_dropped_bytes(10);
+        diagnostics.add_dropped_bytes(dropped_bytes(10));
         diagnostics.record_resync();
         diagnostics.record_error(crate::ParserError::BadChecksum);
 
-        assert_eq!(diagnostics.dropped_bytes, u64::MAX);
-        assert_eq!(diagnostics.resyncs, 1);
-        assert_eq!(diagnostics.bad_checksums, 1);
+        assert_eq!(diagnostics.dropped_bytes, dropped_bytes(u64::MAX));
+        assert_eq!(diagnostics.resyncs, diag_count(1));
+        assert_eq!(diagnostics.bad_checksums, diag_count(1));
     }
 
     #[test]
     fn parser_diagnostics_merge_with_saturating_counts() {
         let mut left = crate::ParserDiagnostics {
-            timeouts: u64::MAX,
-            malformed_frames: 2,
+            timeouts: diag_count(u64::MAX),
+            malformed_frames: diag_count(2),
             ..crate::ParserDiagnostics::default()
         };
         let right = crate::ParserDiagnostics {
-            timeouts: 1,
-            unmatched_replies: 3,
+            timeouts: diag_count(1),
+            unmatched_replies: diag_count(3),
             ..crate::ParserDiagnostics::default()
         };
 
         left.merge(right);
 
-        assert_eq!(left.timeouts, u64::MAX);
-        assert_eq!(left.malformed_frames, 2);
-        assert_eq!(left.unmatched_replies, 3);
+        assert_eq!(left.timeouts, diag_count(u64::MAX));
+        assert_eq!(left.malformed_frames, diag_count(2));
+        assert_eq!(left.unmatched_replies, diag_count(3));
     }
 
     #[test]
@@ -7209,25 +7243,25 @@ mod tests {
         });
         diagnostics.record_error(crate::ParserError::UnmatchedReply);
 
-        assert_eq!(diagnostics.oversized_frames, 1);
-        assert_eq!(diagnostics.malformed_frames, 1);
-        assert_eq!(diagnostics.timeouts, 1);
-        assert_eq!(diagnostics.unmatched_replies, 1);
+        assert_eq!(diagnostics.oversized_frames, diag_count(1));
+        assert_eq!(diagnostics.malformed_frames, diag_count(1));
+        assert_eq!(diagnostics.timeouts, diag_count(1));
+        assert_eq!(diagnostics.unmatched_replies, diag_count(1));
     }
 
     #[test]
     fn parser_diagnostics_can_be_emitted_as_device_event() {
         let diagnostics = crate::ParserDiagnostics {
-            bad_checksums: 2,
-            resyncs: 1,
+            bad_checksums: diag_count(2),
+            resyncs: diag_count(1),
             ..crate::ParserDiagnostics::default()
         };
 
         assert_eq!(
             DeviceEvent::Diagnostics(diagnostics),
             DeviceEvent::Diagnostics(crate::ParserDiagnostics {
-                bad_checksums: 2,
-                resyncs: 1,
+                bad_checksums: diag_count(2),
+                resyncs: diag_count(1),
                 ..crate::ParserDiagnostics::default()
             })
         );
@@ -7255,25 +7289,25 @@ mod tests {
     #[test]
     fn diagnostic_snapshot_preserves_counter_fields() {
         let diagnostics = crate::ParserDiagnostics {
-            dropped_bytes: 1,
-            resyncs: 2,
-            bad_checksums: 3,
-            timeouts: 4,
-            oversized_frames: 5,
-            malformed_frames: 6,
-            unmatched_replies: 7,
+            dropped_bytes: dropped_bytes(1),
+            resyncs: diag_count(2),
+            bad_checksums: diag_count(3),
+            timeouts: diag_count(4),
+            oversized_frames: diag_count(5),
+            malformed_frames: diag_count(6),
+            unmatched_replies: diag_count(7),
         };
 
         assert_eq!(
             crate::DiagnosticSnapshot::from_parser_diagnostics(diagnostics),
             crate::DiagnosticSnapshot {
-                dropped_bytes: 1,
-                resyncs: 2,
-                bad_checksums: 3,
-                timeouts: 4,
-                oversized_frames: 5,
-                malformed_frames: 6,
-                unmatched_replies: 7,
+                dropped_bytes: dropped_bytes(1),
+                resyncs: diag_count(2),
+                bad_checksums: diag_count(3),
+                timeouts: diag_count(4),
+                oversized_frames: diag_count(5),
+                malformed_frames: diag_count(6),
+                unmatched_replies: diag_count(7),
             }
         );
     }
@@ -7319,14 +7353,14 @@ mod tests {
     #[test]
     fn diagnostic_snapshot_maps_from_device_event() {
         let diagnostics = crate::ParserDiagnostics {
-            bad_checksums: 2,
+            bad_checksums: diag_count(2),
             ..crate::ParserDiagnostics::default()
         };
 
         assert_eq!(
             crate::DiagnosticSnapshot::from_device_event(DeviceEvent::Diagnostics(diagnostics)),
             Some(crate::DiagnosticSnapshot {
-                bad_checksums: 2,
+                bad_checksums: diag_count(2),
                 ..crate::DiagnosticSnapshot::default()
             })
         );
@@ -7414,7 +7448,7 @@ mod tests {
             tracker.correlate_reply(key, &mut diagnostics),
             crate::CorrelationResult::Unmatched { key }
         );
-        assert_eq!(diagnostics.unmatched_replies, 1);
+        assert_eq!(diagnostics.unmatched_replies, diag_count(1));
     }
 
     #[test]
@@ -7451,7 +7485,7 @@ mod tests {
             tracker.correlate_reply(local, &mut diagnostics),
             crate::CorrelationResult::Unmatched { key: local }
         );
-        assert_eq!(diagnostics.unmatched_replies, 1);
+        assert_eq!(diagnostics.unmatched_replies, diag_count(1));
         assert_eq!(
             tracker.correlate_reply(can, &mut diagnostics),
             crate::CorrelationResult::Matched {
@@ -8241,7 +8275,7 @@ mod tests {
                 SessionInput::Tick { monotonic_ms } => {
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         crate::ParserDiagnostics {
-                            timeouts: monotonic_ms.get(),
+                            timeouts: diag_count(monotonic_ms.get()),
                             ..crate::ParserDiagnostics::default()
                         },
                     )));
@@ -8276,7 +8310,7 @@ mod tests {
         host.tick(ms(2));
         host.tick(ms(3));
 
-        assert_eq!(host.diagnostics().timeouts, 5);
+        assert_eq!(host.diagnostics().timeouts, diag_count(5));
     }
 
     #[test]
@@ -8288,7 +8322,7 @@ mod tests {
         assert_eq!(
             crate::DiagnosticSnapshot::from_parser_diagnostics(host.diagnostics()),
             crate::DiagnosticSnapshot {
-                timeouts: 2,
+                timeouts: diag_count(2),
                 ..crate::DiagnosticSnapshot::default()
             }
         );
@@ -8332,7 +8366,7 @@ mod tests {
                 SessionInput::Command(command) => {
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         crate::ParserDiagnostics {
-                            unmatched_replies: command.kind() as u64,
+                            unmatched_replies: diag_count(command.kind() as u64),
                             ..crate::ParserDiagnostics::default()
                         },
                     )));
@@ -8410,7 +8444,7 @@ mod tests {
                     monotonic_ms: ms(2)
                 },
                 DeviceEvent::Diagnostics(crate::ParserDiagnostics {
-                    unmatched_replies: crate::CommandKind::RequestIdentity as u64,
+                    unmatched_replies: diag_count(crate::CommandKind::RequestIdentity as u64),
                     ..crate::ParserDiagnostics::default()
                 }),
                 DeviceEvent::Telemetry(TelemetryDelta {
@@ -8436,7 +8470,7 @@ mod tests {
         assert_eq!(
             replay_events(&records).as_slice(),
             &[DeviceEvent::Diagnostics(crate::ParserDiagnostics {
-                unmatched_replies: crate::CommandKind::RequestTelemetry as u64,
+                unmatched_replies: diag_count(crate::CommandKind::RequestTelemetry as u64),
                 ..crate::ParserDiagnostics::default()
             })]
         );

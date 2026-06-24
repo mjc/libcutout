@@ -5,12 +5,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
     GattRoles, MonotonicMillis, MonotonicMillisDto, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticsDto, ParserErrorDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
-    ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto, TransportActionDto, VerificationStatus, VerificationStatusDto,
-    VerifiedValue, WallClockUnixMillis,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto,
+    SemanticEventCountDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
+    TransportActionDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -163,6 +164,32 @@ impl From<SemanticEventCountDto> for MobileSemanticEventCountDto {
         Self {
             count: value.count as u64,
         }
+    }
+}
+
+/// Mobile dropped parser byte count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserDroppedBytesDto {
+    /// Count of dropped bytes.
+    pub bytes: u64,
+}
+
+impl From<ParserDroppedBytesDto> for MobileParserDroppedBytesDto {
+    fn from(value: ParserDroppedBytesDto) -> Self {
+        Self { bytes: value.bytes }
+    }
+}
+
+/// Mobile parser diagnostic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserDiagnosticCountDto {
+    /// Count of parser diagnostic events.
+    pub count: u64,
+}
+
+impl From<ParserDiagnosticCountDto> for MobileParserDiagnosticCountDto {
+    fn from(value: ParserDiagnosticCountDto) -> Self {
+        Self { count: value.count }
     }
 }
 
@@ -377,14 +404,26 @@ pub struct MobileTelemetrySnapshotDto {
 /// Mobile parser diagnostics DTO.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileParserDiagnosticsDto {
+    /// Bytes dropped while recovering from malformed or excessive input.
+    pub dropped_bytes: MobileParserDroppedBytesDto,
+
+    /// Parser resynchronization attempts.
+    pub resyncs: MobileParserDiagnosticCountDto,
+
     /// Malformed frame count.
-    pub malformed_frames: u64,
+    pub malformed_frames: MobileParserDiagnosticCountDto,
 
     /// Bad checksum count.
-    pub bad_checksums: u64,
+    pub bad_checksums: MobileParserDiagnosticCountDto,
+
+    /// Parser timeout count.
+    pub timeouts: MobileParserDiagnosticCountDto,
 
     /// Oversized frame count.
-    pub oversized_frames: u64,
+    pub oversized_frames: MobileParserDiagnosticCountDto,
+
+    /// Unmatched reply count.
+    pub unmatched_replies: MobileParserDiagnosticCountDto,
 }
 
 /// Mobile Falcon construction profile.
@@ -1140,9 +1179,13 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
 impl From<ParserDiagnosticsDto> for MobileParserDiagnosticsDto {
     fn from(diagnostics: ParserDiagnosticsDto) -> Self {
         Self {
-            malformed_frames: diagnostics.malformed_frames,
-            bad_checksums: diagnostics.bad_checksums,
-            oversized_frames: diagnostics.oversized_frames,
+            dropped_bytes: diagnostics.dropped_bytes.into(),
+            resyncs: diagnostics.resyncs.into(),
+            malformed_frames: diagnostics.malformed_frames.into(),
+            bad_checksums: diagnostics.bad_checksums.into(),
+            timeouts: diagnostics.timeouts.into(),
+            oversized_frames: diagnostics.oversized_frames.into(),
+            unmatched_replies: diagnostics.unmatched_replies.into(),
         }
     }
 }
@@ -1284,6 +1327,10 @@ mod tests {
         MobileSemanticEventCountDto { count: value }
     }
 
+    const fn mobile_diag_count(value: u64) -> MobileParserDiagnosticCountDto {
+        MobileParserDiagnosticCountDto { count: value }
+    }
+
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
             family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
@@ -1396,7 +1443,7 @@ mod tests {
     fn aero_wrapper_constructs_and_exposes_diagnostics() {
         let session = AeroReadOnlySession::new();
 
-        assert_eq!(session.diagnostics().malformed_frames, 0);
+        assert_eq!(session.diagnostics().malformed_frames, mobile_diag_count(0));
     }
 
     #[test]

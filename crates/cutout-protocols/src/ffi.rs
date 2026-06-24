@@ -266,8 +266,8 @@ where
 mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        MonotonicMillis, MonotonicMillisDto, SafetyClassDto, SessionEventDto, SessionInputDto,
-        SessionOutputDto, TransportActionDto,
+        MonotonicMillis, MonotonicMillisDto, ParserDiagnosticCountDto, SafetyClassDto,
+        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
     };
 
     use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -395,7 +395,10 @@ mod tests {
         });
 
         assert_eq!(session.current_snapshot().at_ms, None);
-        assert!(session.diagnostics().malformed_frames > 0);
+        assert_eq!(
+            session.diagnostics().malformed_frames,
+            ParserDiagnosticCountDto { count: 1 }
+        );
         assert!(session.drain_outputs().iter().any(|output| {
             matches!(
                 output,

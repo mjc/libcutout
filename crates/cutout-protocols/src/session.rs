@@ -1620,7 +1620,7 @@ mod tests {
             diagnostic_counter_events(&output)
                 .last()
                 .map(|diagnostics| diagnostics.malformed_frames),
-            Some(1)
+            Some(cutout_core::ParserDiagnosticCount::new(1))
         );
     }
 

@@ -4,11 +4,12 @@ use crate::{
     DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind,
     DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState,
     Measured, MonotonicMillis, NotificationByteLen, NotificationEvidence,
-    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, PayloadBodyLen,
-    Percent, Power, ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
-    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-    TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserGapEvidence, PayloadBodyLen, Percent, Power, ProtocolFamily, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
+    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
+    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, ValueQuality, ValueSource,
+    VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -84,6 +85,32 @@ pub struct SemanticEventCountDto {
 
 impl SemanticEventCountDto {
     fn from_core(value: SemanticEventCount) -> Self {
+        Self { count: value.get() }
+    }
+}
+
+/// UniFFI-ready dropped parser byte count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDroppedBytesDto {
+    /// Count of dropped bytes.
+    pub bytes: u64,
+}
+
+impl ParserDroppedBytesDto {
+    fn from_core(value: ParserDroppedBytes) -> Self {
+        Self { bytes: value.get() }
+    }
+}
+
+/// UniFFI-ready parser diagnostic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDiagnosticCountDto {
+    /// Count of parser diagnostic events.
+    pub count: u64,
+}
+
+impl ParserDiagnosticCountDto {
+    fn from_core(value: ParserDiagnosticCount) -> Self {
         Self { count: value.get() }
     }
 }
@@ -1625,37 +1652,37 @@ impl From<ControlRefusalReason> for ControlRefusalReasonDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParserDiagnosticsDto {
     /// Bytes dropped while recovering from malformed or excessive input.
-    pub dropped_bytes: u64,
+    pub dropped_bytes: ParserDroppedBytesDto,
 
     /// Parser resynchronization attempts.
-    pub resyncs: u64,
+    pub resyncs: ParserDiagnosticCountDto,
 
     /// Frames rejected because their checksum did not match.
-    pub bad_checksums: u64,
+    pub bad_checksums: ParserDiagnosticCountDto,
 
     /// Parser deadlines that elapsed before expected data arrived.
-    pub timeouts: u64,
+    pub timeouts: ParserDiagnosticCountDto,
 
     /// Frames rejected because they exceeded parser limits.
-    pub oversized_frames: u64,
+    pub oversized_frames: ParserDiagnosticCountDto,
 
     /// Frames rejected because their structure was invalid.
-    pub malformed_frames: u64,
+    pub malformed_frames: ParserDiagnosticCountDto,
 
     /// Replies that could not be matched to an in-flight request.
-    pub unmatched_replies: u64,
+    pub unmatched_replies: ParserDiagnosticCountDto,
 }
 
 impl From<ParserDiagnostics> for ParserDiagnosticsDto {
     fn from(diagnostics: ParserDiagnostics) -> Self {
         Self {
-            dropped_bytes: diagnostics.dropped_bytes,
-            resyncs: diagnostics.resyncs,
-            bad_checksums: diagnostics.bad_checksums,
-            timeouts: diagnostics.timeouts,
-            oversized_frames: diagnostics.oversized_frames,
-            malformed_frames: diagnostics.malformed_frames,
-            unmatched_replies: diagnostics.unmatched_replies,
+            dropped_bytes: ParserDroppedBytesDto::from_core(diagnostics.dropped_bytes),
+            resyncs: ParserDiagnosticCountDto::from_core(diagnostics.resyncs),
+            bad_checksums: ParserDiagnosticCountDto::from_core(diagnostics.bad_checksums),
+            timeouts: ParserDiagnosticCountDto::from_core(diagnostics.timeouts),
+            oversized_frames: ParserDiagnosticCountDto::from_core(diagnostics.oversized_frames),
+            malformed_frames: ParserDiagnosticCountDto::from_core(diagnostics.malformed_frames),
+            unmatched_replies: ParserDiagnosticCountDto::from_core(diagnostics.unmatched_replies),
         }
     }
 }
