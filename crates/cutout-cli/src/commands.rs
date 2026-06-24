@@ -23,10 +23,11 @@ use cutout_core::{
     BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
     CaptureSessionLabel, CatalogModelResolution, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    ModelCatalog, NotificationByteLen, ParserDiagnostics, PevcapCapture, PevcapDirection,
-    PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily,
-    ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput, SettingsReadback,
-    TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
+    ModelCatalog, MonotonicMillis, NotificationByteLen, ParserDiagnostics, PevcapCapture,
+    PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
+    ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
+    SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+    VerifiedValue,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -454,7 +455,7 @@ const fn notification_ingest_monotonic_ms(
         | cutout_core::NotificationIngestOutcome::ParserGap { notification, .. }
         | cutout_core::NotificationIngestOutcome::BufferedFragment(notification)
         | cutout_core::NotificationIngestOutcome::Ignored(notification) => {
-            notification.monotonic_ms
+            notification.monotonic_ms.get()
         }
     })
 }
@@ -622,8 +623,8 @@ fn render_diagnostic_error_jsonl(
         "kind": diagnostic_error_kind_name(error.kind),
         "claimed_len": error.claimed_len,
         "max_len": error.max_len,
-        "elapsed_ms": error.elapsed_ms,
-        "timeout_ms": error.timeout_ms,
+        "elapsed_ms": error.elapsed_ms.map(MonotonicMillis::get),
+        "timeout_ms": error.timeout_ms.map(MonotonicMillis::get),
     }))
 }
 
@@ -1682,21 +1683,21 @@ fn encode_raw_capture_pevcap(
         .collect::<Vec<_>>();
     let gatt_fingerprints = summary.gatt_fingerprints();
     let mut pevcap_records = Vec::with_capacity(records.len().saturating_add(2));
-    pevcap_records.push(PevcapRecord::link_up(0, write_limit));
+    pevcap_records.push(PevcapRecord::link_up(MonotonicMillis::new(0), write_limit));
     pevcap_records.extend(records.iter().map(|record| {
         PevcapRecord::inbound_notification(
-            record.monotonic_ms.get(),
+            MonotonicMillis::new(record.monotonic_ms.get()),
             gatt_channel_from_uuid(record.characteristic),
             gatt_channel_from_uuid(record.service),
             record.bytes.to_raw_bytes(),
         )
     }));
-    pevcap_records.push(PevcapRecord::link_down(
+    pevcap_records.push(PevcapRecord::link_down(MonotonicMillis::new(
         records
             .last()
             .map_or(MonotonicMs::default(), |record| record.monotonic_ms)
             .get(),
-    ));
+    )));
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
     capture_annotations.push("cutout-cli subscribe-raw");
     capture_annotations.extend_from_slice(annotations);
@@ -2313,14 +2314,18 @@ mod tests {
         PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        DeviceEvent, GattChannel, NotificationByteLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
-        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, VerificationStatus,
-        VerifiedValue, WriteMode,
+        DeviceEvent, GattChannel, MonotonicMillis, NotificationByteLen, PayloadBodyLen,
+        PevcapHeader, PevcapRecord, ProtocolFamily, ProtocolSelector, SemanticEventCount,
+        SessionInput, VerificationStatus, VerifiedValue, WriteMode,
     };
     use uuid::Uuid;
 
     use super::*;
     use crate::cli::ScanArgs;
+
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
 
     struct DropSignal(mpsc::Sender<()>);
 
@@ -2398,13 +2403,13 @@ mod tests {
             header,
             vec![
                 PevcapRecord::outbound_write(
-                    7,
+                    ms(7),
                     characteristic,
                     WriteMode::WithoutResponse,
                     b"N".to_vec(),
                 ),
                 PevcapRecord::inbound_notification(
-                    9,
+                    ms(9),
                     characteristic,
                     service,
                     b"NAME=Falcon".to_vec(),
@@ -2417,7 +2422,7 @@ mod tests {
         sample_falcon_replay_capture_with_records(
             annotations,
             vec![PevcapRecord::inbound_notification(
-                42,
+                ms(42),
                 BEGODE_DATA_CHANNEL,
                 BEGODE_DATA_CHANNEL,
                 hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
@@ -2468,7 +2473,7 @@ mod tests {
         PevcapCapture::new(
             header,
             vec![PevcapRecord::inbound_notification(
-                42,
+                ms(42),
                 VETERAN_DATA_CHANNEL,
                 VETERAN_DATA_CHANNEL,
                 hex_literal::hex!(
@@ -2499,7 +2504,7 @@ mod tests {
         PevcapCapture::new(
             header,
             vec![PevcapRecord::inbound_notification(
-                42,
+                ms(42),
                 VETERAN_DATA_CHANNEL,
                 VETERAN_DATA_CHANNEL,
                 hex_literal::hex!(
@@ -2820,13 +2825,13 @@ mod tests {
         assert!(matches!(
             replay[0],
             SessionOutput::Event(DeviceEvent::LinkUp(link))
-                if link.monotonic_ms == 0 && link.max_write_len == Some(185)
+                if link.monotonic_ms == ms(0) && link.max_write_len == Some(185)
         ));
         assert!(matches!(
             replay[1],
             SessionOutput::NotificationIngest(
                 cutout_core::NotificationIngestOutcome::Ignored(evidence)
-            ) if evidence.monotonic_ms == 7 && evidence.len == NotificationByteLen::new(4)
+            ) if evidence.monotonic_ms == ms(7) && evidence.len == NotificationByteLen::new(4)
         ));
         assert!(matches!(
             replay[2],
@@ -3020,7 +3025,7 @@ mod tests {
             ProtocolFamily::VeteranLeaperkimNosfet,
             VETERAN_DATA_CHANNEL,
             NotificationByteLen::new(75),
-            42,
+            ms(42),
             cutout_core::ReservedPayloadEvidence {
                 classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::new(24),
@@ -3222,8 +3227,8 @@ mod tests {
     #[test]
     fn diagnostic_error_jsonl_preserves_kind_and_fixed_unit_details() {
         let error = DiagnosticError::from_parser_error(cutout_core::ParserError::Timeout {
-            elapsed_ms: 1_234,
-            timeout_ms: 5_000,
+            elapsed_ms: ms(1_234),
+            timeout_ms: ms(5_000),
         });
 
         let line = render_diagnostic_error_jsonl(JsonSequence::new(3), error)
@@ -3653,13 +3658,13 @@ mod tests {
             &[],
             vec![
                 PevcapRecord::inbound_notification(
-                    41,
+                    ms(41),
                     BEGODE_DATA_CHANNEL,
                     BEGODE_DATA_CHANNEL,
                     hex_literal::hex!("55aa2710000003b6ff9c0019001a0190000001035a5a5a5a").to_vec(),
                 ),
                 PevcapRecord::inbound_notification(
-                    42,
+                    ms(42),
                     BEGODE_DATA_CHANNEL,
                     BEGODE_DATA_CHANNEL,
                     hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
@@ -3685,7 +3690,7 @@ mod tests {
         let capture = sample_falcon_replay_capture_with_records(
             &[],
             vec![PevcapRecord::inbound_notification(
-                41,
+                ms(41),
                 BEGODE_DATA_CHANNEL,
                 BEGODE_DATA_CHANNEL,
                 hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a").to_vec(),
@@ -3906,7 +3911,7 @@ mod tests {
             distance: Some(distance(1_551_169_000)),
             pitch: Some(angle_mdeg(69_060)),
             battery_percent_estimated: Some(percent_estimated(47)),
-            ..cutout_core::TelemetryDelta::empty(42)
+            ..cutout_core::TelemetryDelta::empty(ms(42))
         });
 
         assert_eq!(

@@ -668,6 +668,10 @@ fn veteran_pwm(raw_pwm: u16) -> i16 {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
+
     use super::*;
 
     const fn pct(value: u8) -> Percent {
@@ -859,7 +863,7 @@ mod tests {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
         let telemetry =
             VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
-        let delta = telemetry.to_delta(42);
+        let delta = telemetry.to_delta(ms(42));
 
         assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
         assert_eq!(
@@ -1232,9 +1236,9 @@ mod tests {
     fn veteran_telemetry_maps_voltage_and_estimated_percent_to_delta() {
         let delta = VeteranTelemetry::decode(&live_aero_frame())
             .expect("telemetry decodes")
-            .to_delta(42);
+            .to_delta(ms(42));
 
-        assert_eq!(delta.at_ms, 42);
+        assert_eq!(delta.at_ms, ms(42));
         assert_eq!(
             delta.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(0)))
@@ -1332,7 +1336,7 @@ mod tests {
         telemetry.speed = Speed::from_millimetres_per_second(deci_kmh_to_mm_s(36));
         telemetry.phase_current = PhaseCurrent::from_milliamps(-1_700);
 
-        let delta = telemetry.to_delta(42);
+        let delta = telemetry.to_delta(ms(42));
 
         assert_eq!(
             delta.speed,

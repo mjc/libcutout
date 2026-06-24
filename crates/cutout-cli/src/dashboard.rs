@@ -3423,13 +3423,18 @@ mod tests {
     };
     use cutout_core::{
         BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticDetail,
-        DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, NotificationByteLen,
-        NotificationIngestOutcome, ParserError, ParserGapEvidence, PayloadBodyLen, ProtocolFamily,
-        ProtocolSelector, RawFieldValue, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
-        SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+        DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
+        NotificationByteLen, NotificationIngestOutcome, ParserError, ParserGapEvidence,
+        PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue, ReadOnlyResponse,
+        ReservedPayloadEvidence, SettingsEntry, SettingsReadback, TelemetrySnapshot, ValueQuality,
+        ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
+
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
 
     const fn protocol_writes(value: usize) -> ProtocolWriteCount {
         ProtocolWriteCount::new(value)
@@ -3518,7 +3523,7 @@ mod tests {
         .expect("fixture frame is valid");
         let delta = VeteranTelemetry::decode(&frame)
             .expect("fixture telemetry decodes")
-            .to_delta(42);
+            .to_delta(ms(42));
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(delta);
         snapshot
@@ -4121,7 +4126,7 @@ mod tests {
                     power: Some(power(-1_046_560)),
                     controller_temperature: Some(temperature(36_600)),
                     battery_percent_reported: Some(percent_reported(77)),
-                    ..TelemetryDelta::empty(42)
+                    ..TelemetryDelta::empty(ms(42))
                 },
             }],
             disconnects: disconnects(0),
@@ -4197,7 +4202,7 @@ mod tests {
                 delta: TelemetryDelta {
                     voltage: Some(voltage(117_600)),
                     battery_percent_estimated: Some(percent_estimated(78)),
-                    ..TelemetryDelta::empty(7)
+                    ..TelemetryDelta::empty(ms(7))
                 },
             }],
             ..empty_session_bridge_report()
@@ -4272,7 +4277,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
                 NotificationByteLen::new(75),
-                4,
+                ms(4),
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::new(24),
@@ -4398,7 +4403,7 @@ mod tests {
             motor_temperature: Some(temperature(44_600)),
             distance: Some(distance(999_000)),
             pitch: Some(angle_mdeg(-3_000)),
-            ..TelemetryDelta::empty(42)
+            ..TelemetryDelta::empty(ms(42))
         };
 
         assert_eq!(
@@ -4406,7 +4411,7 @@ mod tests {
             "speed=10mph voltage=118V battery=78% current=-12A power=-1468W temperature=44C distance=999 m pitch=-3deg"
         );
         assert_eq!(
-            TelemetryDeltaLog(TelemetryDelta::empty(42)).to_string(),
+            TelemetryDeltaLog(TelemetryDelta::empty(ms(42))).to_string(),
             "unmapped"
         );
     }
@@ -4420,7 +4425,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
                 NotificationByteLen::new(75),
-                4,
+                ms(4),
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(sel(8)),
                     body_len: PayloadBodyLen::new(24),
@@ -4438,7 +4443,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
                 NotificationByteLen::new(75),
-                9,
+                ms(9),
                 ParserGapEvidence {
                     classifier: cutout_core::PayloadClassifier::tag(cutout_core::ProtocolTag::new(
                         0x1234,
@@ -4501,7 +4506,7 @@ mod tests {
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
                         NotificationByteLen::new(20),
-                        3,
+                        ms(3),
                     ),
                 },
                 SessionBridgeEvent::NotificationIngest {
@@ -4510,7 +4515,7 @@ mod tests {
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
                         NotificationByteLen::new(75),
-                        4,
+                        ms(4),
                         ReservedPayloadEvidence {
                             classifier: cutout_core::PayloadClassifier::selector(
                                 ProtocolSelector::new(8),
@@ -4526,7 +4531,7 @@ mod tests {
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
                         NotificationByteLen::new(77),
-                        5,
+                        ms(5),
                         ParserGapEvidence {
                             classifier: cutout_core::PayloadClassifier::selector(
                                 ProtocolSelector::new(9),
@@ -4541,7 +4546,7 @@ mod tests {
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
                         NotificationByteLen::new(77),
-                        6,
+                        ms(6),
                         ParserError::BadChecksum,
                     ),
                 },
@@ -4550,7 +4555,7 @@ mod tests {
                     outcome: NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
                         NotificationByteLen::new(20),
-                        7,
+                        ms(7),
                     ),
                 },
             ],
@@ -4693,7 +4698,7 @@ mod tests {
                 delta: TelemetryDelta {
                     voltage: Some(voltage(108_760)),
                     battery_percent_estimated: Some(percent_estimated(47)),
-                    ..TelemetryDelta::empty(7)
+                    ..TelemetryDelta::empty(ms(7))
                 },
             }],
             disconnects: disconnects(0),
@@ -4823,7 +4828,7 @@ mod tests {
             speed: Some(speed(4_470)),
             voltage: Some(voltage(108_760)),
             battery_percent_estimated: Some(percent_estimated(47)),
-            ..TelemetryDelta::empty(42)
+            ..TelemetryDelta::empty(ms(42))
         };
         let report = SessionBridgeReport {
             protocol_writes: protocol_writes(0),
@@ -5145,7 +5150,7 @@ mod tests {
                     distance: Some(distance(1_551_169_000)),
                     pitch: Some(angle_mdeg(69_060)),
                     battery_percent_estimated: Some(percent_estimated(47)),
-                    ..TelemetryDelta::empty(42)
+                    ..TelemetryDelta::empty(ms(42))
                 },
             }],
             disconnects: disconnects(0),

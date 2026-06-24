@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticsDto,
-    ParserErrorDto, ParserGapEvidenceDto, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
+    GattRoles, MonotonicMillis, NotificationEvidenceDto, NotificationIngestOutcomeDto,
+    ParserDiagnosticsDto, ParserErrorDto, ParserGapEvidenceDto, PevcapCapture, PevcapEncoding,
+    PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
     ReservedPayloadEvidenceDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
     TransportActionDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
 };
@@ -65,8 +65,8 @@ pub struct MobileSessionInputDto {
     /// Input kind.
     pub kind: MobileSessionInputKindDto,
 
-    /// Monotonic timestamp in milliseconds.
-    pub monotonic_ms: u64,
+    /// Monotonic timestamp.
+    pub monotonic_ms: MobileMonotonicMillisDto,
 
     /// Maximum write length, when known.
     pub max_write_len: Option<u16>,
@@ -79,6 +79,23 @@ pub struct MobileSessionInputDto {
 
     /// Command for command inputs.
     pub command: Option<MobileCommandDto>,
+}
+
+/// Mobile DTO monotonic timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMonotonicMillisDto {
+    /// Timestamp value in milliseconds.
+    pub milliseconds: u64,
+}
+
+impl MobileMonotonicMillisDto {
+    fn into_core_ffi(self) -> u64 {
+        self.milliseconds
+    }
+
+    fn into_core(self) -> MonotonicMillis {
+        MonotonicMillis::new(self.milliseconds)
+    }
 }
 
 /// Mobile output kind.
@@ -501,26 +518,33 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records a link-up lifecycle event.
-    pub fn record_link_up(&self, monotonic_ms: u64, max_write_len: Option<u16>) {
+    pub fn record_link_up(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+        max_write_len: Option<u16>,
+    ) {
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::link_up(monotonic_ms, max_write_len));
+            .push(PevcapRecord::link_up(
+                monotonic_ms.into_core(),
+                max_write_len,
+            ));
     }
 
     /// Records a link-down lifecycle event.
-    pub fn record_link_down(&self, monotonic_ms: u64) {
+    pub fn record_link_down(&self, monotonic_ms: MobileMonotonicMillisDto) {
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::link_down(monotonic_ms));
+            .push(PevcapRecord::link_down(monotonic_ms.into_core()));
     }
 
     /// Records inbound notification bytes.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_notification(
         &self,
-        monotonic_ms: u64,
+        monotonic_ms: MobileMonotonicMillisDto,
         characteristic: Vec<u8>,
         service: Vec<u8>,
         bytes: Vec<u8>,
@@ -529,7 +553,7 @@ impl MobilePevcapCaptureBuilder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(PevcapRecord::inbound_notification(
-                monotonic_ms,
+                monotonic_ms.into_core(),
                 mobile_gatt_channel(&characteristic),
                 mobile_gatt_channel(&service),
                 bytes,
@@ -767,17 +791,17 @@ impl From<MobileSessionInputDto> for SessionInputDto {
     fn from(input: MobileSessionInputDto) -> Self {
         match input.kind {
             MobileSessionInputKindDto::LinkUp => Self::LinkUp {
-                monotonic_ms: input.monotonic_ms,
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
                 max_write_len: input.max_write_len,
             },
             MobileSessionInputKindDto::LinkDown => Self::LinkDown,
             MobileSessionInputKindDto::Notification => Self::Notification {
                 channel: mobile_channel_bytes(&input.channel),
                 bytes: input.bytes,
-                monotonic_ms: input.monotonic_ms,
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
             MobileSessionInputKindDto::Tick => Self::Tick {
-                monotonic_ms: input.monotonic_ms,
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
             MobileSessionInputKindDto::Command => Self::Command(
                 input
@@ -1150,6 +1174,12 @@ impl FalconReadOnlySession {
 mod tests {
     use super::*;
 
+    const fn ms(value: u64) -> MobileMonotonicMillisDto {
+        MobileMonotonicMillisDto {
+            milliseconds: value,
+        }
+    }
+
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
             family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
@@ -1271,7 +1301,7 @@ mod tests {
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
-            monotonic_ms: 0,
+            monotonic_ms: ms(0),
             max_write_len: None,
             channel: Vec::new(),
             bytes: Vec::new(),
@@ -1302,7 +1332,7 @@ mod tests {
         let session = AeroReadOnlySession::new();
         let link_result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::LinkUp,
-            monotonic_ms: 1,
+            monotonic_ms: ms(1),
             max_write_len: Some(185),
             channel: Vec::new(),
             bytes: Vec::new(),
@@ -1318,7 +1348,7 @@ mod tests {
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Notification,
-            monotonic_ms: 2,
+            monotonic_ms: ms(2),
             max_write_len: None,
             channel,
             bytes: hex_literal::hex!(
@@ -1367,9 +1397,9 @@ mod tests {
         builder.add_annotation("capture_privacy=redacted".into());
         builder.add_annotation("capture_distribution=redistributable".into());
         builder.add_annotation("capture_evidence=hardware_tested".into());
-        builder.record_link_up(1, Some(185));
+        builder.record_link_up(ms(1), Some(185));
         builder.record_notification(
-            2,
+            ms(2),
             vec![0x11; 16],
             vec![0x22; 16],
             vec![0xde, 0xad, 0xbe, 0xef],
@@ -1471,7 +1501,7 @@ mod tests {
     fn mobile_capture_builder_exports_binary_container() {
         let builder =
             MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
-        builder.record_link_down(9);
+        builder.record_link_down(ms(9));
 
         let bytes = builder
             .export(MobilePevcapEncodingDto::Binary)
@@ -1481,6 +1511,6 @@ mod tests {
 
         assert_eq!(capture.header.platform_id, "ios-corebluetooth");
         assert_eq!(capture.records.len(), 1);
-        assert_eq!(capture.records[0].monotonic_ms, 9);
+        assert_eq!(capture.records[0].monotonic_ms, MonotonicMillis::new(9));
     }
 }

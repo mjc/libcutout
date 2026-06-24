@@ -23,6 +23,10 @@ use uuid::Uuid;
 use super::crate_name;
 
 type WriteRecord = (Uuid, Bytes, WriteMode);
+
+const fn ms(value: u64) -> cutout_core::MonotonicMillis {
+    cutout_core::MonotonicMillis::new(value)
+}
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
 type NotificationLog = Arc<Mutex<Vec<crate::BtleNotification>>>;
 
@@ -780,7 +784,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     );
     assert_eq!(pevcap.records.len(), 4);
     assert_eq!(pevcap.records[0].direction, PevcapDirection::LinkUp);
-    assert_eq!(pevcap.records[0].monotonic_ms, 0);
+    assert_eq!(pevcap.records[0].monotonic_ms, ms(0));
     assert_eq!(pevcap.records[0].link_max_write_len, Some(23));
     assert_eq!(pevcap.records[1].direction, PevcapDirection::Outbound);
     assert_eq!(
@@ -793,7 +797,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     assert_eq!(pevcap.records[2].service, advertised_service);
     assert_eq!(pevcap.records[2].bytes.as_ref(), b"NAME=NF2557");
     assert_eq!(pevcap.records[3].direction, PevcapDirection::LinkDown);
-    assert_eq!(pevcap.records[3].monotonic_ms, 4);
+    assert_eq!(pevcap.records[3].monotonic_ms, ms(4));
 }
 
 fn pevcap_conversion_capture_records() -> Vec<crate::SessionCaptureRecord> {
@@ -1235,7 +1239,7 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
             NotificationByteLen::new(77),
-            7,
+            ms(7),
             SemanticEventCount::new(5),
         ),
     )];
@@ -1268,7 +1272,7 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
             NotificationByteLen::new(20),
-            3,
+            ms(3),
         ),
     )];
 
@@ -1290,7 +1294,7 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
         NotificationIngestOutcome::ignored_wrong_channel(
             GattChannel::from_bytes([0xA1; 16]),
             NotificationByteLen::new(20),
-            3,
+            ms(3),
         ),
     )];
 
@@ -1313,7 +1317,7 @@ fn drive_session_reports_fragment_notifications_as_typed_ingest_events() {
         ProtocolFamily::VeteranLeaperkimNosfet,
         GattChannel::from_bytes([0xA1; 16]),
         NotificationByteLen::new(20),
-        3,
+        ms(3),
     );
 
     crate::report::process_notification_ingest_outcome(
@@ -1338,12 +1342,12 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
             NotificationByteLen::new(77),
-            3,
+            ms(3),
             SemanticEventCount::new(5),
         )),
         SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
             voltage: Some(voltage(126_000)),
-            ..TelemetryDelta::empty(0)
+            ..TelemetryDelta::empty(ms(0))
         })),
     ];
 
@@ -1367,7 +1371,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
             NotificationByteLen::new(75),
-            4,
+            ms(4),
             ReservedPayloadEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::new(24),
@@ -1380,7 +1384,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
             NotificationByteLen::new(77),
-            5,
+            ms(5),
             ParserGapEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                 body_len: PayloadBodyLen::new(26),
@@ -1392,7 +1396,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
             NotificationByteLen::new(77),
-            6,
+            ms(6),
             ParserError::BadChecksum,
         ),
     )];
@@ -2221,7 +2225,7 @@ impl ProtocolSession for BridgeSession {
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         GattChannel::from_bytes([0xA1; 16]),
                         NotificationByteLen::new(2),
-                        0,
+                        ms(0),
                         SemanticEventCount::new(1),
                     ),
                 ));
@@ -2230,7 +2234,7 @@ impl ProtocolSession for BridgeSession {
                         speed: Some(speed(1_200)),
                         voltage: Some(voltage(84_200)),
                         battery_percent_estimated: Some(battery_percent_estimated(61)),
-                        ..TelemetryDelta::empty(0)
+                        ..TelemetryDelta::empty(ms(0))
                     },
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(

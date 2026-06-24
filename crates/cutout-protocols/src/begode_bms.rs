@@ -222,6 +222,10 @@ const fn source_reported<T>(value: T) -> Measured<T> {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
+
     use cutout_core::{
         BatteryPageKind, Measured, ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource,
         VerificationStatus,
@@ -262,12 +266,12 @@ mod tests {
         let summary = BegodeBmsSummary::decode(&frame).expect("summary decodes");
 
         assert_eq!(
-            summary.to_delta(77),
+            summary.to_delta(ms(77)),
             TelemetryDelta {
                 voltage: Some(source_reported(Voltage::from_millivolts(80_000))),
                 battery_current: Some(source_reported(BatteryCurrent::from_milliamps(-10_000))),
                 battery_temperature: Some(source_reported(Temperature::from_millicelsius(25_000,))),
-                ..TelemetryDelta::empty(77)
+                ..TelemetryDelta::empty(ms(77))
             }
         );
     }
@@ -282,10 +286,10 @@ mod tests {
             BegodePackVoltageProfile::Begode84VFullCharge,
         )
         .expect("live A decodes")
-        .to_delta(1);
+        .to_delta(ms(1));
         let bms_delta = BegodeBmsSummary::decode(&bms_frame)
             .expect("summary decodes")
-            .to_delta(2);
+            .to_delta(ms(2));
 
         assert_eq!(
             live_delta.voltage,

@@ -3,11 +3,12 @@ use crate::{
     BmsPackCurrent, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason,
     DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind,
     DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState,
-    Measured, NotificationEvidence, NotificationIngestOutcome, ParserDiagnostics, ParserError,
-    ParserGapEvidence, Percent, Power, ProtocolFamily, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput, SessionOutput,
-    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-    TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    Measured, MonotonicMillis, NotificationEvidence, NotificationIngestOutcome, ParserDiagnostics,
+    ParserError, ParserGapEvidence, Percent, Power, ProtocolFamily, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput,
+    SessionOutput, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot,
+    Temperature, TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -930,7 +931,7 @@ impl From<SessionInput<'_>> for SessionInputDto {
     fn from(input: SessionInput<'_>) -> Self {
         match input {
             SessionInput::LinkUp(link) => Self::LinkUp {
-                monotonic_ms: link.monotonic_ms,
+                monotonic_ms: link.monotonic_ms.get(),
                 max_write_len: link.max_write_len,
             },
             SessionInput::LinkDown => Self::LinkDown,
@@ -941,9 +942,11 @@ impl From<SessionInput<'_>> for SessionInputDto {
             } => Self::Notification {
                 channel: channel.as_bytes(),
                 bytes: bytes.to_vec(),
-                monotonic_ms,
+                monotonic_ms: monotonic_ms.get(),
             },
-            SessionInput::Tick { monotonic_ms } => Self::Tick { monotonic_ms },
+            SessionInput::Tick { monotonic_ms } => Self::Tick {
+                monotonic_ms: monotonic_ms.get(),
+            },
             SessionInput::Command(command) => Self::Command(command.into()),
         }
     }
@@ -958,7 +961,7 @@ impl SessionInputDto {
                 monotonic_ms,
                 max_write_len,
             } => SessionInput::LinkUp(crate::LinkInfo {
-                monotonic_ms: *monotonic_ms,
+                monotonic_ms: MonotonicMillis::new(*monotonic_ms),
                 max_write_len: *max_write_len,
             }),
             Self::LinkDown => SessionInput::LinkDown,
@@ -969,10 +972,10 @@ impl SessionInputDto {
             } => SessionInput::Notification {
                 channel: crate::GattChannel::from_bytes(*channel),
                 bytes: bytes.as_slice(),
-                monotonic_ms: *monotonic_ms,
+                monotonic_ms: MonotonicMillis::new(*monotonic_ms),
             },
             Self::Tick { monotonic_ms } => SessionInput::Tick {
-                monotonic_ms: *monotonic_ms,
+                monotonic_ms: MonotonicMillis::new(*monotonic_ms),
             },
             Self::Command(command) => SessionInput::Command((*command).into()),
         }
@@ -1106,7 +1109,7 @@ impl From<NotificationEvidence> for NotificationEvidenceDto {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.as_bytes(),
             len: evidence.len.get(),
-            monotonic_ms: evidence.monotonic_ms,
+            monotonic_ms: evidence.monotonic_ms.get(),
         }
     }
 }
@@ -1175,8 +1178,8 @@ impl From<ParserError> for ParserErrorDto {
                 elapsed_ms,
                 timeout_ms,
             } => Self::Timeout {
-                elapsed_ms,
-                timeout_ms,
+                elapsed_ms: elapsed_ms.get(),
+                timeout_ms: timeout_ms.get(),
             },
             ParserError::UnmatchedReply => Self::UnmatchedReply,
         }
@@ -1344,11 +1347,13 @@ impl From<DeviceEvent> for SessionEventDto {
     fn from(event: DeviceEvent) -> Self {
         match event {
             DeviceEvent::LinkUp(link) => Self::LinkUp {
-                monotonic_ms: link.monotonic_ms,
+                monotonic_ms: link.monotonic_ms.get(),
                 max_write_len: link.max_write_len,
             },
             DeviceEvent::LinkDown => Self::LinkDown,
-            DeviceEvent::Tick { monotonic_ms } => Self::Tick { monotonic_ms },
+            DeviceEvent::Tick { monotonic_ms } => Self::Tick {
+                monotonic_ms: monotonic_ms.get(),
+            },
             DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
             DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnlyResponse(response.into()),
             DeviceEvent::ControlRefusal(refusal) => Self::ControlRefusal(refusal.into()),
@@ -1410,7 +1415,7 @@ pub struct TelemetryDeltaDto {
 impl From<TelemetryDelta> for TelemetryDeltaDto {
     fn from(delta: TelemetryDelta) -> Self {
         Self {
-            at_ms: delta.at_ms,
+            at_ms: delta.at_ms.get(),
             speed: delta.speed.map(Into::into),
             voltage: delta.voltage.map(Into::into),
             battery_current: delta.battery_current.map(Into::into),
@@ -1481,7 +1486,7 @@ pub struct TelemetrySnapshotDto {
 impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshot) -> Self {
         Self {
-            at_ms: snapshot.at_ms,
+            at_ms: snapshot.at_ms.map(MonotonicMillis::get),
             speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
@@ -1653,8 +1658,8 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
             kind: error.kind.into(),
             claimed_len: error.claimed_len.map(|len| len as u64),
             max_len: error.max_len.map(|len| len as u64),
-            elapsed_ms: error.elapsed_ms,
-            timeout_ms: error.timeout_ms,
+            elapsed_ms: error.elapsed_ms.map(MonotonicMillis::get),
+            timeout_ms: error.timeout_ms.map(MonotonicMillis::get),
         }
     }
 }
@@ -1857,7 +1862,7 @@ mod tests {
         let notification = SessionInputDto::from(SessionInput::Notification {
             channel: GattChannel::from_bytes([0xA1; 16]),
             bytes: &[0xde, 0xad, 0xbe, 0xef],
-            monotonic_ms: 42,
+            monotonic_ms: MonotonicMillis::new(42),
         });
         let command =
             SessionInputDto::from(SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
@@ -1891,7 +1896,7 @@ mod tests {
             SessionInput::Notification {
                 channel: GattChannel::from_bytes([0xA1; 16]),
                 bytes: &[0xde, 0xad, 0xbe, 0xef],
-                monotonic_ms: 42,
+                monotonic_ms: MonotonicMillis::new(42),
             }
         );
     }
@@ -1918,7 +1923,7 @@ mod tests {
             mode: WriteMode::WithoutResponse,
         }));
         let event = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-            monotonic_ms: 7,
+            monotonic_ms: MonotonicMillis::new(7),
             max_write_len: Some(182),
         })));
 
@@ -1942,7 +1947,7 @@ mod tests {
     #[test]
     fn telemetry_snapshot_dto_preserves_optional_fields() {
         let snapshot = TelemetrySnapshot {
-            at_ms: Some(42),
+            at_ms: Some(MonotonicMillis::new(42)),
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200,
             ))),

@@ -24,8 +24,54 @@ pub use ffi::*;
 #[cfg(test)]
 mod gatt_channel_tests;
 
-/// Monotonic timestamp in milliseconds, supplied by the host.
-pub type MonotonicMillis = u64;
+/// Monotonic timestamp supplied by the host.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MonotonicMillis(u64);
+
+impl MonotonicMillis {
+    /// Creates a monotonic timestamp from milliseconds.
+    #[must_use]
+    pub const fn from_milliseconds(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Creates a monotonic timestamp from milliseconds.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self::from_milliseconds(value)
+    }
+
+    /// Returns the timestamp as milliseconds.
+    #[must_use]
+    pub const fn as_milliseconds(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the timestamp as milliseconds.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.as_milliseconds()
+    }
+
+    /// Adds a duration to this timestamp, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn saturating_add_duration(self, duration: Duration) -> Self {
+        Self::from_milliseconds(self.0.saturating_add(duration.as_milliseconds()))
+    }
+
+    /// Returns the elapsed duration between this timestamp and an earlier one.
+    #[must_use]
+    pub const fn saturating_duration_since(self, earlier: Self) -> Duration {
+        Duration::from_milliseconds(self.0.saturating_sub(earlier.0))
+    }
+}
+
+impl fmt::Display for MonotonicMillis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Maximum payload bytes accepted for a single GATT write value.
 pub const MAX_TRANSPORT_WRITE_LEN: usize = 512;
@@ -263,7 +309,7 @@ impl DangerousActuationPolicy {
     pub const fn arm(self, monotonic_ms: MonotonicMillis) -> DangerousActuationArm {
         DangerousActuationArm {
             model: self.model,
-            expires_at_ms: monotonic_ms.saturating_add(self.arm_duration.as_milliseconds()),
+            expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
         }
     }
 
@@ -291,7 +337,7 @@ impl DangerousActuationPolicy {
         if !str_eq(arm.model, self.model) {
             return Err(DangerousActuationRefusal::WrongModel);
         }
-        if monotonic_ms > arm.expires_at_ms {
+        if monotonic_ms.get() > arm.expires_at_ms.get() {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
         if let DeviceCommand::SetRawMotorCurrent { current } = command
@@ -1821,7 +1867,7 @@ impl Default for ParserLimits {
             max_frame_len: 4_096,
             max_buffered_len: 8_192,
             max_queued_outputs: 128,
-            timeout_ms: 1_000,
+            timeout_ms: MonotonicMillis::new(1_000),
         }
     }
 }
@@ -2661,7 +2707,7 @@ impl RequestTracker {
         }
 
         if let Some((last_key, started_at_ms)) = self.last_started {
-            let ready_at_ms = started_at_ms.saturating_add(policy.min_interval.as_milliseconds());
+            let ready_at_ms = started_at_ms.saturating_add_duration(policy.min_interval);
             if last_key == key && now_ms < ready_at_ms {
                 return Err(RequestStartError::Pacing { ready_at_ms });
             }
@@ -2685,8 +2731,8 @@ impl RequestTracker {
         };
         let deadline_ms = active
             .started_at_ms
-            .saturating_add(active.policy.timeout.as_milliseconds());
-        if now_ms < deadline_ms {
+            .saturating_add_duration(active.policy.timeout);
+        if now_ms.get() < deadline_ms.get() {
             RequestTick::Waiting
         } else if active.retries < active.policy.max_retries {
             RequestTick::Retry {
@@ -5192,14 +5238,18 @@ mod tests {
     use super::crate_name;
     use crate::{
         BatteryCurrent, DeviceCommand, DeviceEvent, Distance, Duration, GattChannel, LinkInfo,
-        Measured, Percent, ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta,
-        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
-        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        Measured, MonotonicMillis, Percent, ProtocolSession, SessionInput, SessionOutput, Speed,
+        TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason,
+        ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0xA1; 16]);
+
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
 
     #[test]
     fn exposes_the_expected_name() {
@@ -5357,12 +5407,12 @@ mod tests {
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
             crate::NotificationByteLen::new(20),
-            7,
+            ms(7),
         );
         let ignored = crate::NotificationIngestOutcome::ignored_wrong_channel(
             TEST_CHANNEL,
             crate::NotificationByteLen::new(20),
-            7,
+            ms(7),
         );
 
         assert!(matches!(
@@ -5371,7 +5421,7 @@ mod tests {
                 if evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                     && evidence.channel == TEST_CHANNEL
                     && evidence.len == crate::NotificationByteLen::new(20)
-                    && evidence.monotonic_ms == 7
+                    && evidence.monotonic_ms == ms(7)
         ));
         assert!(matches!(
             ignored,
@@ -5379,7 +5429,7 @@ mod tests {
                 if evidence.family.is_none()
                     && evidence.channel == TEST_CHANNEL
                     && evidence.len == crate::NotificationByteLen::new(20)
-                    && evidence.monotonic_ms == 7
+                    && evidence.monotonic_ms == ms(7)
         ));
     }
 
@@ -5389,7 +5439,7 @@ mod tests {
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
             crate::NotificationByteLen::new(75),
-            12,
+            ms(12),
             crate::ReservedPayloadEvidence {
                 classifier: crate::PayloadClassifier::selector(crate::ProtocolSelector::new(8)),
                 body_len: crate::PayloadBodyLen::new(68),
@@ -5405,7 +5455,7 @@ mod tests {
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::new(75)
-                && notification.monotonic_ms == 12
+                && notification.monotonic_ms == ms(12)
                 && payload.classifier.selector_value() == Some(crate::ProtocolSelector::new(8))
                 && payload.classifier.tag_value().is_none()
                 && payload.body_len == crate::PayloadBodyLen::new(68)
@@ -5419,7 +5469,7 @@ mod tests {
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
             crate::NotificationByteLen::new(77),
-            21,
+            ms(21),
             crate::SemanticEventCount::new(3),
         );
 
@@ -5431,7 +5481,7 @@ mod tests {
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::new(77)
-                && notification.monotonic_ms == 21
+                && notification.monotonic_ms == ms(21)
                 && event_count == crate::SemanticEventCount::new(3)
         ));
     }
@@ -5442,7 +5492,7 @@ mod tests {
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
             crate::NotificationByteLen::new(77),
-            22,
+            ms(22),
             crate::ParserError::BadChecksum,
         );
 
@@ -5462,7 +5512,7 @@ mod tests {
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
             crate::NotificationByteLen::new(77),
-            15,
+            ms(15),
             crate::ParserGapEvidence {
                 classifier: crate::PayloadClassifier::tag(crate::ProtocolTag::new(0x5c)),
                 body_len: crate::PayloadBodyLen::new(70),
@@ -5541,7 +5591,7 @@ mod tests {
         let mut session = EchoSession::default();
         let mut output = Vec::new();
         let link = LinkInfo {
-            monotonic_ms: 10,
+            monotonic_ms: ms(10),
             max_write_len: Some(185),
         };
 
@@ -5564,7 +5614,7 @@ mod tests {
             SessionInput::Notification {
                 channel,
                 bytes: &[0xdc, 0x5a, 0x5c],
-                monotonic_ms: 20,
+                monotonic_ms: ms(20),
             },
             &mut output,
         );
@@ -5576,7 +5626,7 @@ mod tests {
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
                     crate::NotificationByteLen::new(3),
-                    20
+                    ms(20)
                 )
             )]
         );
@@ -5608,24 +5658,24 @@ mod tests {
     fn telemetry_delta_updates_only_present_fields() {
         let mut snapshot = TelemetrySnapshot::default();
         let first = TelemetryDelta {
-            at_ms: 100,
+            at_ms: ms(100),
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_500,
             ))),
             voltage: Some(Measured::reported(Voltage::from_millivolts(81_000))),
             battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
-            ..TelemetryDelta::empty(100)
+            ..TelemetryDelta::empty(ms(100))
         };
         let second = TelemetryDelta {
-            at_ms: 150,
+            at_ms: ms(150),
             motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(42_500))),
-            ..TelemetryDelta::empty(150)
+            ..TelemetryDelta::empty(ms(150))
         };
 
         snapshot.apply_delta(first);
         snapshot.apply_delta(second);
 
-        assert_eq!(snapshot.at_ms, Some(150));
+        assert_eq!(snapshot.at_ms, Some(ms(150)));
         assert_eq!(
             snapshot.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
@@ -5646,10 +5696,10 @@ mod tests {
     fn zero_measurement_is_not_unknown() {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(TelemetryDelta {
-            at_ms: 200,
+            at_ms: ms(200),
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
             battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
-            ..TelemetryDelta::empty(200)
+            ..TelemetryDelta::empty(ms(200))
         });
 
         assert_eq!(
@@ -5706,7 +5756,7 @@ mod tests {
         let estimated_percent = Measured::estimated(Percent::from_percent(76));
 
         snapshot.apply_delta(TelemetryDelta {
-            at_ms: 300,
+            at_ms: ms(300),
             battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200))),
             motor_current: Some(Measured::reported(BatteryCurrent::from_milliamps(3_400))),
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
@@ -5716,7 +5766,7 @@ mod tests {
             battery_temperature: Some(Measured::reported(Temperature::from_millicelsius(31_000))),
             battery_percent_reported: Some(Measured::reported(Percent::from_percent(80))),
             battery_percent_estimated: Some(estimated_percent),
-            ..TelemetryDelta::empty(300)
+            ..TelemetryDelta::empty(ms(300))
         });
 
         assert_eq!(
@@ -5755,17 +5805,17 @@ mod tests {
     #[test]
     fn telemetry_delta_can_be_emitted_as_device_event() {
         let delta = TelemetryDelta {
-            at_ms: 400,
+            at_ms: ms(400),
             distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
-            ..TelemetryDelta::empty(400)
+            ..TelemetryDelta::empty(ms(400))
         };
 
         assert_eq!(
             DeviceEvent::Telemetry(delta),
             DeviceEvent::Telemetry(TelemetryDelta {
-                at_ms: 400,
+                at_ms: ms(400),
                 distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
-                ..TelemetryDelta::empty(400)
+                ..TelemetryDelta::empty(ms(400))
             })
         );
     }
@@ -6920,7 +6970,7 @@ mod tests {
         let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
 
         assert_eq!(
-            policy.authorize(command, 42, None),
+            policy.authorize(command, ms(42), None),
             Err(crate::DangerousActuationRefusal::MissingArm)
         );
     }
@@ -6938,15 +6988,15 @@ mod tests {
             arm_duration: Duration::from_milliseconds(1_000),
         };
         let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
-        let falcon_arm = falcon.arm(10);
-        let aero_arm = aero.arm(10);
+        let falcon_arm = falcon.arm(ms(10));
+        let aero_arm = aero.arm(ms(10));
 
         assert_eq!(
-            falcon.authorize(command, 1_011, Some(falcon_arm)),
+            falcon.authorize(command, ms(1_011), Some(falcon_arm)),
             Err(crate::DangerousActuationRefusal::ExpiredArm)
         );
         assert_eq!(
-            falcon.authorize(command, 42, Some(aero_arm)),
+            falcon.authorize(command, ms(42), Some(aero_arm)),
             Err(crate::DangerousActuationRefusal::WrongModel)
         );
     }
@@ -6958,16 +7008,16 @@ mod tests {
             max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration: Duration::from_milliseconds(1_000),
         };
-        let arm = policy.arm(10);
+        let arm = policy.arm(ms(10));
 
         assert_eq!(
-            policy.authorize(DeviceCommand::SoundHorn, 42, Some(arm)),
+            policy.authorize(DeviceCommand::SoundHorn, ms(42), Some(arm)),
             Err(crate::DangerousActuationRefusal::WrongSafetyClass)
         );
         assert_eq!(
             policy.authorize(
                 DeviceCommand::SetRawMotorCurrent { current: 5_001 },
-                42,
+                ms(42),
                 Some(arm)
             ),
             Err(crate::DangerousActuationRefusal::CurrentLimitExceeded)
@@ -6982,10 +7032,10 @@ mod tests {
             arm_duration: Duration::from_milliseconds(1_000),
         };
         let command = DeviceCommand::SetRawMotorCurrent { current: -5_000 };
-        let arm = policy.arm(10);
+        let arm = policy.arm(ms(10));
 
         assert_eq!(
-            policy.authorize(command, 1_010, Some(arm)),
+            policy.authorize(command, ms(1_010), Some(arm)),
             Ok(crate::CommandMetadata {
                 kind: crate::CommandKind::SetRawMotorCurrent,
                 safety_class: crate::SafetyClass::Actuation,
@@ -7078,8 +7128,8 @@ mod tests {
         });
         diagnostics.record_error(crate::ParserError::MalformedFrame);
         diagnostics.record_error(crate::ParserError::Timeout {
-            elapsed_ms: 1_500,
-            timeout_ms: 1_000,
+            elapsed_ms: ms(1_500),
+            timeout_ms: ms(1_000),
         });
         diagnostics.record_error(crate::ParserError::UnmatchedReply);
 
@@ -7110,8 +7160,8 @@ mod tests {
     #[test]
     fn diagnostic_error_can_be_emitted_as_device_event() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
-            elapsed_ms: 1_500,
-            timeout_ms: 1_000,
+            elapsed_ms: ms(1_500),
+            timeout_ms: ms(1_000),
         });
 
         assert_eq!(
@@ -7120,8 +7170,8 @@ mod tests {
                 kind: crate::DiagnosticErrorKind::Timeout,
                 claimed_len: None,
                 max_len: None,
-                elapsed_ms: Some(1_500),
-                timeout_ms: Some(1_000),
+                elapsed_ms: Some(ms(1_500)),
+                timeout_ms: Some(ms(1_000)),
             })
         );
     }
@@ -7174,8 +7224,8 @@ mod tests {
     #[test]
     fn diagnostic_error_preserves_timeout_details() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
-            elapsed_ms: 1_500,
-            timeout_ms: 1_000,
+            elapsed_ms: ms(1_500),
+            timeout_ms: ms(1_000),
         });
 
         assert_eq!(
@@ -7184,8 +7234,8 @@ mod tests {
                 kind: crate::DiagnosticErrorKind::Timeout,
                 claimed_len: None,
                 max_len: None,
-                elapsed_ms: Some(1_500),
-                timeout_ms: Some(1_000),
+                elapsed_ms: Some(ms(1_500)),
+                timeout_ms: Some(ms(1_000)),
             }
         );
     }
@@ -7219,16 +7269,18 @@ mod tests {
         let mut tracker = crate::RequestTracker::default();
         let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
 
-        assert_eq!(tracker.start(key, policy, 1_000), Ok(()));
+        assert_eq!(tracker.start(key, policy, ms(1_000)), Ok(()));
         assert_eq!(
             tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
             crate::CorrelationResult::Matched { key, attempts: 1 }
         );
         assert_eq!(
-            tracker.start(key, policy, 1_050),
-            Err(crate::RequestStartError::Pacing { ready_at_ms: 1_100 })
+            tracker.start(key, policy, ms(1_050)),
+            Err(crate::RequestStartError::Pacing {
+                ready_at_ms: ms(1_100)
+            })
         );
-        assert_eq!(tracker.start(key, policy, 1_100), Ok(()));
+        assert_eq!(tracker.start(key, policy, ms(1_100)), Ok(()));
     }
 
     #[test]
@@ -7241,21 +7293,21 @@ mod tests {
         let mut tracker = crate::RequestTracker::default();
         let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
 
-        tracker.start(key, policy, 10).unwrap();
+        tracker.start(key, policy, ms(10)).unwrap();
 
-        assert_eq!(tracker.on_tick(259), crate::RequestTick::Waiting);
+        assert_eq!(tracker.on_tick(ms(259)), crate::RequestTick::Waiting);
         assert_eq!(
-            tracker.on_tick(260),
+            tracker.on_tick(ms(260)),
             crate::RequestTick::Retry { key, attempt: 1 }
         );
-        assert_eq!(tracker.retry_started(260), Ok(()));
+        assert_eq!(tracker.retry_started(ms(260)), Ok(()));
         assert_eq!(
-            tracker.on_tick(510),
+            tracker.on_tick(ms(510)),
             crate::RequestTick::Retry { key, attempt: 2 }
         );
-        assert_eq!(tracker.retry_started(510), Ok(()));
+        assert_eq!(tracker.retry_started(ms(510)), Ok(()));
         assert_eq!(
-            tracker.on_tick(760),
+            tracker.on_tick(ms(760)),
             crate::RequestTick::TimedOut { key, attempts: 3 }
         );
     }
@@ -7266,14 +7318,14 @@ mod tests {
         let mut tracker = crate::RequestTracker::default();
         let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
 
-        tracker.start(key, policy, 20).unwrap();
+        tracker.start(key, policy, ms(20)).unwrap();
 
         assert_eq!(
             tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
             crate::CorrelationResult::Matched { key, attempts: 1 }
         );
         assert_eq!(tracker.in_flight(), None);
-        assert_eq!(tracker.start(key, policy, 21), Ok(()));
+        assert_eq!(tracker.start(key, policy, ms(21)), Ok(()));
     }
 
     #[test]
@@ -7296,10 +7348,10 @@ mod tests {
         let telemetry = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
         let identity = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
 
-        tracker.start(telemetry, policy, 20).unwrap();
+        tracker.start(telemetry, policy, ms(20)).unwrap();
 
         assert_eq!(
-            tracker.start(identity, policy, 21),
+            tracker.start(identity, policy, ms(21)),
             Err(crate::RequestStartError::Busy { key: telemetry })
         );
     }
@@ -7317,7 +7369,7 @@ mod tests {
         );
         let mut diagnostics = crate::ParserDiagnostics::default();
 
-        tracker.start(can, policy, 20).unwrap();
+        tracker.start(can, policy, ms(20)).unwrap();
 
         assert_eq!(
             tracker.correlate_reply(local, &mut diagnostics),
@@ -8020,7 +8072,7 @@ mod tests {
     fn host_session_drives_link_events_and_drains_outputs() {
         let mut host = crate::HostSession::new(EchoSession::default());
         let link = LinkInfo {
-            monotonic_ms: 10,
+            monotonic_ms: ms(10),
             max_write_len: Some(185),
         };
 
@@ -8039,7 +8091,7 @@ mod tests {
         let mut host = crate::HostSession::new(EchoSession::default());
         let channel = GattChannel::from_bytes([0xfe; 16]);
 
-        host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], 20);
+        host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], ms(20));
 
         assert_eq!(
             host.drain_outputs().as_slice(),
@@ -8047,7 +8099,7 @@ mod tests {
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
                     crate::NotificationByteLen::new(3),
-                    20
+                    ms(20)
                 )
             )]
         );
@@ -8062,7 +8114,7 @@ mod tests {
         host.ingest(SessionInput::Notification {
             channel,
             bytes: &bytes,
-            monotonic_ms: 42,
+            monotonic_ms: ms(42),
         });
 
         assert_eq!(
@@ -8071,7 +8123,7 @@ mod tests {
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
                     crate::NotificationByteLen::new(4),
-                    42
+                    ms(42)
                 )
             )]
         );
@@ -8102,18 +8154,18 @@ mod tests {
                 SessionInput::Command(DeviceCommand::RequestTelemetry) => {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta {
-                            at_ms: 40,
+                            at_ms: ms(40),
                             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                                 1_200,
                             ))),
-                            ..TelemetryDelta::empty(40)
+                            ..TelemetryDelta::empty(ms(40))
                         },
                     )));
                 }
                 SessionInput::Tick { monotonic_ms } => {
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         crate::ParserDiagnostics {
-                            timeouts: monotonic_ms,
+                            timeouts: monotonic_ms.get(),
                             ..crate::ParserDiagnostics::default()
                         },
                     )));
@@ -8132,7 +8184,7 @@ mod tests {
 
         host.issue_command(DeviceCommand::RequestTelemetry);
 
-        assert_eq!(host.current_snapshot().at_ms, Some(40));
+        assert_eq!(host.current_snapshot().at_ms, Some(ms(40)));
         assert_eq!(
             host.current_snapshot().speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
@@ -8145,8 +8197,8 @@ mod tests {
     fn host_session_merges_diagnostics_from_events() {
         let mut host = crate::HostSession::new(StateSession);
 
-        host.tick(2);
-        host.tick(3);
+        host.tick(ms(2));
+        host.tick(ms(3));
 
         assert_eq!(host.diagnostics().timeouts, 5);
     }
@@ -8155,7 +8207,7 @@ mod tests {
     fn diagnostic_snapshot_maps_from_host_session_diagnostics() {
         let mut host = crate::HostSession::new(StateSession);
 
-        host.tick(2);
+        host.tick(ms(2));
 
         assert_eq!(
             crate::DiagnosticSnapshot::from_parser_diagnostics(host.diagnostics()),
@@ -8185,11 +8237,11 @@ mod tests {
                         if *byte == 0xff {
                             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                                 TelemetryDelta {
-                                    at_ms: 90,
+                                    at_ms: ms(90),
                                     speed: Some(Measured::reported(
                                         Speed::from_millimetres_per_second(self.sum),
                                     )),
-                                    ..TelemetryDelta::empty(90)
+                                    ..TelemetryDelta::empty(ms(90))
                                 },
                             )));
                             self.sum = 0;
@@ -8228,14 +8280,14 @@ mod tests {
     fn capture_record_owns_notification_payloads() {
         let channel = GattChannel::from_bytes([0x11; 16]);
         let source = vec![1, 2, 0xff];
-        let record = crate::CaptureRecord::notification(channel, source.clone(), 10);
+        let record = crate::CaptureRecord::notification(channel, source.clone(), ms(10));
 
         assert_eq!(
             record,
             crate::CaptureRecord::Notification {
                 channel,
                 bytes: source,
-                monotonic_ms: 10,
+                monotonic_ms: ms(10),
             }
         );
     }
@@ -8261,14 +8313,16 @@ mod tests {
     fn replay_capture_drives_link_tick_command_and_notification_records() {
         let channel = GattChannel::from_bytes([0x22; 16]);
         let link = LinkInfo {
-            monotonic_ms: 1,
+            monotonic_ms: ms(1),
             max_write_len: Some(185),
         };
         let records = [
             crate::CaptureRecord::LinkUp(link),
-            crate::CaptureRecord::Tick { monotonic_ms: 2 },
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(2),
+            },
             crate::CaptureRecord::Command(DeviceCommand::RequestIdentity),
-            crate::CaptureRecord::notification(channel, vec![4, 5, 0xff], 3),
+            crate::CaptureRecord::notification(channel, vec![4, 5, 0xff], ms(3)),
             crate::CaptureRecord::LinkDown,
         ];
 
@@ -8276,15 +8330,17 @@ mod tests {
             replay_events(&records).as_slice(),
             &[
                 DeviceEvent::LinkUp(link),
-                DeviceEvent::Tick { monotonic_ms: 2 },
+                DeviceEvent::Tick {
+                    monotonic_ms: ms(2)
+                },
                 DeviceEvent::Diagnostics(crate::ParserDiagnostics {
                     unmatched_replies: crate::CommandKind::RequestIdentity as u64,
                     ..crate::ParserDiagnostics::default()
                 }),
                 DeviceEvent::Telemetry(TelemetryDelta {
-                    at_ms: 90,
+                    at_ms: ms(90),
                     speed: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
-                    ..TelemetryDelta::empty(90)
+                    ..TelemetryDelta::empty(ms(90))
                 }),
                 DeviceEvent::LinkDown,
             ]
@@ -8339,9 +8395,9 @@ mod tests {
         let whole = [crate::CaptureRecord::notification(
             channel,
             vec![1, 2, 3, 0xff],
-            10,
+            ms(10),
         )];
-        let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], 10)
+        let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], ms(10))
             .split_notification_bytes(crate::NotificationChunkLen::new(1));
 
         assert_eq!(replay_events(&one_byte), replay_events(&whole));
@@ -8353,7 +8409,7 @@ mod tests {
         let records = [crate::CaptureRecord::notification(
             channel,
             vec![1, 2, 3, 0xff],
-            10,
+            ms(10),
         )];
 
         let comparison = crate::compare_replay_capture_chunks(
@@ -8408,7 +8464,7 @@ mod tests {
         let records = [crate::CaptureRecord::notification(
             channel,
             vec![1, 2, 3, 4],
-            10,
+            ms(10),
         )];
 
         let comparison = crate::compare_replay_capture_chunks(
@@ -8428,9 +8484,11 @@ mod tests {
     fn replay_arbitrary_chunk_lengths_are_derived_from_capture_notifications() {
         let channel = GattChannel::from_bytes([0x78; 16]);
         let records = [
-            crate::CaptureRecord::Tick { monotonic_ms: 1 },
-            crate::CaptureRecord::notification(channel, vec![0; 4], 2),
-            crate::CaptureRecord::notification(channel, vec![0; 10], 3),
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(1),
+            },
+            crate::CaptureRecord::notification(channel, vec![0; 4], ms(2)),
+            crate::CaptureRecord::notification(channel, vec![0; 10], ms(3)),
             crate::CaptureRecord::LinkDown,
         ];
 
@@ -8448,7 +8506,7 @@ mod tests {
     fn replay_arbitrary_chunk_lengths_are_empty_without_notifications() {
         assert_eq!(
             crate::replay_arbitrary_chunk_lengths(&[crate::CaptureRecord::Tick {
-                monotonic_ms: 1
+                monotonic_ms: ms(1)
             }]),
             Vec::<crate::NotificationChunkLen>::new()
         );
@@ -8463,7 +8521,7 @@ mod tests {
         let cases = crate::notification_boundary_replay_cases(
             channel,
             &[frame_a.as_slice(), frame_b.as_slice()],
-            10,
+            ms(10),
             &[crate::NotificationChunkLen::new(2)],
         );
 
@@ -8488,9 +8546,9 @@ mod tests {
         let cases = crate::notification_impairment_replay_cases(
             channel,
             frame.as_slice(),
-            10,
+            ms(10),
             &[0x00, 0x01],
-            99,
+            ms(99),
         );
 
         assert_eq!(
@@ -8520,12 +8578,12 @@ mod tests {
             let channel = GattChannel::from_bytes([0x44; 16]);
             let mut payload = payload_prefix;
             payload.push(0xff);
-            let whole = [crate::CaptureRecord::notification(channel, payload.clone(), 20)];
+            let whole = [crate::CaptureRecord::notification(channel, payload.clone(), ms(20))];
             let chunk_lengths = lengths
                 .into_iter()
                 .map(crate::NotificationChunkLen::new)
                 .collect::<Vec<_>>();
-            let chunks = crate::CaptureRecord::notification(channel, payload, 20)
+            let chunks = crate::CaptureRecord::notification(channel, payload, ms(20))
                 .split_notification_by_lengths(&chunk_lengths);
 
             prop_assert_eq!(replay_events(&chunks), replay_events(&whole));
@@ -8536,22 +8594,30 @@ mod tests {
     fn replay_summary_preserves_output_order() {
         let channel = GattChannel::from_bytes([0x55; 16]);
         let records = [
-            crate::CaptureRecord::Tick { monotonic_ms: 1 },
-            crate::CaptureRecord::notification(channel, vec![9, 0xff], 2),
-            crate::CaptureRecord::Tick { monotonic_ms: 3 },
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(1),
+            },
+            crate::CaptureRecord::notification(channel, vec![9, 0xff], ms(2)),
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(3),
+            },
         ];
         let mut host = crate::HostSession::new(FramedCaptureSession::default());
 
         assert_eq!(
             crate::replay_capture(&mut host, &records).as_slice(),
             &[
-                SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 1 }),
+                SessionOutput::Event(DeviceEvent::Tick {
+                    monotonic_ms: ms(1)
+                }),
                 SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
-                    at_ms: 90,
+                    at_ms: ms(90),
                     speed: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
-                    ..TelemetryDelta::empty(90)
+                    ..TelemetryDelta::empty(ms(90))
                 })),
-                SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 3 }),
+                SessionOutput::Event(DeviceEvent::Tick {
+                    monotonic_ms: ms(3)
+                }),
             ]
         );
     }

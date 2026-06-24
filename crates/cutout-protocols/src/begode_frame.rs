@@ -100,7 +100,12 @@ impl BegodeFrameReassembler {
         let Some(last_byte_ms) = self.last_byte_ms else {
             return false;
         };
-        if self.buffer.is_empty() || monotonic_ms.saturating_sub(last_byte_ms) <= timeout_ms {
+        if self.buffer.is_empty()
+            || monotonic_ms
+                .saturating_duration_since(last_byte_ms)
+                .as_milliseconds()
+                <= timeout_ms.get()
+        {
             return false;
         }
 
@@ -196,6 +201,10 @@ impl BegodeFrameReassembler {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
+
     use super::*;
     use proptest::prelude::*;
 
@@ -337,13 +346,13 @@ mod tests {
         for (offset, byte) in LIVE_A[..12].iter().enumerate() {
             assert_eq!(
                 reassembler
-                    .feed_byte_result_at(*byte, offset as u64)
+                    .feed_byte_result_at(*byte, ms(offset as u64))
                     .unwrap(),
                 BegodeFrameParseResult::Buffered
             );
         }
 
-        assert!(reassembler.expire_idle(1_012, 1_000));
+        assert!(reassembler.expire_idle(ms(1_012), ms(1_000)));
         let frames = feed_bytes(&mut reassembler, &LIVE_A[12..]);
 
         assert!(frames.is_empty());
@@ -356,13 +365,13 @@ mod tests {
         for (offset, byte) in LIVE_A[..12].iter().enumerate() {
             assert_eq!(
                 reassembler
-                    .feed_byte_result_at(*byte, offset as u64)
+                    .feed_byte_result_at(*byte, ms(offset as u64))
                     .unwrap(),
                 BegodeFrameParseResult::Buffered
             );
         }
 
-        assert!(reassembler.expire_idle(1_012, 1_000));
+        assert!(reassembler.expire_idle(ms(1_012), ms(1_000)));
         let frames = feed_bytes(&mut reassembler, &LIVE_A);
 
         assert_eq!(frames, vec![BegodeFrame::try_from_slice(&LIVE_A).unwrap()]);

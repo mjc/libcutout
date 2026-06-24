@@ -123,6 +123,10 @@ pub const fn crate_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> cutout_core::MonotonicMillis {
+        cutout_core::MonotonicMillis::new(value)
+    }
+
     use super::crate_name;
     use cutout_core::{
         Capabilities, CommandKind, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
@@ -157,7 +161,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -178,7 +182,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,

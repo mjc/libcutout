@@ -323,6 +323,10 @@ fn veteran_crc_matches(bytes: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> cutout_core::MonotonicMillis {
+        cutout_core::MonotonicMillis::new(value)
+    }
+
     use super::*;
     use proptest::prelude::*;
 
@@ -662,8 +666,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let cases = cutout_core::notification_boundary_replay_cases(
                 channel,
-                &[frame.as_slice()],
-                1,
+                &[frame.as_slice()], ms(1),
                 &chunk_sizes,
             );
             let expected = feed_chunk(&mut VeteranFrameReassembler::default(), &frame);

@@ -440,11 +440,11 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             monotonic_ms,
             max_write_len,
         } => Some(PevcapRecord::link_up(
-            monotonic_ms.get(),
+            monotonic_ms.into_core(),
             max_write_len.map(NegotiatedWriteLen::get),
         )),
         SessionCaptureRecord::LinkDown { monotonic_ms } => {
-            Some(PevcapRecord::link_down(monotonic_ms.get()))
+            Some(PevcapRecord::link_down(monotonic_ms.into_core()))
         }
         SessionCaptureRecord::Write {
             monotonic_ms,
@@ -453,7 +453,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             bytes,
             provenance: _,
         } => Some(PevcapRecord::outbound_write(
-            monotonic_ms.get(),
+            monotonic_ms.into_core(),
             gatt_channel_from_uuid(*characteristic),
             *mode,
             bytes.to_raw_bytes(),
@@ -464,7 +464,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             service,
             bytes,
         } => Some(PevcapRecord::inbound_notification(
-            monotonic_ms.get(),
+            monotonic_ms.into_core(),
             gatt_channel_from_uuid(*characteristic),
             gatt_channel_from_uuid(*service),
             bytes.to_raw_bytes(),

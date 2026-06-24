@@ -8,10 +8,14 @@ use std::sync::{
 
 use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
-    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
-    ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue, RequestScheduler,
-    RequestUrgency, SessionInput, SessionKey, SessionOutput, VerificationStatus,
+    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, MonotonicMillis,
+    ParserKey, ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue,
+    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, VerificationStatus,
 };
+
+const fn ms(value: u64) -> MonotonicMillis {
+    MonotonicMillis::new(value)
+}
 
 struct CountingAllocator;
 
@@ -153,7 +157,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     let mut link_up_host = HostSession::new(NoOpSession);
     assert_no_allocations("host link-up", || {
         link_up_host.ingest_link_up(LinkInfo {
-            monotonic_ms: 10,
+            monotonic_ms: ms(10),
             max_write_len: Some(185),
         });
         let drained = link_up_host.drain_outputs();
@@ -167,7 +171,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
         notification_host.ingest_notification_owned(
             GattChannel::from_bytes([0x22; 16]),
             notification,
-            20,
+            ms(20),
         );
         let drained = notification_host.drain_outputs();
 
@@ -244,7 +248,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     let replay_records = [CaptureRecord::notification(
         GattChannel::from_bytes([0x44; 16]),
         vec![0x11, 0x22, 0x33],
-        30,
+        ms(30),
     )];
     assert_no_allocations("borrowed replay capture notification", || {
         cutout_core::replay_capture_into(&mut replay_host, &replay_records, &mut replay_outputs);

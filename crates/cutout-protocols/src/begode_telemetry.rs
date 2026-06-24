@@ -1270,6 +1270,10 @@ fn percent_from_i32(percent: i32) -> Percent {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> cutout_core::MonotonicMillis {
+        cutout_core::MonotonicMillis::new(value)
+    }
+
     use super::{
         BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeCapacityEvidence, BegodeCapacitySelection,
         BegodeCellModel, BegodeFalconBatteryVariant, BegodeFalconBatteryVariantSelection,
@@ -1350,12 +1354,12 @@ mod tests {
             BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A frame decodes");
 
-        let delta = telemetry.to_delta(42);
+        let delta = telemetry.to_delta(ms(42));
 
         assert_eq!(
             delta,
             TelemetryDelta {
-                at_ms: 42,
+                at_ms: ms(42),
                 speed: Some(source_reported(
                     cutout_core::Speed::from_millimetres_per_second(13_360,)
                 )),
@@ -1392,7 +1396,7 @@ mod tests {
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
 
         assert_eq!(
-            telemetry.to_delta(99).distance,
+            telemetry.to_delta(ms(99)).distance,
             Some(source_reported(cutout_core::Distance::from_millimetres(
                 50_000
             )))
@@ -1443,7 +1447,7 @@ mod tests {
             BegodeLiveATelemetry::decode(&live_a, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A decodes");
 
-        let delta = context.live_a_to_delta(telemetry, 42);
+        let delta = context.live_a_to_delta(telemetry, ms(42));
 
         assert_eq!(
             delta.speed,
@@ -1477,7 +1481,7 @@ mod tests {
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B decodes");
 
         assert_eq!(
-            telemetry.to_delta(7).distance,
+            telemetry.to_delta(ms(7)).distance,
             Some(source_reported(cutout_core::Distance::from_millimetres(
                 80_467
             )))
@@ -1516,7 +1520,7 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&EXTRA).expect("fixture frame is valid");
         let telemetry = BegodeExtraTelemetry::decode(&frame).expect("extra frame decodes");
 
-        let delta = telemetry.to_delta(7);
+        let delta = telemetry.to_delta(ms(7));
 
         assert_eq!(
             delta.battery_current,

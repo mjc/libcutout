@@ -100,6 +100,12 @@ impl MonotonicMs {
         self.0
     }
 
+    /// Converts this BTLE adapter timestamp into the protocol-core timestamp type.
+    #[must_use]
+    pub const fn into_core(self) -> cutout_core::MonotonicMillis {
+        cutout_core::MonotonicMillis::new(self.0)
+    }
+
     pub(crate) fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }

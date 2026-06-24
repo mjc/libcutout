@@ -266,7 +266,8 @@ where
 mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
+        MonotonicMillis, SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto,
+        TransportActionDto,
     };
 
     use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -401,7 +402,7 @@ mod tests {
     fn concrete_session_accepts_core_link_info_roundtrip_inputs() {
         let mut session = new_begode_falcon_read_only_session();
         let link = LinkInfo {
-            monotonic_ms: 7,
+            monotonic_ms: MonotonicMillis::new(7),
             max_write_len: Some(20),
         };
 

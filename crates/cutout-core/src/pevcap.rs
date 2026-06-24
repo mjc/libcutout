@@ -714,7 +714,7 @@ impl PevcapCapture {
             .any(|record| record.direction == PevcapDirection::LinkUp)
         {
             host.ingest_link_up(LinkInfo {
-                monotonic_ms: 0,
+                monotonic_ms: MonotonicMillis::new(0),
                 max_write_len: self.header.write_limit,
             });
             host.drain_outputs_into(outputs);
@@ -1595,7 +1595,7 @@ impl GattRoleJson {
 #[cfg(feature = "serde")]
 #[derive(Deserialize, Serialize)]
 struct PevcapRecordJson {
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: u64,
     direction: PevcapDirectionJson,
     characteristic: [u8; 16],
     service: Option<[u8; 16]>,
@@ -1611,7 +1611,7 @@ struct PevcapRecordJson {
 impl From<&PevcapRecord> for PevcapRecordJson {
     fn from(record: &PevcapRecord) -> Self {
         Self {
-            monotonic_ms: record.monotonic_ms,
+            monotonic_ms: record.monotonic_ms.get(),
             direction: PevcapDirectionJson::from(record.direction),
             characteristic: record.characteristic.as_bytes(),
             service: record.service.map(GattChannel::as_bytes),
@@ -1628,7 +1628,7 @@ impl PevcapRecordJson {
     fn try_into_record(self) -> Result<PevcapRecord, PevcapRecordError> {
         self.validate()?;
         Ok(PevcapRecord {
-            monotonic_ms: self.monotonic_ms,
+            monotonic_ms: MonotonicMillis::new(self.monotonic_ms),
             direction: self.direction.into_direction(),
             characteristic: GattChannel::from_bytes(self.characteristic),
             service: self.service.map(GattChannel::from_bytes),
@@ -1788,6 +1788,10 @@ mod tests {
     use crate::{NotificationByteLen, VerificationStatus};
     use proptest::prelude::*;
     use std::{cell::RefCell, rc::Rc};
+
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
 
     #[derive(Clone, Default)]
     struct RecordingSession {
@@ -2080,13 +2084,13 @@ mod tests {
         let characteristic = GattChannel::from_bytes([0x33; 16]);
         let service = GattChannel::from_bytes([0x44; 16]);
         let write = PevcapRecord::outbound_write(
-            7,
+            ms(7),
             characteristic,
             WriteMode::WithoutResponse,
             Bytes::from_static(&[0x01, 0x23, 0xab]),
         );
         let notification = PevcapRecord::inbound_notification(
-            9,
+            ms(9),
             characteristic,
             service,
             Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
@@ -2111,7 +2115,7 @@ mod tests {
             controller_id: VescControllerId::new(7),
         };
         let write = PevcapRecord::targeted_outbound_write(
-            7,
+            ms(7),
             characteristic,
             WriteMode::WithoutResponse,
             Bytes::from_static(&[0x01, 0x23]),
@@ -2138,7 +2142,7 @@ mod tests {
         )
         .expect("header should validate");
         let records = vec![PevcapRecord::outbound_write(
-            1,
+            ms(1),
             GattChannel::from_bytes([0x55; 16]),
             WriteMode::WithResponse,
             Bytes::from_static(&[0x10]),
@@ -2171,19 +2175,19 @@ mod tests {
             header,
             vec![
                 PevcapRecord::outbound_write(
-                    7,
+                    ms(7),
                     characteristic,
                     WriteMode::WithoutResponse,
                     Bytes::from_static(b"N"),
                 ),
                 PevcapRecord::inbound_notification(
-                    9,
+                    ms(9),
                     characteristic,
                     service,
                     Bytes::from_static(b"NAME=Falcon"),
                 ),
                 PevcapRecord::inbound_notification(
-                    11,
+                    ms(11),
                     characteristic,
                     service,
                     Bytes::from_static(b"55aa"),
@@ -2196,19 +2200,19 @@ mod tests {
         assert!(matches!(
             outputs[0],
             SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-                monotonic_ms: 0,
+                monotonic_ms,
                 max_write_len: Some(23),
-            }))
+            })) if monotonic_ms == ms(0)
         ));
         assert!(matches!(
             outputs[1],
             SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
-                if evidence.monotonic_ms == 9
+                if evidence.monotonic_ms == ms(9)
         ));
         assert!(matches!(
             outputs[2],
             SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
-                if evidence.monotonic_ms == 11
+                if evidence.monotonic_ms == ms(11)
         ));
         assert_eq!(
             replayed_bytes(&capture, PevcapReplayMode::Whole),
@@ -2235,17 +2239,17 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![
-                PevcapRecord::link_up(5, Some(23)),
+                PevcapRecord::link_up(ms(5), Some(23)),
                 PevcapRecord::inbound_notification(
-                    9,
+                    ms(9),
                     characteristic,
                     service,
                     Bytes::from_static(b"NAME=Falcon"),
                 ),
-                PevcapRecord::link_down(12),
-                PevcapRecord::link_up(20, Some(23)),
+                PevcapRecord::link_down(ms(12)),
+                PevcapRecord::link_up(ms(20), Some(23)),
                 PevcapRecord::inbound_notification(
-                    21,
+                    ms(21),
                     characteristic,
                     service,
                     Bytes::from_static(b"55aa"),
@@ -2258,9 +2262,9 @@ mod tests {
         assert!(matches!(
             outputs[0],
             SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-                monotonic_ms: 5,
+                monotonic_ms,
                 max_write_len: Some(23),
-            }))
+            })) if monotonic_ms == ms(5)
         ));
         assert!(matches!(
             outputs[2],
@@ -2269,9 +2273,9 @@ mod tests {
         assert!(matches!(
             outputs[3],
             SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-                monotonic_ms: 20,
+                monotonic_ms,
                 max_write_len: Some(23),
-            }))
+            })) if monotonic_ms == ms(20)
         ));
         assert_eq!(
             replayed_bytes(&capture, PevcapReplayMode::Whole),
@@ -2287,7 +2291,7 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![PevcapRecord::outbound_write(
-                7,
+                ms(7),
                 characteristic,
                 WriteMode::WithoutResponse,
                 Bytes::from_static(b"N"),
@@ -2299,9 +2303,9 @@ mod tests {
         assert!(matches!(
             outputs.as_slice(),
             [SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-                monotonic_ms: 0,
+                monotonic_ms,
                 max_write_len: None,
-            }))]
+            }))] if *monotonic_ms == ms(0)
         ));
     }
 
@@ -2323,7 +2327,7 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![PevcapRecord::inbound_notification(
-                9,
+                ms(9),
                 characteristic,
                 characteristic,
                 Bytes::from_static(b"abc"),
@@ -2361,7 +2365,7 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![PevcapRecord::inbound_notification(
-                9,
+                ms(9),
                 characteristic,
                 characteristic,
                 Bytes::from_static(b"abcd"),
@@ -2403,8 +2407,7 @@ mod tests {
             .expect("header should validate");
             let capture = PevcapCapture::new(
                 header,
-                vec![PevcapRecord::inbound_notification(
-                    9,
+                vec![PevcapRecord::inbound_notification(ms(9),
                     characteristic,
                     characteristic,
                     payload.clone(),
@@ -2461,14 +2464,14 @@ mod tests {
             header,
             vec![
                 PevcapRecord::targeted_outbound_write(
-                    7,
+                    ms(7),
                     characteristic,
                     WriteMode::WithoutResponse,
                     Bytes::from_static(b"N"),
                     can_target,
                 ),
                 PevcapRecord::inbound_notification(
-                    9,
+                    ms(9),
                     characteristic,
                     service,
                     Bytes::from_static(b"NAME=Falcon"),
@@ -2502,8 +2505,8 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![
-                PevcapRecord::link_up(5, Some(23)),
-                PevcapRecord::link_down(12),
+                PevcapRecord::link_up(ms(5), Some(23)),
+                PevcapRecord::link_down(ms(12)),
             ],
         );
 
@@ -2782,13 +2785,13 @@ mod tests {
             header,
             vec![
                 PevcapRecord::outbound_write(
-                    7,
+                    ms(7),
                     characteristic,
                     WriteMode::WithoutResponse,
                     Bytes::from_static(b"N"),
                 ),
                 PevcapRecord::inbound_notification(
-                    9,
+                    ms(9),
                     characteristic,
                     service,
                     Bytes::from_static(b"NAME=Falcon"),

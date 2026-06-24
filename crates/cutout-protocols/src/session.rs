@@ -1201,7 +1201,7 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
         Self {
             policy,
             arm: None,
-            monotonic_ms: 0,
+            monotonic_ms: MonotonicMillis::new(0),
             model: PhantomData,
         }
     }
@@ -1271,6 +1271,10 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> MonotonicMillis {
+        MonotonicMillis::new(value)
+    }
+
     use super::*;
     use core::mem::size_of;
     use cutout_core::{
@@ -1439,7 +1443,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1450,7 +1454,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1464,7 +1468,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1476,7 +1480,7 @@ mod tests {
                 SessionInput::Notification {
                     channel: VETERAN_DATA_CHANNEL,
                     bytes,
-                    monotonic_ms: 42 + u64::try_from(index).expect("chunk index fits"),
+                    monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
                 },
                 &mut output,
             );
@@ -1491,7 +1495,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1501,7 +1505,7 @@ mod tests {
                 SessionInput::Notification {
                     channel: BEGODE_DATA_CHANNEL,
                     bytes,
-                    monotonic_ms: 42 + u64::try_from(index).expect("fixture index fits"),
+                    monotonic_ms: ms(42 + u64::try_from(index).expect("fixture index fits")),
                 },
                 &mut output,
             );
@@ -1516,7 +1520,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1525,7 +1529,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1539,7 +1543,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1548,7 +1552,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &live_aero_frame(),
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1569,7 +1573,7 @@ mod tests {
             &mut connected,
             &mut decoder,
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 7,
+                monotonic_ms: ms(7),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1588,7 +1592,7 @@ mod tests {
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1600,7 +1604,7 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &malformed,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1631,7 +1635,7 @@ mod tests {
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
-                monotonic_ms: 11,
+                monotonic_ms: ms(11),
             },
             &mut output,
         );
@@ -1640,7 +1644,7 @@ mod tests {
             item,
             SessionOutput::NotificationIngest(NotificationIngestOutcome::Ignored(evidence))
                 if evidence.channel == TEST_CHANNEL
-                    && evidence.monotonic_ms == 11
+                    && evidence.monotonic_ms == ms(11)
                     && evidence.len == NotificationByteLen::new(3)
         )));
     }
@@ -1657,7 +1661,7 @@ mod tests {
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
-                monotonic_ms: 11,
+                monotonic_ms: ms(11),
             },
             &mut output,
         );
@@ -1703,7 +1707,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1712,7 +1716,7 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_a,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1742,7 +1746,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1752,7 +1756,7 @@ mod tests {
             output,
             vec![
                 SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-                    monotonic_ms: 1,
+                    monotonic_ms: ms(1),
                     max_write_len: Some(185),
                 })),
                 SessionOutput::Transport(TransportAction::Subscribe {
@@ -1824,7 +1828,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1834,7 +1838,7 @@ mod tests {
                 SessionInput::Notification {
                     channel: VESC_NOTIFY_CHANNEL,
                     bytes: chunk,
-                    monotonic_ms: 42,
+                    monotonic_ms: ms(42),
                 },
                 &mut output,
             );
@@ -1842,7 +1846,7 @@ mod tests {
 
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
-        assert_eq!(delta.at_ms, 42);
+        assert_eq!(delta.at_ms, ms(42));
         assert_eq!(
             delta.voltage,
             Some(Measured::reported(Voltage::from_millivolts(37_500),))
@@ -1889,7 +1893,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1898,7 +1902,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_selective_values_frame(),
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1931,7 +1935,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -1940,7 +1944,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_stats_frame(),
-                monotonic_ms: 43,
+                monotonic_ms: ms(43),
             },
             &mut output,
         );
@@ -2011,7 +2015,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -2020,14 +2024,14 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_b,
-                monotonic_ms: 2,
+                monotonic_ms: ms(2),
             },
             &mut output,
         );
         session.handle(SessionInput::LinkDown, &mut output);
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 3,
+                monotonic_ms: ms(3),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -2036,7 +2040,7 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_a,
-                monotonic_ms: 4,
+                monotonic_ms: ms(4),
             },
             &mut output,
         );
@@ -2122,7 +2126,7 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
+                monotonic_ms: ms(1),
                 max_write_len: Some(185),
             }),
             &mut output,
@@ -2131,7 +2135,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &live_aero_frame(),
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -2274,7 +2278,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::new(20),
-                42,
+                ms(42),
             )]
         );
         assert!(telemetry_events(&output).is_empty());
@@ -2293,7 +2297,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::new(frame.len()),
-                42,
+                ms(42),
                 SemanticEventCount::new(5),
             )]
         );
@@ -2313,7 +2317,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::new(frame.len()),
-                42,
+                ms(42),
                 ReservedPayloadEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::new(24),
@@ -2336,7 +2340,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::new(frame.len()),
-                42,
+                ms(42),
                 ParserGapEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                     body_len: PayloadBodyLen::new(26),
@@ -2368,7 +2372,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::new(frame.len()),
-                42,
+                ms(42),
                 ParserError::BadChecksum,
             )]
         );
@@ -2386,7 +2390,7 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], 42, &mut output);
+        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output);
 
         let error = ParserError::OversizedFrame {
             claimed: crate::MAX_VETERAN_FRAME_LEN + 1,
@@ -2398,7 +2402,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::new(1),
-                42,
+                ms(42),
                 error,
             )]
         );
@@ -2428,7 +2432,7 @@ mod tests {
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::new(frame.len()),
-                42 + u64::try_from(frame.len() - 1).expect("fixture length fits"),
+                ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1),
                 SemanticEventCount::new(5),
             ))
         );
@@ -2492,14 +2496,14 @@ mod tests {
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
                     NotificationByteLen::new(semantic_frame.len()),
-                    42,
+                    ms(42),
                     SemanticEventCount::new(5),
                 ),
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
                     NotificationByteLen::new(reserved_frame.len()),
-                    42,
+                    ms(42),
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                         body_len: PayloadBodyLen::new(24),
@@ -2541,7 +2545,7 @@ mod tests {
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
                     NotificationByteLen::new(frame.len()),
-                    42 + u64::try_from(chunks.len() - 1).expect("chunk count fits"),
+                    ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
                     SemanticEventCount::new(5),
                 ))
             );
@@ -2800,10 +2804,10 @@ mod tests {
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
 
-        session.arm(policy.arm(10));
+        session.arm(policy.arm(ms(10)));
         session.handle(
             SessionInput::Tick {
-                monotonic_ms: 1_011,
+                monotonic_ms: ms(1_011),
             },
             &mut output,
         );
@@ -2844,8 +2848,13 @@ mod tests {
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
 
-        session.arm(wrong_model_policy.arm(10));
-        session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
+        session.arm(wrong_model_policy.arm(ms(10)));
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(42),
+            },
+            &mut output,
+        );
         session.handle(
             SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1_000 }),
             &mut output,
@@ -2878,8 +2887,13 @@ mod tests {
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
 
-        session.arm(policy.arm(10));
-        session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
+        session.arm(policy.arm(ms(10)));
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(42),
+            },
+            &mut output,
+        );
         session.handle(
             SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 5_001 }),
             &mut output,

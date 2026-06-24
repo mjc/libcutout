@@ -290,7 +290,7 @@ where
     monotonic_ms = monotonic_ms.next();
     session.handle(
         SessionInput::Tick {
-            monotonic_ms: monotonic_ms.get(),
+            monotonic_ms: monotonic_ms.into_core(),
         },
         &mut outputs,
     );
@@ -365,7 +365,7 @@ where
     info!("session bridge link-up handling starting");
     session.handle(
         SessionInput::LinkUp(LinkInfo {
-            monotonic_ms: monotonic_ms.get(),
+            monotonic_ms: monotonic_ms.into_core(),
             max_write_len: max_write_len.map(NegotiatedWriteLen::get),
         }),
         outputs,
@@ -546,7 +546,7 @@ where
         SessionInput::Notification {
             channel: context.channel,
             bytes: notification.as_raw_bytes(),
-            monotonic_ms: monotonic_ms.get(),
+            monotonic_ms: monotonic_ms.into_core(),
         },
         outputs,
     );
