@@ -251,7 +251,7 @@ pub struct DangerousActuationPolicy {
     pub model: &'static str,
 
     /// Maximum absolute raw motor current allowed by this policy.
-    pub max_current_ma: i32,
+    pub max_current_ma: BatteryCurrent,
 
     /// Duration of newly issued arming tokens.
     pub arm_duration_ms: MonotonicMillis,
@@ -295,7 +295,7 @@ impl DangerousActuationPolicy {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
         if let DeviceCommand::SetRawMotorCurrent { current_ma } = command
-            && current_ma.saturating_abs() > self.max_current_ma
+            && current_ma.saturating_abs() > self.max_current_ma.as_milliamps()
         {
             return Err(DangerousActuationRefusal::CurrentLimitExceeded);
         }
@@ -6733,7 +6733,7 @@ mod tests {
     fn dangerous_actuation_policy_requires_arm_token() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
@@ -6748,12 +6748,12 @@ mod tests {
     fn dangerous_actuation_policy_rejects_expired_or_wrong_model_arms() {
         let falcon = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let aero = crate::DangerousActuationPolicy {
             model: "NOSFET Aero",
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
@@ -6774,7 +6774,7 @@ mod tests {
     fn dangerous_actuation_policy_rejects_non_actuation_and_over_limit_commands() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let arm = policy.arm(10);
@@ -6797,7 +6797,7 @@ mod tests {
     fn dangerous_actuation_policy_accepts_armed_in_limit_actuation() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let command = DeviceCommand::SetRawMotorCurrent { current_ma: -5_000 };

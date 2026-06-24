@@ -2749,7 +2749,7 @@ mod tests {
         let mut session =
             DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
                 model: TestModel::MODEL,
-                max_current_ma: 5_000,
+                max_current_ma: BatteryCurrent::from_milliamps(5_000),
                 arm_duration_ms: 1_000,
             });
         let mut output = Vec::new();
@@ -2781,7 +2781,7 @@ mod tests {
     fn dangerous_control_session_refuses_expired_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2820,12 +2820,12 @@ mod tests {
     fn dangerous_control_session_refuses_wrong_model_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let wrong_model_policy = cutout_core::DangerousActuationPolicy {
             model: "other model",
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2859,7 +2859,7 @@ mod tests {
     fn dangerous_control_session_refuses_over_current_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: 5_000,
+            max_current_ma: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
