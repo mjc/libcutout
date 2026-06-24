@@ -32,19 +32,19 @@ pub struct BegodeBmsSummary {
     pub pwm_limit: DutyCycle,
 
     /// BMS-authoritative pack voltage in millivolts.
-    pub pack_voltage_mv: Voltage,
+    pub pack_voltage: Voltage,
 
     /// BMS-reported pack current in milliamps.
-    pub current_ma: BatteryCurrent,
+    pub current: BatteryCurrent,
 
     /// First temperature for the selected half in millicelsius.
-    pub temperature_0_mc: Temperature,
+    pub temperature_0: Temperature,
 
     /// Second temperature for the selected half in millicelsius.
-    pub temperature_1_mc: Temperature,
+    pub temperature_1: Temperature,
 
     /// Half-pack voltage in millivolts.
-    pub half_pack_voltage_mv: Voltage,
+    pub half_pack_voltage: Voltage,
 }
 
 impl BegodeBmsSummary {
@@ -64,19 +64,19 @@ impl BegodeBmsSummary {
             bms_index: u8::from(sub_index_value >= 2),
             half_index: sub_index_value & 1,
             pwm_limit: centi_percent_to_permille(be_u16(cursor, ByteOffset::new(2))),
-            pack_voltage_mv: Voltage::from_millivolts(
+            pack_voltage: Voltage::from_millivolts(
                 i32::from(be_u16(cursor, ByteOffset::new(6))) * 100,
             ),
-            current_ma: BatteryCurrent::from_milliamps(
+            current: BatteryCurrent::from_milliamps(
                 i32::from(be_i16(cursor, ByteOffset::new(8))) * 100,
             ),
-            temperature_0_mc: Temperature::from_millicelsius(
+            temperature_0: Temperature::from_millicelsius(
                 i32::from(be_i16(cursor, ByteOffset::new(10))) * 1_000,
             ),
-            temperature_1_mc: Temperature::from_millicelsius(
+            temperature_1: Temperature::from_millicelsius(
                 i32::from(be_i16(cursor, ByteOffset::new(12))) * 1_000,
             ),
-            half_pack_voltage_mv: Voltage::from_millivolts(
+            half_pack_voltage: Voltage::from_millivolts(
                 i32::from(be_i16(cursor, ByteOffset::new(14))) * 100,
             ),
         })
@@ -86,9 +86,9 @@ impl BegodeBmsSummary {
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            voltage_mv: Some(source_reported(self.pack_voltage_mv)),
-            battery_current_ma: Some(source_reported(self.current_ma)),
-            battery_temperature_mc: Some(source_reported(self.temperature_0_mc)),
+            voltage_mv: Some(source_reported(self.pack_voltage)),
+            battery_current_ma: Some(source_reported(self.current)),
+            battery_temperature_mc: Some(source_reported(self.temperature_0)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -99,9 +99,9 @@ impl BegodeBmsSummary {
         ReadOnlyResponse::Battery(BatteryPagePayload::raw(
             BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
             BatteryInfo {
-                voltage_mv: Some(source_reported(self.pack_voltage_mv)),
-                current_ma: Some(source_reported(self.current_ma)),
-                temperature_mc: Some(source_reported(self.temperature_0_mc)),
+                voltage_mv: Some(source_reported(self.pack_voltage)),
+                current_ma: Some(source_reported(self.current)),
+                temperature_mc: Some(source_reported(self.temperature_0)),
                 ..BatteryInfo::default()
             },
         ))
@@ -247,11 +247,11 @@ mod tests {
                 bms_index: 1,
                 half_index: 1,
                 pwm_limit: DutyCycle::from_permille(1_000),
-                pack_voltage_mv: Voltage::from_millivolts(80_000),
-                current_ma: BatteryCurrent::from_milliamps(-10_000),
-                temperature_0_mc: Temperature::from_millicelsius(25_000),
-                temperature_1_mc: Temperature::from_millicelsius(26_000),
-                half_pack_voltage_mv: Voltage::from_millivolts(40_000),
+                pack_voltage: Voltage::from_millivolts(80_000),
+                current: BatteryCurrent::from_milliamps(-10_000),
+                temperature_0: Temperature::from_millicelsius(25_000),
+                temperature_1: Temperature::from_millicelsius(26_000),
+                half_pack_voltage: Voltage::from_millivolts(40_000),
             }
         );
     }
