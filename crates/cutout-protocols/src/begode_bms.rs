@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryInfo, BatteryPageMetadata, BatteryPagePayload, Measured, MonotonicMillis,
-    ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource,
-    VerificationStatus,
+    BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, Measured,
+    MonotonicMillis, ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature,
+    ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -76,9 +76,15 @@ impl BegodeBmsSummary {
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            voltage_mv: Some(source_reported(self.pack_voltage_mv)),
-            battery_current_ma: Some(source_reported(self.current_ma)),
-            battery_temperature_mc: Some(source_reported(self.temperature_0_mc)),
+            voltage_mv: Some(source_reported(Voltage::from_millivolts(
+                self.pack_voltage_mv,
+            ))),
+            battery_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
+                self.current_ma,
+            ))),
+            battery_temperature_mc: Some(source_reported(Temperature::from_millicelsius(
+                self.temperature_0_mc,
+            ))),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -89,9 +95,15 @@ impl BegodeBmsSummary {
         ReadOnlyResponse::Battery(BatteryPagePayload::raw(
             BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
             BatteryInfo {
-                voltage_mv: Some(source_reported(self.pack_voltage_mv)),
-                current_ma: Some(source_reported(self.current_ma)),
-                temperature_mc: Some(source_reported(self.temperature_0_mc)),
+                voltage_mv: Some(source_reported(Voltage::from_millivolts(
+                    self.pack_voltage_mv,
+                ))),
+                current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
+                    self.current_ma,
+                ))),
+                temperature_mc: Some(source_reported(Temperature::from_millicelsius(
+                    self.temperature_0_mc,
+                ))),
                 ..BatteryInfo::default()
             },
         ))
@@ -250,9 +262,11 @@ mod tests {
         assert_eq!(
             summary.to_delta(77),
             TelemetryDelta {
-                voltage_mv: Some(source_reported(80_000)),
-                battery_current_ma: Some(source_reported(-10_000)),
-                battery_temperature_mc: Some(source_reported(25_000)),
+                voltage_mv: Some(source_reported(Voltage::from_millivolts(80_000))),
+                battery_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(-10_000))),
+                battery_temperature_mc: Some(source_reported(Temperature::from_millicelsius(
+                    25_000,
+                ))),
                 ..TelemetryDelta::empty(77)
             }
         );
@@ -273,8 +287,14 @@ mod tests {
             .expect("summary decodes")
             .to_delta(2);
 
-        assert_eq!(live_delta.voltage_mv, Some(source_reported(75_063)));
-        assert_eq!(bms_delta.voltage_mv, Some(source_reported(80_000)));
+        assert_eq!(
+            live_delta.voltage_mv,
+            Some(source_reported(Voltage::from_millivolts(75_063)))
+        );
+        assert_eq!(
+            bms_delta.voltage_mv,
+            Some(source_reported(Voltage::from_millivolts(80_000)))
+        );
     }
 
     #[test]
@@ -292,8 +312,14 @@ mod tests {
             payload.page().verification,
             VerificationStatus::SourceVerified
         );
-        assert_eq!(payload.battery().voltage_mv, Some(source_reported(80_000)));
-        assert_eq!(payload.battery().current_ma, Some(source_reported(-10_000)));
+        assert_eq!(
+            payload.battery().voltage_mv,
+            Some(source_reported(Voltage::from_millivolts(80_000)))
+        );
+        assert_eq!(
+            payload.battery().current_ma,
+            Some(source_reported(BatteryCurrent::from_milliamps(-10_000)))
+        );
     }
 
     #[test]

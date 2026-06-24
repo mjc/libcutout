@@ -1,9 +1,10 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Measured, MonotonicMillis,
-    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality,
-    ValueSource, VerificationStatus,
+    BatteryCurrent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle,
+    Measured, MonotonicMillis, Percent, Power, RawFieldValue, ReadOnlyResponse, SettingsEntry,
+    SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -838,21 +839,29 @@ impl BegodeLiveATelemetry {
         unit_mode: BegodeUnitMode,
     ) -> TelemetryDelta {
         TelemetryDelta {
-            speed_mm_s: Some(source_reported(milli_kmh_to_mm_s(
-                unit_mode.speed_milli_kmh(self.speed_milli_kmh),
+            speed_mm_s: Some(source_reported(Speed::from_millimetres_per_second(
+                milli_kmh_to_mm_s(unit_mode.speed_milli_kmh(self.speed_milli_kmh)),
             ))),
-            voltage_mv: Some(source_reported(self.voltage_mv)),
-            motor_current_ma: Some(source_reported(self.phase_current_ma)),
-            power_mw: Some(source_calculated(power_mw(
-                self.voltage_mv,
+            voltage_mv: Some(source_reported(Voltage::from_millivolts(self.voltage_mv))),
+            motor_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
                 self.phase_current_ma,
             ))),
-            controller_temperature_mc: Some(source_reported(self.imu_temperature_mc)),
-            pwm_permille: Some(source_reported(raw_pwm_to_permille(self.hardware_pwm_raw))),
-            distance_mm: Some(source_reported(
+            power_mw: Some(source_calculated(Power::from_milliwatts(power_mw(
+                self.voltage_mv,
+                self.phase_current_ma,
+            )))),
+            controller_temperature_mc: Some(source_reported(Temperature::from_millicelsius(
+                self.imu_temperature_mc,
+            ))),
+            pwm_permille: Some(source_reported(DutyCycle::from_permille(
+                raw_pwm_to_permille(self.hardware_pwm_raw),
+            ))),
+            distance_mm: Some(source_reported(Distance::from_millimetres(
                 unit_mode.distance_m_to_mm(u32::from(self.trip_distance_low_m)),
-            )),
-            battery_percent_estimated: Some(source_estimated(self.battery_percent_estimated)),
+            ))),
+            battery_percent_estimated: Some(source_estimated(Percent::from_percent(
+                self.battery_percent_estimated,
+            ))),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -914,9 +923,9 @@ impl BegodeLiveBTelemetry {
     #[must_use]
     pub fn to_delta_with_units(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            distance_mm: Some(source_reported(
+            distance_mm: Some(source_reported(Distance::from_millimetres(
                 self.unit_mode().distance_m_to_mm(self.total_distance_m),
-            )),
+            ))),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1018,9 +1027,15 @@ impl BegodeExtraTelemetry {
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            battery_current_ma: Some(source_reported(self.battery_current_ma)),
-            motor_temperature_mc: Some(source_reported(self.motor_temperature_mc)),
-            pwm_permille: Some(source_reported(raw_pwm_to_permille(self.true_pwm_raw))),
+            battery_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
+                self.battery_current_ma,
+            ))),
+            motor_temperature_mc: Some(source_reported(Temperature::from_millicelsius(
+                self.motor_temperature_mc,
+            ))),
+            pwm_permille: Some(source_reported(DutyCycle::from_permille(
+                raw_pwm_to_permille(self.true_pwm_raw),
+            ))),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1290,20 +1305,34 @@ mod tests {
             delta,
             TelemetryDelta {
                 at_ms: 42,
-                speed_mm_s: Some(source_reported(13_360)),
-                voltage_mv: Some(source_reported(75_063)),
+                speed_mm_s: Some(source_reported(
+                    cutout_core::Speed::from_millimetres_per_second(13_360,)
+                )),
+                voltage_mv: Some(source_reported(cutout_core::Voltage::from_millivolts(
+                    75_063
+                ))),
                 battery_current_ma: None,
-                motor_current_ma: Some(source_reported(-11_800)),
-                power_mw: Some(source_calculated(-885_743)),
-                controller_temperature_mc: Some(source_reported(27_930)),
+                motor_current_ma: Some(source_reported(
+                    cutout_core::BatteryCurrent::from_milliamps(-11_800,)
+                )),
+                power_mw: Some(source_calculated(cutout_core::Power::from_milliwatts(
+                    -885_743
+                ))),
+                controller_temperature_mc: Some(source_reported(
+                    cutout_core::Temperature::from_millicelsius(27_930,)
+                )),
                 motor_temperature_mc: None,
                 battery_temperature_mc: None,
-                pwm_permille: Some(source_reported(524)),
-                distance_mm: Some(source_reported(750_000)),
+                pwm_permille: Some(source_reported(cutout_core::DutyCycle::from_permille(524))),
+                distance_mm: Some(source_reported(cutout_core::Distance::from_millimetres(
+                    750_000
+                ))),
                 pitch_mdeg: None,
                 roll_mdeg: None,
                 battery_percent_reported: None,
-                battery_percent_estimated: Some(source_estimated(50)),
+                battery_percent_estimated: Some(source_estimated(
+                    cutout_core::Percent::from_percent(50)
+                )),
             }
         );
     }
@@ -1315,7 +1344,9 @@ mod tests {
 
         assert_eq!(
             telemetry.to_delta(99).distance_mm,
-            Some(source_reported(50_000))
+            Some(source_reported(cutout_core::Distance::from_millimetres(
+                50_000
+            )))
         );
         let ReadOnlyResponse::Settings(settings) = telemetry.to_settings_response() else {
             panic!("expected settings response");
@@ -1365,8 +1396,18 @@ mod tests {
 
         let delta = context.live_a_to_delta(telemetry, 42);
 
-        assert_eq!(delta.speed_mm_s, Some(source_reported(21_500)));
-        assert_eq!(delta.distance_mm, Some(source_reported(1_207_008)));
+        assert_eq!(
+            delta.speed_mm_s,
+            Some(source_reported(
+                cutout_core::Speed::from_millimetres_per_second(21_500)
+            ))
+        );
+        assert_eq!(
+            delta.distance_mm,
+            Some(source_reported(cutout_core::Distance::from_millimetres(
+                1_207_008
+            )))
+        );
     }
 
     #[test]
@@ -1388,7 +1429,9 @@ mod tests {
 
         assert_eq!(
             telemetry.to_delta(7).distance_mm,
-            Some(source_reported(80_467))
+            Some(source_reported(cutout_core::Distance::from_millimetres(
+                80_467
+            )))
         );
         let ReadOnlyResponse::Settings(settings) = telemetry.to_settings_response() else {
             panic!("expected settings response");
@@ -1426,9 +1469,22 @@ mod tests {
 
         let delta = telemetry.to_delta(7);
 
-        assert_eq!(delta.battery_current_ma, Some(source_reported(-1_000)));
-        assert_eq!(delta.motor_temperature_mc, Some(source_reported(42_000)));
-        assert_eq!(delta.pwm_permille, Some(source_reported(-4)));
+        assert_eq!(
+            delta.battery_current_ma,
+            Some(source_reported(
+                cutout_core::BatteryCurrent::from_milliamps(-1_000)
+            ))
+        );
+        assert_eq!(
+            delta.motor_temperature_mc,
+            Some(source_reported(
+                cutout_core::Temperature::from_millicelsius(42_000)
+            ))
+        );
+        assert_eq!(
+            delta.pwm_permille,
+            Some(source_reported(cutout_core::DutyCycle::from_permille(-4)))
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
-    BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsParallelPacks,
-    BmsTemperatureValuesPerPage, ChargeMode, FirmwareInfo, Measured, MonotonicMillis,
-    PackSeriesCells, ProtocolSelector, RawFieldValue, ReadOnlyResponse, SettingsEntry,
-    SettingsReadback, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
+    Angle, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsParallelPacks,
+    BmsTemperatureValuesPerPage, ChargeMode, Distance, DutyCycle, FirmwareInfo, Measured,
+    MonotonicMillis, PackSeriesCells, Percent, PhaseCurrent, Power, ProtocolSelector,
+    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
+    Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -70,8 +71,8 @@ pub struct VeteranTelemetry {
     /// Firmware/model version fields.
     pub firmware: VeteranFirmwareVersion,
 
-    /// Pack voltage in millivolts.
-    pub voltage_mv: i32,
+    /// Pack voltage.
+    pub voltage: Voltage,
 
     /// Speed in protocol-native deci-km/h.
     pub speed_deci_kmh: i16,
@@ -82,8 +83,8 @@ pub struct VeteranTelemetry {
     /// Total distance in meters.
     pub total_distance_m: u32,
 
-    /// Phase current in protocol-native deci-amps.
-    pub phase_current_deci_a: i16,
+    /// Phase current reported by the realtime frame.
+    pub phase_current: PhaseCurrent,
 
     /// MOSFET/controller temperature in millicelsius.
     pub mosfet_temperature_mc: i32,
@@ -371,11 +372,13 @@ impl VeteranTelemetry {
             .be_u16(ByteOffset::new(28))
             .ok_or(VeteranTelemetryError::FrameTooShort)?;
         let firmware = VeteranFirmwareVersion::from_raw(raw_version);
-        let voltage_mv = i32::from(
-            cursor
-                .be_u16(ByteOffset::new(4))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-        ) * 10;
+        let voltage = Voltage::from_millivolts(
+            i32::from(
+                cursor
+                    .be_u16(ByteOffset::new(4))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            ) * 10,
+        );
 
         let raw_charge_mode = VeteranRawChargeMode::new(
             cursor
@@ -385,7 +388,7 @@ impl VeteranTelemetry {
 
         Ok(Self {
             firmware,
-            voltage_mv,
+            voltage,
             speed_deci_kmh: cursor
                 .be_i16(ByteOffset::new(6))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -395,9 +398,13 @@ impl VeteranTelemetry {
             total_distance_m: cursor
                 .veteran_swapped_u32(ByteOffset::new(12))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            phase_current_deci_a: cursor
-                .be_i16(ByteOffset::new(16))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            phase_current: PhaseCurrent::from_milliamps(
+                i32::from(
+                    cursor
+                        .be_i16(ByteOffset::new(16))
+                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
+                ) * 100,
+            ),
             mosfet_temperature_mc: i32::from(
                 cursor
                     .be_i16(ByteOffset::new(18))
@@ -427,7 +434,7 @@ impl VeteranTelemetry {
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
             battery_percent_estimated: estimate_veteran_battery_percent(
                 firmware.model_id,
-                voltage_mv,
+                voltage.as_millivolts(),
             ),
         })
     }
@@ -435,22 +442,29 @@ impl VeteranTelemetry {
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
-        let motor_current_ma = i32::from(self.phase_current_deci_a) * 100;
+        let power_mw = Power::from_voltage_current(self.voltage, self.phase_current);
         TelemetryDelta {
-            speed_mm_s: Some(Measured::reported(deci_kmh_to_mm_s(self.speed_deci_kmh))),
-            voltage_mv: Some(Measured::reported(self.voltage_mv)),
-            motor_current_ma: Some(Measured::reported(motor_current_ma)),
-            power_mw: Some(Measured::calculated(veteran_power_mw(
-                self.voltage_mv,
-                motor_current_ma,
+            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
+                deci_kmh_to_mm_s(self.speed_deci_kmh),
             ))),
-            controller_temperature_mc: Some(Measured::reported(self.mosfet_temperature_mc)),
-            pwm_permille: Some(Measured::reported(veteran_pwm_permille(
-                self.hardware_pwm_raw,
+            voltage_mv: Some(Measured::reported(self.voltage)),
+            motor_current_ma: Some(Measured::reported(self.phase_current)),
+            power_mw: Some(Measured::calculated(power_mw)),
+            controller_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+                self.mosfet_temperature_mc,
             ))),
-            distance_mm: Some(Measured::reported(u64::from(self.total_distance_m) * 1_000)),
-            pitch_mdeg: Some(Measured::reported(self.pitch_mdeg)),
-            battery_percent_estimated: Some(Measured::estimated(self.battery_percent_estimated)),
+            pwm_permille: Some(Measured::reported(DutyCycle::from_permille(
+                veteran_pwm_permille(self.hardware_pwm_raw),
+            ))),
+            distance_mm: Some(Measured::reported(Distance::from_millimetres(
+                u64::from(self.total_distance_m) * 1_000,
+            ))),
+            pitch_mdeg: Some(Measured::reported(Angle::from_millidegrees(
+                self.pitch_mdeg,
+            ))),
+            battery_percent_estimated: Some(Measured::estimated(Percent::from_percent(
+                self.battery_percent_estimated,
+            ))),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -589,10 +603,6 @@ fn deci_kmh_to_mm_s(value: i16) -> i32 {
     i32::from(value) * 250 / 9
 }
 
-fn veteran_power_mw(voltage_mv: i32, current_ma: i32) -> i64 {
-    i64::from(voltage_mv) * i64::from(current_ma) / 1_000
-}
-
 fn veteran_pwm_permille(raw_pwm: u16) -> i16 {
     let centered = i32::from(raw_pwm) - 0x8000;
     let permille = centered * 1_000 / 0x8000;
@@ -644,7 +654,7 @@ mod tests {
     fn veteran_telemetry_decodes_live_aero_voltage() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
-        assert_eq!(telemetry.voltage_mv, 108_760);
+        assert_eq!(telemetry.voltage.as_millivolts(), 108_760);
     }
 
     #[test]
@@ -660,11 +670,11 @@ mod tests {
                     minor: 2,
                     revision: 54,
                 },
-                voltage_mv: 108_760,
+                voltage: Voltage::from_millivolts(108_760),
                 speed_deci_kmh: 0,
                 trip_distance_m: 0,
                 total_distance_m: 1_551_169,
-                phase_current_deci_a: 0,
+                phase_current: PhaseCurrent::from_milliamps(0),
                 mosfet_temperature_mc: 33_270,
                 auto_shutdown_time_remaining_seconds: 0,
                 raw_charge_mode: VeteranRawChargeMode::new(0),
@@ -704,7 +714,7 @@ mod tests {
         let telemetry =
             VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
 
-        assert_eq!(telemetry.voltage_mv, 107_610);
+        assert_eq!(telemetry.voltage.as_millivolts(), 107_610);
         assert_eq!(telemetry.battery_percent_estimated, 42);
         assert_eq!(telemetry.auto_shutdown_time_remaining_seconds, 1_117);
         assert_eq!(telemetry.firmware.model_id, 43);
@@ -774,7 +784,9 @@ mod tests {
         assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
         assert_eq!(
             delta.distance_mm.map(|distance| distance.value),
-            Some(u64::from(telemetry.total_distance_m) * 1_000)
+            Some(Distance::from_millimetres(
+                u64::from(telemetry.total_distance_m) * 1_000
+            ))
         );
     }
 
@@ -1027,20 +1039,45 @@ mod tests {
             .to_delta(42);
 
         assert_eq!(delta.at_ms, 42);
-        assert_eq!(delta.speed_mm_s, Some(Measured::reported(0)));
-        assert_eq!(delta.voltage_mv, Some(Measured::reported(108_760)));
-        assert_eq!(delta.motor_current_ma, Some(Measured::reported(0)));
+        assert_eq!(
+            delta.speed_mm_s,
+            Some(Measured::reported(Speed::from_millimetres_per_second(0)))
+        );
+        assert_eq!(
+            delta.voltage_mv,
+            Some(Measured::reported(Voltage::from_millivolts(108_760)))
+        );
+        assert_eq!(
+            delta.motor_current_ma,
+            Some(Measured::reported(
+                cutout_core::BatteryCurrent::from_milliamps(0)
+            ))
+        );
         assert_eq!(
             delta.controller_temperature_mc,
-            Some(Measured::reported(33_270))
+            Some(Measured::reported(Temperature::from_millicelsius(33_270)))
         );
-        assert_eq!(delta.power_mw, Some(Measured::calculated(0)));
-        assert_eq!(delta.pwm_permille, Some(Measured::reported(-1_000)));
-        assert_eq!(delta.distance_mm, Some(Measured::reported(1_551_169_000)));
-        assert_eq!(delta.pitch_mdeg, Some(Measured::reported(69_060)));
+        assert_eq!(
+            delta.power_mw,
+            Some(Measured::calculated(Power::from_milliwatts(0)))
+        );
+        assert_eq!(
+            delta.pwm_permille,
+            Some(Measured::reported(DutyCycle::from_permille(-1_000)))
+        );
+        assert_eq!(
+            delta.distance_mm,
+            Some(Measured::reported(Distance::from_millimetres(
+                1_551_169_000
+            )))
+        );
+        assert_eq!(
+            delta.pitch_mdeg,
+            Some(Measured::reported(Angle::from_millidegrees(69_060)))
+        );
         assert_eq!(
             delta.battery_percent_estimated,
-            Some(Measured::estimated(47))
+            Some(Measured::estimated(Percent::from_percent(47)))
         );
     }
 
@@ -1095,13 +1132,26 @@ mod tests {
         let mut telemetry =
             VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
         telemetry.speed_deci_kmh = 36;
-        telemetry.phase_current_deci_a = -17;
+        telemetry.phase_current = PhaseCurrent::from_milliamps(-1_700);
 
         let delta = telemetry.to_delta(42);
 
-        assert_eq!(delta.speed_mm_s, Some(Measured::reported(1_000)));
-        assert_eq!(delta.motor_current_ma, Some(Measured::reported(-1_700)));
-        assert_eq!(delta.power_mw, Some(Measured::calculated(-184_892)));
+        assert_eq!(
+            delta.speed_mm_s,
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_000
+            )))
+        );
+        assert_eq!(
+            delta.motor_current_ma,
+            Some(Measured::reported(
+                cutout_core::BatteryCurrent::from_milliamps(-1_700)
+            ))
+        );
+        assert_eq!(
+            delta.power_mw,
+            Some(Measured::calculated(Power::from_milliwatts(-184_892)))
+        );
     }
 
     #[test]
@@ -1120,8 +1170,14 @@ mod tests {
     }
 
     #[test]
-    fn veteran_power_conversion_uses_millivolts_and_milliamps() {
-        assert_eq!(veteran_power_mw(108_760, -1_700), -184_892);
+    fn veteran_power_conversion_uses_typed_phase_current() {
+        let current = PhaseCurrent::from_milliamps(-1_700);
+
+        assert_eq!(current.as_milliamps(), -1_700);
+        assert_eq!(
+            Power::from_voltage_current(Voltage::from_millivolts(108_760), current).as_milliwatts(),
+            -184_892
+        );
     }
 
     #[test]

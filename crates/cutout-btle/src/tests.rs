@@ -100,6 +100,18 @@ const fn disconnects(value: usize) -> crate::DisconnectCount {
     crate::DisconnectCount::new(value)
 }
 
+fn speed_mm_s(value: i32) -> Measured<cutout_core::Speed> {
+    Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
+}
+
+fn voltage_mv(value: i32) -> Measured<cutout_core::Voltage> {
+    Measured::reported(cutout_core::Voltage::from_millivolts(value))
+}
+
+fn battery_percent_estimated(value: u8) -> Measured<cutout_core::Percent> {
+    Measured::estimated(cutout_core::Percent::from_percent(value))
+}
+
 fn decode_outcome_evidence(
     outcome: crate::bridge::NotificationDecodeOutcome,
 ) -> cutout_core::NotificationEvidence {
@@ -1143,15 +1155,15 @@ async fn drive_session_relays_notifications_back_into_session() {
     assert_eq!(report.read_only_responses, read_only_responses(2));
     assert_eq!(
         report.telemetry_snapshot.speed_mm_s,
-        Some(Measured::reported(1_200))
+        Some(speed_mm_s(1_200))
     );
     assert_eq!(
         report.telemetry_snapshot.voltage_mv,
-        Some(Measured::reported(84_200))
+        Some(voltage_mv(84_200))
     );
     assert_eq!(
         report.telemetry_snapshot.battery_percent_estimated,
-        Some(Measured::estimated(61))
+        Some(battery_percent_estimated(61))
     );
     assert_eq!(
         report.firmware.expect("firmware response").firmware_major,
@@ -1336,7 +1348,7 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
             SemanticEventCount::new(5),
         )),
         SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
-            voltage_mv: Some(Measured::reported(126_000)),
+            voltage_mv: Some(voltage_mv(126_000)),
             ..TelemetryDelta::empty(0)
         })),
     ];
@@ -2221,9 +2233,9 @@ impl ProtocolSession for BridgeSession {
                 ));
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
-                        speed_mm_s: Some(Measured::reported(1_200)),
-                        voltage_mv: Some(Measured::reported(84_200)),
-                        battery_percent_estimated: Some(Measured::estimated(61)),
+                        speed_mm_s: Some(speed_mm_s(1_200)),
+                        voltage_mv: Some(voltage_mv(84_200)),
+                        battery_percent_estimated: Some(battery_percent_estimated(61)),
                         ..TelemetryDelta::empty(0)
                     },
                 )));

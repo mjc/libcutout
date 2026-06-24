@@ -1,14 +1,15 @@
 use core::marker::PhantomData;
 use cutout_core::{
-    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BatterySpec, Capabilities, CommandKind, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
-    GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis, NotificationByteLen,
-    NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics, ParserError, ParserGapEvidence,
-    PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, TransportAction, ValueQuality,
-    VerificationStatus, VerifiedValue, WritePayload,
+    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
+    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, DeviceCommand,
+    DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
+    GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis,
+    NotificationByteLen, NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
+    ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, Speed,
+    Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, Voltage,
+    WritePayload,
 };
 
 use crate::{
@@ -596,9 +597,13 @@ fn vesc_values_to_delta(
         at_ms: monotonic_ms,
         speed_mm_s: board_profile
             .and_then(|profile| profile.speed_mm_s_from_erpm(values.rpm_erpm))
-            .map(Measured::calculated),
-        voltage_mv: Some(Measured::reported(values.voltage_mv)),
-        battery_current_ma: Some(Measured::reported(values.input_current_ma)),
+            .map(|value| Measured::calculated(Speed::from_millimetres_per_second(value))),
+        voltage_mv: Some(Measured::reported(Voltage::from_millivolts(
+            values.voltage_mv,
+        ))),
+        battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(
+            values.input_current_ma,
+        ))),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -825,12 +830,15 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
 }
 
 fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPagePayload {
+    let first_temperature_mc = page.temperatures_mc.first().copied().unwrap_or_default();
     let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
     for (slot, temperature_mc) in temperatures.iter_mut().zip(page.temperatures_mc) {
         *slot = Some(Measured::reported(temperature_mc));
     }
     let battery = BatteryInfo {
-        temperature_mc: temperatures[0],
+        temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+            first_temperature_mc,
+        ))),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::temperature_values(
@@ -842,7 +850,9 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
     let battery = BatteryInfo {
-        current_ma: Some(Measured::reported(page.currents.current_0_ma().get())),
+        current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(
+            page.currents.current_0_ma().get(),
+        ))),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::raw(
@@ -1670,15 +1680,15 @@ mod tests {
 
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].voltage_mv.map(|value| value.value),
+            telemetry[0].voltage_mv.map(|value| value.value.get()),
             Some(75_063)
         );
         assert_eq!(
-            telemetry[0].speed_mm_s.map(|value| value.value),
+            telemetry[0].speed_mm_s.map(|value| value.value.get()),
             Some(13_360)
         );
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value),
+            telemetry[0].distance_mm.map(|value| value.value.get()),
             Some(750_000)
         );
     }
@@ -1712,7 +1722,7 @@ mod tests {
         let telemetry = telemetry_events(&output);
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].voltage_mv.map(|value| value.value),
+            telemetry[0].voltage_mv.map(|value| value.value.get()),
             Some(90_075)
         );
     }
@@ -1835,8 +1845,14 @@ mod tests {
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
         assert_eq!(delta.at_ms, 42);
-        assert_eq!(delta.voltage_mv, Some(Measured::reported(37_500)));
-        assert_eq!(delta.battery_current_ma, Some(Measured::reported(40)));
+        assert_eq!(
+            delta.voltage_mv,
+            Some(Measured::reported(Voltage::from_millivolts(37_500)))
+        );
+        assert_eq!(
+            delta.battery_current_ma,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(40)))
+        );
         assert_eq!(delta.speed_mm_s, None);
 
         let responses = read_only_response_events(&output);
@@ -1887,7 +1903,12 @@ mod tests {
 
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
-        assert_eq!(delta.speed_mm_s, Some(Measured::calculated(989)));
+        assert_eq!(
+            delta.speed_mm_s,
+            Some(Measured::calculated(Speed::from_millimetres_per_second(
+                989
+            )))
+        );
 
         let responses = read_only_response_events(&output);
         let ReadOnlyResponse::RawTelemetry(raw) =
@@ -1953,7 +1974,7 @@ mod tests {
 
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value),
+            telemetry[0].distance_mm.map(|value| value.value.get()),
             Some(50_000)
         );
     }
@@ -1966,15 +1987,15 @@ mod tests {
 
         assert_eq!(telemetry.len(), 2);
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value),
+            telemetry[0].distance_mm.map(|value| value.value.get()),
             Some(80_467)
         );
         assert_eq!(
-            telemetry[1].speed_mm_s.map(|value| value.value),
+            telemetry[1].speed_mm_s.map(|value| value.value.get()),
             Some(21_500)
         );
         assert_eq!(
-            telemetry[1].distance_mm.map(|value| value.value),
+            telemetry[1].distance_mm.map(|value| value.value.get()),
             Some(1_207_008)
         );
     }
@@ -2022,13 +2043,13 @@ mod tests {
         assert_eq!(
             telemetry
                 .last()
-                .and_then(|delta| delta.speed_mm_s.map(|value| value.value)),
+                .and_then(|delta| delta.speed_mm_s.map(|value| value.value.get())),
             Some(13_360)
         );
         assert_eq!(
             telemetry
                 .last()
-                .and_then(|delta| delta.distance_mm.map(|value| value.value)),
+                .and_then(|delta| delta.distance_mm.map(|value| value.value.get())),
             Some(750_000)
         );
     }
@@ -2037,7 +2058,7 @@ mod tests {
     fn nosfet_aero_session_emits_voltage_from_live_fixture_notification() {
         assert_eq!(
             live_aero_telemetry().voltage_mv,
-            Some(Measured::reported(108_760))
+            Some(Measured::reported(Voltage::from_millivolts(108_760)))
         );
     }
 
@@ -2045,7 +2066,7 @@ mod tests {
     fn nosfet_aero_session_emits_estimated_battery_percent_from_live_fixture_notification() {
         assert_eq!(
             live_aero_telemetry().battery_percent_estimated,
-            Some(Measured::estimated(47))
+            Some(Measured::estimated(cutout_core::Percent::from_percent(47)))
         );
     }
 
@@ -2053,19 +2074,41 @@ mod tests {
     fn nosfet_aero_session_emits_fixed_header_telemetry_from_live_fixture_notification() {
         let telemetry = live_aero_telemetry();
 
-        assert_eq!(telemetry.speed_mm_s, Some(Measured::reported(0)));
-        assert_eq!(telemetry.motor_current_ma, Some(Measured::reported(0)));
-        assert_eq!(telemetry.power_mw, Some(Measured::calculated(0)));
+        assert_eq!(
+            telemetry.speed_mm_s,
+            Some(Measured::reported(Speed::from_millimetres_per_second(0)))
+        );
+        assert_eq!(
+            telemetry.motor_current_ma,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+        );
+        assert_eq!(telemetry.battery_current_ma, None);
+        assert_eq!(
+            telemetry.power_mw,
+            Some(Measured::calculated(cutout_core::Power::from_milliwatts(0)))
+        );
         assert_eq!(
             telemetry.controller_temperature_mc,
-            Some(Measured::reported(33_270))
+            Some(Measured::reported(Temperature::from_millicelsius(33_270)))
         );
-        assert_eq!(telemetry.pwm_permille, Some(Measured::reported(-1_000)));
+        assert_eq!(
+            telemetry.pwm_permille,
+            Some(Measured::reported(cutout_core::DutyCycle::from_permille(
+                -1_000
+            )))
+        );
         assert_eq!(
             telemetry.distance_mm,
-            Some(Measured::reported(1_551_169_000))
+            Some(Measured::reported(cutout_core::Distance::from_millimetres(
+                1_551_169_000
+            )))
         );
-        assert_eq!(telemetry.pitch_mdeg, Some(Measured::reported(69_060)));
+        assert_eq!(
+            telemetry.pitch_mdeg,
+            Some(Measured::reported(cutout_core::Angle::from_millidegrees(
+                69_060
+            )))
+        );
     }
 
     #[test]
@@ -2127,8 +2170,18 @@ mod tests {
                 if payload.page().selector == ProtocolSelector::new(3)
                     && payload.page().kind == BatteryPageKind::Temperature
                     && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload.battery().temperature_mc.expect("representative temperature").value == 16_730
-                    && payload.temperatures_mc()[5].expect("sixth temperature").value == 17_830
+                    && payload
+                        .battery()
+                        .temperature_mc
+                        .expect("representative temperature")
+                        .value
+                        .get()
+                        == 16_730
+                    && payload
+                        .temperatures_mc()[5]
+                        .expect("sixth temperature")
+                        .value
+                        == 17_830
         )));
     }
 
@@ -2155,7 +2208,9 @@ mod tests {
                 if payload.page().selector == ProtocolSelector::new(0)
                     && payload.page().kind == BatteryPageKind::Metadata
                     && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload.battery().current_ma == Some(Measured::reported(20))
+                    && payload.battery().current_ma == Some(Measured::reported(
+                        BatteryCurrent::from_milliamps(20)
+                    ))
                     && payload.bms_pack_currents() == Some(cutout_core::BmsPackCurrents::reported(20, 20))
         )));
     }
@@ -2169,7 +2224,10 @@ mod tests {
 
         let battery = payload.battery();
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
-        assert_eq!(battery.current_ma, Some(Measured::reported(-1_230)));
+        assert_eq!(
+            battery.current_ma,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_230)))
+        );
         assert_eq!(
             payload.bms_pack_currents(),
             Some(cutout_core::BmsPackCurrents::reported(-1_230, 450))
