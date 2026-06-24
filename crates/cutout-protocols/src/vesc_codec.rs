@@ -1,6 +1,6 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
-use cutout_core::{BatteryCurrent, Power, Voltage};
+use cutout_core::{BatteryCurrent, Power, Speed, Voltage};
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -185,11 +185,11 @@ pub struct VescValuesTelemetry {
 /// Owned VESC statistics telemetry subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescStatsTelemetry {
-    /// Average speed in milli-units reported by VESC.
-    pub speed_avg_milli: i32,
+    /// Average speed.
+    pub speed_avg: Speed,
 
-    /// Maximum speed in milli-units reported by VESC.
-    pub speed_max_milli: i32,
+    /// Maximum speed.
+    pub speed_max: Speed,
 
     /// Average power.
     pub power_avg_mw: Power,
@@ -513,8 +513,12 @@ impl From<vesc::Values> for VescValuesTelemetry {
 impl From<vesc::Stats> for VescStatsTelemetry {
     fn from(stats: vesc::Stats) -> Self {
         Self {
-            speed_avg_milli: round_f32_to_i32(stats.speed_avg * 1_000.0),
-            speed_max_milli: round_f32_to_i32(stats.speed_max * 1_000.0),
+            speed_avg: Speed::from_millimetres_per_second(round_f32_to_i32(
+                stats.speed_avg * 1_000.0,
+            )),
+            speed_max: Speed::from_millimetres_per_second(round_f32_to_i32(
+                stats.speed_max * 1_000.0,
+            )),
             power_avg_mw: Power::from_milliwatts(i64::from(round_f32_to_i32(
                 stats.power_avg * 1_000.0,
             ))),
@@ -698,8 +702,8 @@ mod tests {
             panic!("expected stats reply");
         };
 
-        assert_eq!(stats.speed_avg_milli, 1_000);
-        assert_eq!(stats.speed_max_milli, 2_000);
+        assert_eq!(stats.speed_avg.as_millimetres_per_second(), 1_000);
+        assert_eq!(stats.speed_max.as_millimetres_per_second(), 2_000);
         assert_eq!(stats.power_avg_mw.as_milliwatts(), 3_000);
         assert_eq!(stats.power_max_mw.as_milliwatts(), 4_000);
         assert_eq!(stats.current_avg_ma.as_milliamps(), 5_000);

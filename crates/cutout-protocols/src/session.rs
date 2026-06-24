@@ -639,7 +639,7 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
         details: [
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
-                i64::from(stats.speed_avg_milli),
+                i64::from(stats.speed_avg.as_millimetres_per_second()),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_POWER_AVG_FIELD_ID,
