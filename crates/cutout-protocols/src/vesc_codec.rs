@@ -163,8 +163,8 @@ pub enum VescReadOnlyReply {
 /// Owned VESC values telemetry subset used by the generic read-only session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescValuesTelemetry {
-    /// Raw electrical RPM.
-    pub rpm_erpm: i32,
+    /// Electrical RPM.
+    pub rpm: ElectricalRpm,
 
     /// Input voltage.
     pub voltage: Voltage,
@@ -173,13 +173,51 @@ pub struct VescValuesTelemetry {
     pub input_current: BatteryCurrent,
 
     /// Relative tachometer.
-    pub tachometer: i32,
+    pub tachometer: VescTachometer,
 
     /// Controller identifier.
-    pub controller_id: u8,
+    pub controller_id: VescControllerId,
 
     /// Current VESC fault code.
     pub fault_code: VescFaultCode,
+}
+
+/// VESC electrical RPM.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ElectricalRpm(i32);
+
+impl ElectricalRpm {
+    /// Creates an electrical RPM value.
+    #[must_use]
+    pub const fn from_erpm(value: i32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the value as electrical RPM.
+    #[must_use]
+    pub const fn as_erpm(self) -> i32 {
+        self.0
+    }
+}
+
+/// VESC relative tachometer count.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VescTachometer(i32);
+
+impl VescTachometer {
+    /// Creates a relative tachometer count.
+    #[must_use]
+    pub const fn from_counts(value: i32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the relative tachometer count.
+    #[must_use]
+    pub const fn as_counts(self) -> i32 {
+        self.0
+    }
 }
 
 /// Owned VESC statistics telemetry subset.
@@ -235,9 +273,9 @@ impl VescBoardProfile {
         }
     }
 
-    /// Calculates signed road speed in millimeters per second from eRPM.
+    /// Calculates signed road speed from eRPM.
     #[must_use]
-    pub fn speed_from_erpm(self, erpm: i32) -> Option<i32> {
+    pub fn speed_from_erpm(self, erpm: ElectricalRpm) -> Option<Speed> {
         let denominator =
             i64::from(self.motor_pole_pairs) * i64::from(self.gear_ratio_denominator) * 60;
         if denominator == 0 {
@@ -246,8 +284,11 @@ impl VescBoardProfile {
 
         let wheel_circumference_mm =
             i64::try_from(self.wheel_circumference.as_millimetres()).ok()?;
-        let numerator = i64::from(erpm) * wheel_circumference_mm;
-        Some(round_div_i64_to_i32(numerator, denominator))
+        let numerator = i64::from(erpm.as_erpm()) * wheel_circumference_mm;
+        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
+            numerator,
+            denominator,
+        )))
     }
 }
 
@@ -501,13 +542,13 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
 impl From<vesc::Values> for VescValuesTelemetry {
     fn from(values: vesc::Values) -> Self {
         Self {
-            rpm_erpm: round_f32_to_i32(values.rpm),
+            rpm: ElectricalRpm::from_erpm(round_f32_to_i32(values.rpm)),
             voltage: Voltage::from_millivolts(round_f32_to_i32(values.voltage_in * 1_000.0)),
             input_current: BatteryCurrent::from_milliamps(round_f32_to_i32(
                 values.avg_current_input * 1_000.0,
             )),
-            tachometer: values.tachometer,
-            controller_id: values.controller_id,
+            tachometer: VescTachometer::from_counts(values.tachometer),
+            controller_id: VescControllerId::new(values.controller_id),
             fault_code: values.fault_code.into(),
         }
     }
@@ -686,11 +727,11 @@ mod tests {
             panic!("expected values reply");
         };
 
-        assert_eq!(telemetry.rpm_erpm, 989);
+        assert_eq!(telemetry.rpm, ElectricalRpm::from_erpm(989));
         assert_eq!(telemetry.voltage.as_millivolts(), 37_500);
         assert_eq!(telemetry.input_current.as_milliamps(), 40);
-        assert_eq!(telemetry.tachometer, -21_973);
-        assert_eq!(telemetry.controller_id, 20);
+        assert_eq!(telemetry.tachometer, VescTachometer::from_counts(-21_973));
+        assert_eq!(telemetry.controller_id, VescControllerId::new(20));
         assert_eq!(telemetry.fault_code, VescFaultCode::None);
     }
 
@@ -720,14 +761,20 @@ mod tests {
     fn vesc_board_profile_calculates_speed_from_erpm() {
         let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
 
-        assert_eq!(profile.speed_from_erpm(4_500), Some(10_500));
+        assert_eq!(
+            profile.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            Some(Speed::from_millimetres_per_second(10_500))
+        );
     }
 
     #[test]
     fn vesc_board_profile_preserves_reverse_erpm_sign() {
         let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
 
-        assert_eq!(profile.speed_from_erpm(-4_500), Some(-10_500));
+        assert_eq!(
+            profile.speed_from_erpm(ElectricalRpm::from_erpm(-4_500)),
+            Some(Speed::from_millimetres_per_second(-10_500))
+        );
     }
 
     #[test]
@@ -735,18 +782,26 @@ mod tests {
         let direct_drive = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
         let geared = VescBoardProfile::new(15, 2, Distance::from_millimetres(2_100));
 
-        assert_eq!(direct_drive.speed_from_erpm(4_500), Some(10_500));
-        assert_eq!(geared.speed_from_erpm(4_500), Some(5_250));
+        assert_eq!(
+            direct_drive.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            Some(Speed::from_millimetres_per_second(10_500))
+        );
+        assert_eq!(
+            geared.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            Some(Speed::from_millimetres_per_second(5_250))
+        );
     }
 
     #[test]
     fn vesc_board_profile_refuses_zero_denominators() {
         assert_eq!(
-            VescBoardProfile::new(0, 1, Distance::from_millimetres(2_100)).speed_from_erpm(4_500),
+            VescBoardProfile::new(0, 1, Distance::from_millimetres(2_100))
+                .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
             None
         );
         assert_eq!(
-            VescBoardProfile::new(15, 0, Distance::from_millimetres(2_100)).speed_from_erpm(4_500),
+            VescBoardProfile::new(15, 0, Distance::from_millimetres(2_100))
+                .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
             None
         );
     }

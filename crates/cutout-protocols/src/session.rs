@@ -7,7 +7,7 @@ use cutout_core::{
     NotificationByteLen, NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics,
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
     ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, Speed,
+    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
     Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, Voltage,
     WritePayload,
 };
@@ -596,8 +596,8 @@ fn vesc_values_to_delta(
     cutout_core::TelemetryDelta {
         at_ms: monotonic_ms,
         speed: board_profile
-            .and_then(|profile| profile.speed_from_erpm(values.rpm_erpm))
-            .map(|value| Measured::calculated(Speed::from_millimetres_per_second(value))),
+            .and_then(|profile| profile.speed_from_erpm(values.rpm))
+            .map(Measured::calculated),
         voltage: Some(Measured::reported(values.voltage)),
         battery_current: Some(Measured::reported(values.input_current)),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
@@ -609,15 +609,15 @@ fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryRead
         fields: [
             Some(RawFieldValue::new(
                 VESC_RAW_ERPM_FIELD_ID,
-                i64::from(values.rpm_erpm),
+                i64::from(values.rpm.as_erpm()),
             )),
             Some(RawFieldValue::new(
                 VESC_RAW_TACHOMETER_FIELD_ID,
-                i64::from(values.tachometer),
+                i64::from(values.tachometer.as_counts()),
             )),
             Some(RawFieldValue::new(
                 VESC_RAW_CONTROLLER_ID_FIELD_ID,
-                i64::from(values.controller_id),
+                i64::from(values.controller_id.get()),
             )),
             Some(RawFieldValue::new(
                 VESC_RAW_FAULT_CODE_FIELD_ID,
@@ -1907,9 +1907,9 @@ mod tests {
         let delta = telemetry.last().expect("VESC values telemetry");
         assert_eq!(
             delta.speed,
-            Some(Measured::calculated(Speed::from_millimetres_per_second(
-                989
-            )))
+            Some(Measured::calculated(
+                cutout_core::Speed::from_millimetres_per_second(989)
+            ))
         );
 
         let responses = read_only_response_events(&output);
@@ -2078,7 +2078,9 @@ mod tests {
 
         assert_eq!(
             telemetry.speed,
-            Some(Measured::reported(Speed::from_millimetres_per_second(0)))
+            Some(Measured::reported(
+                cutout_core::Speed::from_millimetres_per_second(0)
+            ))
         );
         assert_eq!(
             telemetry.motor_current,
