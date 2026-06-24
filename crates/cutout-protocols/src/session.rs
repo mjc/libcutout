@@ -1880,7 +1880,11 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_emits_calculated_speed_when_board_profile_is_explicit() {
-        let decoder = VescNotificationDecoder::with_board_profile(VescBoardProfile::new(1, 1, 60));
+        let decoder = VescNotificationDecoder::with_board_profile(VescBoardProfile::new(
+            1,
+            1,
+            cutout_core::Distance::from_millimetres(60),
+        ));
         let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);
         let mut output = Vec::new();
 

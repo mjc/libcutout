@@ -1,6 +1,6 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
-use cutout_core::{BatteryCurrent, Power, Speed, Voltage};
+use cutout_core::{BatteryCurrent, Distance, Power, Speed, Voltage};
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -216,8 +216,8 @@ pub struct VescBoardProfile {
     /// Mechanical gear reduction denominator.
     pub gear_ratio_denominator: u8,
 
-    /// Wheel circumference in millimeters.
-    pub wheel_circumference_mm: u16,
+    /// Wheel circumference.
+    pub wheel_circumference: Distance,
 }
 
 impl VescBoardProfile {
@@ -226,24 +226,27 @@ impl VescBoardProfile {
     pub const fn new(
         motor_pole_pairs: u8,
         gear_ratio_denominator: u8,
-        wheel_circumference_mm: u16,
+        wheel_circumference: Distance,
     ) -> Self {
         Self {
             motor_pole_pairs,
             gear_ratio_denominator,
-            wheel_circumference_mm,
+            wheel_circumference,
         }
     }
 
     /// Calculates signed road speed in millimeters per second from eRPM.
     #[must_use]
-    pub const fn speed_mm_s_from_erpm(self, erpm: i32) -> Option<i32> {
-        let denominator = self.motor_pole_pairs as i64 * self.gear_ratio_denominator as i64 * 60;
+    pub fn speed_mm_s_from_erpm(self, erpm: i32) -> Option<i32> {
+        let denominator =
+            i64::from(self.motor_pole_pairs) * i64::from(self.gear_ratio_denominator) * 60;
         if denominator == 0 {
             return None;
         }
 
-        let numerator = erpm as i64 * self.wheel_circumference_mm as i64;
+        let wheel_circumference_mm =
+            i64::try_from(self.wheel_circumference.as_millimetres()).ok()?;
+        let numerator = i64::from(erpm) * wheel_circumference_mm;
         Some(round_div_i64_to_i32(numerator, denominator))
     }
 }
@@ -713,22 +716,22 @@ mod tests {
 
     #[test]
     fn vesc_board_profile_calculates_speed_from_erpm() {
-        let profile = VescBoardProfile::new(15, 1, 2_100);
+        let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
 
         assert_eq!(profile.speed_mm_s_from_erpm(4_500), Some(10_500));
     }
 
     #[test]
     fn vesc_board_profile_preserves_reverse_erpm_sign() {
-        let profile = VescBoardProfile::new(15, 1, 2_100);
+        let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
 
         assert_eq!(profile.speed_mm_s_from_erpm(-4_500), Some(-10_500));
     }
 
     #[test]
     fn vesc_board_profile_applies_gear_reduction() {
-        let direct_drive = VescBoardProfile::new(15, 1, 2_100);
-        let geared = VescBoardProfile::new(15, 2, 2_100);
+        let direct_drive = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
+        let geared = VescBoardProfile::new(15, 2, Distance::from_millimetres(2_100));
 
         assert_eq!(direct_drive.speed_mm_s_from_erpm(4_500), Some(10_500));
         assert_eq!(geared.speed_mm_s_from_erpm(4_500), Some(5_250));
@@ -737,11 +740,13 @@ mod tests {
     #[test]
     fn vesc_board_profile_refuses_zero_denominators() {
         assert_eq!(
-            VescBoardProfile::new(0, 1, 2_100).speed_mm_s_from_erpm(4_500),
+            VescBoardProfile::new(0, 1, Distance::from_millimetres(2_100))
+                .speed_mm_s_from_erpm(4_500),
             None
         );
         assert_eq!(
-            VescBoardProfile::new(15, 0, 2_100).speed_mm_s_from_erpm(4_500),
+            VescBoardProfile::new(15, 0, Distance::from_millimetres(2_100))
+                .speed_mm_s_from_erpm(4_500),
             None
         );
     }
