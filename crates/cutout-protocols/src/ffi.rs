@@ -267,7 +267,8 @@ mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
         MonotonicMillis, MonotonicMillisDto, ParserDiagnosticCountDto, SafetyClassDto,
-        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
+        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto, TransportWriteLen,
+        TransportWriteLenDto,
     };
 
     use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -283,13 +284,21 @@ mod tests {
         }
     }
 
+    const fn write_len(value: u16) -> TransportWriteLen {
+        TransportWriteLen::new(value)
+    }
+
+    const fn write_len_dto(value: u16) -> TransportWriteLenDto {
+        TransportWriteLenDto { bytes: value }
+    }
+
     #[test]
     fn concrete_aero_session_drives_link_up_and_drains_owned_outputs() {
         let mut session = new_nosfet_aero_read_only_session();
 
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len_dto(185)),
         });
 
         assert!(session.drain_outputs().iter().any(|output| matches!(
@@ -304,7 +313,7 @@ mod tests {
         let mut session = new_begode_falcon_read_only_session();
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len_dto(185)),
         });
         let _ = session.drain_outputs();
 
@@ -322,7 +331,7 @@ mod tests {
         let mut session = new_begode_falcon_read_only_session();
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len_dto(185)),
         });
         let _ = session.drain_outputs();
 
@@ -364,7 +373,7 @@ mod tests {
 
         let result = session.ingest_checked(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len_dto(185)),
         });
 
         assert_eq!(result.error, None);
@@ -384,7 +393,7 @@ mod tests {
 
         session.ingest(&SessionInputDto::LinkUp {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len_dto(185)),
         });
         let _ = session.drain_outputs();
 
@@ -412,7 +421,7 @@ mod tests {
         let mut session = new_begode_falcon_read_only_session();
         let link = LinkInfo {
             monotonic_ms: MonotonicMillis::new(7),
-            max_write_len: Some(20),
+            max_write_len: Some(write_len(20)),
         };
 
         session.ingest(&SessionInputDto::from(cutout_core::SessionInput::LinkUp(

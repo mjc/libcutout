@@ -10,11 +10,16 @@ use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
     ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, MonotonicMillis,
     ParserKey, ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue,
-    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, VerificationStatus,
+    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, TransportWriteLen,
+    VerificationStatus,
 };
 
 const fn ms(value: u64) -> MonotonicMillis {
     MonotonicMillis::new(value)
+}
+
+const fn write_len(value: u16) -> TransportWriteLen {
+    TransportWriteLen::new(value)
 }
 
 struct CountingAllocator;
@@ -158,7 +163,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     assert_no_allocations("host link-up", || {
         link_up_host.ingest_link_up(LinkInfo {
             monotonic_ms: ms(10),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len(185)),
         });
         let drained = link_up_host.drain_outputs();
 

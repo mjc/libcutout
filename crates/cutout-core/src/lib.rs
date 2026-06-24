@@ -116,6 +116,43 @@ pub const MAX_TRANSPORT_WRITE_LEN: usize = 512;
 /// Payload bytes stored inline before falling back to an explicit large write.
 pub const MAX_INLINE_TRANSPORT_WRITE_LEN: usize = 32;
 
+/// Maximum payload bytes accepted by a transport write.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TransportWriteLen(u16);
+
+impl TransportWriteLen {
+    /// Creates a transport write length from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Creates a transport write length from bytes.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self::from_bytes(value)
+    }
+
+    /// Returns the transport write length in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> u16 {
+        self.0
+    }
+
+    /// Returns the transport write length in bytes.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.as_bytes()
+    }
+}
+
+impl fmt::Display for TransportWriteLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Transport-independent identifier for a GATT characteristic or endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GattChannel(Uuid);
@@ -153,7 +190,7 @@ pub struct LinkInfo {
     pub monotonic_ms: MonotonicMillis,
 
     /// Maximum write payload length reported by the host, when known.
-    pub max_write_len: Option<u16>,
+    pub max_write_len: Option<TransportWriteLen>,
 }
 
 /// Command requested by the host application.
@@ -5353,6 +5390,10 @@ mod tests {
         crate::ParserDiagnosticCount::new(value)
     }
 
+    const fn write_len(value: u16) -> crate::TransportWriteLen {
+        crate::TransportWriteLen::new(value)
+    }
+
     #[test]
     fn exposes_the_expected_name() {
         assert_eq!(crate_name(), "cutout-core");
@@ -5702,7 +5743,7 @@ mod tests {
         let mut output = Vec::new();
         let link = LinkInfo {
             monotonic_ms: ms(10),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len(185)),
         };
 
         session.handle(SessionInput::LinkUp(link), &mut output);
@@ -8183,7 +8224,7 @@ mod tests {
         let mut host = crate::HostSession::new(EchoSession::default());
         let link = LinkInfo {
             monotonic_ms: ms(10),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len(185)),
         };
 
         host.ingest_link_up(link);
@@ -8424,7 +8465,7 @@ mod tests {
         let channel = GattChannel::from_bytes([0x22; 16]);
         let link = LinkInfo {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len(185)),
         };
         let records = [
             crate::CaptureRecord::LinkUp(link),

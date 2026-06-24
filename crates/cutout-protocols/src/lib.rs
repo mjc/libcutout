@@ -129,6 +129,10 @@ mod tests {
         cutout_core::MonotonicMillis::new(value)
     }
 
+    const fn write_len(value: u16) -> cutout_core::TransportWriteLen {
+        cutout_core::TransportWriteLen::new(value)
+    }
+
     use super::crate_name;
     use cutout_core::{
         Capabilities, CommandKind, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
@@ -164,7 +168,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -185,7 +189,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );

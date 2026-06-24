@@ -6,7 +6,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use cutout_core::{LinkInfo, MonotonicMillis, ProtocolSession, SessionInput, SessionOutput};
+use cutout_core::{
+    LinkInfo, MonotonicMillis, ProtocolSession, SessionInput, SessionOutput, TransportWriteLen,
+};
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
     BegodeFrameReassembler, NosfetAeroModel, ReadOnlyModelSpec, ReadOnlySession,
@@ -18,6 +20,10 @@ struct CountingAllocator;
 
 const fn ms(value: u64) -> MonotonicMillis {
     MonotonicMillis::new(value)
+}
+
+const fn write_len(value: u16) -> TransportWriteLen {
+    TransportWriteLen::new(value)
 }
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -98,7 +104,7 @@ where
     session.handle(
         SessionInput::LinkUp(LinkInfo {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len(185)),
         }),
         &mut output,
     );
@@ -120,7 +126,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
     veteran.handle(
         SessionInput::LinkUp(LinkInfo {
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(write_len(185)),
         }),
         &mut veteran_output,
     );

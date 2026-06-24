@@ -13,7 +13,8 @@ use crate::VescControllerId;
 use crate::{
     DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicMillis,
     NotificationChunkLen, ProtocolFamily, ProtocolSession, ReplayChunkComparison, RequestTarget,
-    SemanticEventCount, SessionInput, SessionOutput, VerifiedValue, WallClockUnixMillis, WriteMode,
+    SemanticEventCount, SessionInput, SessionOutput, TransportWriteLen, VerifiedValue,
+    WallClockUnixMillis, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -715,7 +716,7 @@ impl PevcapCapture {
         {
             host.ingest_link_up(LinkInfo {
                 monotonic_ms: MonotonicMillis::new(0),
-                max_write_len: self.header.write_limit,
+                max_write_len: transport_write_len(self.header.write_limit),
             });
             host.drain_outputs_into(outputs);
         }
@@ -725,7 +726,7 @@ impl PevcapCapture {
                 PevcapDirection::LinkUp => {
                     host.ingest_link_up(LinkInfo {
                         monotonic_ms: record.monotonic_ms,
-                        max_write_len: record.link_max_write_len,
+                        max_write_len: transport_write_len(record.link_max_write_len),
                     });
                 }
                 PevcapDirection::LinkDown => host.ingest_link_down(),
@@ -1024,6 +1025,10 @@ fn replay_pevcap_notification<S>(
             }
         }
     }
+}
+
+fn transport_write_len(value: Option<u16>) -> Option<TransportWriteLen> {
+    value.map(TransportWriteLen::new)
 }
 
 /// JSONL PEVCAP import/export error.
@@ -1797,6 +1802,10 @@ mod tests {
         WallClockUnixMillis::new(value)
     }
 
+    const fn write_len(value: u16) -> TransportWriteLen {
+        TransportWriteLen::new(value)
+    }
+
     #[derive(Clone, Default)]
     struct RecordingSession {
         bytes: Rc<RefCell<Vec<u8>>>,
@@ -2205,8 +2214,8 @@ mod tests {
             outputs[0],
             SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
                 monotonic_ms,
-                max_write_len: Some(23),
-            })) if monotonic_ms == ms(0)
+                max_write_len: Some(max_write_len),
+            })) if monotonic_ms == ms(0) && max_write_len == write_len(23)
         ));
         assert!(matches!(
             outputs[1],
@@ -2267,8 +2276,8 @@ mod tests {
             outputs[0],
             SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
                 monotonic_ms,
-                max_write_len: Some(23),
-            })) if monotonic_ms == ms(5)
+                max_write_len: Some(max_write_len),
+            })) if monotonic_ms == ms(5) && max_write_len == write_len(23)
         ));
         assert!(matches!(
             outputs[2],
@@ -2278,8 +2287,8 @@ mod tests {
             outputs[3],
             SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
                 monotonic_ms,
-                max_write_len: Some(23),
-            })) if monotonic_ms == ms(20)
+                max_write_len: Some(max_write_len),
+            })) if monotonic_ms == ms(20) && max_write_len == write_len(23)
         ));
         assert_eq!(
             replayed_bytes(&capture, PevcapReplayMode::Whole),

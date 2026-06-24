@@ -1275,6 +1275,10 @@ mod tests {
         MonotonicMillis::new(value)
     }
 
+    const fn write_len(value: u16) -> cutout_core::TransportWriteLen {
+        cutout_core::TransportWriteLen::new(value)
+    }
+
     use super::*;
     use crate::{GearRatioDenominator, MotorPolePairs};
     use core::mem::size_of;
@@ -1445,7 +1449,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1470,7 +1474,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1497,7 +1501,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1522,7 +1526,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1545,7 +1549,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1575,7 +1579,7 @@ mod tests {
             &mut decoder,
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(7),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1594,7 +1598,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1709,7 +1713,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1748,7 +1752,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1758,7 +1762,7 @@ mod tests {
             vec![
                 SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
                     monotonic_ms: ms(1),
-                    max_write_len: Some(185),
+                    max_write_len: Some(write_len(185)),
                 })),
                 SessionOutput::Transport(TransportAction::Subscribe {
                     channel: VESC_NOTIFY_CHANNEL,
@@ -1830,7 +1834,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1895,7 +1899,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1937,7 +1941,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -2017,7 +2021,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -2033,7 +2037,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(3),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -2128,7 +2132,7 @@ mod tests {
         session.handle(
             SessionInput::LinkUp(LinkInfo {
                 monotonic_ms: ms(1),
-                max_write_len: Some(185),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );

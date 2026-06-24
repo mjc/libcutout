@@ -10,8 +10,8 @@ use cutout_core::{
     PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
     PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto,
     SemanticEventCountDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
-    TransportActionDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    WallClockUnixMillis,
+    TransportActionDto, TransportWriteLenDto, VerificationStatus, VerificationStatusDto,
+    VerifiedValue, WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -72,7 +72,7 @@ pub struct MobileSessionInputDto {
     pub monotonic_ms: MobileMonotonicMillisDto,
 
     /// Maximum write length, when known.
-    pub max_write_len: Option<u16>,
+    pub max_write_len: Option<MobileTransportWriteLenDto>,
 
     /// Transport channel bytes for notification inputs.
     pub channel: Vec<u8>,
@@ -119,6 +119,25 @@ pub struct MobileWallClockUnixMillisDto {
 impl MobileWallClockUnixMillisDto {
     fn into_core(self) -> WallClockUnixMillis {
         WallClockUnixMillis::new(self.milliseconds)
+    }
+}
+
+/// Mobile maximum transport write payload length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileTransportWriteLenDto {
+    /// Length in bytes.
+    pub bytes: u16,
+}
+
+impl MobileTransportWriteLenDto {
+    const fn into_core_ffi(self) -> TransportWriteLenDto {
+        TransportWriteLenDto { bytes: self.bytes }
+    }
+}
+
+impl From<TransportWriteLenDto> for MobileTransportWriteLenDto {
+    fn from(value: TransportWriteLenDto) -> Self {
+        Self { bytes: value.bytes }
     }
 }
 
@@ -899,7 +918,9 @@ impl From<MobileSessionInputDto> for SessionInputDto {
         match input.kind {
             MobileSessionInputKindDto::LinkUp => Self::LinkUp {
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
-                max_write_len: input.max_write_len,
+                max_write_len: input
+                    .max_write_len
+                    .map(MobileTransportWriteLenDto::into_core_ffi),
             },
             MobileSessionInputKindDto::LinkDown => Self::LinkDown,
             MobileSessionInputKindDto::Notification => Self::Notification {
@@ -1331,6 +1352,10 @@ mod tests {
         MobileParserDiagnosticCountDto { count: value }
     }
 
+    const fn mobile_write_len(value: u16) -> MobileTransportWriteLenDto {
+        MobileTransportWriteLenDto { bytes: value }
+    }
+
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
             family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
@@ -1484,7 +1509,7 @@ mod tests {
         let link_result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
-            max_write_len: Some(185),
+            max_write_len: Some(mobile_write_len(185)),
             channel: Vec::new(),
             bytes: Vec::new(),
             command: None,
