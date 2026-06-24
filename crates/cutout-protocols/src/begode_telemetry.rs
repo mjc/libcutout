@@ -2,8 +2,8 @@ use core::ops::RangeInclusive;
 
 use cutout_core::{
     BatteryCurrent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle,
-    Measured, MonotonicMillis, Percent, Power, RawFieldValue, ReadOnlyResponse, SettingsEntry,
-    SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    Measured, MonotonicMillis, Percent, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse,
+    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
     VerificationStatus, Voltage,
 };
 use thiserror::Error;
@@ -770,8 +770,8 @@ pub struct BegodeLiveATelemetry {
     /// Raw unscaled voltage in centivolts.
     pub raw_voltage_centivolts: u16,
 
-    /// Scaled pack voltage in millivolts.
-    pub voltage_mv: i32,
+    /// Scaled pack voltage.
+    pub voltage_mv: Voltage,
 
     /// Raw signed speed converted to milli-km/h.
     pub speed_milli_kmh: i32,
@@ -782,17 +782,17 @@ pub struct BegodeLiveATelemetry {
     /// Low-word trip distance in meters for firmwares that do not populate the high word.
     pub trip_distance_low_m: u16,
 
-    /// Signed phase current in milliamps.
-    pub phase_current_ma: i32,
+    /// Signed phase current.
+    pub phase_current_ma: PhaseCurrent,
 
-    /// Default MPU6050 IMU temperature in millicelsius.
-    pub imu_temperature_mc: i32,
+    /// Default MPU6050 IMU temperature.
+    pub imu_temperature_mc: Temperature,
 
     /// Raw hardware PWM field.
     pub hardware_pwm_raw: i16,
 
     /// Estimated battery percent derived from voltage.
-    pub battery_percent_estimated: u8,
+    pub battery_percent_estimated: Percent,
 }
 
 impl BegodeLiveATelemetry {
@@ -815,13 +815,15 @@ impl BegodeLiveATelemetry {
             speed_milli_kmh: raw_speed_to_milli_kmh(be_i16(cursor, ByteOffset::new(4))),
             trip_distance_m: be_u32(cursor, ByteOffset::new(6)),
             trip_distance_low_m: be_u16(cursor, ByteOffset::new(8)),
-            phase_current_ma: i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
+            phase_current_ma: PhaseCurrent::from_milliamps(
+                i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
+            ),
             imu_temperature_mc: mpu6050_temperature_mc(be_i16(cursor, ByteOffset::new(12))),
             hardware_pwm_raw: be_i16(cursor, ByteOffset::new(14)),
-            battery_percent_estimated: estimate_begode_battery_percent(
+            battery_percent_estimated: Percent::from_percent(estimate_begode_battery_percent(
                 scaled_voltage_mv(raw_voltage_centivolts, profile),
                 profile,
-            ),
+            )),
         })
     }
 
@@ -842,26 +844,22 @@ impl BegodeLiveATelemetry {
             speed_mm_s: Some(source_reported(Speed::from_millimetres_per_second(
                 milli_kmh_to_mm_s(unit_mode.speed_milli_kmh(self.speed_milli_kmh)),
             ))),
-            voltage_mv: Some(source_reported(Voltage::from_millivolts(self.voltage_mv))),
+            voltage_mv: Some(source_reported(self.voltage_mv)),
             motor_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
-                self.phase_current_ma,
+                self.phase_current_ma.as_milliamps(),
             ))),
-            power_mw: Some(source_calculated(Power::from_milliwatts(power_mw(
+            power_mw: Some(source_calculated(power_mw(
                 self.voltage_mv,
                 self.phase_current_ma,
-            )))),
-            controller_temperature_mc: Some(source_reported(Temperature::from_millicelsius(
-                self.imu_temperature_mc,
             ))),
+            controller_temperature_mc: Some(source_reported(self.imu_temperature_mc)),
             pwm_permille: Some(source_reported(DutyCycle::from_permille(
                 raw_pwm_to_permille(self.hardware_pwm_raw),
             ))),
             distance_mm: Some(source_reported(Distance::from_millimetres(
                 unit_mode.distance_m_to_mm(u32::from(self.trip_distance_low_m)),
             ))),
-            battery_percent_estimated: Some(source_estimated(Percent::from_percent(
-                self.battery_percent_estimated,
-            ))),
+            battery_percent_estimated: Some(source_estimated(self.battery_percent_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -997,10 +995,10 @@ impl BegodeLiveBTelemetry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeExtraTelemetry {
     /// True battery current in milliamps.
-    pub battery_current_ma: i32,
+    pub battery_current_ma: BatteryCurrent,
 
-    /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: i32,
+    /// Motor temperature.
+    pub motor_temperature_mc: Temperature,
 
     /// True PWM raw field.
     pub true_pwm_raw: i16,
@@ -1017,8 +1015,12 @@ impl BegodeExtraTelemetry {
         require_tag(frame, 0x07)?;
         let cursor = ByteCursor::new(frame.as_slice());
         Ok(Self {
-            battery_current_ma: i32::from(be_i16(cursor, ByteOffset::new(2))) * 10,
-            motor_temperature_mc: i32::from(be_i16(cursor, ByteOffset::new(6))) * 1_000,
+            battery_current_ma: BatteryCurrent::from_milliamps(
+                i32::from(be_i16(cursor, ByteOffset::new(2))) * 10,
+            ),
+            motor_temperature_mc: Temperature::from_millicelsius(
+                i32::from(be_i16(cursor, ByteOffset::new(6))) * 1_000,
+            ),
             true_pwm_raw: be_i16(cursor, ByteOffset::new(8)),
         })
     }
@@ -1027,12 +1029,8 @@ impl BegodeExtraTelemetry {
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            battery_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
-                self.battery_current_ma,
-            ))),
-            motor_temperature_mc: Some(source_reported(Temperature::from_millicelsius(
-                self.motor_temperature_mc,
-            ))),
+            battery_current_ma: Some(source_reported(self.battery_current_ma)),
+            motor_temperature_mc: Some(source_reported(self.motor_temperature_mc)),
             pwm_permille: Some(source_reported(DutyCycle::from_permille(
                 raw_pwm_to_permille(self.true_pwm_raw),
             ))),
@@ -1072,7 +1070,10 @@ pub enum BegodeTelemetryError {
 
 /// Estimates Begode battery percent from scaled pack voltage and profile.
 #[must_use]
-pub fn estimate_begode_battery_percent(voltage_mv: i32, profile: BegodePackVoltageProfile) -> u8 {
+pub fn estimate_begode_battery_percent(
+    voltage_mv: Voltage,
+    profile: BegodePackVoltageProfile,
+) -> u8 {
     let raw_centivolts = unscaled_centivolts(voltage_mv, profile);
     if raw_centivolts <= 5_120 {
         return 0;
@@ -1098,12 +1099,14 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
     }
 }
 
-fn scaled_voltage_mv(raw_centivolts: u16, profile: BegodePackVoltageProfile) -> i32 {
-    (i32::from(raw_centivolts) * 10 * profile.scaler_milli() + 500) / 1_000
+fn scaled_voltage_mv(raw_centivolts: u16, profile: BegodePackVoltageProfile) -> Voltage {
+    Voltage::from_millivolts(
+        (i32::from(raw_centivolts) * 10 * profile.scaler_milli() + 500) / 1_000,
+    )
 }
 
-fn unscaled_centivolts(voltage_mv: i32, profile: BegodePackVoltageProfile) -> i32 {
-    (voltage_mv * 100 + profile.scaler_milli() / 2) / profile.scaler_milli()
+fn unscaled_centivolts(voltage_mv: Voltage, profile: BegodePackVoltageProfile) -> i32 {
+    (voltage_mv.as_millivolts() * 100 + profile.scaler_milli() / 2) / profile.scaler_milli()
 }
 
 fn raw_speed_to_milli_kmh(raw_speed: i16) -> i32 {
@@ -1114,16 +1117,16 @@ fn milli_kmh_to_mm_s(value: i32) -> i32 {
     value * 5 / 18
 }
 
-fn power_mw(voltage_mv: i32, current_ma: i32) -> i64 {
-    i64::from(voltage_mv) * i64::from(current_ma) / 1_000
+fn power_mw(voltage_mv: Voltage, current_ma: PhaseCurrent) -> Power {
+    Power::from_voltage_current(voltage_mv, current_ma)
 }
 
 fn raw_pwm_to_permille(raw_pwm: i16) -> i16 {
     raw_pwm / 10
 }
 
-fn mpu6050_temperature_mc(raw_temperature: i16) -> i32 {
-    36_530 + (i32::from(raw_temperature) * 1_000) / 340
+fn mpu6050_temperature_mc(raw_temperature: i16) -> Temperature {
+    Temperature::from_millicelsius(36_530 + (i32::from(raw_temperature) * 1_000) / 340)
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {
@@ -1239,7 +1242,7 @@ mod tests {
     };
     use cutout_core::{
         DiagnosticSeverity, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
-        ValueQuality, ValueSource, VerificationStatus,
+        ValueQuality, ValueSource, VerificationStatus, Voltage,
     };
     use proptest::prelude::*;
 
@@ -1258,14 +1261,14 @@ mod tests {
                 .expect("live A frame decodes");
 
         assert_eq!(telemetry.raw_voltage_centivolts, 6005);
-        assert_eq!(telemetry.voltage_mv, 75_063);
+        assert_eq!(telemetry.voltage_mv.as_millivolts(), 75_063);
         assert_eq!(telemetry.speed_milli_kmh, 48_096);
         assert_eq!(telemetry.trip_distance_m, 0x0076_02ee);
         assert_eq!(telemetry.trip_distance_low_m, 750);
-        assert_eq!(telemetry.phase_current_ma, -11_800);
-        assert_eq!(telemetry.imu_temperature_mc, 27_930);
+        assert_eq!(telemetry.phase_current_ma.as_milliamps(), -11_800);
+        assert_eq!(telemetry.imu_temperature_mc.as_millicelsius(), 27_930);
         assert_eq!(telemetry.hardware_pwm_raw, 0x1481);
-        assert_eq!(telemetry.battery_percent_estimated, 50);
+        assert_eq!(telemetry.battery_percent_estimated.get(), 50);
     }
 
     #[test]
@@ -1287,8 +1290,8 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&EXTRA).expect("fixture frame is valid");
         let telemetry = BegodeExtraTelemetry::decode(&frame).expect("extra frame decodes");
 
-        assert_eq!(telemetry.battery_current_ma, -1_000);
-        assert_eq!(telemetry.motor_temperature_mc, 42_000);
+        assert_eq!(telemetry.battery_current_ma.as_milliamps(), -1_000);
+        assert_eq!(telemetry.motor_temperature_mc.as_millicelsius(), 42_000);
         assert_eq!(telemetry.true_pwm_raw, -40);
     }
 
@@ -1308,9 +1311,7 @@ mod tests {
                 speed_mm_s: Some(source_reported(
                     cutout_core::Speed::from_millimetres_per_second(13_360,)
                 )),
-                voltage_mv: Some(source_reported(cutout_core::Voltage::from_millivolts(
-                    75_063
-                ))),
+                voltage_mv: Some(source_reported(Voltage::from_millivolts(75_063))),
                 battery_current_ma: None,
                 motor_current_ma: Some(source_reported(
                     cutout_core::BatteryCurrent::from_milliamps(-11_800,)
@@ -1503,7 +1504,10 @@ mod tests {
     #[test]
     fn falcon_84v_full_charge_battery_percent_uses_better_begode_curve() {
         assert_eq!(
-            estimate_begode_battery_percent(75_063, BegodePackVoltageProfile::Begode84VFullCharge),
+            estimate_begode_battery_percent(
+                Voltage::from_millivolts(75_063),
+                BegodePackVoltageProfile::Begode84VFullCharge,
+            ),
             50
         );
     }
@@ -1998,8 +2002,13 @@ mod tests {
             let high = first_mv.max(second_mv);
 
             prop_assert!(
-                estimate_begode_battery_percent(low, BegodePackVoltageProfile::Begode84VFullCharge)
-                    <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Begode84VFullCharge)
+                estimate_begode_battery_percent(
+                    Voltage::from_millivolts(low),
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ) <= estimate_begode_battery_percent(
+                    Voltage::from_millivolts(high),
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                )
             );
         }
 
@@ -2009,8 +2018,13 @@ mod tests {
             let high = first_mv.max(second_mv);
 
             prop_assert!(
-                estimate_begode_battery_percent(low, BegodePackVoltageProfile::Begode100VFullCharge)
-                    <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Begode100VFullCharge)
+                estimate_begode_battery_percent(
+                    Voltage::from_millivolts(low),
+                    BegodePackVoltageProfile::Begode100VFullCharge,
+                ) <= estimate_begode_battery_percent(
+                    Voltage::from_millivolts(high),
+                    BegodePackVoltageProfile::Begode100VFullCharge,
+                )
             );
         }
 

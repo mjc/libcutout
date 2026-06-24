@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrents,
-    ProtocolSelector, VerificationStatus,
+    ProtocolSelector, Temperature, VerificationStatus,
 };
 use thiserror::Error;
 
@@ -173,7 +173,7 @@ pub struct VeteranBmsTemperaturePage {
     pub selector: ProtocolSelector,
 
     /// Temperature values in millicelsius.
-    pub temperatures_mc: ArrayVec<i32, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
+    pub temperatures_mc: ArrayVec<Temperature, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
 }
 
 impl VeteranBmsTemperaturePage {
@@ -204,7 +204,7 @@ impl VeteranBmsTemperaturePage {
         let cursor = ByteCursor::new(values);
         for offset in (0..values.len()).step_by(2) {
             if let Some(value) = cursor.be_i16(ByteOffset::new(offset)) {
-                temperatures_mc.push(i32::from(value) * 10);
+                temperatures_mc.push(Temperature::from_millicelsius(i32::from(value) * 10));
             }
         }
 
@@ -570,7 +570,14 @@ mod tests {
         assert_eq!(page.selector, sel(3));
         assert_eq!(
             page.temperatures_mc.as_slice(),
-            &[16730, 16230, 16980, 16700, 16600, 17830]
+            &[
+                Temperature::from_millicelsius(16_730),
+                Temperature::from_millicelsius(16_230),
+                Temperature::from_millicelsius(16_980),
+                Temperature::from_millicelsius(16_700),
+                Temperature::from_millicelsius(16_600),
+                Temperature::from_millicelsius(17_830),
+            ]
         );
     }
 
