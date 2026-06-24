@@ -145,10 +145,10 @@ pub struct VeteranModelProfile {
     pub name: &'static str,
 
     /// Series-connected cell count for pack-voltage interpretation.
-    pub cell_count: u8,
+    pub series_cells: PackSeriesCells,
 
-    /// Parallel cell count for model pack configuration.
-    pub parallel_cells: u8,
+    /// Parallel pack count for model pack configuration.
+    pub parallel_packs: BmsParallelPacks,
 
     /// Nominal pack capacity, when known.
     pub nominal_capacity: Option<Capacity>,
@@ -262,14 +262,14 @@ impl VeteranModelProfile {
     const fn new_linear(
         model_id: u16,
         name: &'static str,
-        cell_count: u8,
+        series_cells: u8,
         voltage_range: RangeInclusive<Voltage>,
     ) -> Self {
         Self {
             model_id,
             name,
-            cell_count,
-            parallel_cells: 1,
+            series_cells: PackSeriesCells::new(series_cells),
+            parallel_packs: BmsParallelPacks::new(1),
             nominal_capacity: None,
             battery_profile: None,
             voltage_range,
@@ -284,26 +284,28 @@ impl VeteranModelProfile {
     fn new_with_battery_profile(
         model_id: u16,
         name: &'static str,
-        cell_count: u8,
-        parallel_cells: u8,
+        series_cells: u8,
+        parallel_packs: u8,
         battery_profile: &'static BatteryVoltageProfile,
     ) -> Self {
+        let series_cells = PackSeriesCells::new(series_cells);
+        let parallel_packs = BmsParallelPacks::new(parallel_packs);
         Self {
             model_id,
             name,
-            cell_count,
-            parallel_cells,
+            series_cells,
+            parallel_packs,
             nominal_capacity: Some(Capacity::from_milliamp_hours(
                 battery_profile
                     .nominal_capacity
                     .as_milliamp_hours()
-                    .saturating_mul(u32::from(parallel_cells)),
+                    .saturating_mul(u32::from(parallel_packs.get())),
             )),
             battery_profile: Some(battery_profile),
-            voltage_range: battery_profile_pack_range(battery_profile, cell_count),
+            voltage_range: battery_profile_pack_range(battery_profile, series_cells),
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
-            bms_layout: bms_layout_for_geometry(cell_count, parallel_cells),
+            bms_layout: bms_layout_for_geometry(series_cells, parallel_packs),
             observed_app_odometer_offset_m: None,
             requires_binary_horn: model_id >= 3,
         }
@@ -321,7 +323,8 @@ impl VeteranModelProfile {
     #[must_use]
     pub fn estimate_battery_percent(&self, voltage: Voltage) -> Percent {
         if let Some(battery_profile) = self.battery_profile {
-            return battery_profile.estimate_percent_from_pack_voltage(voltage, self.cell_count);
+            return battery_profile
+                .estimate_percent_from_pack_voltage(voltage, self.series_cells.get());
         }
 
         let start = self.voltage_range.start().as_millivolts();
@@ -343,10 +346,10 @@ impl VeteranModelProfile {
 }
 
 const fn bms_layout_for_geometry(
-    series_cells: u8,
-    parallel_packs: u8,
+    series_cells: PackSeriesCells,
+    parallel_packs: BmsParallelPacks,
 ) -> Option<&'static BmsLayoutSpec> {
-    match (series_cells, parallel_packs) {
+    match (series_cells.get(), parallel_packs.get()) {
         (30, 2) => Some(&VETERAN_BMS_30S_2P_LAYOUT),
         (36, 2) => Some(&VETERAN_BMS_36S_2P_LAYOUT),
         (36, 4) => Some(&VETERAN_BMS_36S_4P_LAYOUT),
@@ -358,9 +361,9 @@ const fn bms_layout_for_geometry(
 
 fn battery_profile_pack_range(
     battery_profile: &'static BatteryVoltageProfile,
-    series_cells: u8,
+    series_cells: PackSeriesCells,
 ) -> RangeInclusive<Voltage> {
-    let series_cells = i32::from(series_cells);
+    let series_cells = i32::from(series_cells.get());
     let start = battery_profile
         .points
         .first()
@@ -819,8 +822,8 @@ mod tests {
         let sherman = VeteranModelProfile::from_model_id(0).expect("Sherman profile is known");
 
         assert_eq!(aero.name, "NOSFET Aero");
-        assert_eq!(aero.cell_count, 30);
-        assert_eq!(aero.parallel_cells, 2);
+        assert_eq!(aero.series_cells, PackSeriesCells::new(30));
+        assert_eq!(aero.parallel_packs, BmsParallelPacks::new(2));
         assert_eq!(
             aero.nominal_capacity,
             Some(Capacity::from_milliamp_hours(10_000))
@@ -835,8 +838,8 @@ mod tests {
         assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
 
         assert_eq!(oryx.name, "Veteran Oryx");
-        assert_eq!(oryx.cell_count, 42);
-        assert_eq!(oryx.parallel_cells, 6);
+        assert_eq!(oryx.series_cells, PackSeriesCells::new(42));
+        assert_eq!(oryx.parallel_packs, BmsParallelPacks::new(6));
         assert_eq!(
             oryx.nominal_capacity,
             Some(Capacity::from_milliamp_hours(30_000))
@@ -848,8 +851,8 @@ mod tests {
         assert_eq!(oryx.voltage_range, test_voltage_range(127_400, 176_400));
         assert!(oryx.has_smart_bms);
 
-        assert_eq!(sherman.cell_count, 24);
-        assert_eq!(sherman.parallel_cells, 1);
+        assert_eq!(sherman.series_cells, PackSeriesCells::new(24));
+        assert_eq!(sherman.parallel_packs, BmsParallelPacks::new(1));
         assert_eq!(sherman.nominal_capacity, None);
         assert_eq!(sherman.battery_profile, None);
         assert_eq!(sherman.voltage_range, test_voltage_range(79_350, 98_700));
@@ -884,8 +887,8 @@ mod tests {
         assert_eq!(
             aero.voltage_range,
             test_voltage_range(
-                pack_voltage(first.cell_voltage, i32::from(aero.cell_count)),
-                pack_voltage(last.cell_voltage, i32::from(aero.cell_count)),
+                pack_voltage(first.cell_voltage, i32::from(aero.series_cells.get())),
+                pack_voltage(last.cell_voltage, i32::from(aero.series_cells.get())),
             )
         );
         assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
@@ -908,8 +911,8 @@ mod tests {
             .battery_profile
             .expect("Aero has a cell battery profile");
 
-        assert_eq!(aero.cell_count, 30);
-        assert_eq!(aero.parallel_cells, 2);
+        assert_eq!(aero.series_cells, PackSeriesCells::new(30));
+        assert_eq!(aero.parallel_packs, BmsParallelPacks::new(2));
         assert_eq!(profile.cell_model, "Samsung 50S");
         assert_eq!(
             profile
@@ -964,7 +967,7 @@ mod tests {
             aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
             profile.estimate_percent_from_pack_voltage(
                 Voltage::from_millivolts(107_950),
-                aero.cell_count,
+                aero.series_cells.get(),
             )
         );
     }
@@ -1068,14 +1071,18 @@ mod tests {
             ),
         ];
 
-        for (model_id, name, cell_count, parallel_cells, nominal_capacity, voltage_range) in models
+        for (model_id, name, series_cells, parallel_packs, nominal_capacity, voltage_range) in
+            models
         {
             let profile =
                 VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
 
             assert_eq!(profile.name, name);
-            assert_eq!(profile.cell_count, cell_count);
-            assert_eq!(profile.parallel_cells, parallel_cells);
+            assert_eq!(profile.series_cells, PackSeriesCells::new(series_cells));
+            assert_eq!(
+                profile.parallel_packs,
+                BmsParallelPacks::new(parallel_packs)
+            );
             assert_eq!(
                 profile.nominal_capacity,
                 nominal_capacity.map(Capacity::from_milliamp_hours)
@@ -1168,7 +1175,7 @@ mod tests {
                 VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
 
             assert_eq!(profile.battery_profile, None);
-            assert_eq!(profile.parallel_cells, 1);
+            assert_eq!(profile.parallel_packs, BmsParallelPacks::new(1));
             assert_eq!(profile.nominal_capacity, None);
         }
     }
