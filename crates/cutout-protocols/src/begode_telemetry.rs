@@ -47,11 +47,22 @@ impl BegodeUnitMode {
         }
     }
 
+    fn speed(self, raw_metric_speed: Speed) -> Speed {
+        Speed::from_millimetres_per_second(milli_kmh_to_mm_s(
+            self.speed_milli_kmh(speed_to_milli_kmh(raw_metric_speed)),
+        ))
+    }
+
     fn speed_kmh_u16(self, raw_speed: u16) -> u16 {
         match self {
             Self::Metric => raw_speed,
             Self::Imperial => mph_to_kmh_u16(raw_speed),
         }
+    }
+
+    fn distance(self, raw_metric_distance: Distance) -> Distance {
+        let raw_m = raw_metric_distance.as_millimetres() / 1_000;
+        Distance::from_millimetres(self.distance_m_to_mm(u32::try_from(raw_m).unwrap_or(u32::MAX)))
     }
 }
 
@@ -773,14 +784,14 @@ pub struct BegodeLiveATelemetry {
     /// Scaled pack voltage.
     pub voltage_mv: Voltage,
 
-    /// Raw signed speed converted to milli-km/h.
-    pub speed_milli_kmh: i32,
+    /// Signed speed.
+    pub speed: Speed,
 
-    /// Full four-byte trip distance candidate in meters.
-    pub trip_distance_m: u32,
+    /// Full four-byte trip distance candidate.
+    pub trip_distance: Distance,
 
-    /// Low-word trip distance in meters for firmwares that do not populate the high word.
-    pub trip_distance_low_m: u16,
+    /// Low-word trip distance for firmwares that do not populate the high word.
+    pub trip_distance_low: Distance,
 
     /// Signed phase current.
     pub phase_current_ma: PhaseCurrent,
@@ -812,9 +823,15 @@ impl BegodeLiveATelemetry {
         Ok(Self {
             raw_voltage_centivolts,
             voltage_mv: scaled_voltage_mv(raw_voltage_centivolts, profile),
-            speed_milli_kmh: raw_speed_to_milli_kmh(be_i16(cursor, ByteOffset::new(4))),
-            trip_distance_m: be_u32(cursor, ByteOffset::new(6)),
-            trip_distance_low_m: be_u16(cursor, ByteOffset::new(8)),
+            speed: Speed::from_millimetres_per_second(milli_kmh_to_mm_s(raw_speed_to_milli_kmh(
+                be_i16(cursor, ByteOffset::new(4)),
+            ))),
+            trip_distance: Distance::from_millimetres(
+                u64::from(be_u32(cursor, ByteOffset::new(6))) * 1_000,
+            ),
+            trip_distance_low: Distance::from_millimetres(
+                u64::from(be_u16(cursor, ByteOffset::new(8))) * 1_000,
+            ),
             phase_current_ma: PhaseCurrent::from_milliamps(
                 i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
             ),
@@ -844,9 +861,7 @@ impl BegodeLiveATelemetry {
         unit_mode: BegodeUnitMode,
     ) -> TelemetryDelta {
         TelemetryDelta {
-            speed_mm_s: Some(source_reported(Speed::from_millimetres_per_second(
-                milli_kmh_to_mm_s(unit_mode.speed_milli_kmh(self.speed_milli_kmh)),
-            ))),
+            speed_mm_s: Some(source_reported(unit_mode.speed(self.speed))),
             voltage_mv: Some(source_reported(self.voltage_mv)),
             motor_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
                 self.phase_current_ma.as_milliamps(),
@@ -859,9 +874,7 @@ impl BegodeLiveATelemetry {
             pwm_permille: Some(source_reported(DutyCycle::from_permille(
                 self.hardware_pwm_permille.as_permille(),
             ))),
-            distance_mm: Some(source_reported(Distance::from_millimetres(
-                unit_mode.distance_m_to_mm(u32::from(self.trip_distance_low_m)),
-            ))),
+            distance_mm: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
             battery_percent_estimated: Some(source_estimated(self.battery_percent_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -1129,6 +1142,10 @@ fn milli_kmh_to_mm_s(value: i32) -> i32 {
     value * 5 / 18
 }
 
+fn speed_to_milli_kmh(value: Speed) -> i32 {
+    value.as_millimetres_per_second() * 18 / 5
+}
+
 fn speed_mm_s_to_kmh_u16(value: i32) -> u16 {
     let kmh = div_round(value * 18, 5_000);
     u16::try_from(kmh).unwrap_or(u16::MAX)
@@ -1279,9 +1296,9 @@ mod tests {
 
         assert_eq!(telemetry.raw_voltage_centivolts, 6005);
         assert_eq!(telemetry.voltage_mv.as_millivolts(), 75_063);
-        assert_eq!(telemetry.speed_milli_kmh, 48_096);
-        assert_eq!(telemetry.trip_distance_m, 0x0076_02ee);
-        assert_eq!(telemetry.trip_distance_low_m, 750);
+        assert_eq!(telemetry.speed.as_millimetres_per_second(), 13_360);
+        assert_eq!(telemetry.trip_distance.as_millimetres(), 7_733_998_000);
+        assert_eq!(telemetry.trip_distance_low.as_millimetres(), 750_000);
         assert_eq!(telemetry.phase_current_ma.as_milliamps(), -11_800);
         assert_eq!(telemetry.imu_temperature_mc.as_millicelsius(), 27_930);
         assert_eq!(telemetry.hardware_pwm_permille.as_permille(), 0x1481 / 10);
