@@ -1457,8 +1457,8 @@ impl fmt::Display for BmsCurrentSummary {
             write!(
                 f,
                 " bms_current_0={}A bms_current_1={}A",
-                milliamps_to_amps(currents.current_0_ma().get()),
-                milliamps_to_amps(currents.current_1_ma().get())
+                milliamps_to_amps(currents.current_0().as_milliamps()),
+                milliamps_to_amps(currents.current_1().as_milliamps())
             )?;
         }
         Ok(())
@@ -4477,7 +4477,10 @@ mod tests {
                         ..BatteryInfo::default()
                     },
                 )
-                .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+                .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
+                    cutout_core::BmsPackCurrent::from_milliamps(-1_230),
+                    cutout_core::BmsPackCurrent::from_milliamps(450),
+                )),
             ),
             "selector=0 kind=metadata verification=hardware_verified current=2A bms_current_0=-1A bms_current_1=0A",
         );
@@ -4631,7 +4634,10 @@ mod tests {
                     ..BatteryInfo::default()
                 },
             )
-            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
+                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
+                cutout_core::BmsPackCurrent::from_milliamps(450),
+            )),
         );
         let report = SessionBridgeReport {
             read_only_responses: read_only_responses(1),

@@ -1928,13 +1928,13 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
         "current": measured_i32_json(battery.current.map(|measured| {
             measured.map_value(cutout_core::BatteryCurrent::as_milliamps)
         })),
-        "bms_pack_current_0_ma": bms_pack_current_json(
+        "bms_pack_current_0": bms_pack_current_json(
             payload.bms_pack_currents(),
-            cutout_core::BmsPackCurrents::current_0_ma,
+            cutout_core::BmsPackCurrents::current_0,
         ),
-        "bms_pack_current_1_ma": bms_pack_current_json(
+        "bms_pack_current_1": bms_pack_current_json(
             payload.bms_pack_currents(),
-            cutout_core::BmsPackCurrents::current_1_ma,
+            cutout_core::BmsPackCurrents::current_1,
         ),
         "percent_reported": measured_u8_json(battery.percent_reported.map(|measured| {
             measured.map_value(cutout_core::Percent::as_percent)
@@ -1951,11 +1951,11 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
 
 fn bms_pack_current_json(
     currents: Option<cutout_core::BmsPackCurrents>,
-    select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BmsPackCurrentMa,
+    select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BmsPackCurrent,
 ) -> serde_json::Value {
     currents.map_or(serde_json::Value::Null, |currents| {
         measured_json_parts(
-            i64::from(select(currents).get()),
+            i64::from(select(currents).as_milliamps()),
             currents.source,
             currents.quality,
             currents.verification,
@@ -2908,7 +2908,10 @@ mod tests {
                     raw_state: Some(cutout_core::RawFieldValue::new(0x0008, 0x55aa)),
                 },
             )
-            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
+                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
+                cutout_core::BmsPackCurrent::from_milliamps(450),
+            )),
         );
 
         let line = render_read_only_response_jsonl(JsonSequence::new(2), response)
@@ -2931,8 +2934,8 @@ mod tests {
             "hardware_verified"
         );
         assert_eq!(value["battery"]["current"]["value"], -10_000);
-        assert_eq!(value["battery"]["bms_pack_current_0_ma"]["value"], -1_230);
-        assert_eq!(value["battery"]["bms_pack_current_1_ma"]["value"], 450);
+        assert_eq!(value["battery"]["bms_pack_current_0"]["value"], -1_230);
+        assert_eq!(value["battery"]["bms_pack_current_1"]["value"], 450);
         assert_eq!(
             value["battery"]["percent_reported"],
             serde_json::Value::Null
@@ -3760,13 +3763,15 @@ mod tests {
                 assert_eq!(
                     payload.battery().current,
                     Some(Measured::reported(
-                        cutout_core::BatteryCurrent::from_milliamps(currents.current_0_ma().get())
+                        cutout_core::BatteryCurrent::from_milliamps(
+                            currents.current_0().as_milliamps()
+                        )
                     ))
                 );
                 observed.insert((
                     payload.page().selector.get(),
-                    currents.current_0_ma().get(),
-                    currents.current_1_ma().get(),
+                    currents.current_0().as_milliamps(),
+                    currents.current_1().as_milliamps(),
                 ));
             }
         }
@@ -3838,8 +3843,8 @@ mod tests {
                         .expect("metadata page should carry typed BMS currents");
                     observed_currents.insert((
                         payload.page().selector.get(),
-                        currents.current_0_ma().get(),
-                        currents.current_1_ma().get(),
+                        currents.current_0().as_milliamps(),
+                        currents.current_1().as_milliamps(),
                     ));
                 }
             }

@@ -1,14 +1,13 @@
 use crate::{
     Angle, BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
-    BmsPackCurrentMa, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
-    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
-    LightState, Measured, NotificationEvidence, NotificationIngestOutcome, ParserDiagnostics,
-    ParserError, ParserGapEvidence, Percent, Power, ProtocolFamily, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput,
-    SessionOutput, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot,
-    Temperature, TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage,
-    WriteMode,
+    BmsPackCurrent, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason,
+    DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind,
+    DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState,
+    Measured, NotificationEvidence, NotificationIngestOutcome, ParserDiagnostics, ParserError,
+    ParserGapEvidence, Percent, Power, ProtocolFamily, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput, SessionOutput,
+    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
+    TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -405,9 +404,9 @@ impl From<Measured<i32>> for MeasuredI32Dto {
 }
 
 impl MeasuredI32Dto {
-    fn from_bms_pack_current(current: BmsPackCurrentMa, currents: BmsPackCurrents) -> Self {
+    fn from_bms_pack_current(current: BmsPackCurrent, currents: BmsPackCurrents) -> Self {
         Self {
-            value: current.get(),
+            value: current.as_milliamps(),
             source: currents.source.into(),
             quality: currents.quality.into(),
             verification: currents.verification.into(),
@@ -686,10 +685,10 @@ pub struct BatteryInfoDto {
     pub current: Option<MeasuredI32Dto>,
 
     /// First page-specific BMS pack current in milliamps.
-    pub bms_pack_current_0_ma: Option<MeasuredI32Dto>,
+    pub bms_pack_current_0: Option<MeasuredI32Dto>,
 
     /// Second page-specific BMS pack current in milliamps.
-    pub bms_pack_current_1_ma: Option<MeasuredI32Dto>,
+    pub bms_pack_current_1: Option<MeasuredI32Dto>,
 
     /// Battery percentage reported by the device.
     pub percent_reported: Option<MeasuredU8Dto>,
@@ -735,11 +734,11 @@ impl BatteryInfoDto {
             page: page.into(),
             voltage: battery.voltage.map(Into::into),
             current: battery.current.map(Into::into),
-            bms_pack_current_0_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_0_ma(), currents)
+            bms_pack_current_0: bms_pack_currents.map(|currents| {
+                MeasuredI32Dto::from_bms_pack_current(currents.current_0(), currents)
             }),
-            bms_pack_current_1_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_1_ma(), currents)
+            bms_pack_current_1: bms_pack_currents.map(|currents| {
+                MeasuredI32Dto::from_bms_pack_current(currents.current_1(), currents)
             }),
             percent_reported: battery.percent_reported.map(Into::into),
             percent_estimated: battery.percent_estimated.map(Into::into),
@@ -1690,7 +1689,10 @@ mod tests {
                     raw_state: Some(RawFieldValue::new(0x0008, 0x55aa)),
                 },
             )
-            .with_bms_pack_currents(BmsPackCurrents::reported(-1_230, 450)),
+            .with_bms_pack_currents(BmsPackCurrents::reported(
+                BmsPackCurrent::from_milliamps(-1_230),
+                BmsPackCurrent::from_milliamps(450),
+            )),
         );
 
         let dto = ReadOnlyResponseDto::from(response);
@@ -1708,15 +1710,12 @@ mod tests {
         assert_eq!(battery.voltage.expect("voltage").value, 80_000);
         assert_eq!(battery.current, None);
         assert_eq!(
-            battery
-                .bms_pack_current_0_ma
-                .expect("first BMS current")
-                .value,
+            battery.bms_pack_current_0.expect("first BMS current").value,
             -1_230
         );
         assert_eq!(
             battery
-                .bms_pack_current_1_ma
+                .bms_pack_current_1
                 .expect("second BMS current")
                 .value,
             450

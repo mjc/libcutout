@@ -849,7 +849,7 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
     let battery = BatteryInfo {
         current: Some(Measured::reported(BatteryCurrent::from_milliamps(
-            page.currents.current_0_ma().get(),
+            page.currents.current_0().as_milliamps(),
         ))),
         ..BatteryInfo::default()
     };
@@ -2213,7 +2213,11 @@ mod tests {
                     && payload.battery().current == Some(Measured::reported(
                         BatteryCurrent::from_milliamps(20)
                     ))
-                    && payload.bms_pack_currents() == Some(cutout_core::BmsPackCurrents::reported(20, 20))
+                    && payload.bms_pack_currents()
+                        == Some(cutout_core::BmsPackCurrents::reported(
+                            cutout_core::BmsPackCurrent::from_milliamps(20),
+                            cutout_core::BmsPackCurrent::from_milliamps(20)
+                        ))
         )));
     }
 
@@ -2221,7 +2225,10 @@ mod tests {
     fn veteran_bms_metadata_payload_preserves_two_distinct_pack_currents() {
         let payload = veteran_bms_metadata_payload(VeteranBmsMetadataPage {
             selector: ProtocolSelector::new(4),
-            currents: cutout_core::BmsPackCurrents::reported(-1_230, 450),
+            currents: cutout_core::BmsPackCurrents::reported(
+                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
+                cutout_core::BmsPackCurrent::from_milliamps(450),
+            ),
         });
 
         let battery = payload.battery();
@@ -2232,7 +2239,10 @@ mod tests {
         );
         assert_eq!(
             payload.bms_pack_currents(),
-            Some(cutout_core::BmsPackCurrents::reported(-1_230, 450))
+            Some(cutout_core::BmsPackCurrents::reported(
+                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
+                cutout_core::BmsPackCurrent::from_milliamps(450)
+            ))
         );
     }
 

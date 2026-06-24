@@ -3948,21 +3948,21 @@ pub struct FirmwareInfo {
     pub build_id: Option<RawFieldValue>,
 }
 
-/// BMS pack current in milliamps.
+/// BMS pack current.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct BmsPackCurrentMa(i32);
+pub struct BmsPackCurrent(i32);
 
-impl BmsPackCurrentMa {
-    /// Creates a BMS pack current value in milliamps.
+impl BmsPackCurrent {
+    /// Creates a BMS pack current value from milliamps.
     #[must_use]
-    pub const fn new(value: i32) -> Self {
+    pub const fn from_milliamps(value: i32) -> Self {
         Self(value)
     }
 
-    /// Returns the current value in milliamps.
+    /// Returns the current value as milliamps.
     #[must_use]
-    pub const fn get(self) -> i32 {
+    pub const fn as_milliamps(self) -> i32 {
         self.0
     }
 }
@@ -3970,11 +3970,11 @@ impl BmsPackCurrentMa {
 /// Paired page-specific BMS pack-current values with shared provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsPackCurrents {
-    /// First page-specific BMS pack current in milliamps.
-    current_0_ma: BmsPackCurrentMa,
+    /// First page-specific BMS pack current.
+    current_0: BmsPackCurrent,
 
-    /// Second page-specific BMS pack current in milliamps.
-    current_1_ma: BmsPackCurrentMa,
+    /// Second page-specific BMS pack current.
+    current_1: BmsPackCurrent,
 
     /// Source of the current values.
     pub source: ValueSource,
@@ -3989,10 +3989,10 @@ pub struct BmsPackCurrents {
 impl BmsPackCurrents {
     /// Creates known BMS pack current values reported directly by the device.
     #[must_use]
-    pub const fn reported(current_0_ma: i32, current_1_ma: i32) -> Self {
+    pub const fn reported(current_0: BmsPackCurrent, current_1: BmsPackCurrent) -> Self {
         Self {
-            current_0_ma: BmsPackCurrentMa::new(current_0_ma),
-            current_1_ma: BmsPackCurrentMa::new(current_1_ma),
+            current_0,
+            current_1,
             source: ValueSource::Reported,
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
@@ -4001,14 +4001,14 @@ impl BmsPackCurrents {
 
     /// Returns the first page-specific BMS pack current.
     #[must_use]
-    pub const fn current_0_ma(self) -> BmsPackCurrentMa {
-        self.current_0_ma
+    pub const fn current_0(self) -> BmsPackCurrent {
+        self.current_0
     }
 
     /// Returns the second page-specific BMS pack current.
     #[must_use]
-    pub const fn current_1_ma(self) -> BmsPackCurrentMa {
-        self.current_1_ma
+    pub const fn current_1(self) -> BmsPackCurrent {
+        self.current_1
     }
 }
 
