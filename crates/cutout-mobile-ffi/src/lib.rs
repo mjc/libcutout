@@ -90,10 +90,6 @@ pub struct MobileMonotonicMillisDto {
 }
 
 impl MobileMonotonicMillisDto {
-    const fn from_core_ffi(milliseconds: u64) -> Self {
-        Self { milliseconds }
-    }
-
     const fn from_core_ffi_timestamp(timestamp: MonotonicMillisDto) -> Self {
         Self {
             milliseconds: timestamp.milliseconds,
@@ -1018,8 +1014,12 @@ impl From<ParserErrorDto> for MobileParserErrorDto {
                 kind: MobileParserErrorKindDto::Timeout,
                 claimed: None,
                 max: None,
-                elapsed_ms: Some(MobileMonotonicMillisDto::from_core_ffi(elapsed_ms)),
-                timeout_ms: Some(MobileMonotonicMillisDto::from_core_ffi(timeout_ms)),
+                elapsed_ms: Some(MobileMonotonicMillisDto::from_core_ffi_timestamp(
+                    elapsed_ms,
+                )),
+                timeout_ms: Some(MobileMonotonicMillisDto::from_core_ffi_timestamp(
+                    timeout_ms,
+                )),
             },
             ParserErrorDto::UnmatchedReply => Self {
                 kind: MobileParserErrorKindDto::UnmatchedReply,

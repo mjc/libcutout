@@ -1177,10 +1177,10 @@ pub enum ParserErrorDto {
     /// A parser deadline elapsed before the expected data arrived.
     Timeout {
         /// Elapsed monotonic milliseconds.
-        elapsed_ms: u64,
+        elapsed_ms: MonotonicMillisDto,
 
         /// Timeout threshold in monotonic milliseconds.
-        timeout_ms: u64,
+        timeout_ms: MonotonicMillisDto,
     },
 
     /// A reply could not be matched to an in-flight request.
@@ -1197,8 +1197,8 @@ impl From<ParserError> for ParserErrorDto {
                 elapsed_ms,
                 timeout_ms,
             } => Self::Timeout {
-                elapsed_ms: elapsed_ms.get(),
-                timeout_ms: timeout_ms.get(),
+                elapsed_ms: MonotonicMillisDto::from_core(elapsed_ms),
+                timeout_ms: MonotonicMillisDto::from_core(timeout_ms),
             },
             ParserError::UnmatchedReply => Self::UnmatchedReply,
         }
