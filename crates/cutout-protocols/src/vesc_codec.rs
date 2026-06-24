@@ -220,6 +220,44 @@ impl VescTachometer {
     }
 }
 
+/// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MotorPolePairs(u8);
+
+impl MotorPolePairs {
+    /// Creates a motor pole-pair count.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the motor pole-pair count.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Mechanical gear-reduction denominator.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GearRatioDenominator(u8);
+
+impl GearRatioDenominator {
+    /// Creates a gear-reduction denominator.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the gear-reduction denominator.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 /// Owned VESC statistics telemetry subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescStatsTelemetry {
@@ -249,10 +287,10 @@ pub struct VescStatsTelemetry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescBoardProfile {
     /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
-    pub motor_pole_pairs: u8,
+    pub motor_pole_pairs: MotorPolePairs,
 
     /// Mechanical gear reduction denominator.
-    pub gear_ratio_denominator: u8,
+    pub gear_ratio_denominator: GearRatioDenominator,
 
     /// Wheel circumference.
     pub wheel_circumference: Distance,
@@ -262,8 +300,8 @@ impl VescBoardProfile {
     /// Creates a board profile from explicit geometry.
     #[must_use]
     pub const fn new(
-        motor_pole_pairs: u8,
-        gear_ratio_denominator: u8,
+        motor_pole_pairs: MotorPolePairs,
+        gear_ratio_denominator: GearRatioDenominator,
         wheel_circumference: Distance,
     ) -> Self {
         Self {
@@ -276,8 +314,9 @@ impl VescBoardProfile {
     /// Calculates signed road speed from eRPM.
     #[must_use]
     pub fn speed_from_erpm(self, erpm: ElectricalRpm) -> Option<Speed> {
-        let denominator =
-            i64::from(self.motor_pole_pairs) * i64::from(self.gear_ratio_denominator) * 60;
+        let denominator = i64::from(self.motor_pole_pairs.get())
+            * i64::from(self.gear_ratio_denominator.get())
+            * 60;
         if denominator == 0 {
             return None;
         }
@@ -759,7 +798,11 @@ mod tests {
 
     #[test]
     fn vesc_board_profile_calculates_speed_from_erpm() {
-        let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
+        let profile = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(1),
+            Distance::from_millimetres(2_100),
+        );
 
         assert_eq!(
             profile.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
@@ -769,7 +812,11 @@ mod tests {
 
     #[test]
     fn vesc_board_profile_preserves_reverse_erpm_sign() {
-        let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
+        let profile = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(1),
+            Distance::from_millimetres(2_100),
+        );
 
         assert_eq!(
             profile.speed_from_erpm(ElectricalRpm::from_erpm(-4_500)),
@@ -779,8 +826,16 @@ mod tests {
 
     #[test]
     fn vesc_board_profile_applies_gear_reduction() {
-        let direct_drive = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
-        let geared = VescBoardProfile::new(15, 2, Distance::from_millimetres(2_100));
+        let direct_drive = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(1),
+            Distance::from_millimetres(2_100),
+        );
+        let geared = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(2),
+            Distance::from_millimetres(2_100),
+        );
 
         assert_eq!(
             direct_drive.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
@@ -795,13 +850,21 @@ mod tests {
     #[test]
     fn vesc_board_profile_refuses_zero_denominators() {
         assert_eq!(
-            VescBoardProfile::new(0, 1, Distance::from_millimetres(2_100))
-                .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            VescBoardProfile::new(
+                MotorPolePairs::new(0),
+                GearRatioDenominator::new(1),
+                Distance::from_millimetres(2_100)
+            )
+            .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
             None
         );
         assert_eq!(
-            VescBoardProfile::new(15, 0, Distance::from_millimetres(2_100))
-                .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            VescBoardProfile::new(
+                MotorPolePairs::new(15),
+                GearRatioDenominator::new(0),
+                Distance::from_millimetres(2_100)
+            )
+            .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
             None
         );
     }

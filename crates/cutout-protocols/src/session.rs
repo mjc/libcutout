@@ -1276,6 +1276,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::{GearRatioDenominator, MotorPolePairs};
     use core::mem::size_of;
     use cutout_core::{
         BatteryPageKind, LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
@@ -1884,8 +1885,8 @@ mod tests {
     #[test]
     fn generic_vesc_session_emits_calculated_speed_when_board_profile_is_explicit() {
         let decoder = VescNotificationDecoder::with_board_profile(VescBoardProfile::new(
-            1,
-            1,
+            MotorPolePairs::new(1),
+            GearRatioDenominator::new(1),
             cutout_core::Distance::from_millimetres(60),
         ));
         let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);

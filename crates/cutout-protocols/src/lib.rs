@@ -90,10 +90,11 @@ pub use session::{
     VescNotificationDecoder, VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
-    VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN, VESC_MAX_STREAM_REPLIES, VescBoardProfile,
-    VescCanReadOnlyRequest, VescCodecError, VescFaultCode, VescReadOnlyCodec, VescReadOnlyReply,
-    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask,
-    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
+    GearRatioDenominator, MotorPolePairs, VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN,
+    VESC_MAX_STREAM_REPLIES, VescBoardProfile, VescCanReadOnlyRequest, VescCodecError,
+    VescFaultCode, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask, VescStatsTelemetry,
+    VescValuesMask, VescValuesTelemetry,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,
