@@ -1,5 +1,6 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
+use cutout_core::{BatteryCurrent, Power, Voltage};
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -165,11 +166,11 @@ pub struct VescValuesTelemetry {
     /// Raw electrical RPM.
     pub rpm_erpm: i32,
 
-    /// Input voltage in millivolts.
-    pub voltage_mv: i32,
+    /// Input voltage.
+    pub voltage_mv: Voltage,
 
-    /// Input current in milliamps.
-    pub input_current_ma: i32,
+    /// Input current.
+    pub input_current_ma: BatteryCurrent,
 
     /// Relative tachometer.
     pub tachometer: i32,
@@ -190,17 +191,17 @@ pub struct VescStatsTelemetry {
     /// Maximum speed in milli-units reported by VESC.
     pub speed_max_milli: i32,
 
-    /// Average power in milliwatts.
-    pub power_avg_mw: i32,
+    /// Average power.
+    pub power_avg_mw: Power,
 
-    /// Maximum power in milliwatts.
-    pub power_max_mw: i32,
+    /// Maximum power.
+    pub power_max_mw: Power,
 
-    /// Average current in milliamps.
-    pub current_avg_ma: i32,
+    /// Average current.
+    pub current_avg_ma: BatteryCurrent,
 
-    /// Maximum current in milliamps.
-    pub current_max_ma: i32,
+    /// Maximum current.
+    pub current_max_ma: BatteryCurrent,
 
     /// Statistics accumulation time in milliseconds.
     pub count_time_ms: u32,
@@ -498,8 +499,10 @@ impl From<vesc::Values> for VescValuesTelemetry {
     fn from(values: vesc::Values) -> Self {
         Self {
             rpm_erpm: round_f32_to_i32(values.rpm),
-            voltage_mv: round_f32_to_i32(values.voltage_in * 1_000.0),
-            input_current_ma: round_f32_to_i32(values.avg_current_input * 1_000.0),
+            voltage_mv: Voltage::from_millivolts(round_f32_to_i32(values.voltage_in * 1_000.0)),
+            input_current_ma: BatteryCurrent::from_milliamps(round_f32_to_i32(
+                values.avg_current_input * 1_000.0,
+            )),
             tachometer: values.tachometer,
             controller_id: values.controller_id,
             fault_code: values.fault_code.into(),
@@ -512,10 +515,18 @@ impl From<vesc::Stats> for VescStatsTelemetry {
         Self {
             speed_avg_milli: round_f32_to_i32(stats.speed_avg * 1_000.0),
             speed_max_milli: round_f32_to_i32(stats.speed_max * 1_000.0),
-            power_avg_mw: round_f32_to_i32(stats.power_avg * 1_000.0),
-            power_max_mw: round_f32_to_i32(stats.power_max * 1_000.0),
-            current_avg_ma: round_f32_to_i32(stats.current_avg * 1_000.0),
-            current_max_ma: round_f32_to_i32(stats.current_max * 1_000.0),
+            power_avg_mw: Power::from_milliwatts(i64::from(round_f32_to_i32(
+                stats.power_avg * 1_000.0,
+            ))),
+            power_max_mw: Power::from_milliwatts(i64::from(round_f32_to_i32(
+                stats.power_max * 1_000.0,
+            ))),
+            current_avg_ma: BatteryCurrent::from_milliamps(round_f32_to_i32(
+                stats.current_avg * 1_000.0,
+            )),
+            current_max_ma: BatteryCurrent::from_milliamps(round_f32_to_i32(
+                stats.current_max * 1_000.0,
+            )),
             count_time_ms: round_f32_to_u32(stats.count_time * 1_000.0),
         }
     }
@@ -667,8 +678,8 @@ mod tests {
         };
 
         assert_eq!(telemetry.rpm_erpm, 989);
-        assert_eq!(telemetry.voltage_mv, 37_500);
-        assert_eq!(telemetry.input_current_ma, 40);
+        assert_eq!(telemetry.voltage_mv.as_millivolts(), 37_500);
+        assert_eq!(telemetry.input_current_ma.as_milliamps(), 40);
         assert_eq!(telemetry.tachometer, -21_973);
         assert_eq!(telemetry.controller_id, 20);
         assert_eq!(telemetry.fault_code, VescFaultCode::None);
@@ -689,10 +700,10 @@ mod tests {
 
         assert_eq!(stats.speed_avg_milli, 1_000);
         assert_eq!(stats.speed_max_milli, 2_000);
-        assert_eq!(stats.power_avg_mw, 3_000);
-        assert_eq!(stats.power_max_mw, 4_000);
-        assert_eq!(stats.current_avg_ma, 5_000);
-        assert_eq!(stats.current_max_ma, 6_000);
+        assert_eq!(stats.power_avg_mw.as_milliwatts(), 3_000);
+        assert_eq!(stats.power_max_mw.as_milliwatts(), 4_000);
+        assert_eq!(stats.current_avg_ma.as_milliamps(), 5_000);
+        assert_eq!(stats.current_max_ma.as_milliamps(), 6_000);
         assert_eq!(stats.count_time_ms, 11_000);
     }
 

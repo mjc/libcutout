@@ -8,8 +8,7 @@ use cutout_core::{
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
     ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
     ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, Speed,
-    Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, Voltage,
-    WritePayload,
+    Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, WritePayload,
 };
 
 use crate::{
@@ -598,12 +597,8 @@ fn vesc_values_to_delta(
         speed_mm_s: board_profile
             .and_then(|profile| profile.speed_mm_s_from_erpm(values.rpm_erpm))
             .map(|value| Measured::calculated(Speed::from_millimetres_per_second(value))),
-        voltage_mv: Some(Measured::reported(Voltage::from_millivolts(
-            values.voltage_mv,
-        ))),
-        battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(
-            values.input_current_ma,
-        ))),
+        voltage_mv: Some(Measured::reported(values.voltage_mv)),
+        battery_current_ma: Some(Measured::reported(values.input_current_ma)),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -648,11 +643,11 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-                i64::from(stats.power_avg_mw),
+                stats.power_avg_mw.as_milliwatts(),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-                i64::from(stats.current_avg_ma),
+                i64::from(stats.current_avg_ma.as_milliamps()),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
@@ -1849,7 +1844,9 @@ mod tests {
         assert_eq!(delta.at_ms, 42);
         assert_eq!(
             delta.voltage_mv,
-            Some(Measured::reported(Voltage::from_millivolts(37_500)))
+            Some(Measured::reported(cutout_core::Voltage::from_millivolts(
+                37_500
+            ),))
         );
         assert_eq!(
             delta.battery_current_ma,
@@ -2060,7 +2057,9 @@ mod tests {
     fn nosfet_aero_session_emits_voltage_from_live_fixture_notification() {
         assert_eq!(
             live_aero_telemetry().voltage_mv,
-            Some(Measured::reported(Voltage::from_millivolts(108_760)))
+            Some(Measured::reported(cutout_core::Voltage::from_millivolts(
+                108_760
+            ),))
         );
     }
 
