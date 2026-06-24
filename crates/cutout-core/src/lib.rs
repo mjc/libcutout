@@ -1923,13 +1923,13 @@ impl CommandKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParserLimits {
     /// Maximum accepted logical frame length in bytes.
-    pub max_frame_len: usize,
+    pub max_frame_len: ParserFrameLen,
 
     /// Maximum buffered input length in bytes before a parser should shed data.
-    pub max_buffered_len: usize,
+    pub max_buffered_len: ParserBufferedLen,
 
     /// Maximum queued outputs a parser should retain before yielding to host code.
-    pub max_queued_outputs: usize,
+    pub max_queued_outputs: ParserQueuedOutputCount,
 
     /// Parser timeout threshold in host monotonic milliseconds.
     pub timeout_ms: MonotonicMillis,
@@ -1938,9 +1938,9 @@ pub struct ParserLimits {
 impl Default for ParserLimits {
     fn default() -> Self {
         Self {
-            max_frame_len: 4_096,
-            max_buffered_len: 8_192,
-            max_queued_outputs: 128,
+            max_frame_len: ParserFrameLen::new(4_096),
+            max_buffered_len: ParserBufferedLen::new(8_192),
+            max_queued_outputs: ParserQueuedOutputCount::new(128),
             timeout_ms: MonotonicMillis::new(1_000),
         }
     }
@@ -1953,8 +1953,8 @@ impl ParserLimits {
     ///
     /// Returns [`ParserError::OversizedFrame`] when `claimed` exceeds
     /// [`Self::max_frame_len`].
-    pub const fn validate_frame_len(self, claimed: usize) -> Result<(), ParserError> {
-        if claimed <= self.max_frame_len {
+    pub const fn validate_frame_len(self, claimed: ParserFrameLen) -> Result<(), ParserError> {
+        if claimed.is_at_most(self.max_frame_len) {
             Ok(())
         } else {
             Err(ParserError::OversizedFrame {
@@ -1965,43 +1965,15 @@ impl ParserLimits {
     }
 }
 
-/// Parser failure reason that can be counted without tying core to a protocol.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ParserError {
-    /// A frame claimed or accumulated more bytes than allowed.
-    OversizedFrame {
-        /// Claimed or observed frame length.
-        claimed: usize,
-
-        /// Configured maximum accepted frame length.
-        max: usize,
-    },
-
-    /// A frame checksum did not match its payload.
-    BadChecksum,
-
-    /// Input bytes could not form a valid frame.
-    MalformedFrame,
-
-    /// A parser deadline elapsed before the expected data arrived.
-    Timeout {
-        /// Elapsed monotonic milliseconds.
-        elapsed_ms: MonotonicMillis,
-
-        /// Timeout threshold in monotonic milliseconds.
-        timeout_ms: MonotonicMillis,
-    },
-
-    /// A reply could not be matched to an in-flight request.
-    UnmatchedReply,
-}
-
 enum NotificationByteLenUnit {}
 enum NotificationChunkLenUnit {}
 enum PayloadBodyLenUnit {}
 enum SemanticEventCountUnit {}
 enum ParserDroppedBytesUnit {}
 enum ParserDiagnosticCountUnit {}
+enum ParserFrameLenUnit {}
+enum ParserBufferedLenUnit {}
+enum ParserQueuedOutputCountUnit {}
 enum ProtocolSelectorUnit {}
 enum ProtocolTagUnit {}
 enum VescControllerIdUnit {}
@@ -2084,6 +2056,66 @@ impl ParserDiagnosticCount {
     pub const fn saturating_add(self, other: Self) -> Self {
         Self::new(self.value.saturating_add(other.value))
     }
+}
+
+typed_protocol_value!(
+    ParserFrameLen,
+    ParserFrameLenUnit,
+    usize,
+    "Length of one parser frame or claimed parser frame in bytes."
+);
+
+impl ParserFrameLen {
+    /// Returns true when this frame length is less than or equal to another.
+    #[must_use]
+    pub const fn is_at_most(self, other: Self) -> bool {
+        self.value <= other.value
+    }
+}
+
+typed_protocol_value!(
+    ParserBufferedLen,
+    ParserBufferedLenUnit,
+    usize,
+    "Maximum buffered parser input length in bytes."
+);
+
+typed_protocol_value!(
+    ParserQueuedOutputCount,
+    ParserQueuedOutputCountUnit,
+    usize,
+    "Maximum queued parser output count."
+);
+
+/// Parser failure reason that can be counted without tying core to a protocol.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParserError {
+    /// A frame claimed or accumulated more bytes than allowed.
+    OversizedFrame {
+        /// Claimed or observed frame length.
+        claimed: ParserFrameLen,
+
+        /// Configured maximum accepted frame length.
+        max: ParserFrameLen,
+    },
+
+    /// A frame checksum did not match its payload.
+    BadChecksum,
+
+    /// Input bytes could not form a valid frame.
+    MalformedFrame,
+
+    /// A parser deadline elapsed before the expected data arrived.
+    Timeout {
+        /// Elapsed monotonic milliseconds.
+        elapsed_ms: MonotonicMillis,
+
+        /// Timeout threshold in monotonic milliseconds.
+        timeout_ms: MonotonicMillis,
+    },
+
+    /// A reply could not be matched to an in-flight request.
+    UnmatchedReply,
 }
 
 /// Saturating parser diagnostics counters.
@@ -2241,10 +2273,10 @@ pub struct DiagnosticError {
     pub kind: DiagnosticErrorKind,
 
     /// Claimed or observed frame length for oversized-frame errors.
-    pub claimed_len: Option<usize>,
+    pub claimed_len: Option<ParserFrameLen>,
 
     /// Configured maximum frame length for oversized-frame errors.
-    pub max_len: Option<usize>,
+    pub max_len: Option<ParserFrameLen>,
 
     /// Elapsed monotonic milliseconds for timeout errors.
     pub elapsed_ms: Option<MonotonicMillis>,
@@ -5394,6 +5426,10 @@ mod tests {
         crate::TransportWriteLen::new(value)
     }
 
+    const fn frame_len(value: usize) -> crate::ParserFrameLen {
+        crate::ParserFrameLen::new(value)
+    }
+
     #[test]
     fn exposes_the_expected_name() {
         assert_eq!(crate_name(), "cutout-core");
@@ -7219,16 +7255,16 @@ mod tests {
     #[test]
     fn parser_limits_reject_oversized_frame_lengths() {
         let limits = crate::ParserLimits {
-            max_frame_len: 24,
+            max_frame_len: frame_len(24),
             ..crate::ParserLimits::default()
         };
 
-        assert_eq!(limits.validate_frame_len(24), Ok(()));
+        assert_eq!(limits.validate_frame_len(frame_len(24)), Ok(()));
         assert_eq!(
-            limits.validate_frame_len(25),
+            limits.validate_frame_len(frame_len(25)),
             Err(crate::ParserError::OversizedFrame {
-                claimed: 25,
-                max: 24,
+                claimed: frame_len(25),
+                max: frame_len(24),
             })
         );
     }
@@ -7274,8 +7310,8 @@ mod tests {
         let mut diagnostics = crate::ParserDiagnostics::default();
 
         diagnostics.record_error(crate::ParserError::OversizedFrame {
-            claimed: 4_097,
-            max: 4_096,
+            claimed: frame_len(4_097),
+            max: frame_len(4_096),
         });
         diagnostics.record_error(crate::ParserError::MalformedFrame);
         diagnostics.record_error(crate::ParserError::Timeout {
@@ -7356,16 +7392,16 @@ mod tests {
     #[test]
     fn diagnostic_error_preserves_oversized_frame_details() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::OversizedFrame {
-            claimed: 4_097,
-            max: 4_096,
+            claimed: frame_len(4_097),
+            max: frame_len(4_096),
         });
 
         assert_eq!(
             error,
             crate::DiagnosticError {
                 kind: crate::DiagnosticErrorKind::OversizedFrame,
-                claimed_len: Some(4_097),
-                max_len: Some(4_096),
+                claimed_len: Some(frame_len(4_097)),
+                max_len: Some(frame_len(4_096)),
                 elapsed_ms: None,
                 timeout_ms: None,
             }

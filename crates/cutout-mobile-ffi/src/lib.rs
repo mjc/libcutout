@@ -6,12 +6,12 @@ use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
     GattRoles, MonotonicMillis, MonotonicMillisDto, NotificationByteLenDto,
     NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto,
-    SemanticEventCountDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
-    TransportActionDto, TransportWriteLenDto, VerificationStatus, VerificationStatusDto,
-    VerifiedValue, WallClockUnixMillis,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
+    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
+    ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto, TransportActionDto, TransportWriteLenDto, VerificationStatus,
+    VerificationStatusDto, VerifiedValue, WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -295,16 +295,23 @@ pub struct MobileParserErrorDto {
     pub kind: MobileParserErrorKindDto,
 
     /// Claimed or observed frame length.
-    pub claimed: Option<u64>,
+    pub claimed: Option<MobileParserFrameLenDto>,
 
     /// Configured maximum accepted frame length.
-    pub max: Option<u64>,
+    pub max: Option<MobileParserFrameLenDto>,
 
     /// Elapsed monotonic time.
     pub elapsed_ms: Option<MobileMonotonicMillisDto>,
 
     /// Timeout threshold in monotonic time.
     pub timeout_ms: Option<MobileMonotonicMillisDto>,
+}
+
+/// Mobile parser frame length DTO.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserFrameLenDto {
+    /// Length in bytes.
+    pub bytes: u64,
 }
 
 /// Mobile reserved payload evidence DTO.
@@ -1089,13 +1096,21 @@ impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     }
 }
 
+impl From<ParserFrameLenDto> for MobileParserFrameLenDto {
+    fn from(value: ParserFrameLenDto) -> Self {
+        Self {
+            bytes: value.bytes as u64,
+        }
+    }
+}
+
 impl From<ParserErrorDto> for MobileParserErrorDto {
     fn from(error: ParserErrorDto) -> Self {
         match error {
             ParserErrorDto::OversizedFrame { claimed, max } => Self {
                 kind: MobileParserErrorKindDto::OversizedFrame,
-                claimed: Some(claimed as u64),
-                max: Some(max as u64),
+                claimed: Some(claimed.into()),
+                max: Some(max.into()),
                 elapsed_ms: None,
                 timeout_ms: None,
             },
@@ -1340,6 +1355,14 @@ mod tests {
         MobilePayloadBodyLenDto { bytes: value }
     }
 
+    const fn frame_len(value: usize) -> ParserFrameLenDto {
+        ParserFrameLenDto { bytes: value }
+    }
+
+    const fn mobile_frame_len(value: u64) -> MobileParserFrameLenDto {
+        MobileParserFrameLenDto { bytes: value }
+    }
+
     const fn event_count(value: usize) -> SemanticEventCountDto {
         SemanticEventCountDto { count: value }
     }
@@ -1405,16 +1428,16 @@ mod tests {
         let diagnostic = mobile_ingest(NotificationIngestOutcomeDto::ParserDiagnostic {
             notification: notification_fixture(),
             error: ParserErrorDto::OversizedFrame {
-                claimed: 257,
-                max: 256,
+                claimed: frame_len(257),
+                max: frame_len(256),
             },
         });
         assert_eq!(
             diagnostic.parser_error,
             Some(MobileParserErrorDto {
                 kind: MobileParserErrorKindDto::OversizedFrame,
-                claimed: Some(257),
-                max: Some(256),
+                claimed: Some(mobile_frame_len(257)),
+                max: Some(mobile_frame_len(256)),
                 elapsed_ms: None,
                 timeout_ms: None,
             })

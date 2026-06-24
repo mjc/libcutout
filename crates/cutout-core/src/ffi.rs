@@ -5,8 +5,8 @@ use crate::{
     DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState,
     Measured, MonotonicMillis, NotificationByteLen, NotificationEvidence,
     NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
-    ParserError, ParserGapEvidence, PayloadBodyLen, Percent, Power, ProtocolFamily, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, Percent, Power, ProtocolFamily,
+    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
     SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
     TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLen,
     ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
@@ -129,6 +129,19 @@ impl TransportWriteLenDto {
 
     fn into_core(self) -> TransportWriteLen {
         TransportWriteLen::new(self.bytes)
+    }
+}
+
+/// UniFFI-ready parser frame length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserFrameLenDto {
+    /// Length in bytes.
+    pub bytes: usize,
+}
+
+impl ParserFrameLenDto {
+    fn from_core(value: ParserFrameLen) -> Self {
+        Self { bytes: value.get() }
     }
 }
 
@@ -1245,10 +1258,10 @@ pub enum ParserErrorDto {
     /// A frame claimed or accumulated more bytes than allowed.
     OversizedFrame {
         /// Claimed or observed frame length.
-        claimed: usize,
+        claimed: ParserFrameLenDto,
 
         /// Configured maximum accepted frame length.
-        max: usize,
+        max: ParserFrameLenDto,
     },
 
     /// A frame checksum did not match its payload.
@@ -1273,7 +1286,10 @@ pub enum ParserErrorDto {
 impl From<ParserError> for ParserErrorDto {
     fn from(error: ParserError) -> Self {
         match error {
-            ParserError::OversizedFrame { claimed, max } => Self::OversizedFrame { claimed, max },
+            ParserError::OversizedFrame { claimed, max } => Self::OversizedFrame {
+                claimed: ParserFrameLenDto::from_core(claimed),
+                max: ParserFrameLenDto::from_core(max),
+            },
             ParserError::BadChecksum => Self::BadChecksum,
             ParserError::MalformedFrame => Self::MalformedFrame,
             ParserError::Timeout {
@@ -1742,10 +1758,10 @@ pub struct DiagnosticErrorDto {
     pub kind: DiagnosticErrorKindDto,
 
     /// Claimed or observed frame length for oversized-frame errors.
-    pub claimed_len: Option<u64>,
+    pub claimed_len: Option<ParserFrameLenDto>,
 
     /// Configured maximum frame length for oversized-frame errors.
-    pub max_len: Option<u64>,
+    pub max_len: Option<ParserFrameLenDto>,
 
     /// Elapsed monotonic milliseconds for timeout errors.
     pub elapsed_ms: Option<MonotonicMillisDto>,
@@ -1758,8 +1774,8 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
     fn from(error: DiagnosticError) -> Self {
         Self {
             kind: error.kind.into(),
-            claimed_len: error.claimed_len.map(|len| len as u64),
-            max_len: error.max_len.map(|len| len as u64),
+            claimed_len: error.claimed_len.map(ParserFrameLenDto::from_core),
+            max_len: error.max_len.map(ParserFrameLenDto::from_core),
             elapsed_ms: error.elapsed_ms.map(MonotonicMillisDto::from_core),
             timeout_ms: error.timeout_ms.map(MonotonicMillisDto::from_core),
         }

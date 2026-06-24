@@ -5,11 +5,11 @@ use cutout_core::{
     DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
     GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis,
     NotificationByteLen, NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics,
-    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
-    ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
-    Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, Voltage,
-    WritePayload,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PayloadClassifier,
+    ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput,
+    SessionOutput, Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue,
+    Voltage, WritePayload,
 };
 
 use crate::{
@@ -255,7 +255,10 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     return;
                 }
                 Err(VeteranReassemblyError::OversizedFrame { claimed, max }) => {
-                    let error = ParserError::OversizedFrame { claimed, max };
+                    let error = ParserError::OversizedFrame {
+                        claimed: ParserFrameLen::new(claimed),
+                        max: ParserFrameLen::new(max),
+                    };
                     push_parser_error(error, output);
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
@@ -2398,8 +2401,8 @@ mod tests {
         decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output);
 
         let error = ParserError::OversizedFrame {
-            claimed: crate::MAX_VETERAN_FRAME_LEN + 1,
-            max: crate::MAX_VETERAN_FRAME_LEN,
+            claimed: ParserFrameLen::new(crate::MAX_VETERAN_FRAME_LEN + 1),
+            max: ParserFrameLen::new(crate::MAX_VETERAN_FRAME_LEN),
         };
         assert_eq!(
             notification_ingest_outcomes(&output),
