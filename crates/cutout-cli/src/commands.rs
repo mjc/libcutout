@@ -2943,12 +2943,12 @@ mod tests {
     #[test]
     fn read_only_battery_jsonl_preserves_temperature_page_values() {
         let temperatures = [
-            Some(Measured::reported(16_730)),
-            Some(Measured::reported(17_030)),
-            Some(Measured::reported(17_330)),
-            Some(Measured::reported(17_060)),
-            Some(Measured::reported(17_080)),
-            Some(Measured::reported(17_830)),
+            Some(temperature_mc(16_730)),
+            Some(temperature_mc(17_030)),
+            Some(temperature_mc(17_330)),
+            Some(temperature_mc(17_060)),
+            Some(temperature_mc(17_080)),
+            Some(temperature_mc(17_830)),
         ];
         let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
             cutout_core::BatteryPageMetadata::temperature(

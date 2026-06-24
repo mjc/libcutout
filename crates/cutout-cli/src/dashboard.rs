@@ -3582,12 +3582,12 @@ mod tests {
                     ..BatteryInfo::default()
                 },
                 [
-                    Some(Measured::reported(16_730)),
-                    Some(Measured::reported(17_840)),
-                    Some(Measured::reported(18_100)),
-                    Some(Measured::reported(17_800)),
-                    Some(Measured::reported(17_700)),
-                    Some(Measured::reported(19_100)),
+                    Some(temperature_mc(16_730)),
+                    Some(temperature_mc(17_840)),
+                    Some(temperature_mc(18_100)),
+                    Some(temperature_mc(17_800)),
+                    Some(temperature_mc(17_700)),
+                    Some(temperature_mc(19_100)),
                 ],
             )),
             ReadOnlyResponse::Battery(BatteryPagePayload::raw(
@@ -4581,12 +4581,12 @@ mod tests {
                 ..BatteryInfo::default()
             },
             [
-                Some(Measured::reported(17_600)),
-                Some(Measured::reported(17_100)),
-                Some(Measured::reported(17_700)),
-                Some(Measured::reported(18_500)),
-                Some(Measured::reported(19_000)),
-                Some(Measured::reported(19_100)),
+                Some(temperature_mc(17_600)),
+                Some(temperature_mc(17_100)),
+                Some(temperature_mc(17_700)),
+                Some(temperature_mc(18_500)),
+                Some(temperature_mc(19_000)),
+                Some(temperature_mc(19_100)),
             ],
         ));
         let report = SessionBridgeReport {
@@ -4976,12 +4976,12 @@ mod tests {
                         ..BatteryInfo::default()
                     },
                     [
-                        Some(Measured::reported(17_600)),
-                        Some(Measured::reported(17_100)),
-                        Some(Measured::reported(17_700)),
-                        Some(Measured::reported(18_500)),
-                        Some(Measured::reported(19_000)),
-                        Some(Measured::reported(19_100)),
+                        Some(temperature_mc(17_600)),
+                        Some(temperature_mc(17_100)),
+                        Some(temperature_mc(17_700)),
+                        Some(temperature_mc(18_500)),
+                        Some(temperature_mc(19_000)),
+                        Some(temperature_mc(19_100)),
                     ],
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
