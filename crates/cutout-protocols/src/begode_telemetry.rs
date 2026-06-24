@@ -142,7 +142,7 @@ pub enum BegodeVoltageEvidence {
     VoltageClass100V,
 
     /// A capture/app/BMS value reports an observed pack voltage.
-    ObservedPackVoltageMv(u32),
+    ObservedPackVoltage(Voltage),
 }
 
 /// Result of selecting a Begode pack voltage profile from explicit evidence.
@@ -338,12 +338,16 @@ impl BegodePackVoltageProfile {
         }
     }
 
-    /// Expected pack voltage range in millivolts.
+    /// Expected pack voltage range.
     #[must_use]
-    pub fn voltage_range_mv(self) -> RangeInclusive<u32> {
+    pub fn voltage_range(self) -> RangeInclusive<Voltage> {
         match self {
-            Self::Begode84VFullCharge => 60_000..=84_000,
-            Self::Begode100VFullCharge => 72_000..=100_800,
+            Self::Begode84VFullCharge => {
+                Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+            }
+            Self::Begode100VFullCharge => {
+                Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
+            }
         }
     }
 }
@@ -679,9 +683,11 @@ fn voltage_class_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
 fn parse_mv_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
     value
         .trim()
-        .parse::<u32>()
+        .parse::<i32>()
         .ok()
-        .map(BegodeVoltageEvidence::ObservedPackVoltageMv)
+        .filter(|millivolts| *millivolts >= 0)
+        .map(Voltage::from_millivolts)
+        .map(BegodeVoltageEvidence::ObservedPackVoltage)
 }
 
 fn parse_u8_evidence(value: &str) -> Option<u8> {
@@ -704,13 +710,15 @@ const fn evidence_profile(evidence: BegodeVoltageEvidence) -> Option<BegodePackV
         BegodeVoltageEvidence::VoltageClass100V => {
             Some(BegodePackVoltageProfile::Begode100VFullCharge)
         }
-        BegodeVoltageEvidence::ObservedPackVoltageMv(mv) if mv < 72_000 => {
+        BegodeVoltageEvidence::ObservedPackVoltage(voltage) if voltage.as_millivolts() < 72_000 => {
             Some(BegodePackVoltageProfile::Begode84VFullCharge)
         }
-        BegodeVoltageEvidence::ObservedPackVoltageMv(mv) if mv > 84_000 && mv <= 100_800 => {
+        BegodeVoltageEvidence::ObservedPackVoltage(voltage)
+            if voltage.as_millivolts() > 84_000 && voltage.as_millivolts() <= 100_800 =>
+        {
             Some(BegodePackVoltageProfile::Begode100VFullCharge)
         }
-        BegodeVoltageEvidence::ObservedPackVoltageMv(_) => None,
+        BegodeVoltageEvidence::ObservedPackVoltage(_) => None,
     }
 }
 
@@ -1562,7 +1570,10 @@ mod tests {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
         assert_eq!(profile.series_cells(), 20);
-        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+        );
         assert_eq!(profile.nominal_capacity(), None);
     }
 
@@ -1571,7 +1582,10 @@ mod tests {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
         assert_eq!(profile.series_cells(), 20);
-        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+        );
         assert_eq!(profile.nominal_capacity(), None);
     }
 
@@ -1582,7 +1596,10 @@ mod tests {
         assert_eq!(profile, BEGODE_FALCON_TARGET_VOLTAGE_PROFILE);
         assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
         assert_eq!(profile.series_cells(), 20);
-        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+        );
         assert_eq!(profile.nominal_capacity(), None);
     }
 
@@ -1591,7 +1608,10 @@ mod tests {
         let profile = BegodePackVoltageProfile::Begode100VFullCharge;
 
         assert_eq!(profile.series_cells(), 24);
-        assert_eq!(profile.voltage_range_mv(), 72_000..=100_800);
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
+        );
         assert_eq!(profile.nominal_capacity(), None);
     }
 
@@ -1625,8 +1645,8 @@ mod tests {
     #[test]
     fn voltage_profile_selection_does_not_guess_from_overlap_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
-                80_000
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(
+                Voltage::from_millivolts(80_000)
             )]),
             BegodeVoltageProfileSelection::Missing
         );
@@ -1635,14 +1655,14 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_non_overlapping_observed_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
-                95_000
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(
+                Voltage::from_millivolts(95_000)
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
         );
         assert_eq!(
-            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
-                65_000
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(
+                Voltage::from_millivolts(65_000)
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
         );
@@ -2083,25 +2103,25 @@ mod tests {
         }
 
         #[test]
-        fn voltage_profile_selection_maps_low_non_overlap_voltage_to_84v(mv in 1u32..72_000) {
+        fn voltage_profile_selection_maps_low_non_overlap_voltage_to_84v(mv in 1i32..72_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(Voltage::from_millivolts(mv))]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
             );
         }
 
         #[test]
-        fn voltage_profile_selection_maps_high_non_overlap_voltage_to_100v(mv in 84_001u32..=100_800) {
+        fn voltage_profile_selection_maps_high_non_overlap_voltage_to_100v(mv in 84_001i32..=100_800) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(Voltage::from_millivolts(mv))]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
             );
         }
 
         #[test]
-        fn voltage_profile_selection_keeps_overlap_voltage_ambiguous(mv in 72_000u32..=84_000) {
+        fn voltage_profile_selection_keeps_overlap_voltage_ambiguous(mv in 72_000i32..=84_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(Voltage::from_millivolts(mv))]),
                 BegodeVoltageProfileSelection::Missing
             );
         }

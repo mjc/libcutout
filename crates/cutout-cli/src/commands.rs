@@ -352,9 +352,9 @@ fn falcon_replay_bms_voltage_evidence(
         }
         let frame = BegodeFrame::try_from_slice(record.bytes.as_ref()).ok()?;
         let summary = BegodeBmsSummary::decode(&frame).ok()?;
-        u32::try_from(summary.pack_voltage_mv.as_millivolts())
-            .ok()
-            .map(BegodeVoltageEvidence::ObservedPackVoltageMv)
+        Some(BegodeVoltageEvidence::ObservedPackVoltage(
+            summary.pack_voltage_mv,
+        ))
     })
 }
 

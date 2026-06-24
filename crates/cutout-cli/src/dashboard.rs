@@ -3017,8 +3017,8 @@ fn dashboard_voltage_range_mv(state: &DashboardState) -> Option<(i32, i32)> {
         && let Some(profile) = VeteranModelProfile::from_model_id(43)
     {
         return Some((
-            *profile.voltage_range_mv.start(),
-            *profile.voltage_range_mv.end(),
+            profile.voltage_range.start().as_millivolts(),
+            profile.voltage_range.end().as_millivolts(),
         ));
     }
 

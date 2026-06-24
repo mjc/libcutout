@@ -157,7 +157,7 @@ pub struct VeteranModelProfile {
     pub battery_profile: Option<&'static BatteryVoltageProfile>,
 
     /// Pack-voltage range used for estimated battery percent.
-    pub voltage_range_mv: RangeInclusive<i32>,
+    pub voltage_range: RangeInclusive<Voltage>,
 
     /// Whether the fixed telemetry hardware-PWM field is valid.
     pub has_pwm_readback: bool,
@@ -184,9 +184,24 @@ impl VeteranModelProfile {
     #[must_use]
     pub fn from_model_id(model_id: u16) -> Option<Self> {
         let profile = match model_id {
-            0 | 1 => Self::new_linear(model_id, "Veteran Sherman", 24, 79_350..=98_700),
-            2 => Self::new_linear(model_id, "Veteran Abrams", 24, 79_350..=98_700),
-            3 => Self::new_linear(model_id, "Veteran Sherman S", 24, 79_350..=98_700),
+            0 | 1 => Self::new_linear(
+                model_id,
+                "Veteran Sherman",
+                24,
+                pack_voltage_range(79_350, 98_700),
+            ),
+            2 => Self::new_linear(
+                model_id,
+                "Veteran Abrams",
+                24,
+                pack_voltage_range(79_350, 98_700),
+            ),
+            3 => Self::new_linear(
+                model_id,
+                "Veteran Sherman S",
+                24,
+                pack_voltage_range(79_350, 98_700),
+            ),
             4 => Self::new_with_battery_profile(
                 model_id,
                 "Veteran Patton",
@@ -248,7 +263,7 @@ impl VeteranModelProfile {
         model_id: u16,
         name: &'static str,
         cell_count: u8,
-        voltage_range_mv: RangeInclusive<i32>,
+        voltage_range: RangeInclusive<Voltage>,
     ) -> Self {
         Self {
             model_id,
@@ -257,7 +272,7 @@ impl VeteranModelProfile {
             parallel_cells: 1,
             nominal_capacity: None,
             battery_profile: None,
-            voltage_range_mv,
+            voltage_range,
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
             bms_layout: None,
@@ -285,7 +300,7 @@ impl VeteranModelProfile {
                     .saturating_mul(u32::from(parallel_cells)),
             )),
             battery_profile: Some(battery_profile),
-            voltage_range_mv: battery_profile_pack_range(battery_profile, cell_count),
+            voltage_range: battery_profile_pack_range(battery_profile, cell_count),
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
             bms_layout: bms_layout_for_geometry(cell_count, parallel_cells),
@@ -309,8 +324,8 @@ impl VeteranModelProfile {
             return battery_profile.estimate_percent_from_pack_voltage(voltage_mv, self.cell_count);
         }
 
-        let start = *self.voltage_range_mv.start();
-        let end = *self.voltage_range_mv.end();
+        let start = self.voltage_range.start().as_millivolts();
+        let end = self.voltage_range.end().as_millivolts();
         let voltage_mv = voltage_mv.as_millivolts();
         if voltage_mv <= start {
             return 0;
@@ -342,7 +357,7 @@ const fn bms_layout_for_geometry(
 fn battery_profile_pack_range(
     battery_profile: &'static BatteryVoltageProfile,
     series_cells: u8,
-) -> RangeInclusive<i32> {
+) -> RangeInclusive<Voltage> {
     let series_cells = i32::from(series_cells);
     let start = battery_profile
         .points
@@ -351,7 +366,11 @@ fn battery_profile_pack_range(
     let end = battery_profile.points.last().map_or(start, |point| {
         pack_voltage_mv(point.cell_voltage, series_cells)
     });
-    start..=end
+    pack_voltage_range(start, end)
+}
+
+const fn pack_voltage_range(start_mv: i32, end_mv: i32) -> RangeInclusive<Voltage> {
+    Voltage::from_millivolts(start_mv)..=Voltage::from_millivolts(end_mv)
 }
 
 fn pack_voltage_mv(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> i32 {
@@ -651,6 +670,10 @@ fn veteran_pwm_permille(raw_pwm: u16) -> i16 {
 mod tests {
     use super::*;
 
+    fn test_voltage_range(start_mv: i32, end_mv: i32) -> RangeInclusive<Voltage> {
+        Voltage::from_millivolts(start_mv)..=Voltage::from_millivolts(end_mv)
+    }
+
     fn live_aero_frame() -> VeteranFrame {
         VeteranFrame::try_from_slice(&hex_literal::hex!(
             "dc5a5c532a7c000000000000ab41001700000cff\
@@ -799,7 +822,7 @@ mod tests {
             aero.battery_profile.map(|profile| profile.cell_model),
             Some("Samsung 50S")
         );
-        assert_eq!(aero.voltage_range_mv, 91_000..=126_000);
+        assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
         assert!(aero.has_pwm_readback);
         assert!(aero.requires_binary_horn);
         assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
@@ -815,14 +838,14 @@ mod tests {
             oryx.battery_profile.map(|profile| profile.cell_model),
             Some("Samsung 50S")
         );
-        assert_eq!(oryx.voltage_range_mv, 127_400..=176_400);
+        assert_eq!(oryx.voltage_range, test_voltage_range(127_400, 176_400));
         assert!(oryx.has_smart_bms);
 
         assert_eq!(sherman.cell_count, 24);
         assert_eq!(sherman.parallel_cells, 1);
         assert_eq!(sherman.nominal_capacity, None);
         assert_eq!(sherman.battery_profile, None);
-        assert_eq!(sherman.voltage_range_mv, 79_350..=98_700);
+        assert_eq!(sherman.voltage_range, test_voltage_range(79_350, 98_700));
         assert!(!sherman.has_pwm_readback);
         assert!(!sherman.requires_binary_horn);
         assert_eq!(sherman.observed_app_odometer_offset_m, None);
@@ -852,11 +875,13 @@ mod tests {
         let last = profile.points.last().expect("profile has high point");
 
         assert_eq!(
-            aero.voltage_range_mv,
-            pack_voltage_mv(first.cell_voltage, i32::from(aero.cell_count))
-                ..=pack_voltage_mv(last.cell_voltage, i32::from(aero.cell_count))
+            aero.voltage_range,
+            test_voltage_range(
+                pack_voltage_mv(first.cell_voltage, i32::from(aero.cell_count)),
+                pack_voltage_mv(last.cell_voltage, i32::from(aero.cell_count)),
+            )
         );
-        assert_eq!(aero.voltage_range_mv, 91_000..=126_000);
+        assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
     }
 
     #[test]
@@ -962,26 +987,81 @@ mod tests {
     #[test]
     fn known_samsung_50s_veteran_models_share_cell_curve_with_model_geometry() {
         let models = [
-            (4, "Veteran Patton", 30, 2, Some(10_000), 91_000..=126_000),
-            (5, "Veteran Lynx", 36, 4, Some(20_000), 109_200..=151_200),
+            (
+                4,
+                "Veteran Patton",
+                30,
+                2,
+                Some(10_000),
+                test_voltage_range(91_000, 126_000),
+            ),
+            (
+                5,
+                "Veteran Lynx",
+                36,
+                4,
+                Some(20_000),
+                test_voltage_range(109_200, 151_200),
+            ),
             (
                 6,
                 "Veteran Sherman L",
                 36,
                 6,
                 Some(30_000),
-                109_200..=151_200,
+                test_voltage_range(109_200, 151_200),
             ),
-            (7, "Veteran Patton S", 30, 2, Some(10_000), 91_000..=126_000),
-            (8, "Veteran Oryx", 42, 6, Some(30_000), 127_400..=176_400),
-            (9, "Veteran Lynx S", 36, 4, Some(20_000), 109_200..=151_200),
-            (42, "NOSFET Apex", 36, 4, Some(20_000), 109_200..=151_200),
-            (43, "NOSFET Aero", 30, 2, Some(10_000), 91_000..=126_000),
-            (44, "NOSFET Aeon", 36, 2, Some(10_000), 109_200..=151_200),
+            (
+                7,
+                "Veteran Patton S",
+                30,
+                2,
+                Some(10_000),
+                test_voltage_range(91_000, 126_000),
+            ),
+            (
+                8,
+                "Veteran Oryx",
+                42,
+                6,
+                Some(30_000),
+                test_voltage_range(127_400, 176_400),
+            ),
+            (
+                9,
+                "Veteran Lynx S",
+                36,
+                4,
+                Some(20_000),
+                test_voltage_range(109_200, 151_200),
+            ),
+            (
+                42,
+                "NOSFET Apex",
+                36,
+                4,
+                Some(20_000),
+                test_voltage_range(109_200, 151_200),
+            ),
+            (
+                43,
+                "NOSFET Aero",
+                30,
+                2,
+                Some(10_000),
+                test_voltage_range(91_000, 126_000),
+            ),
+            (
+                44,
+                "NOSFET Aeon",
+                36,
+                2,
+                Some(10_000),
+                test_voltage_range(109_200, 151_200),
+            ),
         ];
 
-        for (model_id, name, cell_count, parallel_cells, nominal_capacity, voltage_range_mv) in
-            models
+        for (model_id, name, cell_count, parallel_cells, nominal_capacity, voltage_range) in models
         {
             let profile =
                 VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
@@ -994,7 +1074,7 @@ mod tests {
                 nominal_capacity.map(Capacity::from_milliamp_hours)
             );
             assert_eq!(profile.battery_profile, Some(&SAMSUNG_50S_PROFILE));
-            assert_eq!(profile.voltage_range_mv, voltage_range_mv);
+            assert_eq!(profile.voltage_range, voltage_range);
         }
     }
 

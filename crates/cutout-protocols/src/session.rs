@@ -8,7 +8,8 @@ use cutout_core::{
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
     ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
     ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, Speed,
-    Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, WritePayload,
+    Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue, Voltage,
+    WritePayload,
 };
 
 use crate::{
@@ -951,7 +952,7 @@ impl RegisteredModelSpec for NosfetAeroModel {
         battery: Some(BatterySpec {
             series_cells: PackSeriesCells::new(30),
             nominal_capacity: None,
-            voltage_range_mv: 91_000..=126_000,
+            voltage_range: Voltage::from_millivolts(91_000)..=Voltage::from_millivolts(126_000),
             verification: VerificationStatus::HardwareVerified,
         }),
         bms: None,
@@ -1844,9 +1845,7 @@ mod tests {
         assert_eq!(delta.at_ms, 42);
         assert_eq!(
             delta.voltage_mv,
-            Some(Measured::reported(cutout_core::Voltage::from_millivolts(
-                37_500
-            ),))
+            Some(Measured::reported(Voltage::from_millivolts(37_500),))
         );
         assert_eq!(
             delta.battery_current_ma,
@@ -2061,9 +2060,7 @@ mod tests {
     fn nosfet_aero_session_emits_voltage_from_live_fixture_notification() {
         assert_eq!(
             live_aero_telemetry().voltage_mv,
-            Some(Measured::reported(cutout_core::Voltage::from_millivolts(
-                108_760
-            ),))
+            Some(Measured::reported(Voltage::from_millivolts(108_760),))
         );
     }
 

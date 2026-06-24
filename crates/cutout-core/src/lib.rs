@@ -438,8 +438,8 @@ pub struct BatterySpec {
     /// Nominal pack capacity, when known.
     pub nominal_capacity: Option<Capacity>,
 
-    /// Expected pack voltage range in millivolts.
-    pub voltage_range_mv: RangeInclusive<u32>,
+    /// Expected pack voltage range.
+    pub voltage_range: RangeInclusive<Voltage>,
 
     /// Verification status for the battery metadata.
     pub verification: VerificationStatus,
@@ -1574,8 +1574,8 @@ impl RegistryHashBuilder {
                 self.write_u8(1);
                 self.write_u8(battery.series_cells.get());
                 self.write_optional_u32(battery.nominal_capacity.map(Capacity::as_milliamp_hours));
-                self.write_u32(*battery.voltage_range_mv.start());
-                self.write_u32(*battery.voltage_range_mv.end());
+                self.write_i32(battery.voltage_range.start().as_millivolts());
+                self.write_i32(battery.voltage_range.end().as_millivolts());
                 self.write_u8(verification_code(battery.verification));
             }
             None => self.write_u8(0),
@@ -1642,6 +1642,10 @@ impl RegistryHashBuilder {
     }
 
     fn write_u32(&mut self, value: u32) {
+        self.write_bytes(&value.to_le_bytes());
+    }
+
+    fn write_i32(&mut self, value: i32) {
         self.write_bytes(&value.to_le_bytes());
     }
 
@@ -5892,7 +5896,7 @@ mod tests {
             battery: Some(crate::BatterySpec {
                 series_cells: crate::PackSeriesCells::new(30),
                 nominal_capacity: Some(crate::Capacity::from_milliamp_hours(10_000)),
-                voltage_range_mv: 99_180..=123_370,
+                voltage_range: Voltage::from_millivolts(99_180)..=Voltage::from_millivolts(123_370),
                 verification: VerificationStatus::SourceAndHardwareVerified,
             }),
             bms: Some(crate::BmsLayoutSpec {
