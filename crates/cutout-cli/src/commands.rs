@@ -105,6 +105,51 @@ fn convert_pevcap_bytes(
     Ok(capture?.encode(pevcap_encoding(output_format))?)
 }
 
+#[cfg(test)]
+fn speed_mm_s(value: i32) -> Measured<cutout_core::Speed> {
+    Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
+}
+
+#[cfg(test)]
+fn voltage_mv(value: i32) -> Measured<cutout_core::Voltage> {
+    Measured::reported(cutout_core::Voltage::from_millivolts(value))
+}
+
+#[cfg(test)]
+fn battery_current_ma(value: i32) -> Measured<cutout_core::BatteryCurrent> {
+    Measured::reported(cutout_core::BatteryCurrent::from_milliamps(value))
+}
+
+#[cfg(test)]
+fn temperature_mc(value: i32) -> Measured<cutout_core::Temperature> {
+    Measured::reported(cutout_core::Temperature::from_millicelsius(value))
+}
+
+#[cfg(test)]
+fn power_mw(value: i64) -> Measured<cutout_core::Power> {
+    Measured::calculated(cutout_core::Power::from_milliwatts(value))
+}
+
+#[cfg(test)]
+fn duty_cycle_permille(value: i16) -> Measured<cutout_core::DutyCycle> {
+    Measured::reported(cutout_core::DutyCycle::from_permille(value))
+}
+
+#[cfg(test)]
+fn distance_mm(value: u64) -> Measured<cutout_core::Distance> {
+    Measured::reported(cutout_core::Distance::from_millimetres(value))
+}
+
+#[cfg(test)]
+fn angle_mdeg(value: i32) -> Measured<cutout_core::Angle> {
+    Measured::reported(cutout_core::Angle::from_millidegrees(value))
+}
+
+#[cfg(test)]
+fn percent_estimated(value: u8) -> Measured<cutout_core::Percent> {
+    Measured::estimated(cutout_core::Percent::from_percent(value))
+}
+
 const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
     match format {
         PevcapFormat::Jsonl => PevcapEncoding::Jsonl,
@@ -1869,8 +1914,12 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
 fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
     let battery = payload.battery();
     serde_json::json!({
-        "voltage_mv": measured_i32_json(battery.voltage_mv),
-        "current_ma": measured_i32_json(battery.current_ma),
+        "voltage_mv": measured_i32_json(battery.voltage_mv.map(|measured| {
+            measured.map_value(cutout_core::Voltage::as_millivolts)
+        })),
+        "current_ma": measured_i32_json(battery.current_ma.map(|measured| {
+            measured.map_value(cutout_core::BatteryCurrent::as_milliamps)
+        })),
         "bms_pack_current_0_ma": bms_pack_current_json(
             payload.bms_pack_currents(),
             cutout_core::BmsPackCurrents::current_0_ma,
@@ -1879,9 +1928,15 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
             payload.bms_pack_currents(),
             cutout_core::BmsPackCurrents::current_1_ma,
         ),
-        "percent_reported": measured_u8_json(battery.percent_reported),
-        "percent_estimated": measured_u8_json(battery.percent_estimated),
-        "temperature_mc": measured_i32_json(battery.temperature_mc),
+        "percent_reported": measured_u8_json(battery.percent_reported.map(|measured| {
+            measured.map_value(cutout_core::Percent::as_percent)
+        })),
+        "percent_estimated": measured_u8_json(battery.percent_estimated.map(|measured| {
+            measured.map_value(cutout_core::Percent::as_percent)
+        })),
+        "temperature_mc": measured_i32_json(battery.temperature_mc.map(|measured| {
+            measured.map_value(cutout_core::Temperature::as_millicelsius)
+        })),
         "raw_state": raw_field_json(battery.raw_state),
     })
 }
@@ -2840,11 +2895,11 @@ mod tests {
                     VerificationStatus::SourceVerified,
                 ),
                 cutout_core::BatteryInfo {
-                    voltage_mv: Some(Measured::reported(80_000)),
-                    current_ma: Some(Measured::reported(-10_000)),
+                    voltage_mv: Some(voltage_mv(80_000)),
+                    current_ma: Some(battery_current_ma(-10_000)),
                     percent_reported: None,
-                    percent_estimated: Some(Measured::estimated(61)),
-                    temperature_mc: Some(Measured::reported(25_000)),
+                    percent_estimated: Some(percent_estimated(61)),
+                    temperature_mc: Some(temperature_mc(25_000)),
                     raw_state: Some(cutout_core::RawFieldValue::new(0x0008, 0x55aa)),
                 },
             )
@@ -2901,7 +2956,7 @@ mod tests {
                 VerificationStatus::HardwareVerified,
             ),
             cutout_core::BatteryInfo {
-                temperature_mc: temperatures[0],
+                temperature_mc: Some(temperature_mc(16_730)),
                 ..cutout_core::BatteryInfo::default()
             },
             temperatures,
@@ -3219,7 +3274,7 @@ mod tests {
             report
                 .telemetry_snapshot
                 .voltage_mv
-                .map(|voltage| voltage.value),
+                .map(|voltage| voltage.value.get()),
             Some(107_610)
         );
         assert_eq!(
@@ -3397,7 +3452,7 @@ mod tests {
             report
                 .telemetry_snapshot
                 .voltage_mv
-                .map(|voltage| voltage.value),
+                .map(|voltage| voltage.value.get()),
             Some(90_075)
         );
     }
@@ -3612,7 +3667,7 @@ mod tests {
             report
                 .telemetry_snapshot
                 .voltage_mv
-                .map(|voltage| voltage.value),
+                .map(|voltage| voltage.value.get()),
             Some(90_075)
         );
     }
@@ -3699,7 +3754,9 @@ mod tests {
                     .expect("metadata page should carry typed BMS currents");
                 assert_eq!(
                     payload.battery().current_ma,
-                    Some(Measured::reported(currents.current_0_ma().get()))
+                    Some(Measured::reported(
+                        cutout_core::BatteryCurrent::from_milliamps(currents.current_0_ma().get())
+                    ))
                 );
                 observed.insert((
                     payload.page().selector.get(),
@@ -3741,21 +3798,21 @@ mod tests {
             report
                 .telemetry_snapshot
                 .speed_mm_s
-                .map(|speed| speed.value),
+                .map(|speed| speed.value.get()),
             Some(0)
         );
         assert_eq!(
             report
                 .telemetry_snapshot
                 .voltage_mv
-                .map(|voltage| voltage.value),
+                .map(|voltage| voltage.value.get()),
             Some(125_230)
         );
         assert_eq!(
             report
                 .telemetry_snapshot
                 .distance_mm
-                .map(|distance| distance.value),
+                .map(|distance| distance.value.get()),
             Some(1_551_216_000)
         );
         assert_eq!(
@@ -3830,22 +3887,22 @@ mod tests {
     fn telemetry_snapshot_renderer_includes_present_fields() {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(cutout_core::TelemetryDelta {
-            speed_mm_s: Some(Measured::reported(1_200)),
-            voltage_mv: Some(Measured::reported(108_760)),
-            motor_current_ma: Some(Measured::reported(-1_700)),
-            power_mw: Some(Measured::calculated(-184_892)),
-            controller_temperature_mc: Some(Measured::reported(33_270)),
-            pwm_permille: Some(Measured::reported(-1_000)),
-            distance_mm: Some(Measured::reported(1_551_169_000)),
-            pitch_mdeg: Some(Measured::reported(69_060)),
-            battery_percent_estimated: Some(Measured::estimated(47)),
+            speed_mm_s: Some(speed_mm_s(1_200)),
+            voltage_mv: Some(voltage_mv(108_760)),
+            battery_current_ma: Some(battery_current_ma(-1_700)),
+            power_mw: Some(power_mw(-184_892)),
+            controller_temperature_mc: Some(temperature_mc(33_270)),
+            pwm_permille: Some(duty_cycle_permille(-1_000)),
+            distance_mm: Some(distance_mm(1_551_169_000)),
+            pitch_mdeg: Some(angle_mdeg(69_060)),
+            battery_percent_estimated: Some(percent_estimated(47)),
             ..cutout_core::TelemetryDelta::empty(42)
         });
 
         assert_eq!(
             render_telemetry_snapshot(&snapshot).map(|telemetry| telemetry.to_string()),
             Some(
-                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=47".to_owned()
+                "telemetry speed_mm_s=1200 voltage_mv=108760 battery_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=47".to_owned()
             )
         );
     }

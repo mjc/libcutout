@@ -18,12 +18,14 @@ use cutout_btle::{
     SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    BatteryPagePayload, CatalogModelResolution, DiagnosticReadback, FirmwareInfo, ModelCatalog,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ProtocolFamily,
-    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta,
-    TelemetrySnapshot,
+    BatteryPagePayload, CatalogModelResolution, DiagnosticReadback, FirmwareInfo, Measured,
+    ModelCatalog, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
+    ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+    TelemetryDelta, TelemetrySnapshot,
 };
-use cutout_protocols::{MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VeteranModelProfile};
+use cutout_protocols::{
+    MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
+};
 use ratatui::termina::{
     PlatformTerminal, Terminal as _,
     escape::csi::{self},
@@ -97,16 +99,51 @@ impl ScanSelection {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProfileSelection(usize);
+
+impl ProfileSelection {
+    const fn first() -> Self {
+        Self(0)
+    }
+
+    const fn get(self) -> usize {
+        self.0
+    }
+
+    fn move_down(&mut self, len: usize) {
+        if len == 0 {
+            self.0 = 0;
+        } else {
+            self.0 = (self.0 + 1).min(len - 1);
+        }
+    }
+
+    fn move_up(&mut self) {
+        self.0 = self.0.saturating_sub(1);
+    }
+
+    fn bounded(self, len: usize) -> Option<Self> {
+        if len == 0 {
+            None
+        } else {
+            Some(Self(self.0.min(len - 1)))
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DashboardState {
     pub(crate) source: DashboardSource,
     pub(crate) active_tab: DashboardTab,
+    pub(crate) active_profile_dashboard: Option<ProfileSelection>,
     pub(crate) provenance: Option<String>,
     pub(crate) device: DeviceSnapshot,
     pub(crate) scan_browser: ScanBrowser,
     pub(crate) telemetry: TelemetryWindow,
     pub(crate) read_only: ReadOnlyDashboardState,
     pub(crate) profiles: Vec<ProfileSnapshot>,
+    pub(crate) profile_selection: ProfileSelection,
     pub(crate) counters: SessionCounters,
     pub(crate) logs: VecDeque<LogEntry>,
 }
@@ -342,12 +379,12 @@ impl SignalPercent {
     }
 
     fn from_rssi_dbm(rssi_dbm: i16) -> Self {
-        let clamped = rssi_dbm.clamp(-100, -40);
+        let clamped = rssi_dbm.clamp(-90, -50);
         Self::new(
-            u64::try_from(i32::from(clamped) + 100)
+            u64::try_from(i32::from(clamped) + 90)
                 .unwrap_or(0)
                 .saturating_mul(100)
-                / 60,
+                / 40,
         )
     }
 
@@ -363,6 +400,192 @@ impl SignalPercent {
 impl fmt::Display for SignalPercent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WheelSpeedMph(u64);
+
+impl WheelSpeedMph {
+    const fn is_stationary(self) -> bool {
+        self.0 == 0
+    }
+
+    const fn is_moving(self) -> bool {
+        self.0 > 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WheelPitchDeg(i64);
+
+impl WheelPitchDeg {
+    const fn is_lifted_or_tilted(self) -> bool {
+        self.0.abs() >= 45
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PwmPercent(i64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PhaseCurrentAmps(i64);
+
+impl PhaseCurrentAmps {
+    fn from_milliamps(value: i32) -> Self {
+        Self(milliamps_to_amps(value))
+    }
+
+    fn abs_sample(self) -> u64 {
+        self.0.unsigned_abs()
+    }
+
+    const fn get(self) -> i64 {
+        self.0
+    }
+
+    const fn is_idle(self) -> bool {
+        self.0.abs() <= 1
+    }
+
+    const fn is_working(self) -> bool {
+        !self.is_idle()
+    }
+}
+
+impl fmt::Display for PhaseCurrentAmps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} A", self.get())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BatteryCurrentAmps(i64);
+
+impl BatteryCurrentAmps {
+    fn from_milliamps(value: i32) -> Self {
+        Self(milliamps_to_amps(value))
+    }
+
+    const fn get(self) -> i64 {
+        self.0
+    }
+
+    const fn is_idle(self) -> bool {
+        self.0.abs() <= 1
+    }
+
+    const fn is_working(self) -> bool {
+        !self.is_idle()
+    }
+}
+
+impl fmt::Display for BatteryCurrentAmps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} A", self.get())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationalCurrentAmps {
+    Charge(BatteryCurrentAmps),
+    PhaseFallback(PhaseCurrentAmps),
+}
+
+impl OperationalCurrentAmps {
+    const fn is_idle(self) -> bool {
+        match self {
+            Self::Charge(current) => current.is_idle(),
+            Self::PhaseFallback(current) => current.is_idle(),
+        }
+    }
+
+    const fn is_working(self) -> bool {
+        match self {
+            Self::Charge(current) => current.is_working(),
+            Self::PhaseFallback(current) => current.is_working(),
+        }
+    }
+}
+
+impl fmt::Display for OperationalCurrentAmps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Charge(current) => current.fmt(f),
+            Self::PhaseFallback(current) => current.fmt(f),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PowerWatts(i64);
+
+impl PowerWatts {
+    const fn from_watts(value: i64) -> Self {
+        Self(value)
+    }
+
+    const fn from_milliwatts(value: i64) -> Self {
+        Self(value / 1_000)
+    }
+
+    fn from_volts_amps(volts: u64, amps: u64) -> Option<Self> {
+        u64_to_i64(volts.saturating_mul(amps)).map(Self::from_watts)
+    }
+
+    const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl fmt::Display for PowerWatts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} W", self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationalChargeState {
+    Charging,
+    NotCharging,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationalWheelState {
+    Charging,
+    Riding,
+    Balancing,
+    Parked,
+    Lifted,
+    Unknown,
+}
+
+impl OperationalWheelState {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Charging => "charging",
+            Self::Riding => "riding",
+            Self::Balancing => "balancing",
+            Self::Parked => "parked",
+            Self::Lifted => "lifted",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperationalRawPwm {
+    Known(PwmPercent),
+    Unknown,
+}
+
+impl fmt::Display for OperationalRawPwm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Known(value) => write!(f, "{}%", value.0),
+            Self::Unknown => f.write_str("unknown"),
+        }
     }
 }
 
@@ -479,7 +702,9 @@ pub(crate) struct TelemetryWindow {
     pub(crate) signal_pct: SignalPercent,
     pub(crate) latest_speed_mph: Option<u64>,
     pub(crate) latest_voltage_v: Option<u64>,
-    pub(crate) latest_current_a: Option<i64>,
+    pub(crate) latest_phase_current_a: Option<PhaseCurrentAmps>,
+    pub(crate) latest_battery_current_a: Option<BatteryCurrentAmps>,
+    pub(crate) latest_power_w: Option<PowerWatts>,
     pub(crate) latest_temperature_c: Option<i64>,
     pub(crate) latest_distance_m: Option<u64>,
     pub(crate) latest_pitch_deg: Option<i64>,
@@ -517,6 +742,10 @@ enum DashboardInput {
     Quit,
     NextTab,
     PreviousTab,
+    MoveDown,
+    MoveUp,
+    Enter,
+    Back,
 }
 
 const DEMO_PROVENANCE: &str = "demo state: aero-nf2557.v1";
@@ -530,6 +759,7 @@ impl DashboardState {
         Self {
             source: DashboardSource::Live,
             active_tab: DashboardTab::first(),
+            active_profile_dashboard: None,
             provenance: None,
             device: DeviceSnapshot {
                 make: "unknown".to_owned(),
@@ -544,6 +774,7 @@ impl DashboardState {
             telemetry: TelemetryWindow::empty(),
             read_only: ReadOnlyDashboardState::default(),
             profiles: Vec::new(),
+            profile_selection: ProfileSelection::first(),
             counters: SessionCounters::default(),
             logs: VecDeque::new(),
         }
@@ -635,6 +866,12 @@ impl DashboardState {
             DEMO_CURRENT_A,
             DEMO_TEMPERATURE_C,
         );
+        self.read_only.firmware = Some(FirmwareInfo {
+            firmware_major: Some(Measured::reported(43)),
+            firmware_minor: Some(Measured::reported(2)),
+            firmware_patch: Some(Measured::reported(54)),
+            ..FirmwareInfo::default()
+        });
         self.profiles.push(ProfileSnapshot {
             name: "Primary drive".to_owned(),
             source: "probe".to_owned(),
@@ -839,11 +1076,40 @@ impl DashboardState {
     }
 
     fn next_tab(&mut self) {
+        self.active_profile_dashboard = None;
         self.active_tab = self.active_tab.next();
     }
 
     fn previous_tab(&mut self) {
+        self.active_profile_dashboard = None;
         self.active_tab = self.active_tab.previous();
+    }
+
+    fn handle_input(&mut self, input: DashboardInput) {
+        match input {
+            DashboardInput::Quit => {}
+            DashboardInput::NextTab => self.next_tab(),
+            DashboardInput::PreviousTab => self.previous_tab(),
+            DashboardInput::MoveDown => {
+                if self.active_tab.bounded() == 2 && self.active_profile_dashboard.is_none() {
+                    self.profile_selection.move_down(self.profiles.len());
+                }
+            }
+            DashboardInput::MoveUp => {
+                if self.active_tab.bounded() == 2 && self.active_profile_dashboard.is_none() {
+                    self.profile_selection.move_up();
+                }
+            }
+            DashboardInput::Enter => {
+                if self.active_tab.bounded() == 2 {
+                    self.active_profile_dashboard =
+                        self.profile_selection.bounded(self.profiles.len());
+                }
+            }
+            DashboardInput::Back => {
+                self.active_profile_dashboard = None;
+            }
+        }
     }
 
     fn apply_device_snapshot(
@@ -921,7 +1187,9 @@ impl TelemetryWindow {
             signal_pct: SignalPercent::default(),
             latest_speed_mph: None,
             latest_voltage_v: None,
-            latest_current_a: None,
+            latest_phase_current_a: None,
+            latest_battery_current_a: None,
+            latest_power_w: None,
             latest_temperature_c: None,
             latest_distance_m: None,
             latest_pitch_deg: None,
@@ -949,7 +1217,16 @@ impl TelemetryWindow {
         self.signal_pct = signal_pct;
         self.latest_speed_mph = speed_mph.last().copied();
         self.latest_voltage_v = voltage_v.last().copied();
-        self.latest_current_a = current_a.last().copied().and_then(u64_to_i64);
+        self.latest_battery_current_a = current_a
+            .last()
+            .copied()
+            .and_then(u64_to_i64)
+            .map(BatteryCurrentAmps);
+        self.latest_power_w = voltage_v
+            .last()
+            .copied()
+            .zip(current_a.last().copied())
+            .and_then(|(voltage, current)| PowerWatts::from_volts_amps(voltage, current));
         self.latest_temperature_c = temperature_c.last().copied().and_then(u64_to_i64);
         self.speed_mph.clear();
         self.voltage_v.clear();
@@ -978,7 +1255,8 @@ impl TelemetryWindow {
         push_sample(&mut self.temperature_c, next_temperature);
         self.latest_speed_mph = Some(next_speed);
         self.latest_voltage_v = Some(next_voltage);
-        self.latest_current_a = u64_to_i64(next_current);
+        self.latest_battery_current_a = u64_to_i64(next_current).map(BatteryCurrentAmps);
+        self.latest_power_w = PowerWatts::from_volts_amps(next_voltage, next_current);
         self.latest_temperature_c = u64_to_i64(next_temperature);
         self.sync_points();
     }
@@ -1002,45 +1280,59 @@ impl TelemetryWindow {
 
     fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
         if let Some(percent) = snapshot.battery_percent_reported {
-            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value));
+            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value.get()));
             self.battery_source = BatterySource::TelemetryReported;
         } else if let Some(percent) = snapshot.battery_percent_estimated {
-            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value));
+            self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value.get()));
             self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed_mm_s {
-            let speed_mph = mm_s_to_mph(speed.value);
+            let speed_mph = mm_s_to_mph(speed.value.get());
             self.latest_speed_mph = Some(speed_mph);
             push_sample(&mut self.speed_mph, speed_mph);
         }
         if let Some(voltage) = snapshot.voltage_mv {
-            let volts = millivolts_to_volts(voltage.value);
+            let volts = millivolts_to_volts(voltage.value.get());
             self.latest_voltage_v = Some(volts);
             seed_or_push_sample(&mut self.voltage_v, volts);
         }
-        if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
-            self.latest_current_a = Some(milliamps_to_amps(current.value));
-            push_sample(&mut self.current_a, milliamps_to_amps_abs(current.value));
+        if let Some(current) = snapshot.battery_current_ma {
+            self.latest_battery_current_a =
+                Some(BatteryCurrentAmps::from_milliamps(current.value.get()));
+        }
+        if let Some(current) = snapshot.motor_current_ma {
+            let current = PhaseCurrentAmps::from_milliamps(current.value.get());
+            self.latest_phase_current_a = Some(current);
+            push_sample(&mut self.current_a, current.abs_sample());
+        } else if let Some(current) = snapshot.battery_current_ma {
+            push_sample(
+                &mut self.current_a,
+                milliamps_to_amps_abs(current.value.get()),
+            );
+        }
+        if let Some(power) = snapshot.power_mw {
+            self.latest_power_w = Some(PowerWatts::from_milliwatts(power.value.get()));
         }
         if let Some(temperature) = snapshot
             .controller_temperature_mc
             .or(snapshot.motor_temperature_mc)
             .or(snapshot.battery_temperature_mc)
         {
-            self.latest_temperature_c = Some(millicelsius_to_celsius_signed(temperature.value));
+            self.latest_temperature_c =
+                Some(millicelsius_to_celsius_signed(temperature.value.get()));
             push_sample(
                 &mut self.temperature_c,
-                millicelsius_to_celsius(temperature.value),
+                millicelsius_to_celsius(temperature.value.get()),
             );
         }
         if let Some(distance) = snapshot.distance_mm {
-            self.latest_distance_m = Some(distance.value / 1_000);
+            self.latest_distance_m = Some(distance.value.get() / 1_000);
         }
         if let Some(pitch) = snapshot.pitch_mdeg {
-            self.latest_pitch_deg = Some(millidegrees_to_degrees(pitch.value));
+            self.latest_pitch_deg = Some(millidegrees_to_degrees(pitch.value.get()));
         }
         if let Some(pwm) = snapshot.pwm_permille {
-            self.latest_pwm_pct = Some(permille_to_percent(pwm.value));
+            self.latest_pwm_pct = Some(permille_to_percent(pwm.value.get()));
         }
         self.sync_points();
     }
@@ -1090,7 +1382,7 @@ impl fmt::Display for FirmwareSummary {
 
 fn write_optional_measured_u16(
     f: &mut fmt::Formatter<'_>,
-    value: Option<cutout_core::Measured<u16>>,
+    value: Option<Measured<u16>>,
 ) -> fmt::Result {
     if let Some(value) = value {
         write!(f, "{}", value.value)
@@ -1159,7 +1451,7 @@ impl fmt::Display for BmsCurrentSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let battery = self.0.battery();
         if let Some(current) = battery.current_ma {
-            write!(f, " current={}A", milliamps_to_amps(current.value))?;
+            write!(f, " current={}A", milliamps_to_amps(current.value.get()))?;
         }
         if let Some(currents) = self.0.bms_pack_currents() {
             write!(
@@ -1319,10 +1611,10 @@ impl fmt::Display for MappedTelemetryLog {
         let snapshot = self.0;
 
         if let Some(speed) = snapshot.speed_mm_s {
-            fields.write("speed", mm_s_to_mph(speed.value), "mph")?;
+            fields.write("speed", mm_s_to_mph(speed.value.get()), "mph")?;
         }
         if let Some(voltage) = snapshot.voltage_mv {
-            fields.write("voltage", millivolts_to_volts(voltage.value), "V")?;
+            fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
         }
         if let Some(percent) = snapshot
             .battery_percent_reported
@@ -1331,7 +1623,14 @@ impl fmt::Display for MappedTelemetryLog {
             fields.write("battery", percent.value, "%")?;
         }
         if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
-            fields.write("current", milliamps_to_amps(current.value), "A")?;
+            fields.write("current", milliamps_to_amps(current.value.get()), "A")?;
+        }
+        if let Some(power) = snapshot.power_mw {
+            fields.write(
+                "power",
+                PowerWatts::from_milliwatts(power.value.get()).get(),
+                "W",
+            )?;
         }
         if let Some(temperature) = snapshot
             .controller_temperature_mc
@@ -1340,21 +1639,21 @@ impl fmt::Display for MappedTelemetryLog {
         {
             fields.write(
                 "temperature",
-                millicelsius_to_celsius_signed(temperature.value),
+                millicelsius_to_celsius_signed(temperature.value.get()),
                 "C",
             )?;
         }
         if let Some(pwm) = snapshot.pwm_permille {
-            fields.write("pwm", permille_to_percent(pwm.value), "%")?;
+            fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
         if let Some(distance) = snapshot.distance_mm {
-            fields.write_display("distance", DistanceMmDisplay(distance.value))?;
+            fields.write_display("distance", DistanceMmDisplay(distance.value.get()))?;
         }
         if let Some(pitch) = snapshot.pitch_mdeg {
-            fields.write("pitch", millidegrees_to_degrees(pitch.value), "deg")?;
+            fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
         }
         if let Some(roll) = snapshot.roll_mdeg {
-            fields.write("roll", millidegrees_to_degrees(roll.value), "deg")?;
+            fields.write("roll", millidegrees_to_degrees(roll.value.get()), "deg")?;
         }
 
         fields.finish()
@@ -1369,10 +1668,10 @@ impl fmt::Display for TelemetryDeltaLog {
         let delta = self.0;
 
         if let Some(speed) = delta.speed_mm_s {
-            fields.write("speed", mm_s_to_mph(speed.value), "mph")?;
+            fields.write("speed", mm_s_to_mph(speed.value.get()), "mph")?;
         }
         if let Some(voltage) = delta.voltage_mv {
-            fields.write("voltage", millivolts_to_volts(voltage.value), "V")?;
+            fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
         }
         if let Some(percent) = delta
             .battery_percent_reported
@@ -1381,7 +1680,14 @@ impl fmt::Display for TelemetryDeltaLog {
             fields.write("battery", percent.value, "%")?;
         }
         if let Some(current) = delta.battery_current_ma.or(delta.motor_current_ma) {
-            fields.write("current", milliamps_to_amps(current.value), "A")?;
+            fields.write("current", milliamps_to_amps(current.value.get()), "A")?;
+        }
+        if let Some(power) = delta.power_mw {
+            fields.write(
+                "power",
+                PowerWatts::from_milliwatts(power.value.get()).get(),
+                "W",
+            )?;
         }
         if let Some(temperature) = delta
             .controller_temperature_mc
@@ -1390,18 +1696,18 @@ impl fmt::Display for TelemetryDeltaLog {
         {
             fields.write(
                 "temperature",
-                millicelsius_to_celsius_signed(temperature.value),
+                millicelsius_to_celsius_signed(temperature.value.get()),
                 "C",
             )?;
         }
         if let Some(pwm) = delta.pwm_permille {
-            fields.write("pwm", permille_to_percent(pwm.value), "%")?;
+            fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
         if let Some(distance) = delta.distance_mm {
-            fields.write_display("distance", DistanceMmDisplay(distance.value))?;
+            fields.write_display("distance", DistanceMmDisplay(distance.value.get()))?;
         }
         if let Some(pitch) = delta.pitch_mdeg {
-            fields.write("pitch", millidegrees_to_degrees(pitch.value), "deg")?;
+            fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
         }
 
         fields.finish()
@@ -1480,6 +1786,28 @@ impl FieldCount {
 
     const fn increment(self) -> Self {
         Self(self.0.saturating_add(1))
+    }
+}
+
+struct OptionalPowerDisplay(Option<PowerWatts>);
+
+impl fmt::Display for OptionalPowerDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => value.fmt(f),
+            None => f.write_str("unknown"),
+        }
+    }
+}
+
+struct OptionalOperationalCurrentDisplay(Option<OperationalCurrentAmps>);
+
+impl fmt::Display for OptionalOperationalCurrentDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => value.fmt(f),
+            None => f.write_str("unknown"),
+        }
     }
 }
 
@@ -1859,8 +2187,7 @@ fn run_dashboard_loop(
         while let Ok(input) = rx.try_recv() {
             match input {
                 DashboardInput::Quit => break 'dashboard Ok(()),
-                DashboardInput::NextTab => state.next_tab(),
-                DashboardInput::PreviousTab => state.previous_tab(),
+                input => state.handle_input(input),
             }
         }
 
@@ -1977,8 +2304,20 @@ fn spawn_input_thread(tx: mpsc::Sender<DashboardInput>) -> thread::JoinHandle<()
                     let _ = tx.send(DashboardInput::Quit);
                     break;
                 }
+                b'\r' | b'\n' => {
+                    let _ = tx.send(DashboardInput::Enter);
+                }
                 b'\t' => {
                     let _ = tx.send(DashboardInput::NextTab);
+                }
+                b'j' | b'J' => {
+                    let _ = tx.send(DashboardInput::MoveDown);
+                }
+                b'k' | b'K' => {
+                    let _ = tx.send(DashboardInput::MoveUp);
+                }
+                b'b' | b'B' | 0x7f => {
+                    let _ = tx.send(DashboardInput::Back);
                 }
                 0x1b => handle_escape_sequence(&mut locked, &tx),
                 _ => {}
@@ -1999,6 +2338,12 @@ fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInp
         }
         [b'[', b'D'] => {
             let _ = tx.send(DashboardInput::PreviousTab);
+        }
+        [b'[', b'B'] => {
+            let _ = tx.send(DashboardInput::MoveDown);
+        }
+        [b'[', b'A'] => {
+            let _ = tx.send(DashboardInput::MoveUp);
         }
         _ => {}
     }
@@ -2046,6 +2391,13 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn render_body(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    if let Some(selection) = state.active_profile_dashboard
+        && state.active_tab.bounded() == 2
+    {
+        render_operational_dashboard(frame, area, state, selection);
+        return;
+    }
+
     match state.active_tab.bounded() {
         0 => render_overview_tab(frame, area, state),
         1 => render_telemetry(frame, area, state),
@@ -2132,13 +2484,19 @@ fn render_profile_table(frame: &mut Frame<'_>, area: Rect, state: &DashboardStat
     let rows = state
         .profiles
         .iter()
-        .map(|profile| {
-            Row::new(vec![
+        .enumerate()
+        .map(|(index, profile)| {
+            let row = Row::new(vec![
                 Cell::from(profile.name.as_str()),
                 Cell::from(profile.source.as_str()),
                 Cell::from(profile.status.as_str()),
                 Cell::from(profile.family.summary()),
-            ])
+            ]);
+            if index == state.profile_selection.get() {
+                row.style(Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            } else {
+                row
+            }
         })
         .collect::<Vec<_>>();
 
@@ -2155,6 +2513,386 @@ fn render_profile_table(frame: &mut Frame<'_>, area: Rect, state: &DashboardStat
     .block(panel_block("Profiles"))
     .column_spacing(1);
     frame.render_widget(table, area);
+}
+
+fn render_operational_dashboard(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &DashboardState,
+    selection: ProfileSelection,
+) {
+    let profile = selection
+        .bounded(state.profiles.len())
+        .and_then(|selection| state.profiles.get(selection.get()));
+    let profile_heading = operational_profile_heading(state, profile);
+    let firmware = state.read_only.firmware.map_or_else(
+        || state.device.firmware.clone(),
+        |firmware| FirmwareSummary(firmware).to_string(),
+    );
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(12), Constraint::Fill(1)])
+        .split(area);
+
+    let dashboard = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Fill(1)])
+        .split(chunks[0]);
+    let summary = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(dashboard[1]);
+
+    render_operational_heading(frame, dashboard[0], &profile_heading);
+    render_operational_speed_panel(frame, summary[0], state, &firmware);
+    render_operational_metric_grid(frame, summary[1], state);
+    render_read_only_summary(frame, chunks[1], state);
+}
+
+fn render_operational_heading(frame: &mut Frame<'_>, area: Rect, profile_heading: &str) {
+    let heading = Paragraph::new(Line::from(Span::styled(
+        profile_heading.to_owned(),
+        Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )))
+    .block(panel_block("Operational dashboard"))
+    .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(heading, area);
+}
+
+fn render_operational_speed_panel(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &DashboardState,
+    firmware: &str,
+) {
+    let speed = OptionalU64Display::new(state.telemetry.latest_speed_mph, " mph").to_string();
+    let lines = vec![
+        Line::from(vec![Span::styled(
+            speed,
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![
+            Span::styled("device ", Style::new().fg(Color::Gray)),
+            Span::raw(state.device.name.as_str()),
+        ]),
+        Line::from(vec![
+            Span::styled("state ", Style::new().fg(Color::Gray)),
+            Span::raw(state.device.connection_state.as_str()),
+        ]),
+        Line::from(vec![
+            Span::styled("source ", Style::new().fg(Color::Gray)),
+            Span::raw(state.provenance.as_deref().unwrap_or("live")),
+        ]),
+        Line::from(vec![
+            Span::styled("firmware ", Style::new().fg(Color::Gray)),
+            Span::raw(firmware.to_owned()),
+        ]),
+    ];
+
+    let panel = Paragraph::new(lines)
+        .block(panel_block("Speed"))
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(panel, area);
+}
+
+fn render_operational_metric_grid(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+
+    render_operational_top_metrics(frame, rows[0], state);
+    render_operational_middle_metrics(frame, rows[1], state);
+    render_operational_bottom_metrics(frame, rows[2], state);
+}
+
+fn render_operational_top_metrics(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+
+    render_metric_tile(
+        frame,
+        top[0],
+        "Battery",
+        OptionalBatteryPercentDisplay(state.telemetry.battery_pct).to_string(),
+        state
+            .telemetry
+            .battery_pct
+            .map(DashboardBatteryPercent::ratio),
+        Color::Green,
+    );
+    render_metric_tile(
+        frame,
+        top[1],
+        "Voltage",
+        OptionalU64Display::new(state.telemetry.latest_voltage_v, " V").to_string(),
+        operational_voltage_ratio(state),
+        Color::Magenta,
+    );
+    render_metric_tile(
+        frame,
+        top[2],
+        "Signal",
+        format!("{}%", state.telemetry.signal_pct),
+        Some(state.telemetry.signal_pct.ratio()),
+        Color::Cyan,
+    );
+}
+
+fn render_operational_middle_metrics(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let middle = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area);
+
+    render_metric_tile(
+        frame,
+        middle[0],
+        "Wheel state",
+        operational_wheel_state(state).label().to_owned(),
+        None,
+        Color::Green,
+    );
+    render_metric_tile(
+        frame,
+        middle[1],
+        "Power",
+        OptionalPowerDisplay(state.telemetry.latest_power_w).to_string(),
+        None,
+        Color::Yellow,
+    );
+    render_metric_tile(
+        frame,
+        middle[2],
+        "Amps",
+        OptionalOperationalCurrentDisplay(operational_current_amps(state)).to_string(),
+        None,
+        Color::LightBlue,
+    );
+    render_metric_tile(
+        frame,
+        middle[3],
+        "Temp",
+        OptionalI64Display::new(state.telemetry.latest_temperature_c, " C").to_string(),
+        None,
+        Color::Red,
+    );
+}
+
+fn render_operational_bottom_metrics(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let bottom = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+
+    render_metric_tile(
+        frame,
+        bottom[0],
+        "PWM",
+        operational_pwm(state).to_string(),
+        None,
+        Color::Yellow,
+    );
+    render_metric_tile(
+        frame,
+        bottom[1],
+        "Trip",
+        OptionalDistanceDisplay(state.telemetry.latest_distance_m).to_string(),
+        None,
+        Color::Cyan,
+    );
+    render_metric_tile(
+        frame,
+        bottom[2],
+        "Read-only mode",
+        "active".to_owned(),
+        None,
+        Color::DarkGray,
+    );
+}
+
+fn render_metric_tile(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    title: &str,
+    value: String,
+    ratio: Option<f64>,
+    color: Color,
+) {
+    if let Some(ratio) = ratio {
+        let gauge = Gauge::default()
+            .block(panel_block(title))
+            .gauge_style(Style::new().fg(color).bg(Color::Black))
+            .label(value)
+            .ratio(ratio.clamp(0.0, 1.0));
+        frame.render_widget(gauge, area);
+        return;
+    }
+
+    let panel = Paragraph::new(vec![Line::from(Span::styled(
+        value,
+        Style::new().fg(color).add_modifier(Modifier::BOLD),
+    ))])
+    .block(panel_block(title))
+    .wrap(ratatui::widgets::Wrap { trim: true });
+    frame.render_widget(panel, area);
+}
+
+fn operational_voltage_ratio(state: &DashboardState) -> Option<f64> {
+    let voltage = state.telemetry.latest_voltage_v?;
+    let (min_mv, max_mv) = dashboard_voltage_range_mv(state)?;
+    let percent = voltage_range_percent(voltage, min_mv, max_mv);
+    Some(to_f64(percent) / 100.0)
+}
+
+fn operational_wheel_state(state: &DashboardState) -> OperationalWheelState {
+    match operational_charge_state(state) {
+        OperationalChargeState::Charging => return OperationalWheelState::Charging,
+        OperationalChargeState::NotCharging | OperationalChargeState::Unknown => {}
+    }
+
+    let speed = state.telemetry.latest_speed_mph.map(WheelSpeedMph);
+    let current = operational_current_amps(state);
+    let pitch = state.telemetry.latest_pitch_deg.map(WheelPitchDeg);
+
+    if speed.is_some_and(WheelSpeedMph::is_moving) {
+        return OperationalWheelState::Riding;
+    }
+
+    if pitch.is_some_and(WheelPitchDeg::is_lifted_or_tilted) {
+        return OperationalWheelState::Lifted;
+    }
+
+    match (speed, current) {
+        (Some(speed), Some(current)) if speed.is_stationary() && current.is_working() => {
+            OperationalWheelState::Balancing
+        }
+        (Some(speed), Some(current)) if speed.is_stationary() && current.is_idle() => {
+            OperationalWheelState::Parked
+        }
+        _ => OperationalWheelState::Unknown,
+    }
+}
+
+fn operational_charge_state(state: &DashboardState) -> OperationalChargeState {
+    state
+        .read_only
+        .settings
+        .iter()
+        .find_map(|setting| {
+            (setting.field.id == VETERAN_FIELD_CHARGE_MODE).then_some({
+                if setting.field.value == 0 {
+                    OperationalChargeState::NotCharging
+                } else {
+                    OperationalChargeState::Charging
+                }
+            })
+        })
+        .unwrap_or(OperationalChargeState::Unknown)
+}
+
+fn operational_current_amps(state: &DashboardState) -> Option<OperationalCurrentAmps> {
+    state
+        .telemetry
+        .latest_battery_current_a
+        .map(OperationalCurrentAmps::Charge)
+        .or_else(|| {
+            state
+                .telemetry
+                .latest_phase_current_a
+                .map(OperationalCurrentAmps::PhaseFallback)
+        })
+}
+
+fn operational_pwm(state: &DashboardState) -> OperationalRawPwm {
+    state
+        .telemetry
+        .latest_pwm_pct
+        .map(PwmPercent)
+        .map_or(OperationalRawPwm::Unknown, OperationalRawPwm::Known)
+}
+
+fn operational_profile_heading(
+    state: &DashboardState,
+    profile: Option<&ProfileSnapshot>,
+) -> String {
+    let identity = operational_device_identity(state);
+    let Some(profile) = profile else {
+        return format!("{identity} Profile Not Selected");
+    };
+    let protocol = operational_protocol_label(&profile.family);
+    let status = operational_profile_status(profile);
+    format!("{identity} ({protocol}) {status}")
+}
+
+fn operational_device_identity(state: &DashboardState) -> String {
+    if state.device.make == "unknown" || state.device.model == "unknown" {
+        return state.device.name.clone();
+    }
+    if state
+        .device
+        .model
+        .to_ascii_lowercase()
+        .starts_with(&state.device.make.to_ascii_lowercase())
+    {
+        return state.device.model.clone();
+    }
+    format!("{} {}", state.device.make, state.device.model)
+}
+
+fn operational_protocol_label(family: &ProfileFamily) -> &'static str {
+    match family {
+        ProfileFamily::AeroVeteran { .. } => "via Veteran Protocol",
+        ProfileFamily::Pending { .. } => "profile pending",
+    }
+}
+
+fn operational_profile_status(profile: &ProfileSnapshot) -> String {
+    match &profile.family {
+        ProfileFamily::AeroVeteran { summary, .. } => summary
+            .strip_prefix("Aero/Veteran ")
+            .unwrap_or(summary)
+            .split_whitespace()
+            .map(title_case_word)
+            .collect::<Vec<_>>()
+            .join(" "),
+        ProfileFamily::Pending { summary, .. } => summary
+            .split_whitespace()
+            .map(title_case_word)
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
+fn title_case_word(word: &str) -> String {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut output = String::new();
+    output.extend(first.to_uppercase());
+    output.push_str(chars.as_str());
+    output
 }
 
 fn render_battery_cluster(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -2436,7 +3174,7 @@ fn render_pending_telemetry_wait(frame: &mut Frame<'_>, area: Rect) {
     let text = Paragraph::new(vec![
         Line::from("waiting for protocol decoder output"),
         Line::from("transport notifications are arriving from the connected device"),
-        Line::from("decoded speed, voltage, current, and temperature will fill in here"),
+        Line::from("decoded speed, voltage, current, power, and temperature will fill in here"),
     ])
     .block(panel_block("Decoder"));
     frame.render_widget(text, area);
@@ -2474,19 +3212,21 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
                 Span::raw(OptionalBatteryPercentDisplay(state.telemetry.battery_pct).to_string()),
             ]),
             Line::from(vec![
-                Span::styled("current ", Style::new().fg(Color::Gray)),
+                Span::styled("amps ", Style::new().fg(Color::Gray)),
                 Span::raw(
-                    OptionalI64Display::new(state.telemetry.latest_current_a, " A").to_string(),
+                    OptionalOperationalCurrentDisplay(operational_current_amps(state)).to_string(),
                 ),
+                Span::styled(" power ", Style::new().fg(Color::Gray)),
+                Span::raw(OptionalPowerDisplay(state.telemetry.latest_power_w).to_string()),
+            ]),
+            Line::from(vec![
                 Span::styled(" temp ", Style::new().fg(Color::Gray)),
                 Span::raw(
                     OptionalI64Display::new(state.telemetry.latest_temperature_c, " C").to_string(),
                 ),
                 Span::styled(" pwm ", Style::new().fg(Color::Gray)),
                 Span::raw(OptionalI64Display::new(state.telemetry.latest_pwm_pct, "%").to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled("distance ", Style::new().fg(Color::Gray)),
+                Span::styled(" distance ", Style::new().fg(Color::Gray)),
                 Span::raw(OptionalDistanceDisplay(state.telemetry.latest_distance_m).to_string()),
                 Span::styled(" pitch ", Style::new().fg(Color::Gray)),
                 Span::raw(
@@ -2727,6 +3467,46 @@ mod tests {
         ProtocolSelector::new(value)
     }
 
+    fn speed_mm_s(value: i32) -> Measured<cutout_core::Speed> {
+        Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
+    }
+
+    fn voltage_mv(value: i32) -> Measured<cutout_core::Voltage> {
+        Measured::reported(cutout_core::Voltage::from_millivolts(value))
+    }
+
+    fn battery_current_ma(value: i32) -> Measured<cutout_core::BatteryCurrent> {
+        Measured::reported(cutout_core::BatteryCurrent::from_milliamps(value))
+    }
+
+    fn power_mw(value: i64) -> Measured<cutout_core::Power> {
+        Measured::calculated(cutout_core::Power::from_milliwatts(value))
+    }
+
+    fn temperature_mc(value: i32) -> Measured<cutout_core::Temperature> {
+        Measured::reported(cutout_core::Temperature::from_millicelsius(value))
+    }
+
+    fn duty_cycle_permille(value: i16) -> Measured<cutout_core::DutyCycle> {
+        Measured::reported(cutout_core::DutyCycle::from_permille(value))
+    }
+
+    fn distance_mm(value: u64) -> Measured<cutout_core::Distance> {
+        Measured::reported(cutout_core::Distance::from_millimetres(value))
+    }
+
+    fn angle_mdeg(value: i32) -> Measured<cutout_core::Angle> {
+        Measured::reported(cutout_core::Angle::from_millidegrees(value))
+    }
+
+    fn percent_reported(value: u8) -> Measured<cutout_core::Percent> {
+        Measured::reported(cutout_core::Percent::from_percent(value))
+    }
+
+    fn percent_estimated(value: u8) -> Measured<cutout_core::Percent> {
+        Measured::estimated(cutout_core::Percent::from_percent(value))
+    }
+
     fn live_aero_telemetry_snapshot() -> TelemetrySnapshot {
         let frame = VeteranFrame::try_from_slice(&hex_literal::hex!(
             "dc5a5c532a7c000000000000ab41001700000cff\
@@ -2798,7 +3578,7 @@ mod tests {
             ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
                 BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                 BatteryInfo {
-                    temperature_mc: Some(Measured::reported(16_730)),
+                    temperature_mc: Some(temperature_mc(16_730)),
                     ..BatteryInfo::default()
                 },
                 [
@@ -2973,14 +3753,14 @@ mod tests {
         assert_eq!(state.counters.connected, ConnectedDeviceCount::new(1));
         assert_eq!(state.telemetry.battery_pct, None);
         assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
-        assert_eq!(state.telemetry.signal_pct, SignalPercent::new(65));
+        assert_eq!(state.telemetry.signal_pct, SignalPercent::new(72));
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
         assert_eq!(state.profiles[0].source, "gatt");
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
-        assert!(text.contains("65% / -61 dBm"));
+        assert!(text.contains("72% / -61 dBm"));
         assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
     }
 
@@ -3009,11 +3789,130 @@ mod tests {
     #[test]
     fn rssi_signal_percent_clamps_to_reasonable_ble_range() {
         assert_eq!(SignalPercent::from_rssi_dbm(-40), SignalPercent::new(100));
-        assert_eq!(SignalPercent::from_rssi_dbm(-61), SignalPercent::new(65));
-        assert_eq!(SignalPercent::from_rssi_dbm(-74), SignalPercent::new(43));
+        assert_eq!(SignalPercent::from_rssi_dbm(-50), SignalPercent::new(100));
+        assert_eq!(SignalPercent::from_rssi_dbm(-61), SignalPercent::new(72));
+        assert_eq!(SignalPercent::from_rssi_dbm(-74), SignalPercent::new(40));
+        assert_eq!(SignalPercent::from_rssi_dbm(-90), SignalPercent::new(0));
         assert_eq!(SignalPercent::from_rssi_dbm(-100), SignalPercent::new(0));
         assert_eq!(SignalPercent::from_rssi_dbm(-120), SignalPercent::new(0));
         assert_eq!(SignalPercent::from_rssi_dbm(-20), SignalPercent::new(100));
+    }
+
+    #[test]
+    fn operational_wheel_state_prefers_charge_mode_readback() {
+        let mut state = DashboardState::empty();
+        state.telemetry.latest_speed_mph = Some(3);
+        state
+            .read_only
+            .settings
+            .push_back(hardware_setting(VETERAN_FIELD_CHARGE_MODE, 1));
+
+        assert_eq!(
+            operational_wheel_state(&state),
+            OperationalWheelState::Charging
+        );
+    }
+
+    #[test]
+    fn operational_wheel_state_reports_riding_from_motion() {
+        let mut state = DashboardState::empty();
+        state.telemetry.latest_speed_mph = Some(1);
+        state.telemetry.latest_battery_current_a = Some(BatteryCurrentAmps(0));
+        state
+            .read_only
+            .settings
+            .push_back(hardware_setting(VETERAN_FIELD_CHARGE_MODE, 0));
+
+        assert_eq!(
+            operational_wheel_state(&state),
+            OperationalWheelState::Riding
+        );
+    }
+
+    #[test]
+    fn operational_wheel_state_reports_lifted_from_stationary_pitch() {
+        let mut state = DashboardState::empty();
+        state.telemetry.latest_speed_mph = Some(0);
+        state.telemetry.latest_battery_current_a = Some(BatteryCurrentAmps(0));
+        state.telemetry.latest_pitch_deg = Some(69);
+
+        assert_eq!(
+            operational_wheel_state(&state),
+            OperationalWheelState::Lifted
+        );
+    }
+
+    #[test]
+    fn operational_wheel_state_reports_balancing_from_stationary_current() {
+        let mut state = DashboardState::empty();
+        state.telemetry.latest_speed_mph = Some(0);
+        state.telemetry.latest_battery_current_a = Some(BatteryCurrentAmps(4));
+        state.telemetry.latest_pitch_deg = Some(0);
+
+        assert_eq!(
+            operational_wheel_state(&state),
+            OperationalWheelState::Balancing
+        );
+    }
+
+    #[test]
+    fn operational_wheel_state_reports_parked_from_stationary_idle_current() {
+        let mut state = DashboardState::empty();
+        state.telemetry.latest_speed_mph = Some(0);
+        state.telemetry.latest_battery_current_a = Some(BatteryCurrentAmps(0));
+        state.telemetry.latest_pitch_deg = Some(0);
+
+        assert_eq!(
+            operational_wheel_state(&state),
+            OperationalWheelState::Parked
+        );
+    }
+
+    #[test]
+    fn operational_pwm_preserves_signed_percent_without_load_semantics() {
+        let mut state = DashboardState::empty();
+        assert_eq!(operational_pwm(&state), OperationalRawPwm::Unknown);
+
+        state.telemetry.latest_speed_mph = Some(0);
+        state.telemetry.latest_battery_current_a = Some(BatteryCurrentAmps(0));
+        state.telemetry.latest_pwm_pct = Some(-100);
+
+        assert_eq!(
+            operational_pwm(&state),
+            OperationalRawPwm::Known(PwmPercent(-100))
+        );
+        assert_eq!(operational_pwm(&state).to_string(), "-100%");
+    }
+
+    #[test]
+    fn power_watts_converts_from_milliwatts_without_unit_leaking() {
+        assert_eq!(
+            PowerWatts::from_milliwatts(-184_892),
+            PowerWatts::from_watts(-184)
+        );
+        assert_eq!(
+            PowerWatts::from_volts_amps(53, 6),
+            Some(PowerWatts::from_watts(318))
+        );
+        assert_eq!(PowerWatts::from_milliwatts(-184_892).to_string(), "-184 W");
+        assert_eq!(OptionalPowerDisplay(None).to_string(), "unknown");
+    }
+
+    #[test]
+    fn operational_current_amps_display_preserves_signed_discharge_current() {
+        let current = BatteryCurrentAmps(-12);
+
+        assert_eq!(current.get(), -12);
+        assert_eq!(current.to_string(), "-12 A");
+        assert_eq!(
+            OptionalOperationalCurrentDisplay(Some(OperationalCurrentAmps::Charge(current)))
+                .to_string(),
+            "-12 A"
+        );
+        assert_eq!(
+            OptionalOperationalCurrentDisplay(None).to_string(),
+            "unknown"
+        );
     }
 
     #[test]
@@ -3197,11 +4096,12 @@ mod tests {
             latest_notification_len: Some(NotificationByteLen::new(100)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
-                speed_mm_s: Some(Measured::reported(4_470)),
-                voltage_mv: Some(Measured::reported(84_400)),
-                battery_current_ma: Some(Measured::reported(-12_400)),
-                controller_temperature_mc: Some(Measured::reported(36_600)),
-                battery_percent_reported: Some(Measured::reported(77)),
+                speed_mm_s: Some(speed_mm_s(4_470)),
+                voltage_mv: Some(voltage_mv(84_400)),
+                battery_current_ma: Some(battery_current_ma(-12_400)),
+                power_mw: Some(power_mw(-1_046_560)),
+                controller_temperature_mc: Some(temperature_mc(36_600)),
+                battery_percent_reported: Some(percent_reported(77)),
                 ..TelemetrySnapshot::default()
             },
             read_only_responses: read_only_responses(0),
@@ -3215,11 +4115,12 @@ mod tests {
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
-                    speed_mm_s: Some(Measured::reported(4_470)),
-                    voltage_mv: Some(Measured::reported(84_400)),
-                    battery_current_ma: Some(Measured::reported(-12_400)),
-                    controller_temperature_mc: Some(Measured::reported(36_600)),
-                    battery_percent_reported: Some(Measured::reported(77)),
+                    speed_mm_s: Some(speed_mm_s(4_470)),
+                    voltage_mv: Some(voltage_mv(84_400)),
+                    battery_current_ma: Some(battery_current_ma(-12_400)),
+                    power_mw: Some(power_mw(-1_046_560)),
+                    controller_temperature_mc: Some(temperature_mc(36_600)),
+                    battery_percent_reported: Some(percent_reported(77)),
                     ..TelemetryDelta::empty(42)
                 },
             }],
@@ -3238,7 +4139,18 @@ mod tests {
         );
         assert_eq!(state.telemetry.latest_speed_mph, Some(10));
         assert_eq!(state.telemetry.latest_voltage_v, Some(84));
-        assert_eq!(state.telemetry.latest_current_a, Some(-12));
+        assert_eq!(
+            state
+                .telemetry
+                .latest_battery_current_a
+                .map(BatteryCurrentAmps::get),
+            Some(-12)
+        );
+        assert_eq!(state.telemetry.latest_phase_current_a, None);
+        assert_eq!(
+            state.telemetry.latest_power_w,
+            Some(PowerWatts::from_watts(-1046))
+        );
         assert_eq!(state.telemetry.latest_temperature_c, Some(36));
         assert_eq!(state.telemetry.speed_mph, vec![10]);
         assert_eq!(state.telemetry.voltage_v.len(), HISTORY_LIMIT);
@@ -3257,11 +4169,13 @@ mod tests {
                 && entry.message.contains("speed=10mph")
                 && entry.message.contains("battery=77%")
                 && entry.message.contains("current=-12A")
+                && entry.message.contains("power=-1046W")
         }));
         assert!(state.logs.iter().any(|entry| {
             entry.level == "info"
                 && entry.message.contains("t=42ms processed telemetry")
                 && entry.message.contains("voltage=84V")
+                && entry.message.contains("power=-1046W")
         }));
     }
 
@@ -3274,15 +4188,15 @@ mod tests {
             latest_notification_len: Some(NotificationByteLen::new(99)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
-                voltage_mv: Some(Measured::reported(117_600)),
-                battery_percent_estimated: Some(Measured::estimated(78)),
+                voltage_mv: Some(voltage_mv(117_600)),
+                battery_percent_estimated: Some(percent_estimated(78)),
                 ..TelemetrySnapshot::default()
             },
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
-                    voltage_mv: Some(Measured::reported(117_600)),
-                    battery_percent_estimated: Some(Measured::estimated(78)),
+                    voltage_mv: Some(voltage_mv(117_600)),
+                    battery_percent_estimated: Some(percent_estimated(78)),
                     ..TelemetryDelta::empty(7)
                 },
             }],
@@ -3377,21 +4291,22 @@ mod tests {
     #[test]
     fn mapped_telemetry_log_keeps_snapshot_structured_until_render_edge() {
         let snapshot = TelemetrySnapshot {
-            speed_mm_s: Some(Measured::reported(12_000)),
-            voltage_mv: Some(Measured::reported(119_600)),
-            battery_percent_reported: Some(Measured::reported(87)),
-            motor_current_ma: Some(Measured::reported(-18_500)),
-            controller_temperature_mc: Some(Measured::reported(36_000)),
-            pwm_permille: Some(Measured::reported(420)),
-            distance_mm: Some(Measured::reported(1_551_169_000)),
-            pitch_mdeg: Some(Measured::reported(-2_000)),
-            roll_mdeg: Some(Measured::reported(1_000)),
+            speed_mm_s: Some(speed_mm_s(12_000)),
+            voltage_mv: Some(voltage_mv(119_600)),
+            battery_percent_reported: Some(percent_reported(87)),
+            motor_current_ma: Some(battery_current_ma(-18_500)),
+            power_mw: Some(power_mw(-2_212_600)),
+            controller_temperature_mc: Some(temperature_mc(36_000)),
+            pwm_permille: Some(duty_cycle_permille(420)),
+            distance_mm: Some(distance_mm(1_551_169_000)),
+            pitch_mdeg: Some(angle_mdeg(-2_000)),
+            roll_mdeg: Some(angle_mdeg(1_000)),
             ..TelemetrySnapshot::default()
         };
 
         assert_eq!(
             MappedTelemetryLog(snapshot).to_string(),
-            "telemetry mapped speed=27mph voltage=120V battery=87% current=-18A temperature=36C pwm=42% distance=1551.2 km pitch=-2deg roll=1deg"
+            "telemetry mapped speed=27mph voltage=120V battery=87% current=-18A power=-2212W temperature=36C pwm=42% distance=1551.2 km pitch=-2deg roll=1deg"
         );
         assert_eq!(
             MappedTelemetryLog(TelemetrySnapshot::default()).to_string(),
@@ -3475,19 +4390,20 @@ mod tests {
     #[test]
     fn telemetry_delta_log_reuses_typed_field_rendering() {
         let delta = TelemetryDelta {
-            speed_mm_s: Some(Measured::reported(4_470)),
-            voltage_mv: Some(Measured::reported(118_400)),
-            battery_percent_estimated: Some(Measured::estimated(78)),
-            battery_current_ma: Some(Measured::reported(-12_400)),
-            motor_temperature_mc: Some(Measured::reported(44_600)),
-            distance_mm: Some(Measured::reported(999_000)),
-            pitch_mdeg: Some(Measured::reported(-3_000)),
+            speed_mm_s: Some(speed_mm_s(4_470)),
+            voltage_mv: Some(voltage_mv(118_400)),
+            battery_percent_estimated: Some(percent_estimated(78)),
+            battery_current_ma: Some(battery_current_ma(-12_400)),
+            power_mw: Some(power_mw(-1_468_160)),
+            motor_temperature_mc: Some(temperature_mc(44_600)),
+            distance_mm: Some(distance_mm(999_000)),
+            pitch_mdeg: Some(angle_mdeg(-3_000)),
             ..TelemetryDelta::empty(42)
         };
 
         assert_eq!(
             TelemetryDeltaLog(delta).to_string(),
-            "speed=10mph voltage=118V battery=78% current=-12A temperature=44C distance=999 m pitch=-3deg"
+            "speed=10mph voltage=118V battery=78% current=-12A power=-1468W temperature=44C distance=999 m pitch=-3deg"
         );
         assert_eq!(
             TelemetryDeltaLog(TelemetryDelta::empty(42)).to_string(),
@@ -3538,8 +4454,8 @@ mod tests {
 
         assert_display_preserves_capacity(
             MappedTelemetryLog(TelemetrySnapshot {
-                voltage_mv: Some(Measured::reported(119_600)),
-                battery_percent_reported: Some(Measured::reported(87)),
+                voltage_mv: Some(voltage_mv(119_600)),
+                battery_percent_reported: Some(percent_reported(87)),
                 ..TelemetrySnapshot::default()
             }),
             "telemetry mapped voltage=120V battery=87%",
@@ -3557,7 +4473,7 @@ mod tests {
                 BatteryPagePayload::raw(
                     BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo {
-                        current_ma: Some(Measured::reported(2_010)),
+                        current_ma: Some(battery_current_ma(2_010)),
                         ..BatteryInfo::default()
                     },
                 )
@@ -3661,7 +4577,7 @@ mod tests {
         let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
             BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
             BatteryInfo {
-                temperature_mc: Some(Measured::reported(17_600)),
+                temperature_mc: Some(temperature_mc(17_600)),
                 ..BatteryInfo::default()
             },
             [
@@ -3711,7 +4627,7 @@ mod tests {
             BatteryPagePayload::raw(
                 BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                 BatteryInfo {
-                    current_ma: Some(Measured::reported(2_010)),
+                    current_ma: Some(battery_current_ma(2_010)),
                     ..BatteryInfo::default()
                 },
             )
@@ -3769,8 +4685,8 @@ mod tests {
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
-                    voltage_mv: Some(Measured::reported(108_760)),
-                    battery_percent_estimated: Some(Measured::estimated(47)),
+                    voltage_mv: Some(voltage_mv(108_760)),
+                    battery_percent_estimated: Some(percent_estimated(47)),
                     ..TelemetryDelta::empty(7)
                 },
             }],
@@ -3898,9 +4814,9 @@ mod tests {
     fn live_session_report_wires_complete_aero_dashboard_state() {
         let mut state = DashboardState::empty();
         let telemetry = TelemetryDelta {
-            speed_mm_s: Some(Measured::reported(4_470)),
-            voltage_mv: Some(Measured::reported(108_760)),
-            battery_percent_estimated: Some(Measured::estimated(47)),
+            speed_mm_s: Some(speed_mm_s(4_470)),
+            voltage_mv: Some(voltage_mv(108_760)),
+            battery_percent_estimated: Some(percent_estimated(47)),
             ..TelemetryDelta::empty(42)
         };
         let report = SessionBridgeReport {
@@ -4056,7 +4972,7 @@ mod tests {
                 ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
                     BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                     BatteryInfo {
-                        temperature_mc: Some(Measured::reported(17_600)),
+                        temperature_mc: Some(temperature_mc(17_600)),
                         ..BatteryInfo::default()
                     },
                     [
@@ -4215,14 +5131,14 @@ mod tests {
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
-                    speed_mm_s: Some(Measured::reported(0)),
-                    voltage_mv: Some(Measured::reported(108_760)),
-                    motor_current_ma: Some(Measured::reported(0)),
-                    controller_temperature_mc: Some(Measured::reported(33_270)),
-                    pwm_permille: Some(Measured::reported(-1_000)),
-                    distance_mm: Some(Measured::reported(1_551_169_000)),
-                    pitch_mdeg: Some(Measured::reported(69_060)),
-                    battery_percent_estimated: Some(Measured::estimated(47)),
+                    speed_mm_s: Some(speed_mm_s(0)),
+                    voltage_mv: Some(voltage_mv(108_760)),
+                    motor_current_ma: Some(battery_current_ma(0)),
+                    controller_temperature_mc: Some(temperature_mc(33_270)),
+                    pwm_permille: Some(duty_cycle_permille(-1_000)),
+                    distance_mm: Some(distance_mm(1_551_169_000)),
+                    pitch_mdeg: Some(angle_mdeg(69_060)),
+                    battery_percent_estimated: Some(percent_estimated(47)),
                     ..TelemetryDelta::empty(42)
                 },
             }],
@@ -4241,7 +5157,14 @@ mod tests {
         );
         assert_eq!(state.telemetry.latest_speed_mph, Some(0));
         assert_eq!(state.telemetry.latest_voltage_v, Some(109));
-        assert_eq!(state.telemetry.latest_current_a, Some(0));
+        assert_eq!(
+            state
+                .telemetry
+                .latest_phase_current_a
+                .map(PhaseCurrentAmps::get),
+            Some(0)
+        );
+        assert_eq!(state.telemetry.latest_battery_current_a, None);
         assert_eq!(state.telemetry.latest_temperature_c, Some(33));
         assert_eq!(state.telemetry.latest_distance_m, Some(1_551_169));
         assert_eq!(state.telemetry.latest_pitch_deg, Some(69));
@@ -4383,6 +5306,108 @@ mod tests {
         assert!(text.contains("selector=8 kind=raw"));
         assert!(text.contains("raw/unverified pages 1"));
         assert!(text.contains("diagnostic responses 1"));
+    }
+
+    #[test]
+    fn profiles_tab_enter_opens_selected_operational_dashboard() {
+        let mut state = DashboardState::sample();
+        state.active_tab = DashboardTab::new(2);
+
+        state.handle_input(DashboardInput::Enter);
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(text.contains("Operational dashboard"));
+        assert!(
+            text.contains("NOSFET Aero (via Veteran Protocol) Current 45A / Raw Tail Preserved")
+        );
+        assert!(text.contains("18 mph"));
+        assert!(text.contains("Battery"));
+        assert!(text.contains("74%"));
+        assert!(text.contains("Voltage"));
+        assert!(text.contains("53 V"));
+        assert!(text.contains("Signal"));
+        assert!(text.contains("81%"));
+        assert!(text.contains("Wheel state"));
+        assert!(text.contains("riding"));
+        assert!(text.contains("Power"));
+        assert!(text.contains("318 W"));
+        assert!(text.contains("Amps"));
+        assert!(text.contains("6 A"));
+        assert!(text.contains("Temp"));
+        assert!(text.contains("33 C"));
+        assert!(text.contains("PWM"));
+        assert!(text.contains("unknown"));
+        assert!(text.contains("Trip"));
+        assert!(text.contains("firmware 43.2.54"));
+        assert!(text.contains("Read-only mode"));
+        assert!(text.contains("active"));
+        assert!(!text.contains("Load/PWM"));
+        assert!(!text.contains("Controls"));
+        assert!(!text.contains("disabled"));
+    }
+
+    #[test]
+    fn escape_returns_from_operational_dashboard_to_profiles() {
+        let mut state = DashboardState::sample();
+        state.active_tab = DashboardTab::new(2);
+        state.handle_input(DashboardInput::Enter);
+
+        state.handle_input(DashboardInput::Back);
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(text.contains("Profiles"));
+        assert!(text.contains("Read-only responses"));
+        assert!(!text.contains("Operational dashboard"));
+    }
+
+    #[test]
+    fn profile_selection_moves_before_opening_dashboard() {
+        let mut state = DashboardState::sample();
+        state.active_tab = DashboardTab::new(2);
+
+        state.handle_input(DashboardInput::MoveDown);
+        state.handle_input(DashboardInput::Enter);
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(text.contains("Operational dashboard"));
+        assert!(
+            text.contains(
+                "NOSFET Aero (profile pending) Pending Begode/Falcon Unsupported / Pending"
+            )
+        );
+    }
+
+    #[test]
+    fn live_profile_dashboard_uses_device_protocol_heading() {
+        let target = ConnectionTarget {
+            address: None,
+            identifier: None,
+            name_contains: Some("NF2557".to_owned()),
+        };
+        let summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "platform-0001".to_owned(),
+                address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
+                name: Some("NF2557".to_owned()),
+                rssi: Some(-61),
+                advertised_services: vec![].into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        };
+        let mut state = DashboardState::live_connected(&target, &summary);
+        state.active_tab = DashboardTab::new(2);
+
+        state.handle_input(DashboardInput::Enter);
+
+        let text = buffer_text(&render_buffer(&state, 140, 36));
+
+        assert!(
+            text.contains("NOSFET Aero (via Veteran Protocol) Live Notification Channel Observed")
+        );
     }
 
     #[test]
