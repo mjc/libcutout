@@ -24,9 +24,85 @@ pub enum BegodeUnitMode {
     Imperial,
 }
 
+/// Raw Begode settings bitfield.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeSettingsBits(u16);
+
+impl BegodeSettingsBits {
+    /// Creates a raw Begode settings bitfield.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw settings bitfield.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+/// Raw Begode LED mode.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeLedMode(u8);
+
+impl BegodeLedMode {
+    /// Creates a raw Begode LED mode.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw LED mode.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Raw Begode alert bitfield.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeAlertFlags(u8);
+
+impl BegodeAlertFlags {
+    /// Creates a raw Begode alert bitfield.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw alert bitfield.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Begode light mode stored in the low two bits of the source byte.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeLightMode(u8);
+
+impl BegodeLightMode {
+    /// Creates a Begode light mode, preserving only the encoded low two bits.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value & 0x03)
+    }
+
+    /// Returns the low two light-mode bits.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 impl BegodeUnitMode {
-    const fn from_settings_bits(settings_bits: u16) -> Self {
-        if settings_bits & 0x0001 == 0 {
+    const fn from_settings_bits(settings_bits: BegodeSettingsBits) -> Self {
+        if settings_bits.get() & 0x0001 == 0 {
             Self::Metric
         } else {
             Self::Imperial
@@ -901,7 +977,7 @@ pub struct BegodeLiveBTelemetry {
     pub total_distance: Distance,
 
     /// Raw settings bitfield.
-    pub settings_bits: u16,
+    pub settings_bits: BegodeSettingsBits,
 
     /// Power-off timer.
     pub power_off_timer: Duration,
@@ -910,13 +986,13 @@ pub struct BegodeLiveBTelemetry {
     pub tiltback_speed: Speed,
 
     /// LED mode.
-    pub led_mode: u8,
+    pub led_mode: BegodeLedMode,
 
     /// Raw alert bitfield.
-    pub alert_flags: u8,
+    pub alert_flags: BegodeAlertFlags,
 
     /// Low two bits of the light-mode byte.
-    pub light_mode: u8,
+    pub light_mode: BegodeLightMode,
 }
 
 impl BegodeLiveBTelemetry {
@@ -929,7 +1005,7 @@ impl BegodeLiveBTelemetry {
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x04)?;
         let cursor = ByteCursor::new(frame.as_slice());
-        let settings_bits = be_u16(cursor, ByteOffset::new(6));
+        let settings_bits = BegodeSettingsBits::new(be_u16(cursor, ByteOffset::new(6)));
         let unit_mode = BegodeUnitMode::from_settings_bits(settings_bits);
         Ok(Self {
             total_distance: Distance::from_millimetres(
@@ -940,9 +1016,9 @@ impl BegodeLiveBTelemetry {
             tiltback_speed: Speed::from_millimetres_per_second(milli_kmh_to_mm_s(
                 i32::from(unit_mode.speed_kmh_u16(be_u16(cursor, ByteOffset::new(10)))) * 1_000,
             )),
-            led_mode: byte(cursor, ByteOffset::new(13)),
-            alert_flags: byte(cursor, ByteOffset::new(14)),
-            light_mode: byte(cursor, ByteOffset::new(15)) & 0x03,
+            led_mode: BegodeLedMode::new(byte(cursor, ByteOffset::new(13))),
+            alert_flags: BegodeAlertFlags::new(byte(cursor, ByteOffset::new(14))),
+            light_mode: BegodeLightMode::new(byte(cursor, ByteOffset::new(15))),
         })
     }
 
@@ -976,7 +1052,7 @@ impl BegodeLiveBTelemetry {
             entries: [
                 Some(settings_entry(
                     BEGODE_FIELD_SETTINGS_BITS,
-                    i64::from(self.settings_bits),
+                    i64::from(self.settings_bits.get()),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
@@ -990,7 +1066,9 @@ impl BegodeLiveBTelemetry {
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_LED_AND_LIGHT_MODE,
-                    i64::from((u16::from(self.led_mode) << 8) | u16::from(self.light_mode)),
+                    i64::from(
+                        (u16::from(self.led_mode.get()) << 8) | u16::from(self.light_mode.get()),
+                    ),
                 )),
             ],
         })
@@ -1010,9 +1088,9 @@ impl BegodeLiveBTelemetry {
                 Some(DiagnosticDetail {
                     field: RawFieldValue::new(
                         BEGODE_FIELD_ALERT_FLAGS,
-                        i64::from(self.alert_flags),
+                        i64::from(self.alert_flags.get()),
                     ),
-                    severity: if self.alert_flags == 0 {
+                    severity: if self.alert_flags.get() == 0 {
                         DiagnosticSeverity::Info
                     } else {
                         DiagnosticSeverity::Warning
@@ -1275,10 +1353,11 @@ mod tests {
     }
 
     use super::{
-        BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeCapacityEvidence, BegodeCapacitySelection,
-        BegodeCellModel, BegodeFalconBatteryVariant, BegodeFalconBatteryVariantSelection,
-        BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeVoltageEvidence,
-        BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
+        BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeAlertFlags, BegodeCapacityEvidence,
+        BegodeCapacitySelection, BegodeCellModel, BegodeFalconBatteryVariant,
+        BegodeFalconBatteryVariantSelection, BegodeLedMode, BegodeLightMode,
+        BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeSettingsBits,
+        BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
         select_begode_falcon_battery_variant, select_begode_pack_capacity_from_annotations,
         select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
         select_begode_pack_voltage_profile_from_annotations,
@@ -1329,12 +1408,12 @@ mod tests {
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
 
         assert_eq!(telemetry.total_distance.as_millimetres(), 50_000);
-        assert_eq!(telemetry.settings_bits, 0);
+        assert_eq!(telemetry.settings_bits, BegodeSettingsBits::new(0));
         assert_eq!(telemetry.power_off_timer, Duration::from_minutes(15));
         assert_eq!(telemetry.tiltback_speed.as_millimetres_per_second(), 13_888);
-        assert_eq!(telemetry.led_mode, 3);
-        assert_eq!(telemetry.alert_flags, 5);
-        assert_eq!(telemetry.light_mode, 2);
+        assert_eq!(telemetry.led_mode, BegodeLedMode::new(3));
+        assert_eq!(telemetry.alert_flags, BegodeAlertFlags::new(5));
+        assert_eq!(telemetry.light_mode, BegodeLightMode::new(2));
     }
 
     #[test]
@@ -2129,12 +2208,12 @@ mod tests {
         fn live_b_unit_mode_follows_settings_bit_zero(settings_bits in any::<u16>()) {
             let telemetry = BegodeLiveBTelemetry {
                 total_distance: cutout_core::Distance::from_millimetres(0),
-                settings_bits,
+                settings_bits: BegodeSettingsBits::new(settings_bits),
                 power_off_timer: Duration::from_minutes(0),
                 tiltback_speed: cutout_core::Speed::from_millimetres_per_second(0),
-                led_mode: 0,
-                alert_flags: 0,
-                light_mode: 0,
+                led_mode: BegodeLedMode::new(0),
+                alert_flags: BegodeAlertFlags::new(0),
+                light_mode: BegodeLightMode::new(0),
             };
 
             prop_assert_eq!(

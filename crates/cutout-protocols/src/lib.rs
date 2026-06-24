@@ -28,11 +28,12 @@ mod begode_telemetry;
 pub use begode_telemetry::{
     BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BEGODE_FIELD_ALERT_FLAGS,
     BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
-    BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeCapacityEvidence,
-    BegodeCapacitySelection, BegodeCellModel, BegodeExtraTelemetry, BegodeFalconBatteryVariant,
-    BegodeFalconBatteryVariantSelection, BegodeLiveATelemetry, BegodeLiveBTelemetry,
-    BegodePackEvidenceConsistency, BegodePackLayoutEvidence, BegodePackLayoutSelection,
-    BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
+    BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeAlertFlags,
+    BegodeCapacityEvidence, BegodeCapacitySelection, BegodeCellModel, BegodeExtraTelemetry,
+    BegodeFalconBatteryVariant, BegodeFalconBatteryVariantSelection, BegodeLedMode,
+    BegodeLightMode, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackEvidenceConsistency,
+    BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodePackVoltageProfile,
+    BegodeSettingsBits, BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
     BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
     estimate_begode_battery_percent, select_begode_falcon_battery_variant,
     select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
@@ -112,8 +113,8 @@ pub use veteran_telemetry::{
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VeteranFirmwareVersion, VeteranModelProfile,
-    VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_percent,
-    estimate_veteran_battery_percent,
+    VeteranPedalsMode, VeteranTelemetry, VeteranTelemetryError,
+    estimate_nosfet_aero_battery_percent, estimate_veteran_battery_percent,
 };
 
 /// Returns the crate name used by setup smoke tests.

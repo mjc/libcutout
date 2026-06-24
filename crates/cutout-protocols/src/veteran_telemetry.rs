@@ -105,7 +105,7 @@ pub struct VeteranTelemetry {
     pub speed_tiltback: Speed,
 
     /// Raw pedals-mode field.
-    pub pedals_mode: u16,
+    pub pedals_mode: VeteranPedalsMode,
 
     /// Pitch.
     pub pitch: Angle,
@@ -123,6 +123,24 @@ pub struct VeteranRawChargeMode(u16);
 
 impl VeteranRawChargeMode {
     /// Creates a raw charge-mode evidence value from the wire field.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the protocol-native raw field value.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+/// Raw Veteran pedals-mode field retained for protocol evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VeteranPedalsMode(u16);
+
+impl VeteranPedalsMode {
+    /// Creates a raw pedals-mode evidence value from the wire field.
     #[must_use]
     pub const fn new(value: u16) -> Self {
         Self(value)
@@ -466,9 +484,11 @@ impl VeteranTelemetry {
                     .be_u16(ByteOffset::new(26))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             ))),
-            pedals_mode: cursor
-                .be_u16(ByteOffset::new(30))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            pedals_mode: VeteranPedalsMode::new(
+                cursor
+                    .be_u16(ByteOffset::new(30))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            ),
             pitch: Angle::from_millidegrees(
                 i32::from(
                     cursor
@@ -555,7 +575,7 @@ impl VeteranTelemetry {
                 entries: [
                     Some(settings_entry(
                         VETERAN_FIELD_PEDALS_MODE,
-                        i64::from(self.pedals_mode),
+                        i64::from(self.pedals_mode.get()),
                     )),
                     None,
                     None,
@@ -749,7 +769,7 @@ mod tests {
                 charge_mode: ChargeMode::NotCharging,
                 speed_alert: Speed::from_millimetres_per_second(15_277),
                 speed_tiltback: Speed::from_millimetres_per_second(15_000),
-                pedals_mode: 1_920,
+                pedals_mode: VeteranPedalsMode::new(1_920),
                 pitch: Angle::from_millidegrees(69_060),
                 hardware_pwm: DutyCycle::from_permille(-1_000),
                 battery_percent_estimated: Percent::from_percent(47),
