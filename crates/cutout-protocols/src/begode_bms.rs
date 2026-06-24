@@ -123,8 +123,8 @@ pub struct BegodeBmsCellPage {
     /// First cell index represented by this page.
     pub first_cell_index: u16,
 
-    /// Eight cell voltages in millivolts.
-    pub cell_mv: ArrayVec<u16, BEGODE_BMS_CELL_VALUES_PER_PAGE>,
+    /// Eight cell voltages.
+    pub cell_voltage: ArrayVec<Voltage, BEGODE_BMS_CELL_VALUES_PER_PAGE>,
 }
 
 impl BegodeBmsCellPage {
@@ -145,9 +145,9 @@ impl BegodeBmsCellPage {
 
         let cursor = ByteCursor::new(frame.as_slice());
         let page_index = frame.sub_index();
-        let mut cell_mv = ArrayVec::new();
+        let mut cell_voltage = ArrayVec::new();
         for offset in (2..18).step_by(2).map(ByteOffset::new) {
-            cell_mv.push(be_u16(cursor, offset));
+            cell_voltage.push(Voltage::from_millivolts(i32::from(be_u16(cursor, offset))));
         }
 
         Ok(Self {
@@ -155,7 +155,7 @@ impl BegodeBmsCellPage {
             bms_index: u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or_default(),
             page_index,
             first_cell_index: u16::from(page_index.get()) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
-            cell_mv,
+            cell_voltage,
         })
     }
 
@@ -334,8 +334,17 @@ mod tests {
         assert_eq!(page.page_index, ProtocolSelector::new(2));
         assert_eq!(page.first_cell_index, 16);
         assert_eq!(
-            page.cell_mv.as_slice(),
-            &[4_000, 4_001, 4_002, 4_003, 4_004, 4_005, 4_006, 4_007]
+            page.cell_voltage.as_slice(),
+            &[
+                Voltage::from_millivolts(4_000),
+                Voltage::from_millivolts(4_001),
+                Voltage::from_millivolts(4_002),
+                Voltage::from_millivolts(4_003),
+                Voltage::from_millivolts(4_004),
+                Voltage::from_millivolts(4_005),
+                Voltage::from_millivolts(4_006),
+                Voltage::from_millivolts(4_007),
+            ]
         );
     }
 

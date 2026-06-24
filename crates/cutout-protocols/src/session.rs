@@ -813,7 +813,7 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
 
     let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
         .map_or(0, |page| {
-            u8::try_from(page.cell_mv.len()).unwrap_or_default()
+            u8::try_from(page.cell_voltage.len()).unwrap_or_default()
         });
     decode_veteran_bms_page(
         evidence.selector,

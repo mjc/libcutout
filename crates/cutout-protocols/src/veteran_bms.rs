@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrents,
-    ProtocolSelector, Temperature, VerificationStatus,
+    ProtocolSelector, Temperature, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -121,8 +121,8 @@ pub struct VeteranBmsCellPage {
     /// BMS page selector.
     pub selector: ProtocolSelector,
 
-    /// Cell voltage values in millivolts.
-    pub cell_mv: ArrayVec<u16, { VETERAN_BMS_CELL_VALUES_PER_PAGE as usize }>,
+    /// Cell voltage values.
+    pub cell_voltage: ArrayVec<Voltage, { VETERAN_BMS_CELL_VALUES_PER_PAGE as usize }>,
 }
 
 impl VeteranBmsCellPage {
@@ -154,15 +154,18 @@ impl VeteranBmsCellPage {
                 expected: end,
                 observed: body.len(),
             })?;
-        let mut cell_mv = ArrayVec::new();
+        let mut cell_voltage = ArrayVec::new();
         let cursor = ByteCursor::new(values);
         for offset in (0..values.len()).step_by(2) {
             if let Some(value) = cursor.be_u16(ByteOffset::new(offset)) {
-                cell_mv.push(value);
+                cell_voltage.push(Voltage::from_millivolts(i32::from(value)));
             }
         }
 
-        Ok(Self { selector, cell_mv })
+        Ok(Self {
+            selector,
+            cell_voltage,
+        })
     }
 }
 
@@ -532,9 +535,9 @@ mod tests {
         let page = VeteranBmsCellPage::from_body(sel(1), &body).expect("documented body decodes");
 
         assert_eq!(page.selector, sel(1));
-        assert_eq!(page.cell_mv.len(), 15);
-        assert_eq!(page.cell_mv[0], 3700);
-        assert_eq!(page.cell_mv[14], 3714);
+        assert_eq!(page.cell_voltage.len(), 15);
+        assert_eq!(page.cell_voltage[0], Voltage::from_millivolts(3700));
+        assert_eq!(page.cell_voltage[14], Voltage::from_millivolts(3714));
     }
 
     #[test]
@@ -554,7 +557,7 @@ mod tests {
         assert_eq!(
             VeteranBmsCellPage::from_body(sel(2), &sixteen_value_body)
                 .expect("extra trailing data after 15 documented values is ignored")
-                .cell_mv
+                .cell_voltage
                 .len(),
             15
         );
