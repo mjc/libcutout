@@ -598,8 +598,8 @@ fn vesc_values_to_delta(
         speed_mm_s: board_profile
             .and_then(|profile| profile.speed_mm_s_from_erpm(values.rpm_erpm))
             .map(|value| Measured::calculated(Speed::from_millimetres_per_second(value))),
-        voltage_mv: Some(Measured::reported(values.voltage_mv)),
-        battery_current_ma: Some(Measured::reported(values.input_current_ma)),
+        voltage_mv: Some(Measured::reported(values.voltage)),
+        battery_current_ma: Some(Measured::reported(values.input_current)),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -644,11 +644,11 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-                stats.power_avg_mw.as_milliwatts(),
+                stats.power_avg.as_milliwatts(),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-                i64::from(stats.current_avg_ma.as_milliamps()),
+                i64::from(stats.current_avg.as_milliamps()),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_COUNT_TIME_FIELD_ID,

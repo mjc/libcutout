@@ -167,10 +167,10 @@ pub struct VescValuesTelemetry {
     pub rpm_erpm: i32,
 
     /// Input voltage.
-    pub voltage_mv: Voltage,
+    pub voltage: Voltage,
 
     /// Input current.
-    pub input_current_ma: BatteryCurrent,
+    pub input_current: BatteryCurrent,
 
     /// Relative tachometer.
     pub tachometer: i32,
@@ -192,16 +192,16 @@ pub struct VescStatsTelemetry {
     pub speed_max: Speed,
 
     /// Average power.
-    pub power_avg_mw: Power,
+    pub power_avg: Power,
 
     /// Maximum power.
-    pub power_max_mw: Power,
+    pub power_max: Power,
 
     /// Average current.
-    pub current_avg_ma: BatteryCurrent,
+    pub current_avg: BatteryCurrent,
 
     /// Maximum current.
-    pub current_max_ma: BatteryCurrent,
+    pub current_max: BatteryCurrent,
 
     /// Statistics accumulation time.
     pub count_time: Duration,
@@ -502,8 +502,8 @@ impl From<vesc::Values> for VescValuesTelemetry {
     fn from(values: vesc::Values) -> Self {
         Self {
             rpm_erpm: round_f32_to_i32(values.rpm),
-            voltage_mv: Voltage::from_millivolts(round_f32_to_i32(values.voltage_in * 1_000.0)),
-            input_current_ma: BatteryCurrent::from_milliamps(round_f32_to_i32(
+            voltage: Voltage::from_millivolts(round_f32_to_i32(values.voltage_in * 1_000.0)),
+            input_current: BatteryCurrent::from_milliamps(round_f32_to_i32(
                 values.avg_current_input * 1_000.0,
             )),
             tachometer: values.tachometer,
@@ -522,16 +522,16 @@ impl From<vesc::Stats> for VescStatsTelemetry {
             speed_max: Speed::from_millimetres_per_second(round_f32_to_i32(
                 stats.speed_max * 1_000.0,
             )),
-            power_avg_mw: Power::from_milliwatts(i64::from(round_f32_to_i32(
+            power_avg: Power::from_milliwatts(i64::from(round_f32_to_i32(
                 stats.power_avg * 1_000.0,
             ))),
-            power_max_mw: Power::from_milliwatts(i64::from(round_f32_to_i32(
+            power_max: Power::from_milliwatts(i64::from(round_f32_to_i32(
                 stats.power_max * 1_000.0,
             ))),
-            current_avg_ma: BatteryCurrent::from_milliamps(round_f32_to_i32(
+            current_avg: BatteryCurrent::from_milliamps(round_f32_to_i32(
                 stats.current_avg * 1_000.0,
             )),
-            current_max_ma: BatteryCurrent::from_milliamps(round_f32_to_i32(
+            current_max: BatteryCurrent::from_milliamps(round_f32_to_i32(
                 stats.current_max * 1_000.0,
             )),
             count_time: Duration::from_milliseconds(u64::from(round_f32_to_u32(
@@ -687,8 +687,8 @@ mod tests {
         };
 
         assert_eq!(telemetry.rpm_erpm, 989);
-        assert_eq!(telemetry.voltage_mv.as_millivolts(), 37_500);
-        assert_eq!(telemetry.input_current_ma.as_milliamps(), 40);
+        assert_eq!(telemetry.voltage.as_millivolts(), 37_500);
+        assert_eq!(telemetry.input_current.as_milliamps(), 40);
         assert_eq!(telemetry.tachometer, -21_973);
         assert_eq!(telemetry.controller_id, 20);
         assert_eq!(telemetry.fault_code, VescFaultCode::None);
@@ -709,10 +709,10 @@ mod tests {
 
         assert_eq!(stats.speed_avg.as_millimetres_per_second(), 1_000);
         assert_eq!(stats.speed_max.as_millimetres_per_second(), 2_000);
-        assert_eq!(stats.power_avg_mw.as_milliwatts(), 3_000);
-        assert_eq!(stats.power_max_mw.as_milliwatts(), 4_000);
-        assert_eq!(stats.current_avg_ma.as_milliamps(), 5_000);
-        assert_eq!(stats.current_max_ma.as_milliamps(), 6_000);
+        assert_eq!(stats.power_avg.as_milliwatts(), 3_000);
+        assert_eq!(stats.power_max.as_milliwatts(), 4_000);
+        assert_eq!(stats.current_avg.as_milliamps(), 5_000);
+        assert_eq!(stats.current_max.as_milliamps(), 6_000);
         assert_eq!(stats.count_time, Duration::from_seconds(11));
     }
 
