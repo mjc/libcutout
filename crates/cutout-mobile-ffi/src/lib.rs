@@ -283,7 +283,7 @@ pub struct MobileTelemetrySnapshotDto {
     pub at_ms: Option<u64>,
 
     /// Reported voltage in millivolts.
-    pub voltage_mv: Option<i32>,
+    pub voltage: Option<i32>,
 
     /// Estimated battery percent.
     pub battery_percent_estimated: Option<u8>,
@@ -1033,7 +1033,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
         Self {
             at_ms: snapshot.at_ms,
-            voltage_mv: snapshot.voltage_mv.map(|value| value.value),
+            voltage: snapshot.voltage.map(|value| value.value),
             battery_percent_estimated: snapshot.battery_percent_estimated.map(|value| value.value),
         }
     }
@@ -1353,7 +1353,7 @@ mod tests {
         assert_eq!(ingest.reserved, None);
         assert_eq!(ingest.gap, None);
         assert!(result.outputs.iter().all(|output| output.bytes.is_empty()));
-        assert_eq!(session.current_snapshot().voltage_mv, Some(108_760));
+        assert_eq!(session.current_snapshot().voltage, Some(108_760));
     }
 
     #[test]

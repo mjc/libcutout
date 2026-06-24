@@ -237,7 +237,7 @@ impl VescBoardProfile {
 
     /// Calculates signed road speed in millimeters per second from eRPM.
     #[must_use]
-    pub fn speed_mm_s_from_erpm(self, erpm: i32) -> Option<i32> {
+    pub fn speed_from_erpm(self, erpm: i32) -> Option<i32> {
         let denominator =
             i64::from(self.motor_pole_pairs) * i64::from(self.gear_ratio_denominator) * 60;
         if denominator == 0 {
@@ -720,14 +720,14 @@ mod tests {
     fn vesc_board_profile_calculates_speed_from_erpm() {
         let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
 
-        assert_eq!(profile.speed_mm_s_from_erpm(4_500), Some(10_500));
+        assert_eq!(profile.speed_from_erpm(4_500), Some(10_500));
     }
 
     #[test]
     fn vesc_board_profile_preserves_reverse_erpm_sign() {
         let profile = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
 
-        assert_eq!(profile.speed_mm_s_from_erpm(-4_500), Some(-10_500));
+        assert_eq!(profile.speed_from_erpm(-4_500), Some(-10_500));
     }
 
     #[test]
@@ -735,20 +735,18 @@ mod tests {
         let direct_drive = VescBoardProfile::new(15, 1, Distance::from_millimetres(2_100));
         let geared = VescBoardProfile::new(15, 2, Distance::from_millimetres(2_100));
 
-        assert_eq!(direct_drive.speed_mm_s_from_erpm(4_500), Some(10_500));
-        assert_eq!(geared.speed_mm_s_from_erpm(4_500), Some(5_250));
+        assert_eq!(direct_drive.speed_from_erpm(4_500), Some(10_500));
+        assert_eq!(geared.speed_from_erpm(4_500), Some(5_250));
     }
 
     #[test]
     fn vesc_board_profile_refuses_zero_denominators() {
         assert_eq!(
-            VescBoardProfile::new(0, 1, Distance::from_millimetres(2_100))
-                .speed_mm_s_from_erpm(4_500),
+            VescBoardProfile::new(0, 1, Distance::from_millimetres(2_100)).speed_from_erpm(4_500),
             None
         );
         assert_eq!(
-            VescBoardProfile::new(15, 0, Distance::from_millimetres(2_100))
-                .speed_mm_s_from_erpm(4_500),
+            VescBoardProfile::new(15, 0, Distance::from_millimetres(2_100)).speed_from_erpm(4_500),
             None
         );
     }

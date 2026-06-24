@@ -138,7 +138,7 @@ pub enum DeviceCommandDto {
     /// Set raw motor current.
     SetRawMotorCurrent {
         /// Target motor/phase current in milliamps.
-        current_ma: i32,
+        current: i32,
     },
 }
 
@@ -153,9 +153,7 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
-            DeviceCommand::SetRawMotorCurrent { current_ma } => {
-                Self::SetRawMotorCurrent { current_ma }
-            }
+            DeviceCommand::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent { current },
         }
     }
 }
@@ -171,8 +169,8 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
-            DeviceCommandDto::SetRawMotorCurrent { current_ma } => {
-                Self::SetRawMotorCurrent { current_ma }
+            DeviceCommandDto::SetRawMotorCurrent { current } => {
+                Self::SetRawMotorCurrent { current }
             }
         }
     }
@@ -682,10 +680,10 @@ pub struct BatteryInfoDto {
     pub page: BatteryPageMetadataDto,
 
     /// Pack or input voltage in millivolts.
-    pub voltage_mv: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredI32Dto>,
 
     /// Pack or battery current in milliamps.
-    pub current_ma: Option<MeasuredI32Dto>,
+    pub current: Option<MeasuredI32Dto>,
 
     /// First page-specific BMS pack current in milliamps.
     pub bms_pack_current_0_ma: Option<MeasuredI32Dto>,
@@ -700,10 +698,10 @@ pub struct BatteryInfoDto {
     pub percent_estimated: Option<MeasuredU8Dto>,
 
     /// Battery or BMS temperature in millicelsius.
-    pub temperature_mc: Option<MeasuredI32Dto>,
+    pub temperature: Option<MeasuredI32Dto>,
 
     /// Page-specific BMS temperature values in millicelsius.
-    pub temperatures_mc: Vec<Option<MeasuredI32Dto>>,
+    pub temperatures: Vec<Option<MeasuredI32Dto>>,
 
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
@@ -712,8 +710,8 @@ pub struct BatteryInfoDto {
 impl From<BatteryPagePayload> for BatteryInfoDto {
     fn from(payload: BatteryPagePayload) -> Self {
         let battery = payload.battery();
-        let temperatures_mc = payload
-            .temperatures_mc()
+        let temperatures = payload
+            .temperatures()
             .into_iter()
             .map(|measured| measured.map(Into::into))
             .collect();
@@ -721,7 +719,7 @@ impl From<BatteryPagePayload> for BatteryInfoDto {
             payload.page(),
             battery,
             payload.bms_pack_currents(),
-            temperatures_mc,
+            temperatures,
         )
     }
 }
@@ -731,12 +729,12 @@ impl BatteryInfoDto {
         page: BatteryPageMetadata,
         battery: BatteryInfo,
         bms_pack_currents: Option<BmsPackCurrents>,
-        temperatures_mc: Vec<Option<MeasuredI32Dto>>,
+        temperatures: Vec<Option<MeasuredI32Dto>>,
     ) -> Self {
         Self {
             page: page.into(),
-            voltage_mv: battery.voltage_mv.map(Into::into),
-            current_ma: battery.current_ma.map(Into::into),
+            voltage: battery.voltage.map(Into::into),
+            current: battery.current.map(Into::into),
             bms_pack_current_0_ma: bms_pack_currents.map(|currents| {
                 MeasuredI32Dto::from_bms_pack_current(currents.current_0_ma(), currents)
             }),
@@ -745,8 +743,8 @@ impl BatteryInfoDto {
             }),
             percent_reported: battery.percent_reported.map(Into::into),
             percent_estimated: battery.percent_estimated.map(Into::into),
-            temperature_mc: battery.temperature_mc.map(Into::into),
-            temperatures_mc,
+            temperature: battery.temperature.map(Into::into),
+            temperatures,
             raw_state: battery.raw_state.map(Into::into),
         }
     }
@@ -1368,40 +1366,40 @@ pub struct TelemetryDeltaDto {
     pub at_ms: u64,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed_mm_s: Option<MeasuredI32Dto>,
+    pub speed: Option<MeasuredI32Dto>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage_mv: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredI32Dto>,
 
     /// Battery/input current in milliamps.
-    pub battery_current_ma: Option<MeasuredI32Dto>,
+    pub battery_current: Option<MeasuredI32Dto>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current_ma: Option<MeasuredI32Dto>,
+    pub motor_current: Option<MeasuredI32Dto>,
 
     /// Electrical power in milliwatts.
-    pub power_mw: Option<MeasuredI64Dto>,
+    pub power: Option<MeasuredI64Dto>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<MeasuredI32Dto>,
+    pub controller_temperature: Option<MeasuredI32Dto>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<MeasuredI32Dto>,
+    pub motor_temperature: Option<MeasuredI32Dto>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<MeasuredI32Dto>,
+    pub battery_temperature: Option<MeasuredI32Dto>,
 
     /// PWM duty in permille.
-    pub pwm_permille: Option<MeasuredI16Dto>,
+    pub pwm: Option<MeasuredI16Dto>,
 
     /// Total or trip distance in millimeters.
-    pub distance_mm: Option<MeasuredU64Dto>,
+    pub distance: Option<MeasuredU64Dto>,
 
     /// Pitch in millidegrees.
-    pub pitch_mdeg: Option<MeasuredI32Dto>,
+    pub pitch: Option<MeasuredI32Dto>,
 
     /// Roll in millidegrees.
-    pub roll_mdeg: Option<MeasuredI32Dto>,
+    pub roll: Option<MeasuredI32Dto>,
 
     /// Battery percentage reported by the device.
     pub battery_percent_reported: Option<MeasuredU8Dto>,
@@ -1414,18 +1412,18 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
     fn from(delta: TelemetryDelta) -> Self {
         Self {
             at_ms: delta.at_ms,
-            speed_mm_s: delta.speed_mm_s.map(Into::into),
-            voltage_mv: delta.voltage_mv.map(Into::into),
-            battery_current_ma: delta.battery_current_ma.map(Into::into),
-            motor_current_ma: delta.motor_current_ma.map(Into::into),
-            power_mw: delta.power_mw.map(Into::into),
-            controller_temperature_mc: delta.controller_temperature_mc.map(Into::into),
-            motor_temperature_mc: delta.motor_temperature_mc.map(Into::into),
-            battery_temperature_mc: delta.battery_temperature_mc.map(Into::into),
-            pwm_permille: delta.pwm_permille.map(Into::into),
-            distance_mm: delta.distance_mm.map(Into::into),
-            pitch_mdeg: delta.pitch_mdeg.map(Into::into),
-            roll_mdeg: delta.roll_mdeg.map(Into::into),
+            speed: delta.speed.map(Into::into),
+            voltage: delta.voltage.map(Into::into),
+            battery_current: delta.battery_current.map(Into::into),
+            motor_current: delta.motor_current.map(Into::into),
+            power: delta.power.map(Into::into),
+            controller_temperature: delta.controller_temperature.map(Into::into),
+            motor_temperature: delta.motor_temperature.map(Into::into),
+            battery_temperature: delta.battery_temperature.map(Into::into),
+            pwm: delta.pwm.map(Into::into),
+            distance: delta.distance.map(Into::into),
+            pitch: delta.pitch.map(Into::into),
+            roll: delta.roll.map(Into::into),
             battery_percent_reported: delta.battery_percent_reported.map(Into::into),
             battery_percent_estimated: delta.battery_percent_estimated.map(Into::into),
         }
@@ -1439,40 +1437,40 @@ pub struct TelemetrySnapshotDto {
     pub at_ms: Option<u64>,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed_mm_s: Option<MeasuredI32Dto>,
+    pub speed: Option<MeasuredI32Dto>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage_mv: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredI32Dto>,
 
     /// Battery/input current in milliamps.
-    pub battery_current_ma: Option<MeasuredI32Dto>,
+    pub battery_current: Option<MeasuredI32Dto>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current_ma: Option<MeasuredI32Dto>,
+    pub motor_current: Option<MeasuredI32Dto>,
 
     /// Electrical power in milliwatts.
-    pub power_mw: Option<MeasuredI64Dto>,
+    pub power: Option<MeasuredI64Dto>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<MeasuredI32Dto>,
+    pub controller_temperature: Option<MeasuredI32Dto>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<MeasuredI32Dto>,
+    pub motor_temperature: Option<MeasuredI32Dto>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<MeasuredI32Dto>,
+    pub battery_temperature: Option<MeasuredI32Dto>,
 
     /// PWM duty in permille.
-    pub pwm_permille: Option<MeasuredI16Dto>,
+    pub pwm: Option<MeasuredI16Dto>,
 
     /// Total or trip distance in millimeters.
-    pub distance_mm: Option<MeasuredU64Dto>,
+    pub distance: Option<MeasuredU64Dto>,
 
     /// Pitch in millidegrees.
-    pub pitch_mdeg: Option<MeasuredI32Dto>,
+    pub pitch: Option<MeasuredI32Dto>,
 
     /// Roll in millidegrees.
-    pub roll_mdeg: Option<MeasuredI32Dto>,
+    pub roll: Option<MeasuredI32Dto>,
 
     /// Battery percentage reported by the device.
     pub battery_percent_reported: Option<MeasuredU8Dto>,
@@ -1485,18 +1483,18 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshot) -> Self {
         Self {
             at_ms: snapshot.at_ms,
-            speed_mm_s: snapshot.speed_mm_s.map(Into::into),
-            voltage_mv: snapshot.voltage_mv.map(Into::into),
-            battery_current_ma: snapshot.battery_current_ma.map(Into::into),
-            motor_current_ma: snapshot.motor_current_ma.map(Into::into),
-            power_mw: snapshot.power_mw.map(Into::into),
-            controller_temperature_mc: snapshot.controller_temperature_mc.map(Into::into),
-            motor_temperature_mc: snapshot.motor_temperature_mc.map(Into::into),
-            battery_temperature_mc: snapshot.battery_temperature_mc.map(Into::into),
-            pwm_permille: snapshot.pwm_permille.map(Into::into),
-            distance_mm: snapshot.distance_mm.map(Into::into),
-            pitch_mdeg: snapshot.pitch_mdeg.map(Into::into),
-            roll_mdeg: snapshot.roll_mdeg.map(Into::into),
+            speed: snapshot.speed.map(Into::into),
+            voltage: snapshot.voltage.map(Into::into),
+            battery_current: snapshot.battery_current.map(Into::into),
+            motor_current: snapshot.motor_current.map(Into::into),
+            power: snapshot.power.map(Into::into),
+            controller_temperature: snapshot.controller_temperature.map(Into::into),
+            motor_temperature: snapshot.motor_temperature.map(Into::into),
+            battery_temperature: snapshot.battery_temperature.map(Into::into),
+            pwm: snapshot.pwm.map(Into::into),
+            distance: snapshot.distance.map(Into::into),
+            pitch: snapshot.pitch.map(Into::into),
+            roll: snapshot.roll.map(Into::into),
             battery_percent_reported: snapshot.battery_percent_reported.map(Into::into),
             battery_percent_estimated: snapshot.battery_percent_estimated.map(Into::into),
         }
@@ -1684,13 +1682,11 @@ mod tests {
                     VerificationStatus::SourceVerified,
                 ),
                 BatteryInfo {
-                    voltage_mv: Some(Measured::reported(Voltage::from_millivolts(80_000))),
-                    current_ma: None,
+                    voltage: Some(Measured::reported(Voltage::from_millivolts(80_000))),
+                    current: None,
                     percent_reported: Some(Measured::reported(Percent::from_percent(72))),
                     percent_estimated: None,
-                    temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
-                        25_000,
-                    ))),
+                    temperature: Some(Measured::reported(Temperature::from_millicelsius(25_000))),
                     raw_state: Some(RawFieldValue::new(0x0008, 0x55aa)),
                 },
             )
@@ -1709,8 +1705,8 @@ mod tests {
             battery.page.verification,
             VerificationStatusDto::SourceVerified
         );
-        assert_eq!(battery.voltage_mv.expect("voltage").value, 80_000);
-        assert_eq!(battery.current_ma, None);
+        assert_eq!(battery.voltage.expect("voltage").value, 80_000);
+        assert_eq!(battery.current, None);
         assert_eq!(
             battery
                 .bms_pack_current_0_ma
@@ -1727,7 +1723,7 @@ mod tests {
         );
         assert_eq!(battery.percent_reported.expect("percent").value, 72);
         assert_eq!(battery.percent_estimated, None);
-        assert_eq!(battery.temperature_mc.expect("temperature").value, 25_000);
+        assert_eq!(battery.temperature.expect("temperature").value, 25_000);
         assert_eq!(
             battery.raw_state,
             Some(RawFieldValueDto {
@@ -1866,7 +1862,7 @@ mod tests {
         });
         let command =
             SessionInputDto::from(SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current_ma: -1_500,
+                current: -1_500,
             }));
 
         assert_eq!(
@@ -1879,7 +1875,7 @@ mod tests {
         );
         assert_eq!(
             command,
-            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current_ma: -1_500 })
+            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current: -1_500 })
         );
     }
 
@@ -1909,9 +1905,9 @@ mod tests {
             SessionInput::Command(DeviceCommand::SetLights(LightState::On))
         );
         assert_eq!(
-            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current_ma: -1_500 })
+            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current: -1_500 })
                 .as_session_input(),
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: -1_500 })
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: -1_500 })
         );
     }
 
@@ -1948,22 +1944,22 @@ mod tests {
     fn telemetry_snapshot_dto_preserves_optional_fields() {
         let snapshot = TelemetrySnapshot {
             at_ms: Some(42),
-            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200,
             ))),
-            voltage_mv: Some(Measured::reported(Voltage::from_millivolts(84_000))),
-            battery_current_ma: None,
-            motor_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_500))),
-            power_mw: None,
-            controller_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+            voltage: Some(Measured::reported(Voltage::from_millivolts(84_000))),
+            battery_current: None,
+            motor_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_500))),
+            power: None,
+            controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
                 31_000,
             ))),
-            motor_temperature_mc: None,
-            battery_temperature_mc: None,
-            pwm_permille: Some(Measured::reported(DutyCycle::from_permille(250))),
-            distance_mm: Some(Measured::reported(Distance::from_millimetres(12_345))),
-            pitch_mdeg: None,
-            roll_mdeg: None,
+            motor_temperature: None,
+            battery_temperature: None,
+            pwm: Some(Measured::reported(DutyCycle::from_permille(250))),
+            distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
+            pitch: None,
+            roll: None,
             battery_percent_reported: None,
             battery_percent_estimated: Some(Measured::estimated(Percent::from_percent(80))),
         };
@@ -1971,10 +1967,10 @@ mod tests {
         let dto = TelemetrySnapshotDto::from(snapshot);
 
         assert_eq!(dto.at_ms, Some(42));
-        assert_eq!(dto.speed_mm_s.expect("speed").value, 1_200);
-        assert_eq!(dto.voltage_mv.expect("voltage").value, 84_000);
-        assert_eq!(dto.battery_current_ma, None);
-        assert_eq!(dto.motor_current_ma.expect("current").value, -1_500);
+        assert_eq!(dto.speed.expect("speed").value, 1_200);
+        assert_eq!(dto.voltage.expect("voltage").value, 84_000);
+        assert_eq!(dto.battery_current, None);
+        assert_eq!(dto.motor_current.expect("current").value, -1_500);
         assert_eq!(dto.battery_percent_estimated.expect("percent").value, 80);
     }
 }

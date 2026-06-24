@@ -595,11 +595,11 @@ fn vesc_values_to_delta(
 ) -> cutout_core::TelemetryDelta {
     cutout_core::TelemetryDelta {
         at_ms: monotonic_ms,
-        speed_mm_s: board_profile
-            .and_then(|profile| profile.speed_mm_s_from_erpm(values.rpm_erpm))
+        speed: board_profile
+            .and_then(|profile| profile.speed_from_erpm(values.rpm_erpm))
             .map(|value| Measured::calculated(Speed::from_millimetres_per_second(value))),
-        voltage_mv: Some(Measured::reported(values.voltage)),
-        battery_current_ma: Some(Measured::reported(values.input_current)),
+        voltage: Some(Measured::reported(values.voltage)),
+        battery_current: Some(Measured::reported(values.input_current)),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -826,17 +826,17 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
 }
 
 fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPagePayload {
-    let first_temperature_mc = page
+    let first_temperature = page
         .temperatures
         .first()
         .copied()
         .unwrap_or(Temperature::from_millicelsius(0));
     let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
-    for (slot, temperature_mc) in temperatures.iter_mut().zip(page.temperatures) {
-        *slot = Some(Measured::reported(temperature_mc));
+    for (slot, temperature) in temperatures.iter_mut().zip(page.temperatures) {
+        *slot = Some(Measured::reported(temperature));
     }
     let battery = BatteryInfo {
-        temperature_mc: Some(Measured::reported(first_temperature_mc)),
+        temperature: Some(Measured::reported(first_temperature)),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::temperature_values(
@@ -848,7 +848,7 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
     let battery = BatteryInfo {
-        current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(
+        current: Some(Measured::reported(BatteryCurrent::from_milliamps(
             page.currents.current_0_ma().get(),
         ))),
         ..BatteryInfo::default()
@@ -1678,15 +1678,15 @@ mod tests {
 
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].voltage_mv.map(|value| value.value.get()),
+            telemetry[0].voltage.map(|value| value.value.get()),
             Some(75_063)
         );
         assert_eq!(
-            telemetry[0].speed_mm_s.map(|value| value.value.get()),
+            telemetry[0].speed.map(|value| value.value.get()),
             Some(13_360)
         );
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value.get()),
+            telemetry[0].distance.map(|value| value.value.get()),
             Some(750_000)
         );
     }
@@ -1720,7 +1720,7 @@ mod tests {
         let telemetry = telemetry_events(&output);
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].voltage_mv.map(|value| value.value.get()),
+            telemetry[0].voltage.map(|value| value.value.get()),
             Some(90_075)
         );
     }
@@ -1810,7 +1810,7 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1 }),
             &mut output,
         );
 
@@ -1844,14 +1844,14 @@ mod tests {
         let delta = telemetry.last().expect("VESC values telemetry");
         assert_eq!(delta.at_ms, 42);
         assert_eq!(
-            delta.voltage_mv,
+            delta.voltage,
             Some(Measured::reported(Voltage::from_millivolts(37_500),))
         );
         assert_eq!(
-            delta.battery_current_ma,
+            delta.battery_current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(40)))
         );
-        assert_eq!(delta.speed_mm_s, None);
+        assert_eq!(delta.speed, None);
 
         let responses = read_only_response_events(&output);
         let ReadOnlyResponse::RawTelemetry(raw) =
@@ -1906,7 +1906,7 @@ mod tests {
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
         assert_eq!(
-            delta.speed_mm_s,
+            delta.speed,
             Some(Measured::calculated(Speed::from_millimetres_per_second(
                 989
             )))
@@ -1976,7 +1976,7 @@ mod tests {
 
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value.get()),
+            telemetry[0].distance.map(|value| value.value.get()),
             Some(50_000)
         );
     }
@@ -1989,15 +1989,15 @@ mod tests {
 
         assert_eq!(telemetry.len(), 2);
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value.get()),
+            telemetry[0].distance.map(|value| value.value.get()),
             Some(80_467)
         );
         assert_eq!(
-            telemetry[1].speed_mm_s.map(|value| value.value.get()),
+            telemetry[1].speed.map(|value| value.value.get()),
             Some(21_500)
         );
         assert_eq!(
-            telemetry[1].distance_mm.map(|value| value.value.get()),
+            telemetry[1].distance.map(|value| value.value.get()),
             Some(1_207_008)
         );
     }
@@ -2045,13 +2045,13 @@ mod tests {
         assert_eq!(
             telemetry
                 .last()
-                .and_then(|delta| delta.speed_mm_s.map(|value| value.value.get())),
+                .and_then(|delta| delta.speed.map(|value| value.value.get())),
             Some(13_360)
         );
         assert_eq!(
             telemetry
                 .last()
-                .and_then(|delta| delta.distance_mm.map(|value| value.value.get())),
+                .and_then(|delta| delta.distance.map(|value| value.value.get())),
             Some(750_000)
         );
     }
@@ -2059,7 +2059,7 @@ mod tests {
     #[test]
     fn nosfet_aero_session_emits_voltage_from_live_fixture_notification() {
         assert_eq!(
-            live_aero_telemetry().voltage_mv,
+            live_aero_telemetry().voltage,
             Some(Measured::reported(Voltage::from_millivolts(108_760),))
         );
     }
@@ -2077,36 +2077,36 @@ mod tests {
         let telemetry = live_aero_telemetry();
 
         assert_eq!(
-            telemetry.speed_mm_s,
+            telemetry.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(0)))
         );
         assert_eq!(
-            telemetry.motor_current_ma,
+            telemetry.motor_current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
-        assert_eq!(telemetry.battery_current_ma, None);
+        assert_eq!(telemetry.battery_current, None);
         assert_eq!(
-            telemetry.power_mw,
+            telemetry.power,
             Some(Measured::calculated(cutout_core::Power::from_milliwatts(0)))
         );
         assert_eq!(
-            telemetry.controller_temperature_mc,
+            telemetry.controller_temperature,
             Some(Measured::reported(Temperature::from_millicelsius(33_270)))
         );
         assert_eq!(
-            telemetry.pwm_permille,
+            telemetry.pwm,
             Some(Measured::reported(cutout_core::DutyCycle::from_permille(
                 -1_000
             )))
         );
         assert_eq!(
-            telemetry.distance_mm,
+            telemetry.distance,
             Some(Measured::reported(cutout_core::Distance::from_millimetres(
                 1_551_169_000
             )))
         );
         assert_eq!(
-            telemetry.pitch_mdeg,
+            telemetry.pitch,
             Some(Measured::reported(cutout_core::Angle::from_millidegrees(
                 69_060
             )))
@@ -2174,13 +2174,13 @@ mod tests {
                     && payload.page().verification == VerificationStatus::HardwareVerified
                     && payload
                         .battery()
-                        .temperature_mc
+                        .temperature
                         .expect("representative temperature")
                         .value
                         .get()
                         == 16_730
                     && payload
-                        .temperatures_mc()[5]
+                        .temperatures()[5]
                         .expect("sixth temperature")
                         .value
                         == 17_830
@@ -2210,7 +2210,7 @@ mod tests {
                 if payload.page().selector == ProtocolSelector::new(0)
                     && payload.page().kind == BatteryPageKind::Metadata
                     && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload.battery().current_ma == Some(Measured::reported(
+                    && payload.battery().current == Some(Measured::reported(
                         BatteryCurrent::from_milliamps(20)
                     ))
                     && payload.bms_pack_currents() == Some(cutout_core::BmsPackCurrents::reported(20, 20))
@@ -2227,7 +2227,7 @@ mod tests {
         let battery = payload.battery();
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
         assert_eq!(
-            battery.current_ma,
+            battery.current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(-1_230)))
         );
         assert_eq!(
@@ -2651,7 +2651,7 @@ mod tests {
         );
         assert_eq!(
             gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SetRawMotorCurrent {
-                current_ma: 1
+                current: 1
             }),
             ReadOnlyCommandGate::Unsupported(CommandKind::SetRawMotorCurrent)
         );
@@ -2733,7 +2733,7 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1 }),
             &mut output,
         );
 
@@ -2750,13 +2750,13 @@ mod tests {
         let mut session =
             DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
                 model: TestModel::MODEL,
-                max_current_ma: BatteryCurrent::from_milliamps(5_000),
+                max_current: BatteryCurrent::from_milliamps(5_000),
                 arm_duration_ms: 1_000,
             });
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1_000 }),
             &mut output,
         );
 
@@ -2782,7 +2782,7 @@ mod tests {
     fn dangerous_control_session_refuses_expired_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2796,7 +2796,7 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1_000 }),
             &mut output,
         );
 
@@ -2821,12 +2821,12 @@ mod tests {
     fn dangerous_control_session_refuses_wrong_model_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let wrong_model_policy = cutout_core::DangerousActuationPolicy {
             model: "other model",
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2835,7 +2835,7 @@ mod tests {
         session.arm(wrong_model_policy.arm(10));
         session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1_000 }),
             &mut output,
         );
 
@@ -2860,7 +2860,7 @@ mod tests {
     fn dangerous_control_session_refuses_over_current_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2869,7 +2869,7 @@ mod tests {
         session.arm(policy.arm(10));
         session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 5_001 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 5_001 }),
             &mut output,
         );
 

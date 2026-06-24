@@ -319,22 +319,22 @@ impl VeteranModelProfile {
 
     /// Estimates battery percentage from this model's pack voltage.
     #[must_use]
-    pub fn estimate_battery_percent(&self, voltage_mv: Voltage) -> u8 {
+    pub fn estimate_battery_percent(&self, voltage: Voltage) -> u8 {
         if let Some(battery_profile) = self.battery_profile {
-            return battery_profile.estimate_percent_from_pack_voltage(voltage_mv, self.cell_count);
+            return battery_profile.estimate_percent_from_pack_voltage(voltage, self.cell_count);
         }
 
         let start = self.voltage_range.start().as_millivolts();
         let end = self.voltage_range.end().as_millivolts();
-        let voltage_mv = voltage_mv.as_millivolts();
-        if voltage_mv <= start {
+        let voltage = voltage.as_millivolts();
+        if voltage <= start {
             return 0;
         }
-        if voltage_mv >= end {
+        if voltage >= end {
             return 100;
         }
 
-        let numerator = (voltage_mv - start) * 100;
+        let numerator = (voltage - start) * 100;
         let denominator = end - start;
         u8::try_from((numerator + denominator / 2) / denominator).unwrap_or(100)
     }
@@ -362,9 +362,9 @@ fn battery_profile_pack_range(
     let start = battery_profile
         .points
         .first()
-        .map_or(0, |point| pack_voltage_mv(point.cell_voltage, series_cells));
+        .map_or(0, |point| pack_voltage(point.cell_voltage, series_cells));
     let end = battery_profile.points.last().map_or(start, |point| {
-        pack_voltage_mv(point.cell_voltage, series_cells)
+        pack_voltage(point.cell_voltage, series_cells)
     });
     pack_voltage_range(start, end)
 }
@@ -373,7 +373,7 @@ const fn pack_voltage_range(start_mv: i32, end_mv: i32) -> RangeInclusive<Voltag
     Voltage::from_millivolts(start_mv)..=Voltage::from_millivolts(end_mv)
 }
 
-fn pack_voltage_mv(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> i32 {
+fn pack_voltage(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> i32 {
     (cell_voltage.as_microvolts().saturating_mul(series_cells) + 500) / 1_000
 }
 
@@ -471,7 +471,7 @@ impl VeteranTelemetry {
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 10,
             ),
-            hardware_pwm: DutyCycle::from_permille(veteran_pwm_permille(
+            hardware_pwm: DutyCycle::from_permille(veteran_pwm(
                 cursor
                     .be_u16(ByteOffset::new(34))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -486,20 +486,20 @@ impl VeteranTelemetry {
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
-        let power_mw = Power::from_voltage_current(self.voltage, self.phase_current);
+        let power = Power::from_voltage_current(self.voltage, self.phase_current);
         TelemetryDelta {
-            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 self.speed.as_millimetres_per_second(),
             ))),
-            voltage_mv: Some(Measured::reported(self.voltage)),
-            motor_current_ma: Some(Measured::reported(self.phase_current)),
-            power_mw: Some(Measured::calculated(power_mw)),
-            controller_temperature_mc: Some(Measured::reported(self.mosfet_temperature)),
-            pwm_permille: Some(Measured::reported(self.hardware_pwm)),
-            distance_mm: Some(Measured::reported(Distance::from_millimetres(
+            voltage: Some(Measured::reported(self.voltage)),
+            motor_current: Some(Measured::reported(self.phase_current)),
+            power: Some(Measured::calculated(power)),
+            controller_temperature: Some(Measured::reported(self.mosfet_temperature)),
+            pwm: Some(Measured::reported(self.hardware_pwm)),
+            distance: Some(Measured::reported(Distance::from_millimetres(
                 self.total_distance.as_millimetres(),
             ))),
-            pitch_mdeg: Some(Measured::reported(self.pitch)),
+            pitch: Some(Measured::reported(self.pitch)),
             battery_percent_estimated: Some(Measured::estimated(self.battery_percent_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -629,15 +629,15 @@ impl VeteranFirmwareVersion {
 
 /// Estimates Aero battery percent from its model's Samsung 50S battery profile.
 #[must_use]
-pub fn estimate_nosfet_aero_battery_percent(voltage_mv: Voltage) -> u8 {
-    estimate_veteran_battery_percent(43, voltage_mv)
+pub fn estimate_nosfet_aero_battery_percent(voltage: Voltage) -> u8 {
+    estimate_veteran_battery_percent(43, voltage)
 }
 
 /// Estimates Veteran battery percent using the known model profile when possible.
 #[must_use]
-pub fn estimate_veteran_battery_percent(model_id: u16, voltage_mv: Voltage) -> u8 {
+pub fn estimate_veteran_battery_percent(model_id: u16, voltage: Voltage) -> u8 {
     VeteranModelProfile::from_model_id(model_id)
-        .map_or(0, |profile| profile.estimate_battery_percent(voltage_mv))
+        .map_or(0, |profile| profile.estimate_battery_percent(voltage))
 }
 
 fn deci_kmh_to_mm_s(value: i32) -> i32 {
@@ -657,7 +657,7 @@ fn speed_to_deci_kmh(value: i32) -> i32 {
     }
 }
 
-fn veteran_pwm_permille(raw_pwm: u16) -> i16 {
+fn veteran_pwm(raw_pwm: u16) -> i16 {
     let centered = i32::from(raw_pwm) - 0x8000;
     let permille = centered * 1_000 / 0x8000;
     #[allow(clippy::cast_possible_truncation)]
@@ -696,11 +696,10 @@ mod tests {
         .expect("fixture frame is valid")
     }
 
-    fn synthetic_short_frame(model_id: u16, voltage_mv: i32) -> VeteranFrame {
+    fn synthetic_short_frame(model_id: u16, voltage: i32) -> VeteranFrame {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
-        let voltage_centivolts =
-            u16::try_from(voltage_mv / 10).expect("synthetic voltage fits u16");
+        let voltage_centivolts = u16::try_from(voltage / 10).expect("synthetic voltage fits u16");
         bytes[4..6].copy_from_slice(&voltage_centivolts.to_be_bytes());
         let raw_version = model_id * 1_000;
         bytes[28..30].copy_from_slice(&raw_version.to_be_bytes());
@@ -860,7 +859,7 @@ mod tests {
 
         assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
         assert_eq!(
-            delta.distance_mm.map(|distance| distance.value),
+            delta.distance.map(|distance| distance.value),
             Some(telemetry.total_distance)
         );
     }
@@ -877,8 +876,8 @@ mod tests {
         assert_eq!(
             aero.voltage_range,
             test_voltage_range(
-                pack_voltage_mv(first.cell_voltage, i32::from(aero.cell_count)),
-                pack_voltage_mv(last.cell_voltage, i32::from(aero.cell_count)),
+                pack_voltage(first.cell_voltage, i32::from(aero.cell_count)),
+                pack_voltage(last.cell_voltage, i32::from(aero.cell_count)),
             )
         );
         assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
@@ -1233,39 +1232,39 @@ mod tests {
 
         assert_eq!(delta.at_ms, 42);
         assert_eq!(
-            delta.speed_mm_s,
+            delta.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(0)))
         );
         assert_eq!(
-            delta.voltage_mv,
+            delta.voltage,
             Some(Measured::reported(Voltage::from_millivolts(108_760)))
         );
         assert_eq!(
-            delta.motor_current_ma,
+            delta.motor_current,
             Some(Measured::reported(
                 cutout_core::BatteryCurrent::from_milliamps(0)
             ))
         );
         assert_eq!(
-            delta.controller_temperature_mc,
+            delta.controller_temperature,
             Some(Measured::reported(Temperature::from_millicelsius(33_270)))
         );
         assert_eq!(
-            delta.power_mw,
+            delta.power,
             Some(Measured::calculated(Power::from_milliwatts(0)))
         );
         assert_eq!(
-            delta.pwm_permille,
+            delta.pwm,
             Some(Measured::reported(DutyCycle::from_permille(-1_000)))
         );
         assert_eq!(
-            delta.distance_mm,
+            delta.distance,
             Some(Measured::reported(Distance::from_millimetres(
                 1_551_169_000
             )))
         );
         assert_eq!(
-            delta.pitch_mdeg,
+            delta.pitch,
             Some(Measured::reported(Angle::from_millidegrees(69_060)))
         );
         assert_eq!(
@@ -1332,19 +1331,19 @@ mod tests {
         let delta = telemetry.to_delta(42);
 
         assert_eq!(
-            delta.speed_mm_s,
+            delta.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_000
             )))
         );
         assert_eq!(
-            delta.motor_current_ma,
+            delta.motor_current,
             Some(Measured::reported(
                 cutout_core::BatteryCurrent::from_milliamps(-1_700)
             ))
         );
         assert_eq!(
-            delta.power_mw,
+            delta.power,
             Some(Measured::calculated(Power::from_milliwatts(-184_892)))
         );
     }
@@ -1383,8 +1382,8 @@ mod tests {
 
     #[test]
     fn veteran_pwm_conversion_maps_raw_bounds_and_midpoint() {
-        assert_eq!(veteran_pwm_permille(0), -1_000);
-        assert_eq!(veteran_pwm_permille(0x8000), 0);
-        assert_eq!(veteran_pwm_permille(u16::MAX), 999);
+        assert_eq!(veteran_pwm(0), -1_000);
+        assert_eq!(veteran_pwm(0x8000), 0);
+        assert_eq!(veteran_pwm(u16::MAX), 999);
     }
 }

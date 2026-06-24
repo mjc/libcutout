@@ -105,7 +105,7 @@ pub struct BatteryTemperaturePage {
     pub battery: BatteryInfo,
 
     /// Contiguous BMS temperature values.
-    pub temperatures_mc: [Temperature; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+    pub temperatures: [Temperature; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
 
     /// Number of populated temperature values.
     pub temperature_count: u8,
@@ -118,8 +118,7 @@ impl BatteryTemperaturePage {
         Self {
             page,
             battery,
-            temperatures_mc: [Temperature::from_millicelsius(0);
-                BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+            temperatures: [Temperature::from_millicelsius(0); BATTERY_TEMPERATURE_VALUES_PER_PAGE],
             temperature_count: 0,
         }
     }
@@ -129,13 +128,13 @@ impl BatteryTemperaturePage {
     pub const fn with_temperatures(
         page: BatteryPageMetadata,
         battery: BatteryInfo,
-        temperatures_mc: [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+        temperatures: [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
     ) -> Self {
         let mut values = [Temperature::from_millicelsius(0); BATTERY_TEMPERATURE_VALUES_PER_PAGE];
         let mut index = 0;
         let mut count = 0_u8;
         while index < BATTERY_TEMPERATURE_VALUES_PER_PAGE {
-            let Some(temperature) = temperatures_mc[index] else {
+            let Some(temperature) = temperatures[index] else {
                 break;
             };
             values[index] = temperature.value;
@@ -145,7 +144,7 @@ impl BatteryTemperaturePage {
         Self {
             page,
             battery,
-            temperatures_mc: values,
+            temperatures: values,
             temperature_count: count,
         }
     }
@@ -230,18 +229,18 @@ impl BatteryPagePayload {
     pub const fn temperature_values(
         page: BatteryPageMetadata,
         battery: BatteryInfo,
-        temperatures_mc: [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+        temperatures: [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
     ) -> Self {
         Self::Temperature(BatteryTemperaturePage::with_temperatures(
             page,
             battery,
-            temperatures_mc,
+            temperatures,
         ))
     }
 
     /// Returns page-specific temperature values when present.
     #[must_use]
-    pub const fn temperatures_mc(
+    pub const fn temperatures(
         self,
     ) -> [Option<Measured<i32>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
         match self {
@@ -250,7 +249,7 @@ impl BatteryPagePayload {
                 let mut index = 0;
                 while index < page.temperature_count as usize {
                     temperatures[index] = Some(Measured::reported(
-                        page.temperatures_mc[index].as_millicelsius(),
+                        page.temperatures[index].as_millicelsius(),
                     ));
                     index += 1;
                 }
@@ -350,11 +349,11 @@ mod tests {
     #[test]
     fn page_payload_wrappers_preserve_page_and_battery_values() {
         let battery = BatteryInfo {
-            voltage_mv: None,
-            current_ma: None,
+            voltage: None,
+            current: None,
             percent_reported: None,
             percent_estimated: None,
-            temperature_mc: None,
+            temperature: None,
             raw_state: None,
         };
         let page = BatteryPageMetadata::cell_voltage(sel(3), VerificationStatus::HardwareVerified);
@@ -367,11 +366,11 @@ mod tests {
     #[test]
     fn temperature_payload_wrapper_preserves_page_and_battery_values() {
         let battery = BatteryInfo {
-            voltage_mv: None,
-            current_ma: None,
+            voltage: None,
+            current: None,
             percent_reported: None,
             percent_estimated: None,
-            temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(16_730))),
+            temperature: Some(Measured::reported(Temperature::from_millicelsius(16_730))),
             raw_state: None,
         };
         let page = BatteryPageMetadata::temperature(sel(3), VerificationStatus::SourceVerified);
@@ -424,13 +423,13 @@ mod tests {
     #[test]
     fn explicit_temperature_constructor_chooses_temperature_variant() {
         let battery = BatteryInfo {
-            temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(17_830))),
+            temperature: Some(Measured::reported(Temperature::from_millicelsius(17_830))),
             ..BatteryInfo::default()
         };
         let page = BatteryPageMetadata::temperature(sel(3), VerificationStatus::SourceVerified);
         let payload = BatteryPagePayload::temperature(page, battery);
 
         assert!(matches!(payload, BatteryPagePayload::Temperature(_)));
-        assert_eq!(payload.battery().temperature_mc, battery.temperature_mc);
+        assert_eq!(payload.battery().temperature, battery.temperature);
     }
 }

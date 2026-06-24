@@ -103,7 +103,7 @@ pub enum DeviceCommand {
     /// Set raw motor current in milliamps.
     SetRawMotorCurrent {
         /// Target motor/phase current in milliamps.
-        current_ma: i32,
+        current: i32,
     },
 }
 
@@ -251,7 +251,7 @@ pub struct DangerousActuationPolicy {
     pub model: &'static str,
 
     /// Maximum absolute raw motor current allowed by this policy.
-    pub max_current_ma: BatteryCurrent,
+    pub max_current: BatteryCurrent,
 
     /// Duration of newly issued arming tokens.
     pub arm_duration_ms: MonotonicMillis,
@@ -294,8 +294,8 @@ impl DangerousActuationPolicy {
         if monotonic_ms > arm.expires_at_ms {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
-        if let DeviceCommand::SetRawMotorCurrent { current_ma } = command
-            && current_ma.saturating_abs() > self.max_current_ma.as_milliamps()
+        if let DeviceCommand::SetRawMotorCurrent { current } = command
+            && current.saturating_abs() > self.max_current.as_milliamps()
         {
             return Err(DangerousActuationRefusal::CurrentLimitExceeded);
         }
@@ -4047,10 +4047,10 @@ impl core::fmt::Display for ChargeMode {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatteryInfo {
     /// Pack or input voltage in millivolts.
-    pub voltage_mv: Option<Measured<Voltage>>,
+    pub voltage: Option<Measured<Voltage>>,
 
     /// Pack or battery current in milliamps.
-    pub current_ma: Option<Measured<BatteryCurrent>>,
+    pub current: Option<Measured<BatteryCurrent>>,
 
     /// Battery percentage reported by the device.
     pub percent_reported: Option<Measured<Percent>>,
@@ -4059,7 +4059,7 @@ pub struct BatteryInfo {
     pub percent_estimated: Option<Measured<Percent>>,
 
     /// Battery or BMS temperature in millicelsius.
-    pub temperature_mc: Option<Measured<Temperature>>,
+    pub temperature: Option<Measured<Temperature>>,
 
     /// Raw battery/BMS state field, when present.
     pub raw_state: Option<RawFieldValue>,
@@ -4171,40 +4171,40 @@ pub struct TelemetryDelta {
     pub at_ms: MonotonicMillis,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed_mm_s: Option<Measured<Speed>>,
+    pub speed: Option<Measured<Speed>>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage_mv: Option<Measured<Voltage>>,
+    pub voltage: Option<Measured<Voltage>>,
 
     /// Battery/input current in milliamps.
-    pub battery_current_ma: Option<Measured<BatteryCurrent>>,
+    pub battery_current: Option<Measured<BatteryCurrent>>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current_ma: Option<Measured<PhaseCurrent>>,
+    pub motor_current: Option<Measured<PhaseCurrent>>,
 
     /// Electrical power in milliwatts.
-    pub power_mw: Option<Measured<Power>>,
+    pub power: Option<Measured<Power>>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<Measured<Temperature>>,
+    pub controller_temperature: Option<Measured<Temperature>>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<Measured<Temperature>>,
+    pub motor_temperature: Option<Measured<Temperature>>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<Measured<Temperature>>,
+    pub battery_temperature: Option<Measured<Temperature>>,
 
     /// PWM duty in permille.
-    pub pwm_permille: Option<Measured<DutyCycle>>,
+    pub pwm: Option<Measured<DutyCycle>>,
 
     /// Total or trip distance in millimeters.
-    pub distance_mm: Option<Measured<Distance>>,
+    pub distance: Option<Measured<Distance>>,
 
     /// Pitch in millidegrees.
-    pub pitch_mdeg: Option<Measured<Angle>>,
+    pub pitch: Option<Measured<Angle>>,
 
     /// Roll in millidegrees.
-    pub roll_mdeg: Option<Measured<Angle>>,
+    pub roll: Option<Measured<Angle>>,
 
     /// Battery percentage reported by the device.
     pub battery_percent_reported: Option<Measured<Percent>>,
@@ -4219,18 +4219,18 @@ impl TelemetryDelta {
     pub const fn empty(at_ms: MonotonicMillis) -> Self {
         Self {
             at_ms,
-            speed_mm_s: None,
-            voltage_mv: None,
-            battery_current_ma: None,
-            motor_current_ma: None,
-            power_mw: None,
-            controller_temperature_mc: None,
-            motor_temperature_mc: None,
-            battery_temperature_mc: None,
-            pwm_permille: None,
-            distance_mm: None,
-            pitch_mdeg: None,
-            roll_mdeg: None,
+            speed: None,
+            voltage: None,
+            battery_current: None,
+            motor_current: None,
+            power: None,
+            controller_temperature: None,
+            motor_temperature: None,
+            battery_temperature: None,
+            pwm: None,
+            distance: None,
+            pitch: None,
+            roll: None,
             battery_percent_reported: None,
             battery_percent_estimated: None,
         }
@@ -4244,40 +4244,40 @@ pub struct TelemetrySnapshot {
     pub at_ms: Option<MonotonicMillis>,
 
     /// Latest known speed in millimeters per second.
-    pub speed_mm_s: Option<Measured<Speed>>,
+    pub speed: Option<Measured<Speed>>,
 
     /// Latest known input voltage in millivolts.
-    pub voltage_mv: Option<Measured<Voltage>>,
+    pub voltage: Option<Measured<Voltage>>,
 
     /// Latest known battery/input current in milliamps.
-    pub battery_current_ma: Option<Measured<BatteryCurrent>>,
+    pub battery_current: Option<Measured<BatteryCurrent>>,
 
     /// Latest known motor/phase current in milliamps.
-    pub motor_current_ma: Option<Measured<PhaseCurrent>>,
+    pub motor_current: Option<Measured<PhaseCurrent>>,
 
     /// Latest known electrical power in milliwatts.
-    pub power_mw: Option<Measured<Power>>,
+    pub power: Option<Measured<Power>>,
 
     /// Latest known controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<Measured<Temperature>>,
+    pub controller_temperature: Option<Measured<Temperature>>,
 
     /// Latest known motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<Measured<Temperature>>,
+    pub motor_temperature: Option<Measured<Temperature>>,
 
     /// Latest known battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<Measured<Temperature>>,
+    pub battery_temperature: Option<Measured<Temperature>>,
 
     /// Latest known PWM duty in permille.
-    pub pwm_permille: Option<Measured<DutyCycle>>,
+    pub pwm: Option<Measured<DutyCycle>>,
 
     /// Latest known total or trip distance in millimeters.
-    pub distance_mm: Option<Measured<Distance>>,
+    pub distance: Option<Measured<Distance>>,
 
     /// Latest known pitch in millidegrees.
-    pub pitch_mdeg: Option<Measured<Angle>>,
+    pub pitch: Option<Measured<Angle>>,
 
     /// Latest known roll in millidegrees.
-    pub roll_mdeg: Option<Measured<Angle>>,
+    pub roll: Option<Measured<Angle>>,
 
     /// Latest known battery percentage reported by the device.
     pub battery_percent_reported: Option<Measured<Percent>>,
@@ -4291,41 +4291,41 @@ impl TelemetrySnapshot {
     pub const fn apply_delta(&mut self, delta: TelemetryDelta) {
         self.at_ms = Some(delta.at_ms);
 
-        if delta.speed_mm_s.is_some() {
-            self.speed_mm_s = delta.speed_mm_s;
+        if delta.speed.is_some() {
+            self.speed = delta.speed;
         }
-        if delta.voltage_mv.is_some() {
-            self.voltage_mv = delta.voltage_mv;
+        if delta.voltage.is_some() {
+            self.voltage = delta.voltage;
         }
-        if delta.battery_current_ma.is_some() {
-            self.battery_current_ma = delta.battery_current_ma;
+        if delta.battery_current.is_some() {
+            self.battery_current = delta.battery_current;
         }
-        if delta.motor_current_ma.is_some() {
-            self.motor_current_ma = delta.motor_current_ma;
+        if delta.motor_current.is_some() {
+            self.motor_current = delta.motor_current;
         }
-        if delta.power_mw.is_some() {
-            self.power_mw = delta.power_mw;
+        if delta.power.is_some() {
+            self.power = delta.power;
         }
-        if delta.controller_temperature_mc.is_some() {
-            self.controller_temperature_mc = delta.controller_temperature_mc;
+        if delta.controller_temperature.is_some() {
+            self.controller_temperature = delta.controller_temperature;
         }
-        if delta.motor_temperature_mc.is_some() {
-            self.motor_temperature_mc = delta.motor_temperature_mc;
+        if delta.motor_temperature.is_some() {
+            self.motor_temperature = delta.motor_temperature;
         }
-        if delta.battery_temperature_mc.is_some() {
-            self.battery_temperature_mc = delta.battery_temperature_mc;
+        if delta.battery_temperature.is_some() {
+            self.battery_temperature = delta.battery_temperature;
         }
-        if delta.pwm_permille.is_some() {
-            self.pwm_permille = delta.pwm_permille;
+        if delta.pwm.is_some() {
+            self.pwm = delta.pwm;
         }
-        if delta.distance_mm.is_some() {
-            self.distance_mm = delta.distance_mm;
+        if delta.distance.is_some() {
+            self.distance = delta.distance;
         }
-        if delta.pitch_mdeg.is_some() {
-            self.pitch_mdeg = delta.pitch_mdeg;
+        if delta.pitch.is_some() {
+            self.pitch = delta.pitch;
         }
-        if delta.roll_mdeg.is_some() {
-            self.roll_mdeg = delta.roll_mdeg;
+        if delta.roll.is_some() {
+            self.roll = delta.roll;
         }
         if delta.battery_percent_reported.is_some() {
             self.battery_percent_reported = delta.battery_percent_reported;
@@ -4548,18 +4548,18 @@ where
             output: Vec::with_capacity(4),
             snapshot: TelemetrySnapshot {
                 at_ms: None,
-                speed_mm_s: None,
-                voltage_mv: None,
-                battery_current_ma: None,
-                motor_current_ma: None,
-                power_mw: None,
-                controller_temperature_mc: None,
-                motor_temperature_mc: None,
-                battery_temperature_mc: None,
-                pwm_permille: None,
-                distance_mm: None,
-                pitch_mdeg: None,
-                roll_mdeg: None,
+                speed: None,
+                voltage: None,
+                battery_current: None,
+                motor_current: None,
+                power: None,
+                controller_temperature: None,
+                motor_temperature: None,
+                battery_temperature: None,
+                pwm: None,
+                distance: None,
+                pitch: None,
+                roll: None,
                 battery_percent_reported: None,
                 battery_percent_estimated: None,
             },
@@ -5587,16 +5587,16 @@ mod tests {
         let mut snapshot = TelemetrySnapshot::default();
         let first = TelemetryDelta {
             at_ms: 100,
-            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_500,
             ))),
-            voltage_mv: Some(Measured::reported(Voltage::from_millivolts(81_000))),
-            battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
+            voltage: Some(Measured::reported(Voltage::from_millivolts(81_000))),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
             ..TelemetryDelta::empty(100)
         };
         let second = TelemetryDelta {
             at_ms: 150,
-            motor_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(42_500))),
+            motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(42_500))),
             ..TelemetryDelta::empty(150)
         };
 
@@ -5605,17 +5605,17 @@ mod tests {
 
         assert_eq!(snapshot.at_ms, Some(150));
         assert_eq!(
-            snapshot.speed_mm_s,
+            snapshot.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_500
             )))
         );
         assert_eq!(
-            snapshot.voltage_mv,
+            snapshot.voltage,
             Some(Measured::reported(Voltage::from_millivolts(81_000)))
         );
         assert_eq!(
-            snapshot.motor_temperature_mc,
+            snapshot.motor_temperature,
             Some(Measured::reported(Temperature::from_millicelsius(42_500)))
         );
     }
@@ -5625,20 +5625,20 @@ mod tests {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(TelemetryDelta {
             at_ms: 200,
-            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
-            battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
             ..TelemetryDelta::empty(200)
         });
 
         assert_eq!(
-            snapshot.speed_mm_s,
+            snapshot.speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(0)))
         );
         assert_eq!(
-            snapshot.battery_current_ma,
+            snapshot.battery_current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
-        assert_eq!(snapshot.motor_current_ma, None);
+        assert_eq!(snapshot.motor_current, None);
     }
 
     #[test]
@@ -5685,38 +5685,36 @@ mod tests {
 
         snapshot.apply_delta(TelemetryDelta {
             at_ms: 300,
-            battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200))),
-            motor_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(3_400))),
-            controller_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200))),
+            motor_current: Some(Measured::reported(BatteryCurrent::from_milliamps(3_400))),
+            controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
                 35_000,
             ))),
-            motor_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(45_000))),
-            battery_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
-                31_000,
-            ))),
+            motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(45_000))),
+            battery_temperature: Some(Measured::reported(Temperature::from_millicelsius(31_000))),
             battery_percent_reported: Some(Measured::reported(Percent::from_percent(80))),
             battery_percent_estimated: Some(estimated_percent),
             ..TelemetryDelta::empty(300)
         });
 
         assert_eq!(
-            snapshot.battery_current_ma,
+            snapshot.battery_current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200)))
         );
         assert_eq!(
-            snapshot.motor_current_ma,
+            snapshot.motor_current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(3_400)))
         );
         assert_eq!(
-            snapshot.controller_temperature_mc,
+            snapshot.controller_temperature,
             Some(Measured::reported(Temperature::from_millicelsius(35_000)))
         );
         assert_eq!(
-            snapshot.motor_temperature_mc,
+            snapshot.motor_temperature,
             Some(Measured::reported(Temperature::from_millicelsius(45_000)))
         );
         assert_eq!(
-            snapshot.battery_temperature_mc,
+            snapshot.battery_temperature,
             Some(Measured::reported(Temperature::from_millicelsius(31_000)))
         );
         assert_eq!(
@@ -5736,7 +5734,7 @@ mod tests {
     fn telemetry_delta_can_be_emitted_as_device_event() {
         let delta = TelemetryDelta {
             at_ms: 400,
-            distance_mm: Some(Measured::reported(Distance::from_millimetres(12_345))),
+            distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
             ..TelemetryDelta::empty(400)
         };
 
@@ -5744,7 +5742,7 @@ mod tests {
             DeviceEvent::Telemetry(delta),
             DeviceEvent::Telemetry(TelemetryDelta {
                 at_ms: 400,
-                distance_mm: Some(Measured::reported(Distance::from_millimetres(12_345))),
+                distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
                 ..TelemetryDelta::empty(400)
             })
         );
@@ -5771,11 +5769,11 @@ mod tests {
     #[test]
     fn battery_response_distinguishes_reported_estimated_and_unknown_percent() {
         let battery = crate::BatteryInfo {
-            voltage_mv: Some(Measured::reported(Voltage::from_millivolts(80_400))),
-            current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            voltage: Some(Measured::reported(Voltage::from_millivolts(80_400))),
+            current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
             percent_reported: Some(Measured::reported(Percent::from_percent(0))),
             percent_estimated: Some(Measured::estimated(Percent::from_percent(42))),
-            temperature_mc: None,
+            temperature: None,
             raw_state: None,
         };
         let response = crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
@@ -5794,7 +5792,7 @@ mod tests {
             )
         );
         assert_eq!(
-            response.battery().current_ma,
+            response.battery().current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
         assert_eq!(
@@ -5802,10 +5800,7 @@ mod tests {
             Some(Measured::reported(Percent::from_percent(0)))
         );
         assert_eq!(
-            response
-                .battery()
-                .voltage_mv
-                .map(|value| value.verification),
+            response.battery().voltage.map(|value| value.verification),
             Some(VerificationStatus::HardwareVerified)
         );
         assert_eq!(
@@ -5815,7 +5810,7 @@ mod tests {
                 .map(|value| value.verification),
             Some(VerificationStatus::Inferred)
         );
-        assert_eq!(response.battery().temperature_mc, None);
+        assert_eq!(response.battery().temperature, None);
     }
 
     #[test]
@@ -6884,7 +6879,7 @@ mod tests {
     #[test]
     fn actuation_commands_are_not_supported_without_capability() {
         let capabilities = crate::Capabilities::default();
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
 
         assert_eq!(command.safety_class(), crate::SafetyClass::Actuation);
         assert_eq!(
@@ -6897,10 +6892,10 @@ mod tests {
     fn dangerous_actuation_policy_requires_arm_token() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
 
         assert_eq!(
             policy.authorize(command, 42, None),
@@ -6912,15 +6907,15 @@ mod tests {
     fn dangerous_actuation_policy_rejects_expired_or_wrong_model_arms() {
         let falcon = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let aero = crate::DangerousActuationPolicy {
             model: "NOSFET Aero",
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
         let falcon_arm = falcon.arm(10);
         let aero_arm = aero.arm(10);
 
@@ -6938,7 +6933,7 @@ mod tests {
     fn dangerous_actuation_policy_rejects_non_actuation_and_over_limit_commands() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
         let arm = policy.arm(10);
@@ -6949,7 +6944,7 @@ mod tests {
         );
         assert_eq!(
             policy.authorize(
-                DeviceCommand::SetRawMotorCurrent { current_ma: 5_001 },
+                DeviceCommand::SetRawMotorCurrent { current: 5_001 },
                 42,
                 Some(arm)
             ),
@@ -6961,10 +6956,10 @@ mod tests {
     fn dangerous_actuation_policy_accepts_armed_in_limit_actuation() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: BatteryCurrent::from_milliamps(5_000),
+            max_current: BatteryCurrent::from_milliamps(5_000),
             arm_duration_ms: 1_000,
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: -5_000 };
+        let command = DeviceCommand::SetRawMotorCurrent { current: -5_000 };
         let arm = policy.arm(10);
 
         assert_eq!(
@@ -8086,9 +8081,9 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta {
                             at_ms: 40,
-                            speed_mm_s: Some(Measured::reported(
-                                Speed::from_millimetres_per_second(1_200),
-                            )),
+                            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
+                                1_200,
+                            ))),
                             ..TelemetryDelta::empty(40)
                         },
                     )));
@@ -8117,7 +8112,7 @@ mod tests {
 
         assert_eq!(host.current_snapshot().at_ms, Some(40));
         assert_eq!(
-            host.current_snapshot().speed_mm_s,
+            host.current_snapshot().speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200
             )))
@@ -8169,7 +8164,7 @@ mod tests {
                             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                                 TelemetryDelta {
                                     at_ms: 90,
-                                    speed_mm_s: Some(Measured::reported(
+                                    speed: Some(Measured::reported(
                                         Speed::from_millimetres_per_second(self.sum),
                                     )),
                                     ..TelemetryDelta::empty(90)
@@ -8266,7 +8261,7 @@ mod tests {
                 }),
                 DeviceEvent::Telemetry(TelemetryDelta {
                     at_ms: 90,
-                    speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
+                    speed: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
                     ..TelemetryDelta::empty(90)
                 }),
                 DeviceEvent::LinkDown,
@@ -8378,7 +8373,7 @@ mod tests {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
                         at_ms: monotonic_ms,
-                        speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
+                        speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                             i32::try_from(bytes.len()).unwrap_or(0),
                         ))),
                         ..TelemetryDelta::empty(monotonic_ms)
@@ -8531,7 +8526,7 @@ mod tests {
                 SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 1 }),
                 SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
                     at_ms: 90,
-                    speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
+                    speed: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
                     ..TelemetryDelta::empty(90)
                 })),
                 SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 3 }),

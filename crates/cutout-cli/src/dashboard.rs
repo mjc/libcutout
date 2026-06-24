@@ -1286,37 +1286,37 @@ impl TelemetryWindow {
             self.battery_pct = Some(DashboardBatteryPercent::from_u8(percent.value.get()));
             self.battery_source = BatterySource::TelemetryEstimated;
         }
-        if let Some(speed) = snapshot.speed_mm_s {
+        if let Some(speed) = snapshot.speed {
             let speed_mph = mm_s_to_mph(speed.value.get());
             self.latest_speed_mph = Some(speed_mph);
             push_sample(&mut self.speed_mph, speed_mph);
         }
-        if let Some(voltage) = snapshot.voltage_mv {
+        if let Some(voltage) = snapshot.voltage {
             let volts = millivolts_to_volts(voltage.value.get());
             self.latest_voltage_v = Some(volts);
             seed_or_push_sample(&mut self.voltage_v, volts);
         }
-        if let Some(current) = snapshot.battery_current_ma {
+        if let Some(current) = snapshot.battery_current {
             self.latest_battery_current_a =
                 Some(BatteryCurrentAmps::from_milliamps(current.value.get()));
         }
-        if let Some(current) = snapshot.motor_current_ma {
+        if let Some(current) = snapshot.motor_current {
             let current = PhaseCurrentAmps::from_milliamps(current.value.get());
             self.latest_phase_current_a = Some(current);
             push_sample(&mut self.current_a, current.abs_sample());
-        } else if let Some(current) = snapshot.battery_current_ma {
+        } else if let Some(current) = snapshot.battery_current {
             push_sample(
                 &mut self.current_a,
                 milliamps_to_amps_abs(current.value.get()),
             );
         }
-        if let Some(power) = snapshot.power_mw {
+        if let Some(power) = snapshot.power {
             self.latest_power_w = Some(PowerWatts::from_milliwatts(power.value.get()));
         }
         if let Some(temperature) = snapshot
-            .controller_temperature_mc
-            .or(snapshot.motor_temperature_mc)
-            .or(snapshot.battery_temperature_mc)
+            .controller_temperature
+            .or(snapshot.motor_temperature)
+            .or(snapshot.battery_temperature)
         {
             self.latest_temperature_c =
                 Some(millicelsius_to_celsius_signed(temperature.value.get()));
@@ -1325,13 +1325,13 @@ impl TelemetryWindow {
                 millicelsius_to_celsius(temperature.value.get()),
             );
         }
-        if let Some(distance) = snapshot.distance_mm {
+        if let Some(distance) = snapshot.distance {
             self.latest_distance_m = Some(distance.value.get() / 1_000);
         }
-        if let Some(pitch) = snapshot.pitch_mdeg {
+        if let Some(pitch) = snapshot.pitch {
             self.latest_pitch_deg = Some(millidegrees_to_degrees(pitch.value.get()));
         }
-        if let Some(pwm) = snapshot.pwm_permille {
+        if let Some(pwm) = snapshot.pwm {
             self.latest_pwm_pct = Some(permille_to_percent(pwm.value.get()));
         }
         self.sync_points();
@@ -1423,7 +1423,7 @@ impl BmsTemperatureValues {
         matches!(self.0, BatteryPagePayload::Temperature(_))
             && self
                 .0
-                .temperatures_mc()
+                .temperatures()
                 .into_iter()
                 .any(|value| value.is_some())
     }
@@ -1432,7 +1432,7 @@ impl BmsTemperatureValues {
 impl fmt::Display for BmsTemperatureValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut wrote = false;
-        for temperature in self.0.temperatures_mc().into_iter().flatten() {
+        for temperature in self.0.temperatures().into_iter().flatten() {
             if wrote {
                 write!(f, ",")?;
             } else {
@@ -1450,7 +1450,7 @@ struct BmsCurrentSummary(BatteryPagePayload);
 impl fmt::Display for BmsCurrentSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let battery = self.0.battery();
-        if let Some(current) = battery.current_ma {
+        if let Some(current) = battery.current {
             write!(f, " current={}A", milliamps_to_amps(current.value.get()))?;
         }
         if let Some(currents) = self.0.bms_pack_currents() {
@@ -1610,10 +1610,10 @@ impl fmt::Display for MappedTelemetryLog {
         let mut fields = TelemetryFieldWriter::new(f, Some("telemetry mapped"), "none");
         let snapshot = self.0;
 
-        if let Some(speed) = snapshot.speed_mm_s {
+        if let Some(speed) = snapshot.speed {
             fields.write("speed", mm_s_to_mph(speed.value.get()), "mph")?;
         }
-        if let Some(voltage) = snapshot.voltage_mv {
+        if let Some(voltage) = snapshot.voltage {
             fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
         }
         if let Some(percent) = snapshot
@@ -1622,10 +1622,10 @@ impl fmt::Display for MappedTelemetryLog {
         {
             fields.write("battery", percent.value, "%")?;
         }
-        if let Some(current) = snapshot.battery_current_ma.or(snapshot.motor_current_ma) {
+        if let Some(current) = snapshot.battery_current.or(snapshot.motor_current) {
             fields.write("current", milliamps_to_amps(current.value.get()), "A")?;
         }
-        if let Some(power) = snapshot.power_mw {
+        if let Some(power) = snapshot.power {
             fields.write(
                 "power",
                 PowerWatts::from_milliwatts(power.value.get()).get(),
@@ -1633,9 +1633,9 @@ impl fmt::Display for MappedTelemetryLog {
             )?;
         }
         if let Some(temperature) = snapshot
-            .controller_temperature_mc
-            .or(snapshot.motor_temperature_mc)
-            .or(snapshot.battery_temperature_mc)
+            .controller_temperature
+            .or(snapshot.motor_temperature)
+            .or(snapshot.battery_temperature)
         {
             fields.write(
                 "temperature",
@@ -1643,16 +1643,16 @@ impl fmt::Display for MappedTelemetryLog {
                 "C",
             )?;
         }
-        if let Some(pwm) = snapshot.pwm_permille {
+        if let Some(pwm) = snapshot.pwm {
             fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
-        if let Some(distance) = snapshot.distance_mm {
+        if let Some(distance) = snapshot.distance {
             fields.write_display("distance", DistanceMmDisplay(distance.value.get()))?;
         }
-        if let Some(pitch) = snapshot.pitch_mdeg {
+        if let Some(pitch) = snapshot.pitch {
             fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
         }
-        if let Some(roll) = snapshot.roll_mdeg {
+        if let Some(roll) = snapshot.roll {
             fields.write("roll", millidegrees_to_degrees(roll.value.get()), "deg")?;
         }
 
@@ -1667,10 +1667,10 @@ impl fmt::Display for TelemetryDeltaLog {
         let mut fields = TelemetryFieldWriter::new(f, None, "unmapped");
         let delta = self.0;
 
-        if let Some(speed) = delta.speed_mm_s {
+        if let Some(speed) = delta.speed {
             fields.write("speed", mm_s_to_mph(speed.value.get()), "mph")?;
         }
-        if let Some(voltage) = delta.voltage_mv {
+        if let Some(voltage) = delta.voltage {
             fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
         }
         if let Some(percent) = delta
@@ -1679,10 +1679,10 @@ impl fmt::Display for TelemetryDeltaLog {
         {
             fields.write("battery", percent.value, "%")?;
         }
-        if let Some(current) = delta.battery_current_ma.or(delta.motor_current_ma) {
+        if let Some(current) = delta.battery_current.or(delta.motor_current) {
             fields.write("current", milliamps_to_amps(current.value.get()), "A")?;
         }
-        if let Some(power) = delta.power_mw {
+        if let Some(power) = delta.power {
             fields.write(
                 "power",
                 PowerWatts::from_milliwatts(power.value.get()).get(),
@@ -1690,9 +1690,9 @@ impl fmt::Display for TelemetryDeltaLog {
             )?;
         }
         if let Some(temperature) = delta
-            .controller_temperature_mc
-            .or(delta.motor_temperature_mc)
-            .or(delta.battery_temperature_mc)
+            .controller_temperature
+            .or(delta.motor_temperature)
+            .or(delta.battery_temperature)
         {
             fields.write(
                 "temperature",
@@ -1700,13 +1700,13 @@ impl fmt::Display for TelemetryDeltaLog {
                 "C",
             )?;
         }
-        if let Some(pwm) = delta.pwm_permille {
+        if let Some(pwm) = delta.pwm {
             fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
-        if let Some(distance) = delta.distance_mm {
+        if let Some(distance) = delta.distance {
             fields.write_display("distance", DistanceMmDisplay(distance.value.get()))?;
         }
-        if let Some(pitch) = delta.pitch_mdeg {
+        if let Some(pitch) = delta.pitch {
             fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
         }
 
@@ -2994,19 +2994,19 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
 }
 
 fn voltage_range_percent(sample_v: u64, min_mv: i32, max_mv: i32) -> u64 {
-    let voltage_mv = i64::try_from(sample_v)
+    let voltage = i64::try_from(sample_v)
         .unwrap_or(i64::MAX / 1_000)
         .saturating_mul(1_000);
     let min_mv = i64::from(min_mv);
     let max_mv = i64::from(max_mv);
-    if max_mv <= min_mv || voltage_mv <= min_mv {
+    if max_mv <= min_mv || voltage <= min_mv {
         return 0;
     }
-    if voltage_mv >= max_mv {
+    if voltage >= max_mv {
         return 100;
     }
 
-    u64::try_from(((voltage_mv - min_mv) * 100 + (max_mv - min_mv) / 2) / (max_mv - min_mv))
+    u64::try_from(((voltage - min_mv) * 100 + (max_mv - min_mv) / 2) / (max_mv - min_mv))
         .unwrap_or(100)
 }
 
@@ -3467,23 +3467,23 @@ mod tests {
         ProtocolSelector::new(value)
     }
 
-    fn speed_mm_s(value: i32) -> Measured<cutout_core::Speed> {
+    fn speed(value: i32) -> Measured<cutout_core::Speed> {
         Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
     }
 
-    fn voltage_mv(value: i32) -> Measured<cutout_core::Voltage> {
+    fn voltage(value: i32) -> Measured<cutout_core::Voltage> {
         Measured::reported(cutout_core::Voltage::from_millivolts(value))
     }
 
-    fn battery_current_ma(value: i32) -> Measured<cutout_core::BatteryCurrent> {
+    fn battery_current(value: i32) -> Measured<cutout_core::BatteryCurrent> {
         Measured::reported(cutout_core::BatteryCurrent::from_milliamps(value))
     }
 
-    fn power_mw(value: i64) -> Measured<cutout_core::Power> {
+    fn power(value: i64) -> Measured<cutout_core::Power> {
         Measured::calculated(cutout_core::Power::from_milliwatts(value))
     }
 
-    fn temperature_mc(value: i32) -> Measured<cutout_core::Temperature> {
+    fn temperature(value: i32) -> Measured<cutout_core::Temperature> {
         Measured::reported(cutout_core::Temperature::from_millicelsius(value))
     }
 
@@ -3491,7 +3491,7 @@ mod tests {
         Measured::reported(cutout_core::DutyCycle::from_permille(value))
     }
 
-    fn distance_mm(value: u64) -> Measured<cutout_core::Distance> {
+    fn distance(value: u64) -> Measured<cutout_core::Distance> {
         Measured::reported(cutout_core::Distance::from_millimetres(value))
     }
 
@@ -3578,16 +3578,16 @@ mod tests {
             ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
                 BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                 BatteryInfo {
-                    temperature_mc: Some(temperature_mc(16_730)),
+                    temperature: Some(temperature(16_730)),
                     ..BatteryInfo::default()
                 },
                 [
-                    Some(temperature_mc(16_730)),
-                    Some(temperature_mc(17_840)),
-                    Some(temperature_mc(18_100)),
-                    Some(temperature_mc(17_800)),
-                    Some(temperature_mc(17_700)),
-                    Some(temperature_mc(19_100)),
+                    Some(temperature(16_730)),
+                    Some(temperature(17_840)),
+                    Some(temperature(18_100)),
+                    Some(temperature(17_800)),
+                    Some(temperature(17_700)),
+                    Some(temperature(19_100)),
                 ],
             )),
             ReadOnlyResponse::Battery(BatteryPagePayload::raw(
@@ -4096,11 +4096,11 @@ mod tests {
             latest_notification_len: Some(NotificationByteLen::new(100)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
-                speed_mm_s: Some(speed_mm_s(4_470)),
-                voltage_mv: Some(voltage_mv(84_400)),
-                battery_current_ma: Some(battery_current_ma(-12_400)),
-                power_mw: Some(power_mw(-1_046_560)),
-                controller_temperature_mc: Some(temperature_mc(36_600)),
+                speed: Some(speed(4_470)),
+                voltage: Some(voltage(84_400)),
+                battery_current: Some(battery_current(-12_400)),
+                power: Some(power(-1_046_560)),
+                controller_temperature: Some(temperature(36_600)),
                 battery_percent_reported: Some(percent_reported(77)),
                 ..TelemetrySnapshot::default()
             },
@@ -4115,11 +4115,11 @@ mod tests {
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
-                    speed_mm_s: Some(speed_mm_s(4_470)),
-                    voltage_mv: Some(voltage_mv(84_400)),
-                    battery_current_ma: Some(battery_current_ma(-12_400)),
-                    power_mw: Some(power_mw(-1_046_560)),
-                    controller_temperature_mc: Some(temperature_mc(36_600)),
+                    speed: Some(speed(4_470)),
+                    voltage: Some(voltage(84_400)),
+                    battery_current: Some(battery_current(-12_400)),
+                    power: Some(power(-1_046_560)),
+                    controller_temperature: Some(temperature(36_600)),
                     battery_percent_reported: Some(percent_reported(77)),
                     ..TelemetryDelta::empty(42)
                 },
@@ -4188,14 +4188,14 @@ mod tests {
             latest_notification_len: Some(NotificationByteLen::new(99)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
-                voltage_mv: Some(voltage_mv(117_600)),
+                voltage: Some(voltage(117_600)),
                 battery_percent_estimated: Some(percent_estimated(78)),
                 ..TelemetrySnapshot::default()
             },
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
-                    voltage_mv: Some(voltage_mv(117_600)),
+                    voltage: Some(voltage(117_600)),
                     battery_percent_estimated: Some(percent_estimated(78)),
                     ..TelemetryDelta::empty(7)
                 },
@@ -4291,16 +4291,16 @@ mod tests {
     #[test]
     fn mapped_telemetry_log_keeps_snapshot_structured_until_render_edge() {
         let snapshot = TelemetrySnapshot {
-            speed_mm_s: Some(speed_mm_s(12_000)),
-            voltage_mv: Some(voltage_mv(119_600)),
+            speed: Some(speed(12_000)),
+            voltage: Some(voltage(119_600)),
             battery_percent_reported: Some(percent_reported(87)),
-            motor_current_ma: Some(battery_current_ma(-18_500)),
-            power_mw: Some(power_mw(-2_212_600)),
-            controller_temperature_mc: Some(temperature_mc(36_000)),
-            pwm_permille: Some(duty_cycle_permille(420)),
-            distance_mm: Some(distance_mm(1_551_169_000)),
-            pitch_mdeg: Some(angle_mdeg(-2_000)),
-            roll_mdeg: Some(angle_mdeg(1_000)),
+            motor_current: Some(battery_current(-18_500)),
+            power: Some(power(-2_212_600)),
+            controller_temperature: Some(temperature(36_000)),
+            pwm: Some(duty_cycle_permille(420)),
+            distance: Some(distance(1_551_169_000)),
+            pitch: Some(angle_mdeg(-2_000)),
+            roll: Some(angle_mdeg(1_000)),
             ..TelemetrySnapshot::default()
         };
 
@@ -4390,14 +4390,14 @@ mod tests {
     #[test]
     fn telemetry_delta_log_reuses_typed_field_rendering() {
         let delta = TelemetryDelta {
-            speed_mm_s: Some(speed_mm_s(4_470)),
-            voltage_mv: Some(voltage_mv(118_400)),
+            speed: Some(speed(4_470)),
+            voltage: Some(voltage(118_400)),
             battery_percent_estimated: Some(percent_estimated(78)),
-            battery_current_ma: Some(battery_current_ma(-12_400)),
-            power_mw: Some(power_mw(-1_468_160)),
-            motor_temperature_mc: Some(temperature_mc(44_600)),
-            distance_mm: Some(distance_mm(999_000)),
-            pitch_mdeg: Some(angle_mdeg(-3_000)),
+            battery_current: Some(battery_current(-12_400)),
+            power: Some(power(-1_468_160)),
+            motor_temperature: Some(temperature(44_600)),
+            distance: Some(distance(999_000)),
+            pitch: Some(angle_mdeg(-3_000)),
             ..TelemetryDelta::empty(42)
         };
 
@@ -4454,7 +4454,7 @@ mod tests {
 
         assert_display_preserves_capacity(
             MappedTelemetryLog(TelemetrySnapshot {
-                voltage_mv: Some(voltage_mv(119_600)),
+                voltage: Some(voltage(119_600)),
                 battery_percent_reported: Some(percent_reported(87)),
                 ..TelemetrySnapshot::default()
             }),
@@ -4473,7 +4473,7 @@ mod tests {
                 BatteryPagePayload::raw(
                     BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo {
-                        current_ma: Some(battery_current_ma(2_010)),
+                        current: Some(battery_current(2_010)),
                         ..BatteryInfo::default()
                     },
                 )
@@ -4577,16 +4577,16 @@ mod tests {
         let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
             BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
             BatteryInfo {
-                temperature_mc: Some(temperature_mc(17_600)),
+                temperature: Some(temperature(17_600)),
                 ..BatteryInfo::default()
             },
             [
-                Some(temperature_mc(17_600)),
-                Some(temperature_mc(17_100)),
-                Some(temperature_mc(17_700)),
-                Some(temperature_mc(18_500)),
-                Some(temperature_mc(19_000)),
-                Some(temperature_mc(19_100)),
+                Some(temperature(17_600)),
+                Some(temperature(17_100)),
+                Some(temperature(17_700)),
+                Some(temperature(18_500)),
+                Some(temperature(19_000)),
+                Some(temperature(19_100)),
             ],
         ));
         let report = SessionBridgeReport {
@@ -4627,7 +4627,7 @@ mod tests {
             BatteryPagePayload::raw(
                 BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                 BatteryInfo {
-                    current_ma: Some(battery_current_ma(2_010)),
+                    current: Some(battery_current(2_010)),
                     ..BatteryInfo::default()
                 },
             )
@@ -4685,7 +4685,7 @@ mod tests {
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
-                    voltage_mv: Some(voltage_mv(108_760)),
+                    voltage: Some(voltage(108_760)),
                     battery_percent_estimated: Some(percent_estimated(47)),
                     ..TelemetryDelta::empty(7)
                 },
@@ -4814,8 +4814,8 @@ mod tests {
     fn live_session_report_wires_complete_aero_dashboard_state() {
         let mut state = DashboardState::empty();
         let telemetry = TelemetryDelta {
-            speed_mm_s: Some(speed_mm_s(4_470)),
-            voltage_mv: Some(voltage_mv(108_760)),
+            speed: Some(speed(4_470)),
+            voltage: Some(voltage(108_760)),
             battery_percent_estimated: Some(percent_estimated(47)),
             ..TelemetryDelta::empty(42)
         };
@@ -4972,16 +4972,16 @@ mod tests {
                 ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
                     BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                     BatteryInfo {
-                        temperature_mc: Some(temperature_mc(17_600)),
+                        temperature: Some(temperature(17_600)),
                         ..BatteryInfo::default()
                     },
                     [
-                        Some(temperature_mc(17_600)),
-                        Some(temperature_mc(17_100)),
-                        Some(temperature_mc(17_700)),
-                        Some(temperature_mc(18_500)),
-                        Some(temperature_mc(19_000)),
-                        Some(temperature_mc(19_100)),
+                        Some(temperature(17_600)),
+                        Some(temperature(17_100)),
+                        Some(temperature(17_700)),
+                        Some(temperature(18_500)),
+                        Some(temperature(19_000)),
+                        Some(temperature(19_100)),
                     ],
                 )),
                 ReadOnlyResponse::Battery(BatteryPagePayload::raw(
@@ -5131,13 +5131,13 @@ mod tests {
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(42),
                 delta: TelemetryDelta {
-                    speed_mm_s: Some(speed_mm_s(0)),
-                    voltage_mv: Some(voltage_mv(108_760)),
-                    motor_current_ma: Some(battery_current_ma(0)),
-                    controller_temperature_mc: Some(temperature_mc(33_270)),
-                    pwm_permille: Some(duty_cycle_permille(-1_000)),
-                    distance_mm: Some(distance_mm(1_551_169_000)),
-                    pitch_mdeg: Some(angle_mdeg(69_060)),
+                    speed: Some(speed(0)),
+                    voltage: Some(voltage(108_760)),
+                    motor_current: Some(battery_current(0)),
+                    controller_temperature: Some(temperature(33_270)),
+                    pwm: Some(duty_cycle_permille(-1_000)),
+                    distance: Some(distance(1_551_169_000)),
+                    pitch: Some(angle_mdeg(69_060)),
                     battery_percent_estimated: Some(percent_estimated(47)),
                     ..TelemetryDelta::empty(42)
                 },

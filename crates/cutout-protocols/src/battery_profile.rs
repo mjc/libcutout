@@ -26,15 +26,8 @@ pub struct BatteryVoltageProfile {
 impl BatteryVoltageProfile {
     /// Estimates battery percentage from pack voltage and series cell count.
     #[must_use]
-    pub fn estimate_percent_from_pack_voltage(
-        self,
-        pack_voltage_mv: Voltage,
-        series_cells: u8,
-    ) -> u8 {
-        self.estimate_percent_from_cell_voltage(normalize_cell_voltage(
-            pack_voltage_mv,
-            series_cells,
-        ))
+    pub fn estimate_percent_from_pack_voltage(self, pack_voltage: Voltage, series_cells: u8) -> u8 {
+        self.estimate_percent_from_cell_voltage(normalize_cell_voltage(pack_voltage, series_cells))
     }
 
     /// Estimates battery percentage from a single-cell voltage.
@@ -103,14 +96,14 @@ pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     points: &SAMSUNG_50S_CELL_POINTS,
 };
 
-fn normalize_cell_voltage(pack_voltage_mv: Voltage, series_cells: u8) -> CellVoltage {
+fn normalize_cell_voltage(pack_voltage: Voltage, series_cells: u8) -> CellVoltage {
     let series_cells = i32::from(series_cells);
     if series_cells <= 0 {
         return CellVoltage::from_microvolts(0);
     }
 
     CellVoltage::from_microvolts(
-        ((pack_voltage_mv.as_millivolts() * 1_000) + (series_cells / 2)) / series_cells,
+        ((pack_voltage.as_millivolts() * 1_000) + (series_cells / 2)) / series_cells,
     )
 }
 

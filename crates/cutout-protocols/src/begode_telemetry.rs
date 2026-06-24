@@ -594,10 +594,8 @@ const fn within_percent(value: u32, expected: u32, percent: u32) -> bool {
 fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvidence> {
     let (key, value) = annotation.split_once('=')?;
     match key.trim() {
-        "battery" | "app_voltage_class" | "charger_voltage" | "charger_voltage_class" => {
-            voltage_class_evidence(value)
-        }
-        "charger_voltage_mv" | "observed_pack_voltage_mv" | "bms_voltage_mv" | "app_voltage_mv" => {
+        "battery" | "app_voltage_class" | "charger_voltage_class" => voltage_class_evidence(value),
+        "charger_voltage" | "observed_pack_voltage" | "bms_voltage" | "app_voltage" => {
             parse_mv_evidence(value)
         }
         _ => None,
@@ -853,7 +851,7 @@ impl BegodeLiveATelemetry {
             phase_current: PhaseCurrent::from_milliamps(
                 i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
             ),
-            imu_temperature: mpu6050_temperature_mc(be_i16(cursor, ByteOffset::new(12))),
+            imu_temperature: mpu6050_temperature(be_i16(cursor, ByteOffset::new(12))),
             hardware_pwm: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
                 cursor,
                 ByteOffset::new(14),
@@ -879,20 +877,17 @@ impl BegodeLiveATelemetry {
         unit_mode: BegodeUnitMode,
     ) -> TelemetryDelta {
         TelemetryDelta {
-            speed_mm_s: Some(source_reported(unit_mode.speed(self.speed))),
-            voltage_mv: Some(source_reported(self.voltage)),
-            motor_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(
+            speed: Some(source_reported(unit_mode.speed(self.speed))),
+            voltage: Some(source_reported(self.voltage)),
+            motor_current: Some(source_reported(BatteryCurrent::from_milliamps(
                 self.phase_current.as_milliamps(),
             ))),
-            power_mw: Some(source_calculated(power_mw(
-                self.voltage,
-                self.phase_current,
-            ))),
-            controller_temperature_mc: Some(source_reported(self.imu_temperature)),
-            pwm_permille: Some(source_reported(DutyCycle::from_permille(
+            power: Some(source_calculated(power(self.voltage, self.phase_current))),
+            controller_temperature: Some(source_reported(self.imu_temperature)),
+            pwm: Some(source_reported(DutyCycle::from_permille(
                 self.hardware_pwm.as_permille(),
             ))),
-            distance_mm: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
+            distance: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
             battery_percent_estimated: Some(source_estimated(self.battery_percent)),
             ..TelemetryDelta::empty(at_ms)
         }
@@ -961,7 +956,7 @@ impl BegodeLiveBTelemetry {
     #[must_use]
     pub fn to_delta_with_units(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            distance_mm: Some(source_reported(Distance::from_millimetres(
+            distance: Some(source_reported(Distance::from_millimetres(
                 self.total_distance.as_millimetres(),
             ))),
             ..TelemetryDelta::empty(at_ms)
@@ -989,7 +984,7 @@ impl BegodeLiveBTelemetry {
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(speed_mm_s_to_kmh_u16(
+                    i64::from(speed_to_kmh_u16(
                         self.tiltback_speed.as_millimetres_per_second(),
                     )),
                 )),
@@ -1074,9 +1069,9 @@ impl BegodeExtraTelemetry {
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            battery_current_ma: Some(source_reported(self.battery_current)),
-            motor_temperature_mc: Some(source_reported(self.motor_temperature)),
-            pwm_permille: Some(source_reported(self.true_pwm)),
+            battery_current: Some(source_reported(self.battery_current)),
+            motor_temperature: Some(source_reported(self.motor_temperature)),
+            pwm: Some(source_reported(self.true_pwm)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1161,20 +1156,20 @@ fn speed_to_milli_kmh(value: Speed) -> i32 {
     value.as_millimetres_per_second() * 18 / 5
 }
 
-fn speed_mm_s_to_kmh_u16(value: i32) -> u16 {
+fn speed_to_kmh_u16(value: i32) -> u16 {
     let kmh = div_round(value * 18, 5_000);
     u16::try_from(kmh).unwrap_or(u16::MAX)
 }
 
-fn power_mw(voltage: Voltage, current_ma: PhaseCurrent) -> Power {
-    Power::from_voltage_current(voltage, current_ma)
+fn power(voltage: Voltage, current: PhaseCurrent) -> Power {
+    Power::from_voltage_current(voltage, current)
 }
 
 fn raw_pwm_to_permille(raw_pwm: i16) -> i16 {
     raw_pwm / 10
 }
 
-fn mpu6050_temperature_mc(raw_temperature: i16) -> Temperature {
+fn mpu6050_temperature(raw_temperature: i16) -> Temperature {
     Temperature::from_millicelsius(36_530 + (i32::from(raw_temperature) * 1_000) / 340)
 }
 
@@ -1358,28 +1353,28 @@ mod tests {
             delta,
             TelemetryDelta {
                 at_ms: 42,
-                speed_mm_s: Some(source_reported(
+                speed: Some(source_reported(
                     cutout_core::Speed::from_millimetres_per_second(13_360,)
                 )),
-                voltage_mv: Some(source_reported(Voltage::from_millivolts(75_063))),
-                battery_current_ma: None,
-                motor_current_ma: Some(source_reported(
+                voltage: Some(source_reported(Voltage::from_millivolts(75_063))),
+                battery_current: None,
+                motor_current: Some(source_reported(
                     cutout_core::BatteryCurrent::from_milliamps(-11_800,)
                 )),
-                power_mw: Some(source_calculated(cutout_core::Power::from_milliwatts(
+                power: Some(source_calculated(cutout_core::Power::from_milliwatts(
                     -885_743
                 ))),
-                controller_temperature_mc: Some(source_reported(
+                controller_temperature: Some(source_reported(
                     cutout_core::Temperature::from_millicelsius(27_930,)
                 )),
-                motor_temperature_mc: None,
-                battery_temperature_mc: None,
-                pwm_permille: Some(source_reported(cutout_core::DutyCycle::from_permille(524))),
-                distance_mm: Some(source_reported(cutout_core::Distance::from_millimetres(
+                motor_temperature: None,
+                battery_temperature: None,
+                pwm: Some(source_reported(cutout_core::DutyCycle::from_permille(524))),
+                distance: Some(source_reported(cutout_core::Distance::from_millimetres(
                     750_000
                 ))),
-                pitch_mdeg: None,
-                roll_mdeg: None,
+                pitch: None,
+                roll: None,
                 battery_percent_reported: None,
                 battery_percent_estimated: Some(source_estimated(
                     cutout_core::Percent::from_percent(50)
@@ -1394,7 +1389,7 @@ mod tests {
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
 
         assert_eq!(
-            telemetry.to_delta(99).distance_mm,
+            telemetry.to_delta(99).distance,
             Some(source_reported(cutout_core::Distance::from_millimetres(
                 50_000
             )))
@@ -1448,13 +1443,13 @@ mod tests {
         let delta = context.live_a_to_delta(telemetry, 42);
 
         assert_eq!(
-            delta.speed_mm_s,
+            delta.speed,
             Some(source_reported(
                 cutout_core::Speed::from_millimetres_per_second(21_500)
             ))
         );
         assert_eq!(
-            delta.distance_mm,
+            delta.distance,
             Some(source_reported(cutout_core::Distance::from_millimetres(
                 1_207_008
             )))
@@ -1479,7 +1474,7 @@ mod tests {
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B decodes");
 
         assert_eq!(
-            telemetry.to_delta(7).distance_mm,
+            telemetry.to_delta(7).distance,
             Some(source_reported(cutout_core::Distance::from_millimetres(
                 80_467
             )))
@@ -1521,19 +1516,19 @@ mod tests {
         let delta = telemetry.to_delta(7);
 
         assert_eq!(
-            delta.battery_current_ma,
+            delta.battery_current,
             Some(source_reported(
                 cutout_core::BatteryCurrent::from_milliamps(-1_000)
             ))
         );
         assert_eq!(
-            delta.motor_temperature_mc,
+            delta.motor_temperature,
             Some(source_reported(
                 cutout_core::Temperature::from_millicelsius(42_000)
             ))
         );
         assert_eq!(
-            delta.pwm_permille,
+            delta.pwm,
             Some(source_reported(cutout_core::DutyCycle::from_permille(-4)))
         );
     }
@@ -1701,7 +1696,7 @@ mod tests {
     fn voltage_evidence_from_annotations_uses_non_overlapping_observed_voltage() {
         assert_eq!(
             select_begode_pack_voltage_profile_from_annotations([
-                "observed_pack_voltage_mv=95000",
+                "observed_pack_voltage=95000",
                 "capture_label=rolling_forward",
             ]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
@@ -1725,7 +1720,7 @@ mod tests {
             select_begode_pack_voltage_profile_from_annotations([
                 "model=Falcon",
                 "cell_model=Samsung 50S",
-                "observed_pack_voltage_mv=80000",
+                "observed_pack_voltage=80000",
             ]),
             BegodeVoltageProfileSelection::Missing
         );

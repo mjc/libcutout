@@ -86,9 +86,9 @@ impl BegodeBmsSummary {
     #[must_use]
     pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
         TelemetryDelta {
-            voltage_mv: Some(source_reported(self.pack_voltage)),
-            battery_current_ma: Some(source_reported(self.current)),
-            battery_temperature_mc: Some(source_reported(self.temperature_0)),
+            voltage: Some(source_reported(self.pack_voltage)),
+            battery_current: Some(source_reported(self.current)),
+            battery_temperature: Some(source_reported(self.temperature_0)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -99,9 +99,9 @@ impl BegodeBmsSummary {
         ReadOnlyResponse::Battery(BatteryPagePayload::raw(
             BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
             BatteryInfo {
-                voltage_mv: Some(source_reported(self.pack_voltage)),
-                current_ma: Some(source_reported(self.current)),
-                temperature_mc: Some(source_reported(self.temperature_0)),
+                voltage: Some(source_reported(self.pack_voltage)),
+                current: Some(source_reported(self.current)),
+                temperature: Some(source_reported(self.temperature_0)),
                 ..BatteryInfo::default()
             },
         ))
@@ -264,11 +264,9 @@ mod tests {
         assert_eq!(
             summary.to_delta(77),
             TelemetryDelta {
-                voltage_mv: Some(source_reported(Voltage::from_millivolts(80_000))),
-                battery_current_ma: Some(source_reported(BatteryCurrent::from_milliamps(-10_000))),
-                battery_temperature_mc: Some(source_reported(Temperature::from_millicelsius(
-                    25_000,
-                ))),
+                voltage: Some(source_reported(Voltage::from_millivolts(80_000))),
+                battery_current: Some(source_reported(BatteryCurrent::from_milliamps(-10_000))),
+                battery_temperature: Some(source_reported(Temperature::from_millicelsius(25_000,))),
                 ..TelemetryDelta::empty(77)
             }
         );
@@ -290,11 +288,11 @@ mod tests {
             .to_delta(2);
 
         assert_eq!(
-            live_delta.voltage_mv,
+            live_delta.voltage,
             Some(source_reported(Voltage::from_millivolts(75_063)))
         );
         assert_eq!(
-            bms_delta.voltage_mv,
+            bms_delta.voltage,
             Some(source_reported(Voltage::from_millivolts(80_000)))
         );
     }
@@ -315,11 +313,11 @@ mod tests {
             VerificationStatus::SourceVerified
         );
         assert_eq!(
-            payload.battery().voltage_mv,
+            payload.battery().voltage,
             Some(source_reported(Voltage::from_millivolts(80_000)))
         );
         assert_eq!(
-            payload.battery().current_ma,
+            payload.battery().current,
             Some(source_reported(BatteryCurrent::from_milliamps(-10_000)))
         );
     }
