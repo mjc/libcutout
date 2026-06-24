@@ -3344,6 +3344,425 @@ impl<T> Measured<T> {
             verification: VerificationStatus::Inferred,
         }
     }
+
+    /// Transforms the underlying value while keeping provenance metadata.
+    #[must_use]
+    pub fn map_value<U>(self, f: impl FnOnce(T) -> U) -> Measured<U> {
+        Measured {
+            value: f(self.value),
+            source: self.source,
+            quality: self.quality,
+            verification: self.verification,
+        }
+    }
+}
+
+/// Marker trait for zero-sized quantity dimensions.
+pub trait Dimension: Copy + Eq {}
+
+/// Electrical potential dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricPotential;
+
+impl Dimension for ElectricPotential {}
+
+/// Electrical current dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricCurrent;
+
+impl Dimension for ElectricCurrent {}
+
+/// Electrical power dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricPower;
+
+impl Dimension for ElectricPower {}
+
+/// Linear velocity dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Velocity;
+
+impl Dimension for Velocity {}
+
+/// Length dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Length;
+
+impl Dimension for Length {}
+
+/// Thermodynamic temperature dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ThermodynamicTemperature;
+
+impl Dimension for ThermodynamicTemperature {}
+
+/// Plane angle dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlaneAngle;
+
+impl Dimension for PlaneAngle {}
+
+/// Dimensionless ratio dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ratio;
+
+impl Dimension for Ratio {}
+
+/// Marker trait for zero-sized quantity units.
+pub trait Unit: Copy + Eq {
+    /// Dimension measured by this unit.
+    type Dimension: Dimension;
+}
+
+/// Millivolt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliVolt;
+
+impl Unit for MilliVolt {
+    type Dimension = ElectricPotential;
+}
+
+/// Milliamp storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliAmp;
+
+impl Unit for MilliAmp {
+    type Dimension = ElectricCurrent;
+}
+
+/// Milliwatt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliWatt;
+
+impl Unit for MilliWatt {
+    type Dimension = ElectricPower;
+}
+
+/// Millimetres per second storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MillimetrePerSecond;
+
+impl Unit for MillimetrePerSecond {
+    type Dimension = Velocity;
+}
+
+/// Millimetre storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Millimetre;
+
+impl Unit for Millimetre {
+    type Dimension = Length;
+}
+
+/// Millicelsius storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliCelsius;
+
+impl Unit for MilliCelsius {
+    type Dimension = ThermodynamicTemperature;
+}
+
+/// Millidegree storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliDegree;
+
+impl Unit for MilliDegree {
+    type Dimension = PlaneAngle;
+}
+
+/// Permille storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Permille;
+
+impl Unit for Permille {
+    type Dimension = Ratio;
+}
+
+/// Percent storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PercentUnit;
+
+impl Unit for PercentUnit {
+    type Dimension = Ratio;
+}
+
+/// Fixed-point quantity tagged by zero-sized dimension and unit markers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+{
+    value: T,
+    dimension: PhantomData<D>,
+    unit: PhantomData<U>,
+}
+
+impl<D, U, T> Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+{
+    /// Creates a quantity from a value already expressed in its storage unit.
+    #[must_use]
+    pub const fn new(value: T) -> Self {
+        Self {
+            value,
+            dimension: PhantomData,
+            unit: PhantomData,
+        }
+    }
+
+    /// Creates a quantity from a value already expressed in its storage unit.
+    #[must_use]
+    pub const fn from_unit_value(value: T) -> Self {
+        Self::new(value)
+    }
+
+    /// Returns the value in this quantity's storage unit.
+    #[must_use]
+    pub const fn unit_value(self) -> T
+    where
+        T: Copy,
+    {
+        self.value
+    }
+
+    /// Returns the value in this quantity's storage unit.
+    #[must_use]
+    pub const fn get(self) -> T
+    where
+        T: Copy,
+    {
+        self.unit_value()
+    }
+}
+
+impl<D, U, T> fmt::Display for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+/// Electrical voltage stored in millivolts.
+pub type Voltage = Quantity<ElectricPotential, MilliVolt, i32>;
+
+impl Voltage {
+    /// Creates a voltage from millivolts.
+    #[must_use]
+    pub const fn from_millivolts(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this voltage in millivolts.
+    #[must_use]
+    pub const fn as_millivolts(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this voltage in volts.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_volts(self) -> f32 {
+        self.as_millivolts() as f32 / 1_000.0
+    }
+}
+
+/// Electrical current stored in milliamps.
+pub type Current = Quantity<ElectricCurrent, MilliAmp, i32>;
+
+/// Motor/phase current stored in milliamps.
+pub type PhaseCurrent = Current;
+
+/// Battery/input current stored in milliamps.
+pub type BatteryCurrent = Current;
+
+impl Current {
+    /// Creates a current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.as_milliamps() as f32 / 1_000.0
+    }
+}
+
+/// Electrical power stored in milliwatts.
+pub type Power = Quantity<ElectricPower, MilliWatt, i64>;
+
+impl Power {
+    /// Creates a power value from milliwatts.
+    #[must_use]
+    pub const fn from_milliwatts(value: i64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Calculates electrical power from voltage and current.
+    #[must_use]
+    pub fn from_voltage_current(voltage: Voltage, current: Current) -> Self {
+        Self::from_milliwatts(
+            i64::from(voltage.as_millivolts()) * i64::from(current.as_milliamps()) / 1_000,
+        )
+    }
+
+    /// Returns this power in milliwatts.
+    #[must_use]
+    pub const fn as_milliwatts(self) -> i64 {
+        self.unit_value()
+    }
+
+    /// Returns this power in watts.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_watts(self) -> f32 {
+        self.as_milliwatts() as f32 / 1_000.0
+    }
+}
+
+/// Linear speed stored in millimetres per second.
+pub type Speed = Quantity<Velocity, MillimetrePerSecond, i32>;
+
+impl Speed {
+    /// Creates a speed from millimetres per second.
+    #[must_use]
+    pub const fn from_millimetres_per_second(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this speed in millimetres per second.
+    #[must_use]
+    pub const fn as_millimetres_per_second(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this speed in metres per second.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_metres_per_second(self) -> f32 {
+        self.as_millimetres_per_second() as f32 / 1_000.0
+    }
+}
+
+/// Linear distance stored in millimetres.
+pub type Distance = Quantity<Length, Millimetre, u64>;
+
+impl Distance {
+    /// Creates a distance from millimetres.
+    #[must_use]
+    pub const fn from_millimetres(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this distance in millimetres.
+    #[must_use]
+    pub const fn as_millimetres(self) -> u64 {
+        self.unit_value()
+    }
+}
+
+/// Temperature stored in millicelsius.
+pub type Temperature = Quantity<ThermodynamicTemperature, MilliCelsius, i32>;
+
+impl Temperature {
+    /// Creates a temperature from millicelsius.
+    #[must_use]
+    pub const fn from_millicelsius(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this temperature in millicelsius.
+    #[must_use]
+    pub const fn as_millicelsius(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this temperature in celsius.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_celsius(self) -> f32 {
+        self.as_millicelsius() as f32 / 1_000.0
+    }
+}
+
+/// Plane angle stored in millidegrees.
+pub type Angle = Quantity<PlaneAngle, MilliDegree, i32>;
+
+impl Angle {
+    /// Creates an angle from millidegrees.
+    #[must_use]
+    pub const fn from_millidegrees(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this angle in millidegrees.
+    #[must_use]
+    pub const fn as_millidegrees(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this angle in degrees.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_degrees(self) -> f32 {
+        self.as_millidegrees() as f32 / 1_000.0
+    }
+}
+
+/// Ratio stored in permille.
+pub type DutyCycle = Quantity<Ratio, Permille, i16>;
+
+impl DutyCycle {
+    /// Creates a duty cycle from permille.
+    #[must_use]
+    pub const fn from_permille(value: i16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this duty cycle in permille.
+    #[must_use]
+    pub const fn as_permille(self) -> i16 {
+        self.unit_value()
+    }
+
+    /// Returns this duty cycle as percent.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_percent(self) -> f32 {
+        f32::from(self.as_permille()) / 10.0
+    }
+}
+
+/// Ratio stored as a percentage.
+pub type Percent = Quantity<Ratio, PercentUnit, u8>;
+
+impl Percent {
+    /// Creates a percentage value.
+    #[must_use]
+    pub const fn from_percent(value: u8) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this percentage value.
+    #[must_use]
+    pub const fn as_percent(self) -> u8 {
+        self.unit_value()
+    }
 }
 
 /// Raw numeric field reported by a protocol-specific response.
@@ -3482,19 +3901,19 @@ impl core::fmt::Display for ChargeMode {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatteryInfo {
     /// Pack or input voltage in millivolts.
-    pub voltage_mv: Option<Measured<i32>>,
+    pub voltage_mv: Option<Measured<Voltage>>,
 
     /// Pack or battery current in milliamps.
-    pub current_ma: Option<Measured<i32>>,
+    pub current_ma: Option<Measured<BatteryCurrent>>,
 
     /// Battery percentage reported by the device.
-    pub percent_reported: Option<Measured<u8>>,
+    pub percent_reported: Option<Measured<Percent>>,
 
     /// Battery percentage estimated by Cutout.
-    pub percent_estimated: Option<Measured<u8>>,
+    pub percent_estimated: Option<Measured<Percent>>,
 
     /// Battery or BMS temperature in millicelsius.
-    pub temperature_mc: Option<Measured<i32>>,
+    pub temperature_mc: Option<Measured<Temperature>>,
 
     /// Raw battery/BMS state field, when present.
     pub raw_state: Option<RawFieldValue>,
@@ -3606,46 +4025,46 @@ pub struct TelemetryDelta {
     pub at_ms: MonotonicMillis,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed_mm_s: Option<Measured<i32>>,
+    pub speed_mm_s: Option<Measured<Speed>>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage_mv: Option<Measured<i32>>,
+    pub voltage_mv: Option<Measured<Voltage>>,
 
     /// Battery/input current in milliamps.
-    pub battery_current_ma: Option<Measured<i32>>,
+    pub battery_current_ma: Option<Measured<BatteryCurrent>>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current_ma: Option<Measured<i32>>,
+    pub motor_current_ma: Option<Measured<PhaseCurrent>>,
 
     /// Electrical power in milliwatts.
-    pub power_mw: Option<Measured<i64>>,
+    pub power_mw: Option<Measured<Power>>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<Measured<i32>>,
+    pub controller_temperature_mc: Option<Measured<Temperature>>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<Measured<i32>>,
+    pub motor_temperature_mc: Option<Measured<Temperature>>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<Measured<i32>>,
+    pub battery_temperature_mc: Option<Measured<Temperature>>,
 
     /// PWM duty in permille.
-    pub pwm_permille: Option<Measured<i16>>,
+    pub pwm_permille: Option<Measured<DutyCycle>>,
 
     /// Total or trip distance in millimeters.
-    pub distance_mm: Option<Measured<u64>>,
+    pub distance_mm: Option<Measured<Distance>>,
 
     /// Pitch in millidegrees.
-    pub pitch_mdeg: Option<Measured<i32>>,
+    pub pitch_mdeg: Option<Measured<Angle>>,
 
     /// Roll in millidegrees.
-    pub roll_mdeg: Option<Measured<i32>>,
+    pub roll_mdeg: Option<Measured<Angle>>,
 
     /// Battery percentage reported by the device.
-    pub battery_percent_reported: Option<Measured<u8>>,
+    pub battery_percent_reported: Option<Measured<Percent>>,
 
     /// Battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<Measured<u8>>,
+    pub battery_percent_estimated: Option<Measured<Percent>>,
 }
 
 impl TelemetryDelta {
@@ -3679,46 +4098,46 @@ pub struct TelemetrySnapshot {
     pub at_ms: Option<MonotonicMillis>,
 
     /// Latest known speed in millimeters per second.
-    pub speed_mm_s: Option<Measured<i32>>,
+    pub speed_mm_s: Option<Measured<Speed>>,
 
     /// Latest known input voltage in millivolts.
-    pub voltage_mv: Option<Measured<i32>>,
+    pub voltage_mv: Option<Measured<Voltage>>,
 
     /// Latest known battery/input current in milliamps.
-    pub battery_current_ma: Option<Measured<i32>>,
+    pub battery_current_ma: Option<Measured<BatteryCurrent>>,
 
     /// Latest known motor/phase current in milliamps.
-    pub motor_current_ma: Option<Measured<i32>>,
+    pub motor_current_ma: Option<Measured<PhaseCurrent>>,
 
     /// Latest known electrical power in milliwatts.
-    pub power_mw: Option<Measured<i64>>,
+    pub power_mw: Option<Measured<Power>>,
 
     /// Latest known controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<Measured<i32>>,
+    pub controller_temperature_mc: Option<Measured<Temperature>>,
 
     /// Latest known motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<Measured<i32>>,
+    pub motor_temperature_mc: Option<Measured<Temperature>>,
 
     /// Latest known battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<Measured<i32>>,
+    pub battery_temperature_mc: Option<Measured<Temperature>>,
 
     /// Latest known PWM duty in permille.
-    pub pwm_permille: Option<Measured<i16>>,
+    pub pwm_permille: Option<Measured<DutyCycle>>,
 
     /// Latest known total or trip distance in millimeters.
-    pub distance_mm: Option<Measured<u64>>,
+    pub distance_mm: Option<Measured<Distance>>,
 
     /// Latest known pitch in millidegrees.
-    pub pitch_mdeg: Option<Measured<i32>>,
+    pub pitch_mdeg: Option<Measured<Angle>>,
 
     /// Latest known roll in millidegrees.
-    pub roll_mdeg: Option<Measured<i32>>,
+    pub roll_mdeg: Option<Measured<Angle>>,
 
     /// Latest known battery percentage reported by the device.
-    pub battery_percent_reported: Option<Measured<u8>>,
+    pub battery_percent_reported: Option<Measured<Percent>>,
 
     /// Latest known battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<Measured<u8>>,
+    pub battery_percent_estimated: Option<Measured<Percent>>,
 }
 
 impl TelemetrySnapshot {
@@ -4604,9 +5023,10 @@ pub const fn crate_name() -> &'static str {
 mod tests {
     use super::crate_name;
     use crate::{
-        DeviceCommand, DeviceEvent, GattChannel, LinkInfo, Measured, ProtocolSession, SessionInput,
-        SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, UnsupportedReason,
-        ValueQuality, ValueSource, VerificationStatus, WriteMode, WritePayload,
+        BatteryCurrent, DeviceCommand, DeviceEvent, Distance, GattChannel, LinkInfo, Measured,
+        Percent, ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta,
+        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -5021,14 +5441,16 @@ mod tests {
         let mut snapshot = TelemetrySnapshot::default();
         let first = TelemetryDelta {
             at_ms: 100,
-            speed_mm_s: Some(Measured::reported(1_500)),
-            voltage_mv: Some(Measured::reported(81_000)),
-            battery_current_ma: Some(Measured::reported(-2_000)),
+            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_500,
+            ))),
+            voltage_mv: Some(Measured::reported(Voltage::from_millivolts(81_000))),
+            battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
             ..TelemetryDelta::empty(100)
         };
         let second = TelemetryDelta {
             at_ms: 150,
-            motor_temperature_mc: Some(Measured::reported(42_500)),
+            motor_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(42_500))),
             ..TelemetryDelta::empty(150)
         };
 
@@ -5036,11 +5458,19 @@ mod tests {
         snapshot.apply_delta(second);
 
         assert_eq!(snapshot.at_ms, Some(150));
-        assert_eq!(snapshot.speed_mm_s, Some(Measured::reported(1_500)));
-        assert_eq!(snapshot.voltage_mv, Some(Measured::reported(81_000)));
+        assert_eq!(
+            snapshot.speed_mm_s,
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_500
+            )))
+        );
+        assert_eq!(
+            snapshot.voltage_mv,
+            Some(Measured::reported(Voltage::from_millivolts(81_000)))
+        );
         assert_eq!(
             snapshot.motor_temperature_mc,
-            Some(Measured::reported(42_500))
+            Some(Measured::reported(Temperature::from_millicelsius(42_500)))
         );
     }
 
@@ -5049,13 +5479,19 @@ mod tests {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(TelemetryDelta {
             at_ms: 200,
-            speed_mm_s: Some(Measured::reported(0)),
-            battery_current_ma: Some(Measured::reported(0)),
+            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
+            battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
             ..TelemetryDelta::empty(200)
         });
 
-        assert_eq!(snapshot.speed_mm_s, Some(Measured::reported(0)));
-        assert_eq!(snapshot.battery_current_ma, Some(Measured::reported(0)));
+        assert_eq!(
+            snapshot.speed_mm_s,
+            Some(Measured::reported(Speed::from_millimetres_per_second(0)))
+        );
+        assert_eq!(
+            snapshot.battery_current_ma,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+        );
         assert_eq!(snapshot.motor_current_ma, None);
     }
 
@@ -5081,40 +5517,47 @@ mod tests {
     #[test]
     fn telemetry_keeps_distinct_current_temperature_and_estimate_fields() {
         let mut snapshot = TelemetrySnapshot::default();
-        let estimated_percent = Measured::estimated(76);
+        let estimated_percent = Measured::estimated(Percent::from_percent(76));
 
         snapshot.apply_delta(TelemetryDelta {
             at_ms: 300,
-            battery_current_ma: Some(Measured::reported(-1_200)),
-            motor_current_ma: Some(Measured::reported(3_400)),
-            controller_temperature_mc: Some(Measured::reported(35_000)),
-            motor_temperature_mc: Some(Measured::reported(45_000)),
-            battery_temperature_mc: Some(Measured::reported(31_000)),
-            battery_percent_reported: Some(Measured::reported(80)),
+            battery_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200))),
+            motor_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(3_400))),
+            controller_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+                35_000,
+            ))),
+            motor_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(45_000))),
+            battery_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+                31_000,
+            ))),
+            battery_percent_reported: Some(Measured::reported(Percent::from_percent(80))),
             battery_percent_estimated: Some(estimated_percent),
             ..TelemetryDelta::empty(300)
         });
 
         assert_eq!(
             snapshot.battery_current_ma,
-            Some(Measured::reported(-1_200))
+            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200)))
         );
-        assert_eq!(snapshot.motor_current_ma, Some(Measured::reported(3_400)));
+        assert_eq!(
+            snapshot.motor_current_ma,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(3_400)))
+        );
         assert_eq!(
             snapshot.controller_temperature_mc,
-            Some(Measured::reported(35_000))
+            Some(Measured::reported(Temperature::from_millicelsius(35_000)))
         );
         assert_eq!(
             snapshot.motor_temperature_mc,
-            Some(Measured::reported(45_000))
+            Some(Measured::reported(Temperature::from_millicelsius(45_000)))
         );
         assert_eq!(
             snapshot.battery_temperature_mc,
-            Some(Measured::reported(31_000))
+            Some(Measured::reported(Temperature::from_millicelsius(31_000)))
         );
         assert_eq!(
             snapshot.battery_percent_reported,
-            Some(Measured::reported(80))
+            Some(Measured::reported(Percent::from_percent(80)))
         );
         assert_eq!(snapshot.battery_percent_estimated, Some(estimated_percent));
         assert_eq!(
@@ -5129,7 +5572,7 @@ mod tests {
     fn telemetry_delta_can_be_emitted_as_device_event() {
         let delta = TelemetryDelta {
             at_ms: 400,
-            distance_mm: Some(Measured::reported(12_345)),
+            distance_mm: Some(Measured::reported(Distance::from_millimetres(12_345))),
             ..TelemetryDelta::empty(400)
         };
 
@@ -5137,7 +5580,7 @@ mod tests {
             DeviceEvent::Telemetry(delta),
             DeviceEvent::Telemetry(TelemetryDelta {
                 at_ms: 400,
-                distance_mm: Some(Measured::reported(12_345)),
+                distance_mm: Some(Measured::reported(Distance::from_millimetres(12_345))),
                 ..TelemetryDelta::empty(400)
             })
         );
@@ -5164,10 +5607,10 @@ mod tests {
     #[test]
     fn battery_response_distinguishes_reported_estimated_and_unknown_percent() {
         let battery = crate::BatteryInfo {
-            voltage_mv: Some(Measured::reported(80_400)),
-            current_ma: Some(Measured::reported(0)),
-            percent_reported: Some(Measured::reported(0)),
-            percent_estimated: Some(Measured::estimated(42)),
+            voltage_mv: Some(Measured::reported(Voltage::from_millivolts(80_400))),
+            current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            percent_reported: Some(Measured::reported(Percent::from_percent(0))),
+            percent_estimated: Some(Measured::estimated(Percent::from_percent(42))),
             temperature_mc: None,
             raw_state: None,
         };
@@ -5186,10 +5629,13 @@ mod tests {
                 VerificationStatus::SourceVerified,
             )
         );
-        assert_eq!(response.battery().current_ma, Some(Measured::reported(0)));
+        assert_eq!(
+            response.battery().current_ma,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+        );
         assert_eq!(
             response.battery().percent_reported,
-            Some(Measured::reported(0))
+            Some(Measured::reported(Percent::from_percent(0)))
         );
         assert_eq!(
             response
@@ -7341,14 +7787,17 @@ mod tests {
     proptest! {
         #[test]
         fn battery_response_keeps_unknown_distinct_from_zero(include_zero in any::<bool>()) {
-            let percent_reported = include_zero.then_some(Measured::reported(0));
+            let percent_reported = include_zero.then_some(Measured::reported(Percent::from_percent(0)));
             let response = crate::BatteryInfo {
                 percent_reported,
                 ..crate::BatteryInfo::default()
             };
 
             if include_zero {
-                prop_assert_eq!(response.percent_reported, Some(Measured::reported(0)));
+                prop_assert_eq!(
+                    response.percent_reported,
+                    Some(Measured::reported(Percent::from_percent(0)))
+                );
             } else {
                 prop_assert_eq!(response.percent_reported, None);
             }
@@ -7473,7 +7922,9 @@ mod tests {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta {
                             at_ms: 40,
-                            speed_mm_s: Some(Measured::reported(1_200)),
+                            speed_mm_s: Some(Measured::reported(
+                                Speed::from_millimetres_per_second(1_200),
+                            )),
                             ..TelemetryDelta::empty(40)
                         },
                     )));
@@ -7503,7 +7954,9 @@ mod tests {
         assert_eq!(host.current_snapshot().at_ms, Some(40));
         assert_eq!(
             host.current_snapshot().speed_mm_s,
-            Some(Measured::reported(1_200))
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_200
+            )))
         );
     }
 
@@ -7552,7 +8005,9 @@ mod tests {
                             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                                 TelemetryDelta {
                                     at_ms: 90,
-                                    speed_mm_s: Some(Measured::reported(self.sum)),
+                                    speed_mm_s: Some(Measured::reported(
+                                        Speed::from_millimetres_per_second(self.sum),
+                                    )),
                                     ..TelemetryDelta::empty(90)
                                 },
                             )));
@@ -7647,7 +8102,7 @@ mod tests {
                 }),
                 DeviceEvent::Telemetry(TelemetryDelta {
                     at_ms: 90,
-                    speed_mm_s: Some(Measured::reported(9)),
+                    speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
                     ..TelemetryDelta::empty(90)
                 }),
                 DeviceEvent::LinkDown,
@@ -7759,9 +8214,9 @@ mod tests {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
                         at_ms: monotonic_ms,
-                        speed_mm_s: Some(Measured::reported(
+                        speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
                             i32::try_from(bytes.len()).unwrap_or(0),
-                        )),
+                        ))),
                         ..TelemetryDelta::empty(monotonic_ms)
                     },
                 )));
@@ -7912,7 +8367,7 @@ mod tests {
                 SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 1 }),
                 SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
                     at_ms: 90,
-                    speed_mm_s: Some(Measured::reported(9)),
+                    speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
                     ..TelemetryDelta::empty(90)
                 })),
                 SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 3 }),

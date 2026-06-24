@@ -1,12 +1,14 @@
 use crate::{
-    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrentMa,
-    BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
-    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
-    DiagnosticSeverity, FirmwareInfo, LightState, Measured, NotificationEvidence,
-    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, ProtocolFamily,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta,
-    TelemetrySnapshot, TransportAction, ValueQuality, ValueSource, VerificationStatus, WriteMode,
+    Angle, BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
+    BmsPackCurrentMa, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
+    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
+    LightState, Measured, NotificationEvidence, NotificationIngestOutcome, ParserDiagnostics,
+    ParserError, ParserGapEvidence, Percent, Power, ProtocolFamily, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SessionInput,
+    SessionOutput, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot,
+    Temperature, TransportAction, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -547,6 +549,60 @@ impl From<Measured<u16>> for MeasuredU16Dto {
             quality: measured.quality.into(),
             verification: measured.verification.into(),
         }
+    }
+}
+
+impl From<Measured<Voltage>> for MeasuredI32Dto {
+    fn from(measured: Measured<Voltage>) -> Self {
+        Self::from(measured.map_value(Voltage::as_millivolts))
+    }
+}
+
+impl From<Measured<BatteryCurrent>> for MeasuredI32Dto {
+    fn from(measured: Measured<BatteryCurrent>) -> Self {
+        Self::from(measured.map_value(BatteryCurrent::as_milliamps))
+    }
+}
+
+impl From<Measured<Power>> for MeasuredI64Dto {
+    fn from(measured: Measured<Power>) -> Self {
+        Self::from(measured.map_value(Power::as_milliwatts))
+    }
+}
+
+impl From<Measured<Speed>> for MeasuredI32Dto {
+    fn from(measured: Measured<Speed>) -> Self {
+        Self::from(measured.map_value(Speed::as_millimetres_per_second))
+    }
+}
+
+impl From<Measured<Temperature>> for MeasuredI32Dto {
+    fn from(measured: Measured<Temperature>) -> Self {
+        Self::from(measured.map_value(Temperature::as_millicelsius))
+    }
+}
+
+impl From<Measured<DutyCycle>> for MeasuredI16Dto {
+    fn from(measured: Measured<DutyCycle>) -> Self {
+        Self::from(measured.map_value(DutyCycle::as_permille))
+    }
+}
+
+impl From<Measured<Distance>> for MeasuredU64Dto {
+    fn from(measured: Measured<Distance>) -> Self {
+        Self::from(measured.map_value(Distance::as_millimetres))
+    }
+}
+
+impl From<Measured<Angle>> for MeasuredI32Dto {
+    fn from(measured: Measured<Angle>) -> Self {
+        Self::from(measured.map_value(Angle::as_millidegrees))
+    }
+}
+
+impl From<Measured<Percent>> for MeasuredU8Dto {
+    fn from(measured: Measured<Percent>) -> Self {
+        Self::from(measured.map_value(Percent::as_percent))
     }
 }
 
@@ -1609,11 +1665,12 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
 #[cfg(test)]
 mod tests {
     use crate::{
-        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DeviceCommand, DeviceEvent,
-        DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
-        LinkInfo, Measured, ProtocolSelector, RawFieldValue, ReadOnlyResponse, SessionInput,
-        SessionOutput, SettingsEntry, SettingsReadback, TelemetrySnapshot, TransportAction,
-        ValueQuality, ValueSource, VerificationStatus, WriteMode, WritePayload,
+        BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DeviceCommand,
+        DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle,
+        FirmwareInfo, GattChannel, LinkInfo, Measured, Percent, ProtocolSelector, RawFieldValue,
+        ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
+        TelemetrySnapshot, Temperature, TransportAction, ValueQuality, ValueSource,
+        VerificationStatus, Voltage, WriteMode, WritePayload,
     };
 
     use super::*;
@@ -1627,11 +1684,13 @@ mod tests {
                     VerificationStatus::SourceVerified,
                 ),
                 BatteryInfo {
-                    voltage_mv: Some(Measured::reported(80_000)),
+                    voltage_mv: Some(Measured::reported(Voltage::from_millivolts(80_000))),
                     current_ma: None,
-                    percent_reported: Some(Measured::reported(72)),
+                    percent_reported: Some(Measured::reported(Percent::from_percent(72))),
                     percent_estimated: None,
-                    temperature_mc: Some(Measured::reported(25_000)),
+                    temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+                        25_000,
+                    ))),
                     raw_state: Some(RawFieldValue::new(0x0008, 0x55aa)),
                 },
             )
@@ -1889,20 +1948,24 @@ mod tests {
     fn telemetry_snapshot_dto_preserves_optional_fields() {
         let snapshot = TelemetrySnapshot {
             at_ms: Some(42),
-            speed_mm_s: Some(Measured::reported(1_200)),
-            voltage_mv: Some(Measured::reported(84_000)),
+            speed_mm_s: Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_200,
+            ))),
+            voltage_mv: Some(Measured::reported(Voltage::from_millivolts(84_000))),
             battery_current_ma: None,
-            motor_current_ma: Some(Measured::reported(-1_500)),
+            motor_current_ma: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_500))),
             power_mw: None,
-            controller_temperature_mc: Some(Measured::reported(31_000)),
+            controller_temperature_mc: Some(Measured::reported(Temperature::from_millicelsius(
+                31_000,
+            ))),
             motor_temperature_mc: None,
             battery_temperature_mc: None,
-            pwm_permille: Some(Measured::reported(250)),
-            distance_mm: Some(Measured::reported(12_345)),
+            pwm_permille: Some(Measured::reported(DutyCycle::from_permille(250))),
+            distance_mm: Some(Measured::reported(Distance::from_millimetres(12_345))),
             pitch_mdeg: None,
             roll_mdeg: None,
             battery_percent_reported: None,
-            battery_percent_estimated: Some(Measured::estimated(80)),
+            battery_percent_estimated: Some(Measured::estimated(Percent::from_percent(80))),
         };
 
         let dto = TelemetrySnapshotDto::from(snapshot);

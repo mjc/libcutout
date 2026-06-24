@@ -366,7 +366,9 @@ mod tests {
             current_ma: None,
             percent_reported: None,
             percent_estimated: None,
-            temperature_mc: Some(Measured::reported(16_730)),
+            temperature_mc: Some(Measured::reported(crate::Temperature::from_millicelsius(
+                16_730,
+            ))),
             raw_state: None,
         };
         let page = BatteryPageMetadata::temperature(sel(3), VerificationStatus::SourceVerified);
@@ -419,7 +421,9 @@ mod tests {
     #[test]
     fn explicit_temperature_constructor_chooses_temperature_variant() {
         let battery = BatteryInfo {
-            temperature_mc: Some(Measured::reported(17_830)),
+            temperature_mc: Some(Measured::reported(crate::Temperature::from_millicelsius(
+                17_830,
+            ))),
             ..BatteryInfo::default()
         };
         let page = BatteryPageMetadata::temperature(sel(3), VerificationStatus::SourceVerified);
