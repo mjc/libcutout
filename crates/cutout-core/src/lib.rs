@@ -8,7 +8,7 @@
 
 //! Core types and setup scaffolding for Cutout.
 
-use std::{fmt, marker::PhantomData, ops::RangeInclusive};
+use std::{cmp::Ordering, fmt, marker::PhantomData, ops::RangeInclusive};
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
@@ -3600,6 +3600,28 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.value.fmt(f)
+    }
+}
+
+impl<D, U, T> Ord for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.value.cmp(&other.value)
+    }
+}
+
+impl<D, U, T> PartialOrd for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: Ord,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

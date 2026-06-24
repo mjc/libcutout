@@ -856,10 +856,10 @@ impl BegodeLiveATelemetry {
                 cursor,
                 ByteOffset::new(14),
             ))),
-            battery_percent: Percent::from_percent(estimate_begode_battery_percent(
+            battery_percent: estimate_begode_battery_percent(
                 scaled_voltage(raw_voltage_centivolts, profile),
                 profile,
-            )),
+            ),
         })
     }
 
@@ -1108,10 +1108,13 @@ pub enum BegodeTelemetryError {
 
 /// Estimates Begode battery percent from scaled pack voltage and profile.
 #[must_use]
-pub fn estimate_begode_battery_percent(voltage: Voltage, profile: BegodePackVoltageProfile) -> u8 {
+pub fn estimate_begode_battery_percent(
+    voltage: Voltage,
+    profile: BegodePackVoltageProfile,
+) -> Percent {
     let raw_centivolts = unscaled_centivolts(voltage, profile);
     if raw_centivolts <= 5_120 {
-        return 0;
+        return Percent::from_percent(0);
     }
     if raw_centivolts <= 5_440 {
         return percent_from_i32(div_round(raw_centivolts - 5_120, 36).clamp(0, 100));
@@ -1119,7 +1122,7 @@ pub fn estimate_begode_battery_percent(voltage: Voltage, profile: BegodePackVolt
     if raw_centivolts <= 6_680 {
         return percent_from_i32(div_round((raw_centivolts - 5_320) * 10, 136).clamp(0, 100));
     }
-    100
+    Percent::from_percent(100)
 }
 
 fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryError> {
@@ -1252,8 +1255,8 @@ fn mph_to_kmh_u16(value: u16) -> u16 {
     u16::try_from(scaled / 1_000_000).unwrap_or(u16::MAX)
 }
 
-fn percent_from_i32(percent: i32) -> u8 {
-    match u8::try_from(percent) {
+fn percent_from_i32(percent: i32) -> Percent {
+    Percent::from_percent(match u8::try_from(percent) {
         Ok(value) => value,
         Err(_) => {
             if percent < 0 {
@@ -1262,7 +1265,7 @@ fn percent_from_i32(percent: i32) -> u8 {
                 100
             }
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1553,7 +1556,7 @@ mod tests {
                 Voltage::from_millivolts(75_063),
                 BegodePackVoltageProfile::Begode84VFullCharge,
             ),
-            50
+            cutout_core::Percent::from_percent(50)
         );
     }
 
