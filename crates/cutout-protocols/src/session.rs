@@ -2092,10 +2092,10 @@ mod tests {
             ))
         );
         assert_eq!(
-            telemetry.motor_current,
+            telemetry.battery_current,
             Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
-        assert_eq!(telemetry.battery_current, None);
+        assert_eq!(telemetry.motor_current, None);
         assert_eq!(
             telemetry.power,
             Some(Measured::calculated(cutout_core::Power::from_milliwatts(0)))
