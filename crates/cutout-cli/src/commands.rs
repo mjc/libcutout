@@ -564,7 +564,7 @@ fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationByteTotal {
         .records
         .iter()
         .filter(|record| record.direction == PevcapDirection::Inbound)
-        .map(|record| NotificationByteLen::new(record.bytes.len()))
+        .map(|record| NotificationByteLen::from_bytes(record.bytes.len()))
         .fold(NotificationByteTotal::default(), |total, len| {
             total.saturating_add_len(len)
         })
@@ -576,7 +576,7 @@ fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<Notificatio
         .iter()
         .rev()
         .find(|record| record.direction == PevcapDirection::Inbound)
-        .map(|record| NotificationByteLen::new(record.bytes.len()))
+        .map(|record| NotificationByteLen::from_bytes(record.bytes.len()))
 }
 
 fn render_diagnostic_snapshots_jsonl(
@@ -2352,7 +2352,7 @@ mod tests {
     }
 
     const fn frame_len(value: usize) -> ParserFrameLen {
-        ParserFrameLen::new(value)
+        ParserFrameLen::from_bytes(value)
     }
 
     struct DropSignal(mpsc::Sender<()>);
@@ -2382,7 +2382,7 @@ mod tests {
                 } => output.push(SessionOutput::NotificationIngest(
                     cutout_core::NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                     ),
                 )),
@@ -2859,7 +2859,7 @@ mod tests {
             replay[1],
             SessionOutput::NotificationIngest(
                 cutout_core::NotificationIngestOutcome::Ignored(evidence)
-            ) if evidence.monotonic_ms == ms(7) && evidence.len == NotificationByteLen::new(4)
+            ) if evidence.monotonic_ms == ms(7) && evidence.len == NotificationByteLen::from_bytes(4)
         ));
         assert!(matches!(
             replay[2],
@@ -3049,11 +3049,11 @@ mod tests {
         let outcome = cutout_core::NotificationIngestOutcome::known_reserved(
             ProtocolFamily::VeteranLeaperkimNosfet,
             VETERAN_DATA_CHANNEL,
-            NotificationByteLen::new(75),
+            NotificationByteLen::from_bytes(75),
             ms(42),
             cutout_core::ReservedPayloadEvidence {
                 classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
-                body_len: PayloadBodyLen::new(24),
+                body_len: PayloadBodyLen::from_bytes(24),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -3343,7 +3343,7 @@ mod tests {
         );
         assert_eq!(
             state.counters.latest_notification_len,
-            Some(NotificationByteLen::new(99))
+            Some(NotificationByteLen::from_bytes(99))
         );
         assert_eq!(
             state

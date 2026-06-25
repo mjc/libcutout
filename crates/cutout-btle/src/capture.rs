@@ -62,7 +62,7 @@ impl CapturedBtlePacket {
     /// Returns the captured byte length.
     #[must_use]
     pub fn len(&self) -> NotificationByteLen {
-        NotificationByteLen::new(self.as_raw_bytes().len())
+        NotificationByteLen::from_bytes(self.as_raw_bytes().len())
     }
 
     /// Returns true when no bytes were captured.
@@ -107,7 +107,7 @@ impl BtleAttributeValue {
             Err(MalformedBtlePacket {
                 bytes,
                 reason: MalformedBtlePacketReason::OversizedAttributeValue {
-                    max: NotificationByteLen::new(MAX_BTLE_ATTRIBUTE_VALUE_LEN),
+                    max: NotificationByteLen::from_bytes(MAX_BTLE_ATTRIBUTE_VALUE_LEN),
                 },
             })
         }

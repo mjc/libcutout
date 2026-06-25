@@ -648,7 +648,7 @@ impl PevcapCapture {
             }
             let remaining = max_notification_len - covered;
             let next = chunk_len.min(remaining);
-            lengths.push(NotificationChunkLen::new(next));
+            lengths.push(NotificationChunkLen::from_bytes(next));
             covered += next;
         }
         lengths
@@ -1009,7 +1009,9 @@ fn replay_pevcap_notification<S>(
                 if offset >= record.bytes.len() {
                     break;
                 }
-                let end = offset.saturating_add(length.get()).min(record.bytes.len());
+                let end = offset
+                    .saturating_add(length.as_bytes())
+                    .min(record.bytes.len());
                 host.ingest(SessionInput::Notification {
                     channel: record.characteristic,
                     bytes: &record.bytes[offset..end],
@@ -1826,7 +1828,7 @@ mod tests {
                     output.push(SessionOutput::NotificationIngest(
                         crate::NotificationIngestOutcome::ignored_wrong_channel(
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                         ),
                     ));
@@ -2355,7 +2357,7 @@ mod tests {
                 output,
                 SessionOutput::NotificationIngest(
                     crate::NotificationIngestOutcome::Ignored(evidence)
-                ) if evidence.len == NotificationByteLen::new(1)
+                ) if evidence.len == NotificationByteLen::from_bytes(1)
             )
         }));
     }
@@ -2385,7 +2387,10 @@ mod tests {
             )],
         );
 
-        let lengths = [NotificationChunkLen::new(2), NotificationChunkLen::new(1)];
+        let lengths = [
+            NotificationChunkLen::from_bytes(2),
+            NotificationChunkLen::from_bytes(1),
+        ];
         let outputs = replay_outputs(&capture, PevcapReplayMode::Lengths(&lengths));
         assert_eq!(outputs.len(), 4);
         assert_eq!(
@@ -2395,7 +2400,7 @@ mod tests {
         assert!(matches!(
             outputs[1],
             SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
-                if evidence.len == NotificationByteLen::new(2)
+                if evidence.len == NotificationByteLen::from_bytes(2)
         ));
     }
 
@@ -2429,7 +2434,7 @@ mod tests {
 
             let chunk_lengths = lengths
                 .into_iter()
-                .map(NotificationChunkLen::new)
+                .map(NotificationChunkLen::from_bytes)
                 .collect::<Vec<_>>();
 
             prop_assert_eq!(

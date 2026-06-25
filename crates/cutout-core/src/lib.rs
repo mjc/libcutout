@@ -1918,8 +1918,8 @@ pub struct ParserLimits {
 impl Default for ParserLimits {
     fn default() -> Self {
         Self {
-            max_frame_len: ParserFrameLen::new(4_096),
-            max_buffered_len: ParserBufferedLen::new(8_192),
+            max_frame_len: ParserFrameLen::from_bytes(4_096),
+            max_buffered_len: ParserBufferedLen::from_bytes(8_192),
             max_queued_outputs: ParserQueuedOutputCount::new(128),
             timeout_ms: MonotonicTimestamp::new(1_000),
         }
@@ -1945,14 +1945,9 @@ impl ParserLimits {
     }
 }
 
-enum NotificationByteLenUnit {}
-enum NotificationChunkLenUnit {}
-enum PayloadBodyLenUnit {}
 enum SemanticEventCountUnit {}
 enum ParserDroppedBytesUnit {}
 enum ParserDiagnosticCountUnit {}
-enum ParserFrameLenUnit {}
-enum ParserBufferedLenUnit {}
 enum ParserQueuedOutputCountUnit {}
 enum ProtocolSelectorUnit {}
 enum ProtocolTagUnit {}
@@ -2039,27 +2034,45 @@ impl ParserDiagnosticCount {
     }
 }
 
-typed_protocol_value!(
-    ParserFrameLen,
-    ParserFrameLenUnit,
-    usize,
-    "Length of one parser frame or claimed parser frame in bytes."
-);
+/// Size of one parser frame or claimed parser frame.
+pub type ParserFrameLen = Quantity<Information, ParserFrameByte, usize>;
 
 impl ParserFrameLen {
+    /// Creates a parser frame size from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this parser frame size in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> usize {
+        self.unit_value()
+    }
+
     /// Returns true when this frame length is less than or equal to another.
     #[must_use]
     pub const fn is_at_most(self, other: Self) -> bool {
-        self.value <= other.value
+        self.as_bytes() <= other.as_bytes()
     }
 }
 
-typed_protocol_value!(
-    ParserBufferedLen,
-    ParserBufferedLenUnit,
-    usize,
-    "Maximum buffered parser input length in bytes."
-);
+/// Maximum buffered parser input size.
+pub type ParserBufferedLen = Quantity<Information, ParserBufferByte, usize>;
+
+impl ParserBufferedLen {
+    /// Creates a buffered parser input size from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this buffered parser input size in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> usize {
+        self.unit_value()
+    }
+}
 
 typed_protocol_value!(
     ParserQueuedOutputCount,
@@ -2309,34 +2322,62 @@ impl DiagnosticError {
     }
 }
 
-typed_protocol_value!(
-    NotificationByteLen,
-    NotificationByteLenUnit,
-    usize,
-    "Length of one transport notification payload after capture/parser admission."
-);
+/// Size of one transport notification payload after capture/parser admission.
+pub type NotificationByteLen = Quantity<Information, NotificationPayloadByte, usize>;
 
-typed_protocol_value!(
-    NotificationChunkLen,
-    NotificationChunkLenUnit,
-    usize,
-    "Replay split length for one notification chunk; zero preserves whole-notification replay."
-);
-
-impl NotificationChunkLen {
-    /// Returns true when replay should preserve whole notifications.
+impl NotificationByteLen {
+    /// Creates a notification payload size from bytes.
     #[must_use]
-    pub const fn is_whole(self) -> bool {
-        self.value == 0
+    pub const fn from_bytes(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this notification payload size in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> usize {
+        self.unit_value()
     }
 }
 
-typed_protocol_value!(
-    PayloadBodyLen,
-    PayloadBodyLenUnit,
-    usize,
-    "Length of a protocol payload body after selector/tag framing bytes are removed."
-);
+/// Replay split size for one notification chunk; zero preserves whole-notification replay.
+pub type NotificationChunkLen = Quantity<Information, NotificationChunkByte, usize>;
+
+impl NotificationChunkLen {
+    /// Creates a notification replay chunk size from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this notification replay chunk size in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> usize {
+        self.unit_value()
+    }
+
+    /// Returns true when replay should preserve whole notifications.
+    #[must_use]
+    pub const fn is_whole(self) -> bool {
+        self.as_bytes() == 0
+    }
+}
+
+/// Size of a protocol payload body after selector/tag framing bytes are removed.
+pub type PayloadBodyLen = Quantity<Information, PayloadBodyByte, usize>;
+
+impl PayloadBodyLen {
+    /// Creates a protocol payload body size from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this protocol payload body size in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> usize {
+        self.unit_value()
+    }
+}
 
 typed_protocol_value!(
     SemanticEventCount,
@@ -3717,6 +3758,46 @@ impl Unit for Millimetre {
 pub struct Byte;
 
 impl Unit for Byte {
+    type Dimension = Information;
+}
+
+/// Parser frame byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserFrameByte;
+
+impl Unit for ParserFrameByte {
+    type Dimension = Information;
+}
+
+/// Parser buffer byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserBufferByte;
+
+impl Unit for ParserBufferByte {
+    type Dimension = Information;
+}
+
+/// Notification payload byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationPayloadByte;
+
+impl Unit for NotificationPayloadByte {
+    type Dimension = Information;
+}
+
+/// Notification chunk byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationChunkByte;
+
+impl Unit for NotificationChunkByte {
+    type Dimension = Information;
+}
+
+/// Protocol payload body byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PayloadBodyByte;
+
+impl Unit for PayloadBodyByte {
     type Dimension = Information;
 }
 
@@ -5105,7 +5186,7 @@ impl CaptureRecord {
         }
 
         bytes
-            .chunks(chunk_len.get())
+            .chunks(chunk_len.as_bytes())
             .map(|chunk| Self::notification(channel, chunk.to_vec(), monotonic_ms))
             .collect()
     }
@@ -5131,7 +5212,7 @@ impl CaptureRecord {
             if offset >= bytes.len() {
                 break;
             }
-            let end = offset.saturating_add(length.get()).min(bytes.len());
+            let end = offset.saturating_add(length.as_bytes()).min(bytes.len());
             records.push(Self::notification(
                 channel,
                 bytes[offset..end].to_vec(),
@@ -5270,7 +5351,7 @@ where
 {
     let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
     let one_byte_records =
-        split_capture_notifications_by_len(records, NotificationChunkLen::new(1));
+        split_capture_notifications_by_len(records, NotificationChunkLen::from_bytes(1));
     let one_byte =
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
     let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
@@ -5315,7 +5396,7 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<Notifica
         }
         let remaining = max_notification_len - covered;
         let next = chunk_len.min(remaining);
-        lengths.push(NotificationChunkLen::new(next));
+        lengths.push(NotificationChunkLen::from_bytes(next));
         covered += next;
     }
     lengths
@@ -5337,7 +5418,7 @@ pub fn notification_boundary_replay_cases(
 ) -> Vec<NotificationBoundaryReplayCase> {
     let whole_records = notification_records(channel, frames, monotonic_ms);
     let one_byte_records =
-        split_capture_notifications_by_len(&whole_records, NotificationChunkLen::new(1));
+        split_capture_notifications_by_len(&whole_records, NotificationChunkLen::from_bytes(1));
     let arbitrary_records =
         split_capture_notifications_by_lengths(&whole_records, arbitrary_lengths);
     let coalesced_records = coalesced_notification_record(channel, frames, monotonic_ms);
@@ -5555,7 +5636,7 @@ mod tests {
     }
 
     const fn frame_len(value: usize) -> crate::ParserFrameLen {
-        crate::ParserFrameLen::new(value)
+        crate::ParserFrameLen::from_bytes(value)
     }
 
     #[test]
@@ -5706,14 +5787,14 @@ mod tests {
 
     #[test]
     fn notification_ingest_evidence_uses_distinct_typed_protocol_values() {
-        let notification_len = crate::NotificationByteLen::new(77);
-        let body_len = crate::PayloadBodyLen::new(24);
+        let notification_len = crate::NotificationByteLen::from_bytes(77);
+        let body_len = crate::PayloadBodyLen::from_bytes(24);
         let event_count = crate::SemanticEventCount::new(3);
         let selector = crate::ProtocolSelector::new(8);
         let tag = crate::ProtocolTag::new(0x5c);
 
-        assert_eq!(notification_len.get(), 77);
-        assert_eq!(body_len.get(), 24);
+        assert_eq!(notification_len.as_bytes(), 77);
+        assert_eq!(body_len.as_bytes(), 24);
         assert_eq!(event_count.get(), 3);
         assert_eq!(selector.get(), 8);
         assert_eq!(tag.get(), 0x5c);
@@ -5724,12 +5805,12 @@ mod tests {
         let buffered = crate::NotificationIngestOutcome::buffered_fragment(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(20),
+            crate::NotificationByteLen::from_bytes(20),
             ms(7),
         );
         let ignored = crate::NotificationIngestOutcome::ignored_wrong_channel(
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(20),
+            crate::NotificationByteLen::from_bytes(20),
             ms(7),
         );
 
@@ -5738,7 +5819,7 @@ mod tests {
             crate::NotificationIngestOutcome::BufferedFragment(evidence)
                 if evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                     && evidence.channel == TEST_CHANNEL
-                    && evidence.len == crate::NotificationByteLen::new(20)
+                    && evidence.len == crate::NotificationByteLen::from_bytes(20)
                     && evidence.monotonic_ms == ms(7)
         ));
         assert!(matches!(
@@ -5746,7 +5827,7 @@ mod tests {
             crate::NotificationIngestOutcome::Ignored(evidence)
                 if evidence.family.is_none()
                     && evidence.channel == TEST_CHANNEL
-                    && evidence.len == crate::NotificationByteLen::new(20)
+                    && evidence.len == crate::NotificationByteLen::from_bytes(20)
                     && evidence.monotonic_ms == ms(7)
         ));
     }
@@ -5756,11 +5837,11 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::known_reserved(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(75),
+            crate::NotificationByteLen::from_bytes(75),
             ms(12),
             crate::ReservedPayloadEvidence {
                 classifier: crate::PayloadClassifier::selector(crate::ProtocolSelector::new(8)),
-                body_len: crate::PayloadBodyLen::new(68),
+                body_len: crate::PayloadBodyLen::from_bytes(68),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -5772,11 +5853,11 @@ mod tests {
                 payload,
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
-                && notification.len == crate::NotificationByteLen::new(75)
+                && notification.len == crate::NotificationByteLen::from_bytes(75)
                 && notification.monotonic_ms == ms(12)
                 && payload.classifier.selector_value() == Some(crate::ProtocolSelector::new(8))
                 && payload.classifier.tag_value().is_none()
-                && payload.body_len == crate::PayloadBodyLen::new(68)
+                && payload.body_len == crate::PayloadBodyLen::from_bytes(68)
                 && payload.verification == VerificationStatus::HardwareVerified
         ));
     }
@@ -5786,7 +5867,7 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::semantic_events(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(77),
+            crate::NotificationByteLen::from_bytes(77),
             ms(21),
             crate::SemanticEventCount::new(3),
         );
@@ -5798,7 +5879,7 @@ mod tests {
                 event_count,
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
-                && notification.len == crate::NotificationByteLen::new(77)
+                && notification.len == crate::NotificationByteLen::from_bytes(77)
                 && notification.monotonic_ms == ms(21)
                 && event_count == crate::SemanticEventCount::new(3)
         ));
@@ -5809,7 +5890,7 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::parser_diagnostic(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(77),
+            crate::NotificationByteLen::from_bytes(77),
             ms(22),
             crate::ParserError::BadChecksum,
         );
@@ -5829,17 +5910,18 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::parser_gap(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(77),
+            crate::NotificationByteLen::from_bytes(77),
             ms(15),
             crate::ParserGapEvidence {
                 classifier: crate::PayloadClassifier::tag(crate::ProtocolTag::new(0x5c)),
-                body_len: crate::PayloadBodyLen::new(70),
+                body_len: crate::PayloadBodyLen::from_bytes(70),
             },
         );
         let debug = format!("{outcome:?}");
 
         assert!(debug.contains("ParserGap"));
-        assert!(debug.contains("body_len: PayloadBodyLen(70)"));
+        assert!(debug.contains("body_len"));
+        assert!(debug.contains("value: 70"));
         assert!(!debug.contains("dc5a5c"));
         assert!(!debug.contains("bytes"));
     }
@@ -5870,7 +5952,7 @@ mod tests {
                     output.push(SessionOutput::NotificationIngest(
                         crate::NotificationIngestOutcome::ignored_wrong_channel(
                             channel,
-                            crate::NotificationByteLen::new(bytes.len()),
+                            crate::NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                         ),
                     ));
@@ -5943,7 +6025,7 @@ mod tests {
             &[SessionOutput::NotificationIngest(
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    crate::NotificationByteLen::new(3),
+                    crate::NotificationByteLen::from_bytes(3),
                     ms(20)
                 )
             )]
@@ -8456,7 +8538,7 @@ mod tests {
             &[SessionOutput::NotificationIngest(
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    crate::NotificationByteLen::new(3),
+                    crate::NotificationByteLen::from_bytes(3),
                     ms(20)
                 )
             )]
@@ -8480,7 +8562,7 @@ mod tests {
             &[SessionOutput::NotificationIngest(
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    crate::NotificationByteLen::new(4),
+                    crate::NotificationByteLen::from_bytes(4),
                     ms(42)
                 )
             )]
@@ -8735,13 +8817,13 @@ mod tests {
         assert_eq!(
             record
                 .clone()
-                .split_notification_bytes(crate::NotificationChunkLen::new(1)),
+                .split_notification_bytes(crate::NotificationChunkLen::from_bytes(1)),
             vec![record.clone()]
         );
         assert_eq!(
             record.clone().split_notification_by_lengths(&[
-                crate::NotificationChunkLen::new(1),
-                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::from_bytes(1),
+                crate::NotificationChunkLen::from_bytes(2),
             ]),
             vec![record]
         );
@@ -8756,7 +8838,7 @@ mod tests {
             ms(10),
         )];
         let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], ms(10))
-            .split_notification_bytes(crate::NotificationChunkLen::new(1));
+            .split_notification_bytes(crate::NotificationChunkLen::from_bytes(1));
 
         assert_eq!(replay_events(&one_byte), replay_events(&whole));
     }
@@ -8774,8 +8856,8 @@ mod tests {
             FramedCaptureSession::default,
             &records,
             &[
-                crate::NotificationChunkLen::new(2),
-                crate::NotificationChunkLen::new(1),
+                crate::NotificationChunkLen::from_bytes(2),
+                crate::NotificationChunkLen::from_bytes(1),
             ],
         );
 
@@ -8829,8 +8911,8 @@ mod tests {
             || NotificationLengthSession,
             &records,
             &[
-                crate::NotificationChunkLen::new(2),
-                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::from_bytes(2),
+                crate::NotificationChunkLen::from_bytes(2),
             ],
         );
 
@@ -8853,9 +8935,9 @@ mod tests {
         assert_eq!(
             crate::replay_arbitrary_chunk_lengths(&records),
             vec![
-                crate::NotificationChunkLen::new(2),
-                crate::NotificationChunkLen::new(3),
-                crate::NotificationChunkLen::new(5),
+                crate::NotificationChunkLen::from_bytes(2),
+                crate::NotificationChunkLen::from_bytes(3),
+                crate::NotificationChunkLen::from_bytes(5),
             ]
         );
     }
@@ -8880,7 +8962,7 @@ mod tests {
             channel,
             &[frame_a.as_slice(), frame_b.as_slice()],
             ms(10),
-            &[crate::NotificationChunkLen::new(2)],
+            &[crate::NotificationChunkLen::from_bytes(2)],
         );
 
         assert_eq!(
@@ -8939,7 +9021,7 @@ mod tests {
             let whole = [crate::CaptureRecord::notification(channel, payload.clone(), ms(20))];
             let chunk_lengths = lengths
                 .into_iter()
-                .map(crate::NotificationChunkLen::new)
+                .map(crate::NotificationChunkLen::from_bytes)
                 .collect::<Vec<_>>();
             let chunks = crate::CaptureRecord::notification(channel, payload, ms(20))
                 .split_notification_by_lengths(&chunk_lengths);

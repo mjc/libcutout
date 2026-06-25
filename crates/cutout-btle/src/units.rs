@@ -131,7 +131,7 @@ impl NotificationByteTotal {
     /// Creates a total from one typed notification length.
     #[must_use]
     pub const fn from_len(len: NotificationByteLen) -> Self {
-        Self(len.get())
+        Self(len.as_bytes())
     }
 
     /// Returns the primitive value for rendering or serialization edges.
@@ -149,7 +149,7 @@ impl NotificationByteTotal {
     /// Adds one typed notification length, saturating at `usize::MAX`.
     #[must_use]
     pub const fn saturating_add_len(self, len: NotificationByteLen) -> Self {
-        Self(self.0.saturating_add(len.get()))
+        Self(self.0.saturating_add(len.as_bytes()))
     }
 }
 

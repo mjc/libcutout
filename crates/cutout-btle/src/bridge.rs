@@ -681,28 +681,28 @@ fn log_notification_decode_outcome(
         Some(NotificationDecodeOutcome::SemanticEvents(_)) => {}
         Some(NotificationDecodeOutcome::BufferedFragment(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification buffered by protocol decoder"
             );
         }
         Some(NotificationDecodeOutcome::ParserDiagnostic(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification produced parser diagnostic"
             );
         }
         Some(NotificationDecodeOutcome::KnownReserved(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification produced known reserved protocol evidence"
             );
         }
         Some(NotificationDecodeOutcome::ParserGap(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification produced parser gap evidence"
             );
@@ -834,7 +834,7 @@ where
     for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
         let chunk = BtleWriteChunk::new(chunk, write_limit).ok_or(
             SessionBridgeError::WriteChunkTooLong {
-                len: cutout_core::NotificationByteLen::new(chunk.len()),
+                len: cutout_core::NotificationByteLen::from_bytes(chunk.len()),
                 limit: write_limit,
             },
         )?;

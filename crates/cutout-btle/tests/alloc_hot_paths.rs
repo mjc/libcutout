@@ -69,11 +69,11 @@ fn btle_report_records_typed_ingest_outcomes_without_allocating_after_setup() {
     let outcome = NotificationIngestOutcome::known_reserved(
         ProtocolFamily::VeteranLeaperkimNosfet,
         channel,
-        NotificationByteLen::new(75),
+        NotificationByteLen::from_bytes(75),
         ms(4),
         ReservedPayloadEvidence {
             classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-            body_len: PayloadBodyLen::new(24),
+            body_len: PayloadBodyLen::from_bytes(24),
             verification: VerificationStatus::HardwareVerified,
         },
     );

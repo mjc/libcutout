@@ -59,7 +59,9 @@ pub struct NotificationByteLenDto {
 
 impl NotificationByteLenDto {
     fn from_core(value: NotificationByteLen) -> Self {
-        Self { bytes: value.get() }
+        Self {
+            bytes: value.as_bytes(),
+        }
     }
 }
 
@@ -72,7 +74,9 @@ pub struct PayloadBodyLenDto {
 
 impl PayloadBodyLenDto {
     fn from_core(value: PayloadBodyLen) -> Self {
-        Self { bytes: value.get() }
+        Self {
+            bytes: value.as_bytes(),
+        }
     }
 }
 
@@ -141,7 +145,9 @@ pub struct ParserFrameLenDto {
 
 impl ParserFrameLenDto {
     fn from_core(value: ParserFrameLen) -> Self {
-        Self { bytes: value.get() }
+        Self {
+            bytes: value.as_bytes(),
+        }
     }
 }
 

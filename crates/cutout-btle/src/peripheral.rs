@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(
             malformed.reason(),
             MalformedBtlePacketReason::OversizedAttributeValue {
-                max: cutout_core::NotificationByteLen::new(512),
+                max: cutout_core::NotificationByteLen::from_bytes(512),
             }
         );
     }

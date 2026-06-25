@@ -2002,14 +2002,14 @@ impl fmt::Display for NotificationIngestLog {
                 self.monotonic_ms,
                 family_name(notification.family),
                 event_count.get(),
-                notification.len.get()
+                notification.len.as_bytes()
             ),
             NotificationIngestOutcome::BufferedFragment(notification) => write!(
                 f,
                 "t={}ms protocol buffered fragment family={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                notification.len.get()
+                notification.len.as_bytes()
             ),
             NotificationIngestOutcome::ParserDiagnostic {
                 notification,
@@ -2019,7 +2019,7 @@ impl fmt::Display for NotificationIngestLog {
                 "t={}ms protocol parser diagnostic family={} len={} error={error:?}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                notification.len.get()
+                notification.len.as_bytes()
             ),
             NotificationIngestOutcome::KnownReserved {
                 notification,
@@ -2041,9 +2041,9 @@ impl fmt::Display for NotificationIngestLog {
                         .tag_value()
                         .map(cutout_core::ProtocolTag::get)
                 ),
-                payload.body_len.get(),
+                payload.body_len.as_bytes(),
                 verification_name(payload.verification),
-                notification.len.get()
+                notification.len.as_bytes()
             ),
             NotificationIngestOutcome::ParserGap { notification, gap } => write!(
                 f,
@@ -2060,15 +2060,15 @@ impl fmt::Display for NotificationIngestLog {
                         .tag_value()
                         .map(cutout_core::ProtocolTag::get)
                 ),
-                gap.body_len.get(),
-                notification.len.get()
+                gap.body_len.as_bytes(),
+                notification.len.as_bytes()
             ),
             NotificationIngestOutcome::Ignored(notification) => write!(
                 f,
                 "t={}ms protocol ignored notification family={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                notification.len.get()
+                notification.len.as_bytes()
             ),
         }
     }
@@ -4142,7 +4142,7 @@ mod tests {
             subscribes: subscribes(1),
             notifications: notifications(184),
             notification_bytes: NotificationByteTotal::new(18_400),
-            latest_notification_len: Some(NotificationByteLen::new(100)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
             read_only_responses: read_only_responses(0),
@@ -4183,7 +4183,7 @@ mod tests {
         );
         assert_eq!(
             state.counters.latest_notification_len,
-            Some(NotificationByteLen::new(100))
+            Some(NotificationByteLen::from_bytes(100))
         );
         assert!(
             state
@@ -4217,7 +4217,7 @@ mod tests {
             subscribes: subscribes(1),
             notifications: notifications(2),
             notification_bytes: NotificationByteTotal::new(200),
-            latest_notification_len: Some(NotificationByteLen::new(100)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
                 speed: Some(speed(4_470)),
@@ -4318,7 +4318,7 @@ mod tests {
         let report = SessionBridgeReport {
             notifications: notifications(1),
             notification_bytes: NotificationByteTotal::new(99),
-            latest_notification_len: Some(NotificationByteLen::new(99)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(99)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
                 voltage: Some(voltage(117_600)),
@@ -4370,7 +4370,7 @@ mod tests {
         let report = SessionBridgeReport {
             notifications: notifications(3),
             notification_bytes: NotificationByteTotal::new(57),
-            latest_notification_len: Some(NotificationByteLen::new(20)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             events: Vec::new(),
             ..empty_session_bridge_report()
         };
@@ -4404,11 +4404,11 @@ mod tests {
             outcome: NotificationIngestOutcome::known_reserved(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
-                NotificationByteLen::new(75),
+                NotificationByteLen::from_bytes(75),
                 ms(4),
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
-                    body_len: PayloadBodyLen::new(24),
+                    body_len: PayloadBodyLen::from_bytes(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
             ),
@@ -4552,11 +4552,11 @@ mod tests {
             outcome: NotificationIngestOutcome::known_reserved(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
-                NotificationByteLen::new(75),
+                NotificationByteLen::from_bytes(75),
                 ms(4),
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(sel(8)),
-                    body_len: PayloadBodyLen::new(24),
+                    body_len: PayloadBodyLen::from_bytes(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
             ),
@@ -4570,13 +4570,13 @@ mod tests {
             outcome: NotificationIngestOutcome::parser_gap(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 channel,
-                NotificationByteLen::new(75),
+                NotificationByteLen::from_bytes(75),
                 ms(9),
                 ParserGapEvidence {
                     classifier: cutout_core::PayloadClassifier::tag(cutout_core::ProtocolTag::new(
                         0x1234,
                     )),
-                    body_len: PayloadBodyLen::new(12),
+                    body_len: PayloadBodyLen::from_bytes(12),
                 },
             ),
         };
@@ -4626,14 +4626,14 @@ mod tests {
         let report = SessionBridgeReport {
             notifications: notifications(5),
             notification_bytes: NotificationByteTotal::new(269),
-            latest_notification_len: Some(NotificationByteLen::new(77)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(77)),
             events: vec![
                 SessionBridgeEvent::NotificationIngest {
                     monotonic_ms: cutout_btle::MonotonicMs::new(3),
                     outcome: NotificationIngestOutcome::buffered_fragment(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        NotificationByteLen::new(20),
+                        NotificationByteLen::from_bytes(20),
                         ms(3),
                     ),
                 },
@@ -4642,13 +4642,13 @@ mod tests {
                     outcome: NotificationIngestOutcome::known_reserved(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        NotificationByteLen::new(75),
+                        NotificationByteLen::from_bytes(75),
                         ms(4),
                         ReservedPayloadEvidence {
                             classifier: cutout_core::PayloadClassifier::selector(
                                 ProtocolSelector::new(8),
                             ),
-                            body_len: PayloadBodyLen::new(24),
+                            body_len: PayloadBodyLen::from_bytes(24),
                             verification: VerificationStatus::HardwareVerified,
                         },
                     ),
@@ -4658,13 +4658,13 @@ mod tests {
                     outcome: NotificationIngestOutcome::parser_gap(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        NotificationByteLen::new(77),
+                        NotificationByteLen::from_bytes(77),
                         ms(5),
                         ParserGapEvidence {
                             classifier: cutout_core::PayloadClassifier::selector(
                                 ProtocolSelector::new(9),
                             ),
-                            body_len: PayloadBodyLen::new(26),
+                            body_len: PayloadBodyLen::from_bytes(26),
                         },
                     ),
                 },
@@ -4673,7 +4673,7 @@ mod tests {
                     outcome: NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         channel,
-                        NotificationByteLen::new(77),
+                        NotificationByteLen::from_bytes(77),
                         ms(6),
                         ParserError::BadChecksum,
                     ),
@@ -4682,7 +4682,7 @@ mod tests {
                     monotonic_ms: cutout_btle::MonotonicMs::new(7),
                     outcome: NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
-                        NotificationByteLen::new(20),
+                        NotificationByteLen::from_bytes(20),
                         ms(7),
                     ),
                 },
@@ -4810,7 +4810,7 @@ mod tests {
             subscribes: subscribes(1),
             notifications: notifications(1),
             notification_bytes: NotificationByteTotal::new(20),
-            latest_notification_len: Some(NotificationByteLen::new(20)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
             read_only_responses: read_only_responses(0),
@@ -4857,7 +4857,7 @@ mod tests {
             subscribes: subscribes(1),
             notifications: notifications(3),
             notification_bytes: NotificationByteTotal::new(300),
-            latest_notification_len: Some(NotificationByteLen::new(100)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
             read_only_responses: read_only_responses(5),
@@ -4968,7 +4968,7 @@ mod tests {
             subscribes: subscribes(1),
             notifications: notifications(4),
             notification_bytes: NotificationByteTotal::new(400),
-            latest_notification_len: Some(NotificationByteLen::new(100)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: snapshot_from_delta(telemetry),
             read_only_responses: read_only_responses(5),
@@ -5227,7 +5227,7 @@ mod tests {
             subscribes: subscribes(1),
             notifications: notifications(2),
             notification_bytes: NotificationByteTotal::new(40),
-            latest_notification_len: Some(NotificationByteLen::new(20)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
             read_only_responses: read_only_responses(0),
@@ -5253,7 +5253,7 @@ mod tests {
         );
         assert_eq!(
             state.counters.latest_notification_len,
-            Some(NotificationByteLen::new(20))
+            Some(NotificationByteLen::from_bytes(20))
         );
     }
 
@@ -5266,7 +5266,7 @@ mod tests {
             subscribes: subscribes(1),
             notifications: notifications(1),
             notification_bytes: NotificationByteTotal::new(20),
-            latest_notification_len: Some(NotificationByteLen::new(20)),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
             read_only_responses: read_only_responses(0),
@@ -5574,7 +5574,7 @@ mod tests {
         state.active_tab = DashboardTab::new(1);
         state.counters.notifications = notifications(47);
         state.counters.notification_bytes = NotificationByteTotal::new(4_700);
-        state.counters.latest_notification_len = Some(NotificationByteLen::new(100));
+        state.counters.latest_notification_len = Some(NotificationByteLen::from_bytes(100));
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 

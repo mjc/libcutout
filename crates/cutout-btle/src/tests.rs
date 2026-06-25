@@ -706,7 +706,7 @@ fn captured_btle_packet_distinguishes_malformed_bytes_from_attribute_values() {
     assert_eq!(
         malformed.reason(),
         crate::MalformedBtlePacketReason::OversizedAttributeValue {
-            max: NotificationByteLen::new(512)
+            max: NotificationByteLen::from_bytes(512)
         }
     );
     assert_eq!(malformed.as_raw_bytes().len(), 513);
@@ -1165,7 +1165,7 @@ async fn drive_session_relays_notifications_back_into_session() {
     );
     assert_eq!(
         report.latest_notification_len,
-        Some(NotificationByteLen::new(2))
+        Some(NotificationByteLen::from_bytes(2))
     );
     assert_eq!(
         *session
@@ -1261,7 +1261,7 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
         NotificationIngestOutcome::semantic_events(
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(77),
+            NotificationByteLen::from_bytes(77),
             ms(7),
             SemanticEventCount::new(5),
         ),
@@ -1275,7 +1275,7 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 }
 
@@ -1294,7 +1294,7 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
         NotificationIngestOutcome::buffered_fragment(
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(20),
+            NotificationByteLen::from_bytes(20),
             ms(3),
         ),
     )];
@@ -1307,7 +1307,7 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(20)
+        NotificationByteLen::from_bytes(20)
     );
 }
 
@@ -1316,7 +1316,7 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
     let outputs = [SessionOutput::NotificationIngest(
         NotificationIngestOutcome::ignored_wrong_channel(
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(20),
+            NotificationByteLen::from_bytes(20),
             ms(3),
         ),
     )];
@@ -1329,7 +1329,7 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(20)
+        NotificationByteLen::from_bytes(20)
     );
 }
 
@@ -1339,7 +1339,7 @@ fn drive_session_reports_fragment_notifications_as_typed_ingest_events() {
     let outcome = NotificationIngestOutcome::buffered_fragment(
         ProtocolFamily::VeteranLeaperkimNosfet,
         GattChannel::from_bytes([0xA1; 16]),
-        NotificationByteLen::new(20),
+        NotificationByteLen::from_bytes(20),
         ms(3),
     );
 
@@ -1364,7 +1364,7 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
         SessionOutput::NotificationIngest(NotificationIngestOutcome::semantic_events(
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(77),
+            NotificationByteLen::from_bytes(77),
             ms(3),
             SemanticEventCount::new(5),
         )),
@@ -1382,7 +1382,7 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 }
 
@@ -1393,11 +1393,11 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         NotificationIngestOutcome::known_reserved(
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
-            NotificationByteLen::new(75),
+            NotificationByteLen::from_bytes(75),
             ms(4),
             ReservedPayloadEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-                body_len: PayloadBodyLen::new(24),
+                body_len: PayloadBodyLen::from_bytes(24),
                 verification: VerificationStatus::HardwareVerified,
             },
         ),
@@ -1406,11 +1406,11 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         NotificationIngestOutcome::parser_gap(
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
-            NotificationByteLen::new(77),
+            NotificationByteLen::from_bytes(77),
             ms(5),
             ParserGapEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
-                body_len: PayloadBodyLen::new(26),
+                body_len: PayloadBodyLen::from_bytes(26),
             },
         ),
     )];
@@ -1418,7 +1418,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         NotificationIngestOutcome::parser_diagnostic(
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
-            NotificationByteLen::new(77),
+            NotificationByteLen::from_bytes(77),
             ms(6),
             ParserError::BadChecksum,
         ),
@@ -1432,14 +1432,14 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
     );
     assert_eq!(
         decode_outcome_evidence(reserved).len,
-        NotificationByteLen::new(75)
+        NotificationByteLen::from_bytes(75)
     );
 
     let gap = crate::bridge::notification_decode_outcome(&gap).expect("gap outcome present");
     assert_eq!(gap.kind(), crate::bridge::NotificationDecodeKind::ParserGap);
     assert_eq!(
         decode_outcome_evidence(gap).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 
     let diagnostic = crate::bridge::notification_decode_outcome(&diagnostic)
@@ -1450,7 +1450,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
     );
     assert_eq!(
         decode_outcome_evidence(diagnostic).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 }
 
@@ -2247,7 +2247,7 @@ impl ProtocolSession for BridgeSession {
                     NotificationIngestOutcome::semantic_events(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         GattChannel::from_bytes([0xA1; 16]),
-                        NotificationByteLen::new(2),
+                        NotificationByteLen::from_bytes(2),
                         ms(0),
                         SemanticEventCount::new(1),
                     ),

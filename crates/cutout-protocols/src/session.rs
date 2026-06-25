@@ -181,7 +181,7 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
         output.push(SessionOutput::NotificationIngest(
             NotificationIngestOutcome::ignored_wrong_channel(
                 channel,
-                NotificationByteLen::new(bytes.len()),
+                NotificationByteLen::from_bytes(bytes.len()),
                 monotonic_ms,
             ),
         ));
@@ -247,7 +247,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             ParserError::BadChecksum,
                         ),
@@ -256,15 +256,15 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                 }
                 Err(VeteranReassemblyError::OversizedFrame { claimed, max }) => {
                     let error = ParserError::OversizedFrame {
-                        claimed: ParserFrameLen::new(claimed),
-                        max: ParserFrameLen::new(max),
+                        claimed: ParserFrameLen::from_bytes(claimed),
+                        max: ParserFrameLen::from_bytes(max),
                     };
                     push_parser_error(error, output);
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             error,
                         ),
@@ -277,7 +277,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             ParserError::MalformedFrame,
                         ),
@@ -292,13 +292,13 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                 NotificationIngestOutcome::buffered_fragment(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
             } else {
                 NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
             }));
@@ -313,7 +313,7 @@ fn push_veteran_ingest_outcome_for_frame(
     event_count: SemanticEventCount,
     output: &mut Vec<SessionOutput>,
 ) {
-    let frame_len = NotificationByteLen::new(frame.as_slice().len());
+    let frame_len = NotificationByteLen::from_bytes(frame.as_slice().len());
     if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
         && evidence.kind == BatteryPageKind::Raw
     {
@@ -326,7 +326,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     monotonic_ms,
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
-                        body_len: PayloadBodyLen::new(evidence.body.len()),
+                        body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
                         verification: VerificationStatus::HardwareVerified,
                     },
                 ),
@@ -340,7 +340,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     monotonic_ms,
                     ParserGapEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
-                        body_len: PayloadBodyLen::new(evidence.body.len()),
+                        body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
                     },
                 ),
             ));
@@ -423,7 +423,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::BegodeGotway,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             ParserError::MalformedFrame,
                         ),
@@ -438,7 +438,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::BegodeGotway,
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                     event_count,
                 )
@@ -446,7 +446,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 NotificationIngestOutcome::buffered_fragment(
                     ProtocolFamily::BegodeGotway,
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
             },
@@ -498,7 +498,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::semantic_events(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                         event_count,
                     ),
@@ -510,7 +510,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                         ParserError::UnmatchedReply,
                     ),
@@ -526,7 +526,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                         ParserError::MalformedFrame,
                     ),
@@ -537,7 +537,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::buffered_fragment(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                     ),
                 ));
@@ -1653,7 +1653,7 @@ mod tests {
             SessionOutput::NotificationIngest(NotificationIngestOutcome::Ignored(evidence))
                 if evidence.channel == TEST_CHANNEL
                     && evidence.monotonic_ms == ms(11)
-                    && evidence.len == NotificationByteLen::new(3)
+                    && evidence.len == NotificationByteLen::from_bytes(3)
         )));
     }
 
@@ -2289,7 +2289,7 @@ mod tests {
             vec![NotificationIngestOutcome::buffered_fragment(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(20),
+                NotificationByteLen::from_bytes(20),
                 ms(42),
             )]
         );
@@ -2308,7 +2308,7 @@ mod tests {
             vec![NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
+                NotificationByteLen::from_bytes(frame.len()),
                 ms(42),
                 SemanticEventCount::new(5),
             )]
@@ -2328,11 +2328,11 @@ mod tests {
             vec![NotificationIngestOutcome::known_reserved(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
+                NotificationByteLen::from_bytes(frame.len()),
                 ms(42),
                 ReservedPayloadEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-                    body_len: PayloadBodyLen::new(24),
+                    body_len: PayloadBodyLen::from_bytes(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
             )]
@@ -2351,11 +2351,11 @@ mod tests {
             vec![NotificationIngestOutcome::parser_gap(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
+                NotificationByteLen::from_bytes(frame.len()),
                 ms(42),
                 ParserGapEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
-                    body_len: PayloadBodyLen::new(26),
+                    body_len: PayloadBodyLen::from_bytes(26),
                 },
             )]
         );
@@ -2383,7 +2383,7 @@ mod tests {
             vec![NotificationIngestOutcome::parser_diagnostic(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
+                NotificationByteLen::from_bytes(frame.len()),
                 ms(42),
                 ParserError::BadChecksum,
             )]
@@ -2405,15 +2405,15 @@ mod tests {
         decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output);
 
         let error = ParserError::OversizedFrame {
-            claimed: ParserFrameLen::new(crate::MAX_VETERAN_FRAME_LEN + 1),
-            max: ParserFrameLen::new(crate::MAX_VETERAN_FRAME_LEN),
+            claimed: ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN + 1),
+            max: ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN),
         };
         assert_eq!(
             notification_ingest_outcomes(&output),
             vec![NotificationIngestOutcome::parser_diagnostic(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(1),
+                NotificationByteLen::from_bytes(1),
                 ms(42),
                 error,
             )]
@@ -2443,7 +2443,7 @@ mod tests {
             Some(NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
+                NotificationByteLen::from_bytes(frame.len()),
                 ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1),
                 SemanticEventCount::new(5),
             ))
@@ -2474,7 +2474,7 @@ mod tests {
                         payload.classifier,
                         PayloadClassifier::selector(ProtocolSelector::new(8))
                     );
-                    assert_eq!(payload.body_len, PayloadBodyLen::new(26));
+                    assert_eq!(payload.body_len, PayloadBodyLen::from_bytes(26));
                     assert_eq!(payload.verification, VerificationStatus::HardwareVerified);
                 }
                 (0..=7, NotificationIngestOutcome::SemanticEvents { notification, .. }) => {
@@ -2507,18 +2507,18 @@ mod tests {
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::new(semantic_frame.len()),
+                    NotificationByteLen::from_bytes(semantic_frame.len()),
                     ms(42),
                     SemanticEventCount::new(5),
                 ),
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::new(reserved_frame.len()),
+                    NotificationByteLen::from_bytes(reserved_frame.len()),
                     ms(42),
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-                        body_len: PayloadBodyLen::new(24),
+                        body_len: PayloadBodyLen::from_bytes(24),
                         verification: VerificationStatus::HardwareVerified,
                     },
                 ),
@@ -2556,7 +2556,7 @@ mod tests {
                 Some(NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::new(frame.len()),
+                    NotificationByteLen::from_bytes(frame.len()),
                     ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
                     SemanticEventCount::new(5),
                 ))
