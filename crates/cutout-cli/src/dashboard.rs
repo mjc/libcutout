@@ -378,8 +378,8 @@ impl SignalPercent {
         Self(if value > 100 { 100 } else { value })
     }
 
-    fn from_rssi_dbm(rssi_dbm: i16) -> Self {
-        let clamped = rssi_dbm.clamp(-90, -50);
+    fn from_signal_strength(signal: cutout_core::SignalStrength) -> Self {
+        let clamped = signal.as_dbm().clamp(-90, -50);
         Self::new(
             u64::try_from(i32::from(clamped) + 90)
                 .unwrap_or(0)
@@ -948,15 +948,16 @@ impl DashboardState {
         state.counters.connected = ConnectedDeviceCount::new(1);
         state.telemetry.signal_pct = observation
             .rssi
-            .map_or_else(SignalPercent::default, SignalPercent::from_rssi_dbm);
+            .map_or_else(SignalPercent::default, SignalPercent::from_signal_strength);
         state.scan_browser.push_observation(
             ScanObservation {
                 name: state.device.name.clone(),
                 address: state.device.address.clone(),
                 identifier: state.device.identifier.clone(),
-                rssi: observation
-                    .rssi
-                    .map_or_else(|| "unknown".to_owned(), |rssi| format!("{rssi} dBm")),
+                rssi: observation.rssi.map_or_else(
+                    || "unknown".to_owned(),
+                    |rssi| format!("{} dBm", rssi.as_dbm()),
+                ),
                 services: services_summary(summary),
                 real_device: true,
             },
@@ -3426,7 +3427,7 @@ mod tests {
         DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
         NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserError,
         ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue,
-        ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry, SettingsReadback,
+        ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry, SettingsReadback, SignalStrength,
         TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
@@ -3434,6 +3435,10 @@ mod tests {
 
     const fn ms(value: u64) -> MonotonicMillis {
         MonotonicMillis::new(value)
+    }
+
+    const fn rssi(value: i16) -> SignalStrength {
+        SignalStrength::from_dbm(value)
     }
 
     const fn protocol_writes(value: usize) -> ProtocolWriteCount {
@@ -3744,7 +3749,7 @@ mod tests {
                 identifier: "platform-0001".to_owned(),
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("Aero NF2557".to_owned()),
-                rssi: Some(-61),
+                rssi: Some(rssi(-61)),
                 advertised_services: vec![].into(),
                 manufacturer_data: Vec::new().into(),
             },
@@ -3797,14 +3802,38 @@ mod tests {
 
     #[test]
     fn rssi_signal_percent_clamps_to_reasonable_ble_range() {
-        assert_eq!(SignalPercent::from_rssi_dbm(-40), SignalPercent::new(100));
-        assert_eq!(SignalPercent::from_rssi_dbm(-50), SignalPercent::new(100));
-        assert_eq!(SignalPercent::from_rssi_dbm(-61), SignalPercent::new(72));
-        assert_eq!(SignalPercent::from_rssi_dbm(-74), SignalPercent::new(40));
-        assert_eq!(SignalPercent::from_rssi_dbm(-90), SignalPercent::new(0));
-        assert_eq!(SignalPercent::from_rssi_dbm(-100), SignalPercent::new(0));
-        assert_eq!(SignalPercent::from_rssi_dbm(-120), SignalPercent::new(0));
-        assert_eq!(SignalPercent::from_rssi_dbm(-20), SignalPercent::new(100));
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-40)),
+            SignalPercent::new(100)
+        );
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-50)),
+            SignalPercent::new(100)
+        );
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-61)),
+            SignalPercent::new(72)
+        );
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-74)),
+            SignalPercent::new(40)
+        );
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-90)),
+            SignalPercent::new(0)
+        );
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-100)),
+            SignalPercent::new(0)
+        );
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-120)),
+            SignalPercent::new(0)
+        );
+        assert_eq!(
+            SignalPercent::from_signal_strength(rssi(-20)),
+            SignalPercent::new(100)
+        );
     }
 
     #[test]
@@ -5407,7 +5436,7 @@ mod tests {
                 identifier: "platform-0001".to_owned(),
                 address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
                 name: Some("NF2557".to_owned()),
-                rssi: Some(-61),
+                rssi: Some(rssi(-61)),
                 advertised_services: vec![].into(),
                 manufacturer_data: Vec::new().into(),
             },

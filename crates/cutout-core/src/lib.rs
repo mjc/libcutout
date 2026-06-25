@@ -3610,6 +3610,12 @@ pub struct Ratio;
 
 impl Dimension for Ratio {}
 
+/// Radio signal power dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignalPower;
+
+impl Dimension for SignalPower {}
+
 /// Time duration dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Time;
@@ -3732,6 +3738,14 @@ pub struct PercentUnit;
 
 impl Unit for PercentUnit {
     type Dimension = Ratio;
+}
+
+/// Decibel-milliwatt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecibelMilliwatt;
+
+impl Unit for DecibelMilliwatt {
+    type Dimension = SignalPower;
 }
 
 /// Fixed-point quantity tagged by zero-sized dimension and unit markers.
@@ -4146,6 +4160,23 @@ impl Percent {
     /// Returns this percentage value.
     #[must_use]
     pub const fn as_percent(self) -> u8 {
+        self.unit_value()
+    }
+}
+
+/// Radio signal strength stored in dBm.
+pub type SignalStrength = Quantity<SignalPower, DecibelMilliwatt, i16>;
+
+impl SignalStrength {
+    /// Creates a signal-strength value from dBm.
+    #[must_use]
+    pub const fn from_dbm(value: i16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this signal strength in dBm.
+    #[must_use]
+    pub const fn as_dbm(self) -> i16 {
         self.unit_value()
     }
 }
@@ -5916,6 +5947,11 @@ mod tests {
             10_000
         );
         assert_eq!(crate::Energy::from_watt_hours(900).as_watt_hours(), 900);
+    }
+
+    #[test]
+    fn signal_strength_quantity_preserves_dbm_unit() {
+        assert_eq!(crate::SignalStrength::from_dbm(-61).as_dbm(), -61);
     }
 
     #[test]

@@ -13,8 +13,8 @@ use cutout_core::{
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection,
     PevcapResolvedIdentity, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
     ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput,
-    SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
-    VerificationStatus, VerifiedValue, WriteMode,
+    SettingsEntry, SettingsReadback, SignalStrength, TelemetryDelta, TransportAction, ValueQuality,
+    ValueSource, VerificationStatus, VerifiedValue, WriteMode,
 };
 use futures_util::{StreamExt, stream};
 use smallvec::smallvec;
@@ -26,6 +26,10 @@ type WriteRecord = (Uuid, Bytes, WriteMode);
 
 const fn ms(value: u64) -> cutout_core::MonotonicMillis {
     cutout_core::MonotonicMillis::new(value)
+}
+
+const fn rssi(value: i16) -> SignalStrength {
+    SignalStrength::from_dbm(value)
 }
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
 type NotificationLog = Arc<Mutex<Vec<crate::BtleNotification>>>;
@@ -252,7 +256,7 @@ fn connection_target_matches_on_address_and_name() {
         identifier: "peripheral-id".to_owned(),
         address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
         name: Some("NOSFET Aero".to_owned()),
-        rssi: Some(-42),
+        rssi: Some(rssi(-42)),
         advertised_services: smallvec![],
         manufacturer_data: crate::ManufacturerDataSummaries::new(),
     };
@@ -361,7 +365,7 @@ fn connection_target_matches_on_platform_identifier() {
         identifier: "cb-uuid-1234".to_owned(),
         address: None,
         name: Some("NF2557".to_owned()),
-        rssi: Some(-42),
+        rssi: Some(rssi(-42)),
         advertised_services: smallvec![],
         manufacturer_data: crate::ManufacturerDataSummaries::new(),
     };
@@ -375,7 +379,7 @@ fn peripheral_observation_renders_manufacturer_data_without_payload_bytes() {
         identifier: "peripheral-id".to_owned(),
         address: None,
         name: Some("Generic".to_owned()),
-        rssi: Some(-60),
+        rssi: Some(rssi(-60)),
         advertised_services: smallvec![],
         manufacturer_data: smallvec![
             crate::ManufacturerDataSummary {
@@ -446,7 +450,7 @@ fn connection_summary_renders_services_and_characteristics() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -596,7 +600,7 @@ fn connection_summary_selects_standard_battery_level_characteristic() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -641,7 +645,7 @@ fn connection_summary_uses_identifier_when_address_is_unavailable() {
             identifier: "cb-uuid-1234".to_owned(),
             address: None,
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -729,7 +733,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
             identifier: "cb-uuid".to_owned(),
             address: None,
             name: Some("NF2557".to_owned()),
-            rssi: Some(-67),
+            rssi: Some(rssi(-67)),
             advertised_services: smallvec![Uuid::from_u128(
                 0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
             )],
@@ -906,7 +910,7 @@ fn connection_summary_finds_write_and_notify_candidates() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -941,7 +945,7 @@ fn connection_summary_selects_session_endpoints() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -1069,7 +1073,7 @@ async fn drive_session_subscribes_and_writes_matching_transport_channels() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -2347,7 +2351,7 @@ fn begode_falcon_summary(name: &str) -> crate::ConnectionSummary {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some(name.to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![Uuid::from_u128(
                 0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
             )],
@@ -2373,7 +2377,7 @@ fn shared_write_notify_summary(name: &str) -> crate::ConnectionSummary {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some(name.to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: crate::AdvertisedServices::new(),
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },

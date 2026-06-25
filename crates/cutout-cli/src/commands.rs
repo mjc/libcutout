@@ -1822,7 +1822,7 @@ fn render_reconnect_attempt_diagnostics_jsonl(
         "attempt": attempt.attempt.get(),
         "identifier": attempt.summary.observation.identifier,
         "name": attempt.summary.observation.name,
-        "rssi": attempt.summary.observation.rssi,
+        "rssi": attempt.summary.observation.rssi.map(cutout_core::SignalStrength::as_dbm),
         "protocol_writes": attempt.report.protocol_writes.get(),
         "writes": attempt.report.writes.get(),
         "subscribes": attempt.report.subscribes.get(),
@@ -2319,8 +2319,8 @@ mod tests {
     use cutout_core::{
         DeviceEvent, GattChannel, MonotonicMillis, NotificationByteLen, ParserDiagnosticCount,
         ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
-        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, TransportWriteLen,
-        VerificationStatus, VerifiedValue, WriteMode,
+        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, SignalStrength,
+        TransportWriteLen, VerificationStatus, VerifiedValue, WriteMode,
     };
     use uuid::Uuid;
 
@@ -2333,6 +2333,10 @@ mod tests {
 
     const fn wc(value: u64) -> WallClockUnixMillis {
         WallClockUnixMillis::new(value)
+    }
+
+    const fn rssi(value: i16) -> SignalStrength {
+        SignalStrength::from_dbm(value)
     }
 
     const fn write_len(value: u16) -> TransportWriteLen {
@@ -2576,7 +2580,7 @@ mod tests {
                 identifier: "cb-uuid".to_owned(),
                 address: None,
                 name: Some("NF2557".to_owned()),
-                rssi: Some(-67),
+                rssi: Some(rssi(-67)),
                 advertised_services: vec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
                 )]
@@ -2699,7 +2703,7 @@ mod tests {
                 identifier: "first-link".to_owned(),
                 address: None,
                 name: Some("NF2557".to_owned()),
-                rssi: Some(-67),
+                rssi: Some(rssi(-67)),
                 advertised_services: vec![ffe0].into(),
                 manufacturer_data: Vec::new().into(),
             },
@@ -2720,7 +2724,7 @@ mod tests {
                 identifier: "second-link".to_owned(),
                 address: None,
                 name: Some("NF2557".to_owned()),
-                rssi: Some(-70),
+                rssi: Some(rssi(-70)),
                 advertised_services: vec![ffe0, battery].into(),
                 manufacturer_data: Vec::new().into(),
             },
@@ -2784,7 +2788,7 @@ mod tests {
                 identifier: "cb-uuid".to_owned(),
                 address: None,
                 name: Some("Unknown PEV".to_owned()),
-                rssi: Some(-67),
+                rssi: Some(rssi(-67)),
                 advertised_services: vec![service].into(),
                 manufacturer_data: Vec::new().into(),
             },
@@ -3205,7 +3209,7 @@ mod tests {
                     identifier: "NF2557".to_owned(),
                     address: None,
                     name: Some("NF2557".to_owned()),
-                    rssi: Some(-71),
+                    rssi: Some(rssi(-71)),
                     advertised_services: Vec::new().into(),
                     manufacturer_data: Vec::new().into(),
                 },
