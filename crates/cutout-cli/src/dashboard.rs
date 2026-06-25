@@ -479,6 +479,10 @@ impl WheelPitchDeg {
         Self(value)
     }
 
+    fn get(self) -> i64 {
+        millidegrees_to_degrees(self.0.as_millidegrees())
+    }
+
     const fn is_lifted_or_tilted(self) -> bool {
         let millidegrees = self.0.as_millidegrees();
         millidegrees <= -45_000 || millidegrees >= 45_000
@@ -487,11 +491,7 @@ impl WheelPitchDeg {
 
 impl fmt::Display for WheelPitchDeg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} deg",
-            millidegrees_to_degrees(self.0.as_millidegrees())
-        )
+        write!(f, "{} deg", self.get())
     }
 }
 
@@ -502,11 +502,15 @@ impl DisplayDutyCycle {
     fn from_duty_cycle(value: DutyCycle) -> Self {
         Self(value)
     }
+
+    fn get(self) -> i64 {
+        permille_to_percent(self.0.as_permille())
+    }
 }
 
 impl fmt::Display for DisplayDutyCycle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}%", permille_to_percent(self.0.as_permille()))
+        write!(f, "{}%", self.get())
     }
 }
 
@@ -523,15 +527,15 @@ impl DisplayTemperature {
             value,
         )))
     }
+
+    fn get(self) -> i64 {
+        millicelsius_to_celsius_signed(self.0.as_millicelsius())
+    }
 }
 
 impl fmt::Display for DisplayTemperature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} C",
-            millicelsius_to_celsius_signed(self.0.as_millicelsius())
-        )
+        write!(f, "{} C", self.get())
     }
 }
 
@@ -1633,7 +1637,14 @@ impl fmt::Display for BmsTemperatureValues {
                 write!(f, " temps_c=")?;
             }
             wrote = true;
-            write!(f, "{}", millicelsius_to_celsius_signed(temperature.value))?;
+            write!(
+                f,
+                "{}",
+                DisplayTemperature::from_temperature(Temperature::from_millicelsius(
+                    temperature.value,
+                ))
+                .get()
+            )?;
         }
         Ok(())
     }
@@ -1645,14 +1656,18 @@ impl fmt::Display for BmsCurrentSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let battery = self.0.battery();
         if let Some(current) = battery.current {
-            write!(f, " current={}A", milliamps_to_amps(current.value.get()))?;
+            write!(
+                f,
+                " current={}A",
+                DisplayBatteryCurrent::from_milliamps(current.value.get()).get()
+            )?;
         }
         if let Some(currents) = self.0.bms_pack_currents() {
             write!(
                 f,
                 " bms_current_0={}A bms_current_1={}A",
-                milliamps_to_amps(currents.current_0().as_milliamps()),
-                milliamps_to_amps(currents.current_1().as_milliamps())
+                DisplayBatteryCurrent(currents.current_0()).get(),
+                DisplayBatteryCurrent(currents.current_1()).get()
             )?;
         }
         Ok(())
@@ -1726,10 +1741,6 @@ fn millivolts_to_volts(value: i32) -> u64 {
 
 fn volts_to_millivolts(value: u64) -> i32 {
     i32::try_from(value.saturating_mul(1_000)).unwrap_or(i32::MAX)
-}
-
-fn milliamps_to_amps(value: i32) -> i64 {
-    i64::from(value) / 1_000
 }
 
 fn amps_to_milliamps(value: i64) -> i32 {
@@ -1840,10 +1851,14 @@ impl fmt::Display for MappedTelemetryLog {
         let snapshot = self.0;
 
         if let Some(speed) = snapshot.speed {
-            fields.write("speed", mm_s_to_mph(speed.value.get()), "mph")?;
+            fields.write("speed", DisplaySpeed::from_speed(speed.value).get(), "mph")?;
         }
         if let Some(voltage) = snapshot.voltage {
-            fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
+            fields.write(
+                "voltage",
+                DisplayVoltage::from_voltage(voltage.value).get(),
+                "V",
+            )?;
         }
         if let Some(percent) = snapshot
             .battery_level_reported
@@ -1852,7 +1867,11 @@ impl fmt::Display for MappedTelemetryLog {
             fields.write("battery", percent.value, "%")?;
         }
         if let Some(current) = snapshot.battery_current.or(snapshot.motor_current) {
-            fields.write("current", milliamps_to_amps(current.value.get()), "A")?;
+            fields.write(
+                "current",
+                DisplayBatteryCurrent::from_milliamps(current.value.get()).get(),
+                "A",
+            )?;
         }
         if let Some(power) = snapshot.power {
             fields.write(
@@ -1868,21 +1887,25 @@ impl fmt::Display for MappedTelemetryLog {
         {
             fields.write(
                 "temperature",
-                millicelsius_to_celsius_signed(temperature.value.get()),
+                DisplayTemperature::from_temperature(temperature.value).get(),
                 "C",
             )?;
         }
         if let Some(pwm) = snapshot.pwm {
-            fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
+            fields.write(
+                "pwm",
+                DisplayDutyCycle::from_duty_cycle(pwm.value).get(),
+                "%",
+            )?;
         }
         if let Some(distance) = snapshot.distance {
             fields.write_display("distance", DisplayTelemetryDistance(distance.value))?;
         }
         if let Some(pitch) = snapshot.pitch {
-            fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
+            fields.write("pitch", WheelPitchDeg::from_angle(pitch.value).get(), "deg")?;
         }
         if let Some(roll) = snapshot.roll {
-            fields.write("roll", millidegrees_to_degrees(roll.value.get()), "deg")?;
+            fields.write("roll", WheelPitchDeg::from_angle(roll.value).get(), "deg")?;
         }
 
         fields.finish()
@@ -1897,10 +1920,14 @@ impl fmt::Display for TelemetryDeltaLog {
         let delta = self.0;
 
         if let Some(speed) = delta.speed {
-            fields.write("speed", mm_s_to_mph(speed.value.get()), "mph")?;
+            fields.write("speed", DisplaySpeed::from_speed(speed.value).get(), "mph")?;
         }
         if let Some(voltage) = delta.voltage {
-            fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
+            fields.write(
+                "voltage",
+                DisplayVoltage::from_voltage(voltage.value).get(),
+                "V",
+            )?;
         }
         if let Some(percent) = delta
             .battery_level_reported
@@ -1909,7 +1936,11 @@ impl fmt::Display for TelemetryDeltaLog {
             fields.write("battery", percent.value, "%")?;
         }
         if let Some(current) = delta.battery_current.or(delta.motor_current) {
-            fields.write("current", milliamps_to_amps(current.value.get()), "A")?;
+            fields.write(
+                "current",
+                DisplayBatteryCurrent::from_milliamps(current.value.get()).get(),
+                "A",
+            )?;
         }
         if let Some(power) = delta.power {
             fields.write(
@@ -1925,18 +1956,22 @@ impl fmt::Display for TelemetryDeltaLog {
         {
             fields.write(
                 "temperature",
-                millicelsius_to_celsius_signed(temperature.value.get()),
+                DisplayTemperature::from_temperature(temperature.value).get(),
                 "C",
             )?;
         }
         if let Some(pwm) = delta.pwm {
-            fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
+            fields.write(
+                "pwm",
+                DisplayDutyCycle::from_duty_cycle(pwm.value).get(),
+                "%",
+            )?;
         }
         if let Some(distance) = delta.distance {
             fields.write_display("distance", DisplayTelemetryDistance(distance.value))?;
         }
         if let Some(pitch) = delta.pitch {
-            fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
+            fields.write("pitch", WheelPitchDeg::from_angle(pitch.value).get(), "deg")?;
         }
 
         fields.finish()
