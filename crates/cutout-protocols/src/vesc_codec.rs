@@ -545,9 +545,9 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
 impl From<vesc::Values> for VescValuesTelemetry {
     fn from(values: vesc::Values) -> Self {
         Self {
-            rpm: rotational_speed_from_erpm(values.rpm),
-            voltage: voltage_from_volts(values.voltage_in),
-            input_current: current_from_amps(values.avg_current_input),
+            rpm: RotationalSpeed::from_erpm_f32(values.rpm),
+            voltage: Voltage::from_volts_f32(values.voltage_in),
+            input_current: BatteryCurrent::from_amps_f32(values.avg_current_input),
             tachometer: TachometerReading::from_counts(values.tachometer),
             controller_id: VescControllerId::new(values.controller_id),
             fault_code: values.fault_code.into(),
@@ -558,39 +558,15 @@ impl From<vesc::Values> for VescValuesTelemetry {
 impl From<vesc::Stats> for VescStatsTelemetry {
     fn from(stats: vesc::Stats) -> Self {
         Self {
-            speed_avg: speed_from_metres_per_second(stats.speed_avg),
-            speed_max: speed_from_metres_per_second(stats.speed_max),
-            power_avg: power_from_watts(stats.power_avg),
-            power_max: power_from_watts(stats.power_max),
-            current_avg: current_from_amps(stats.current_avg),
-            current_max: current_from_amps(stats.current_max),
-            count_time: duration_from_seconds(stats.count_time),
+            speed_avg: Speed::from_metres_per_second(stats.speed_avg),
+            speed_max: Speed::from_metres_per_second(stats.speed_max),
+            power_avg: Power::from_watts_f32(stats.power_avg),
+            power_max: Power::from_watts_f32(stats.power_max),
+            current_avg: BatteryCurrent::from_amps_f32(stats.current_avg),
+            current_max: BatteryCurrent::from_amps_f32(stats.current_max),
+            count_time: Duration::from_seconds_f32(stats.count_time),
         }
     }
-}
-
-fn rotational_speed_from_erpm(value: f32) -> RotationalSpeed {
-    RotationalSpeed::from_erpm_f32(value)
-}
-
-fn voltage_from_volts(value: f32) -> Voltage {
-    Voltage::from_volts_f32(value)
-}
-
-fn current_from_amps(value: f32) -> BatteryCurrent {
-    BatteryCurrent::from_amps_f32(value)
-}
-
-fn speed_from_metres_per_second(value: f32) -> Speed {
-    Speed::from_metres_per_second(value)
-}
-
-fn power_from_watts(value: f32) -> Power {
-    Power::from_watts_f32(value)
-}
-
-fn duration_from_seconds(value: f32) -> Duration {
-    Duration::from_seconds_f32(value)
 }
 
 impl From<vesc::FaultCode> for VescFaultCode {

@@ -650,20 +650,11 @@ pub fn estimate_veteran_battery_level(model_id: u16, voltage: Voltage) -> Batter
 }
 
 fn speed_from_deci_kmh(value: i32) -> Speed {
-    Speed::from_millimetres_per_second(value * 250 / 9)
+    Speed::from_deci_kmh(value)
 }
 
 fn speed_setting_value(value: Speed) -> i32 {
-    let numerator = i64::from(value.as_millimetres_per_second()) * 36;
-    let rounded = if numerator >= 0 {
-        (numerator + 500) / 1_000
-    } else {
-        (numerator - 500) / 1_000
-    };
-    #[allow(clippy::cast_possible_truncation)]
-    {
-        rounded as i32
-    }
+    value.as_deci_kmh_rounded()
 }
 
 fn veteran_pwm(raw_pwm: u16) -> i16 {

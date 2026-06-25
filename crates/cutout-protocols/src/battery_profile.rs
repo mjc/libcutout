@@ -31,7 +31,7 @@ impl BatteryVoltageProfile {
         pack_voltage: Voltage,
         series_cells: SeriesCount,
     ) -> BatteryLevel {
-        self.estimate_level_from_cell_voltage(normalize_cell_voltage(pack_voltage, series_cells))
+        self.estimate_level_from_cell_voltage(pack_voltage.as_cell_voltage(series_cells))
     }
 
     /// Estimates battery level from a single-cell voltage.
@@ -101,17 +101,6 @@ pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     nominal_capacity: Capacity::from_milliamp_hours(5_000),
     points: &SAMSUNG_50S_CELL_POINTS,
 };
-
-fn normalize_cell_voltage(pack_voltage: Voltage, series_cells: SeriesCount) -> CellVoltage {
-    let series_cells = i32::from(series_cells.get());
-    if series_cells <= 0 {
-        return CellVoltage::from_microvolts(0);
-    }
-
-    CellVoltage::from_microvolts(
-        ((pack_voltage.as_millivolts() * 1_000) + (series_cells / 2)) / series_cells,
-    )
-}
 
 fn interpolate_level(
     cell_voltage: CellVoltage,

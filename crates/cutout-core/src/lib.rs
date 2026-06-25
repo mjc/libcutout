@@ -4126,6 +4126,19 @@ impl Voltage {
         Self::from_millivolts(round_f32_to_i32(value * 1_000.0))
     }
 
+    /// Returns this pack voltage as a single-cell voltage for the given series count.
+    #[must_use]
+    pub fn as_cell_voltage(self, series_cells: SeriesCount) -> CellVoltage {
+        let series_cells = i32::from(series_cells.get());
+        if series_cells <= 0 {
+            return CellVoltage::from_microvolts(0);
+        }
+
+        let numerator = i64::from(self.as_millivolts()).saturating_mul(1_000);
+        let rounded = (numerator + i64::from(series_cells / 2)) / i64::from(series_cells);
+        CellVoltage::from_microvolts(saturating_i64_to_i32(rounded))
+    }
+
     /// Returns this voltage's position inside a voltage range as a whole percent.
     #[must_use]
     pub fn percent_of_range(self, voltage_range: &RangeInclusive<Self>) -> u64 {
@@ -4420,6 +4433,17 @@ impl Speed {
         self.as_milli_kmh() / 1_000
     }
 
+    /// Returns this speed in whole kilometres per hour, rounded to the nearest km/h.
+    #[must_use]
+    pub fn as_kmh_rounded(self) -> i32 {
+        let numerator = i64::from(self.as_millimetres_per_second()) * 18;
+        if numerator >= 0 {
+            i32::try_from((numerator + 2_500) / 5_000).unwrap_or(i32::MAX)
+        } else {
+            i32::try_from((numerator - 2_500) / 5_000).unwrap_or(i32::MIN)
+        }
+    }
+
     /// Returns this speed in milli-kilometres per hour.
     #[must_use]
     pub const fn as_milli_kmh(self) -> i32 {
@@ -4430,6 +4454,17 @@ impl Speed {
     #[must_use]
     pub const fn as_deci_kmh(self) -> i32 {
         self.as_milli_kmh() / 100
+    }
+
+    /// Returns this speed in deci-kilometres per hour, rounded to the nearest tenth.
+    #[must_use]
+    pub fn as_deci_kmh_rounded(self) -> i32 {
+        let numerator = i64::from(self.as_millimetres_per_second()) * 36;
+        if numerator >= 0 {
+            i32::try_from((numerator + 500) / 1_000).unwrap_or(i32::MAX)
+        } else {
+            i32::try_from((numerator - 500) / 1_000).unwrap_or(i32::MIN)
+        }
     }
 
     /// Creates a speed from miles per hour.
@@ -6410,9 +6445,22 @@ mod tests {
     fn quantity_conversions_keep_unit_math_in_core() {
         assert_eq!(Speed::from_mph(10).as_millimetres_per_second(), 4_474);
         assert_eq!(Speed::from_millimetres_per_second(4_470).as_mph(), 10);
+        assert_eq!(Speed::from_kmh(50).as_kmh_rounded(), 50);
+        assert_eq!(
+            Speed::from_millimetres_per_second(22_222).as_kmh_rounded(),
+            80
+        );
+        assert_eq!(
+            Speed::from_millimetres_per_second(15_277).as_deci_kmh_rounded(),
+            550
+        );
 
         assert_eq!(Voltage::from_volts(126).as_millivolts(), 126_000);
         assert_eq!(Voltage::from_millivolts(84_400).as_whole_volts(), 84);
+        assert_eq!(
+            Voltage::from_millivolts(91_000).as_cell_voltage(crate::SeriesCount::new(30)),
+            crate::CellVoltage::from_microvolts(3_033_333)
+        );
         let voltage_range = Voltage::from_volts(91)..=Voltage::from_volts(126);
         assert_eq!(
             Voltage::from_millivolts(108_500).percent_of_range(&voltage_range),

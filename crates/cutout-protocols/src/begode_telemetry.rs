@@ -127,15 +127,15 @@ impl BegodeUnitMode {
         match self {
             Self::Metric => metric_speed,
             Self::Imperial => {
-                Speed::from_milli_kmh(mph_milli_to_kmh_milli(speed_to_milli_kmh(metric_speed)))
+                Speed::from_milli_kmh(mph_milli_to_kmh_milli(metric_speed.as_milli_kmh()))
             }
         }
     }
 
     fn speed_limit(self, raw_speed: u16) -> Speed {
         match self {
-            Self::Metric => speed_from_kmh(raw_speed),
-            Self::Imperial => speed_from_kmh(mph_to_kmh_u16(raw_speed)),
+            Self::Metric => Speed::from_kmh(u64::from(raw_speed)),
+            Self::Imperial => Speed::from_kmh(u64::from(mph_to_kmh_u16(raw_speed))),
         }
     }
 
@@ -1221,20 +1221,8 @@ fn speed_from_live_a_raw(raw_speed: i16) -> Speed {
     Speed::from_millimetres_per_second(i32::from(raw_speed) * 10)
 }
 
-fn speed_from_kmh(value: u16) -> Speed {
-    speed_from_milli_kmh(i32::from(value) * 1_000)
-}
-
-fn speed_from_milli_kmh(value: i32) -> Speed {
-    Speed::from_millimetres_per_second(value * 5 / 18)
-}
-
-fn speed_to_milli_kmh(value: Speed) -> i32 {
-    value.as_millimetres_per_second() * 18 / 5
-}
-
 fn speed_setting_value(value: Speed) -> u16 {
-    let kmh = div_round(value.as_millimetres_per_second() * 18, 5_000);
+    let kmh = value.as_kmh_rounded().clamp(0, i32::from(u16::MAX));
     u16::try_from(kmh).unwrap_or(u16::MAX)
 }
 
