@@ -1,7 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
 use cutout_core::{
-    BatteryCurrent, Distance, Duration, Power, RotationalSpeed, Speed, TachometerReading, Voltage,
+    BatteryCurrent, Distance, Duration, PeakCurrent, Power, RotationalSpeed, Speed,
+    TachometerReading, Voltage,
 };
 use thiserror::Error;
 
@@ -240,8 +241,8 @@ pub struct VescStatsTelemetry {
     /// Average current.
     pub current_avg: BatteryCurrent,
 
-    /// Maximum current.
-    pub current_max: BatteryCurrent,
+    /// Peak current.
+    pub peak_current: PeakCurrent,
 
     /// Statistics accumulation time.
     pub count_time: Duration,
@@ -563,7 +564,7 @@ impl From<vesc::Stats> for VescStatsTelemetry {
             power_avg: Power::from_watts_f32(stats.power_avg),
             power_max: Power::from_watts_f32(stats.power_max),
             current_avg: BatteryCurrent::from_amps_f32(stats.current_avg),
-            current_max: BatteryCurrent::from_amps_f32(stats.current_max),
+            peak_current: PeakCurrent::from_amps_f32(stats.current_max),
             count_time: Duration::from_seconds_f32(stats.count_time),
         }
     }
@@ -723,7 +724,7 @@ mod tests {
         assert_eq!(stats.power_avg.as_milliwatts(), 3_000);
         assert_eq!(stats.power_max.as_milliwatts(), 4_000);
         assert_eq!(stats.current_avg.as_milliamps(), 5_000);
-        assert_eq!(stats.current_max.as_milliamps(), 6_000);
+        assert_eq!(stats.peak_current.as_milliamps(), 6_000);
         assert_eq!(stats.count_time, Duration::from_seconds(11));
     }
 

@@ -4277,6 +4277,9 @@ pub type PhaseCurrent = Current;
 /// Battery/input current stored in milliamps.
 pub type BatteryCurrent = Current;
 
+/// Peak current stored in milliamps.
+pub type PeakCurrent = Current;
+
 impl Current {
     /// Creates a current from milliamps.
     #[must_use]
