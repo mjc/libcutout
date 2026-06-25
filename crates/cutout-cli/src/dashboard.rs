@@ -19,10 +19,11 @@ use cutout_btle::{
     ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, DiagnosticReadback,
-    Distance, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen, NotificationIngestOutcome,
-    ParserDiagnostics, PhaseCurrent, Power, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
-    SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot, Voltage,
+    BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Current,
+    DiagnosticReadback, Distance, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, PhaseCurrent, Power, ProtocolFamily,
+    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta,
+    TelemetrySnapshot, Temperature, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
@@ -508,7 +509,7 @@ impl fmt::Display for DisplayDutyCycle {
 pub(crate) struct DisplayTemperature(i64);
 
 impl DisplayTemperature {
-    fn from_temperature(value: cutout_core::Temperature) -> Self {
+    fn from_temperature(value: Temperature) -> Self {
         Self(millicelsius_to_celsius_signed(value.as_millicelsius()))
     }
 
@@ -529,10 +530,6 @@ pub(crate) struct DisplayPhaseCurrent(PhaseCurrent);
 impl DisplayPhaseCurrent {
     fn from_milliamps(value: i32) -> Self {
         Self(PhaseCurrent::from_milliamps(value))
-    }
-
-    fn abs_sample(self) -> u64 {
-        self.get().unsigned_abs()
     }
 
     const fn get(self) -> i64 {
@@ -819,8 +816,8 @@ pub(crate) struct TelemetryWindow {
     pub(crate) latest_pwm: Option<DisplayDutyCycle>,
     pub(crate) speed_samples: Vec<u64>,
     pub(crate) voltage_samples: Vec<u64>,
-    pub(crate) current_samples: Vec<u64>,
-    pub(crate) temperature_samples: Vec<u64>,
+    pub(crate) current_samples: Vec<Current>,
+    pub(crate) temperature_samples: Vec<Temperature>,
     pub(crate) current_points: Vec<(f64, f64)>,
     pub(crate) temperature_points: Vec<(f64, f64)>,
 }
@@ -860,7 +857,7 @@ const DEMO_PROVENANCE: &str = "demo state: aero-nf2557.v1";
 const DEMO_SPEED_MPH: &[u64] = &[0, 4, 9, 14, 18, 22, 24, 21, 19, 17, 16, 18];
 const DEMO_VOLTAGE_V: &[u64] = &[52, 52, 53, 53, 54, 54, 55, 55, 55, 54, 54, 53];
 const DEMO_CURRENT_A: &[u64] = &[3, 4, 6, 7, 8, 9, 10, 10, 9, 8, 7, 6];
-const DEMO_TEMPERATURE_C: &[u64] = &[30, 31, 31, 32, 32, 33, 34, 34, 35, 35, 34, 33];
+const DEMO_TEMPERATURE_C: &[i64] = &[30, 31, 31, 32, 32, 33, 34, 34, 35, 35, 34, 33];
 
 impl DashboardState {
     pub(crate) fn empty() -> Self {
@@ -1319,7 +1316,7 @@ impl TelemetryWindow {
         speed_samples: &'static [u64],
         voltage_samples: &'static [u64],
         current_samples: &'static [u64],
-        temperature_samples: &'static [u64],
+        temperature_samples: &'static [i64],
     ) {
         self.battery_level = Some(battery_level);
         self.battery_source = BatterySource::TelemetryReported;
@@ -1342,7 +1339,6 @@ impl TelemetryWindow {
         self.latest_temperature = temperature_samples
             .last()
             .copied()
-            .and_then(u64_to_i64)
             .map(DisplayTemperature::from_celsius);
         self.speed_samples.clear();
         self.voltage_samples.clear();
@@ -1350,18 +1346,41 @@ impl TelemetryWindow {
         self.temperature_samples.clear();
         self.speed_samples.extend_from_slice(speed_samples);
         self.voltage_samples.extend_from_slice(voltage_samples);
-        self.current_samples.extend_from_slice(current_samples);
+        self.current_samples.extend(
+            current_samples
+                .iter()
+                .copied()
+                .filter_map(u64_to_i64)
+                .map(|current| Current::from_milliamps(amps_to_milliamps(current))),
+        );
         self.temperature_samples
-            .extend_from_slice(temperature_samples);
+            .extend(temperature_samples.iter().copied().map(|temperature| {
+                Temperature::from_millicelsius(celsius_to_millicelsius(temperature))
+            }));
         self.sync_points();
     }
 
     fn step(&mut self) {
         let next_speed = (self.speed_samples.last().copied().unwrap_or(0) + 3) % 40;
         let next_voltage = 50 + ((self.voltage_samples.last().copied().unwrap_or(52) + 1) % 6);
-        let next_current = 4 + ((self.current_samples.last().copied().unwrap_or(5) + 1) % 9);
-        let next_temperature =
-            30 + ((self.temperature_samples.last().copied().unwrap_or(32) + 1) % 9);
+        let next_current = 4
+            + ((self
+                .current_samples
+                .last()
+                .copied()
+                .map_or(5, |current| milliamps_to_amps_abs(current.as_milliamps()))
+                + 1)
+                % 9);
+        let next_temperature = 30
+            + ((self
+                .temperature_samples
+                .last()
+                .copied()
+                .map_or(32, |temperature| {
+                    millicelsius_to_celsius(temperature.as_millicelsius())
+                })
+                + 1)
+                % 9);
 
         if let Some(battery_level) = self.battery_level.as_mut() {
             *battery_level = battery_level.decrement_for_demo();
@@ -1369,8 +1388,18 @@ impl TelemetryWindow {
         self.signal_quality = self.signal_quality.increment();
         push_sample(&mut self.speed_samples, next_speed);
         push_sample(&mut self.voltage_samples, next_voltage);
-        push_sample(&mut self.current_samples, next_current);
-        push_sample(&mut self.temperature_samples, next_temperature);
+        push_sample(
+            &mut self.current_samples,
+            Current::from_milliamps(amps_to_milliamps(
+                u64_to_i64(next_current).unwrap_or(i64::MAX / 1_000),
+            )),
+        );
+        push_sample(
+            &mut self.temperature_samples,
+            Temperature::from_millicelsius(celsius_to_millicelsius(
+                u64_to_i64(next_temperature).unwrap_or(i64::MAX / 1_000),
+            )),
+        );
         self.latest_speed = Some(DisplaySpeed::from_mph(next_speed));
         self.latest_voltage = Some(DisplayVoltage::from_volts(next_voltage));
         self.latest_battery_current =
@@ -1388,13 +1417,17 @@ impl TelemetryWindow {
         self.temperature_points.reserve(HISTORY_LIMIT);
 
         for (index, value) in self.current_samples.iter().enumerate() {
-            self.current_points
-                .push((index_to_f64(index), to_f64(*value)));
+            self.current_points.push((
+                index_to_f64(index),
+                to_f64(milliamps_to_amps_abs(value.as_milliamps())),
+            ));
         }
 
         for (index, value) in self.temperature_samples.iter().enumerate() {
-            self.temperature_points
-                .push((index_to_f64(index), to_f64(*value)));
+            self.temperature_points.push((
+                index_to_f64(index),
+                to_f64(millicelsius_to_celsius(value.as_millicelsius())),
+            ));
         }
     }
 
@@ -1425,11 +1458,14 @@ impl TelemetryWindow {
         if let Some(current) = snapshot.motor_current {
             let current = DisplayPhaseCurrent::from_milliamps(current.value.get());
             self.latest_phase_current = Some(current);
-            push_sample(&mut self.current_samples, current.abs_sample());
+            push_sample(
+                &mut self.current_samples,
+                Current::from_milliamps(current.0.as_milliamps().saturating_abs()),
+            );
         } else if let Some(current) = snapshot.battery_current {
             push_sample(
                 &mut self.current_samples,
-                milliamps_to_amps_abs(current.value.get()),
+                Current::from_milliamps(current.value.get().saturating_abs()),
             );
         }
         if let Some(power) = snapshot.power {
@@ -1441,10 +1477,7 @@ impl TelemetryWindow {
             .or(snapshot.battery_temperature)
         {
             self.latest_temperature = Some(DisplayTemperature::from_temperature(temperature.value));
-            push_sample(
-                &mut self.temperature_samples,
-                millicelsius_to_celsius(temperature.value.get()),
-            );
+            push_sample(&mut self.temperature_samples, temperature.value);
         }
         if let Some(distance) = snapshot.distance {
             self.latest_distance = Some(distance.value);
@@ -1466,14 +1499,14 @@ impl TelemetryWindow {
     }
 }
 
-fn push_sample(series: &mut Vec<u64>, value: u64) {
+fn push_sample<T: Copy>(series: &mut Vec<T>, value: T) {
     if series.len() == HISTORY_LIMIT {
         series.remove(0);
     }
     series.push(value);
 }
 
-fn seed_or_push_sample(series: &mut Vec<u64>, value: u64) {
+fn seed_or_push_sample<T: Copy>(series: &mut Vec<T>, value: T) {
     if series.is_empty() {
         series.resize(HISTORY_LIMIT, value);
         return;
@@ -1650,6 +1683,15 @@ fn milliamps_to_amps(value: i32) -> i64 {
     i64::from(value) / 1_000
 }
 
+fn amps_to_milliamps(value: i64) -> i32 {
+    let milliamps = value.saturating_mul(1_000);
+    i32::try_from(milliamps).unwrap_or(if milliamps.is_negative() {
+        i32::MIN
+    } else {
+        i32::MAX
+    })
+}
+
 fn milliamps_to_amps_abs(value: i32) -> u64 {
     u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
 }
@@ -1660,6 +1702,15 @@ fn millicelsius_to_celsius_signed(value: i32) -> i64 {
 
 fn millicelsius_to_celsius(value: i32) -> u64 {
     u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
+}
+
+fn celsius_to_millicelsius(value: i64) -> i32 {
+    let millicelsius = value.saturating_mul(1_000);
+    i32::try_from(millicelsius).unwrap_or(if millicelsius.is_negative() {
+        i32::MIN
+    } else {
+        i32::MAX
+    })
 }
 
 fn millidegrees_to_degrees(value: i32) -> i64 {
@@ -3603,8 +3654,59 @@ mod tests {
         Measured::calculated(Power::from_milliwatts(value))
     }
 
-    fn temperature(value: i32) -> Measured<cutout_core::Temperature> {
-        Measured::reported(cutout_core::Temperature::from_millicelsius(value))
+    fn temperature(value: i32) -> Measured<Temperature> {
+        Measured::reported(Temperature::from_millicelsius(value))
+    }
+
+    fn assert_typed_telemetry_history(
+        state: &DashboardState,
+        current: Current,
+        temperature: Temperature,
+    ) {
+        assert_eq!(state.telemetry.current_samples, vec![current]);
+        assert_eq!(state.telemetry.temperature_samples, vec![temperature]);
+    }
+
+    fn telemetry_snapshot_report() -> SessionBridgeReport {
+        SessionBridgeReport {
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(2),
+            notification_bytes: NotificationPayloadTotal::from_bytes(200),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
+            telemetry: telemetry_events(1),
+            telemetry_snapshot: TelemetrySnapshot {
+                speed: Some(speed(4_470)),
+                voltage: Some(voltage(84_400)),
+                battery_current: Some(battery_current(-12_400)),
+                power: Some(power(-1_046_560)),
+                controller_temperature: Some(temperature(36_600)),
+                battery_level_reported: Some(level_reported(77)),
+                ..TelemetrySnapshot::default()
+            },
+            read_only_responses: read_only_responses(0),
+            read_only_response_events: Vec::new(),
+            firmware: None,
+            settings: Vec::new(),
+            diagnostics: diagnostic_events(0),
+            diagnostics_snapshot: ParserDiagnostics::default(),
+            diagnostic_errors: Vec::new(),
+            identity: None,
+            events: vec![SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: cutout_btle::MonotonicMs::new(42),
+                delta: TelemetryDelta {
+                    speed: Some(speed(4_470)),
+                    voltage: Some(voltage(84_400)),
+                    battery_current: Some(battery_current(-12_400)),
+                    power: Some(power(-1_046_560)),
+                    controller_temperature: Some(temperature(36_600)),
+                    battery_level_reported: Some(level_reported(77)),
+                    ..TelemetryDelta::empty(ms(42))
+                },
+            }],
+            disconnects: disconnects(0),
+        }
     }
 
     fn duty_cycle_permille(value: i16) -> Measured<cutout_core::DutyCycle> {
@@ -4255,45 +4357,7 @@ mod tests {
     #[test]
     fn live_session_report_applies_telemetry_snapshot() {
         let mut state = DashboardState::empty();
-        let report = SessionBridgeReport {
-            protocol_writes: protocol_writes(0),
-            writes: writes(0),
-            subscribes: subscribes(1),
-            notifications: notifications(2),
-            notification_bytes: NotificationPayloadTotal::from_bytes(200),
-            latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
-            telemetry: telemetry_events(1),
-            telemetry_snapshot: TelemetrySnapshot {
-                speed: Some(speed(4_470)),
-                voltage: Some(voltage(84_400)),
-                battery_current: Some(battery_current(-12_400)),
-                power: Some(power(-1_046_560)),
-                controller_temperature: Some(temperature(36_600)),
-                battery_level_reported: Some(level_reported(77)),
-                ..TelemetrySnapshot::default()
-            },
-            read_only_responses: read_only_responses(0),
-            read_only_response_events: Vec::new(),
-            firmware: None,
-            settings: Vec::new(),
-            diagnostics: diagnostic_events(0),
-            diagnostics_snapshot: ParserDiagnostics::default(),
-            diagnostic_errors: Vec::new(),
-            identity: None,
-            events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: cutout_btle::MonotonicMs::new(42),
-                delta: TelemetryDelta {
-                    speed: Some(speed(4_470)),
-                    voltage: Some(voltage(84_400)),
-                    battery_current: Some(battery_current(-12_400)),
-                    power: Some(power(-1_046_560)),
-                    controller_temperature: Some(temperature(36_600)),
-                    battery_level_reported: Some(level_reported(77)),
-                    ..TelemetryDelta::empty(ms(42))
-                },
-            }],
-            disconnects: disconnects(0),
-        };
+        let report = telemetry_snapshot_report();
 
         state.apply_session_report(&report);
 
@@ -4338,8 +4402,11 @@ mod tests {
                 .iter()
                 .all(|voltage| *voltage == 84)
         );
-        assert_eq!(state.telemetry.current_samples, vec![12]);
-        assert_eq!(state.telemetry.temperature_samples, vec![37]);
+        assert_typed_telemetry_history(
+            &state,
+            Current::from_milliamps(12_400),
+            Temperature::from_millicelsius(36_600),
+        );
         assert!(state.logs.iter().any(|entry| {
             entry.level == "info"
                 && entry.message.contains("telemetry mapped")
