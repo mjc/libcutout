@@ -861,9 +861,49 @@ enum DashboardInput {
 
 const DEMO_PROVENANCE: &str = "demo state: aero-nf2557.v1";
 const DEMO_SPEED_MPH: &[u64] = &[0, 4, 9, 14, 18, 22, 24, 21, 19, 17, 16, 18];
-const DEMO_VOLTAGE_V: &[u64] = &[52, 52, 53, 53, 54, 54, 55, 55, 55, 54, 54, 53];
-const DEMO_CURRENT_A: &[u64] = &[3, 4, 6, 7, 8, 9, 10, 10, 9, 8, 7, 6];
-const DEMO_TEMPERATURE_C: &[i64] = &[30, 31, 31, 32, 32, 33, 34, 34, 35, 35, 34, 33];
+const DEMO_VOLTAGE: &[Voltage] = &[
+    Voltage::from_millivolts(52_000),
+    Voltage::from_millivolts(52_000),
+    Voltage::from_millivolts(53_000),
+    Voltage::from_millivolts(53_000),
+    Voltage::from_millivolts(54_000),
+    Voltage::from_millivolts(54_000),
+    Voltage::from_millivolts(55_000),
+    Voltage::from_millivolts(55_000),
+    Voltage::from_millivolts(55_000),
+    Voltage::from_millivolts(54_000),
+    Voltage::from_millivolts(54_000),
+    Voltage::from_millivolts(53_000),
+];
+const DEMO_CURRENT: &[Current] = &[
+    Current::from_milliamps(3_000),
+    Current::from_milliamps(4_000),
+    Current::from_milliamps(6_000),
+    Current::from_milliamps(7_000),
+    Current::from_milliamps(8_000),
+    Current::from_milliamps(9_000),
+    Current::from_milliamps(10_000),
+    Current::from_milliamps(10_000),
+    Current::from_milliamps(9_000),
+    Current::from_milliamps(8_000),
+    Current::from_milliamps(7_000),
+    Current::from_milliamps(6_000),
+];
+const DEMO_TEMPERATURE: &[Temperature] = &[
+    Temperature::from_millicelsius(30_000),
+    Temperature::from_millicelsius(31_000),
+    Temperature::from_millicelsius(31_000),
+    Temperature::from_millicelsius(32_000),
+    Temperature::from_millicelsius(32_000),
+    Temperature::from_millicelsius(33_000),
+    Temperature::from_millicelsius(34_000),
+    Temperature::from_millicelsius(34_000),
+    Temperature::from_millicelsius(35_000),
+    Temperature::from_millicelsius(35_000),
+    Temperature::from_millicelsius(34_000),
+    Temperature::from_millicelsius(33_000),
+];
+static DEMO_SPEED: OnceLock<Box<[Speed]>> = OnceLock::new();
 
 impl DashboardState {
     pub(crate) fn empty() -> Self {
@@ -972,10 +1012,10 @@ impl DashboardState {
         self.telemetry.load_window(
             DashboardBatteryLevel::new(74),
             SignalQuality::new(81),
-            DEMO_SPEED_MPH,
-            DEMO_VOLTAGE_V,
-            DEMO_CURRENT_A,
-            DEMO_TEMPERATURE_C,
+            demo_speed_samples(),
+            DEMO_VOLTAGE,
+            DEMO_CURRENT,
+            DEMO_TEMPERATURE,
         );
         self.read_only.firmware = Some(FirmwareInfo {
             firmware_major: Some(Measured::reported(43)),
@@ -1319,10 +1359,10 @@ impl TelemetryWindow {
         &mut self,
         battery_level: DashboardBatteryLevel,
         signal_quality: SignalQuality,
-        speed_samples: &'static [u64],
-        voltage_samples: &'static [u64],
-        current_samples: &'static [u64],
-        temperature_samples: &'static [i64],
+        speed_samples: &'static [Speed],
+        voltage_samples: &'static [Voltage],
+        current_samples: &'static [Current],
+        temperature_samples: &'static [Temperature],
     ) {
         self.battery_level = Some(battery_level);
         self.battery_source = BatterySource::TelemetryReported;
@@ -1331,29 +1371,11 @@ impl TelemetryWindow {
         self.voltage_samples.clear();
         self.current_samples.clear();
         self.temperature_samples.clear();
-        self.speed_samples.extend(
-            speed_samples
-                .iter()
-                .copied()
-                .map(|speed| Speed::from_millimetres_per_second(mph_to_mm_s(speed))),
-        );
-        self.voltage_samples.extend(
-            voltage_samples
-                .iter()
-                .copied()
-                .map(|voltage| Voltage::from_millivolts(volts_to_millivolts(voltage))),
-        );
-        self.current_samples.extend(
-            current_samples
-                .iter()
-                .copied()
-                .filter_map(u64_to_i64)
-                .map(|current| Current::from_milliamps(amps_to_milliamps(current))),
-        );
+        self.speed_samples.extend(speed_samples.iter().copied());
+        self.voltage_samples.extend(voltage_samples.iter().copied());
+        self.current_samples.extend(current_samples.iter().copied());
         self.temperature_samples
-            .extend(temperature_samples.iter().copied().map(|temperature| {
-                Temperature::from_millicelsius(celsius_to_millicelsius(temperature))
-            }));
+            .extend(temperature_samples.iter().copied());
         self.latest_speed = self
             .speed_samples
             .last()
@@ -1751,6 +1773,19 @@ const fn verification_name(verification: cutout_core::VerificationStatus) -> &'s
 fn mm_s_to_mph(value: i32) -> u64 {
     let numerator = u64::from(value.unsigned_abs()) * 1_000;
     numerator.saturating_add(223_694) / 447_388
+}
+
+fn demo_speed_samples() -> &'static [Speed] {
+    DEMO_SPEED
+        .get_or_init(|| {
+            DEMO_SPEED_MPH
+                .iter()
+                .copied()
+                .map(|value| Speed::from_millimetres_per_second(mph_to_mm_s(value)))
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+        })
+        .as_ref()
 }
 
 fn mph_to_mm_s(value: u64) -> i32 {
