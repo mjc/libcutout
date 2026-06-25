@@ -5,11 +5,11 @@ use crate::{
     DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState, Measured, MonotonicMillis,
     NotificationByteLen, NotificationEvidence, NotificationIngestOutcome, ParserDiagnosticCount,
     ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen, ParserGapEvidence,
-    PayloadBodyLen, Percent, Power, ProtocolFamily, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput,
-    SessionOutput, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot,
-    Temperature, TransportAction, TransportWriteLen, ValueQuality, ValueSource, VerificationStatus,
-    Voltage, WriteMode,
+    PayloadBodyLen, Percent, PhaseCurrent, Power, ProtocolFamily, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
+    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
+    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLen,
+    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -268,7 +268,9 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
-            DeviceCommand::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent { current },
+            DeviceCommand::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
+                current: current.as_milliamps(),
+            },
         }
     }
 }
@@ -284,9 +286,9 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
-            DeviceCommandDto::SetRawMotorCurrent { current } => {
-                Self::SetRawMotorCurrent { current }
-            }
+            DeviceCommandDto::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
+                current: PhaseCurrent::from_milliamps(current),
+            },
         }
     }
 }
@@ -1998,7 +2000,7 @@ mod tests {
         });
         let command =
             SessionInputDto::from(SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: -1_500,
+                current: PhaseCurrent::from_milliamps(-1_500),
             }));
 
         assert_eq!(
@@ -2043,7 +2045,9 @@ mod tests {
         assert_eq!(
             SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current: -1_500 })
                 .as_session_input(),
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: -1_500 })
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: PhaseCurrent::from_milliamps(-1_500),
+            })
         );
     }
 

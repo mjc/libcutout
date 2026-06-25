@@ -223,7 +223,7 @@ pub enum DeviceCommand {
     /// Set raw motor current in milliamps.
     SetRawMotorCurrent {
         /// Target motor/phase current in milliamps.
-        current: i32,
+        current: PhaseCurrent,
     },
 }
 
@@ -370,8 +370,8 @@ pub struct DangerousActuationPolicy {
     /// Model this policy allows.
     pub model: &'static str,
 
-    /// Maximum absolute raw motor current allowed by this policy.
-    pub max_current: BatteryCurrent,
+    /// Maximum absolute motor/phase current allowed by this policy.
+    pub max_current: PhaseCurrent,
 
     /// Duration of newly issued arming tokens.
     pub arm_duration: Duration,
@@ -415,7 +415,7 @@ impl DangerousActuationPolicy {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
         if let DeviceCommand::SetRawMotorCurrent { current } = command
-            && current.saturating_abs() > self.max_current.as_milliamps()
+            && current.as_milliamps().saturating_abs() > self.max_current.as_milliamps()
         {
             return Err(DangerousActuationRefusal::CurrentLimitExceeded);
         }
@@ -5413,9 +5413,10 @@ mod tests {
     use super::crate_name;
     use crate::{
         BatteryCurrent, DeviceCommand, DeviceEvent, Distance, Duration, GattChannel, LinkInfo,
-        Measured, MonotonicMillis, Percent, ProtocolSession, SessionInput, SessionOutput, Speed,
-        TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason,
-        ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        Measured, MonotonicMillis, Percent, PhaseCurrent, ProtocolSession, SessionInput,
+        SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction,
+        UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+        WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -7155,7 +7156,9 @@ mod tests {
     #[test]
     fn actuation_commands_are_not_supported_without_capability() {
         let capabilities = crate::Capabilities::default();
-        let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(1_000),
+        };
 
         assert_eq!(command.safety_class(), crate::SafetyClass::Actuation);
         assert_eq!(
@@ -7168,10 +7171,12 @@ mod tests {
     fn dangerous_actuation_policy_requires_arm_token() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: PhaseCurrent::from_milliamps(5_000),
             arm_duration: Duration::from_milliseconds(1_000),
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(1_000),
+        };
 
         assert_eq!(
             policy.authorize(command, ms(42), None),
@@ -7183,15 +7188,17 @@ mod tests {
     fn dangerous_actuation_policy_rejects_expired_or_wrong_model_arms() {
         let falcon = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: PhaseCurrent::from_milliamps(5_000),
             arm_duration: Duration::from_milliseconds(1_000),
         };
         let aero = crate::DangerousActuationPolicy {
             model: "NOSFET Aero",
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: PhaseCurrent::from_milliamps(5_000),
             arm_duration: Duration::from_milliseconds(1_000),
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(1_000),
+        };
         let falcon_arm = falcon.arm(ms(10));
         let aero_arm = aero.arm(ms(10));
 
@@ -7209,7 +7216,7 @@ mod tests {
     fn dangerous_actuation_policy_rejects_non_actuation_and_over_limit_commands() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: PhaseCurrent::from_milliamps(5_000),
             arm_duration: Duration::from_milliseconds(1_000),
         };
         let arm = policy.arm(ms(10));
@@ -7220,7 +7227,9 @@ mod tests {
         );
         assert_eq!(
             policy.authorize(
-                DeviceCommand::SetRawMotorCurrent { current: 5_001 },
+                DeviceCommand::SetRawMotorCurrent {
+                    current: PhaseCurrent::from_milliamps(5_001)
+                },
                 ms(42),
                 Some(arm)
             ),
@@ -7232,10 +7241,12 @@ mod tests {
     fn dangerous_actuation_policy_accepts_armed_in_limit_actuation() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: PhaseCurrent::from_milliamps(5_000),
             arm_duration: Duration::from_milliseconds(1_000),
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current: -5_000 };
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(-5_000),
+        };
         let arm = policy.arm(ms(10));
 
         assert_eq!(

@@ -1822,7 +1822,9 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1),
+            }),
             &mut output,
         );
 
@@ -2675,7 +2677,7 @@ mod tests {
         );
         assert_eq!(
             gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SetRawMotorCurrent {
-                current: 1
+                current: cutout_core::PhaseCurrent::from_milliamps(1)
             }),
             ReadOnlyCommandGate::Unsupported(CommandKind::SetRawMotorCurrent)
         );
@@ -2757,7 +2759,9 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1),
+            }),
             &mut output,
         );
 
@@ -2774,13 +2778,15 @@ mod tests {
         let mut session =
             DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
                 model: TestModel::MODEL,
-                max_current: BatteryCurrent::from_milliamps(5_000),
+                max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
                 arm_duration: cutout_core::Duration::from_milliseconds(1_000),
             });
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+            }),
             &mut output,
         );
 
@@ -2806,7 +2812,7 @@ mod tests {
     fn dangerous_control_session_refuses_expired_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
             arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2820,7 +2826,9 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+            }),
             &mut output,
         );
 
@@ -2845,12 +2853,12 @@ mod tests {
     fn dangerous_control_session_refuses_wrong_model_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
             arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let wrong_model_policy = cutout_core::DangerousActuationPolicy {
             model: "other model",
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
             arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2864,7 +2872,9 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+            }),
             &mut output,
         );
 
@@ -2889,7 +2899,7 @@ mod tests {
     fn dangerous_control_session_refuses_over_current_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current: BatteryCurrent::from_milliamps(5_000),
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
             arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
@@ -2903,7 +2913,9 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current: 5_001 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(5_001),
+            }),
             &mut output,
         );
 
