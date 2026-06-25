@@ -1,10 +1,11 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    BatteryCurrent, Capacity, CentiVoltage, DiagnosticDetail, DiagnosticReadback,
-    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicMillis, Percent,
-    PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed,
-    TelemetryDelta, Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    BatteryCurrent, BmsParallelPacks, Capacity, CentiVoltage, DiagnosticDetail, DiagnosticReadback,
+    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicMillis,
+    PackSeriesCells, Percent, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SettingsEntry,
+    SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -12,6 +13,12 @@ use crate::{
     BegodeFrame,
     parser::{ByteCursor, ByteOffset},
 };
+
+const SERIES_CELLS_20: PackSeriesCells = PackSeriesCells::new(20);
+const SERIES_CELLS_24: PackSeriesCells = PackSeriesCells::new(24);
+#[cfg(test)]
+const PARALLEL_PACKS_1: BmsParallelPacks = BmsParallelPacks::new(1);
+const PARALLEL_PACKS_2: BmsParallelPacks = BmsParallelPacks::new(2);
 
 /// Begode speed/distance unit mode inferred from Live B settings bit 0.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -281,10 +288,10 @@ pub struct BegodePackLayoutEvidence {
     pub cell_model: Option<BegodeCellModel>,
 
     /// Series cell count, when explicitly reported.
-    pub series_cells: Option<u8>,
+    pub series_cells: Option<PackSeriesCells>,
 
     /// Parallel cell count, when explicitly reported.
-    pub parallel_count: Option<u8>,
+    pub parallel_count: Option<BmsParallelPacks>,
 }
 
 /// Result of selecting Begode pack-layout evidence from explicit inputs.
@@ -572,7 +579,7 @@ fn validate_selected_begode_pack_evidence(
     layout: BegodePackLayoutEvidence,
 ) -> BegodePackEvidenceConsistency {
     if let Some(series_cells) = layout.series_cells
-        && series_cells != profile.series_cells()
+        && series_cells.get() != profile.series_cells()
     {
         return BegodePackEvidenceConsistency::Inconsistent;
     }
@@ -604,11 +611,11 @@ fn validate_selected_begode_pack_capacity(
 
 fn validate_samsung_50s_capacity(
     capacity: BegodeCapacityEvidence,
-    series_cells: u8,
-    parallel_count: u8,
+    series_cells: PackSeriesCells,
+    parallel_count: BmsParallelPacks,
 ) -> BegodePackEvidenceConsistency {
     let expected_capacity =
-        Capacity::from_milliamp_hours(u32::from(parallel_count).saturating_mul(5_000));
+        Capacity::from_milliamp_hours(u32::from(parallel_count.get()).saturating_mul(5_000));
     if let Some(nominal_capacity) = capacity.nominal_capacity
         && nominal_capacity != expected_capacity
     {
@@ -616,8 +623,8 @@ fn validate_samsung_50s_capacity(
     }
 
     if let Some(reported_energy) = capacity.reported_energy {
-        let expected_wh = u32::from(series_cells)
-            .saturating_mul(u32::from(parallel_count))
+        let expected_wh = u32::from(series_cells.get())
+            .saturating_mul(u32::from(parallel_count.get()))
             .saturating_mul(18);
         if !within_percent(reported_energy.as_watt_hours(), expected_wh, 5) {
             return BegodePackEvidenceConsistency::Inconsistent;
@@ -637,7 +644,7 @@ fn select_consistent_begode_falcon_battery_variant(
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge),
             BegodeCapacitySelection::Missing,
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
-                series_cells: Some(20),
+                series_cells: Some(SERIES_CELLS_20),
                 ..
             }),
         ) => {
@@ -648,8 +655,8 @@ fn select_consistent_begode_falcon_battery_variant(
             BegodeCapacitySelection::Selected(capacity),
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                 cell_model: Some(BegodeCellModel::Samsung50S),
-                series_cells: Some(24),
-                parallel_count: Some(2),
+                series_cells: Some(SERIES_CELLS_24),
+                parallel_count: Some(PARALLEL_PACKS_2),
             }),
         ) if capacity.nominal_capacity == Some(Capacity::from_milliamp_hours(10_000))
             && capacity.reported_energy == Some(Energy::from_watt_hours(900)) =>
@@ -703,7 +710,7 @@ fn layout_evidence_from_annotation(annotation: &str) -> Option<BegodePackLayoutE
         "series_cells" | "pack_series_cells" => {
             parse_u8_evidence(value).map(|series_cells| BegodePackLayoutEvidence {
                 cell_model: None,
-                series_cells: Some(series_cells),
+                series_cells: Some(PackSeriesCells::new(series_cells)),
                 parallel_count: None,
             })
         }
@@ -711,7 +718,7 @@ fn layout_evidence_from_annotation(annotation: &str) -> Option<BegodePackLayoutE
             parse_u8_evidence(value).map(|parallel_count| BegodePackLayoutEvidence {
                 cell_model: None,
                 series_cells: None,
-                parallel_count: Some(parallel_count),
+                parallel_count: Some(BmsParallelPacks::new(parallel_count)),
             })
         }
         _ => None,
@@ -829,8 +836,8 @@ fn merge_layout_evidence(
 ) -> Result<BegodePackLayoutEvidence, ()> {
     Ok(BegodePackLayoutEvidence {
         cell_model: merge_optional_cell_model(selected.cell_model, evidence.cell_model)?,
-        series_cells: merge_optional_u8(selected.series_cells, evidence.series_cells)?,
-        parallel_count: merge_optional_u8(selected.parallel_count, evidence.parallel_count)?,
+        series_cells: merge_optional_quantity(selected.series_cells, evidence.series_cells)?,
+        parallel_count: merge_optional_quantity(selected.parallel_count, evidence.parallel_count)?,
     })
 }
 
@@ -842,15 +849,6 @@ const fn merge_optional_cell_model(
         (None, None) => Ok(None),
         (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
         (Some(left), Some(right)) if left as u8 == right as u8 => Ok(Some(left)),
-        (Some(_), Some(_)) => Err(()),
-    }
-}
-
-const fn merge_optional_u8(left: Option<u8>, right: Option<u8>) -> Result<Option<u8>, ()> {
-    match (left, right) {
-        (None, None) => Ok(None),
-        (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
-        (Some(left), Some(right)) if left == right => Ok(Some(left)),
         (Some(_), Some(_)) => Err(()),
     }
 }
@@ -1357,7 +1355,8 @@ mod tests {
         BegodeCapacitySelection, BegodeCellModel, BegodeFalconBatteryVariant,
         BegodeFalconBatteryVariantSelection, BegodeLedMode, BegodeLightMode,
         BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeSettingsBits,
-        BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
+        BegodeVoltageEvidence, BegodeVoltageProfileSelection, PARALLEL_PACKS_1, PARALLEL_PACKS_2,
+        SERIES_CELLS_20, SERIES_CELLS_24, begode_falcon_target_voltage_profile,
         select_begode_falcon_battery_variant, select_begode_pack_capacity_from_annotations,
         select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
         select_begode_pack_voltage_profile_from_annotations,
@@ -1877,8 +1876,8 @@ mod tests {
             ]),
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                 cell_model: Some(BegodeCellModel::Samsung50S),
-                series_cells: Some(20),
-                parallel_count: Some(1),
+                series_cells: Some(SERIES_CELLS_20),
+                parallel_count: Some(PARALLEL_PACKS_1),
             })
         );
     }
@@ -1941,7 +1940,7 @@ mod tests {
                 BegodeCapacitySelection::Missing,
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: None,
-                    series_cells: Some(24),
+                    series_cells: Some(SERIES_CELLS_24),
                     parallel_count: None,
                 }),
             ),
@@ -1959,7 +1958,7 @@ mod tests {
                 BegodeCapacitySelection::Missing,
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: None,
-                    series_cells: Some(20),
+                    series_cells: Some(SERIES_CELLS_20),
                     parallel_count: None,
                 }),
             ),
@@ -1980,8 +1979,8 @@ mod tests {
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(20),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_20),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodePackEvidenceConsistency::Inconsistent
@@ -2001,8 +2000,8 @@ mod tests {
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodePackEvidenceConsistency::Consistent
@@ -2022,7 +2021,7 @@ mod tests {
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(20),
+                    series_cells: Some(SERIES_CELLS_20),
                     parallel_count: None,
                 }),
             ),
@@ -2040,7 +2039,7 @@ mod tests {
                 BegodeCapacitySelection::Missing,
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: None,
-                    series_cells: Some(20),
+                    series_cells: Some(SERIES_CELLS_20),
                     parallel_count: None,
                 }),
             ),
@@ -2061,8 +2060,8 @@ mod tests {
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodeFalconBatteryVariantSelection::Selected(
@@ -2082,8 +2081,8 @@ mod tests {
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodeFalconBatteryVariantSelection::Missing
@@ -2103,8 +2102,8 @@ mod tests {
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodeFalconBatteryVariantSelection::Conflicting
