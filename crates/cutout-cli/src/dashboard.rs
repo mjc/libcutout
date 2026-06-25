@@ -22,7 +22,7 @@ use cutout_core::{
     BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Current,
     DiagnosticReadback, Distance, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen,
     NotificationIngestOutcome, ParserDiagnostics, PhaseCurrent, Power, ProtocolFamily,
-    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta,
+    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
     TelemetrySnapshot, Temperature, Voltage,
 };
 use cutout_protocols::{
@@ -421,12 +421,12 @@ impl fmt::Display for SignalQuality {
 pub(crate) struct DisplaySpeed(u64);
 
 impl DisplaySpeed {
-    fn from_speed(value: cutout_core::Speed) -> Self {
+    fn from_speed(value: Speed) -> Self {
         Self(mm_s_to_mph(value.as_millimetres_per_second()))
     }
 
-    const fn from_mph(value: u64) -> Self {
-        Self(value)
+    fn from_mph(value: u64) -> Self {
+        Self::from_speed(Speed::from_millimetres_per_second(mph_to_mm_s(value)))
     }
 
     pub(crate) const fn get(self) -> u64 {
@@ -456,8 +456,8 @@ impl DisplayVoltage {
         Self(millivolts_to_volts(value.as_millivolts()))
     }
 
-    const fn from_volts(value: u64) -> Self {
-        Self(value)
+    fn from_volts(value: u64) -> Self {
+        Self::from_voltage(Voltage::from_millivolts(volts_to_millivolts(value)))
     }
 
     pub(crate) const fn get(self) -> u64 {
@@ -814,8 +814,8 @@ pub(crate) struct TelemetryWindow {
     pub(crate) latest_distance: Option<Distance>,
     pub(crate) latest_pitch: Option<WheelPitchDeg>,
     pub(crate) latest_pwm: Option<DisplayDutyCycle>,
-    pub(crate) speed_samples: Vec<u64>,
-    pub(crate) voltage_samples: Vec<u64>,
+    pub(crate) speed_samples: Vec<Speed>,
+    pub(crate) voltage_samples: Vec<Voltage>,
     pub(crate) current_samples: Vec<Current>,
     pub(crate) temperature_samples: Vec<Temperature>,
     pub(crate) current_points: Vec<(f64, f64)>,
@@ -1344,8 +1344,18 @@ impl TelemetryWindow {
         self.voltage_samples.clear();
         self.current_samples.clear();
         self.temperature_samples.clear();
-        self.speed_samples.extend_from_slice(speed_samples);
-        self.voltage_samples.extend_from_slice(voltage_samples);
+        self.speed_samples.extend(
+            speed_samples
+                .iter()
+                .copied()
+                .map(|speed| Speed::from_millimetres_per_second(mph_to_mm_s(speed))),
+        );
+        self.voltage_samples.extend(
+            voltage_samples
+                .iter()
+                .copied()
+                .map(|voltage| Voltage::from_millivolts(volts_to_millivolts(voltage))),
+        );
         self.current_samples.extend(
             current_samples
                 .iter()
@@ -1361,8 +1371,21 @@ impl TelemetryWindow {
     }
 
     fn step(&mut self) {
-        let next_speed = (self.speed_samples.last().copied().unwrap_or(0) + 3) % 40;
-        let next_voltage = 50 + ((self.voltage_samples.last().copied().unwrap_or(52) + 1) % 6);
+        let next_speed = (self
+            .speed_samples
+            .last()
+            .copied()
+            .map_or(0, |speed| DisplaySpeed::from_speed(speed).get())
+            + 3)
+            % 40;
+        let next_voltage = 50
+            + ((self
+                .voltage_samples
+                .last()
+                .copied()
+                .map_or(52, |voltage| DisplayVoltage::from_voltage(voltage).get())
+                + 1)
+                % 6);
         let next_current = 4
             + ((self
                 .current_samples
@@ -1386,8 +1409,14 @@ impl TelemetryWindow {
             *battery_level = battery_level.decrement_for_demo();
         }
         self.signal_quality = self.signal_quality.increment();
-        push_sample(&mut self.speed_samples, next_speed);
-        push_sample(&mut self.voltage_samples, next_voltage);
+        push_sample(
+            &mut self.speed_samples,
+            Speed::from_millimetres_per_second(mph_to_mm_s(next_speed)),
+        );
+        push_sample(
+            &mut self.voltage_samples,
+            Voltage::from_millivolts(volts_to_millivolts(next_voltage)),
+        );
         push_sample(
             &mut self.current_samples,
             Current::from_milliamps(amps_to_milliamps(
@@ -1440,16 +1469,16 @@ impl TelemetryWindow {
             self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed {
-            let speed = DisplaySpeed::from_speed(speed.value);
-            let speed_sample = speed.get();
+            let speed_value = speed.value;
+            let speed = DisplaySpeed::from_speed(speed_value);
             self.latest_speed = Some(speed);
-            push_sample(&mut self.speed_samples, speed_sample);
+            push_sample(&mut self.speed_samples, speed_value);
         }
         if let Some(voltage) = snapshot.voltage {
-            let voltage = DisplayVoltage::from_voltage(voltage.value);
-            let volts = voltage.get();
+            let voltage_value = voltage.value;
+            let voltage = DisplayVoltage::from_voltage(voltage_value);
             self.latest_voltage = Some(voltage);
-            seed_or_push_sample(&mut self.voltage_samples, volts);
+            seed_or_push_sample(&mut self.voltage_samples, voltage_value);
         }
         if let Some(current) = snapshot.battery_current {
             self.latest_battery_current =
@@ -1675,8 +1704,17 @@ fn mm_s_to_mph(value: i32) -> u64 {
     numerator.saturating_add(223_694) / 447_388
 }
 
+fn mph_to_mm_s(value: u64) -> i32 {
+    let millimetres_per_second = value.saturating_mul(447_388).saturating_add(500) / 1_000;
+    i32::try_from(millimetres_per_second).unwrap_or(i32::MAX)
+}
+
 fn millivolts_to_volts(value: i32) -> u64 {
     u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
+}
+
+fn volts_to_millivolts(value: u64) -> i32 {
+    i32::try_from(value.saturating_mul(1_000)).unwrap_or(i32::MAX)
 }
 
 fn milliamps_to_amps(value: i32) -> i64 {
@@ -3175,15 +3213,29 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
 
     if let Some(voltage_range) = dashboard_voltage_range(state) {
         for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-            *slot = voltage_range_percent(*voltage_samples, &voltage_range);
+            *slot = voltage_range_percent(
+                millivolts_to_volts(voltage_samples.as_millivolts()),
+                &voltage_range,
+            );
         }
         return (data, len, 100);
     }
 
     for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-        *slot = *voltage_samples;
+        *slot = millivolts_to_volts(voltage_samples.as_millivolts());
     }
     (data, len, voltage_sparkline_max(state))
+}
+
+fn speed_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize) {
+    let mut data = [0; HISTORY_LIMIT];
+    let len = state.telemetry.speed_samples.len().min(HISTORY_LIMIT);
+
+    for (slot, speed_sample) in data.iter_mut().zip(state.telemetry.speed_samples.iter()) {
+        *slot = mm_s_to_mph(speed_sample.as_millimetres_per_second());
+    }
+
+    (data, len)
 }
 
 fn voltage_range_percent(sample_v: u64, voltage_range: &RangeInclusive<Voltage>) -> u64 {
@@ -3219,6 +3271,7 @@ fn dashboard_voltage_range(state: &DashboardState) -> Option<RangeInclusive<Volt
 
 fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     if state.telemetry.has_decoded_samples() {
+        let (speed_samples, speed_len) = speed_sparkline_data(state);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -3235,7 +3288,7 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             frame,
             chunks[2],
             "Speed",
-            &state.telemetry.speed_samples,
+            &speed_samples[..speed_len],
             Color::Yellow,
         );
         render_telemetry_trend(frame, chunks[3], state);
@@ -3638,8 +3691,8 @@ mod tests {
         ProtocolSelector::new(value)
     }
 
-    fn speed(value: i32) -> Measured<cutout_core::Speed> {
-        Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
+    fn speed(value: i32) -> Measured<Speed> {
+        Measured::reported(Speed::from_millimetres_per_second(value))
     }
 
     fn voltage(value: i32) -> Measured<Voltage> {
@@ -4247,7 +4300,11 @@ mod tests {
         state.device.make = "NOSFET".to_owned();
         state.device.model = "NOSFET Aero".to_owned();
         state.telemetry.latest_voltage = Some(DisplayVoltage::from_volts(120));
-        state.telemetry.voltage_samples = vec![109, 120, 126];
+        state.telemetry.voltage_samples = vec![
+            Voltage::from_millivolts(109_000),
+            Voltage::from_millivolts(120_000),
+            Voltage::from_millivolts(126_000),
+        ];
         state.telemetry.battery_level = Some(DashboardBatteryLevel::new(85));
 
         assert_eq!(
@@ -4267,7 +4324,10 @@ mod tests {
     fn voltage_sparkline_falls_back_to_observed_voltage_for_unknown_device() {
         let mut state = DashboardState::empty();
         state.telemetry.latest_voltage = Some(DisplayVoltage::from_volts(151));
-        state.telemetry.voltage_samples = vec![149, 151];
+        state.telemetry.voltage_samples = vec![
+            Voltage::from_millivolts(149_000),
+            Voltage::from_millivolts(151_000),
+        ];
 
         assert_eq!(dashboard_voltage_range(&state), None);
         assert_eq!(voltage_sparkline_max(&state), 151);
@@ -4393,14 +4453,17 @@ mod tests {
             state.telemetry.latest_temperature,
             Some(DisplayTemperature::from_celsius(36))
         );
-        assert_eq!(state.telemetry.speed_samples, vec![10]);
+        assert_eq!(
+            state.telemetry.speed_samples,
+            vec![Speed::from_millimetres_per_second(4_470)]
+        );
         assert_eq!(state.telemetry.voltage_samples.len(), HISTORY_LIMIT);
         assert!(
             state
                 .telemetry
                 .voltage_samples
                 .iter()
-                .all(|voltage| *voltage == 84)
+                .all(|voltage| *voltage == Voltage::from_millivolts(84_400))
         );
         assert_typed_telemetry_history(
             &state,
@@ -4955,7 +5018,7 @@ mod tests {
                 .telemetry
                 .voltage_samples
                 .iter()
-                .all(|voltage| *voltage == 109)
+                .all(|voltage| *voltage == Voltage::from_millivolts(108_760))
         );
     }
 
@@ -5450,7 +5513,7 @@ mod tests {
                 .telemetry
                 .voltage_samples
                 .iter()
-                .all(|voltage| *voltage == 109)
+                .all(|voltage| *voltage == Voltage::from_millivolts(108_760))
         );
 
         let overview_text = buffer_text(&render_buffer(&state, 120, 36));
