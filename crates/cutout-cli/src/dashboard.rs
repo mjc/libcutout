@@ -22,8 +22,8 @@ use cutout_core::{
     Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Current,
     DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PhaseCurrent, Power,
-    ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed,
-    TelemetryDelta, TelemetrySnapshot, Temperature, Voltage,
+    ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+    SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
@@ -194,7 +194,7 @@ pub(crate) struct ScanObservation {
     pub(crate) name: String,
     pub(crate) address: String,
     pub(crate) identifier: String,
-    pub(crate) rssi: String,
+    pub(crate) rssi: Option<SignalStrength>,
     pub(crate) services: String,
     pub(crate) real_device: bool,
 }
@@ -391,7 +391,7 @@ impl SignalQuality {
         Self(BatteryLevel::from_percent(clamp_percent(value)))
     }
 
-    fn from_signal_strength(signal: cutout_core::SignalStrength) -> Self {
+    fn from_signal_strength(signal: SignalStrength) -> Self {
         Self::new(u64::from(signal.as_quality_percent()))
     }
 
@@ -966,7 +966,7 @@ impl DashboardState {
                 name: "Aero NF2557".to_owned(),
                 address: "AA:BB:CC:DD:EE:FF".to_owned(),
                 identifier: "platform-0001".to_owned(),
-                rssi: "-61 dBm".to_owned(),
+                rssi: Some(SignalStrength::from_dbm(-61)),
                 services: "battery, throttle, telemetry".to_owned(),
                 real_device: true,
             },
@@ -977,7 +977,7 @@ impl DashboardState {
                 name: "Begode X".to_owned(),
                 address: "11:22:33:44:55:66".to_owned(),
                 identifier: "platform-0202".to_owned(),
-                rssi: "-77 dBm".to_owned(),
+                rssi: Some(SignalStrength::from_dbm(-77)),
                 services: "diagnostics, state".to_owned(),
                 real_device: true,
             },
@@ -988,7 +988,7 @@ impl DashboardState {
                 name: "Veteran V14".to_owned(),
                 address: "AA:00:11:22:33:44".to_owned(),
                 identifier: "platform-0303".to_owned(),
-                rssi: "-84 dBm".to_owned(),
+                rssi: Some(SignalStrength::from_dbm(-84)),
                 services: "battery, control".to_owned(),
                 real_device: true,
             },
@@ -1098,10 +1098,7 @@ impl DashboardState {
                 name: state.device.name.clone(),
                 address: state.device.address.clone(),
                 identifier: state.device.identifier.clone(),
-                rssi: observation.rssi.map_or_else(
-                    || "unknown".to_owned(),
-                    |rssi| format!("{} dBm", rssi.as_dbm()),
-                ),
+                rssi: observation.rssi,
                 services: services_summary(summary),
                 real_device: true,
             },
@@ -3161,7 +3158,10 @@ fn render_signal_gauge(frame: &mut Frame<'_>, area: Rect, state: &DashboardState
     let rssi = state
         .scan_browser
         .selected()
-        .map_or("unknown", |observation| observation.rssi.as_str());
+        .and_then(|observation| observation.rssi)
+        .map_or("unknown".to_owned(), |rssi| {
+            format!("{} dBm", rssi.as_dbm())
+        });
     let signal = Gauge::default()
         .block(Block::bordered().title("Signal"))
         .gauge_style(Style::new().fg(Color::Cyan).bg(Color::Black))
@@ -3508,7 +3508,10 @@ fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardSta
         ]));
         lines.push(Line::from(vec![
             Span::styled("rssi ", Style::new().fg(Color::Gray)),
-            Span::raw(selected.rssi.as_str()),
+            Span::raw(selected.rssi.map_or_else(
+                || "unknown".to_owned(),
+                |rssi| format!("{} dBm", rssi.as_dbm()),
+            )),
             Span::raw(" services "),
             Span::raw(selected.services.as_str()),
         ]));
@@ -3544,7 +3547,10 @@ fn render_device_browser(frame: &mut Frame<'_>, area: Rect, state: &DashboardSta
                 Span::raw(" | "),
                 Span::raw(observation.identifier.as_str()),
                 Span::raw(" | "),
-                Span::raw(observation.rssi.as_str()),
+                Span::raw(observation.rssi.map_or_else(
+                    || "unknown".to_owned(),
+                    |rssi| format!("{} dBm", rssi.as_dbm()),
+                )),
                 Span::raw(" | "),
                 Span::raw(observation.services.as_str()),
             ]));
