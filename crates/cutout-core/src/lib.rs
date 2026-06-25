@@ -4293,9 +4293,6 @@ pub type PhaseCurrent = Current;
 /// Battery/input current stored in milliamps.
 pub type BatteryCurrent = Current;
 
-/// Peak current stored in milliamps.
-pub type PeakCurrent = Current;
-
 impl Current {
     /// Creates a current from milliamps.
     #[must_use]
@@ -4356,6 +4353,56 @@ impl Current {
     #[must_use]
     pub fn from_amps_f32(value: f32) -> Self {
         Self::from_milliamps(round_f32_to_i32(value * 1_000.0))
+    }
+}
+
+/// Peak current stored in milliamps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct PeakCurrent(Current);
+
+impl PeakCurrent {
+    /// Creates a peak current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self(Current::from_milliamps(value))
+    }
+
+    /// Creates a peak current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self(Current::from_amps_f32(value))
+    }
+
+    /// Creates a peak current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self(Current::from_amps(value))
+    }
+
+    /// Returns this peak current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.0.as_milliamps()
+    }
+
+    /// Returns this peak current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.0.as_amps()
+    }
+}
+
+impl From<Current> for PeakCurrent {
+    fn from(value: Current) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PeakCurrent> for Current {
+    fn from(value: PeakCurrent) -> Self {
+        value.0
     }
 }
 
@@ -6312,10 +6359,10 @@ mod tests {
     use crate::{
         Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
         DeviceEvent, Distance, Duration, DutyCycle, Energy, GattChannel, LinkInfo, Measured,
-        MonotonicTimestamp, ParallelCount, PhaseCurrent, Power, ProtocolSession, SeriesCount,
-        SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-        TransportAction, UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage,
-        WriteMode, WritePayload,
+        MonotonicTimestamp, ParallelCount, PhaseCurrent, PeakCurrent, Power, ProtocolSession,
+        SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot,
+        Temperature, TransportAction, UnsupportedReason, ValueQuality, ValueSource,
+        VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -6982,6 +7029,8 @@ mod tests {
             10_000
         );
         assert_eq!(Energy::from_watt_hours(900).as_watt_hours(), 900);
+        assert_eq!(PeakCurrent::from_milliamps(1_250).as_milliamps(), 1_250);
+        assert_eq!(PeakCurrent::from_amps_f32(-1.25).as_milliamps(), -1_250);
     }
 
     #[test]
