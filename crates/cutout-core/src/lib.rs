@@ -4287,11 +4287,157 @@ impl CellVoltage {
 /// Electrical current stored in milliamps.
 pub type Current = Quantity<ElectricCurrent, MilliAmp, i32>;
 
-/// Motor/phase current stored in milliamps.
-pub type PhaseCurrent = Current;
-
 /// Battery/input current stored in milliamps.
-pub type BatteryCurrent = Current;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct BatteryCurrent(Current);
+
+impl BatteryCurrent {
+    /// Creates a battery current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self(Current::from_milliamps(value))
+    }
+
+    /// Creates a battery current from centiamps.
+    #[must_use]
+    pub const fn from_centiamps(value: i32) -> Self {
+        Self(Current::from_centiamps(value))
+    }
+
+    /// Creates a battery current from deciamps.
+    #[must_use]
+    pub const fn from_deciamps(value: i32) -> Self {
+        Self(Current::from_deciamps(value))
+    }
+
+    /// Creates a battery current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self(Current::from_amps(value))
+    }
+
+    /// Creates a battery current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self(Current::from_amps_f32(value))
+    }
+
+    /// Returns this battery current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.0.as_milliamps()
+    }
+
+    /// Returns this battery current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.0.as_amps()
+    }
+}
+
+impl core::ops::Deref for BatteryCurrent {
+    type Target = Current;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Current> for BatteryCurrent {
+    fn from(value: Current) -> Self {
+        Self(value)
+    }
+}
+
+impl From<BatteryCurrent> for Current {
+    fn from(value: BatteryCurrent) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for BatteryCurrent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Motor/phase current stored in milliamps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct PhaseCurrent(Current);
+
+impl PhaseCurrent {
+    /// Creates a phase current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self(Current::from_milliamps(value))
+    }
+
+    /// Creates a phase current from centiamps.
+    #[must_use]
+    pub const fn from_centiamps(value: i32) -> Self {
+        Self(Current::from_centiamps(value))
+    }
+
+    /// Creates a phase current from deciamps.
+    #[must_use]
+    pub const fn from_deciamps(value: i32) -> Self {
+        Self(Current::from_deciamps(value))
+    }
+
+    /// Creates a phase current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self(Current::from_amps(value))
+    }
+
+    /// Creates a phase current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self(Current::from_amps_f32(value))
+    }
+
+    /// Returns this phase current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.0.as_milliamps()
+    }
+
+    /// Returns this phase current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.0.as_amps()
+    }
+}
+
+impl core::ops::Deref for PhaseCurrent {
+    type Target = Current;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Current> for PhaseCurrent {
+    fn from(value: Current) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PhaseCurrent> for Current {
+    fn from(value: PhaseCurrent) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for PhaseCurrent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl Current {
     /// Creates a current from milliamps.
@@ -4394,6 +4540,14 @@ impl PeakCurrent {
     }
 }
 
+impl core::ops::Deref for PeakCurrent {
+    type Target = Current;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl From<Current> for PeakCurrent {
     fn from(value: Current) -> Self {
         Self(value)
@@ -4403,6 +4557,12 @@ impl From<Current> for PeakCurrent {
 impl From<PeakCurrent> for Current {
     fn from(value: PeakCurrent) -> Self {
         value.0
+    }
+}
+
+impl fmt::Display for PeakCurrent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -4479,7 +4639,8 @@ impl Power {
 
     /// Calculates electrical power from voltage and current.
     #[must_use]
-    pub fn from_voltage_current(voltage: Voltage, current: Current) -> Self {
+    pub fn from_voltage_current(voltage: Voltage, current: impl Into<Current>) -> Self {
+        let current = current.into();
         Self::from_milliwatts(
             i64::from(voltage.as_millivolts()) * i64::from(current.as_milliamps()) / 1_000,
         )
@@ -6359,7 +6520,7 @@ mod tests {
     use crate::{
         Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
         DeviceEvent, Distance, Duration, DutyCycle, Energy, GattChannel, LinkInfo, Measured,
-        MonotonicTimestamp, ParallelCount, PhaseCurrent, PeakCurrent, Power, ProtocolSession,
+        MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power, ProtocolSession,
         SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot,
         Temperature, TransportAction, UnsupportedReason, ValueQuality, ValueSource,
         VerificationStatus, Voltage, WriteMode, WritePayload,
@@ -7029,6 +7190,8 @@ mod tests {
             10_000
         );
         assert_eq!(Energy::from_watt_hours(900).as_watt_hours(), 900);
+        assert_eq!(BatteryCurrent::from_milliamps(1_250).as_milliamps(), 1_250);
+        assert_eq!(PhaseCurrent::from_amps_f32(-1.25).as_milliamps(), -1_250);
         assert_eq!(PeakCurrent::from_milliamps(1_250).as_milliamps(), 1_250);
         assert_eq!(PeakCurrent::from_amps_f32(-1.25).as_milliamps(), -1_250);
     }
@@ -7114,7 +7277,7 @@ mod tests {
         snapshot.apply_delta(TelemetryDelta {
             at_ms: ms(300),
             battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200))),
-            motor_current: Some(Measured::reported(BatteryCurrent::from_milliamps(3_400))),
+            motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(3_400))),
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
                 35_000,
             ))),
@@ -7131,7 +7294,7 @@ mod tests {
         );
         assert_eq!(
             snapshot.motor_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(3_400)))
+            Some(Measured::reported(PhaseCurrent::from_milliamps(3_400)))
         );
         assert_eq!(
             snapshot.controller_temperature,

@@ -691,6 +691,12 @@ impl From<Measured<BatteryCurrent>> for MeasuredI32Dto {
     }
 }
 
+impl From<Measured<PhaseCurrent>> for MeasuredI32Dto {
+    fn from(measured: Measured<PhaseCurrent>) -> Self {
+        Self::from(measured.map_value(PhaseCurrent::as_milliamps))
+    }
+}
+
 impl From<Measured<Power>> for MeasuredI64Dto {
     fn from(measured: Measured<Power>) -> Self {
         Self::from(measured.map_value(Power::as_milliwatts))
@@ -2101,7 +2107,7 @@ mod tests {
             ))),
             voltage: Some(Measured::reported(Voltage::from_millivolts(84_000))),
             battery_current: None,
-            motor_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_500))),
+            motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(-1_500))),
             power: None,
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
                 31_000,
