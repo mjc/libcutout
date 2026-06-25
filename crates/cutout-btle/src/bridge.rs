@@ -13,7 +13,7 @@ use crate::{
     identity::BridgeIdentityObserver,
     report::{process_device_event, process_notification_ingest_outcome},
     types::characteristic_from_summary,
-    units::{MonotonicMs, NegotiatedWriteLen, NotificationWindow, WriteProvenance},
+    units::{MonotonicMs, NegotiatedWriteLimit, NotificationWindow, WriteProvenance},
 };
 
 /// Drives a protocol session against the selected BTLE endpoints.
@@ -361,13 +361,13 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
-    let max_write_len = Some(NegotiatedWriteLen::from_mtu(context.peripheral.mtu()));
+    let max_write_len = Some(NegotiatedWriteLimit::from_bytes(context.peripheral.mtu()));
 
     info!("session bridge link-up handling starting");
     session.handle(
         SessionInput::LinkUp(LinkInfo {
             monotonic_ms: monotonic_ms.into_core(),
-            max_write_len: max_write_len.map(|len| TransportWriteLimit::from_bytes(len.get())),
+            max_write_len: max_write_len.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
         }),
         outputs,
     );
@@ -472,10 +472,10 @@ where
                 log_notification_decode_outcome(decode_outcome, &notification, context.channel);
                 context.report.notifications = context.report.notifications.increment();
                 let notification_len = notification.len();
-                context.report.notification_bytes = context
-                    .report
-                    .notification_bytes
-                    .saturating_add_len(notification_len);
+                context.report.notification_bytes =
+                    context.report.notification_bytes.saturating_add(
+                        crate::NotificationPayloadTotal::from_bytes(notification_len.as_bytes()),
+                    );
                 context.report.latest_notification_len = Some(notification_len);
             }
             Ok(None) => {
@@ -511,8 +511,8 @@ where
         }
     }
     debug!(
-        notifications = context.report.notifications.get(),
-        notification_bytes = context.report.notification_bytes.get(),
+        notifications = context.report.notifications.as_events(),
+        notification_bytes = context.report.notification_bytes.as_bytes(),
         latest_notification_len = ?context.report.latest_notification_len,
         "session notification window completed"
     );
@@ -711,7 +711,7 @@ fn log_notification_decode_outcome(
             debug!(
                 uuid = %notification.characteristic,
                 service = %notification.service,
-                len = notification.len().get(),
+                len = notification.len().as_bytes(),
                 channel = ?channel,
                 "session notification ignored by protocol session"
             );
@@ -830,7 +830,7 @@ where
     }
 
     context.report.protocol_writes = context.report.protocol_writes.increment();
-    let write_limit = NegotiatedWriteLen::from_mtu(context.peripheral.mtu());
+    let write_limit = NegotiatedWriteLimit::from_bytes(context.peripheral.mtu());
     for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
         let chunk = BtleWriteChunk::new(chunk, write_limit).ok_or(
             SessionBridgeError::WriteChunkTooLong {

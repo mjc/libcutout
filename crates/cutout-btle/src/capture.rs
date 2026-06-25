@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use uuid::Uuid;
 
 use crate::{
-    BtleError, CharacteristicSummary, ConnectionSummary, MonotonicMs, NegotiatedWriteLen,
+    BtleError, CharacteristicSummary, ConnectionSummary, MonotonicMs, NegotiatedWriteLimit,
     NotificationWindow, SessionBridgeReport, SessionPeripheral, WriteProvenance,
     gatt::gatt_channel_from_uuid, types::characteristic_from_summary,
 };
@@ -172,7 +172,7 @@ pub enum SessionCaptureRecord {
         monotonic_ms: MonotonicMs,
 
         /// Negotiated maximum write length, when known.
-        max_write_len: Option<NegotiatedWriteLen>,
+        max_write_len: Option<NegotiatedWriteLimit>,
     },
 
     /// Link-down event observed after the session requested disconnect.
@@ -407,7 +407,7 @@ impl SessionCapture {
         let header = PevcapHeader::new(
             metadata.wall_clock_start_unix_ms,
             metadata.platform_id,
-            write_limit.map(|len| TransportWriteLimit::from_bytes(len.get())),
+            write_limit.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
             &advertised_services,
             &gatt_fingerprints,
             metadata.resolved_identity,
@@ -442,7 +442,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             max_write_len,
         } => Some(PevcapRecord::link_up(
             monotonic_ms.into_core(),
-            max_write_len.map(|len| TransportWriteLimit::from_bytes(len.get())),
+            max_write_len.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
         )),
         SessionCaptureRecord::LinkDown { monotonic_ms } => {
             Some(PevcapRecord::link_down(monotonic_ms.into_core()))

@@ -15,8 +15,8 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{
-    ConnectionSummary, ConnectionTarget, NotificationByteTotal, NotificationCount, ServiceSummary,
-    SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
+    ConnectionSummary, ConnectionTarget, NotificationCount, NotificationPayloadTotal,
+    ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
     BatteryPagePayload, CatalogModelResolution, DiagnosticReadback, FirmwareInfo, Measured,
@@ -716,7 +716,7 @@ pub(crate) struct SessionCounters {
     pub(crate) connected: ConnectedDeviceCount,
     pub(crate) subscriptions: SubscribeCount,
     pub(crate) notifications: NotificationCount,
-    pub(crate) notification_bytes: NotificationByteTotal,
+    pub(crate) notification_bytes: NotificationPayloadTotal,
     pub(crate) latest_notification_len: Option<NotificationByteLen>,
 }
 
@@ -936,9 +936,9 @@ impl DashboardState {
         self.counters = SessionCounters {
             discovered: DiscoveredDeviceCount::new(8),
             connected: ConnectedDeviceCount::new(1),
-            subscriptions: SubscribeCount::new(4),
-            notifications: NotificationCount::new(27),
-            notification_bytes: NotificationByteTotal::default(),
+            subscriptions: SubscribeCount::from_events(4),
+            notifications: NotificationCount::from_events(27),
+            notification_bytes: NotificationPayloadTotal::default(),
             latest_notification_len: None,
         };
         self.telemetry.load_window(
@@ -1083,7 +1083,7 @@ impl DashboardState {
                 report.writes,
                 report.subscribes,
                 report.notifications,
-                report.notification_bytes.get()
+                report.notification_bytes.as_bytes()
             ),
         );
 
@@ -2185,7 +2185,7 @@ fn format_unmapped_telemetry_event(report: &SessionBridgeReport) -> String {
     format!(
         "telemetry unmapped notifications={} bytes={} latest_len={} diagnostics={} {}",
         report.notifications,
-        report.notification_bytes.get(),
+        report.notification_bytes.as_bytes(),
         OptionalNotificationLen(report.latest_notification_len),
         report.diagnostics,
         diagnostics
@@ -3249,9 +3249,9 @@ fn render_pending_telemetry(frame: &mut Frame<'_>, area: Rect, state: &Dashboard
         Line::from("decoded telemetry samples: 0"),
         Line::from(vec![
             Span::styled("transport notifications ", Style::new().fg(Color::Gray)),
-            Span::raw(state.counters.notifications.get().to_string()),
+            Span::raw(state.counters.notifications.as_events().to_string()),
             Span::styled(" bytes ", Style::new().fg(Color::Gray)),
-            Span::raw(state.counters.notification_bytes.get().to_string()),
+            Span::raw(state.counters.notification_bytes.as_bytes().to_string()),
         ]),
     ])
     .block(panel_block("Decoded telemetry"));
@@ -3483,8 +3483,8 @@ mod tests {
 
     use super::*;
     use cutout_btle::{
-        ConnectionTarget, DiagnosticEventCount, DisconnectCount, NotificationByteTotal,
-        NotificationCount, PeripheralObservation, ProtocolWriteCount, ReadOnlyResponseCount,
+        ConnectionTarget, DiagnosticEventCount, DisconnectCount, NotificationCount,
+        NotificationPayloadTotal, PeripheralObservation, ProtocolWriteCount, ReadOnlyResponseCount,
         SubscribeCount, TelemetryEventCount, TransportWriteCount,
     };
     use cutout_core::{
@@ -3507,31 +3507,31 @@ mod tests {
     }
 
     const fn protocol_writes(value: usize) -> ProtocolWriteCount {
-        ProtocolWriteCount::new(value)
+        ProtocolWriteCount::from_events(value)
     }
 
     const fn writes(value: usize) -> TransportWriteCount {
-        TransportWriteCount::new(value)
+        TransportWriteCount::from_events(value)
     }
 
     const fn subscribes(value: usize) -> SubscribeCount {
-        SubscribeCount::new(value)
+        SubscribeCount::from_events(value)
     }
 
     const fn notifications(value: usize) -> NotificationCount {
-        NotificationCount::new(value)
+        NotificationCount::from_events(value)
     }
 
     const fn telemetry_events(value: usize) -> TelemetryEventCount {
-        TelemetryEventCount::new(value)
+        TelemetryEventCount::from_events(value)
     }
 
     const fn read_only_responses(value: usize) -> ReadOnlyResponseCount {
-        ReadOnlyResponseCount::new(value)
+        ReadOnlyResponseCount::from_events(value)
     }
 
     const fn diagnostic_events(value: usize) -> DiagnosticEventCount {
-        DiagnosticEventCount::new(value)
+        DiagnosticEventCount::from_events(value)
     }
 
     const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
@@ -3539,7 +3539,7 @@ mod tests {
     }
 
     const fn disconnects(value: usize) -> DisconnectCount {
-        DisconnectCount::new(value)
+        DisconnectCount::from_events(value)
     }
 
     const fn sel(value: u8) -> ProtocolSelector {
@@ -4141,7 +4141,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(1),
             notifications: notifications(184),
-            notification_bytes: NotificationByteTotal::new(18_400),
+            notification_bytes: NotificationPayloadTotal::from_bytes(18_400),
             latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
@@ -4179,7 +4179,7 @@ mod tests {
         assert_eq!(state.counters.notifications, notifications(184));
         assert_eq!(
             state.counters.notification_bytes,
-            NotificationByteTotal::new(18_400)
+            NotificationPayloadTotal::from_bytes(18_400)
         );
         assert_eq!(
             state.counters.latest_notification_len,
@@ -4216,7 +4216,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(1),
             notifications: notifications(2),
-            notification_bytes: NotificationByteTotal::new(200),
+            notification_bytes: NotificationPayloadTotal::from_bytes(200),
             latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
@@ -4317,7 +4317,7 @@ mod tests {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
             notifications: notifications(1),
-            notification_bytes: NotificationByteTotal::new(99),
+            notification_bytes: NotificationPayloadTotal::from_bytes(99),
             latest_notification_len: Some(NotificationByteLen::from_bytes(99)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
@@ -4369,7 +4369,7 @@ mod tests {
         let mut state = DashboardState::empty();
         let report = SessionBridgeReport {
             notifications: notifications(3),
-            notification_bytes: NotificationByteTotal::new(57),
+            notification_bytes: NotificationPayloadTotal::from_bytes(57),
             latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             events: Vec::new(),
             ..empty_session_bridge_report()
@@ -4625,7 +4625,7 @@ mod tests {
         let channel = GattChannel::from_bytes([0xA1; 16]);
         let report = SessionBridgeReport {
             notifications: notifications(5),
-            notification_bytes: NotificationByteTotal::new(269),
+            notification_bytes: NotificationPayloadTotal::from_bytes(269),
             latest_notification_len: Some(NotificationByteLen::from_bytes(77)),
             events: vec![
                 SessionBridgeEvent::NotificationIngest {
@@ -4809,7 +4809,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(1),
             notifications: notifications(1),
-            notification_bytes: NotificationByteTotal::new(20),
+            notification_bytes: NotificationPayloadTotal::from_bytes(20),
             latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
@@ -4856,7 +4856,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(1),
             notifications: notifications(3),
-            notification_bytes: NotificationByteTotal::new(300),
+            notification_bytes: NotificationPayloadTotal::from_bytes(300),
             latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
@@ -4967,7 +4967,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(1),
             notifications: notifications(4),
-            notification_bytes: NotificationByteTotal::new(400),
+            notification_bytes: NotificationPayloadTotal::from_bytes(400),
             latest_notification_len: Some(NotificationByteLen::from_bytes(100)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: snapshot_from_delta(telemetry),
@@ -5080,7 +5080,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(0),
             notifications: notifications(0),
-            notification_bytes: NotificationByteTotal::default(),
+            notification_bytes: NotificationPayloadTotal::default(),
             latest_notification_len: None,
             telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
@@ -5226,7 +5226,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(1),
             notifications: notifications(2),
-            notification_bytes: NotificationByteTotal::new(40),
+            notification_bytes: NotificationPayloadTotal::from_bytes(40),
             latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(0),
             telemetry_snapshot: TelemetrySnapshot::default(),
@@ -5249,7 +5249,7 @@ mod tests {
         assert_eq!(state.counters.notifications, notifications(4));
         assert_eq!(
             state.counters.notification_bytes,
-            NotificationByteTotal::new(80)
+            NotificationPayloadTotal::from_bytes(80)
         );
         assert_eq!(
             state.counters.latest_notification_len,
@@ -5265,7 +5265,7 @@ mod tests {
             writes: writes(0),
             subscribes: subscribes(1),
             notifications: notifications(1),
-            notification_bytes: NotificationByteTotal::new(20),
+            notification_bytes: NotificationPayloadTotal::from_bytes(20),
             latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(1),
             telemetry_snapshot: live_aero_telemetry_snapshot(),
@@ -5573,7 +5573,7 @@ mod tests {
         let mut state = DashboardState::empty();
         state.active_tab = DashboardTab::new(1);
         state.counters.notifications = notifications(47);
-        state.counters.notification_bytes = NotificationByteTotal::new(4_700);
+        state.counters.notification_bytes = NotificationPayloadTotal::from_bytes(4_700);
         state.counters.latest_notification_len = Some(NotificationByteLen::from_bytes(100));
 
         let text = buffer_text(&render_buffer(&state, 120, 36));

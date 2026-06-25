@@ -10,7 +10,7 @@ use uuid::Uuid;
 use cutout_core::SignalStrength;
 
 use crate::{
-    BluetoothAddress, GattUuid, KnownGattUuid, ManufacturerDataLen, PeripheralIdentifier,
+    BluetoothAddress, GattUuid, KnownGattUuid, ManufacturerDataSize, PeripheralIdentifier,
     target::normalize_address, types::write_delimited,
 };
 
@@ -49,7 +49,7 @@ pub struct ManufacturerDataSummary {
     pub company_id: u16,
 
     /// Payload length in bytes.
-    pub len: ManufacturerDataLen,
+    pub len: ManufacturerDataSize,
 }
 
 impl PeripheralObservation {
@@ -121,7 +121,7 @@ impl ManufacturerDataSummary {
     {
         Self {
             company_id,
-            len: ManufacturerDataLen::new(bytes.as_ref().len()),
+            len: ManufacturerDataSize::from_bytes(bytes.as_ref().len()),
         }
     }
 }
@@ -168,18 +168,18 @@ fn sorted_manufacturer_data_summaries(
 #[cfg(test)]
 mod tests {
     use super::sorted_manufacturer_data_summaries;
-    use crate::{ManufacturerDataLen, ManufacturerDataSummary};
+    use crate::{ManufacturerDataSize, ManufacturerDataSummary};
 
     #[test]
     fn manufacturer_data_summary_sorts_already_summarized_backend_payloads() {
         let summary = sorted_manufacturer_data_summaries([
             ManufacturerDataSummary {
                 company_id: 0x004c,
-                len: ManufacturerDataLen::new(4),
+                len: ManufacturerDataSize::from_bytes(4),
             },
             ManufacturerDataSummary {
                 company_id: 0x000f,
-                len: ManufacturerDataLen::new(2),
+                len: ManufacturerDataSize::from_bytes(2),
             },
         ]);
 
@@ -188,11 +188,11 @@ mod tests {
             [
                 ManufacturerDataSummary {
                     company_id: 0x000f,
-                    len: ManufacturerDataLen::new(2)
+                    len: ManufacturerDataSize::from_bytes(2)
                 },
                 ManufacturerDataSummary {
                     company_id: 0x004c,
-                    len: ManufacturerDataLen::new(4)
+                    len: ManufacturerDataSize::from_bytes(4)
                 },
             ]
         );

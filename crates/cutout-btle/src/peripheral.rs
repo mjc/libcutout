@@ -7,7 +7,7 @@ use cutout_core::{NotificationByteLen, WriteMode};
 use futures_util::{StreamExt, stream::Stream};
 use uuid::Uuid;
 
-use crate::{BtleError, CapturedBtlePacket, NegotiatedWriteLen};
+use crate::{BtleError, CapturedBtlePacket, NegotiatedWriteLimit};
 
 /// Notification admitted at the BTLE adapter boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,7 +64,7 @@ impl BtleNotification {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BtleWriteChunk<'a> {
     bytes: &'a [u8],
-    negotiated_limit: NegotiatedWriteLen,
+    negotiated_limit: NegotiatedWriteLimit,
 }
 
 impl<'a> BtleWriteChunk<'a> {
@@ -74,7 +74,7 @@ impl<'a> BtleWriteChunk<'a> {
     ///
     /// Returns `None` when `bytes` exceeds `negotiated_limit`.
     #[must_use]
-    pub fn new(bytes: &'a [u8], negotiated_limit: NegotiatedWriteLen) -> Option<Self> {
+    pub fn new(bytes: &'a [u8], negotiated_limit: NegotiatedWriteLimit) -> Option<Self> {
         (bytes.len() <= negotiated_limit.chunk_len()).then_some(Self {
             bytes,
             negotiated_limit,
@@ -89,7 +89,7 @@ impl<'a> BtleWriteChunk<'a> {
 
     /// Returns the negotiated write limit that admitted this chunk.
     #[must_use]
-    pub const fn negotiated_limit(self) -> NegotiatedWriteLen {
+    pub const fn negotiated_limit(self) -> NegotiatedWriteLimit {
         self.negotiated_limit
     }
 }
@@ -173,7 +173,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{BtleNotification, BtleWriteChunk};
-    use crate::{MalformedBtlePacketReason, NegotiatedWriteLen};
+    use crate::{MalformedBtlePacketReason, NegotiatedWriteLimit};
 
     #[test]
     fn btle_notification_consumes_backend_vec_into_typed_bytes() {
@@ -184,7 +184,7 @@ mod tests {
         });
 
         assert_eq!(notification.as_raw_bytes(), [0xde, 0xad]);
-        assert_eq!(notification.len().get(), 2);
+        assert_eq!(notification.len().as_bytes(), 2);
     }
 
     #[test]
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn btle_write_chunk_requires_negotiated_limit() {
-        let limit = NegotiatedWriteLen::from_mtu(7);
+        let limit = NegotiatedWriteLimit::from_bytes(7);
         let accepted = vec![0; limit.chunk_len()];
         let rejected = vec![0; limit.chunk_len() + 1];
 

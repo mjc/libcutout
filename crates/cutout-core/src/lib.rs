@@ -119,20 +119,6 @@ pub const MAX_INLINE_TRANSPORT_WRITE_LEN: usize = 32;
 /// Maximum payload accepted by a transport write.
 pub type TransportWriteLimit = Quantity<Information, Byte, u16>;
 
-impl TransportWriteLimit {
-    /// Creates a transport write length from bytes.
-    #[must_use]
-    pub const fn from_bytes(value: u16) -> Self {
-        Self::from_unit_value(value)
-    }
-
-    /// Returns the transport write length in bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> u16 {
-        self.unit_value()
-    }
-}
-
 /// Transport-independent identifier for a GATT characteristic or endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GattChannel(Uuid);
@@ -2050,18 +2036,6 @@ impl ParserDiagnosticCount {
 pub type ParserFrameLen = Quantity<Information, ParserFrameByte, usize>;
 
 impl ParserFrameLen {
-    /// Creates a parser frame size from bytes.
-    #[must_use]
-    pub const fn from_bytes(value: usize) -> Self {
-        Self::from_unit_value(value)
-    }
-
-    /// Returns this parser frame size in bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> usize {
-        self.unit_value()
-    }
-
     /// Returns true when this frame length is less than or equal to another.
     #[must_use]
     pub const fn is_at_most(self, other: Self) -> bool {
@@ -2071,20 +2045,6 @@ impl ParserFrameLen {
 
 /// Maximum buffered parser input size.
 pub type ParserBufferedLen = Quantity<Information, ParserBufferByte, usize>;
-
-impl ParserBufferedLen {
-    /// Creates a buffered parser input size from bytes.
-    #[must_use]
-    pub const fn from_bytes(value: usize) -> Self {
-        Self::from_unit_value(value)
-    }
-
-    /// Returns this buffered parser input size in bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> usize {
-        self.unit_value()
-    }
-}
 
 /// Maximum queued parser output count.
 pub type ParserQueuedOutputCount = Quantity<Count, ParserQueuedOutput, usize>;
@@ -2347,36 +2307,10 @@ impl DiagnosticError {
 /// Size of one transport notification payload after capture/parser admission.
 pub type NotificationByteLen = Quantity<Information, NotificationPayloadByte, usize>;
 
-impl NotificationByteLen {
-    /// Creates a notification payload size from bytes.
-    #[must_use]
-    pub const fn from_bytes(value: usize) -> Self {
-        Self::from_unit_value(value)
-    }
-
-    /// Returns this notification payload size in bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> usize {
-        self.unit_value()
-    }
-}
-
 /// Replay split size for one notification chunk; zero preserves whole-notification replay.
 pub type NotificationChunkLen = Quantity<Information, NotificationChunkByte, usize>;
 
 impl NotificationChunkLen {
-    /// Creates a notification replay chunk size from bytes.
-    #[must_use]
-    pub const fn from_bytes(value: usize) -> Self {
-        Self::from_unit_value(value)
-    }
-
-    /// Returns this notification replay chunk size in bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> usize {
-        self.unit_value()
-    }
-
     /// Returns true when replay should preserve whole notifications.
     #[must_use]
     pub const fn is_whole(self) -> bool {
@@ -2387,48 +2321,8 @@ impl NotificationChunkLen {
 /// Size of a protocol payload body after selector/tag framing bytes are removed.
 pub type PayloadBodyLen = Quantity<Information, PayloadBodyByte, usize>;
 
-impl PayloadBodyLen {
-    /// Creates a protocol payload body size from bytes.
-    #[must_use]
-    pub const fn from_bytes(value: usize) -> Self {
-        Self::from_unit_value(value)
-    }
-
-    /// Returns this protocol payload body size in bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> usize {
-        self.unit_value()
-    }
-}
-
 /// Number of semantic events emitted from one protocol ingest operation.
 pub type SemanticEventCount = Quantity<Count, SemanticEvent, usize>;
-
-impl SemanticEventCount {
-    /// Creates a semantic event count from event count.
-    #[must_use]
-    pub const fn from_events(value: usize) -> Self {
-        Self::from_unit_value(value)
-    }
-
-    /// Returns this semantic event count as event count.
-    #[must_use]
-    pub const fn as_events(self) -> usize {
-        self.unit_value()
-    }
-
-    /// Adds one observed semantic event, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn next(self) -> Self {
-        Self::from_events(self.as_events().saturating_add(1))
-    }
-
-    /// Adds another semantic event count, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn saturating_add(self, other: Self) -> Self {
-        Self::from_events(self.as_events().saturating_add(other.as_events()))
-    }
-}
 
 typed_protocol_value!(
     ProtocolSelector,
@@ -3992,6 +3886,99 @@ where
         T: Copy,
     {
         self.unit_value()
+    }
+}
+
+impl<U> Quantity<Information, U, usize>
+where
+    U: Unit<Dimension = Information>,
+{
+    /// Creates an information quantity from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this information quantity in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> usize {
+        self.unit_value()
+    }
+
+    /// Adds another information quantity, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::from_bytes(self.as_bytes().saturating_add(other.as_bytes()))
+    }
+}
+
+impl<U> Quantity<Information, U, u16>
+where
+    U: Unit<Dimension = Information>,
+{
+    /// Creates an information quantity from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: u16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this information quantity in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> u16 {
+        self.unit_value()
+    }
+
+    /// Returns a non-zero chunk length suitable for transport writes.
+    #[must_use]
+    pub fn chunk_len(self) -> usize {
+        usize::from(self.as_bytes()).max(1)
+    }
+}
+
+impl<U> Quantity<Count, U, usize>
+where
+    U: Unit<Dimension = Count>,
+{
+    /// Creates a count quantity from event count.
+    #[must_use]
+    pub const fn from_events(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this count quantity as event count.
+    #[must_use]
+    pub const fn as_events(self) -> usize {
+        self.unit_value()
+    }
+
+    /// Returns true when this count has no observed events.
+    #[must_use]
+    pub const fn has_no_events(self) -> bool {
+        self.as_events() == 0
+    }
+
+    /// Returns true when this count has at least one observed event.
+    #[must_use]
+    pub const fn has_events(self) -> bool {
+        !self.has_no_events()
+    }
+
+    /// Adds one counted event, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self::from_events(self.as_events().saturating_add(1))
+    }
+
+    /// Adds one counted event, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn increment(self) -> Self {
+        self.next()
+    }
+
+    /// Adds another count quantity, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::from_events(self.as_events().saturating_add(other.as_events()))
     }
 }
 

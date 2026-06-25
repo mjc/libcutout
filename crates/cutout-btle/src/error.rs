@@ -3,7 +3,7 @@ use std::{future::Future, time::Duration};
 use cutout_core::{GattChannel, NotificationByteLen};
 use thiserror::Error;
 
-use crate::NegotiatedWriteLen;
+use crate::NegotiatedWriteLimit;
 
 const BACKEND_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -38,7 +38,7 @@ pub enum SessionBridgeError {
         len: NotificationByteLen,
 
         /// Negotiated write limit.
-        limit: NegotiatedWriteLen,
+        limit: NegotiatedWriteLimit,
     },
 
     /// Session tried to emit transport work while handling an externally lost link.

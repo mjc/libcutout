@@ -77,31 +77,31 @@ impl crate::BridgeIdentityObserver for TestIdentityObserver {
 static OVERSIZED_BTLE_VALUE: [u8; 513] = [0; 513];
 
 const fn protocol_writes(value: usize) -> crate::ProtocolWriteCount {
-    crate::ProtocolWriteCount::new(value)
+    crate::ProtocolWriteCount::from_events(value)
 }
 
 const fn writes(value: usize) -> crate::TransportWriteCount {
-    crate::TransportWriteCount::new(value)
+    crate::TransportWriteCount::from_events(value)
 }
 
 const fn subscribes(value: usize) -> crate::SubscribeCount {
-    crate::SubscribeCount::new(value)
+    crate::SubscribeCount::from_events(value)
 }
 
 const fn notifications(value: usize) -> crate::NotificationCount {
-    crate::NotificationCount::new(value)
+    crate::NotificationCount::from_events(value)
 }
 
 const fn telemetry_events(value: usize) -> crate::TelemetryEventCount {
-    crate::TelemetryEventCount::new(value)
+    crate::TelemetryEventCount::from_events(value)
 }
 
 const fn read_only_responses(value: usize) -> crate::ReadOnlyResponseCount {
-    crate::ReadOnlyResponseCount::new(value)
+    crate::ReadOnlyResponseCount::from_events(value)
 }
 
 const fn diagnostic_events(value: usize) -> crate::DiagnosticEventCount {
-    crate::DiagnosticEventCount::new(value)
+    crate::DiagnosticEventCount::from_events(value)
 }
 
 const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
@@ -109,7 +109,7 @@ const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
 }
 
 const fn disconnects(value: usize) -> crate::DisconnectCount {
-    crate::DisconnectCount::new(value)
+    crate::DisconnectCount::from_events(value)
 }
 
 fn speed(value: i32) -> Measured<cutout_core::Speed> {
@@ -384,11 +384,11 @@ fn peripheral_observation_renders_manufacturer_data_without_payload_bytes() {
         manufacturer_data: smallvec![
             crate::ManufacturerDataSummary {
                 company_id: 0x004c,
-                len: crate::ManufacturerDataLen::new(6),
+                len: crate::ManufacturerDataSize::from_bytes(6),
             },
             crate::ManufacturerDataSummary {
                 company_id: 0x000f,
-                len: crate::ManufacturerDataLen::new(2),
+                len: crate::ManufacturerDataSize::from_bytes(2),
             },
         ],
     };
@@ -825,7 +825,7 @@ fn pevcap_conversion_capture_records() -> Vec<crate::SessionCaptureRecord> {
     vec![
         crate::SessionCaptureRecord::Link {
             monotonic_ms: crate::MonotonicMs::new(0),
-            max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(23)),
+            max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(23)),
         },
         crate::SessionCaptureRecord::Subscribe {
             monotonic_ms: crate::MonotonicMs::new(1),
@@ -1161,7 +1161,7 @@ async fn drive_session_relays_notifications_back_into_session() {
     assert_eq!(report.notifications, notifications(1));
     assert_eq!(
         report.notification_bytes,
-        crate::NotificationByteTotal::new(2)
+        crate::NotificationPayloadTotal::from_bytes(2)
     );
     assert_eq!(
         report.latest_notification_len,
@@ -1485,7 +1485,7 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(0),
@@ -1541,7 +1541,7 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(0),
@@ -1685,7 +1685,7 @@ async fn capture_session_records_link_down_after_intentional_disconnect() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::LinkDown {
                 monotonic_ms: crate::MonotonicMs::new(1)
@@ -1772,7 +1772,7 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(0),
@@ -1783,7 +1783,7 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
             },
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(2),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(2),

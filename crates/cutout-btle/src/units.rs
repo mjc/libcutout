@@ -1,6 +1,6 @@
-use std::{fmt, marker::PhantomData, num::NonZeroUsize, time::Duration};
+use std::{fmt, num::NonZeroUsize, time::Duration};
 
-use cutout_core::NotificationByteLen;
+use cutout_core::{Count, Information, Quantity, Unit};
 
 /// Bounded scan duration parsed at the caller boundary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -117,147 +117,83 @@ impl fmt::Display for MonotonicMs {
     }
 }
 
+/// Notification payload byte total storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationTotalByte;
+
+impl Unit for NotificationTotalByte {
+    type Dimension = Information;
+}
+
 /// Total notification payload bytes observed across a bridge report.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct NotificationByteTotal(usize);
+pub type NotificationPayloadTotal = Quantity<Information, NotificationTotalByte, usize>;
 
-impl NotificationByteTotal {
-    /// Creates a total from an already counted byte value.
-    #[must_use]
-    pub const fn new(value: usize) -> Self {
-        Self(value)
-    }
-
-    /// Creates a total from one typed notification length.
-    #[must_use]
-    pub const fn from_len(len: NotificationByteLen) -> Self {
-        Self(len.as_bytes())
-    }
-
-    /// Returns the primitive value for rendering or serialization edges.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-
-    /// Adds another typed byte total, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn saturating_add(self, other: Self) -> Self {
-        Self(self.0.saturating_add(other.0))
-    }
-
-    /// Adds one typed notification length, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn saturating_add_len(self, len: NotificationByteLen) -> Self {
-        Self(self.0.saturating_add(len.as_bytes()))
-    }
-}
-
-impl fmt::Display for NotificationByteTotal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// Typed session report counter backed by a zero-sized semantic tag.
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct SessionCount<Tag> {
-    value: usize,
-    tag: PhantomData<fn() -> Tag>,
-}
-
-impl<Tag> Clone for SessionCount<Tag> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Tag> Copy for SessionCount<Tag> {}
-
-impl<Tag> Default for SessionCount<Tag> {
-    fn default() -> Self {
-        Self::new(0)
-    }
-}
-
-impl<Tag> SessionCount<Tag> {
-    /// Creates a counter from an already parsed count value.
-    #[must_use]
-    pub const fn new(value: usize) -> Self {
-        Self {
-            value,
-            tag: PhantomData,
-        }
-    }
-
-    /// Returns the primitive value for rendering or serialization edges.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.value
-    }
-
-    /// Returns true when the counter has no observed events.
-    #[must_use]
-    pub const fn has_no_events(self) -> bool {
-        self.value == 0
-    }
-
-    /// Returns true when the counter has at least one observed event.
-    #[must_use]
-    pub const fn has_events(self) -> bool {
-        !self.has_no_events()
-    }
-
-    /// Adds one observed event, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn increment(self) -> Self {
-        Self::new(self.value.saturating_add(1))
-    }
-
-    /// Adds another typed event count, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn saturating_add(self, other: Self) -> Self {
-        Self::new(self.value.saturating_add(other.value))
-    }
-}
-
-impl<Tag> fmt::Display for SessionCount<Tag> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.value.fmt(f)
-    }
-}
+/// Typed session report counter backed by a zero-sized semantic unit.
+pub(crate) type SessionCount<Tag> = Quantity<Count, Tag, usize>;
 
 /// Zero-sized tag for protocol writes produced by a protocol session.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ProtocolWriteCountTag;
 
+impl Unit for ProtocolWriteCountTag {
+    type Dimension = Count;
+}
+
 /// Zero-sized tag for transport writes executed by the BTLE bridge.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TransportWriteCountTag;
+
+impl Unit for TransportWriteCountTag {
+    type Dimension = Count;
+}
 
 /// Zero-sized tag for transport subscribe operations.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct SubscribeCountTag;
 
+impl Unit for SubscribeCountTag {
+    type Dimension = Count;
+}
+
 /// Zero-sized tag for notification payloads relayed into a session.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NotificationCountTag;
+
+impl Unit for NotificationCountTag {
+    type Dimension = Count;
+}
 
 /// Zero-sized tag for semantic telemetry events emitted by a session.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TelemetryEventCountTag;
 
+impl Unit for TelemetryEventCountTag {
+    type Dimension = Count;
+}
+
 /// Zero-sized tag for read-only response events emitted by a session.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ReadOnlyResponseCountTag;
+
+impl Unit for ReadOnlyResponseCountTag {
+    type Dimension = Count;
+}
 
 /// Zero-sized tag for parser diagnostics events emitted by a session.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct DiagnosticEventCountTag;
 
+impl Unit for DiagnosticEventCountTag {
+    type Dimension = Count;
+}
+
 /// Zero-sized tag for transport disconnect operations.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct DisconnectCountTag;
+
+impl Unit for DisconnectCountTag {
+    type Dimension = Count;
+}
 
 /// Protocol write actions emitted by a protocol session.
 pub type ProtocolWriteCount = SessionCount<ProtocolWriteCountTag>;
@@ -356,35 +292,16 @@ impl WriteProvenance {
     }
 }
 
-/// Negotiated write length exposed by the BTLE stack.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct NegotiatedWriteLen(u16);
+/// Negotiated write byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NegotiatedWriteByte;
 
-impl NegotiatedWriteLen {
-    /// Creates a negotiated write length from a backend MTU value.
-    #[must_use]
-    pub const fn from_mtu(mtu: u16) -> Self {
-        Self(mtu)
-    }
-
-    /// Returns a chunk length suitable for transport writes.
-    #[must_use]
-    pub fn chunk_len(self) -> usize {
-        usize::from(self.0).max(1)
-    }
-
-    /// Returns the raw negotiated value for capture provenance.
-    #[must_use]
-    pub const fn get(self) -> u16 {
-        self.0
-    }
+impl Unit for NegotiatedWriteByte {
+    type Dimension = Information;
 }
 
-impl fmt::Display for NegotiatedWriteLen {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
+/// Negotiated write capacity exposed by the BTLE stack.
+pub type NegotiatedWriteLimit = Quantity<Information, NegotiatedWriteByte, u16>;
 
 /// Standard BLE Battery Level service value.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -410,26 +327,13 @@ impl BtleBatteryLevel {
     }
 }
 
-/// Length of opaque manufacturer advertisement data.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct ManufacturerDataLen(usize);
+/// Manufacturer advertisement byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ManufacturerDataByte;
 
-impl ManufacturerDataLen {
-    /// Creates a manufacturer data length from backend advertisement bytes.
-    #[must_use]
-    pub const fn new(value: usize) -> Self {
-        Self(value)
-    }
-
-    /// Returns the primitive value for display or serialization edges.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
+impl Unit for ManufacturerDataByte {
+    type Dimension = Information;
 }
 
-impl fmt::Display for ManufacturerDataLen {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
+/// Size of opaque manufacturer advertisement data.
+pub type ManufacturerDataSize = Quantity<Information, ManufacturerDataByte, usize>;
