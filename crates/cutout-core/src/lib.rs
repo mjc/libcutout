@@ -4783,6 +4783,12 @@ impl Temperature {
     pub const fn from_celsius(value: i64) -> Self {
         Self::from_millicelsius(saturating_i64_to_i32(value.saturating_mul(1_000)))
     }
+
+    /// Creates a temperature from raw MPU6050 sensor counts.
+    #[must_use]
+    pub const fn from_mpu6050_counts(value: i16) -> Self {
+        Self::from_millicelsius(36_530 + (value as i32 * 1_000) / 340)
+    }
 }
 
 /// Plane angle stored in millidegrees.
@@ -6660,6 +6666,10 @@ mod tests {
         assert_eq!(
             Current::from_milliamps(-1_700).abs(),
             Current::from_milliamps(1_700)
+        );
+        assert_eq!(
+            Temperature::from_mpu6050_counts(0).as_millicelsius(),
+            36_530
         );
         assert_eq!(
             Voltage::from_millivolts(91_000).as_cell_voltage(crate::SeriesCount::new(30)),

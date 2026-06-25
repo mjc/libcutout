@@ -923,7 +923,10 @@ impl BegodeLiveATelemetry {
                 cursor,
                 ParserOffset::from_bytes(10),
             ))),
-            imu_temperature: mpu6050_temperature(be_i16(cursor, ParserOffset::from_bytes(12))),
+            imu_temperature: Temperature::from_mpu6050_counts(be_i16(
+                cursor,
+                ParserOffset::from_bytes(12),
+            )),
             hardware_pwm: DutyCycle::from_decipermille(be_i16(
                 cursor,
                 ParserOffset::from_bytes(14),
@@ -1222,10 +1225,6 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
             actual: u8::try_from(actual.get()).unwrap_or_default(),
         })
     }
-}
-
-fn mpu6050_temperature(raw_temperature: i16) -> Temperature {
-    Temperature::from_millicelsius(36_530 + (i32::from(raw_temperature) * 1_000) / 340)
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {
