@@ -202,7 +202,7 @@ pub(crate) struct ScanObservation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProfileFamily {
     AeroVeteran {
-        current_limit: Option<String>,
+        current_limit: Option<Current>,
         tail_status: String,
         summary: String,
     },
@@ -1021,7 +1021,7 @@ impl DashboardState {
             source: "probe".to_owned(),
             status: "ready".to_owned(),
             family: ProfileFamily::AeroVeteran {
-                current_limit: Some("45A".to_owned()),
+                current_limit: Some(Current::from_amps(45)),
                 tail_status: "raw tail preserved".to_owned(),
                 summary: "Aero/Veteran current 45A / raw tail preserved".to_owned(),
             },
@@ -3978,7 +3978,7 @@ mod tests {
         assert_eq!(
             state.profiles[0].family,
             ProfileFamily::AeroVeteran {
-                current_limit: Some("45A".to_owned()),
+                current_limit: Some(Current::from_amps(45)),
                 tail_status: "raw tail preserved".to_owned(),
                 summary: "Aero/Veteran current 45A / raw tail preserved".to_owned(),
             }
