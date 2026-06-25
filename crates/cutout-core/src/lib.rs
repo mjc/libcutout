@@ -4480,6 +4480,19 @@ impl Energy {
         Self::from_unit_value(value)
     }
 
+    /// Creates an energy value from per-cell watt-hours and pack geometry.
+    #[must_use]
+    pub const fn from_cell_geometry(
+        cell_watt_hours: u32,
+        series_cells: SeriesCount,
+        parallel_packs: ParallelCount,
+    ) -> Self {
+        let value = cell_watt_hours
+            .saturating_mul(series_cells.get() as u32)
+            .saturating_mul(parallel_packs.get() as u32);
+        Self::from_watt_hours(value)
+    }
+
     /// Returns this energy in watt-hours.
     #[must_use]
     pub const fn as_watt_hours(self) -> u32 {
@@ -4495,6 +4508,17 @@ impl Capacity {
     #[must_use]
     pub const fn from_milliamp_hours(value: u32) -> Self {
         Self::from_unit_value(value)
+    }
+
+    /// Creates a capacity value from per-cell milliamp-hours and parallel packs.
+    #[must_use]
+    pub const fn from_parallel_packs(
+        cell_capacity_milliamp_hours: u32,
+        parallel_packs: ParallelCount,
+    ) -> Self {
+        Self::from_milliamp_hours(
+            cell_capacity_milliamp_hours.saturating_mul(parallel_packs.get() as u32),
+        )
     }
 
     /// Returns this capacity in milliamp-hours.
@@ -6286,11 +6310,12 @@ mod tests {
     use super::crate_name;
     use crate::round_div_i32;
     use crate::{
-        Angle, BatteryCurrent, BatteryLevel, CellVoltage, Current, DeviceCommand, DeviceEvent,
-        Distance, Duration, DutyCycle, GattChannel, LinkInfo, Measured, MonotonicTimestamp,
-        PhaseCurrent, Power, ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta,
-        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
-        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
+        DeviceEvent, Distance, Duration, DutyCycle, Energy, GattChannel, LinkInfo, Measured,
+        MonotonicTimestamp, ParallelCount, PhaseCurrent, Power, ProtocolSession, SeriesCount,
+        SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
+        TransportAction, UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage,
+        WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -6449,8 +6474,8 @@ mod tests {
         assert_eq!(size_of::<crate::SemanticEventCount>(), size_of::<usize>());
         assert_eq!(size_of::<crate::ProtocolSelector>(), size_of::<u8>());
         assert_eq!(size_of::<crate::ProtocolTag>(), size_of::<u16>());
-        assert_eq!(size_of::<crate::SeriesCount>(), size_of::<u8>());
-        assert_eq!(size_of::<crate::ParallelCount>(), size_of::<u8>());
+        assert_eq!(size_of::<SeriesCount>(), size_of::<u8>());
+        assert_eq!(size_of::<ParallelCount>(), size_of::<u8>());
         assert_eq!(size_of::<crate::BmsCellValuesPerPage>(), size_of::<u8>());
         assert_eq!(
             size_of::<crate::BmsTemperatureValuesPerPage>(),
@@ -6776,7 +6801,7 @@ mod tests {
             36_530
         );
         assert_eq!(
-            Voltage::from_millivolts(91_000).as_cell_voltage(crate::SeriesCount::new(30)),
+            Voltage::from_millivolts(91_000).as_cell_voltage(SeriesCount::new(30)),
             CellVoltage::from_microvolts(3_033_333)
         );
         let voltage_range = Voltage::from_volts(91)..=Voltage::from_volts(126);
@@ -6790,6 +6815,15 @@ mod tests {
         assert_eq!(
             Voltage::from_cell_voltage(CellVoltage::from_microvolts(3_050_000), 30).as_millivolts(),
             91_500
+        );
+        assert_eq!(
+            Capacity::from_parallel_packs(5_000, ParallelCount::new(2)).as_milliamp_hours(),
+            10_000
+        );
+        assert_eq!(
+            Energy::from_cell_geometry(18, SeriesCount::new(20), ParallelCount::new(2))
+                .as_watt_hours(),
+            720
         );
 
         assert_eq!(Current::from_amps(-12).as_milliamps(), -12_000);
@@ -6944,10 +6978,10 @@ mod tests {
     #[test]
     fn battery_quantity_types_preserve_capacity_and_energy_units() {
         assert_eq!(
-            crate::Capacity::from_milliamp_hours(10_000).as_milliamp_hours(),
+            Capacity::from_milliamp_hours(10_000).as_milliamp_hours(),
             10_000
         );
-        assert_eq!(crate::Energy::from_watt_hours(900).as_watt_hours(), 900);
+        assert_eq!(Energy::from_watt_hours(900).as_watt_hours(), 900);
     }
 
     #[test]
@@ -7234,14 +7268,14 @@ mod tests {
                 verification: VerificationStatus::HardwareVerified,
             }),
             battery: Some(crate::BatterySpec {
-                series_cells: crate::SeriesCount::new(30),
-                nominal_capacity: Some(crate::Capacity::from_milliamp_hours(10_000)),
+                series_cells: SeriesCount::new(30),
+                nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
                 voltage_range: Voltage::from_millivolts(99_180)..=Voltage::from_millivolts(123_370),
                 verification: VerificationStatus::SourceAndHardwareVerified,
             }),
             bms: Some(crate::BmsLayoutSpec {
-                series_cells: crate::SeriesCount::new(30),
-                parallel_packs: crate::ParallelCount::new(2),
+                series_cells: SeriesCount::new(30),
+                parallel_packs: ParallelCount::new(2),
                 cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
                 temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
                 selectors: &AERO_BMS_SELECTORS,
@@ -7282,8 +7316,8 @@ mod tests {
         let bms = entry
             .bms
             .expect("Aero registry entry should carry BMS layout");
-        assert_eq!(bms.series_cells, crate::SeriesCount::new(30));
-        assert_eq!(bms.parallel_packs, crate::ParallelCount::new(2));
+        assert_eq!(bms.series_cells, SeriesCount::new(30));
+        assert_eq!(bms.parallel_packs, ParallelCount::new(2));
         assert_eq!(bms.selectors[1].kind, crate::BatteryPageKind::CellVoltage);
     }
 
@@ -7773,8 +7807,8 @@ mod tests {
             },
         ];
         let layout = crate::BmsLayoutSpec {
-            series_cells: crate::SeriesCount::new(30),
-            parallel_packs: crate::ParallelCount::new(2),
+            series_cells: SeriesCount::new(30),
+            parallel_packs: ParallelCount::new(2),
             cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
             temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
             selectors: &SELECTORS,
@@ -7930,8 +7964,8 @@ mod tests {
         }];
         let mut entry = sample_registry_entry(manufacturer, model);
         entry.bms = Some(crate::BmsLayoutSpec {
-            series_cells: crate::SeriesCount::new(series_cells),
-            parallel_packs: crate::ParallelCount::new(parallel_packs),
+            series_cells: SeriesCount::new(series_cells),
+            parallel_packs: ParallelCount::new(parallel_packs),
             cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
             temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
             selectors: &SELECTORS,
