@@ -446,11 +446,11 @@ impl VeteranTelemetry {
         Ok(Self {
             firmware,
             voltage,
-            speed: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(i32::from(
+            speed: speed_from_deci_kmh(i32::from(
                 cursor
                     .be_i16(ByteOffset::new(6))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ))),
+            )),
             trip_distance: Distance::from_millimetres(
                 u64::from(
                     cursor
@@ -486,16 +486,16 @@ impl VeteranTelemetry {
             )),
             raw_charge_mode,
             charge_mode: veteran_charge_mode(raw_charge_mode),
-            speed_alert: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(i32::from(
+            speed_alert: speed_from_deci_kmh(i32::from(
                 cursor
                     .be_u16(ByteOffset::new(24))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ))),
-            speed_tiltback: Speed::from_millimetres_per_second(deci_kmh_to_mm_s(i32::from(
+            )),
+            speed_tiltback: speed_from_deci_kmh(i32::from(
                 cursor
                     .be_u16(ByteOffset::new(26))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ))),
+            )),
             pedals_mode: VeteranPedalsMode::new(
                 cursor
                     .be_u16(ByteOffset::new(30))
@@ -571,15 +571,11 @@ impl VeteranTelemetry {
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-                        i64::from(speed_to_deci_kmh(
-                            self.speed_alert.as_millimetres_per_second(),
-                        )),
+                        i64::from(speed_setting_value(self.speed_alert)),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-                        i64::from(speed_to_deci_kmh(
-                            self.speed_tiltback.as_millimetres_per_second(),
-                        )),
+                        i64::from(speed_setting_value(self.speed_tiltback)),
                     )),
                 ],
             }),
@@ -675,12 +671,12 @@ pub fn estimate_veteran_battery_percent(model_id: u16, voltage: Voltage) -> Perc
     })
 }
 
-fn deci_kmh_to_mm_s(value: i32) -> i32 {
-    value * 250 / 9
+fn speed_from_deci_kmh(value: i32) -> Speed {
+    Speed::from_millimetres_per_second(value * 250 / 9)
 }
 
-fn speed_to_deci_kmh(value: i32) -> i32 {
-    let numerator = i64::from(value) * 36;
+fn speed_setting_value(value: Speed) -> i32 {
+    let numerator = i64::from(value.as_millimetres_per_second()) * 36;
     let rounded = if numerator >= 0 {
         (numerator + 500) / 1_000
     } else {
@@ -1382,7 +1378,7 @@ mod tests {
     fn veteran_telemetry_delta_scales_nonzero_speed_and_current() {
         let mut telemetry =
             VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
-        telemetry.speed = Speed::from_millimetres_per_second(deci_kmh_to_mm_s(36));
+        telemetry.speed = speed_from_deci_kmh(36);
         telemetry.phase_current = PhaseCurrent::from_milliamps(-1_700);
 
         let delta = telemetry.to_delta(ms(42));
@@ -1417,13 +1413,22 @@ mod tests {
 
     #[test]
     fn veteran_speed_conversion_scales_nonzero_deci_kmh() {
-        assert_eq!(deci_kmh_to_mm_s(36), 1_000);
+        assert_eq!(
+            speed_from_deci_kmh(36),
+            Speed::from_millimetres_per_second(1_000)
+        );
     }
 
     #[test]
     fn veteran_speed_conversion_round_trips_deci_kmh_thresholds() {
-        assert_eq!(speed_to_deci_kmh(15_277), 550);
-        assert_eq!(speed_to_deci_kmh(15_000), 540);
+        assert_eq!(
+            speed_setting_value(Speed::from_millimetres_per_second(15_277)),
+            550
+        );
+        assert_eq!(
+            speed_setting_value(Speed::from_millimetres_per_second(15_000)),
+            540
+        );
     }
 
     #[test]
