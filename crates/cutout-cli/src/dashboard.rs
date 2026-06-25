@@ -19,10 +19,10 @@ use cutout_btle::{
     ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    BatteryPagePayload, CatalogModelResolution, DiagnosticReadback, FirmwareInfo, Measured,
-    ModelCatalog, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
-    ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-    TelemetryDelta, TelemetrySnapshot, Voltage,
+    BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, DiagnosticReadback,
+    FirmwareInfo, Measured, ModelCatalog, NotificationByteLen, NotificationIngestOutcome,
+    ParserDiagnostics, PhaseCurrent, Power, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
+    SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
@@ -343,40 +343,47 @@ pub(crate) type ReadOnlyDiagnosticResponseCount =
     ReadOnlySummaryCount<ReadOnlyDiagnosticResponseCountTag>;
 pub(crate) type RawTelemetryResponseCount = ReadOnlySummaryCount<RawTelemetryResponseCountTag>;
 
+fn clamp_percent(value: u64) -> u8 {
+    match u8::try_from(value) {
+        Ok(value) if value <= 100 => value,
+        _ => 100,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct DashboardBatteryLevel(u64);
+pub(crate) struct DashboardBatteryLevel(BatteryLevel);
 
 impl DashboardBatteryLevel {
-    const fn new(value: u64) -> Self {
-        Self(if value > 100 { 100 } else { value })
-    }
-
-    fn from_u8(value: u8) -> Self {
-        Self::new(u64::from(value))
+    fn new(value: u64) -> Self {
+        Self(BatteryLevel::from_percent(clamp_percent(value)))
     }
 
     const fn decrement_for_demo(self) -> Self {
-        let value = self.0.saturating_sub(1);
-        if value < 10 { Self(10) } else { Self(value) }
+        let value = self.0.as_percent().saturating_sub(1);
+        Self(BatteryLevel::from_percent(if value < 10 {
+            10
+        } else {
+            value
+        }))
     }
 
     fn ratio(self) -> f64 {
-        f64::from(u32::try_from(self.0).unwrap_or(100)) / 100.0
+        f64::from(self.0.as_percent()) / 100.0
     }
 }
 
 impl fmt::Display for DashboardBatteryLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.0.as_percent().fmt(f)
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct SignalQuality(u64);
+pub(crate) struct SignalQuality(BatteryLevel);
 
 impl SignalQuality {
-    const fn new(value: u64) -> Self {
-        Self(if value > 100 { 100 } else { value })
+    fn new(value: u64) -> Self {
+        Self(BatteryLevel::from_percent(clamp_percent(value)))
     }
 
     fn from_signal_strength(signal: cutout_core::SignalStrength) -> Self {
@@ -390,17 +397,22 @@ impl SignalQuality {
     }
 
     const fn increment(self) -> Self {
-        Self::new(self.0.saturating_add(1))
+        let value = self.0.as_percent().saturating_add(1);
+        Self(BatteryLevel::from_percent(if value > 100 {
+            100
+        } else {
+            value
+        }))
     }
 
     fn ratio(self) -> f64 {
-        f64::from(u32::try_from(self.0).unwrap_or(100)) / 100.0
+        f64::from(self.0.as_percent()) / 100.0
     }
 }
 
 impl fmt::Display for SignalQuality {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.0.as_percent().fmt(f)
     }
 }
 
@@ -512,23 +524,24 @@ impl fmt::Display for DisplayTemperature {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DisplayPhaseCurrent(i64);
+pub(crate) struct DisplayPhaseCurrent(PhaseCurrent);
 
 impl DisplayPhaseCurrent {
     fn from_milliamps(value: i32) -> Self {
-        Self(milliamps_to_amps(value))
+        Self(PhaseCurrent::from_milliamps(value))
     }
 
     fn abs_sample(self) -> u64 {
-        self.0.unsigned_abs()
+        self.get().unsigned_abs()
     }
 
     const fn get(self) -> i64 {
-        self.0
+        (self.0.as_milliamps() / 1_000) as i64
     }
 
     const fn is_idle(self) -> bool {
-        self.0.abs() <= 1
+        let milliamps = self.0.as_milliamps();
+        milliamps > -1_000 && milliamps < 1_000
     }
 
     const fn is_working(self) -> bool {
@@ -543,19 +556,31 @@ impl fmt::Display for DisplayPhaseCurrent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DisplayBatteryCurrent(i64);
+pub(crate) struct DisplayBatteryCurrent(BatteryCurrent);
 
 impl DisplayBatteryCurrent {
     fn from_milliamps(value: i32) -> Self {
-        Self(milliamps_to_amps(value))
+        Self(BatteryCurrent::from_milliamps(value))
+    }
+
+    fn from_amps(value: i64) -> Self {
+        let milliamps = value.saturating_mul(1_000);
+        Self(BatteryCurrent::from_milliamps(
+            i32::try_from(milliamps).unwrap_or(if milliamps.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }),
+        ))
     }
 
     const fn get(self) -> i64 {
-        self.0
+        (self.0.as_milliamps() / 1_000) as i64
     }
 
     const fn is_idle(self) -> bool {
-        self.0.abs() <= 1
+        let milliamps = self.0.as_milliamps();
+        milliamps > -1_000 && milliamps < 1_000
     }
 
     const fn is_working(self) -> bool {
@@ -601,15 +626,15 @@ impl fmt::Display for OperationalCurrent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DisplayPower(i64);
+pub(crate) struct DisplayPower(Power);
 
 impl DisplayPower {
-    const fn from_watts(value: i64) -> Self {
-        Self(value)
+    fn from_watts(value: i64) -> Self {
+        Self(Power::from_milliwatts(value.saturating_mul(1_000)))
     }
 
     const fn from_milliwatts(value: i64) -> Self {
-        Self(value / 1_000)
+        Self(Power::from_milliwatts(value))
     }
 
     fn from_volts_amps(volts: u64, amps: u64) -> Option<Self> {
@@ -617,13 +642,13 @@ impl DisplayPower {
     }
 
     const fn get(self) -> i64 {
-        self.0
+        self.0.as_milliwatts() / 1_000
     }
 }
 
 impl fmt::Display for DisplayPower {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} W", self.0)
+        write!(f, "{} W", self.get())
     }
 }
 
@@ -1134,7 +1159,7 @@ impl DashboardState {
     }
 
     pub(crate) fn apply_battery_level(&mut self, level: u8) {
-        let level = DashboardBatteryLevel::from_u8(level);
+        let level = DashboardBatteryLevel::new(u64::from(level));
         self.telemetry.battery_level = Some(level);
         self.telemetry.battery_source = BatterySource::StandardBle;
         self.push_log("info", &format!("battery level {level}%"));
@@ -1308,7 +1333,7 @@ impl TelemetryWindow {
             .last()
             .copied()
             .and_then(u64_to_i64)
-            .map(DisplayBatteryCurrent);
+            .map(DisplayBatteryCurrent::from_amps);
         self.latest_power = voltage_samples
             .last()
             .copied()
@@ -1348,7 +1373,8 @@ impl TelemetryWindow {
         push_sample(&mut self.temperature_samples, next_temperature);
         self.latest_speed = Some(DisplaySpeed::from_mph(next_speed));
         self.latest_voltage = Some(DisplayVoltage::from_volts(next_voltage));
-        self.latest_battery_current = u64_to_i64(next_current).map(DisplayBatteryCurrent);
+        self.latest_battery_current =
+            u64_to_i64(next_current).map(DisplayBatteryCurrent::from_amps);
         self.latest_power = DisplayPower::from_volts_amps(next_voltage, next_current);
         self.latest_temperature =
             u64_to_i64(next_temperature).map(DisplayTemperature::from_celsius);
@@ -1374,10 +1400,10 @@ impl TelemetryWindow {
 
     fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
         if let Some(percent) = snapshot.battery_level_reported {
-            self.battery_level = Some(DashboardBatteryLevel::from_u8(percent.value.get()));
+            self.battery_level = Some(DashboardBatteryLevel::new(u64::from(percent.value.get())));
             self.battery_source = BatterySource::TelemetryReported;
         } else if let Some(percent) = snapshot.battery_level_estimated {
-            self.battery_level = Some(DashboardBatteryLevel::from_u8(percent.value.get()));
+            self.battery_level = Some(DashboardBatteryLevel::new(u64::from(percent.value.get())));
             self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed {
@@ -3554,12 +3580,12 @@ mod tests {
         Measured::reported(Voltage::from_millivolts(value))
     }
 
-    fn battery_current(value: i32) -> Measured<cutout_core::BatteryCurrent> {
-        Measured::reported(cutout_core::BatteryCurrent::from_milliamps(value))
+    fn battery_current(value: i32) -> Measured<BatteryCurrent> {
+        Measured::reported(BatteryCurrent::from_milliamps(value))
     }
 
-    fn power(value: i64) -> Measured<cutout_core::Power> {
-        Measured::calculated(cutout_core::Power::from_milliwatts(value))
+    fn power(value: i64) -> Measured<Power> {
+        Measured::calculated(Power::from_milliwatts(value))
     }
 
     fn temperature(value: i32) -> Measured<cutout_core::Temperature> {
@@ -3578,12 +3604,12 @@ mod tests {
         Measured::reported(cutout_core::Angle::from_millidegrees(value))
     }
 
-    fn level_reported(value: u8) -> Measured<cutout_core::BatteryLevel> {
-        Measured::reported(cutout_core::BatteryLevel::from_percent(value))
+    fn level_reported(value: u8) -> Measured<BatteryLevel> {
+        Measured::reported(BatteryLevel::from_percent(value))
     }
 
-    fn level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
-        Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
+    fn level_estimated(value: u8) -> Measured<BatteryLevel> {
+        Measured::estimated(BatteryLevel::from_percent(value))
     }
 
     fn live_aero_telemetry_snapshot() -> TelemetrySnapshot {
@@ -3923,7 +3949,7 @@ mod tests {
     fn operational_wheel_state_reports_riding_from_motion() {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(1));
-        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent(0));
+        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state
             .read_only
             .settings
@@ -3939,7 +3965,7 @@ mod tests {
     fn operational_wheel_state_reports_lifted_from_stationary_pitch() {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
-        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent(0));
+        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state.telemetry.latest_pitch = Some(WheelPitchDeg(69));
 
         assert_eq!(
@@ -3952,7 +3978,7 @@ mod tests {
     fn operational_wheel_state_reports_balancing_from_stationary_current() {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
-        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent(4));
+        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(4_000));
         state.telemetry.latest_pitch = Some(WheelPitchDeg(0));
 
         assert_eq!(
@@ -3965,7 +3991,7 @@ mod tests {
     fn operational_wheel_state_reports_parked_from_stationary_idle_current() {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
-        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent(0));
+        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state.telemetry.latest_pitch = Some(WheelPitchDeg(0));
 
         assert_eq!(
@@ -3980,7 +4006,7 @@ mod tests {
         assert_eq!(operational_pwm(&state), OperationalDutyCycle::Unknown);
 
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
-        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent(0));
+        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state.telemetry.latest_pwm = Some(DisplayDutyCycle(-100));
 
         assert_eq!(
@@ -3992,10 +4018,7 @@ mod tests {
 
     #[test]
     fn display_power_converts_from_milliwatts_without_unit_leaking() {
-        assert_eq!(
-            DisplayPower::from_milliwatts(-184_892),
-            DisplayPower::from_watts(-184)
-        );
+        assert_eq!(DisplayPower::from_milliwatts(-184_892).get(), -184);
         assert_eq!(
             DisplayPower::from_volts_amps(53, 6),
             Some(DisplayPower::from_watts(318))
@@ -4009,7 +4032,7 @@ mod tests {
 
     #[test]
     fn operational_current_display_preserves_signed_discharge_current() {
-        let current = DisplayBatteryCurrent(-12);
+        let current = DisplayBatteryCurrent::from_milliamps(-12_400);
 
         assert_eq!(current.get(), -12);
         assert_eq!(current.to_string(), "-12 A");
@@ -4279,7 +4302,7 @@ mod tests {
         assert_eq!(state.telemetry.latest_phase_current, None);
         assert_eq!(
             state.telemetry.latest_power,
-            Some(DisplayPower::from_watts(-1046))
+            Some(DisplayPower::from_milliwatts(-1_046_560))
         );
         assert_eq!(
             state.telemetry.latest_temperature,
@@ -4611,8 +4634,8 @@ mod tests {
                     },
                 )
                 .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-                    cutout_core::BatteryCurrent::from_milliamps(-1_230),
-                    cutout_core::BatteryCurrent::from_milliamps(450),
+                    BatteryCurrent::from_milliamps(-1_230),
+                    BatteryCurrent::from_milliamps(450),
                 )),
             ),
             "selector=0 kind=metadata verification=hardware_verified current=2A bms_current_0=-1A bms_current_1=0A",
@@ -4768,8 +4791,8 @@ mod tests {
                 },
             )
             .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-                cutout_core::BatteryCurrent::from_milliamps(-1_230),
-                cutout_core::BatteryCurrent::from_milliamps(450),
+                BatteryCurrent::from_milliamps(-1_230),
+                BatteryCurrent::from_milliamps(450),
             )),
         );
         let report = SessionBridgeReport {
@@ -5317,9 +5340,12 @@ mod tests {
                 .telemetry
                 .latest_phase_current
                 .map(DisplayPhaseCurrent::get),
-            Some(0)
+            None
         );
-        assert_eq!(state.telemetry.latest_battery_current, None);
+        assert_eq!(
+            state.telemetry.latest_battery_current,
+            Some(DisplayBatteryCurrent::from_milliamps(0))
+        );
         assert_eq!(
             state.telemetry.latest_temperature,
             Some(DisplayTemperature::from_celsius(33))
