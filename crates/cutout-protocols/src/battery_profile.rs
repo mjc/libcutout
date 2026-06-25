@@ -1,4 +1,4 @@
-use cutout_core::{Capacity, CellVoltage, Percent, Voltage};
+use cutout_core::{Capacity, CellVoltage, PackSeriesCells, Percent, Voltage};
 
 /// A measured voltage/percentage point for a battery profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,7 +29,7 @@ impl BatteryVoltageProfile {
     pub fn estimate_percent_from_pack_voltage(
         self,
         pack_voltage: Voltage,
-        series_cells: u8,
+        series_cells: PackSeriesCells,
     ) -> Percent {
         self.estimate_percent_from_cell_voltage(normalize_cell_voltage(pack_voltage, series_cells))
     }
@@ -102,8 +102,8 @@ pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     points: &SAMSUNG_50S_CELL_POINTS,
 };
 
-fn normalize_cell_voltage(pack_voltage: Voltage, series_cells: u8) -> CellVoltage {
-    let series_cells = i32::from(series_cells);
+fn normalize_cell_voltage(pack_voltage: Voltage, series_cells: PackSeriesCells) -> CellVoltage {
+    let series_cells = i32::from(series_cells.get());
     if series_cells <= 0 {
         return CellVoltage::from_microvolts(0);
     }
@@ -144,6 +144,10 @@ mod tests {
         Percent::from_percent(value)
     }
 
+    const fn series(value: u8) -> PackSeriesCells {
+        PackSeriesCells::new(value)
+    }
+
     #[test]
     fn samsung_50s_profile_uses_single_cell_curve_points() {
         for point in SAMSUNG_50S_CELL_POINTS {
@@ -181,8 +185,10 @@ mod tests {
 
         for (pack_mv, percent) in sticker_points {
             assert_eq!(
-                SAMSUNG_50S_PROFILE
-                    .estimate_percent_from_pack_voltage(Voltage::from_millivolts(pack_mv), 30,),
+                SAMSUNG_50S_PROFILE.estimate_percent_from_pack_voltage(
+                    Voltage::from_millivolts(pack_mv),
+                    series(30),
+                ),
                 pct(percent)
             );
         }
@@ -201,12 +207,12 @@ mod tests {
     fn samsung_50s_profile_normalizes_pack_voltage_to_cell_voltage() {
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(91_000), 30,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(91_000), series(30),),
             pct(0)
         );
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(126_000), 30,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(126_000), series(30),),
             pct(100)
         );
     }
@@ -214,9 +220,9 @@ mod tests {
     #[test]
     fn samsung_50s_profile_uses_series_cells_as_voltage_multiplier() {
         let thirty_series = SAMSUNG_50S_PROFILE
-            .estimate_percent_from_pack_voltage(Voltage::from_millivolts(108_000), 30);
+            .estimate_percent_from_pack_voltage(Voltage::from_millivolts(108_000), series(30));
         let thirty_six_series = SAMSUNG_50S_PROFILE
-            .estimate_percent_from_pack_voltage(Voltage::from_millivolts(108_000), 36);
+            .estimate_percent_from_pack_voltage(Voltage::from_millivolts(108_000), series(36));
 
         assert!(thirty_series > thirty_six_series);
     }
@@ -225,15 +231,15 @@ mod tests {
     fn samsung_50s_profile_estimates_same_percent_for_equivalent_series_packs() {
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), 30,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), series(30),),
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(129_540), 36,)
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(129_540), series(36),)
         );
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(151_130), 42,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(151_130), series(42),),
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), 30,)
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), series(30),)
         );
     }
 
@@ -256,7 +262,7 @@ mod tests {
         let mut previous = pct(0);
         for pack_mv in (91_000..=126_000).step_by(250) {
             let percent = SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(pack_mv), 30);
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(pack_mv), series(30));
             assert!(percent >= previous);
             previous = percent;
         }
@@ -276,7 +282,7 @@ mod tests {
     fn samsung_50s_profile_interpolates_between_sticker_points() {
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), 30,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), series(30),),
             pct(44)
         );
     }
@@ -294,7 +300,7 @@ mod tests {
     fn samsung_50s_profile_treats_zero_series_as_empty() {
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), 0,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(107_950), series(0),),
             pct(0)
         );
     }
@@ -303,12 +309,12 @@ mod tests {
     fn samsung_50s_profile_clamps_to_voltage_range() {
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(90_999), 30,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(90_999), series(30),),
             pct(0)
         );
         assert_eq!(
             SAMSUNG_50S_PROFILE
-                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(126_001), 30,),
+                .estimate_percent_from_pack_voltage(Voltage::from_millivolts(126_001), series(30),),
             pct(100)
         );
     }

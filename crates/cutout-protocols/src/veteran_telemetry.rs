@@ -341,8 +341,7 @@ impl VeteranModelProfile {
     #[must_use]
     pub fn estimate_battery_percent(&self, voltage: Voltage) -> Percent {
         if let Some(battery_profile) = self.battery_profile {
-            return battery_profile
-                .estimate_percent_from_pack_voltage(voltage, self.series_cells.get());
+            return battery_profile.estimate_percent_from_pack_voltage(voltage, self.series_cells);
         }
 
         let start = self.voltage_range.start().as_millivolts();
@@ -987,7 +986,7 @@ mod tests {
             aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
             profile.estimate_percent_from_pack_voltage(
                 Voltage::from_millivolts(107_950),
-                aero.series_cells.get(),
+                aero.series_cells,
             )
         );
     }
