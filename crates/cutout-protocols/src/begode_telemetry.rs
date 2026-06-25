@@ -1,11 +1,11 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    BatteryCurrent, Capacity, CentiVoltage, DiagnosticDetail, DiagnosticReadback,
-    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicMillis,
-    ParallelCount, Percent, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
-    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
-    VerificationStatus, Voltage,
+    BatteryCurrent, Capacity, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance,
+    Duration, DutyCycle, Energy, Measured, MonotonicMillis, ParallelCount, Percent, PhaseCurrent,
+    Power, RawFieldValue, ReadOnlyResponse, SeriesCount, SettingsEntry, SettingsReadback, Speed,
+    TelemetryDelta, Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    WireVoltage,
 };
 use thiserror::Error;
 
@@ -864,8 +864,8 @@ fn merge_optional_quantity<T: Copy + Eq>(
 /// Primary Begode live telemetry decoded from frame tag `0x00`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeLiveATelemetry {
-    /// Raw unscaled voltage.
-    pub raw_voltage: CentiVoltage,
+    /// Wire-encoded voltage before profile scaling.
+    pub wire_voltage: WireVoltage,
 
     /// Scaled pack voltage.
     pub voltage: Voltage,
@@ -905,10 +905,10 @@ impl BegodeLiveATelemetry {
     ) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x00)?;
         let cursor = ByteCursor::new(frame.as_slice());
-        let raw_voltage = CentiVoltage::from_centivolts(be_u16(cursor, ByteOffset::new(2)));
+        let wire_voltage = WireVoltage::from_centivolts(be_u16(cursor, ByteOffset::new(2)));
         Ok(Self {
-            raw_voltage,
-            voltage: scaled_voltage(raw_voltage, profile),
+            wire_voltage,
+            voltage: scaled_voltage(wire_voltage, profile),
             speed: speed_from_live_a_raw(be_i16(cursor, ByteOffset::new(4))),
             trip_distance: distance_from_metres(be_u32(cursor, ByteOffset::new(6))),
             trip_distance_low: distance_from_metres(u32::from(be_u16(cursor, ByteOffset::new(8)))),
@@ -921,7 +921,7 @@ impl BegodeLiveATelemetry {
                 ByteOffset::new(14),
             ))),
             battery_percent: estimate_begode_battery_percent(
-                scaled_voltage(raw_voltage, profile),
+                scaled_voltage(wire_voltage, profile),
                 profile,
             ),
         })
@@ -1172,15 +1172,15 @@ pub fn estimate_begode_battery_percent(
     voltage: Voltage,
     profile: BegodePackVoltageProfile,
 ) -> Percent {
-    let raw_centivolts = unscaled_centivolts(voltage, profile);
-    if raw_centivolts <= 5_120 {
+    let wire_centivolts = unscaled_centivolts(voltage, profile);
+    if wire_centivolts <= 5_120 {
         return Percent::from_percent(0);
     }
-    if raw_centivolts <= 5_440 {
-        return percent_from_i32(div_round(raw_centivolts - 5_120, 36).clamp(0, 100));
+    if wire_centivolts <= 5_440 {
+        return percent_from_i32(div_round(wire_centivolts - 5_120, 36).clamp(0, 100));
     }
-    if raw_centivolts <= 6_680 {
-        return percent_from_i32(div_round((raw_centivolts - 5_320) * 10, 136).clamp(0, 100));
+    if wire_centivolts <= 6_680 {
+        return percent_from_i32(div_round((wire_centivolts - 5_320) * 10, 136).clamp(0, 100));
     }
     Percent::from_percent(100)
 }
@@ -1197,10 +1197,8 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
     }
 }
 
-fn scaled_voltage(raw_centivolts: CentiVoltage, profile: BegodePackVoltageProfile) -> Voltage {
-    Voltage::from_millivolts(
-        (raw_centivolts.as_millivolts() * profile.scaler_milli() + 500) / 1_000,
-    )
+fn scaled_voltage(wire_voltage: WireVoltage, profile: BegodePackVoltageProfile) -> Voltage {
+    Voltage::from_millivolts((wire_voltage.as_millivolts() * profile.scaler_milli() + 500) / 1_000)
 }
 
 fn unscaled_centivolts(voltage: Voltage, profile: BegodePackVoltageProfile) -> i32 {
@@ -1382,7 +1380,7 @@ mod tests {
             BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A frame decodes");
 
-        assert_eq!(telemetry.raw_voltage.as_centivolts(), 6005);
+        assert_eq!(telemetry.wire_voltage.as_centivolts(), 6005);
         assert_eq!(telemetry.voltage.as_millivolts(), 75_063);
         assert_eq!(telemetry.speed.as_millimetres_per_second(), 13_360);
         assert_eq!(telemetry.trip_distance.as_millimetres(), 7_733_998_000);

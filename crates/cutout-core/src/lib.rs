@@ -3915,10 +3915,10 @@ impl Voltage {
     }
 }
 
-/// Electrical voltage stored in centivolts.
-pub type CentiVoltage = Quantity<ElectricPotential, CentiVolt, u16>;
+/// Wire-encoded electrical voltage stored in centivolts.
+pub type WireVoltage = Quantity<ElectricPotential, CentiVolt, u16>;
 
-impl CentiVoltage {
+impl WireVoltage {
     /// Creates a voltage from centivolts.
     #[must_use]
     pub const fn from_centivolts(value: u16) -> Self {
@@ -5602,8 +5602,8 @@ mod tests {
     }
 
     #[test]
-    fn centivoltage_keeps_protocol_voltage_units_explicit() {
-        let voltage = crate::CentiVoltage::from_centivolts(6_005);
+    fn wire_voltage_keeps_protocol_voltage_units_explicit() {
+        let voltage = crate::WireVoltage::from_centivolts(6_005);
 
         assert_eq!(voltage.as_centivolts(), 6_005);
         assert_eq!(voltage.as_millivolts(), 60_050);
