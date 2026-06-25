@@ -4065,6 +4065,29 @@ impl Distance {
     }
 }
 
+/// Signed linear distance offset stored in millimetres.
+pub type DistanceOffset = Quantity<Length, Millimetre, i64>;
+
+impl DistanceOffset {
+    /// Creates a signed distance offset from millimetres.
+    #[must_use]
+    pub const fn from_millimetres(value: i64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a signed distance offset from metres.
+    #[must_use]
+    pub const fn from_metres(value: i64) -> Self {
+        Self::from_millimetres(value.saturating_mul(1_000))
+    }
+
+    /// Returns this signed distance offset in millimetres.
+    #[must_use]
+    pub const fn as_millimetres(self) -> i64 {
+        self.unit_value()
+    }
+}
+
 /// Time duration stored in milliseconds.
 pub type Duration = Quantity<Time, Millisecond, u64>;
 
@@ -5970,6 +5993,18 @@ mod tests {
     #[test]
     fn rotational_speed_quantity_preserves_erpm_unit() {
         assert_eq!(crate::RotationalSpeed::from_erpm(4_500).as_erpm(), 4_500);
+    }
+
+    #[test]
+    fn distance_offset_quantity_preserves_signed_length_unit() {
+        assert_eq!(
+            crate::DistanceOffset::from_metres(805).as_millimetres(),
+            805_000
+        );
+        assert_eq!(
+            crate::DistanceOffset::from_metres(-2).as_millimetres(),
+            -2_000
+        );
     }
 
     #[test]
