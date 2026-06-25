@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use cutout_core::{Information, ParserFrameLen, Quantity, Unit};
 use thiserror::Error;
 
 use crate::parser::{ParserCursor, ParserOffset};
@@ -9,34 +10,33 @@ pub const MAX_VETERAN_FRAME_LEN: usize = 259;
 const VETERAN_MAGIC: [u8; 3] = [0xdc, 0x5a, 0x5c];
 const VETERAN_SHORT_FRAME_MAX_LEN: u8 = 38;
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct VeteranDeclaredLen(usize);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VeteranDeclaredByte;
 
-impl VeteranDeclaredLen {
-    const fn from_wire(value: u8) -> Self {
-        Self(value as usize)
-    }
-
-    const fn get(self) -> usize {
-        self.0
-    }
-
-    const fn complete_frame_len(self) -> VeteranCompleteFrameLen {
-        VeteranCompleteFrameLen(self.0 + 4)
-    }
-
-    fn crc_offset(self) -> ParserOffset {
-        ParserOffset::from_bytes(self.0)
-    }
+impl Unit for VeteranDeclaredByte {
+    type Dimension = Information;
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct VeteranCompleteFrameLen(usize);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VeteranFrameByte;
 
-impl VeteranCompleteFrameLen {
-    const fn get(self) -> usize {
-        self.0
-    }
+impl Unit for VeteranFrameByte {
+    type Dimension = Information;
+}
+
+type VeteranDeclaredSize = Quantity<Information, VeteranDeclaredByte, usize>;
+type VeteranFrameSize = Quantity<Information, VeteranFrameByte, usize>;
+
+const fn veteran_declared_size_from_wire(value: u8) -> VeteranDeclaredSize {
+    VeteranDeclaredSize::from_bytes(value as usize)
+}
+
+const fn veteran_complete_frame_size(declared: VeteranDeclaredSize) -> VeteranFrameSize {
+    VeteranFrameSize::from_bytes(declared.as_bytes() + 4)
+}
+
+fn veteran_crc_offset(declared: VeteranDeclaredSize) -> ParserOffset {
+    ParserOffset::from_bytes(declared.as_bytes())
 }
 
 /// Complete Veteran/LeaperKim/NOSFET frame reassembled from BLE notifications.
@@ -60,9 +60,7 @@ impl VeteranFrame {
             return Err(VeteranReassemblyError::InvalidFrame);
         };
         if bytes.len()
-            != VeteranDeclaredLen::from_wire(*len)
-                .complete_frame_len()
-                .get()
+            != veteran_complete_frame_size(veteran_declared_size_from_wire(*len)).as_bytes()
         {
             return Err(VeteranReassemblyError::InvalidFrame);
         }
@@ -86,10 +84,10 @@ pub enum VeteranReassemblyError {
     #[error("Veteran frame exceeded maximum length")]
     OversizedFrame {
         /// Observed frame length.
-        claimed: usize,
+        claimed: ParserFrameLen,
 
         /// Configured maximum accepted frame length.
-        max: usize,
+        max: ParserFrameLen,
     },
 
     /// A complete long frame failed CRC32 validation.
@@ -260,7 +258,7 @@ impl VeteranFrameParseState {
         let Some(expected_len) = veteran_expected_len(buffer.as_slice()) else {
             return Ok(None);
         };
-        if buffer.len() < expected_len.get() {
+        if buffer.len() < expected_len.as_bytes() {
             return Ok(None);
         }
 
@@ -280,22 +278,22 @@ fn push_candidate_byte(
     byte: u8,
 ) -> Result<(), VeteranReassemblyError> {
     if buffer.try_push(byte).is_err() {
-        let claimed = buffer.len().saturating_add(1);
+        let claimed = ParserFrameLen::from_bytes(buffer.len().saturating_add(1));
         buffer.clear();
         Err(VeteranReassemblyError::OversizedFrame {
             claimed,
-            max: MAX_VETERAN_FRAME_LEN,
+            max: ParserFrameLen::from_bytes(MAX_VETERAN_FRAME_LEN),
         })
     } else {
         Ok(())
     }
 }
 
-fn veteran_expected_len(bytes: &[u8]) -> Option<VeteranCompleteFrameLen> {
+fn veteran_expected_len(bytes: &[u8]) -> Option<VeteranFrameSize> {
     ParserCursor::new(bytes)
         .byte(ParserOffset::from_bytes(3))
-        .map(VeteranDeclaredLen::from_wire)
-        .map(VeteranDeclaredLen::complete_frame_len)
+        .map(veteran_declared_size_from_wire)
+        .map(veteran_complete_frame_size)
 }
 
 fn veteran_uses_crc(bytes: &[u8]) -> bool {
@@ -308,14 +306,14 @@ fn veteran_crc_matches(bytes: &[u8]) -> bool {
     let cursor = ParserCursor::new(bytes);
     let Some(declared_len) = cursor
         .byte(ParserOffset::from_bytes(3))
-        .map(VeteranDeclaredLen::from_wire)
+        .map(veteran_declared_size_from_wire)
     else {
         return false;
     };
-    let Some(expected_crc) = cursor.be_u32(declared_len.crc_offset()) else {
+    let Some(expected_crc) = cursor.be_u32(veteran_crc_offset(declared_len)) else {
         return false;
     };
-    let Some(crc_bytes) = bytes.get(..declared_len.get()) else {
+    let Some(crc_bytes) = bytes.get(..declared_len.as_bytes()) else {
         return false;
     };
     crc32fast::hash(crc_bytes) == expected_crc
@@ -613,8 +611,8 @@ mod tests {
         assert_eq!(
             error,
             VeteranReassemblyError::OversizedFrame {
-                claimed: MAX_VETERAN_FRAME_LEN + 1,
-                max: MAX_VETERAN_FRAME_LEN,
+                claimed: ParserFrameLen::from_bytes(MAX_VETERAN_FRAME_LEN + 1),
+                max: ParserFrameLen::from_bytes(MAX_VETERAN_FRAME_LEN),
             }
         );
         assert_eq!(

@@ -1,15 +1,15 @@
 use core::marker::PhantomData;
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, DeviceCommand,
-    DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
-    GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicTimestamp,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector,
-    ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
-    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
-    SessionOutput, Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue,
-    Voltage, WritePayload,
+    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, Count,
+    DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity,
+    FirmwareInfo, GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry,
+    MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
+    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SeriesCount,
+    SessionInput, SessionOutput, Temperature, TransportAction, Unit, ValueQuality,
+    VerificationStatus, VerifiedValue, Voltage, WritePayload,
 };
 
 use crate::{
@@ -194,18 +194,14 @@ pub struct VeteranNotificationDecoder {
     reassembler: VeteranFrameReassembler,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-struct CompletedFrameCount(usize);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompletedFrame;
 
-impl CompletedFrameCount {
-    const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
-    }
-
-    const fn is_zero(self) -> bool {
-        self.0 == 0
-    }
+impl Unit for CompletedFrame {
+    type Dimension = Count;
 }
+
+type CompletedFrames = Quantity<Count, CompletedFrame, usize>;
 
 impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     fn reset(&mut self) {
@@ -219,7 +215,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
-        let mut completed_frames = CompletedFrameCount::default();
+        let mut completed_frames = CompletedFrames::default();
         let mut buffered = false;
         for byte in bytes {
             match self.reassembler.feed_byte_result(*byte) {
@@ -255,10 +251,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     return;
                 }
                 Err(VeteranReassemblyError::OversizedFrame { claimed, max }) => {
-                    let error = ParserError::OversizedFrame {
-                        claimed: ParserFrameLen::from_bytes(claimed),
-                        max: ParserFrameLen::from_bytes(max),
-                    };
+                    let error = ParserError::OversizedFrame { claimed, max };
                     push_parser_error(error, output);
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
@@ -287,7 +280,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
             }
         }
 
-        if completed_frames.is_zero() {
+        if completed_frames.has_no_events() {
             output.push(SessionOutput::NotificationIngest(if buffered {
                 NotificationIngestOutcome::buffered_fragment(
                     ProtocolFamily::VeteranLeaperkimNosfet,
@@ -2405,8 +2398,8 @@ mod tests {
         decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output);
 
         let error = ParserError::OversizedFrame {
-            claimed: ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN + 1),
-            max: ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN),
+            claimed: cutout_core::ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN + 1),
+            max: cutout_core::ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN),
         };
         assert_eq!(
             notification_ingest_outcomes(&output),
