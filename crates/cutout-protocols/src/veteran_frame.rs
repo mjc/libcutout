@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use thiserror::Error;
 
-use crate::parser::{ByteCursor, ByteOffset};
+use crate::parser::{ParserCursor, ParserOffset};
 
 /// Maximum complete Veteran/LeaperKim/NOSFET frame length.
 pub const MAX_VETERAN_FRAME_LEN: usize = 259;
@@ -25,8 +25,8 @@ impl VeteranDeclaredLen {
         VeteranCompleteFrameLen(self.0 + 4)
     }
 
-    fn crc_offset(self) -> ByteOffset {
-        ByteOffset::new(self.0)
+    fn crc_offset(self) -> ParserOffset {
+        ParserOffset::from_bytes(self.0)
     }
 }
 
@@ -292,22 +292,22 @@ fn push_candidate_byte(
 }
 
 fn veteran_expected_len(bytes: &[u8]) -> Option<VeteranCompleteFrameLen> {
-    ByteCursor::new(bytes)
-        .byte(ByteOffset::new(3))
+    ParserCursor::new(bytes)
+        .byte(ParserOffset::from_bytes(3))
         .map(VeteranDeclaredLen::from_wire)
         .map(VeteranDeclaredLen::complete_frame_len)
 }
 
 fn veteran_uses_crc(bytes: &[u8]) -> bool {
-    ByteCursor::new(bytes)
-        .byte(ByteOffset::new(3))
+    ParserCursor::new(bytes)
+        .byte(ParserOffset::from_bytes(3))
         .is_some_and(|len| len > VETERAN_SHORT_FRAME_MAX_LEN)
 }
 
 fn veteran_crc_matches(bytes: &[u8]) -> bool {
-    let cursor = ByteCursor::new(bytes);
+    let cursor = ParserCursor::new(bytes);
     let Some(declared_len) = cursor
-        .byte(ByteOffset::new(3))
+        .byte(ParserOffset::from_bytes(3))
         .map(VeteranDeclaredLen::from_wire)
     else {
         return false;

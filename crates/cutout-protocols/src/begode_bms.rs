@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     BegodeFrame,
-    parser::{ByteCursor, ByteOffset},
+    parser::{ParserCursor, ParserOffset},
 };
 
 /// Cell-voltage count carried by one Begode/Gotway BMS cell page.
@@ -57,28 +57,28 @@ impl BegodeBmsSummary {
     /// not `0x01`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeBmsPageError> {
         require_tag(frame, 0x01)?;
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         let sub_index = frame.sub_index();
         let sub_index_value = sub_index.get();
         Ok(Self {
             sub_index,
             bms_index: BmsPackIndex::new(u8::from(sub_index_value >= 2)),
             half_index: BmsHalfIndex::new(sub_index_value & 1),
-            pwm_limit: centi_percent_to_permille(be_u16(cursor, ByteOffset::new(2))),
+            pwm_limit: centi_percent_to_permille(be_u16(cursor, ParserOffset::from_bytes(2))),
             pack_voltage: Voltage::from_millivolts(
-                i32::from(be_u16(cursor, ByteOffset::new(6))) * 100,
+                i32::from(be_u16(cursor, ParserOffset::from_bytes(6))) * 100,
             ),
             current: BatteryCurrent::from_milliamps(
-                i32::from(be_i16(cursor, ByteOffset::new(8))) * 100,
+                i32::from(be_i16(cursor, ParserOffset::from_bytes(8))) * 100,
             ),
             temperature_0: Temperature::from_millicelsius(
-                i32::from(be_i16(cursor, ByteOffset::new(10))) * 1_000,
+                i32::from(be_i16(cursor, ParserOffset::from_bytes(10))) * 1_000,
             ),
             temperature_1: Temperature::from_millicelsius(
-                i32::from(be_i16(cursor, ByteOffset::new(12))) * 1_000,
+                i32::from(be_i16(cursor, ParserOffset::from_bytes(12))) * 1_000,
             ),
             half_pack_voltage: Voltage::from_millivolts(
-                i32::from(be_i16(cursor, ByteOffset::new(14))) * 100,
+                i32::from(be_i16(cursor, ParserOffset::from_bytes(14))) * 100,
             ),
         })
     }
@@ -144,10 +144,10 @@ impl BegodeBmsCellPage {
             });
         }
 
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         let page_index = frame.sub_index();
         let mut cell_voltage = ArrayVec::new();
-        for offset in (2..18).step_by(2).map(ByteOffset::new) {
+        for offset in (2..18).step_by(2).map(ParserOffset::from_bytes) {
             cell_voltage.push(Voltage::from_millivolts(i32::from(be_u16(cursor, offset))));
         }
 
@@ -204,11 +204,11 @@ fn tag_byte(tag: ProtocolTag) -> u8 {
     u8::try_from(tag.get()).unwrap_or_default()
 }
 
-fn be_u16(cursor: ByteCursor<'_>, offset: ByteOffset) -> u16 {
+fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
     cursor.be_u16(offset).unwrap_or_default()
 }
 
-fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
+fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
     cursor.be_i16(offset).unwrap_or_default()
 }
 

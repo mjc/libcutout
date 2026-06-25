@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::{
     BatteryVoltageProfile, SAMSUNG_50S_PROFILE, VeteranFrame,
-    parser::{ByteCursor, ByteOffset},
+    parser::{ParserCursor, ParserOffset},
 };
 use crate::{VETERAN_BMS_CELL_VALUES_PER_PAGE, classify_veteran_bms_selector};
 
@@ -425,22 +425,22 @@ impl VeteranTelemetry {
     /// Returns [`VeteranTelemetryError::FrameTooShort`] if the frame does not
     /// contain the fixed voltage field.
     pub fn decode(frame: &VeteranFrame) -> Result<Self, VeteranTelemetryError> {
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         let raw_version = cursor
-            .be_u16(ByteOffset::new(28))
+            .be_u16(ParserOffset::from_bytes(28))
             .ok_or(VeteranTelemetryError::FrameTooShort)?;
         let firmware = VeteranFirmwareVersion::from_raw(raw_version);
         let voltage = Voltage::from_millivolts(
             i32::from(
                 cursor
-                    .be_u16(ByteOffset::new(4))
+                    .be_u16(ParserOffset::from_bytes(4))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             ) * 10,
         );
 
         let raw_charge_mode = VeteranRawChargeMode::new(
             cursor
-                .be_u16(ByteOffset::new(22))
+                .be_u16(ParserOffset::from_bytes(22))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
         );
 
@@ -449,69 +449,69 @@ impl VeteranTelemetry {
             voltage,
             speed: speed_from_deci_kmh(i32::from(
                 cursor
-                    .be_i16(ByteOffset::new(6))
+                    .be_i16(ParserOffset::from_bytes(6))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
             trip_distance: Distance::from_millimetres(
                 u64::from(
                     cursor
-                        .veteran_swapped_u32(ByteOffset::new(8))
+                        .veteran_swapped_u32(ParserOffset::from_bytes(8))
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 1_000,
             ),
             total_distance: Distance::from_millimetres(
                 u64::from(
                     cursor
-                        .veteran_swapped_u32(ByteOffset::new(12))
+                        .veteran_swapped_u32(ParserOffset::from_bytes(12))
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 1_000,
             ),
             phase_current: PhaseCurrent::from_milliamps(
                 i32::from(
                     cursor
-                        .be_i16(ByteOffset::new(16))
+                        .be_i16(ParserOffset::from_bytes(16))
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 100,
             ),
             mosfet_temperature: Temperature::from_millicelsius(
                 i32::from(
                     cursor
-                        .be_i16(ByteOffset::new(18))
+                        .be_i16(ParserOffset::from_bytes(18))
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 10,
             ),
             auto_shutdown_time_remaining: Duration::from_seconds(u64::from(
                 cursor
-                    .be_u16(ByteOffset::new(20))
+                    .be_u16(ParserOffset::from_bytes(20))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
             raw_charge_mode,
             charge_mode: veteran_charge_mode(raw_charge_mode),
             speed_alert: speed_from_deci_kmh(i32::from(
                 cursor
-                    .be_u16(ByteOffset::new(24))
+                    .be_u16(ParserOffset::from_bytes(24))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
             speed_tiltback: speed_from_deci_kmh(i32::from(
                 cursor
-                    .be_u16(ByteOffset::new(26))
+                    .be_u16(ParserOffset::from_bytes(26))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
             pedals_mode: VeteranPedalsMode::new(
                 cursor
-                    .be_u16(ByteOffset::new(30))
+                    .be_u16(ParserOffset::from_bytes(30))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             ),
             pitch: Angle::from_millidegrees(
                 i32::from(
                     cursor
-                        .be_i16(ByteOffset::new(32))
+                        .be_i16(ParserOffset::from_bytes(32))
                         .ok_or(VeteranTelemetryError::FrameTooShort)?,
                 ) * 10,
             ),
             hardware_pwm: DutyCycle::from_permille(veteran_pwm(
                 cursor
-                    .be_u16(ByteOffset::new(34))
+                    .be_u16(ParserOffset::from_bytes(34))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
             battery_level_estimated: estimate_veteran_battery_level(firmware.model_id, voltage),
@@ -1401,10 +1401,10 @@ mod tests {
 
     #[test]
     fn veteran_swapped_u32_uses_veteran_byte_order_for_all_bytes() {
-        let cursor = ByteCursor::new(&[0x12, 0x34, 0x56, 0x78]);
+        let cursor = ParserCursor::new(&[0x12, 0x34, 0x56, 0x78]);
 
         assert_eq!(
-            cursor.veteran_swapped_u32(ByteOffset::new(0)),
+            cursor.veteran_swapped_u32(ParserOffset::from_bytes(0)),
             Some(0x5678_1234)
         );
     }

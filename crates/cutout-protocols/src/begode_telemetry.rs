@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::{
     BegodeFrame,
-    parser::{ByteCursor, ByteOffset},
+    parser::{ParserCursor, ParserOffset},
 };
 
 const SERIES_CELLS_20: SeriesCount = SeriesCount::new(20);
@@ -904,21 +904,25 @@ impl BegodeLiveATelemetry {
         profile: BegodePackVoltageProfile,
     ) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x00)?;
-        let cursor = ByteCursor::new(frame.as_slice());
-        let wire_voltage = WireVoltage::from_centivolts(be_u16(cursor, ByteOffset::new(2)));
+        let cursor = ParserCursor::new(frame.as_slice());
+        let wire_voltage =
+            WireVoltage::from_centivolts(be_u16(cursor, ParserOffset::from_bytes(2)));
         Ok(Self {
             wire_voltage,
             voltage: scaled_voltage(wire_voltage, profile),
-            speed: speed_from_live_a_raw(be_i16(cursor, ByteOffset::new(4))),
-            trip_distance: distance_from_metres(be_u32(cursor, ByteOffset::new(6))),
-            trip_distance_low: distance_from_metres(u32::from(be_u16(cursor, ByteOffset::new(8)))),
+            speed: speed_from_live_a_raw(be_i16(cursor, ParserOffset::from_bytes(4))),
+            trip_distance: distance_from_metres(be_u32(cursor, ParserOffset::from_bytes(6))),
+            trip_distance_low: distance_from_metres(u32::from(be_u16(
+                cursor,
+                ParserOffset::from_bytes(8),
+            ))),
             phase_current: PhaseCurrent::from_milliamps(
-                i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
+                i32::from(be_i16(cursor, ParserOffset::from_bytes(10))) * 10,
             ),
-            imu_temperature: mpu6050_temperature(be_i16(cursor, ByteOffset::new(12))),
+            imu_temperature: mpu6050_temperature(be_i16(cursor, ParserOffset::from_bytes(12))),
             hardware_pwm: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
                 cursor,
-                ByteOffset::new(14),
+                ParserOffset::from_bytes(14),
             ))),
             battery_level: estimate_begode_battery_level(
                 scaled_voltage(wire_voltage, profile),
@@ -992,17 +996,21 @@ impl BegodeLiveBTelemetry {
     /// is not `0x04`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x04)?;
-        let cursor = ByteCursor::new(frame.as_slice());
-        let settings_bits = BegodeSettingsBits::new(be_u16(cursor, ByteOffset::new(6)));
+        let cursor = ParserCursor::new(frame.as_slice());
+        let settings_bits = BegodeSettingsBits::new(be_u16(cursor, ParserOffset::from_bytes(6)));
         let unit_mode = BegodeUnitMode::from_settings_bits(settings_bits);
         Ok(Self {
-            total_distance: unit_mode.distance_from_wire(be_u32(cursor, ByteOffset::new(2))),
+            total_distance: unit_mode
+                .distance_from_wire(be_u32(cursor, ParserOffset::from_bytes(2))),
             settings_bits,
-            power_off_timer: Duration::from_minutes(u64::from(be_u16(cursor, ByteOffset::new(8)))),
-            tiltback_speed: unit_mode.speed_limit(be_u16(cursor, ByteOffset::new(10))),
-            led_mode: BegodeLedMode::new(byte(cursor, ByteOffset::new(13))),
-            alert_flags: BegodeAlertFlags::new(byte(cursor, ByteOffset::new(14))),
-            light_mode: BegodeLightMode::new(byte(cursor, ByteOffset::new(15))),
+            power_off_timer: Duration::from_minutes(u64::from(be_u16(
+                cursor,
+                ParserOffset::from_bytes(8),
+            ))),
+            tiltback_speed: unit_mode.speed_limit(be_u16(cursor, ParserOffset::from_bytes(10))),
+            led_mode: BegodeLedMode::new(byte(cursor, ParserOffset::from_bytes(13))),
+            alert_flags: BegodeAlertFlags::new(byte(cursor, ParserOffset::from_bytes(14))),
+            light_mode: BegodeLightMode::new(byte(cursor, ParserOffset::from_bytes(15))),
         })
     }
 
@@ -1110,17 +1118,17 @@ impl BegodeExtraTelemetry {
     /// is not `0x07`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x07)?;
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         Ok(Self {
             battery_current: BatteryCurrent::from_milliamps(
-                i32::from(be_i16(cursor, ByteOffset::new(2))) * 10,
+                i32::from(be_i16(cursor, ParserOffset::from_bytes(2))) * 10,
             ),
             motor_temperature: Temperature::from_millicelsius(
-                i32::from(be_i16(cursor, ByteOffset::new(6))) * 1_000,
+                i32::from(be_i16(cursor, ParserOffset::from_bytes(6))) * 1_000,
             ),
             true_pwm: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
                 cursor,
-                ByteOffset::new(8),
+                ParserOffset::from_bytes(8),
             ))),
         })
     }
@@ -1276,19 +1284,19 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
     }
 }
 
-fn byte(cursor: ByteCursor<'_>, offset: ByteOffset) -> u8 {
+fn byte(cursor: ParserCursor<'_>, offset: ParserOffset) -> u8 {
     cursor.byte(offset).unwrap_or_default()
 }
 
-fn be_u16(cursor: ByteCursor<'_>, offset: ByteOffset) -> u16 {
+fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
     cursor.be_u16(offset).unwrap_or_default()
 }
 
-fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
+fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
     cursor.be_i16(offset).unwrap_or_default()
 }
 
-fn be_u32(cursor: ByteCursor<'_>, offset: ByteOffset) -> u32 {
+fn be_u32(cursor: ParserCursor<'_>, offset: ParserOffset) -> u32 {
     cursor.be_u32(offset).unwrap_or_default()
 }
 
