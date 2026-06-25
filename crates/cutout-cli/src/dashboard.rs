@@ -3424,10 +3424,10 @@ mod tests {
     use cutout_core::{
         BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticDetail,
         DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
-        NotificationByteLen, NotificationIngestOutcome, ParserError, ParserGapEvidence,
-        PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue, ReadOnlyResponse,
-        ReservedPayloadEvidence, SettingsEntry, SettingsReadback, TelemetrySnapshot, ValueQuality,
-        ValueSource, VerificationStatus,
+        NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserError,
+        ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue,
+        ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry, SettingsReadback,
+        TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -3462,6 +3462,10 @@ mod tests {
 
     const fn diagnostic_events(value: usize) -> DiagnosticEventCount {
         DiagnosticEventCount::new(value)
+    }
+
+    const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
+        ParserDiagnosticCount::new(value)
     }
 
     const fn disconnects(value: usize) -> DisconnectCount {
@@ -4032,8 +4036,8 @@ mod tests {
             settings: Vec::new(),
             diagnostics: diagnostic_events(1),
             diagnostics_snapshot: ParserDiagnostics {
-                malformed_frames: 2,
-                unmatched_replies: 1,
+                malformed_frames: parser_diag_count(2),
+                unmatched_replies: parser_diag_count(1),
                 ..ParserDiagnostics::default()
             },
             diagnostic_errors: Vec::new(),
@@ -4042,8 +4046,8 @@ mod tests {
                 SessionBridgeEvent::Diagnostics {
                     monotonic_ms: cutout_btle::MonotonicMs::new(18),
                     diagnostics: ParserDiagnostics {
-                        malformed_frames: 2,
-                        unmatched_replies: 1,
+                        malformed_frames: parser_diag_count(2),
+                        unmatched_replies: parser_diag_count(1),
                         ..ParserDiagnostics::default()
                     },
                 },
@@ -4874,7 +4878,7 @@ mod tests {
             settings: Vec::new(),
             diagnostics: diagnostic_events(1),
             diagnostics_snapshot: ParserDiagnostics {
-                malformed_frames: 1,
+                malformed_frames: parser_diag_count(1),
                 ..ParserDiagnostics::default()
             },
             diagnostic_errors: Vec::new(),
@@ -4887,7 +4891,7 @@ mod tests {
                 SessionBridgeEvent::Diagnostics {
                     monotonic_ms: cutout_btle::MonotonicMs::new(43),
                     diagnostics: ParserDiagnostics {
-                        malformed_frames: 1,
+                        malformed_frames: parser_diag_count(1),
                         ..ParserDiagnostics::default()
                     },
                 },

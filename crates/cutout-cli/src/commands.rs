@@ -26,8 +26,8 @@ use cutout_core::{
     ModelCatalog, MonotonicMillis, NotificationByteLen, ParserDiagnostics, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
     ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
-    SettingsReadback, TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
-    VerifiedValue, WallClockUnixMillis,
+    SettingsReadback, TelemetrySnapshot, TransportWriteLen, ValueQuality, ValueSource,
+    VerificationStatus, VerifiedValue, WallClockUnixMillis,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -603,13 +603,13 @@ fn render_diagnostic_snapshot_jsonl(
     serde_json::to_string(&serde_json::json!({
         "type": "diagnostic_snapshot",
         "sequence": sequence.get(),
-        "dropped_bytes": snapshot.dropped_bytes,
-        "resyncs": snapshot.resyncs,
-        "bad_checksums": snapshot.bad_checksums,
-        "timeouts": snapshot.timeouts,
-        "oversized_frames": snapshot.oversized_frames,
-        "malformed_frames": snapshot.malformed_frames,
-        "unmatched_replies": snapshot.unmatched_replies,
+        "dropped_bytes": snapshot.dropped_bytes.get(),
+        "resyncs": snapshot.resyncs.get(),
+        "bad_checksums": snapshot.bad_checksums.get(),
+        "timeouts": snapshot.timeouts.get(),
+        "oversized_frames": snapshot.oversized_frames.get(),
+        "malformed_frames": snapshot.malformed_frames.get(),
+        "unmatched_replies": snapshot.unmatched_replies.get(),
     }))
 }
 
@@ -621,8 +621,8 @@ fn render_diagnostic_error_jsonl(
         "type": "diagnostic_error",
         "sequence": sequence.get(),
         "kind": diagnostic_error_kind_name(error.kind),
-        "claimed_len": error.claimed_len,
-        "max_len": error.max_len,
+        "claimed_len": error.claimed_len.map(cutout_core::ParserFrameLen::get),
+        "max_len": error.max_len.map(cutout_core::ParserFrameLen::get),
         "elapsed_ms": error.elapsed_ms.map(MonotonicMillis::get),
         "timeout_ms": error.timeout_ms.map(MonotonicMillis::get),
     }))
@@ -1674,6 +1674,7 @@ fn encode_raw_capture_pevcap(
     wall_clock_start_unix_ms: WallClockUnixMillis,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
+    let write_limit = write_limit.map(TransportWriteLen::new);
     let advertised_services = summary
         .observation
         .advertised_services
@@ -1801,13 +1802,13 @@ fn render_session_diagnostics_jsonl(
         "sequence": 0,
         "protocol_writes": report.protocol_writes.get(),
         "writes": report.writes.get(),
-        "dropped_bytes": diagnostics.dropped_bytes,
-        "resyncs": diagnostics.resyncs,
-        "bad_checksums": diagnostics.bad_checksums,
-        "timeouts": diagnostics.timeouts,
-        "oversized_frames": diagnostics.oversized_frames,
-        "malformed_frames": diagnostics.malformed_frames,
-        "unmatched_replies": diagnostics.unmatched_replies,
+        "dropped_bytes": diagnostics.dropped_bytes.get(),
+        "resyncs": diagnostics.resyncs.get(),
+        "bad_checksums": diagnostics.bad_checksums.get(),
+        "timeouts": diagnostics.timeouts.get(),
+        "oversized_frames": diagnostics.oversized_frames.get(),
+        "malformed_frames": diagnostics.malformed_frames.get(),
+        "unmatched_replies": diagnostics.unmatched_replies.get(),
     }))
 }
 
@@ -1830,13 +1831,13 @@ fn render_reconnect_attempt_diagnostics_jsonl(
         "read_only_responses": attempt.report.read_only_responses.get(),
         "diagnostics": attempt.report.diagnostics.get(),
         "disconnects": attempt.report.disconnects.get(),
-        "dropped_bytes": diagnostics.dropped_bytes,
-        "resyncs": diagnostics.resyncs,
-        "bad_checksums": diagnostics.bad_checksums,
-        "timeouts": diagnostics.timeouts,
-        "oversized_frames": diagnostics.oversized_frames,
-        "malformed_frames": diagnostics.malformed_frames,
-        "unmatched_replies": diagnostics.unmatched_replies,
+        "dropped_bytes": diagnostics.dropped_bytes.get(),
+        "resyncs": diagnostics.resyncs.get(),
+        "bad_checksums": diagnostics.bad_checksums.get(),
+        "timeouts": diagnostics.timeouts.get(),
+        "oversized_frames": diagnostics.oversized_frames.get(),
+        "malformed_frames": diagnostics.malformed_frames.get(),
+        "unmatched_replies": diagnostics.unmatched_replies.get(),
     }))
 }
 
@@ -2316,9 +2317,10 @@ mod tests {
         PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        DeviceEvent, GattChannel, MonotonicMillis, NotificationByteLen, PayloadBodyLen,
-        PevcapHeader, PevcapRecord, ProtocolFamily, ProtocolSelector, SemanticEventCount,
-        SessionInput, VerificationStatus, VerifiedValue, WriteMode,
+        DeviceEvent, GattChannel, MonotonicMillis, NotificationByteLen, ParserDiagnosticCount,
+        ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
+        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, TransportWriteLen,
+        VerificationStatus, VerifiedValue, WriteMode,
     };
     use uuid::Uuid;
 
@@ -2331,6 +2333,22 @@ mod tests {
 
     const fn wc(value: u64) -> WallClockUnixMillis {
         WallClockUnixMillis::new(value)
+    }
+
+    const fn write_len(value: u16) -> TransportWriteLen {
+        TransportWriteLen::new(value)
+    }
+
+    const fn dropped_bytes(value: u64) -> ParserDroppedBytes {
+        ParserDroppedBytes::new(value)
+    }
+
+    const fn diag_count(value: u64) -> ParserDiagnosticCount {
+        ParserDiagnosticCount::new(value)
+    }
+
+    const fn frame_len(value: usize) -> ParserFrameLen {
+        ParserFrameLen::new(value)
     }
 
     struct DropSignal(mpsc::Sender<()>);
@@ -2388,7 +2406,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
             "darwin",
-            Some(182),
+            Some(write_len(182)),
             &[service],
             &[],
             Some(PevcapResolvedIdentity {
@@ -2443,7 +2461,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
             "darwin",
-            Some(182),
+            Some(write_len(182)),
             &[BEGODE_DATA_CHANNEL],
             &[],
             Some(PevcapResolvedIdentity {
@@ -2467,7 +2485,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
             "darwin",
-            Some(23),
+            Some(write_len(23)),
             &[VETERAN_DATA_CHANNEL],
             &[],
             None,
@@ -2498,7 +2516,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
             "darwin",
-            Some(23),
+            Some(write_len(23)),
             &[VETERAN_DATA_CHANNEL],
             &[],
             None,
@@ -2615,7 +2633,7 @@ mod tests {
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
         assert_eq!(decoded.header.wall_clock_start_unix_ms, wc(42));
-        assert_eq!(decoded.header.write_limit, Some(23));
+        assert_eq!(decoded.header.write_limit, Some(write_len(23)));
         assert_eq!(
             decoded.header.annotations.as_slice(),
             &[
@@ -2807,7 +2825,7 @@ mod tests {
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
         assert_eq!(decoded.header.wall_clock_start_unix_ms, wc(99));
-        assert_eq!(decoded.header.write_limit, Some(185));
+        assert_eq!(decoded.header.write_limit, Some(write_len(185)));
         assert_eq!(
             decoded.header.advertised_services.as_slice(),
             &[gatt_channel_from_uuid(service)]
@@ -2831,7 +2849,7 @@ mod tests {
         assert!(matches!(
             replay[0],
             SessionOutput::Event(DeviceEvent::LinkUp(link))
-                if link.monotonic_ms == ms(0) && link.max_write_len == Some(185)
+                if link.monotonic_ms == ms(0) && link.max_write_len == Some(write_len(185))
         ));
         assert!(matches!(
             replay[1],
@@ -2878,13 +2896,13 @@ mod tests {
         let line = render_diagnostic_snapshot_jsonl(
             JsonSequence::new(7),
             DiagnosticSnapshot {
-                dropped_bytes: 11,
-                resyncs: 2,
-                bad_checksums: 3,
-                timeouts: 5,
-                oversized_frames: 8,
-                malformed_frames: 13,
-                unmatched_replies: 21,
+                dropped_bytes: dropped_bytes(11),
+                resyncs: diag_count(2),
+                bad_checksums: diag_count(3),
+                timeouts: diag_count(5),
+                oversized_frames: diag_count(8),
+                malformed_frames: diag_count(13),
+                unmatched_replies: diag_count(21),
             },
         )
         .expect("diagnostic snapshot serializes");
@@ -3138,13 +3156,13 @@ mod tests {
             protocol_writes: ProtocolWriteCount::new(1),
             writes: TransportWriteCount::new(3),
             diagnostics_snapshot: ParserDiagnostics {
-                dropped_bytes: 1,
-                resyncs: 2,
-                bad_checksums: 3,
-                timeouts: 4,
-                oversized_frames: 5,
-                malformed_frames: 6,
-                unmatched_replies: 7,
+                dropped_bytes: dropped_bytes(1),
+                resyncs: diag_count(2),
+                bad_checksums: diag_count(3),
+                timeouts: diag_count(4),
+                oversized_frames: diag_count(5),
+                malformed_frames: diag_count(6),
+                unmatched_replies: diag_count(7),
             },
             diagnostic_errors: vec![DiagnosticError::from_parser_error(
                 cutout_core::ParserError::MalformedFrame,
@@ -3200,13 +3218,13 @@ mod tests {
                 notifications: NotificationCount::new(8),
                 disconnects: DisconnectCount::default(),
                 diagnostics_snapshot: ParserDiagnostics {
-                    dropped_bytes: 5,
-                    resyncs: 1,
-                    bad_checksums: 0,
-                    timeouts: 0,
-                    oversized_frames: 0,
-                    malformed_frames: 2,
-                    unmatched_replies: 0,
+                    dropped_bytes: dropped_bytes(5),
+                    resyncs: diag_count(1),
+                    bad_checksums: diag_count(0),
+                    timeouts: diag_count(0),
+                    oversized_frames: diag_count(0),
+                    malformed_frames: diag_count(2),
+                    unmatched_replies: diag_count(0),
                 },
                 ..SessionBridgeReport::default()
             },
@@ -3254,8 +3272,8 @@ mod tests {
     #[test]
     fn pevcap_replay_summary_collects_diagnostic_error_events() {
         let error = DiagnosticError::from_parser_error(cutout_core::ParserError::OversizedFrame {
-            claimed: 33,
-            max: 24,
+            claimed: frame_len(33),
+            max: frame_len(24),
         });
         let outputs = [SessionOutput::Event(DeviceEvent::DiagnosticError(error))];
 

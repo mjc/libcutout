@@ -10,8 +10,9 @@ use cutout_core::{
     ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
     PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
     ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto, TransportActionDto, TransportWriteLenDto, ValueQualityDto,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixMillis,
+    TelemetrySnapshotDto, TransportActionDto, TransportWriteLen, TransportWriteLenDto,
+    ValueQualityDto, ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    WallClockUnixMillis,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -642,7 +643,7 @@ pub enum MobileCaptureExportError {
 pub struct MobilePevcapCaptureBuilder {
     wall_clock_start_unix_ms: WallClockUnixMillis,
     platform_id: String,
-    write_limit: Option<u16>,
+    write_limit: Option<TransportWriteLen>,
     advertised_services: Mutex<Vec<GattChannel>>,
     gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
@@ -658,12 +659,12 @@ impl MobilePevcapCaptureBuilder {
     pub fn new(
         wall_clock_start_unix_ms: MobileWallClockUnixMillisDto,
         platform_id: String,
-        write_limit: Option<u16>,
+        write_limit: Option<MobileTransportWriteLenDto>,
     ) -> Arc<Self> {
         Arc::new(Self {
             wall_clock_start_unix_ms: wall_clock_start_unix_ms.into_core(),
             platform_id,
-            write_limit,
+            write_limit: write_limit.map(|value| TransportWriteLen::new(value.bytes)),
             advertised_services: Mutex::new(Vec::new()),
             gatt_fingerprints: Mutex::new(Vec::new()),
             resolved_identity: Mutex::new(None),
@@ -709,14 +710,14 @@ impl MobilePevcapCaptureBuilder {
     pub fn record_link_up(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
-        max_write_len: Option<u16>,
+        max_write_len: Option<MobileTransportWriteLenDto>,
     ) {
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(PevcapRecord::link_up(
                 monotonic_ms.into_core(),
-                max_write_len,
+                max_write_len.map(|value| TransportWriteLen::new(value.bytes)),
             ));
     }
 
@@ -1694,13 +1695,13 @@ mod tests {
         let builder = MobilePevcapCaptureBuilder::new(
             wc(1_700_000_000_000),
             "ios-corebluetooth".into(),
-            Some(185),
+            Some(mobile_write_len(185)),
         );
         builder.add_annotation("capture_label=powered_on_stationary".into());
         builder.add_annotation("capture_privacy=redacted".into());
         builder.add_annotation("capture_distribution=redistributable".into());
         builder.add_annotation("capture_evidence=hardware_tested".into());
-        builder.record_link_up(ms(1), Some(185));
+        builder.record_link_up(ms(1), Some(mobile_write_len(185)));
         builder.record_notification(
             ms(2),
             vec![0x11; 16],

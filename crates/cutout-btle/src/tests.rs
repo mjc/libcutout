@@ -9,11 +9,11 @@ use btleplug::api::{CharPropFlags, Characteristic};
 use bytes::Bytes;
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
-    ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection, PevcapResolvedIdentity,
-    ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue, ReadOnlyResponse,
-    ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
-    SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
+    NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
+    ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput,
+    SettingsEntry, SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
     VerificationStatus, VerifiedValue, WriteMode,
 };
 use futures_util::{StreamExt, stream};
@@ -98,6 +98,10 @@ const fn read_only_responses(value: usize) -> crate::ReadOnlyResponseCount {
 
 const fn diagnostic_events(value: usize) -> crate::DiagnosticEventCount {
     crate::DiagnosticEventCount::new(value)
+}
+
+const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
+    ParserDiagnosticCount::new(value)
 }
 
 const fn disconnects(value: usize) -> crate::DisconnectCount {
@@ -774,7 +778,10 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         cutout_core::WallClockUnixMillis::new(1_725_000_123_456)
     );
     assert_eq!(pevcap.header.platform_id, "darwin");
-    assert_eq!(pevcap.header.write_limit, Some(23));
+    assert_eq!(
+        pevcap.header.write_limit,
+        Some(cutout_core::TransportWriteLen::new(23))
+    );
     assert_eq!(pevcap.header.advertised_services.len(), 1);
     assert_eq!(pevcap.header.gatt_fingerprints.len(), 1);
     assert_eq!(
@@ -788,7 +795,10 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     assert_eq!(pevcap.records.len(), 4);
     assert_eq!(pevcap.records[0].direction, PevcapDirection::LinkUp);
     assert_eq!(pevcap.records[0].monotonic_ms, ms(0));
-    assert_eq!(pevcap.records[0].link_max_write_len, Some(23));
+    assert_eq!(
+        pevcap.records[0].link_max_write_len,
+        Some(cutout_core::TransportWriteLen::new(23))
+    );
     assert_eq!(pevcap.records[1].direction, PevcapDirection::Outbound);
     assert_eq!(
         pevcap.records[1].write_mode,
@@ -1177,7 +1187,10 @@ async fn drive_session_relays_notifications_back_into_session() {
         RawFieldValue::new(0x0014, 30)
     );
     assert_eq!(report.diagnostics, diagnostic_events(1));
-    assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
+    assert_eq!(
+        report.diagnostics_snapshot.malformed_frames,
+        parser_diag_count(1)
+    );
     assert_eq!(
         report.diagnostic_errors.as_slice(),
         &[DiagnosticError::from_parser_error(
@@ -1207,7 +1220,8 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::Diagnostics {
             monotonic_ms,
             diagnostics,
-        } if *monotonic_ms == crate::MonotonicMs::new(2) && diagnostics.malformed_frames == 1
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && diagnostics.malformed_frames == parser_diag_count(1)
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
@@ -2266,7 +2280,7 @@ impl ProtocolSession for BridgeSession {
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                     ParserDiagnostics {
-                        malformed_frames: 1,
+                        malformed_frames: parser_diag_count(1),
                         ..ParserDiagnostics::default()
                     },
                 )));

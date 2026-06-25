@@ -292,7 +292,7 @@ pub struct PevcapHeader {
     pub platform_id: String,
 
     /// Maximum transport write length observed at capture time.
-    pub write_limit: Option<u16>,
+    pub write_limit: Option<TransportWriteLen>,
 
     /// Advertised service UUIDs observed during discovery.
     pub advertised_services: ArrayVec<GattChannel, PEVCAP_MAX_ADVERTISED_SERVICES>,
@@ -325,7 +325,7 @@ impl PevcapHeader {
     pub fn new(
         wall_clock_start_unix_ms: WallClockUnixMillis,
         platform_id: impl Into<String>,
-        write_limit: Option<u16>,
+        write_limit: Option<TransportWriteLen>,
         advertised_services: &[GattChannel],
         gatt_fingerprints: &[GattFingerprint],
         resolved_identity: Option<PevcapResolvedIdentity>,
@@ -450,7 +450,7 @@ pub struct PevcapRecord {
     pub write_mode: Option<WriteMode>,
 
     /// Negotiated maximum write length, when this is a link-up record.
-    pub link_max_write_len: Option<u16>,
+    pub link_max_write_len: Option<TransportWriteLen>,
 
     /// Optional request target metadata for outbound correlation.
     pub target: Option<RequestTarget>,
@@ -462,7 +462,10 @@ pub struct PevcapRecord {
 impl PevcapRecord {
     /// Creates a link-up lifecycle record.
     #[must_use]
-    pub fn link_up(monotonic_ms: MonotonicMillis, max_write_len: Option<u16>) -> Self {
+    pub fn link_up(
+        monotonic_ms: MonotonicMillis,
+        max_write_len: Option<TransportWriteLen>,
+    ) -> Self {
         Self {
             monotonic_ms,
             direction: PevcapDirection::LinkUp,
@@ -716,7 +719,7 @@ impl PevcapCapture {
         {
             host.ingest_link_up(LinkInfo {
                 monotonic_ms: MonotonicMillis::new(0),
-                max_write_len: transport_write_len(self.header.write_limit),
+                max_write_len: self.header.write_limit,
             });
             host.drain_outputs_into(outputs);
         }
@@ -726,7 +729,7 @@ impl PevcapCapture {
                 PevcapDirection::LinkUp => {
                     host.ingest_link_up(LinkInfo {
                         monotonic_ms: record.monotonic_ms,
-                        max_write_len: transport_write_len(record.link_max_write_len),
+                        max_write_len: record.link_max_write_len,
                     });
                 }
                 PevcapDirection::LinkDown => host.ingest_link_down(),
@@ -1027,10 +1030,6 @@ fn replay_pevcap_notification<S>(
     }
 }
 
-fn transport_write_len(value: Option<u16>) -> Option<TransportWriteLen> {
-    value.map(TransportWriteLen::new)
-}
-
 /// JSONL PEVCAP import/export error.
 #[cfg(feature = "serde")]
 #[derive(Debug, Error)]
@@ -1324,7 +1323,7 @@ impl From<&PevcapHeader> for PevcapHeaderJson {
         Self {
             wall_clock_start_unix_ms: header.wall_clock_start_unix_ms.as_milliseconds(),
             platform_id: header.platform_id.clone(),
-            write_limit: header.write_limit,
+            write_limit: header.write_limit.map(TransportWriteLen::get),
             advertised_services: header
                 .advertised_services
                 .iter()
@@ -1368,7 +1367,7 @@ impl PevcapHeaderJson {
         PevcapHeader::new(
             WallClockUnixMillis::from_milliseconds(self.wall_clock_start_unix_ms),
             self.platform_id,
-            self.write_limit,
+            self.write_limit.map(TransportWriteLen::new),
             &advertised_services,
             &gatt_fingerprints,
             self.resolved_identity
@@ -1621,7 +1620,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             characteristic: record.characteristic.as_bytes(),
             service: record.service.map(GattChannel::as_bytes),
             write_mode: record.write_mode.map(WriteModeJson::from),
-            link_max_write_len: record.link_max_write_len,
+            link_max_write_len: record.link_max_write_len.map(TransportWriteLen::get),
             target: record.target.map(PevcapRequestTargetJson::from),
             bytes: record.bytes.clone(),
         }
@@ -1638,7 +1637,7 @@ impl PevcapRecordJson {
             characteristic: GattChannel::from_bytes(self.characteristic),
             service: self.service.map(GattChannel::from_bytes),
             write_mode: self.write_mode.map(WriteModeJson::into_mode),
-            link_max_write_len: self.link_max_write_len,
+            link_max_write_len: self.link_max_write_len.map(TransportWriteLen::new),
             target: self.target.map(PevcapRequestTargetJson::into_target),
             bytes: self.bytes,
         })
@@ -1973,7 +1972,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_000_000),
             "darwin",
-            Some(185),
+            Some(write_len(185)),
             &[service],
             &[fingerprint],
             Some(PevcapResolvedIdentity {
@@ -1995,7 +1994,7 @@ mod tests {
 
         assert_eq!(header.wall_clock_start_unix_ms, wc(1_725_000_000_000));
         assert_eq!(header.platform_id, "darwin");
-        assert_eq!(header.write_limit, Some(185));
+        assert_eq!(header.write_limit, Some(write_len(185)));
         assert_eq!(header.advertised_services.as_slice(), &[service]);
         assert_eq!(header.gatt_fingerprints.as_slice(), &[fingerprint]);
         assert_eq!(
@@ -2046,7 +2045,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_000_000),
             "8de871ff-6aa1-a767-34dd-608e584b610e",
-            Some(185),
+            Some(write_len(185)),
             &[service],
             &gatt,
             Some(PevcapResolvedIdentity {
@@ -2145,7 +2144,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1),
             "darwin",
-            Some(185),
+            Some(write_len(185)),
             &[],
             &[],
             None,
@@ -2175,7 +2174,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1),
             "darwin",
-            Some(23),
+            Some(write_len(23)),
             &[service],
             &[],
             None,
@@ -2240,7 +2239,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1),
             "darwin",
-            Some(23),
+            Some(write_len(23)),
             &[service],
             &[],
             None,
@@ -2252,7 +2251,7 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![
-                PevcapRecord::link_up(ms(5), Some(23)),
+                PevcapRecord::link_up(ms(5), Some(write_len(23))),
                 PevcapRecord::inbound_notification(
                     ms(9),
                     characteristic,
@@ -2260,7 +2259,7 @@ mod tests {
                     Bytes::from_static(b"NAME=Falcon"),
                 ),
                 PevcapRecord::link_down(ms(12)),
-                PevcapRecord::link_up(ms(20), Some(23)),
+                PevcapRecord::link_up(ms(20), Some(write_len(23))),
                 PevcapRecord::inbound_notification(
                     ms(21),
                     characteristic,
@@ -2329,7 +2328,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1),
             "darwin",
-            Some(128),
+            Some(write_len(128)),
             &[],
             &[],
             None,
@@ -2367,7 +2366,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1),
             "darwin",
-            Some(128),
+            Some(write_len(128)),
             &[],
             &[],
             None,
@@ -2410,7 +2409,7 @@ mod tests {
             let header = PevcapHeader::new(
             wc(1),
                 "darwin",
-                Some(128),
+                Some(write_len(128)),
                 &[],
                 &[],
                 None,
@@ -2451,7 +2450,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
             "darwin",
-            Some(182),
+            Some(write_len(182)),
             &[service],
             &[GattFingerprint {
                 service,
@@ -2507,7 +2506,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1),
             "darwin",
-            Some(23),
+            Some(write_len(23)),
             &[],
             &[],
             None,
@@ -2519,7 +2518,7 @@ mod tests {
         let capture = PevcapCapture::new(
             header,
             vec![
-                PevcapRecord::link_up(ms(5), Some(23)),
+                PevcapRecord::link_up(ms(5), Some(write_len(23))),
                 PevcapRecord::link_down(ms(12)),
             ],
         );
@@ -2772,7 +2771,7 @@ mod tests {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
             "darwin",
-            Some(182),
+            Some(write_len(182)),
             &[service],
             &[GattFingerprint {
                 service,
