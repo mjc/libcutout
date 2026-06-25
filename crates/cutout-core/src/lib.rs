@@ -4309,6 +4309,12 @@ impl Current {
         self.as_milliamps() as f32 / 1_000.0
     }
 
+    /// Returns this current magnitude as a current value.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
+    }
+
     /// Returns this current in whole amps, rounded toward zero.
     #[must_use]
     pub fn as_whole_amps(self) -> i64 {
@@ -6651,6 +6657,10 @@ mod tests {
         assert_eq!(Voltage::from_volts(126).as_millivolts(), 126_000);
         assert_eq!(Voltage::from_millivolts(84_400).as_whole_volts(), 84);
         assert_eq!(Voltage::from_deci_volts(915).as_millivolts(), 91_500);
+        assert_eq!(
+            Current::from_milliamps(-1_700).abs(),
+            Current::from_milliamps(1_700)
+        );
         assert_eq!(
             Voltage::from_millivolts(91_000).as_cell_voltage(crate::SeriesCount::new(30)),
             CellVoltage::from_microvolts(3_033_333)

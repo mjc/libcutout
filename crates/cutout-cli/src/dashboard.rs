@@ -523,8 +523,8 @@ impl fmt::Display for DisplayTemperature {
 pub(crate) struct DisplayPhaseCurrent(PhaseCurrent);
 
 impl DisplayPhaseCurrent {
-    fn from_milliamps(value: i32) -> Self {
-        Self(PhaseCurrent::from_milliamps(value))
+    fn from_current(value: PhaseCurrent) -> Self {
+        Self(value)
     }
 
     fn get(self) -> i64 {
@@ -555,6 +555,7 @@ impl DisplayBatteryCurrent {
         Self(value)
     }
 
+    #[cfg(test)]
     fn from_milliamps(value: i32) -> Self {
         Self::from_current(BatteryCurrent::from_milliamps(value))
     }
@@ -1506,21 +1507,15 @@ impl TelemetryWindow {
             seed_or_push_sample(&mut self.voltage_samples, voltage_value);
         }
         if let Some(current) = snapshot.battery_current {
-            self.latest_battery_current =
-                Some(DisplayBatteryCurrent::from_milliamps(current.value.get()));
+            self.latest_battery_current = Some(DisplayBatteryCurrent::from_current(current.value));
         }
         if let Some(current) = snapshot.motor_current {
-            let current = DisplayPhaseCurrent::from_milliamps(current.value.get());
+            let current_value = current.value;
+            let current = DisplayPhaseCurrent::from_current(current_value);
             self.latest_phase_current = Some(current);
-            push_sample(
-                &mut self.current_samples,
-                Current::from_milliamps(current.0.as_milliamps().saturating_abs()),
-            );
+            push_sample(&mut self.current_samples, current_value.abs());
         } else if let Some(current) = snapshot.battery_current {
-            push_sample(
-                &mut self.current_samples,
-                Current::from_milliamps(current.value.get().saturating_abs()),
-            );
+            push_sample(&mut self.current_samples, current.value.abs());
         }
         if let Some(power) = snapshot.power {
             self.latest_power = Some(DisplayPower::from_milliwatts(power.value.get()));
@@ -1669,7 +1664,7 @@ impl fmt::Display for BmsCurrentSummary {
             write!(
                 f,
                 " current={}A",
-                DisplayBatteryCurrent::from_milliamps(current.value.get()).get()
+                DisplayBatteryCurrent::from_current(current.value).get()
             )?;
         }
         if let Some(currents) = self.0.bms_pack_currents() {
@@ -1831,7 +1826,7 @@ impl fmt::Display for MappedTelemetryLog {
         if let Some(current) = snapshot.battery_current.or(snapshot.motor_current) {
             fields.write(
                 "current",
-                DisplayBatteryCurrent::from_milliamps(current.value.get()).get(),
+                DisplayBatteryCurrent::from_current(current.value).get(),
                 "A",
             )?;
         }
@@ -1900,7 +1895,7 @@ impl fmt::Display for TelemetryDeltaLog {
         if let Some(current) = delta.battery_current.or(delta.motor_current) {
             fields.write(
                 "current",
-                DisplayBatteryCurrent::from_milliamps(current.value.get()).get(),
+                DisplayBatteryCurrent::from_current(current.value).get(),
                 "A",
             )?;
         }
