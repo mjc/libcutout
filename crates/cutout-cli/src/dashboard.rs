@@ -425,10 +425,6 @@ impl DisplaySpeed {
         Self(value)
     }
 
-    fn from_mph(value: u64) -> Self {
-        Self::from_speed(Speed::from_millimetres_per_second(mph_to_mm_s(value)))
-    }
-
     pub(crate) fn get(self) -> u64 {
         mm_s_to_mph(self.0.as_millimetres_per_second())
     }
@@ -454,10 +450,6 @@ pub(crate) struct DisplayVoltage(Voltage);
 impl DisplayVoltage {
     fn from_voltage(value: Voltage) -> Self {
         Self(value)
-    }
-
-    fn from_volts(value: u64) -> Self {
-        Self::from_voltage(Voltage::from_millivolts(volts_to_millivolts(value)))
     }
 
     pub(crate) fn get(self) -> u64 {
@@ -522,12 +514,6 @@ impl DisplayTemperature {
         Self(value)
     }
 
-    fn from_celsius(value: i64) -> Self {
-        Self(Temperature::from_millicelsius(celsius_to_millicelsius(
-            value,
-        )))
-    }
-
     fn get(self) -> i64 {
         millicelsius_to_celsius_signed(self.0.as_millicelsius())
     }
@@ -571,19 +557,12 @@ impl fmt::Display for DisplayPhaseCurrent {
 pub(crate) struct DisplayBatteryCurrent(BatteryCurrent);
 
 impl DisplayBatteryCurrent {
-    fn from_milliamps(value: i32) -> Self {
-        Self(BatteryCurrent::from_milliamps(value))
+    fn from_current(value: BatteryCurrent) -> Self {
+        Self(value)
     }
 
-    fn from_amps(value: i64) -> Self {
-        let milliamps = value.saturating_mul(1_000);
-        Self(BatteryCurrent::from_milliamps(
-            i32::try_from(milliamps).unwrap_or(if milliamps.is_negative() {
-                i32::MIN
-            } else {
-                i32::MAX
-            }),
-        ))
+    fn from_milliamps(value: i32) -> Self {
+        Self::from_current(BatteryCurrent::from_milliamps(value))
     }
 
     const fn get(self) -> i64 {
@@ -598,6 +577,10 @@ impl DisplayBatteryCurrent {
     const fn is_working(self) -> bool {
         !self.is_idle()
     }
+}
+
+fn battery_current_from_current(value: Current) -> BatteryCurrent {
+    BatteryCurrent::from_milliamps(value.as_milliamps())
 }
 
 impl fmt::Display for DisplayBatteryCurrent {
@@ -641,16 +624,24 @@ impl fmt::Display for OperationalCurrent {
 pub(crate) struct DisplayPower(Power);
 
 impl DisplayPower {
+    fn from_power(value: Power) -> Self {
+        Self(value)
+    }
+
+    #[cfg(test)]
     fn from_watts(value: i64) -> Self {
-        Self(Power::from_milliwatts(value.saturating_mul(1_000)))
+        Self::from_power(Power::from_milliwatts(value.saturating_mul(1_000)))
     }
 
-    const fn from_milliwatts(value: i64) -> Self {
-        Self(Power::from_milliwatts(value))
+    fn from_milliwatts(value: i64) -> Self {
+        Self::from_power(Power::from_milliwatts(value))
     }
 
-    fn from_volts_amps(volts: u64, amps: u64) -> Option<Self> {
-        u64_to_i64(volts.saturating_mul(amps)).map(Self::from_watts)
+    fn from_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Option<Self> {
+        let milliwatts = i64::from(voltage.as_millivolts())
+            .checked_mul(i64::from(current.as_milliamps()))
+            .map(|microwatts| microwatts / 1_000)?;
+        Some(Self::from_power(Power::from_milliwatts(milliwatts)))
     }
 
     const fn get(self) -> i64 {
@@ -1336,25 +1327,6 @@ impl TelemetryWindow {
         self.battery_level = Some(battery_level);
         self.battery_source = BatterySource::TelemetryReported;
         self.signal_quality = signal_quality;
-        self.latest_speed = speed_samples.last().copied().map(DisplaySpeed::from_mph);
-        self.latest_voltage = voltage_samples
-            .last()
-            .copied()
-            .map(DisplayVoltage::from_volts);
-        self.latest_battery_current = current_samples
-            .last()
-            .copied()
-            .and_then(u64_to_i64)
-            .map(DisplayBatteryCurrent::from_amps);
-        self.latest_power = voltage_samples
-            .last()
-            .copied()
-            .zip(current_samples.last().copied())
-            .and_then(|(voltage, current)| DisplayPower::from_volts_amps(voltage, current));
-        self.latest_temperature = temperature_samples
-            .last()
-            .copied()
-            .map(DisplayTemperature::from_celsius);
         self.speed_samples.clear();
         self.voltage_samples.clear();
         self.current_samples.clear();
@@ -1382,6 +1354,35 @@ impl TelemetryWindow {
             .extend(temperature_samples.iter().copied().map(|temperature| {
                 Temperature::from_millicelsius(celsius_to_millicelsius(temperature))
             }));
+        self.latest_speed = self
+            .speed_samples
+            .last()
+            .copied()
+            .map(DisplaySpeed::from_speed);
+        self.latest_voltage = self
+            .voltage_samples
+            .last()
+            .copied()
+            .map(DisplayVoltage::from_voltage);
+        self.latest_battery_current = self
+            .current_samples
+            .last()
+            .copied()
+            .map(battery_current_from_current)
+            .map(DisplayBatteryCurrent::from_current);
+        self.latest_power = self
+            .voltage_samples
+            .last()
+            .copied()
+            .zip(self.current_samples.last().copied())
+            .and_then(|(voltage, current)| {
+                DisplayPower::from_voltage_current(voltage, battery_current_from_current(current))
+            });
+        self.latest_temperature = self
+            .temperature_samples
+            .last()
+            .copied()
+            .map(DisplayTemperature::from_temperature);
         self.sync_points();
     }
 
@@ -1444,13 +1445,35 @@ impl TelemetryWindow {
                 u64_to_i64(next_temperature).unwrap_or(i64::MAX / 1_000),
             )),
         );
-        self.latest_speed = Some(DisplaySpeed::from_mph(next_speed));
-        self.latest_voltage = Some(DisplayVoltage::from_volts(next_voltage));
-        self.latest_battery_current =
-            u64_to_i64(next_current).map(DisplayBatteryCurrent::from_amps);
-        self.latest_power = DisplayPower::from_volts_amps(next_voltage, next_current);
-        self.latest_temperature =
-            u64_to_i64(next_temperature).map(DisplayTemperature::from_celsius);
+        self.latest_speed = self
+            .speed_samples
+            .last()
+            .copied()
+            .map(DisplaySpeed::from_speed);
+        self.latest_voltage = self
+            .voltage_samples
+            .last()
+            .copied()
+            .map(DisplayVoltage::from_voltage);
+        self.latest_battery_current = self
+            .current_samples
+            .last()
+            .copied()
+            .map(battery_current_from_current)
+            .map(DisplayBatteryCurrent::from_current);
+        self.latest_power = self
+            .voltage_samples
+            .last()
+            .copied()
+            .zip(self.current_samples.last().copied())
+            .and_then(|(voltage, current)| {
+                DisplayPower::from_voltage_current(voltage, battery_current_from_current(current))
+            });
+        self.latest_temperature = self
+            .temperature_samples
+            .last()
+            .copied()
+            .map(DisplayTemperature::from_temperature);
         self.sync_points();
     }
 
@@ -3741,8 +3764,16 @@ mod tests {
         Measured::reported(Speed::from_millimetres_per_second(value))
     }
 
+    fn display_speed_mph(value: u64) -> DisplaySpeed {
+        DisplaySpeed::from_speed(Speed::from_millimetres_per_second(mph_to_mm_s(value)))
+    }
+
     fn voltage(value: i32) -> Measured<Voltage> {
         Measured::reported(Voltage::from_millivolts(value))
+    }
+
+    fn display_voltage_volts(value: u64) -> DisplayVoltage {
+        DisplayVoltage::from_voltage(Voltage::from_millivolts(volts_to_millivolts(value)))
     }
 
     fn battery_current(value: i32) -> Measured<BatteryCurrent> {
@@ -3755,6 +3786,12 @@ mod tests {
 
     fn temperature(value: i32) -> Measured<Temperature> {
         Measured::reported(Temperature::from_millicelsius(value))
+    }
+
+    fn display_temperature_celsius(value: i64) -> DisplayTemperature {
+        DisplayTemperature::from_temperature(Temperature::from_millicelsius(
+            celsius_to_millicelsius(value),
+        ))
     }
 
     fn assert_typed_telemetry_history(
@@ -4185,7 +4222,7 @@ mod tests {
     #[test]
     fn operational_wheel_state_prefers_charge_mode_readback() {
         let mut state = DashboardState::empty();
-        state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(3));
+        state.telemetry.latest_speed = Some(display_speed_mph(3));
         state
             .read_only
             .settings
@@ -4200,7 +4237,7 @@ mod tests {
     #[test]
     fn operational_wheel_state_reports_riding_from_motion() {
         let mut state = DashboardState::empty();
-        state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(1));
+        state.telemetry.latest_speed = Some(display_speed_mph(1));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state
             .read_only
@@ -4216,7 +4253,7 @@ mod tests {
     #[test]
     fn operational_wheel_state_reports_lifted_from_stationary_pitch() {
         let mut state = DashboardState::empty();
-        state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
+        state.telemetry.latest_speed = Some(display_speed_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state.telemetry.latest_pitch =
             Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(69_000)));
@@ -4230,7 +4267,7 @@ mod tests {
     #[test]
     fn operational_wheel_state_reports_balancing_from_stationary_current() {
         let mut state = DashboardState::empty();
-        state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
+        state.telemetry.latest_speed = Some(display_speed_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(4_000));
         state.telemetry.latest_pitch = Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(0)));
 
@@ -4243,7 +4280,7 @@ mod tests {
     #[test]
     fn operational_wheel_state_reports_parked_from_stationary_idle_current() {
         let mut state = DashboardState::empty();
-        state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
+        state.telemetry.latest_speed = Some(display_speed_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state.telemetry.latest_pitch = Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(0)));
 
@@ -4258,7 +4295,7 @@ mod tests {
         let mut state = DashboardState::empty();
         assert_eq!(operational_pwm(&state), OperationalDutyCycle::Unknown);
 
-        state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
+        state.telemetry.latest_speed = Some(display_speed_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state.telemetry.latest_pwm = Some(DisplayDutyCycle::from_duty_cycle(
             DutyCycle::from_permille(-1_000),
@@ -4277,7 +4314,10 @@ mod tests {
     fn display_power_converts_from_milliwatts_without_unit_leaking() {
         assert_eq!(DisplayPower::from_milliwatts(-184_892).get(), -184);
         assert_eq!(
-            DisplayPower::from_volts_amps(53, 6),
+            DisplayPower::from_voltage_current(
+                Voltage::from_millivolts(volts_to_millivolts(53)),
+                BatteryCurrent::from_milliamps(amps_to_milliamps(6)),
+            ),
             Some(DisplayPower::from_watts(318))
         );
         assert_eq!(
@@ -4359,7 +4399,7 @@ mod tests {
     #[test]
     fn optional_numeric_presenters_render_without_helper_strings() {
         assert_eq!(
-            OptionalDisplay(Some(DisplayVoltage::from_volts(47))).to_string(),
+            OptionalDisplay(Some(display_voltage_volts(47))).to_string(),
             "47 V"
         );
         assert_eq!(
@@ -4372,7 +4412,7 @@ mod tests {
         );
         assert_eq!(OptionalBatteryLevelDisplay(None).to_string(), "unknown");
         assert_eq!(
-            OptionalDisplay(Some(DisplayTemperature::from_celsius(-18))).to_string(),
+            OptionalDisplay(Some(display_temperature_celsius(-18))).to_string(),
             "-18 C"
         );
         assert_eq!(
@@ -4386,7 +4426,7 @@ mod tests {
         let mut state = DashboardState::empty();
         state.device.make = "NOSFET".to_owned();
         state.device.model = "NOSFET Aero".to_owned();
-        state.telemetry.latest_voltage = Some(DisplayVoltage::from_volts(120));
+        state.telemetry.latest_voltage = Some(display_voltage_volts(120));
         state.telemetry.voltage_samples = vec![
             Voltage::from_millivolts(109_000),
             Voltage::from_millivolts(120_000),
@@ -4410,7 +4450,7 @@ mod tests {
     #[test]
     fn voltage_sparkline_falls_back_to_observed_voltage_for_unknown_device() {
         let mut state = DashboardState::empty();
-        state.telemetry.latest_voltage = Some(DisplayVoltage::from_volts(151));
+        state.telemetry.latest_voltage = Some(display_voltage_volts(151));
         state.telemetry.voltage_samples = vec![
             Voltage::from_millivolts(149_000),
             Voltage::from_millivolts(151_000),
@@ -5545,10 +5585,7 @@ mod tests {
             state.telemetry.battery_source,
             BatterySource::TelemetryEstimated
         );
-        assert_eq!(
-            state.telemetry.latest_speed,
-            Some(DisplaySpeed::from_mph(0))
-        );
+        assert_eq!(state.telemetry.latest_speed, Some(display_speed_mph(0)));
         assert_eq!(
             state.telemetry.latest_voltage,
             Some(DisplayVoltage::from_voltage(Voltage::from_millivolts(
