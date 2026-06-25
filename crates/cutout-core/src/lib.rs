@@ -4056,6 +4056,38 @@ const fn saturating_i64_to_i32(value: i64) -> i32 {
     }
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn round_f32_to_i32(value: f32) -> i32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn round_f32_to_i64(value: f32) -> i64 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(i64::MIN as f32, i64::MAX as f32) as i64
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn round_f32_to_u64(value: f32) -> u64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    value.round().clamp(0.0, u64::MAX as f32) as u64
+}
+
 impl Voltage {
     /// Creates a voltage from millivolts.
     #[must_use]
@@ -4086,6 +4118,12 @@ impl Voltage {
     #[must_use]
     pub const fn from_volts(value: u64) -> Self {
         Self::from_millivolts(saturating_u64_to_i32(value.saturating_mul(1_000)))
+    }
+
+    /// Creates a voltage from volts represented as a floating-point number.
+    #[must_use]
+    pub fn from_volts_f32(value: f32) -> Self {
+        Self::from_millivolts(round_f32_to_i32(value * 1_000.0))
     }
 
     /// Returns this voltage's position inside a voltage range as a whole percent.
@@ -4197,6 +4235,12 @@ impl Current {
     pub const fn from_amps(value: i64) -> Self {
         Self::from_milliamps(saturating_i64_to_i32(value.saturating_mul(1_000)))
     }
+
+    /// Creates a current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self::from_milliamps(round_f32_to_i32(value * 1_000.0))
+    }
 }
 
 /// Rotational speed stored in electrical revolutions per minute.
@@ -4213,6 +4257,12 @@ impl RotationalSpeed {
     #[must_use]
     pub const fn as_erpm(self) -> i32 {
         self.unit_value()
+    }
+
+    /// Creates a rotational speed from electrical RPM represented as a floating-point number.
+    #[must_use]
+    pub fn from_erpm_f32(value: f32) -> Self {
+        Self::from_erpm(round_f32_to_i32(value))
     }
 }
 
@@ -4275,6 +4325,12 @@ impl Power {
     pub const fn from_watts(value: i64) -> Self {
         Self::from_milliwatts(value.saturating_mul(1_000))
     }
+
+    /// Creates a power from watts represented as a floating-point number.
+    #[must_use]
+    pub fn from_watts_f32(value: f32) -> Self {
+        Self::from_milliwatts(round_f32_to_i64(value * 1_000.0))
+    }
 }
 
 /// Electrical energy stored in watt-hours.
@@ -4321,6 +4377,30 @@ impl Speed {
         Self::from_unit_value(value)
     }
 
+    /// Creates a speed from kilometres per hour.
+    #[must_use]
+    pub fn from_kmh(value: u64) -> Self {
+        Self::from_milli_kmh(saturating_u64_to_i32(value.saturating_mul(1_000)))
+    }
+
+    /// Creates a speed from metres per second represented as a floating-point number.
+    #[must_use]
+    pub fn from_metres_per_second(value: f32) -> Self {
+        Self::from_millimetres_per_second(round_f32_to_i32(value * 1_000.0))
+    }
+
+    /// Creates a speed from milli-kilometres per hour.
+    #[must_use]
+    pub const fn from_milli_kmh(value: i32) -> Self {
+        Self::from_millimetres_per_second(value.saturating_mul(5) / 18)
+    }
+
+    /// Creates a speed from deci-kilometres per hour.
+    #[must_use]
+    pub const fn from_deci_kmh(value: i32) -> Self {
+        Self::from_milli_kmh(value.saturating_mul(100))
+    }
+
     /// Returns this speed in millimetres per second.
     #[must_use]
     pub const fn as_millimetres_per_second(self) -> i32 {
@@ -4332,6 +4412,24 @@ impl Speed {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_metres_per_second(self) -> f32 {
         self.as_millimetres_per_second() as f32 / 1_000.0
+    }
+
+    /// Returns this speed in kilometres per hour.
+    #[must_use]
+    pub fn as_kmh(self) -> i32 {
+        self.as_milli_kmh() / 1_000
+    }
+
+    /// Returns this speed in milli-kilometres per hour.
+    #[must_use]
+    pub const fn as_milli_kmh(self) -> i32 {
+        self.as_millimetres_per_second().saturating_mul(18) / 5
+    }
+
+    /// Returns this speed in deci-kilometres per hour.
+    #[must_use]
+    pub const fn as_deci_kmh(self) -> i32 {
+        self.as_milli_kmh() / 100
     }
 
     /// Creates a speed from miles per hour.
@@ -4361,10 +4459,34 @@ impl Distance {
         Self::from_unit_value(value)
     }
 
+    /// Creates a distance from metres.
+    #[must_use]
+    pub const fn from_metres(value: u64) -> Self {
+        Self::from_millimetres(value.saturating_mul(1_000))
+    }
+
+    /// Creates a distance from milli-miles.
+    #[must_use]
+    pub fn from_milli_miles(value: u32) -> Self {
+        Self::from_millimetres(u64::from(value).saturating_mul(1_609_344) / 1_000)
+    }
+
+    /// Creates a distance from metres represented as a floating-point number.
+    #[must_use]
+    pub fn from_metres_f32(value: f32) -> Self {
+        Self::from_millimetres(round_f32_to_u64(value * 1_000.0))
+    }
+
     /// Returns this distance in millimetres.
     #[must_use]
     pub const fn as_millimetres(self) -> u64 {
         self.unit_value()
+    }
+
+    /// Returns this distance in metres.
+    #[must_use]
+    pub const fn as_metres(self) -> u64 {
+        self.as_whole_metres()
     }
 
     /// Returns this distance in whole metres, rounded toward zero.
@@ -4444,6 +4566,12 @@ impl Duration {
     #[must_use]
     pub const fn as_minutes(self) -> u64 {
         self.as_seconds() / 60
+    }
+
+    /// Creates a duration from seconds represented as a floating-point number.
+    #[must_use]
+    pub fn from_seconds_f32(value: f32) -> Self {
+        Self::from_milliseconds(round_f32_to_u64(value * 1_000.0))
     }
 }
 
