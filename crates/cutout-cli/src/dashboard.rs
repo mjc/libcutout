@@ -373,7 +373,7 @@ impl DashboardBatteryLevel {
     }
 
     fn ratio(self) -> f64 {
-        f64::from(self.0.as_percent()) / 100.0
+        self.0.as_ratio()
     }
 }
 
@@ -405,7 +405,7 @@ impl SignalQuality {
     }
 
     fn ratio(self) -> f64 {
-        f64::from(self.0.as_percent()) / 100.0
+        self.0.as_ratio()
     }
 }
 
@@ -2986,8 +2986,7 @@ fn render_metric_tile(
 fn operational_voltage_ratio(state: &DashboardState) -> Option<f64> {
     let voltage = state.telemetry.latest_voltage?;
     let voltage_range = dashboard_voltage_range(state)?;
-    let percent = voltage.0.percent_of_range(&voltage_range);
-    Some(to_f64(percent) / 100.0)
+    Some(voltage.0.percent_of_range(&voltage_range).as_ratio())
 }
 
 fn operational_wheel_state(state: &DashboardState) -> OperationalWheelState {
@@ -3211,7 +3210,11 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
 
     if let Some(voltage_range) = dashboard_voltage_range(state) {
         for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-            *slot = voltage_samples.percent_of_range(&voltage_range);
+            *slot = u64::from(
+                voltage_samples
+                    .percent_of_range(&voltage_range)
+                    .as_percent(),
+            );
         }
         return (data, len, 100);
     }

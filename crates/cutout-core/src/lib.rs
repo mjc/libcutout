@@ -4171,24 +4171,25 @@ impl Voltage {
 
     /// Returns this voltage's position inside a voltage range as a whole percent.
     #[must_use]
-    pub fn percent_of_range(self, voltage_range: &RangeInclusive<Self>) -> u64 {
+    pub fn percent_of_range(self, voltage_range: &RangeInclusive<Self>) -> BatteryLevel {
         let voltage = i64::from(self.as_millivolts());
         let range_start = i64::from(voltage_range.start().as_millivolts());
         let range_end = i64::from(voltage_range.end().as_millivolts());
         if range_end <= range_start || voltage <= range_start {
-            return 0;
+            return BatteryLevel::from_percent(0);
         }
         if voltage >= range_end {
-            return 100;
+            return BatteryLevel::from_percent(100);
         }
 
-        u64::try_from(
+        let percent = u64::try_from(
             (voltage - range_start)
                 .saturating_mul(100)
                 .saturating_add((range_end - range_start) / 2)
                 / (range_end - range_start),
         )
-        .unwrap_or(0)
+        .unwrap_or(0);
+        BatteryLevel::from_percent(u8::try_from(percent).unwrap_or(100))
     }
 
     /// Creates a pack voltage from a single-cell voltage and series cell count.
@@ -4912,6 +4913,12 @@ impl BatteryLevel {
     #[must_use]
     pub const fn as_percent(self) -> u8 {
         self.unit_value()
+    }
+
+    /// Returns this battery level as a unitless fraction in the range `0.0..=1.0`.
+    #[must_use]
+    pub fn as_ratio(self) -> f64 {
+        f64::from(self.as_percent()) / 100.0
     }
 }
 
@@ -6680,7 +6687,9 @@ mod tests {
         );
         let voltage_range = Voltage::from_volts(91)..=Voltage::from_volts(126);
         assert_eq!(
-            Voltage::from_millivolts(108_500).percent_of_range(&voltage_range),
+            Voltage::from_millivolts(108_500)
+                .percent_of_range(&voltage_range)
+                .as_percent(),
             50
         );
         assert_eq!(Voltage::from_centivolts(9_150).as_millivolts(), 91_500);
@@ -6696,6 +6705,7 @@ mod tests {
         assert_eq!(Current::from_milliamps(-12_400).as_abs_whole_amps(), 12);
         assert_eq!(BatteryLevel::from_percent_i32(-1).as_percent(), 0);
         assert_eq!(BatteryLevel::from_percent_i32(120).as_percent(), 100);
+        assert!((BatteryLevel::from_percent(75).as_ratio() - 0.75).abs() < f64::EPSILON);
 
         assert_eq!(Temperature::from_celsius(36).as_millicelsius(), 36_000);
         assert_eq!(
