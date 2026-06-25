@@ -955,7 +955,7 @@ impl BegodeLiveATelemetry {
         TelemetryDelta {
             speed: Some(source_reported(unit_mode.speed(self.speed))),
             voltage: Some(source_reported(self.voltage)),
-            motor_current: Some(source_reported(BatteryCurrent::from_milliamps(
+            motor_current: Some(source_reported(PhaseCurrent::from_milliamps(
                 self.phase_current.as_milliamps(),
             ))),
             power: Some(source_calculated(Power::from_voltage_current(
@@ -1373,9 +1373,9 @@ mod tests {
                 )),
                 voltage: Some(source_reported(Voltage::from_millivolts(75_063))),
                 battery_current: None,
-                motor_current: Some(source_reported(
-                    cutout_core::BatteryCurrent::from_milliamps(-11_800,)
-                )),
+                motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
+                    -11_800,
+                ))),
                 power: Some(source_calculated(cutout_core::Power::from_milliwatts(
                     -885_743
                 ))),

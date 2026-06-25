@@ -1369,13 +1369,13 @@ impl TelemetryWindow {
             .current_samples
             .last()
             .copied()
-            .map(DisplayBatteryCurrent::from_current);
+            .map(|current| DisplayBatteryCurrent::from_current(current.into()));
         self.latest_power = self
             .voltage_samples
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current));
+            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current.into()));
         self.latest_temperature = self
             .temperature_samples
             .last()
@@ -1445,13 +1445,13 @@ impl TelemetryWindow {
             .current_samples
             .last()
             .copied()
-            .map(DisplayBatteryCurrent::from_current);
+            .map(|current| DisplayBatteryCurrent::from_current(current.into()));
         self.latest_power = self
             .voltage_samples
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current));
+            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current.into()));
         self.latest_temperature = self
             .temperature_samples
             .last()
@@ -1814,7 +1814,17 @@ impl fmt::Display for MappedTelemetryLog {
         {
             fields.write("battery", percent.value, "%")?;
         }
-        if let Some(current) = snapshot.battery_current.or(snapshot.motor_current) {
+        if let Some(current) = snapshot
+            .battery_current
+            .map(|current| {
+                current.map_value(|value| BatteryCurrent::from_milliamps(value.as_milliamps()))
+            })
+            .or_else(|| {
+                snapshot.motor_current.map(|current| {
+                    current.map_value(|value| BatteryCurrent::from_milliamps(value.as_milliamps()))
+                })
+            })
+        {
             fields.write(
                 "current",
                 DisplayBatteryCurrent::from_current(current.value).get(),
@@ -1879,7 +1889,17 @@ impl fmt::Display for TelemetryDeltaLog {
         {
             fields.write("battery", percent.value, "%")?;
         }
-        if let Some(current) = delta.battery_current.or(delta.motor_current) {
+        if let Some(current) = delta
+            .battery_current
+            .map(|current| {
+                current.map_value(|value| BatteryCurrent::from_milliamps(value.as_milliamps()))
+            })
+            .or_else(|| {
+                delta.motor_current.map(|current| {
+                    current.map_value(|value| BatteryCurrent::from_milliamps(value.as_milliamps()))
+                })
+            })
+        {
             fields.write(
                 "current",
                 DisplayBatteryCurrent::from_current(current.value).get(),
@@ -3685,6 +3705,10 @@ mod tests {
         Measured::reported(BatteryCurrent::from_milliamps(value))
     }
 
+    fn phase_current(value: i32) -> Measured<PhaseCurrent> {
+        Measured::reported(PhaseCurrent::from_milliamps(value))
+    }
+
     fn power(value: i64) -> Measured<Power> {
         Measured::calculated(Power::from_milliwatts(value))
     }
@@ -3771,7 +3795,7 @@ mod tests {
                 delta: TelemetryDelta {
                     speed: Some(speed(0)),
                     voltage: Some(voltage(108_760)),
-                    motor_current: Some(battery_current(0)),
+                    motor_current: Some(phase_current(0)),
                     controller_temperature: Some(temperature(33_270)),
                     pwm: Some(duty_cycle_permille(-1_000)),
                     distance: Some(distance(1_551_169_000)),
@@ -4640,7 +4664,7 @@ mod tests {
             speed: Some(speed(12_000)),
             voltage: Some(voltage(119_600)),
             battery_level_reported: Some(level_reported(87)),
-            motor_current: Some(battery_current(-18_500)),
+            motor_current: Some(phase_current(-18_500)),
             power: Some(power(-2_212_600)),
             controller_temperature: Some(temperature(36_000)),
             pwm: Some(duty_cycle_permille(420)),
