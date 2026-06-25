@@ -426,10 +426,7 @@ impl DisplaySpeed {
     }
 
     pub(crate) fn get(self) -> u64 {
-        u64::from(self.0.as_millimetres_per_second().unsigned_abs())
-            .saturating_mul(1_000)
-            .saturating_add(223_694)
-            / 447_388
+        self.0.as_mph()
     }
 
     const fn is_stationary(self) -> bool {
@@ -456,7 +453,7 @@ impl DisplayVoltage {
     }
 
     pub(crate) fn get(self) -> u64 {
-        u64::from(self.0.as_millivolts().unsigned_abs()).saturating_add(500) / 1_000
+        self.0.as_whole_volts()
     }
 }
 
@@ -475,7 +472,7 @@ impl WheelPitchDeg {
     }
 
     fn get(self) -> i64 {
-        millidegrees_to_degrees(self.0.as_millidegrees())
+        self.0.as_whole_degrees()
     }
 
     const fn is_lifted_or_tilted(self) -> bool {
@@ -499,7 +496,7 @@ impl DisplayDutyCycle {
     }
 
     fn get(self) -> i64 {
-        i64::from(self.0.as_permille()) / 10
+        self.0.as_whole_percent()
     }
 }
 
@@ -518,7 +515,7 @@ impl DisplayTemperature {
     }
 
     fn get(self) -> i64 {
-        i64::from(self.0.as_millicelsius()) / 1_000
+        self.0.as_whole_celsius()
     }
 }
 
@@ -536,8 +533,8 @@ impl DisplayPhaseCurrent {
         Self(PhaseCurrent::from_milliamps(value))
     }
 
-    const fn get(self) -> i64 {
-        (self.0.as_milliamps() / 1_000) as i64
+    fn get(self) -> i64 {
+        self.0.as_whole_amps()
     }
 
     const fn is_idle(self) -> bool {
@@ -568,8 +565,8 @@ impl DisplayBatteryCurrent {
         Self::from_current(BatteryCurrent::from_milliamps(value))
     }
 
-    const fn get(self) -> i64 {
-        (self.0.as_milliamps() / 1_000) as i64
+    fn get(self) -> i64 {
+        self.0.as_whole_amps()
     }
 
     const fn is_idle(self) -> bool {
@@ -633,22 +630,19 @@ impl DisplayPower {
 
     #[cfg(test)]
     fn from_watts(value: i64) -> Self {
-        Self::from_power(Power::from_milliwatts(value.saturating_mul(1_000)))
+        Self::from_power(Power::from_watts(value))
     }
 
     fn from_milliwatts(value: i64) -> Self {
         Self::from_power(Power::from_milliwatts(value))
     }
 
-    fn from_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Option<Self> {
-        let milliwatts = i64::from(voltage.as_millivolts())
-            .checked_mul(i64::from(current.as_milliamps()))
-            .map(|microwatts| microwatts / 1_000)?;
-        Some(Self::from_power(Power::from_milliwatts(milliwatts)))
+    fn from_voltage_current(voltage: Voltage, current: BatteryCurrent) -> Self {
+        Self::from_power(Power::from_voltage_current(voltage, current))
     }
 
     const fn get(self) -> i64 {
-        self.0.as_milliwatts() / 1_000
+        self.0.as_whole_watts()
     }
 }
 
@@ -865,46 +859,46 @@ enum DashboardInput {
 const DEMO_PROVENANCE: &str = "demo state: aero-nf2557.v1";
 const DEMO_SPEED_MPH: &[u64] = &[0, 4, 9, 14, 18, 22, 24, 21, 19, 17, 16, 18];
 const DEMO_VOLTAGE: &[Voltage] = &[
-    Voltage::from_millivolts(52_000),
-    Voltage::from_millivolts(52_000),
-    Voltage::from_millivolts(53_000),
-    Voltage::from_millivolts(53_000),
-    Voltage::from_millivolts(54_000),
-    Voltage::from_millivolts(54_000),
-    Voltage::from_millivolts(55_000),
-    Voltage::from_millivolts(55_000),
-    Voltage::from_millivolts(55_000),
-    Voltage::from_millivolts(54_000),
-    Voltage::from_millivolts(54_000),
-    Voltage::from_millivolts(53_000),
+    Voltage::from_volts(52),
+    Voltage::from_volts(52),
+    Voltage::from_volts(53),
+    Voltage::from_volts(53),
+    Voltage::from_volts(54),
+    Voltage::from_volts(54),
+    Voltage::from_volts(55),
+    Voltage::from_volts(55),
+    Voltage::from_volts(55),
+    Voltage::from_volts(54),
+    Voltage::from_volts(54),
+    Voltage::from_volts(53),
 ];
 const DEMO_CURRENT: &[Current] = &[
-    Current::from_milliamps(3_000),
-    Current::from_milliamps(4_000),
-    Current::from_milliamps(6_000),
-    Current::from_milliamps(7_000),
-    Current::from_milliamps(8_000),
-    Current::from_milliamps(9_000),
-    Current::from_milliamps(10_000),
-    Current::from_milliamps(10_000),
-    Current::from_milliamps(9_000),
-    Current::from_milliamps(8_000),
-    Current::from_milliamps(7_000),
-    Current::from_milliamps(6_000),
+    Current::from_amps(3),
+    Current::from_amps(4),
+    Current::from_amps(6),
+    Current::from_amps(7),
+    Current::from_amps(8),
+    Current::from_amps(9),
+    Current::from_amps(10),
+    Current::from_amps(10),
+    Current::from_amps(9),
+    Current::from_amps(8),
+    Current::from_amps(7),
+    Current::from_amps(6),
 ];
 const DEMO_TEMPERATURE: &[Temperature] = &[
-    Temperature::from_millicelsius(30_000),
-    Temperature::from_millicelsius(31_000),
-    Temperature::from_millicelsius(31_000),
-    Temperature::from_millicelsius(32_000),
-    Temperature::from_millicelsius(32_000),
-    Temperature::from_millicelsius(33_000),
-    Temperature::from_millicelsius(34_000),
-    Temperature::from_millicelsius(34_000),
-    Temperature::from_millicelsius(35_000),
-    Temperature::from_millicelsius(35_000),
-    Temperature::from_millicelsius(34_000),
-    Temperature::from_millicelsius(33_000),
+    Temperature::from_celsius(30),
+    Temperature::from_celsius(31),
+    Temperature::from_celsius(31),
+    Temperature::from_celsius(32),
+    Temperature::from_celsius(32),
+    Temperature::from_celsius(33),
+    Temperature::from_celsius(34),
+    Temperature::from_celsius(34),
+    Temperature::from_celsius(35),
+    Temperature::from_celsius(35),
+    Temperature::from_celsius(34),
+    Temperature::from_celsius(33),
 ];
 static DEMO_SPEED: OnceLock<Box<[Speed]>> = OnceLock::new();
 
@@ -1400,7 +1394,7 @@ impl TelemetryWindow {
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .and_then(|(voltage, current)| {
+            .map(|(voltage, current)| {
                 DisplayPower::from_voltage_current(voltage, battery_current_from_current(current))
             });
         self.latest_temperature = self
@@ -1428,19 +1422,19 @@ impl TelemetryWindow {
                 + 1)
                 % 6);
         let next_current = 4
-            + ((self.current_samples.last().copied().map_or(5, |current| {
-                u64::from(current.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000
-            }) + 1)
+            + ((self
+                .current_samples
+                .last()
+                .copied()
+                .map_or(5, Current::as_abs_whole_amps)
+                + 1)
                 % 9);
         let next_temperature = 30
             + ((self
                 .temperature_samples
                 .last()
                 .copied()
-                .map_or(32, |temperature| {
-                    u64::from(temperature.as_millicelsius().unsigned_abs()).saturating_add(500)
-                        / 1_000
-                })
+                .map_or(32, Temperature::as_abs_whole_celsius)
                 + 1)
                 % 9);
 
@@ -1448,30 +1442,15 @@ impl TelemetryWindow {
             *battery_level = battery_level.decrement_for_demo();
         }
         self.signal_quality = self.signal_quality.increment();
-        push_sample(
-            &mut self.speed_samples,
-            Speed::from_millimetres_per_second(
-                i32::try_from(next_speed.saturating_mul(447_388).saturating_add(500) / 1_000)
-                    .unwrap_or(i32::MAX),
-            ),
-        );
-        push_sample(
-            &mut self.voltage_samples,
-            Voltage::from_millivolts(
-                i32::try_from(next_voltage.saturating_mul(1_000)).unwrap_or(i32::MAX),
-            ),
-        );
+        push_sample(&mut self.speed_samples, Speed::from_mph(next_speed));
+        push_sample(&mut self.voltage_samples, Voltage::from_volts(next_voltage));
         push_sample(
             &mut self.current_samples,
-            Current::from_milliamps(
-                i32::try_from(next_current.saturating_mul(1_000)).unwrap_or(i32::MAX),
-            ),
+            Current::from_amps(i64::try_from(next_current).unwrap_or(i64::MAX)),
         );
         push_sample(
             &mut self.temperature_samples,
-            Temperature::from_millicelsius(
-                i32::try_from(next_temperature.saturating_mul(1_000)).unwrap_or(i32::MAX),
-            ),
+            Temperature::from_celsius(i64::try_from(next_temperature).unwrap_or(i64::MAX)),
         );
         self.latest_speed = self
             .speed_samples
@@ -1494,7 +1473,7 @@ impl TelemetryWindow {
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .and_then(|(voltage, current)| {
+            .map(|(voltage, current)| {
                 DisplayPower::from_voltage_current(voltage, battery_current_from_current(current))
             });
         self.latest_temperature = self
@@ -1512,19 +1491,13 @@ impl TelemetryWindow {
         self.temperature_points.reserve(HISTORY_LIMIT);
 
         for (index, value) in self.current_samples.iter().enumerate() {
-            self.current_points.push((
-                index_to_f64(index),
-                to_f64(u64::from(value.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000),
-            ));
+            self.current_points
+                .push((index_to_f64(index), to_f64(value.as_abs_whole_amps())));
         }
 
         for (index, value) in self.temperature_samples.iter().enumerate() {
-            self.temperature_points.push((
-                index_to_f64(index),
-                to_f64(
-                    u64::from(value.as_millicelsius().unsigned_abs()).saturating_add(500) / 1_000,
-                ),
-            ));
+            self.temperature_points
+                .push((index_to_f64(index), to_f64(value.as_abs_whole_celsius())));
         }
     }
 
@@ -1784,19 +1757,11 @@ fn demo_speed_samples() -> &'static [Speed] {
             DEMO_SPEED_MPH
                 .iter()
                 .copied()
-                .map(|value| {
-                    Speed::from_millimetres_per_second(
-                        i32::try_from(value.saturating_mul(447_388).saturating_add(500) / 1_000)
-                            .unwrap_or(i32::MAX),
-                    )
-                })
+                .map(Speed::from_mph)
                 .collect::<Vec<_>>()
                 .into_boxed_slice()
         })
         .as_ref()
-}
-fn millidegrees_to_degrees(value: i32) -> i64 {
-    i64::from(value) / 1_000
 }
 
 struct OptionalDisplayDistance(Option<Distance>);
@@ -1821,12 +1786,11 @@ impl DisplayDistance {
 
 impl fmt::Display for DisplayDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let meters = self.0.as_millimetres() / 1_000;
+        let meters = self.0.as_whole_metres();
         if meters < 1_000 {
             write!(f, "{meters} m")
         } else {
-            let km_tenths = meters.saturating_mul(10).saturating_add(500) / 1_000;
-            write!(f, "{} km", TenthsDisplay(km_tenths))
+            write!(f, "{} km", TenthsDisplay(self.0.as_kilometre_tenths()))
         }
     }
 }
@@ -2100,12 +2064,12 @@ impl DisplayTelemetryDistance {
 
 impl fmt::Display for DisplayTelemetryDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let meters = self.0.as_millimetres() / 1_000;
+        let meters = self.0.as_whole_metres();
         if meters < 1_000 {
             return write!(f, "{meters} m");
         }
 
-        let km_tenths = meters.saturating_mul(10).saturating_add(500) / 1_000;
+        let km_tenths = self.0.as_kilometre_tenths();
         write!(f, "{}.{} km", km_tenths / 10, km_tenths % 10)
     }
 }
@@ -3046,7 +3010,7 @@ fn render_metric_tile(
 fn operational_voltage_ratio(state: &DashboardState) -> Option<f64> {
     let voltage = state.telemetry.latest_voltage?;
     let voltage_range = dashboard_voltage_range(state)?;
-    let percent = voltage_range_percent(voltage.get(), &voltage_range);
+    let percent = voltage.0.percent_of_range(&voltage_range);
     Some(to_f64(percent) / 100.0)
 }
 
@@ -3255,9 +3219,7 @@ fn voltage_sparkline_title(state: &DashboardState) -> String {
 
 fn voltage_sparkline_max(state: &DashboardState) -> u64 {
     dashboard_voltage_range(state)
-        .map_or(100, |range| {
-            u64::from(range.end().as_millivolts().unsigned_abs()).saturating_add(500) / 1_000
-        })
+        .map_or(100, |range| range.end().as_whole_volts())
         .max(
             state
                 .telemetry
@@ -3273,18 +3235,13 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
 
     if let Some(voltage_range) = dashboard_voltage_range(state) {
         for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-            *slot = voltage_range_percent(
-                u64::from(voltage_samples.as_millivolts().unsigned_abs()).saturating_add(500)
-                    / 1_000,
-                &voltage_range,
-            );
+            *slot = voltage_samples.percent_of_range(&voltage_range);
         }
         return (data, len, 100);
     }
 
     for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-        *slot =
-            u64::from(voltage_samples.as_millivolts().unsigned_abs()).saturating_add(500) / 1_000;
+        *slot = voltage_samples.as_whole_volts();
     }
     (data, len, voltage_sparkline_max(state))
 }
@@ -3294,32 +3251,10 @@ fn speed_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize)
     let len = state.telemetry.speed_samples.len().min(HISTORY_LIMIT);
 
     for (slot, speed_sample) in data.iter_mut().zip(state.telemetry.speed_samples.iter()) {
-        *slot = u64::from(speed_sample.as_millimetres_per_second().unsigned_abs())
-            .saturating_mul(1_000)
-            .saturating_add(223_694)
-            / 447_388;
+        *slot = speed_sample.as_mph();
     }
 
     (data, len)
-}
-
-fn voltage_range_percent(sample_v: u64, voltage_range: &RangeInclusive<Voltage>) -> u64 {
-    let voltage = i64::try_from(sample_v)
-        .unwrap_or(i64::MAX / 1_000)
-        .saturating_mul(1_000);
-    let range_start = i64::from(voltage_range.start().as_millivolts());
-    let range_end = i64::from(voltage_range.end().as_millivolts());
-    if range_end <= range_start || voltage <= range_start {
-        return 0;
-    }
-    if voltage >= range_end {
-        return 100;
-    }
-
-    u64::try_from(
-        ((voltage - range_start) * 100 + (range_end - range_start) / 2) / (range_end - range_start),
-    )
-    .unwrap_or(100)
 }
 
 fn dashboard_voltage_range(state: &DashboardState) -> Option<RangeInclusive<Voltage>> {
@@ -3761,10 +3696,7 @@ mod tests {
     }
 
     fn display_speed_mph(value: u64) -> DisplaySpeed {
-        DisplaySpeed::from_speed(Speed::from_millimetres_per_second(
-            i32::try_from(value.saturating_mul(447_388).saturating_add(500) / 1_000)
-                .unwrap_or(i32::MAX),
-        ))
+        DisplaySpeed::from_speed(Speed::from_mph(value))
     }
 
     fn voltage(value: i32) -> Measured<Voltage> {
@@ -3772,9 +3704,7 @@ mod tests {
     }
 
     fn display_voltage_volts(value: u64) -> DisplayVoltage {
-        DisplayVoltage::from_voltage(Voltage::from_millivolts(
-            i32::try_from(value.saturating_mul(1_000)).unwrap_or(i32::MAX),
-        ))
+        DisplayVoltage::from_voltage(Voltage::from_volts(value))
     }
 
     fn battery_current(value: i32) -> Measured<BatteryCurrent> {
@@ -3790,13 +3720,7 @@ mod tests {
     }
 
     fn display_temperature_celsius(value: i64) -> DisplayTemperature {
-        DisplayTemperature::from_temperature(Temperature::from_millicelsius(
-            i32::try_from(value.saturating_mul(1_000)).unwrap_or(if value.is_negative() {
-                i32::MIN
-            } else {
-                i32::MAX
-            }),
-        ))
+        DisplayTemperature::from_temperature(Temperature::from_celsius(value))
     }
 
     fn assert_typed_telemetry_history(
@@ -4323,7 +4247,7 @@ mod tests {
                 Voltage::from_millivolts(53_000),
                 BatteryCurrent::from_milliamps(6_000),
             ),
-            Some(DisplayPower::from_watts(318))
+            DisplayPower::from_watts(318)
         );
         assert_eq!(
             DisplayPower::from_milliwatts(-184_892).to_string(),

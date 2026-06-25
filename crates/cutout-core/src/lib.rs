@@ -4029,6 +4029,33 @@ where
 /// Electrical voltage stored in millivolts.
 pub type Voltage = Quantity<ElectricPotential, MilliVolt, i32>;
 
+const fn saturating_u64_to_i32(value: u64) -> i32 {
+    if value > i32::MAX as u64 {
+        i32::MAX
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            value as i32
+        }
+    }
+}
+
+const fn saturating_i64_to_i32(value: i64) -> i32 {
+    const I32_MAX_I64: i64 = 2_147_483_647;
+    const I32_MIN_I64: i64 = -2_147_483_648;
+
+    if value > I32_MAX_I64 {
+        i32::MAX
+    } else if value < I32_MIN_I64 {
+        i32::MIN
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            value as i32
+        }
+    }
+}
+
 impl Voltage {
     /// Creates a voltage from millivolts.
     #[must_use]
@@ -4047,6 +4074,40 @@ impl Voltage {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_volts(self) -> f32 {
         self.as_millivolts() as f32 / 1_000.0
+    }
+
+    /// Returns this voltage in whole volts, rounded to the nearest volt.
+    #[must_use]
+    pub fn as_whole_volts(self) -> u64 {
+        u64::from(self.as_millivolts().unsigned_abs()).saturating_add(500) / 1_000
+    }
+
+    /// Creates a voltage from whole volts.
+    #[must_use]
+    pub const fn from_volts(value: u64) -> Self {
+        Self::from_millivolts(saturating_u64_to_i32(value.saturating_mul(1_000)))
+    }
+
+    /// Returns this voltage's position inside a voltage range as a whole percent.
+    #[must_use]
+    pub fn percent_of_range(self, voltage_range: &RangeInclusive<Self>) -> u64 {
+        let voltage = i64::from(self.as_millivolts());
+        let range_start = i64::from(voltage_range.start().as_millivolts());
+        let range_end = i64::from(voltage_range.end().as_millivolts());
+        if range_end <= range_start || voltage <= range_start {
+            return 0;
+        }
+        if voltage >= range_end {
+            return 100;
+        }
+
+        u64::try_from(
+            (voltage - range_start)
+                .saturating_mul(100)
+                .saturating_add((range_end - range_start) / 2)
+                / (range_end - range_start),
+        )
+        .unwrap_or(0)
     }
 }
 
@@ -4118,6 +4179,24 @@ impl Current {
     pub fn as_amps(self) -> f32 {
         self.as_milliamps() as f32 / 1_000.0
     }
+
+    /// Returns this current in whole amps, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_amps(self) -> i64 {
+        i64::from(self.as_milliamps() / 1_000)
+    }
+
+    /// Returns this current magnitude in whole amps, rounded to the nearest amp.
+    #[must_use]
+    pub fn as_abs_whole_amps(self) -> u64 {
+        u64::from(self.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000
+    }
+
+    /// Creates a current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self::from_milliamps(saturating_i64_to_i32(value.saturating_mul(1_000)))
+    }
 }
 
 /// Rotational speed stored in electrical revolutions per minute.
@@ -4184,6 +4263,18 @@ impl Power {
     pub fn as_watts(self) -> f32 {
         self.as_milliwatts() as f32 / 1_000.0
     }
+
+    /// Returns this power in whole watts, rounded toward zero.
+    #[must_use]
+    pub const fn as_whole_watts(self) -> i64 {
+        self.as_milliwatts() / 1_000
+    }
+
+    /// Creates a power from whole watts.
+    #[must_use]
+    pub const fn from_watts(value: i64) -> Self {
+        Self::from_milliwatts(value.saturating_mul(1_000))
+    }
 }
 
 /// Electrical energy stored in watt-hours.
@@ -4242,6 +4333,22 @@ impl Speed {
     pub fn as_metres_per_second(self) -> f32 {
         self.as_millimetres_per_second() as f32 / 1_000.0
     }
+
+    /// Creates a speed from miles per hour.
+    #[must_use]
+    pub fn from_mph(value: u64) -> Self {
+        let millimetres_per_second = value.saturating_mul(447_388).saturating_add(500) / 1_000;
+        Self::from_millimetres_per_second(i32::try_from(millimetres_per_second).unwrap_or(i32::MAX))
+    }
+
+    /// Returns this speed in whole miles per hour, rounded to the nearest mph.
+    #[must_use]
+    pub fn as_mph(self) -> u64 {
+        u64::from(self.as_millimetres_per_second().unsigned_abs())
+            .saturating_mul(1_000)
+            .saturating_add(223_694)
+            / 447_388
+    }
 }
 
 /// Linear distance stored in millimetres.
@@ -4258,6 +4365,21 @@ impl Distance {
     #[must_use]
     pub const fn as_millimetres(self) -> u64 {
         self.unit_value()
+    }
+
+    /// Returns this distance in whole metres, rounded toward zero.
+    #[must_use]
+    pub const fn as_whole_metres(self) -> u64 {
+        self.as_millimetres() / 1_000
+    }
+
+    /// Returns this distance in tenths of a kilometre, rounded to the nearest tenth.
+    #[must_use]
+    pub const fn as_kilometre_tenths(self) -> u64 {
+        self.as_whole_metres()
+            .saturating_mul(10)
+            .saturating_add(500)
+            / 1_000
     }
 }
 
@@ -4347,6 +4469,24 @@ impl Temperature {
     pub fn as_celsius(self) -> f32 {
         self.as_millicelsius() as f32 / 1_000.0
     }
+
+    /// Returns this temperature in whole celsius, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_celsius(self) -> i64 {
+        i64::from(self.as_millicelsius() / 1_000)
+    }
+
+    /// Returns this temperature magnitude in whole celsius, rounded to the nearest degree.
+    #[must_use]
+    pub fn as_abs_whole_celsius(self) -> u64 {
+        u64::from(self.as_millicelsius().unsigned_abs()).saturating_add(500) / 1_000
+    }
+
+    /// Creates a temperature from whole celsius.
+    #[must_use]
+    pub const fn from_celsius(value: i64) -> Self {
+        Self::from_millicelsius(saturating_i64_to_i32(value.saturating_mul(1_000)))
+    }
 }
 
 /// Plane angle stored in millidegrees.
@@ -4371,6 +4511,18 @@ impl Angle {
     pub fn as_degrees(self) -> f32 {
         self.as_millidegrees() as f32 / 1_000.0
     }
+
+    /// Returns this angle in whole degrees, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_degrees(self) -> i64 {
+        i64::from(self.as_millidegrees() / 1_000)
+    }
+
+    /// Creates an angle from whole degrees.
+    #[must_use]
+    pub const fn from_degrees(value: i64) -> Self {
+        Self::from_millidegrees(saturating_i64_to_i32(value.saturating_mul(1_000)))
+    }
 }
 
 /// Ratio stored in permille.
@@ -4394,6 +4546,12 @@ impl DutyCycle {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_percent(self) -> f32 {
         f32::from(self.as_permille()) / 10.0
+    }
+
+    /// Returns this duty cycle as whole percent, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_percent(self) -> i64 {
+        i64::from(self.as_permille() / 10)
     }
 }
 
@@ -5674,11 +5832,11 @@ pub const fn crate_name() -> &'static str {
 mod tests {
     use super::crate_name;
     use crate::{
-        BatteryCurrent, BatteryLevel, DeviceCommand, DeviceEvent, Distance, Duration, GattChannel,
-        LinkInfo, Measured, MonotonicTimestamp, PhaseCurrent, ProtocolSession, SessionInput,
-        SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction,
-        UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
-        WritePayload,
+        Angle, BatteryCurrent, BatteryLevel, Current, DeviceCommand, DeviceEvent, Distance,
+        Duration, GattChannel, LinkInfo, Measured, MonotonicTimestamp, PhaseCurrent, Power,
+        ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot,
+        Temperature, TransportAction, UnsupportedReason, ValueQuality, ValueSource,
+        VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -6118,6 +6276,57 @@ mod tests {
                 mode: WriteMode::WithResponse,
             })]
         );
+    }
+
+    #[test]
+    fn quantity_conversions_keep_unit_math_in_core() {
+        assert_eq!(Speed::from_mph(10).as_millimetres_per_second(), 4_474);
+        assert_eq!(Speed::from_millimetres_per_second(4_470).as_mph(), 10);
+
+        assert_eq!(Voltage::from_volts(126).as_millivolts(), 126_000);
+        assert_eq!(Voltage::from_millivolts(84_400).as_whole_volts(), 84);
+        let voltage_range = Voltage::from_volts(91)..=Voltage::from_volts(126);
+        assert_eq!(
+            Voltage::from_millivolts(108_500).percent_of_range(&voltage_range),
+            50
+        );
+
+        assert_eq!(Current::from_amps(-12).as_milliamps(), -12_000);
+        assert_eq!(Current::from_milliamps(-12_400).as_whole_amps(), -12);
+        assert_eq!(Current::from_milliamps(-12_400).as_abs_whole_amps(), 12);
+
+        assert_eq!(Temperature::from_celsius(36).as_millicelsius(), 36_000);
+        assert_eq!(
+            Temperature::from_millicelsius(-36_600).as_abs_whole_celsius(),
+            37
+        );
+
+        assert_eq!(Angle::from_degrees(69).as_millidegrees(), 69_000);
+        assert_eq!(Angle::from_millidegrees(69_060).as_whole_degrees(), 69);
+
+        assert_eq!(
+            Power::from_voltage_current(Voltage::from_volts(53), Current::from_amps(-6)),
+            Power::from_watts(-318)
+        );
+        assert_eq!(
+            Power::from_voltage_current(
+                Voltage::from_millivolts(i32::MAX),
+                Current::from_milliamps(i32::MAX),
+            ),
+            Power::from_milliwatts(4_611_686_014_132_420)
+        );
+    }
+
+    #[test]
+    fn whole_unit_constructors_saturate_at_storage_bounds() {
+        assert_eq!(Voltage::from_volts(u64::MAX).as_millivolts(), i32::MAX);
+        assert_eq!(Current::from_amps(i64::MAX).as_milliamps(), i32::MAX);
+        assert_eq!(Current::from_amps(i64::MIN).as_milliamps(), i32::MIN);
+        assert_eq!(
+            Temperature::from_celsius(i64::MAX).as_millicelsius(),
+            i32::MAX
+        );
+        assert_eq!(Angle::from_degrees(i64::MIN).as_millidegrees(), i32::MIN);
     }
 
     #[test]
