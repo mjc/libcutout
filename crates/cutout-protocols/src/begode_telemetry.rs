@@ -5,7 +5,7 @@ use cutout_core::{
     DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicTimestamp,
     ParallelCount, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
     SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
-    VerificationStatus, Voltage, WireVoltage, round_div_i32,
+    VerificationStatus, Voltage, WireVoltage,
 };
 use thiserror::Error;
 
@@ -1199,20 +1199,14 @@ pub fn estimate_begode_battery_level(
     let wire_centivolts = i32::from(
         WireVoltage::from_scaled_voltage(voltage, profile.scaler_milli()).as_centivolts(),
     );
-    if wire_centivolts <= 5_120 {
-        return BatteryLevel::from_percent(0);
-    }
-    if wire_centivolts <= 5_440 {
-        return BatteryLevel::from_percent_i32(
-            round_div_i32(wire_centivolts - 5_120, 36).clamp(0, 100),
-        );
-    }
-    if wire_centivolts <= 6_680 {
-        return BatteryLevel::from_percent_i32(
-            round_div_i32((wire_centivolts - 5_320) * 10, 136).clamp(0, 100),
-        );
-    }
-    BatteryLevel::from_percent(100)
+    BatteryLevel::from_piecewise_linear(
+        i64::from(wire_centivolts),
+        &[
+            (5_120, BatteryLevel::from_percent(0)),
+            (5_440, BatteryLevel::from_percent(9)),
+            (6_680, BatteryLevel::from_percent(100)),
+        ],
+    )
 }
 
 fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryError> {
