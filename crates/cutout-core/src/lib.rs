@@ -4074,6 +4074,21 @@ pub fn round_div_i32(numerator: i32, denominator: i32) -> i32 {
     saturating_i64_to_i32(rounded.saturating_mul(sign))
 }
 
+#[must_use]
+fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
+    if denominator == 0 {
+        return 0;
+    }
+
+    let sign = if (numerator < 0) ^ (denominator < 0) {
+        -1
+    } else {
+        1
+    };
+    let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
+    saturating_i64_to_i32(rounded.saturating_mul(sign))
+}
+
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -4364,6 +4379,27 @@ impl RotationalSpeed {
     #[must_use]
     pub fn from_erpm_f32(value: f32) -> Self {
         Self::from_erpm(round_f32_to_i32(value))
+    }
+
+    /// Converts this electrical rotational speed to linear speed using drive geometry.
+    #[must_use]
+    pub fn as_speed(
+        self,
+        motor_pole_pairs: u8,
+        gear_ratio_denominator: u8,
+        wheel_circumference: Distance,
+    ) -> Option<Speed> {
+        let denominator = i64::from(motor_pole_pairs) * i64::from(gear_ratio_denominator) * 60;
+        if denominator == 0 {
+            return None;
+        }
+
+        let wheel_circumference_mm = i64::try_from(wheel_circumference.as_millimetres()).ok()?;
+        let numerator = i64::from(self.as_erpm()) * wheel_circumference_mm;
+        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
+            numerator,
+            denominator,
+        )))
     }
 }
 
@@ -4950,6 +4986,33 @@ impl BatteryLevel {
                 }),
             );
         Self::from_percent_i32(level)
+    }
+
+    /// Evaluates a piecewise-linear battery curve over typed percentage points.
+    #[must_use]
+    pub fn from_piecewise_linear(value: i64, points: &[(i64, Self)]) -> Self {
+        let Some((first_value, first_level)) = points.first().copied() else {
+            return Self::from_percent(0);
+        };
+        if value <= first_value {
+            return first_level;
+        }
+
+        for window in points.windows(2) {
+            let [low, high] = window else {
+                continue;
+            };
+            let (low_value, low_level) = *low;
+            let (high_value, high_level) = *high;
+            if value <= high_value {
+                return Self::interpolate(low_level, high_level, value, low_value, high_value);
+            }
+        }
+
+        points
+            .last()
+            .copied()
+            .map_or_else(|| Self::from_percent(0), |(_, level)| level)
     }
 }
 
@@ -6748,7 +6811,22 @@ mod tests {
             .as_percent(),
             50
         );
+        assert_eq!(
+            BatteryLevel::from_piecewise_linear(
+                5_440,
+                &[
+                    (5_120, BatteryLevel::from_percent(0)),
+                    (5_440, BatteryLevel::from_percent(9)),
+                    (6_680, BatteryLevel::from_percent(100)),
+                ],
+            )
+            .as_percent(),
+            9
+        );
+    }
 
+    #[test]
+    fn quantity_conversions_cover_angles_ratios_and_power() {
         assert_eq!(Temperature::from_celsius(36).as_millicelsius(), 36_000);
         assert_eq!(
             Temperature::from_centi_celsius(-3_660).as_millicelsius(),
@@ -6886,6 +6964,24 @@ mod tests {
     #[test]
     fn rotational_speed_quantity_preserves_erpm_unit() {
         assert_eq!(crate::RotationalSpeed::from_erpm(4_500).as_erpm(), 4_500);
+    }
+
+    #[test]
+    fn rotational_speed_quantity_converts_to_linear_speed_with_drive_geometry() {
+        let wheel = Distance::from_millimetres(2_100);
+
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(4_500).as_speed(15, 1, wheel),
+            Some(Speed::from_millimetres_per_second(10_500))
+        );
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(4_500).as_speed(15, 2, wheel),
+            Some(Speed::from_millimetres_per_second(5_250))
+        );
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(4_500).as_speed(0, 1, wheel),
+            None
+        );
     }
 
     #[test]

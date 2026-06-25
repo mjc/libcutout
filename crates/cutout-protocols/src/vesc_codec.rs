@@ -279,20 +279,11 @@ impl VescBoardProfile {
     /// Calculates signed road speed from eRPM.
     #[must_use]
     pub fn speed_from_erpm(self, erpm: RotationalSpeed) -> Option<Speed> {
-        let denominator = i64::from(self.motor_pole_pairs.get())
-            * i64::from(self.gear_ratio_denominator.get())
-            * 60;
-        if denominator == 0 {
-            return None;
-        }
-
-        let wheel_circumference_mm =
-            i64::try_from(self.wheel_circumference.as_millimetres()).ok()?;
-        let numerator = i64::from(erpm.as_erpm()) * wheel_circumference_mm;
-        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
-            numerator,
-            denominator,
-        )))
+        erpm.as_speed(
+            self.motor_pole_pairs.get(),
+            self.gear_ratio_denominator.get(),
+            self.wheel_circumference,
+        )
     }
 }
 
@@ -577,23 +568,6 @@ impl From<vesc::FaultCode> for VescFaultCode {
             vesc::FaultCode::AbsOverCurrent => Self::AbsOverCurrent,
             other => Self::Other(other as u8),
         }
-    }
-}
-
-#[allow(clippy::cast_possible_truncation)]
-const fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
-    let half = denominator / 2;
-    let rounded = if numerator >= 0 {
-        (numerator + half) / denominator
-    } else {
-        (numerator - half) / denominator
-    };
-    if rounded > i32::MAX as i64 {
-        i32::MAX
-    } else if rounded < i32::MIN as i64 {
-        i32::MIN
-    } else {
-        rounded as i32
     }
 }
 
