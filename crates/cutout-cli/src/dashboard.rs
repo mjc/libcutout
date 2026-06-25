@@ -2,7 +2,6 @@ use std::{
     collections::VecDeque,
     fmt::{self, Write as FmtWrite},
     io::{self, Read, Write},
-    marker::PhantomData,
     ops::RangeInclusive,
     sync::{
         Arc, OnceLock,
@@ -19,11 +18,12 @@ use cutout_btle::{
     ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Current,
-    DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
+    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Count,
+    Current, DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PhaseCurrent, Power,
-    ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-    SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, Voltage,
+    ProtocolFamily, Quantity, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry,
+    SettingsReadback, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, Unit,
+    Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
@@ -247,85 +247,65 @@ impl ScanBrowser {
     }
 }
 
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct DashboardCount<Tag> {
-    value: u64,
-    tag: PhantomData<fn() -> Tag>,
-}
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct DashboardCount<Tag: Unit<Dimension = Count>>(Quantity<Count, Tag, u64>);
 
-impl<Tag> Clone for DashboardCount<Tag> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Tag> Copy for DashboardCount<Tag> {}
-
-impl<Tag> Default for DashboardCount<Tag> {
+impl<Tag: Unit<Dimension = Count>> Default for DashboardCount<Tag> {
     fn default() -> Self {
-        Self::new(0)
+        Self(Quantity::default())
     }
 }
 
-impl<Tag> DashboardCount<Tag> {
+impl<Tag: Unit<Dimension = Count>> DashboardCount<Tag> {
     const fn new(value: u64) -> Self {
-        Self {
-            value,
-            tag: PhantomData,
-        }
+        Self(Quantity::from_unit_value(value))
     }
 }
 
-impl<Tag> fmt::Display for DashboardCount<Tag> {
+impl<Tag: Unit<Dimension = Count>> fmt::Display for DashboardCount<Tag> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.value.fmt(f)
+        self.0.fmt(f)
     }
 }
 
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ReadOnlySummaryCount<Tag> {
-    value: u64,
-    tag: PhantomData<fn() -> Tag>,
-}
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ReadOnlySummaryCount<Tag: Unit<Dimension = Count>>(Quantity<Count, Tag, u64>);
 
-impl<Tag> Clone for ReadOnlySummaryCount<Tag> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<Tag> Copy for ReadOnlySummaryCount<Tag> {}
-
-impl<Tag> Default for ReadOnlySummaryCount<Tag> {
+impl<Tag: Unit<Dimension = Count>> Default for ReadOnlySummaryCount<Tag> {
     fn default() -> Self {
-        Self::new(0)
+        Self(Quantity::default())
     }
 }
 
-impl<Tag> ReadOnlySummaryCount<Tag> {
+impl<Tag: Unit<Dimension = Count>> ReadOnlySummaryCount<Tag> {
     pub(crate) const fn new(value: u64) -> Self {
-        Self {
-            value,
-            tag: PhantomData,
-        }
+        Self(Quantity::from_unit_value(value))
     }
 
     const fn increment(self) -> Self {
-        Self::new(self.value.saturating_add(1))
+        Self::new(self.0.unit_value().saturating_add(1))
     }
 }
 
-impl<Tag> fmt::Display for ReadOnlySummaryCount<Tag> {
+impl<Tag: Unit<Dimension = Count>> fmt::Display for ReadOnlySummaryCount<Tag> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.value.fmt(f)
+        self.0.fmt(f)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct DiscoveredDeviceCountTag;
 
+impl Unit for DiscoveredDeviceCountTag {
+    type Dimension = Count;
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ConnectedDeviceCountTag;
+
+impl Unit for ConnectedDeviceCountTag {
+    type Dimension = Count;
+}
 
 pub(crate) type DiscoveredDeviceCount = DashboardCount<DiscoveredDeviceCountTag>;
 pub(crate) type ConnectedDeviceCount = DashboardCount<ConnectedDeviceCountTag>;
@@ -333,11 +313,23 @@ pub(crate) type ConnectedDeviceCount = DashboardCount<ConnectedDeviceCountTag>;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RawReadOnlyPageCountTag;
 
+impl Unit for RawReadOnlyPageCountTag {
+    type Dimension = Count;
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct ReadOnlyDiagnosticResponseCountTag;
 
+impl Unit for ReadOnlyDiagnosticResponseCountTag {
+    type Dimension = Count;
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct RawTelemetryResponseCountTag;
+
+impl Unit for RawTelemetryResponseCountTag {
+    type Dimension = Count;
+}
 
 pub(crate) type RawReadOnlyPageCount = ReadOnlySummaryCount<RawReadOnlyPageCountTag>;
 pub(crate) type ReadOnlyDiagnosticResponseCount =
