@@ -365,10 +365,7 @@ mod tests {
         let profile = begode_falcon_target_voltage_profile();
 
         assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
-        assert_eq!(
-            profile.series_cells(),
-            cutout_core::PackSeriesCells::new(20)
-        );
+        assert_eq!(profile.series_cells(), cutout_core::SeriesCount::new(20));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)

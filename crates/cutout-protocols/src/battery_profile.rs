@@ -1,4 +1,4 @@
-use cutout_core::{Capacity, CellVoltage, PackSeriesCells, Percent, Voltage};
+use cutout_core::{Capacity, CellVoltage, Percent, SeriesCount, Voltage};
 
 /// A measured voltage/percentage point for a battery profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,7 +29,7 @@ impl BatteryVoltageProfile {
     pub fn estimate_percent_from_pack_voltage(
         self,
         pack_voltage: Voltage,
-        series_cells: PackSeriesCells,
+        series_cells: SeriesCount,
     ) -> Percent {
         self.estimate_percent_from_cell_voltage(normalize_cell_voltage(pack_voltage, series_cells))
     }
@@ -102,7 +102,7 @@ pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     points: &SAMSUNG_50S_CELL_POINTS,
 };
 
-fn normalize_cell_voltage(pack_voltage: Voltage, series_cells: PackSeriesCells) -> CellVoltage {
+fn normalize_cell_voltage(pack_voltage: Voltage, series_cells: SeriesCount) -> CellVoltage {
     let series_cells = i32::from(series_cells.get());
     if series_cells <= 0 {
         return CellVoltage::from_microvolts(0);
@@ -144,8 +144,8 @@ mod tests {
         Percent::from_percent(value)
     }
 
-    const fn series(value: u8) -> PackSeriesCells {
-        PackSeriesCells::new(value)
+    const fn series(value: u8) -> SeriesCount {
+        SeriesCount::new(value)
     }
 
     #[test]

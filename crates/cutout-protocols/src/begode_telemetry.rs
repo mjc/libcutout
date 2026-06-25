@@ -1,10 +1,10 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    BatteryCurrent, BmsParallelPacks, Capacity, CentiVoltage, DiagnosticDetail, DiagnosticReadback,
+    BatteryCurrent, Capacity, CentiVoltage, DiagnosticDetail, DiagnosticReadback,
     DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicMillis,
-    PackSeriesCells, Percent, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SettingsEntry,
-    SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    ParallelCount, Percent, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
+    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
     VerificationStatus, Voltage,
 };
 use thiserror::Error;
@@ -14,11 +14,11 @@ use crate::{
     parser::{ByteCursor, ByteOffset},
 };
 
-const SERIES_CELLS_20: PackSeriesCells = PackSeriesCells::new(20);
-const SERIES_CELLS_24: PackSeriesCells = PackSeriesCells::new(24);
+const SERIES_CELLS_20: SeriesCount = SeriesCount::new(20);
+const SERIES_CELLS_24: SeriesCount = SeriesCount::new(24);
 #[cfg(test)]
-const PARALLEL_PACKS_1: BmsParallelPacks = BmsParallelPacks::new(1);
-const PARALLEL_PACKS_2: BmsParallelPacks = BmsParallelPacks::new(2);
+const PARALLEL_PACKS_1: ParallelCount = ParallelCount::new(1);
+const PARALLEL_PACKS_2: ParallelCount = ParallelCount::new(2);
 
 /// Begode speed/distance unit mode inferred from Live B settings bit 0.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -284,10 +284,10 @@ pub struct BegodePackLayoutEvidence {
     pub cell_model: Option<BegodeCellModel>,
 
     /// Series cell count, when explicitly reported.
-    pub series_cells: Option<PackSeriesCells>,
+    pub series_cells: Option<SeriesCount>,
 
     /// Parallel cell count, when explicitly reported.
-    pub parallel_count: Option<BmsParallelPacks>,
+    pub parallel_count: Option<ParallelCount>,
 }
 
 /// Result of selecting Begode pack-layout evidence from explicit inputs.
@@ -338,7 +338,7 @@ impl BegodeFalconBatteryVariant {
 
     /// Series cell count selected for this Falcon variant.
     #[must_use]
-    pub const fn series_cells(self) -> PackSeriesCells {
+    pub const fn series_cells(self) -> SeriesCount {
         self.voltage_profile().series_cells()
     }
 
@@ -351,12 +351,12 @@ impl BegodeFalconBatteryVariant {
         }
     }
 
-    /// Parallel cell count selected for this Falcon variant, when evidence-backed.
+    /// Parallel pack count selected for this Falcon variant, when evidence-backed.
     #[must_use]
-    pub const fn parallel_count(self) -> Option<u8> {
+    pub const fn parallel_count(self) -> Option<ParallelCount> {
         match self {
             Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(2),
+            Self::Planned100V24S900WhSamsung50S => Some(PARALLEL_PACKS_2),
         }
     }
 
@@ -402,7 +402,7 @@ impl BegodePackVoltageProfile {
 
     /// Series cell count for this pack profile.
     #[must_use]
-    pub const fn series_cells(self) -> PackSeriesCells {
+    pub const fn series_cells(self) -> SeriesCount {
         match self {
             Self::Begode84VFullCharge => SERIES_CELLS_20,
             Self::Begode100VFullCharge => SERIES_CELLS_24,
@@ -607,8 +607,8 @@ fn validate_selected_begode_pack_capacity(
 
 fn validate_samsung_50s_capacity(
     capacity: BegodeCapacityEvidence,
-    series_cells: PackSeriesCells,
-    parallel_count: BmsParallelPacks,
+    series_cells: SeriesCount,
+    parallel_count: ParallelCount,
 ) -> BegodePackEvidenceConsistency {
     let expected_capacity =
         Capacity::from_milliamp_hours(u32::from(parallel_count.get()).saturating_mul(5_000));
@@ -706,7 +706,7 @@ fn layout_evidence_from_annotation(annotation: &str) -> Option<BegodePackLayoutE
         "series_cells" | "pack_series_cells" => {
             parse_u8_evidence(value).map(|series_cells| BegodePackLayoutEvidence {
                 cell_model: None,
-                series_cells: Some(PackSeriesCells::new(series_cells)),
+                series_cells: Some(SeriesCount::new(series_cells)),
                 parallel_count: None,
             })
         }
@@ -714,7 +714,7 @@ fn layout_evidence_from_annotation(annotation: &str) -> Option<BegodePackLayoutE
             parse_u8_evidence(value).map(|parallel_count| BegodePackLayoutEvidence {
                 cell_model: None,
                 series_cells: None,
-                parallel_count: Some(BmsParallelPacks::new(parallel_count)),
+                parallel_count: Some(ParallelCount::new(parallel_count)),
             })
         }
         _ => None,
@@ -1363,8 +1363,8 @@ mod tests {
     };
     use cutout_core::{Capacity, Duration, Energy};
     use cutout_core::{
-        DiagnosticSeverity, Measured, PackSeriesCells, ProtocolTag, RawFieldValue,
-        ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus, Voltage,
+        DiagnosticSeverity, Measured, ParallelCount, ProtocolTag, RawFieldValue, ReadOnlyResponse,
+        SeriesCount, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus, Voltage,
     };
     use proptest::prelude::*;
 
@@ -1638,7 +1638,7 @@ mod tests {
     fn falcon_84v_full_charge_profile_exposes_pack_geometry_without_capacity_guess() {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
-        assert_eq!(profile.series_cells(), PackSeriesCells::new(20));
+        assert_eq!(profile.series_cells(), SeriesCount::new(20));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
@@ -1650,7 +1650,7 @@ mod tests {
     fn begode_84v_profile_records_user_confirmed_falcon_target() {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
-        assert_eq!(profile.series_cells(), PackSeriesCells::new(20));
+        assert_eq!(profile.series_cells(), SeriesCount::new(20));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
@@ -1664,7 +1664,7 @@ mod tests {
 
         assert_eq!(profile, BEGODE_FALCON_TARGET_VOLTAGE_PROFILE);
         assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
-        assert_eq!(profile.series_cells(), PackSeriesCells::new(20));
+        assert_eq!(profile.series_cells(), SeriesCount::new(20));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
@@ -1676,7 +1676,7 @@ mod tests {
     fn begode_100v_profile_records_public_falcon_variant_evidence() {
         let profile = BegodePackVoltageProfile::Begode100VFullCharge;
 
-        assert_eq!(profile.series_cells(), PackSeriesCells::new(24));
+        assert_eq!(profile.series_cells(), SeriesCount::new(24));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
@@ -2110,7 +2110,7 @@ mod tests {
             variant.voltage_profile(),
             BegodePackVoltageProfile::Begode84VFullCharge
         );
-        assert_eq!(variant.series_cells(), PackSeriesCells::new(20));
+        assert_eq!(variant.series_cells(), SeriesCount::new(20));
         assert_eq!(variant.cell_model(), None);
         assert_eq!(variant.parallel_count(), None);
         assert_eq!(variant.nominal_capacity(), None);
@@ -2125,9 +2125,9 @@ mod tests {
             variant.voltage_profile(),
             BegodePackVoltageProfile::Begode100VFullCharge
         );
-        assert_eq!(variant.series_cells(), PackSeriesCells::new(24));
+        assert_eq!(variant.series_cells(), SeriesCount::new(24));
         assert_eq!(variant.cell_model(), Some(BegodeCellModel::Samsung50S));
-        assert_eq!(variant.parallel_count(), Some(2));
+        assert_eq!(variant.parallel_count(), Some(ParallelCount::new(2)));
         assert_eq!(
             variant.nominal_capacity(),
             Some(Capacity::from_milliamp_hours(10_000))

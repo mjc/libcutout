@@ -4,10 +4,10 @@ use cutout_core::{
     BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, DeviceCommand,
     DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
     GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis,
-    NotificationByteLen, NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics,
-    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PayloadClassifier,
-    ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput,
+    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserFrameLen,
+    ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector,
+    ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SeriesCount, SessionInput,
     SessionOutput, Temperature, TransportAction, ValueQuality, VerificationStatus, VerifiedValue,
     Voltage, WritePayload,
 };
@@ -953,7 +953,7 @@ impl RegisteredModelSpec for NosfetAeroModel {
             verification: VerificationStatus::HardwareVerified,
         }),
         battery: Some(BatterySpec {
-            series_cells: PackSeriesCells::new(30),
+            series_cells: SeriesCount::new(30),
             nominal_capacity: None,
             voltage_range: Voltage::from_millivolts(91_000)..=Voltage::from_millivolts(126_000),
             verification: VerificationStatus::HardwareVerified,
