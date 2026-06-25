@@ -3610,6 +3610,12 @@ pub struct AngularVelocity;
 
 impl Dimension for AngularVelocity {}
 
+/// Rotation-count dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Rotation;
+
+impl Dimension for Rotation {}
+
 /// Dimensionless ratio dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Ratio;
@@ -3736,6 +3742,14 @@ pub struct ElectricalRevolutionPerMinute;
 
 impl Unit for ElectricalRevolutionPerMinute {
     type Dimension = AngularVelocity;
+}
+
+/// Relative tachometer count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TachometerCountUnit;
+
+impl Unit for TachometerCountUnit {
+    type Dimension = Rotation;
 }
 
 /// Permille storage unit.
@@ -3954,6 +3968,23 @@ impl RotationalSpeed {
     /// Returns this rotational speed in electrical revolutions per minute.
     #[must_use]
     pub const fn as_erpm(self) -> i32 {
+        self.unit_value()
+    }
+}
+
+/// Relative tachometer reading stored as signed counts.
+pub type TachometerReading = Quantity<Rotation, TachometerCountUnit, i32>;
+
+impl TachometerReading {
+    /// Creates a relative tachometer reading from signed counts.
+    #[must_use]
+    pub const fn from_counts(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this relative tachometer reading as signed counts.
+    #[must_use]
+    pub const fn as_counts(self) -> i32 {
         self.unit_value()
     }
 }
@@ -5993,6 +6024,14 @@ mod tests {
     #[test]
     fn rotational_speed_quantity_preserves_erpm_unit() {
         assert_eq!(crate::RotationalSpeed::from_erpm(4_500).as_erpm(), 4_500);
+    }
+
+    #[test]
+    fn tachometer_reading_quantity_preserves_signed_counts() {
+        assert_eq!(
+            crate::TachometerReading::from_counts(-21_973).as_counts(),
+            -21_973
+        );
     }
 
     #[test]

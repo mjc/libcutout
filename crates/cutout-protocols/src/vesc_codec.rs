@@ -1,6 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
-use cutout_core::{BatteryCurrent, Distance, Duration, Power, RotationalSpeed, Speed, Voltage};
+use cutout_core::{
+    BatteryCurrent, Distance, Duration, Power, RotationalSpeed, Speed, TachometerReading, Voltage,
+};
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -173,32 +175,13 @@ pub struct VescValuesTelemetry {
     pub input_current: BatteryCurrent,
 
     /// Relative tachometer.
-    pub tachometer: VescTachometer,
+    pub tachometer: TachometerReading,
 
     /// Controller identifier.
     pub controller_id: VescControllerId,
 
     /// Current VESC fault code.
     pub fault_code: VescFaultCode,
-}
-
-/// VESC relative tachometer count.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct VescTachometer(i32);
-
-impl VescTachometer {
-    /// Creates a relative tachometer count.
-    #[must_use]
-    pub const fn from_counts(value: i32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the relative tachometer count.
-    #[must_use]
-    pub const fn as_counts(self) -> i32 {
-        self.0
-    }
 }
 
 /// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
@@ -567,7 +550,7 @@ impl From<vesc::Values> for VescValuesTelemetry {
             input_current: BatteryCurrent::from_milliamps(round_f32_to_i32(
                 values.avg_current_input * 1_000.0,
             )),
-            tachometer: VescTachometer::from_counts(values.tachometer),
+            tachometer: TachometerReading::from_counts(values.tachometer),
             controller_id: VescControllerId::new(values.controller_id),
             fault_code: values.fault_code.into(),
         }
@@ -750,7 +733,10 @@ mod tests {
         assert_eq!(telemetry.rpm, RotationalSpeed::from_erpm(989));
         assert_eq!(telemetry.voltage.as_millivolts(), 37_500);
         assert_eq!(telemetry.input_current.as_milliamps(), 40);
-        assert_eq!(telemetry.tachometer, VescTachometer::from_counts(-21_973));
+        assert_eq!(
+            telemetry.tachometer,
+            TachometerReading::from_counts(-21_973)
+        );
         assert_eq!(telemetry.controller_id, VescControllerId::new(20));
         assert_eq!(telemetry.fault_code, VescFaultCode::None);
     }
