@@ -118,8 +118,8 @@ impl BegodeUnitMode {
 
     fn distance_from_wire(self, distance_m: u32) -> Distance {
         match self {
-            Self::Metric => distance_from_metres(distance_m),
-            Self::Imperial => distance_from_milli_miles(distance_m),
+            Self::Metric => Distance::from_metres(u64::from(distance_m)),
+            Self::Imperial => Distance::from_milli_miles(distance_m),
         }
     }
 
@@ -127,7 +127,7 @@ impl BegodeUnitMode {
         match self {
             Self::Metric => metric_speed,
             Self::Imperial => {
-                speed_from_milli_kmh(mph_milli_to_kmh_milli(speed_to_milli_kmh(metric_speed)))
+                Speed::from_milli_kmh(mph_milli_to_kmh_milli(speed_to_milli_kmh(metric_speed)))
             }
         }
     }
@@ -140,8 +140,7 @@ impl BegodeUnitMode {
     }
 
     fn distance(self, metric_distance: Distance) -> Distance {
-        let metric_metres = metric_distance.as_millimetres() / 1_000;
-        self.distance_from_wire(u32::try_from(metric_metres).unwrap_or(u32::MAX))
+        self.distance_from_wire(u32::try_from(metric_distance.as_metres()).unwrap_or(u32::MAX))
     }
 }
 
@@ -911,8 +910,11 @@ impl BegodeLiveATelemetry {
             wire_voltage,
             voltage: scaled_voltage(wire_voltage, profile),
             speed: speed_from_live_a_raw(be_i16(cursor, ParserOffset::from_bytes(4))),
-            trip_distance: distance_from_metres(be_u32(cursor, ParserOffset::from_bytes(6))),
-            trip_distance_low: distance_from_metres(u32::from(be_u16(
+            trip_distance: Distance::from_metres(u64::from(be_u32(
+                cursor,
+                ParserOffset::from_bytes(6),
+            ))),
+            trip_distance_low: Distance::from_metres(u64::from(be_u16(
                 cursor,
                 ParserOffset::from_bytes(8),
             ))),
@@ -1304,6 +1306,11 @@ const fn div_round(numerator: i32, denominator: i32) -> i32 {
     (numerator + denominator / 2) / denominator
 }
 
+fn mph_to_kmh_u16(value: u16) -> u16 {
+    let scaled = u32::from(value) * 1_609_344;
+    u16::try_from(scaled / 1_000_000).unwrap_or(u16::MAX)
+}
+
 fn mph_milli_to_kmh_milli(value: i32) -> i32 {
     let scaled = i64::from(value) * 1_609_344;
     match i32::try_from(scaled / 1_000_000) {
@@ -1316,19 +1323,6 @@ fn mph_milli_to_kmh_milli(value: i32) -> i32 {
             }
         }
     }
-}
-
-fn distance_from_metres(value: u32) -> Distance {
-    Distance::from_millimetres(u64::from(value) * 1_000)
-}
-
-fn distance_from_milli_miles(value: u32) -> Distance {
-    Distance::from_millimetres(u64::from(value) * 1_609_344 / 1_000)
-}
-
-fn mph_to_kmh_u16(value: u16) -> u16 {
-    let scaled = u32::from(value) * 1_609_344;
-    u16::try_from(scaled / 1_000_000).unwrap_or(u16::MAX)
 }
 
 fn battery_level_from_i32(percent: i32) -> BatteryLevel {

@@ -434,20 +434,16 @@ impl VeteranTelemetry {
                     .be_i16(ParserOffset::from_bytes(6))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
-            trip_distance: Distance::from_millimetres(
-                u64::from(
-                    cursor
-                        .veteran_swapped_u32(ParserOffset::from_bytes(8))
-                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
-                ) * 1_000,
-            ),
-            total_distance: Distance::from_millimetres(
-                u64::from(
-                    cursor
-                        .veteran_swapped_u32(ParserOffset::from_bytes(12))
-                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
-                ) * 1_000,
-            ),
+            trip_distance: Distance::from_metres(u64::from(
+                cursor
+                    .veteran_swapped_u32(ParserOffset::from_bytes(8))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            total_distance: Distance::from_metres(u64::from(
+                cursor
+                    .veteran_swapped_u32(ParserOffset::from_bytes(12))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
             battery_current: BatteryCurrent::from_milliamps(
                 i32::from(
                     cursor

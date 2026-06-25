@@ -570,55 +570,27 @@ impl From<vesc::Stats> for VescStatsTelemetry {
 }
 
 fn rotational_speed_from_erpm(value: f32) -> RotationalSpeed {
-    RotationalSpeed::from_erpm(round_f32_to_i32(value))
+    RotationalSpeed::from_erpm_f32(value)
 }
 
 fn voltage_from_volts(value: f32) -> Voltage {
-    Voltage::from_millivolts(round_f32_to_milli_i32(value))
+    Voltage::from_volts_f32(value)
 }
 
 fn current_from_amps(value: f32) -> BatteryCurrent {
-    BatteryCurrent::from_milliamps(round_f32_to_milli_i32(value))
+    BatteryCurrent::from_amps_f32(value)
 }
 
 fn speed_from_metres_per_second(value: f32) -> Speed {
-    Speed::from_millimetres_per_second(round_f32_to_milli_i32(value))
+    Speed::from_metres_per_second(value)
 }
 
 fn power_from_watts(value: f32) -> Power {
-    Power::from_milliwatts(i64::from(round_f32_to_milli_i32(value)))
+    Power::from_watts_f32(value)
 }
 
 fn duration_from_seconds(value: f32) -> Duration {
-    Duration::from_milliseconds(u64::from(round_f32_to_milli_u32(value)))
-}
-
-fn round_f32_to_milli_i32(value: f32) -> i32 {
-    round_f32_to_i32(value * 1_000.0)
-}
-
-fn round_f32_to_milli_u32(value: f32) -> u32 {
-    round_f32_to_u32(value * 1_000.0)
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn round_f32_to_i32(value: f32) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss
-)]
-fn round_f32_to_u32(value: f32) -> u32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.round().clamp(0.0, u32::MAX as f32) as u32
+    Duration::from_seconds_f32(value)
 }
 
 impl From<vesc::FaultCode> for VescFaultCode {
