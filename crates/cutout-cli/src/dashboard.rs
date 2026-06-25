@@ -1555,20 +1555,20 @@ fn u64_to_i64(value: u64) -> Option<i64> {
     i64::try_from(value).ok()
 }
 
-struct OptionalDistanceDisplay(Option<u64>);
+struct OptionalDisplayDistance(Option<u64>);
 
-impl fmt::Display for OptionalDistanceDisplay {
+impl fmt::Display for OptionalDisplayDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
-            Some(value) => DistanceMDisplay(value).fmt(f),
+            Some(value) => DisplayDistance(value).fmt(f),
             None => f.write_str("unknown"),
         }
     }
 }
 
-struct DistanceMDisplay(u64);
+struct DisplayDistance(u64);
 
-impl fmt::Display for DistanceMDisplay {
+impl fmt::Display for DisplayDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.0 < 1_000 {
             write!(f, "{} m", self.0)
@@ -1649,7 +1649,7 @@ impl fmt::Display for MappedTelemetryLog {
             fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
         if let Some(distance) = snapshot.distance {
-            fields.write_display("distance", DistanceDisplay(distance.value.get()))?;
+            fields.write_display("distance", DisplayTelemetryDistance(distance.value.get()))?;
         }
         if let Some(pitch) = snapshot.pitch {
             fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
@@ -1706,7 +1706,7 @@ impl fmt::Display for TelemetryDeltaLog {
             fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
         if let Some(distance) = delta.distance {
-            fields.write_display("distance", DistanceDisplay(distance.value.get()))?;
+            fields.write_display("distance", DisplayTelemetryDistance(distance.value.get()))?;
         }
         if let Some(pitch) = delta.pitch {
             fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
@@ -1813,9 +1813,9 @@ impl fmt::Display for OptionalOperationalCurrentDisplay {
     }
 }
 
-struct DistanceDisplay(u64);
+struct DisplayTelemetryDistance(u64);
 
-impl fmt::Display for DistanceDisplay {
+impl fmt::Display for DisplayTelemetryDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let meters = self.0 / 1_000;
         if meters < 1_000 {
@@ -2719,7 +2719,7 @@ fn render_operational_bottom_metrics(frame: &mut Frame<'_>, area: Rect, state: &
         frame,
         bottom[1],
         "Trip",
-        OptionalDistanceDisplay(state.telemetry.latest_distance).to_string(),
+        OptionalDisplayDistance(state.telemetry.latest_distance).to_string(),
         None,
         Color::Cyan,
     );
@@ -3229,7 +3229,7 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
                 Span::styled(" pwm ", Style::new().fg(Color::Gray)),
                 Span::raw(OptionalI64Display::new(state.telemetry.latest_pwm, "%").to_string()),
                 Span::styled(" distance ", Style::new().fg(Color::Gray)),
-                Span::raw(OptionalDistanceDisplay(state.telemetry.latest_distance).to_string()),
+                Span::raw(OptionalDisplayDistance(state.telemetry.latest_distance).to_string()),
                 Span::styled(" pitch ", Style::new().fg(Color::Gray)),
                 Span::raw(
                     OptionalI64Display::new(state.telemetry.latest_pitch, " deg").to_string(),
@@ -3990,14 +3990,17 @@ mod tests {
 
     #[test]
     fn distance_formatter_uses_odometer_scale_for_large_distances() {
-        assert_eq!(DistanceMDisplay(999).to_string(), "999 m");
-        assert_eq!(DistanceDisplay(1_551_169_000).to_string(), "1551.2 km");
+        assert_eq!(DisplayDistance(999).to_string(), "999 m");
         assert_eq!(
-            OptionalDistanceDisplay(Some(1_551_169)).to_string(),
+            DisplayTelemetryDistance(1_551_169_000).to_string(),
             "1551.2 km"
         );
-        assert_eq!(DistanceMDisplay(1_550_438).to_string(), "1550.4 km");
-        assert_eq!(OptionalDistanceDisplay(None).to_string(), "unknown");
+        assert_eq!(
+            OptionalDisplayDistance(Some(1_551_169)).to_string(),
+            "1551.2 km"
+        );
+        assert_eq!(DisplayDistance(1_550_438).to_string(), "1550.4 km");
+        assert_eq!(OptionalDisplayDistance(None).to_string(), "unknown");
     }
 
     #[test]
