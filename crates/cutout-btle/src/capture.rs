@@ -3,7 +3,7 @@ use std::fmt::{self, Write as _};
 use bytes::Bytes;
 use cutout_core::{
     NotificationByteLen, PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord,
-    TransportWriteLen, WriteMode,
+    TransportWriteLimit, WriteMode,
 };
 use futures_util::StreamExt;
 use uuid::Uuid;
@@ -407,7 +407,7 @@ impl SessionCapture {
         let header = PevcapHeader::new(
             metadata.wall_clock_start_unix_ms,
             metadata.platform_id,
-            write_limit.map(|len| TransportWriteLen::new(len.get())),
+            write_limit.map(|len| TransportWriteLimit::from_bytes(len.get())),
             &advertised_services,
             &gatt_fingerprints,
             metadata.resolved_identity,
@@ -442,7 +442,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             max_write_len,
         } => Some(PevcapRecord::link_up(
             monotonic_ms.into_core(),
-            max_write_len.map(|len| TransportWriteLen::new(len.get())),
+            max_write_len.map(|len| TransportWriteLimit::from_bytes(len.get())),
         )),
         SessionCaptureRecord::LinkDown { monotonic_ms } => {
             Some(PevcapRecord::link_down(monotonic_ms.into_core()))

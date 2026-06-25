@@ -267,8 +267,8 @@ mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
         MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, SafetyClassDto,
-        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto, TransportWriteLen,
-        TransportWriteLenDto,
+        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
+        TransportWriteLimit, TransportWriteLimitDto,
     };
 
     use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -284,12 +284,12 @@ mod tests {
         }
     }
 
-    const fn write_len(value: u16) -> TransportWriteLen {
-        TransportWriteLen::new(value)
+    const fn write_len(value: u16) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(value)
     }
 
-    const fn write_len_dto(value: u16) -> TransportWriteLenDto {
-        TransportWriteLenDto { bytes: value }
+    const fn write_len_dto(value: u16) -> TransportWriteLimitDto {
+        TransportWriteLimitDto { bytes: value }
     }
 
     #[test]

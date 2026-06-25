@@ -10,7 +10,7 @@ use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
     ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, MonotonicTimestamp,
     ParserKey, ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue,
-    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, TransportWriteLen,
+    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, TransportWriteLimit,
     VerificationStatus,
 };
 
@@ -18,8 +18,8 @@ const fn ms(value: u64) -> MonotonicTimestamp {
     MonotonicTimestamp::new(value)
 }
 
-const fn write_len(value: u16) -> TransportWriteLen {
-    TransportWriteLen::new(value)
+const fn write_len(value: u16) -> TransportWriteLimit {
+    TransportWriteLimit::from_bytes(value)
 }
 
 struct CountingAllocator;

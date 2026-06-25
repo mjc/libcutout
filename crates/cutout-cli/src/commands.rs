@@ -26,7 +26,7 @@ use cutout_core::{
     ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
     ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
-    SettingsReadback, TelemetrySnapshot, TransportWriteLen, ValueQuality, ValueSource,
+    SettingsReadback, TelemetrySnapshot, TransportWriteLimit, ValueQuality, ValueSource,
     VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
 };
 #[cfg(test)]
@@ -1677,7 +1677,7 @@ fn encode_raw_capture_pevcap(
     wall_clock_start_unix_ms: WallClockUnixTimestamp,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
-    let write_limit = write_limit.map(TransportWriteLen::new);
+    let write_limit = write_limit.map(TransportWriteLimit::from_bytes);
     let advertised_services = summary
         .observation
         .advertised_services
@@ -2320,7 +2320,7 @@ mod tests {
         DeviceEvent, GattChannel, MonotonicTimestamp, NotificationByteLen, ParserDiagnosticCount,
         ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
         ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, SignalStrength,
-        TransportWriteLen, VerificationStatus, VerifiedValue, WriteMode,
+        TransportWriteLimit, VerificationStatus, VerifiedValue, WriteMode,
     };
     use uuid::Uuid;
 
@@ -2339,8 +2339,8 @@ mod tests {
         SignalStrength::from_dbm(value)
     }
 
-    const fn write_len(value: u16) -> TransportWriteLen {
-        TransportWriteLen::new(value)
+    const fn write_len(value: u16) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(value)
     }
 
     const fn dropped_bytes(value: u64) -> ParserDroppedBytes {

@@ -1278,8 +1278,8 @@ mod tests {
         MonotonicTimestamp::new(value)
     }
 
-    const fn write_len(value: u16) -> cutout_core::TransportWriteLen {
-        cutout_core::TransportWriteLen::new(value)
+    const fn write_len(value: u16) -> cutout_core::TransportWriteLimit {
+        cutout_core::TransportWriteLimit::from_bytes(value)
     }
 
     use super::*;

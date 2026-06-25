@@ -786,7 +786,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     assert_eq!(pevcap.header.platform_id, "darwin");
     assert_eq!(
         pevcap.header.write_limit,
-        Some(cutout_core::TransportWriteLen::new(23))
+        Some(cutout_core::TransportWriteLimit::from_bytes(23))
     );
     assert_eq!(pevcap.header.advertised_services.len(), 1);
     assert_eq!(pevcap.header.gatt_fingerprints.len(), 1);
@@ -803,7 +803,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     assert_eq!(pevcap.records[0].monotonic_ms, ms(0));
     assert_eq!(
         pevcap.records[0].link_max_write_len,
-        Some(cutout_core::TransportWriteLen::new(23))
+        Some(cutout_core::TransportWriteLimit::from_bytes(23))
     );
     assert_eq!(pevcap.records[1].direction, PevcapDirection::Outbound);
     assert_eq!(

@@ -116,40 +116,20 @@ pub const MAX_TRANSPORT_WRITE_LEN: usize = 512;
 /// Payload bytes stored inline before falling back to an explicit large write.
 pub const MAX_INLINE_TRANSPORT_WRITE_LEN: usize = 32;
 
-/// Maximum payload bytes accepted by a transport write.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TransportWriteLen(u16);
+/// Maximum payload accepted by a transport write.
+pub type TransportWriteLimit = Quantity<Information, Byte, u16>;
 
-impl TransportWriteLen {
+impl TransportWriteLimit {
     /// Creates a transport write length from bytes.
     #[must_use]
     pub const fn from_bytes(value: u16) -> Self {
-        Self(value)
-    }
-
-    /// Creates a transport write length from bytes.
-    #[must_use]
-    pub const fn new(value: u16) -> Self {
-        Self::from_bytes(value)
+        Self::from_unit_value(value)
     }
 
     /// Returns the transport write length in bytes.
     #[must_use]
     pub const fn as_bytes(self) -> u16 {
-        self.0
-    }
-
-    /// Returns the transport write length in bytes.
-    #[must_use]
-    pub const fn get(self) -> u16 {
-        self.as_bytes()
-    }
-}
-
-impl fmt::Display for TransportWriteLen {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        self.unit_value()
     }
 }
 
@@ -190,7 +170,7 @@ pub struct LinkInfo {
     pub monotonic_ms: MonotonicTimestamp,
 
     /// Maximum write payload length reported by the host, when known.
-    pub max_write_len: Option<TransportWriteLen>,
+    pub max_write_len: Option<TransportWriteLimit>,
 }
 
 /// Command requested by the host application.
@@ -3600,6 +3580,12 @@ pub struct Length;
 
 impl Dimension for Length {}
 
+/// Information size dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Information;
+
+impl Dimension for Information {}
+
 /// Thermodynamic temperature dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ThermodynamicTemperature;
@@ -3724,6 +3710,14 @@ pub struct Millimetre;
 
 impl Unit for Millimetre {
     type Dimension = Length;
+}
+
+/// Byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Byte;
+
+impl Unit for Byte {
+    type Dimension = Information;
 }
 
 /// Millisecond storage unit.
@@ -5556,8 +5550,8 @@ mod tests {
         crate::ParserDiagnosticCount::new(value)
     }
 
-    const fn write_len(value: u16) -> crate::TransportWriteLen {
-        crate::TransportWriteLen::new(value)
+    const fn write_len(value: u16) -> crate::TransportWriteLimit {
+        crate::TransportWriteLimit::from_bytes(value)
     }
 
     const fn frame_len(value: usize) -> crate::ParserFrameLen {

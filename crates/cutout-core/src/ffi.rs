@@ -8,7 +8,7 @@ use crate::{
     ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
     ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
     SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLen,
+    Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
     ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
@@ -117,18 +117,18 @@ impl ParserDiagnosticCountDto {
 
 /// UniFFI-ready maximum transport write payload length.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TransportWriteLenDto {
+pub struct TransportWriteLimitDto {
     /// Length in bytes.
     pub bytes: u16,
 }
 
-impl TransportWriteLenDto {
-    fn from_core(value: TransportWriteLen) -> Self {
+impl TransportWriteLimitDto {
+    fn from_core(value: TransportWriteLimit) -> Self {
         Self { bytes: value.get() }
     }
 
-    fn into_core(self) -> TransportWriteLen {
-        TransportWriteLen::new(self.bytes)
+    fn into_core(self) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(self.bytes)
     }
 }
 
@@ -1016,7 +1016,7 @@ pub enum SessionInputDto {
         monotonic_ms: MonotonicMillisDto,
 
         /// Maximum write payload length reported by the host, when known.
-        max_write_len: Option<TransportWriteLenDto>,
+        max_write_len: Option<TransportWriteLimitDto>,
     },
 
     /// The underlying transport link is no longer available.
@@ -1049,7 +1049,7 @@ impl From<SessionInput<'_>> for SessionInputDto {
         match input {
             SessionInput::LinkUp(link) => Self::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
-                max_write_len: link.max_write_len.map(TransportWriteLenDto::from_core),
+                max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
             },
             SessionInput::LinkDown => Self::LinkDown,
             SessionInput::Notification {
@@ -1079,7 +1079,7 @@ impl SessionInputDto {
                 max_write_len,
             } => SessionInput::LinkUp(crate::LinkInfo {
                 monotonic_ms: (*monotonic_ms).into_core(),
-                max_write_len: max_write_len.map(TransportWriteLenDto::into_core),
+                max_write_len: max_write_len.map(TransportWriteLimitDto::into_core),
             }),
             Self::LinkDown => SessionInput::LinkDown,
             Self::Notification {
@@ -1435,7 +1435,7 @@ pub enum SessionEventDto {
         monotonic_ms: MonotonicMillisDto,
 
         /// Maximum write payload length reported by the host, when known.
-        max_write_len: Option<TransportWriteLenDto>,
+        max_write_len: Option<TransportWriteLimitDto>,
     },
 
     /// Link-down event accepted by the session.
@@ -1468,7 +1468,7 @@ impl From<DeviceEvent> for SessionEventDto {
         match event {
             DeviceEvent::LinkUp(link) => Self::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
-                max_write_len: link.max_write_len.map(TransportWriteLenDto::from_core),
+                max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
             },
             DeviceEvent::LinkDown => Self::LinkDown,
             DeviceEvent::Tick { monotonic_ms } => Self::Tick {
@@ -1803,12 +1803,12 @@ mod tests {
         }
     }
 
-    const fn write_len(value: u16) -> TransportWriteLen {
-        TransportWriteLen::new(value)
+    const fn write_len(value: u16) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(value)
     }
 
-    const fn write_len_dto(value: u16) -> TransportWriteLenDto {
-        TransportWriteLenDto { bytes: value }
+    const fn write_len_dto(value: u16) -> TransportWriteLimitDto {
+        TransportWriteLimitDto { bytes: value }
     }
 
     #[test]

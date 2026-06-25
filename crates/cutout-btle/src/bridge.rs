@@ -1,7 +1,7 @@
 use btleplug::api::Characteristic;
 use cutout_core::{
     DeviceCommand, GattChannel, LinkInfo, NotificationEvidence, NotificationIngestOutcome,
-    ProtocolSession, SessionInput, SessionOutput, TransportAction, TransportWriteLen, WriteMode,
+    ProtocolSession, SessionInput, SessionOutput, TransportAction, TransportWriteLimit, WriteMode,
     WritePayload,
 };
 use futures_util::StreamExt;
@@ -367,7 +367,7 @@ where
     session.handle(
         SessionInput::LinkUp(LinkInfo {
             monotonic_ms: monotonic_ms.into_core(),
-            max_write_len: max_write_len.map(|len| TransportWriteLen::new(len.get())),
+            max_write_len: max_write_len.map(|len| TransportWriteLimit::from_bytes(len.get())),
         }),
         outputs,
     );

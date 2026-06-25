@@ -10,7 +10,7 @@ use cutout_core::{
     ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
     PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
     ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto, TransportActionDto, TransportWriteLen, TransportWriteLenDto,
+    TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
     ValueQualityDto, ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
     WallClockUnixTimestamp,
 };
@@ -73,7 +73,7 @@ pub struct MobileSessionInputDto {
     pub monotonic_ms: MobileMonotonicMillisDto,
 
     /// Maximum write length, when known.
-    pub max_write_len: Option<MobileTransportWriteLenDto>,
+    pub max_write_len: Option<MobileTransportWriteLimitDto>,
 
     /// Transport channel bytes for notification inputs.
     pub channel: Vec<u8>,
@@ -125,19 +125,19 @@ impl MobileWallClockUnixMillisDto {
 
 /// Mobile maximum transport write payload length.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileTransportWriteLenDto {
+pub struct MobileTransportWriteLimitDto {
     /// Length in bytes.
     pub bytes: u16,
 }
 
-impl MobileTransportWriteLenDto {
-    const fn into_core_ffi(self) -> TransportWriteLenDto {
-        TransportWriteLenDto { bytes: self.bytes }
+impl MobileTransportWriteLimitDto {
+    const fn into_core_ffi(self) -> TransportWriteLimitDto {
+        TransportWriteLimitDto { bytes: self.bytes }
     }
 }
 
-impl From<TransportWriteLenDto> for MobileTransportWriteLenDto {
-    fn from(value: TransportWriteLenDto) -> Self {
+impl From<TransportWriteLimitDto> for MobileTransportWriteLimitDto {
+    fn from(value: TransportWriteLimitDto) -> Self {
         Self { bytes: value.bytes }
     }
 }
@@ -643,7 +643,7 @@ pub enum MobileCaptureExportError {
 pub struct MobilePevcapCaptureBuilder {
     wall_clock_start_unix_ms: WallClockUnixTimestamp,
     platform_id: String,
-    write_limit: Option<TransportWriteLen>,
+    write_limit: Option<TransportWriteLimit>,
     advertised_services: Mutex<Vec<GattChannel>>,
     gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
@@ -659,12 +659,12 @@ impl MobilePevcapCaptureBuilder {
     pub fn new(
         wall_clock_start_unix_ms: MobileWallClockUnixMillisDto,
         platform_id: String,
-        write_limit: Option<MobileTransportWriteLenDto>,
+        write_limit: Option<MobileTransportWriteLimitDto>,
     ) -> Arc<Self> {
         Arc::new(Self {
             wall_clock_start_unix_ms: wall_clock_start_unix_ms.into_core(),
             platform_id,
-            write_limit: write_limit.map(|value| TransportWriteLen::new(value.bytes)),
+            write_limit: write_limit.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
             advertised_services: Mutex::new(Vec::new()),
             gatt_fingerprints: Mutex::new(Vec::new()),
             resolved_identity: Mutex::new(None),
@@ -710,14 +710,14 @@ impl MobilePevcapCaptureBuilder {
     pub fn record_link_up(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
-        max_write_len: Option<MobileTransportWriteLenDto>,
+        max_write_len: Option<MobileTransportWriteLimitDto>,
     ) {
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(PevcapRecord::link_up(
                 monotonic_ms.into_core(),
-                max_write_len.map(|value| TransportWriteLen::new(value.bytes)),
+                max_write_len.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
             ));
     }
 
@@ -1002,7 +1002,7 @@ impl From<MobileSessionInputDto> for SessionInputDto {
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
                 max_write_len: input
                     .max_write_len
-                    .map(MobileTransportWriteLenDto::into_core_ffi),
+                    .map(MobileTransportWriteLimitDto::into_core_ffi),
             },
             MobileSessionInputKindDto::LinkDown => Self::LinkDown,
             MobileSessionInputKindDto::Notification => Self::Notification {
@@ -1472,8 +1472,8 @@ mod tests {
         MobileParserDiagnosticCountDto { count: value }
     }
 
-    const fn mobile_write_len(value: u16) -> MobileTransportWriteLenDto {
-        MobileTransportWriteLenDto { bytes: value }
+    const fn mobile_write_len(value: u16) -> MobileTransportWriteLimitDto {
+        MobileTransportWriteLimitDto { bytes: value }
     }
 
     fn notification_fixture() -> NotificationEvidenceDto {

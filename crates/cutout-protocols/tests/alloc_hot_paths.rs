@@ -7,7 +7,7 @@ use std::sync::{
 };
 
 use cutout_core::{
-    LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput, TransportWriteLen,
+    LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput, TransportWriteLimit,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
@@ -22,8 +22,8 @@ const fn ms(value: u64) -> MonotonicTimestamp {
     MonotonicTimestamp::new(value)
 }
 
-const fn write_len(value: u16) -> TransportWriteLen {
-    TransportWriteLen::new(value)
+const fn write_len(value: u16) -> TransportWriteLimit {
+    TransportWriteLimit::from_bytes(value)
 }
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);

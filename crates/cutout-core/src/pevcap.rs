@@ -13,7 +13,7 @@ use crate::VescControllerId;
 use crate::{
     DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicTimestamp,
     NotificationChunkLen, ProtocolFamily, ProtocolSession, ReplayChunkComparison, RequestTarget,
-    SemanticEventCount, SessionInput, SessionOutput, TransportWriteLen, VerifiedValue,
+    SemanticEventCount, SessionInput, SessionOutput, TransportWriteLimit, VerifiedValue,
     WallClockUnixTimestamp, WriteMode,
 };
 
@@ -292,7 +292,7 @@ pub struct PevcapHeader {
     pub platform_id: String,
 
     /// Maximum transport write length observed at capture time.
-    pub write_limit: Option<TransportWriteLen>,
+    pub write_limit: Option<TransportWriteLimit>,
 
     /// Advertised service UUIDs observed during discovery.
     pub advertised_services: ArrayVec<GattChannel, PEVCAP_MAX_ADVERTISED_SERVICES>,
@@ -325,7 +325,7 @@ impl PevcapHeader {
     pub fn new(
         wall_clock_start_unix_ms: WallClockUnixTimestamp,
         platform_id: impl Into<String>,
-        write_limit: Option<TransportWriteLen>,
+        write_limit: Option<TransportWriteLimit>,
         advertised_services: &[GattChannel],
         gatt_fingerprints: &[GattFingerprint],
         resolved_identity: Option<PevcapResolvedIdentity>,
@@ -450,7 +450,7 @@ pub struct PevcapRecord {
     pub write_mode: Option<WriteMode>,
 
     /// Negotiated maximum write length, when this is a link-up record.
-    pub link_max_write_len: Option<TransportWriteLen>,
+    pub link_max_write_len: Option<TransportWriteLimit>,
 
     /// Optional request target metadata for outbound correlation.
     pub target: Option<RequestTarget>,
@@ -464,7 +464,7 @@ impl PevcapRecord {
     #[must_use]
     pub fn link_up(
         monotonic_ms: MonotonicTimestamp,
-        max_write_len: Option<TransportWriteLen>,
+        max_write_len: Option<TransportWriteLimit>,
     ) -> Self {
         Self {
             monotonic_ms,
@@ -1323,7 +1323,7 @@ impl From<&PevcapHeader> for PevcapHeaderJson {
         Self {
             wall_clock_start_unix_ms: header.wall_clock_start_unix_ms.as_milliseconds(),
             platform_id: header.platform_id.clone(),
-            write_limit: header.write_limit.map(TransportWriteLen::get),
+            write_limit: header.write_limit.map(TransportWriteLimit::as_bytes),
             advertised_services: header
                 .advertised_services
                 .iter()
@@ -1367,7 +1367,7 @@ impl PevcapHeaderJson {
         PevcapHeader::new(
             WallClockUnixTimestamp::from_milliseconds(self.wall_clock_start_unix_ms),
             self.platform_id,
-            self.write_limit.map(TransportWriteLen::new),
+            self.write_limit.map(TransportWriteLimit::from_bytes),
             &advertised_services,
             &gatt_fingerprints,
             self.resolved_identity
@@ -1620,7 +1620,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             characteristic: record.characteristic.as_bytes(),
             service: record.service.map(GattChannel::as_bytes),
             write_mode: record.write_mode.map(WriteModeJson::from),
-            link_max_write_len: record.link_max_write_len.map(TransportWriteLen::get),
+            link_max_write_len: record.link_max_write_len.map(TransportWriteLimit::as_bytes),
             target: record.target.map(PevcapRequestTargetJson::from),
             bytes: record.bytes.clone(),
         }
@@ -1637,7 +1637,7 @@ impl PevcapRecordJson {
             characteristic: GattChannel::from_bytes(self.characteristic),
             service: self.service.map(GattChannel::from_bytes),
             write_mode: self.write_mode.map(WriteModeJson::into_mode),
-            link_max_write_len: self.link_max_write_len.map(TransportWriteLen::new),
+            link_max_write_len: self.link_max_write_len.map(TransportWriteLimit::from_bytes),
             target: self.target.map(PevcapRequestTargetJson::into_target),
             bytes: self.bytes,
         })
@@ -1801,8 +1801,8 @@ mod tests {
         WallClockUnixTimestamp::new(value)
     }
 
-    const fn write_len(value: u16) -> TransportWriteLen {
-        TransportWriteLen::new(value)
+    const fn write_len(value: u16) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(value)
     }
 
     #[derive(Clone, Default)]
