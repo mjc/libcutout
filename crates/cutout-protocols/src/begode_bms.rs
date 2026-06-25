@@ -64,7 +64,7 @@ impl BegodeBmsSummary {
             sub_index,
             bms_index: BmsPackIndex::new(u8::from(sub_index_value >= 2)),
             half_index: BmsHalfIndex::new(sub_index_value & 1),
-            pwm_limit: centi_percent_to_permille(be_u16(cursor, ParserOffset::from_bytes(2))),
+            pwm_limit: DutyCycle::from_centipercent(be_u16(cursor, ParserOffset::from_bytes(2))),
             pack_voltage: Voltage::from_deci_volts(i32::from(be_u16(
                 cursor,
                 ParserOffset::from_bytes(6),
@@ -215,10 +215,6 @@ fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
 
 fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
     cursor.be_i16(offset).unwrap_or_default()
-}
-
-fn centi_percent_to_permille(value: u16) -> DutyCycle {
-    DutyCycle::from_centipercent(value)
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {
