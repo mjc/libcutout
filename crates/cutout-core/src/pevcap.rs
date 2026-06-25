@@ -677,9 +677,9 @@ impl PevcapCapture {
         );
 
         ReplayChunkComparison {
-            whole_semantic_events: SemanticEventCount::new(whole.len()),
-            one_byte_semantic_events: SemanticEventCount::new(one_byte.len()),
-            arbitrary_semantic_events: SemanticEventCount::new(arbitrary.len()),
+            whole_semantic_events: SemanticEventCount::from_events(whole.len()),
+            one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
+            arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
             one_byte_matches: one_byte == whole,
             arbitrary_matches: arbitrary == whole,
         }

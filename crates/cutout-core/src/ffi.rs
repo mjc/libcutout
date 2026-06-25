@@ -89,7 +89,9 @@ pub struct SemanticEventCountDto {
 
 impl SemanticEventCountDto {
     fn from_core(value: SemanticEventCount) -> Self {
-        Self { count: value.get() }
+        Self {
+            count: value.as_events(),
+        }
     }
 }
 
@@ -102,7 +104,9 @@ pub struct ParserDroppedBytesDto {
 
 impl ParserDroppedBytesDto {
     fn from_core(value: ParserDroppedBytes) -> Self {
-        Self { bytes: value.get() }
+        Self {
+            bytes: value.as_bytes(),
+        }
     }
 }
 
@@ -115,7 +119,9 @@ pub struct ParserDiagnosticCountDto {
 
 impl ParserDiagnosticCountDto {
     fn from_core(value: ParserDiagnosticCount) -> Self {
-        Self { count: value.get() }
+        Self {
+            count: value.as_events(),
+        }
     }
 }
 

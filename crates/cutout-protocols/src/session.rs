@@ -434,7 +434,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         }
 
         output.push(SessionOutput::NotificationIngest(
-            if event_count.get() > 0 {
+            if event_count.as_events() > 0 {
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::BegodeGotway,
                     channel,
@@ -549,9 +549,9 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
 const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount {
     match reply {
         VescReadOnlyReply::FirmwareInfo { .. } | VescReadOnlyReply::Stats(_) => {
-            SemanticEventCount::new(1)
+            SemanticEventCount::from_events(1)
         }
-        VescReadOnlyReply::Values(_) => SemanticEventCount::new(2),
+        VescReadOnlyReply::Values(_) => SemanticEventCount::from_events(2),
     }
 }
 
@@ -683,7 +683,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
                 )));
-                SemanticEventCount::new(1)
+                SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
@@ -695,7 +695,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     summary.to_battery_response(),
                 )));
-                SemanticEventCount::new(2)
+                SemanticEventCount::from_events(2)
             }
             Err(error) => push_begode_bms_error(error, output),
         },
@@ -704,7 +704,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     page.to_battery_response(),
                 )));
-                SemanticEventCount::new(1)
+                SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_bms_error(error, output),
         },
@@ -720,7 +720,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     telemetry.to_diagnostics_response(),
                 )));
-                SemanticEventCount::new(3)
+                SemanticEventCount::from_events(3)
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
@@ -729,13 +729,13 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     telemetry.to_delta(monotonic_ms),
                 )));
-                SemanticEventCount::new(1)
+                SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
         _ => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
@@ -747,7 +747,7 @@ fn push_begode_telemetry_error(
     match error {
         BegodeTelemetryError::UnexpectedFrameTag { .. } => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
@@ -759,7 +759,7 @@ fn push_begode_bms_error(
     match error {
         BegodeBmsPageError::UnexpectedFrameTag { .. } => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
@@ -772,7 +772,7 @@ fn push_veteran_frame(
     match VeteranTelemetry::decode(frame) {
         Ok(telemetry) => {
             let settings_responses = telemetry.to_settings_responses();
-            let settings_count = SemanticEventCount::new(settings_responses.len());
+            let settings_count = SemanticEventCount::from_events(settings_responses.len());
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 telemetry.to_delta(monotonic_ms),
             )));
@@ -791,14 +791,14 @@ fn push_veteran_frame(
                     output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                         ReadOnlyResponse::Battery(payload),
                     )));
-                    return SemanticEventCount::new(3).saturating_add(settings_count);
+                    return SemanticEventCount::from_events(3).saturating_add(settings_count);
                 }
             }
-            SemanticEventCount::new(2).saturating_add(settings_count)
+            SemanticEventCount::from_events(2).saturating_add(settings_count)
         }
         Err(VeteranTelemetryError::FrameTooShort) => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
@@ -1627,7 +1627,7 @@ mod tests {
             diagnostic_counter_events(&output)
                 .last()
                 .map(|diagnostics| diagnostics.malformed_frames),
-            Some(cutout_core::ParserDiagnosticCount::new(1))
+            Some(cutout_core::ParserDiagnosticCount::from_events(1))
         );
     }
 
@@ -2310,7 +2310,7 @@ mod tests {
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::from_bytes(frame.len()),
                 ms(42),
-                SemanticEventCount::new(5),
+                SemanticEventCount::from_events(5),
             )]
         );
         assert!(!telemetry_events(&output).is_empty());
@@ -2445,7 +2445,7 @@ mod tests {
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::from_bytes(frame.len()),
                 ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1),
-                SemanticEventCount::new(5),
+                SemanticEventCount::from_events(5),
             ))
         );
     }
@@ -2509,7 +2509,7 @@ mod tests {
                     VETERAN_DATA_CHANNEL,
                     NotificationByteLen::from_bytes(semantic_frame.len()),
                     ms(42),
-                    SemanticEventCount::new(5),
+                    SemanticEventCount::from_events(5),
                 ),
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
@@ -2558,7 +2558,7 @@ mod tests {
                     VETERAN_DATA_CHANNEL,
                     NotificationByteLen::from_bytes(frame.len()),
                     ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
-                    SemanticEventCount::new(5),
+                    SemanticEventCount::from_events(5),
                 ))
             );
         }

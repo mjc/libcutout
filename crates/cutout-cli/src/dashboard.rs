@@ -2001,7 +2001,7 @@ impl fmt::Display for NotificationIngestLog {
                 "t={}ms protocol semantic events family={} events={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
-                event_count.get(),
+                event_count.as_events(),
                 notification.len.as_bytes()
             ),
             NotificationIngestOutcome::BufferedFragment(notification) => write!(
@@ -3535,7 +3535,7 @@ mod tests {
     }
 
     const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
-        ParserDiagnosticCount::new(value)
+        ParserDiagnosticCount::from_events(value)
     }
 
     const fn disconnects(value: usize) -> DisconnectCount {

@@ -105,7 +105,7 @@ const fn diagnostic_events(value: usize) -> crate::DiagnosticEventCount {
 }
 
 const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
-    ParserDiagnosticCount::new(value)
+    ParserDiagnosticCount::from_events(value)
 }
 
 const fn disconnects(value: usize) -> crate::DisconnectCount {
@@ -1263,7 +1263,7 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
             GattChannel::from_bytes([0xA1; 16]),
             NotificationByteLen::from_bytes(77),
             ms(7),
-            SemanticEventCount::new(5),
+            SemanticEventCount::from_events(5),
         ),
     )];
 
@@ -1366,7 +1366,7 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
             GattChannel::from_bytes([0xA1; 16]),
             NotificationByteLen::from_bytes(77),
             ms(3),
-            SemanticEventCount::new(5),
+            SemanticEventCount::from_events(5),
         )),
         SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
             voltage: Some(voltage(126_000)),
@@ -2249,7 +2249,7 @@ impl ProtocolSession for BridgeSession {
                         GattChannel::from_bytes([0xA1; 16]),
                         NotificationByteLen::from_bytes(2),
                         ms(0),
-                        SemanticEventCount::new(1),
+                        SemanticEventCount::from_events(1),
                     ),
                 ));
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(

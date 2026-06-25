@@ -603,13 +603,13 @@ fn render_diagnostic_snapshot_jsonl(
     serde_json::to_string(&serde_json::json!({
         "type": "diagnostic_snapshot",
         "sequence": sequence.get(),
-        "dropped_bytes": snapshot.dropped_bytes.get(),
-        "resyncs": snapshot.resyncs.get(),
-        "bad_checksums": snapshot.bad_checksums.get(),
-        "timeouts": snapshot.timeouts.get(),
-        "oversized_frames": snapshot.oversized_frames.get(),
-        "malformed_frames": snapshot.malformed_frames.get(),
-        "unmatched_replies": snapshot.unmatched_replies.get(),
+        "dropped_bytes": snapshot.dropped_bytes.as_bytes(),
+        "resyncs": snapshot.resyncs.as_events(),
+        "bad_checksums": snapshot.bad_checksums.as_events(),
+        "timeouts": snapshot.timeouts.as_events(),
+        "oversized_frames": snapshot.oversized_frames.as_events(),
+        "malformed_frames": snapshot.malformed_frames.as_events(),
+        "unmatched_replies": snapshot.unmatched_replies.as_events(),
     }))
 }
 
@@ -1808,13 +1808,13 @@ fn render_session_diagnostics_jsonl(
         "sequence": 0,
         "protocol_writes": report.protocol_writes.get(),
         "writes": report.writes.get(),
-        "dropped_bytes": diagnostics.dropped_bytes.get(),
-        "resyncs": diagnostics.resyncs.get(),
-        "bad_checksums": diagnostics.bad_checksums.get(),
-        "timeouts": diagnostics.timeouts.get(),
-        "oversized_frames": diagnostics.oversized_frames.get(),
-        "malformed_frames": diagnostics.malformed_frames.get(),
-        "unmatched_replies": diagnostics.unmatched_replies.get(),
+        "dropped_bytes": diagnostics.dropped_bytes.as_bytes(),
+        "resyncs": diagnostics.resyncs.as_events(),
+        "bad_checksums": diagnostics.bad_checksums.as_events(),
+        "timeouts": diagnostics.timeouts.as_events(),
+        "oversized_frames": diagnostics.oversized_frames.as_events(),
+        "malformed_frames": diagnostics.malformed_frames.as_events(),
+        "unmatched_replies": diagnostics.unmatched_replies.as_events(),
     }))
 }
 
@@ -1837,13 +1837,13 @@ fn render_reconnect_attempt_diagnostics_jsonl(
         "read_only_responses": attempt.report.read_only_responses.get(),
         "diagnostics": attempt.report.diagnostics.get(),
         "disconnects": attempt.report.disconnects.get(),
-        "dropped_bytes": diagnostics.dropped_bytes.get(),
-        "resyncs": diagnostics.resyncs.get(),
-        "bad_checksums": diagnostics.bad_checksums.get(),
-        "timeouts": diagnostics.timeouts.get(),
-        "oversized_frames": diagnostics.oversized_frames.get(),
-        "malformed_frames": diagnostics.malformed_frames.get(),
-        "unmatched_replies": diagnostics.unmatched_replies.get(),
+        "dropped_bytes": diagnostics.dropped_bytes.as_bytes(),
+        "resyncs": diagnostics.resyncs.as_events(),
+        "bad_checksums": diagnostics.bad_checksums.as_events(),
+        "timeouts": diagnostics.timeouts.as_events(),
+        "oversized_frames": diagnostics.oversized_frames.as_events(),
+        "malformed_frames": diagnostics.malformed_frames.as_events(),
+        "unmatched_replies": diagnostics.unmatched_replies.as_events(),
     }))
 }
 
@@ -2344,11 +2344,11 @@ mod tests {
     }
 
     const fn dropped_bytes(value: u64) -> ParserDroppedBytes {
-        ParserDroppedBytes::new(value)
+        ParserDroppedBytes::from_bytes(value)
     }
 
     const fn diag_count(value: u64) -> ParserDiagnosticCount {
-        ParserDiagnosticCount::new(value)
+        ParserDiagnosticCount::from_events(value)
     }
 
     const fn frame_len(value: usize) -> ParserFrameLen {
@@ -3033,9 +3033,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: SemanticEventCount::new(1),
-                one_byte_semantic_events: SemanticEventCount::new(1),
-                arbitrary_semantic_events: SemanticEventCount::new(1),
+                whole_semantic_events: SemanticEventCount::from_events(1),
+                one_byte_semantic_events: SemanticEventCount::from_events(1),
+                arbitrary_semantic_events: SemanticEventCount::from_events(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },
@@ -3064,9 +3064,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: SemanticEventCount::new(0),
-                one_byte_semantic_events: SemanticEventCount::new(0),
-                arbitrary_semantic_events: SemanticEventCount::new(0),
+                whole_semantic_events: SemanticEventCount::from_events(0),
+                one_byte_semantic_events: SemanticEventCount::from_events(0),
+                arbitrary_semantic_events: SemanticEventCount::from_events(0),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },
@@ -3283,9 +3283,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: SemanticEventCount::new(1),
-                one_byte_semantic_events: SemanticEventCount::new(1),
-                arbitrary_semantic_events: SemanticEventCount::new(1),
+                whole_semantic_events: SemanticEventCount::from_events(1),
+                one_byte_semantic_events: SemanticEventCount::from_events(1),
+                arbitrary_semantic_events: SemanticEventCount::from_events(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },

@@ -1920,7 +1920,7 @@ impl Default for ParserLimits {
         Self {
             max_frame_len: ParserFrameLen::from_bytes(4_096),
             max_buffered_len: ParserBufferedLen::from_bytes(8_192),
-            max_queued_outputs: ParserQueuedOutputCount::new(128),
+            max_queued_outputs: ParserQueuedOutputCount::from_outputs(128),
             timeout_ms: MonotonicTimestamp::new(1_000),
         }
     }
@@ -1945,10 +1945,6 @@ impl ParserLimits {
     }
 }
 
-enum SemanticEventCountUnit {}
-enum ParserDroppedBytesUnit {}
-enum ParserDiagnosticCountUnit {}
-enum ParserQueuedOutputCountUnit {}
 enum ProtocolSelectorUnit {}
 enum ProtocolTagUnit {}
 enum VescControllerIdUnit {}
@@ -1998,39 +1994,55 @@ macro_rules! typed_protocol_value {
     };
 }
 
-typed_protocol_value!(
-    ParserDroppedBytes,
-    ParserDroppedBytesUnit,
-    u64,
-    "Bytes dropped while recovering from malformed or excessive parser input."
-);
+/// Bytes dropped while recovering from malformed or excessive parser input.
+pub type ParserDroppedBytes = Quantity<Information, ParserDroppedByte, u64>;
 
 impl ParserDroppedBytes {
+    /// Creates a dropped parser byte count from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this dropped parser byte count in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> u64 {
+        self.unit_value()
+    }
+
     /// Adds dropped bytes, saturating at `u64::MAX`.
     #[must_use]
     pub const fn saturating_add(self, other: Self) -> Self {
-        Self::new(self.value.saturating_add(other.value))
+        Self::from_bytes(self.as_bytes().saturating_add(other.as_bytes()))
     }
 }
 
-typed_protocol_value!(
-    ParserDiagnosticCount,
-    ParserDiagnosticCountUnit,
-    u64,
-    "Saturating count for one class of parser diagnostic event."
-);
+/// Saturating count for one class of parser diagnostic event.
+pub type ParserDiagnosticCount = Quantity<Count, ParserDiagnosticEvent, u64>;
 
 impl ParserDiagnosticCount {
+    /// Creates a parser diagnostic count from event count.
+    #[must_use]
+    pub const fn from_events(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this parser diagnostic count as event count.
+    #[must_use]
+    pub const fn as_events(self) -> u64 {
+        self.unit_value()
+    }
+
     /// Adds one diagnostic event, saturating at `u64::MAX`.
     #[must_use]
     pub const fn next(self) -> Self {
-        Self::new(self.value.saturating_add(1))
+        Self::from_events(self.as_events().saturating_add(1))
     }
 
     /// Adds diagnostic events, saturating at `u64::MAX`.
     #[must_use]
     pub const fn saturating_add(self, other: Self) -> Self {
-        Self::new(self.value.saturating_add(other.value))
+        Self::from_events(self.as_events().saturating_add(other.as_events()))
     }
 }
 
@@ -2074,12 +2086,22 @@ impl ParserBufferedLen {
     }
 }
 
-typed_protocol_value!(
-    ParserQueuedOutputCount,
-    ParserQueuedOutputCountUnit,
-    usize,
-    "Maximum queued parser output count."
-);
+/// Maximum queued parser output count.
+pub type ParserQueuedOutputCount = Quantity<Count, ParserQueuedOutput, usize>;
+
+impl ParserQueuedOutputCount {
+    /// Creates a parser queued-output count from output count.
+    #[must_use]
+    pub const fn from_outputs(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this parser queued-output count as output count.
+    #[must_use]
+    pub const fn as_outputs(self) -> usize {
+        self.unit_value()
+    }
+}
 
 /// Parser failure reason that can be counted without tying core to a protocol.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2379,24 +2401,32 @@ impl PayloadBodyLen {
     }
 }
 
-typed_protocol_value!(
-    SemanticEventCount,
-    SemanticEventCountUnit,
-    usize,
-    "Number of semantic events emitted from one protocol ingest operation."
-);
+/// Number of semantic events emitted from one protocol ingest operation.
+pub type SemanticEventCount = Quantity<Count, SemanticEvent, usize>;
 
 impl SemanticEventCount {
+    /// Creates a semantic event count from event count.
+    #[must_use]
+    pub const fn from_events(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this semantic event count as event count.
+    #[must_use]
+    pub const fn as_events(self) -> usize {
+        self.unit_value()
+    }
+
     /// Adds one observed semantic event, saturating at `usize::MAX`.
     #[must_use]
     pub const fn next(self) -> Self {
-        Self::new(self.value.saturating_add(1))
+        Self::from_events(self.as_events().saturating_add(1))
     }
 
     /// Adds another semantic event count, saturating at `usize::MAX`.
     #[must_use]
     pub const fn saturating_add(self, other: Self) -> Self {
-        Self::new(self.value.saturating_add(other.value))
+        Self::from_events(self.as_events().saturating_add(other.as_events()))
     }
 }
 
@@ -3801,6 +3831,14 @@ impl Unit for PayloadBodyByte {
     type Dimension = Information;
 }
 
+/// Parser-dropped byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDroppedByte;
+
+impl Unit for ParserDroppedByte {
+    type Dimension = Information;
+}
+
 /// Millisecond storage unit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Millisecond;
@@ -3881,6 +3919,30 @@ impl Unit for Pack {
     type Dimension = Count;
 }
 
+/// Parser diagnostic event count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDiagnosticEvent;
+
+impl Unit for ParserDiagnosticEvent {
+    type Dimension = Count;
+}
+
+/// Parser queued-output count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserQueuedOutput;
+
+impl Unit for ParserQueuedOutput {
+    type Dimension = Count;
+}
+
+/// Semantic event count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SemanticEvent;
+
+impl Unit for SemanticEvent {
+    type Dimension = Count;
+}
+
 /// Fixed-point quantity tagged by zero-sized dimension and unit markers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Quantity<D, U, T>
@@ -3930,6 +3992,17 @@ where
         T: Copy,
     {
         self.unit_value()
+    }
+}
+
+impl<D, U, T> Default for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: Default,
+{
+    fn default() -> Self {
+        Self::new(T::default())
     }
 }
 
@@ -5359,9 +5432,9 @@ where
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
 
     ReplayChunkComparison {
-        whole_semantic_events: SemanticEventCount::new(whole.len()),
-        one_byte_semantic_events: SemanticEventCount::new(one_byte.len()),
-        arbitrary_semantic_events: SemanticEventCount::new(arbitrary.len()),
+        whole_semantic_events: SemanticEventCount::from_events(whole.len()),
+        one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
+        arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
         one_byte_matches: one_byte == whole,
         arbitrary_matches: arbitrary == whole,
     }
@@ -5624,11 +5697,11 @@ mod tests {
     }
 
     const fn dropped_bytes(value: u64) -> crate::ParserDroppedBytes {
-        crate::ParserDroppedBytes::new(value)
+        crate::ParserDroppedBytes::from_bytes(value)
     }
 
     const fn diag_count(value: u64) -> crate::ParserDiagnosticCount {
-        crate::ParserDiagnosticCount::new(value)
+        crate::ParserDiagnosticCount::from_events(value)
     }
 
     const fn write_len(value: u16) -> crate::TransportWriteLimit {
@@ -5789,13 +5862,13 @@ mod tests {
     fn notification_ingest_evidence_uses_distinct_typed_protocol_values() {
         let notification_len = crate::NotificationByteLen::from_bytes(77);
         let body_len = crate::PayloadBodyLen::from_bytes(24);
-        let event_count = crate::SemanticEventCount::new(3);
+        let event_count = crate::SemanticEventCount::from_events(3);
         let selector = crate::ProtocolSelector::new(8);
         let tag = crate::ProtocolTag::new(0x5c);
 
         assert_eq!(notification_len.as_bytes(), 77);
         assert_eq!(body_len.as_bytes(), 24);
-        assert_eq!(event_count.get(), 3);
+        assert_eq!(event_count.as_events(), 3);
         assert_eq!(selector.get(), 8);
         assert_eq!(tag.get(), 0x5c);
     }
@@ -5869,7 +5942,7 @@ mod tests {
             TEST_CHANNEL,
             crate::NotificationByteLen::from_bytes(77),
             ms(21),
-            crate::SemanticEventCount::new(3),
+            crate::SemanticEventCount::from_events(3),
         );
 
         assert!(matches!(
@@ -5881,7 +5954,7 @@ mod tests {
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::from_bytes(77)
                 && notification.monotonic_ms == ms(21)
-                && event_count == crate::SemanticEventCount::new(3)
+                && event_count == crate::SemanticEventCount::from_events(3)
         ));
     }
 
@@ -8864,9 +8937,9 @@ mod tests {
         assert_eq!(
             comparison,
             crate::ReplayChunkComparison {
-                whole_semantic_events: crate::SemanticEventCount::new(1),
-                one_byte_semantic_events: crate::SemanticEventCount::new(1),
-                arbitrary_semantic_events: crate::SemanticEventCount::new(1),
+                whole_semantic_events: crate::SemanticEventCount::from_events(1),
+                one_byte_semantic_events: crate::SemanticEventCount::from_events(1),
+                arbitrary_semantic_events: crate::SemanticEventCount::from_events(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             }
