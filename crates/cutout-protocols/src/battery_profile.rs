@@ -115,13 +115,10 @@ fn interpolate_level(
         return low.level;
     }
 
-    let level_span = i32::from(high.level.get()) - i32::from(low.level.get());
+    let level_span = i32::from(high.level.as_percent()) - i32::from(low.level.as_percent());
     let numerator = (cell_voltage_uv - low_uv) * level_span;
-    BatteryLevel::from_percent(
-        u8::try_from(
-            i32::from(low.level.get()) + ((numerator + (voltage_span / 2)) / voltage_span),
-        )
-        .unwrap_or_else(|_| high.level.get()),
+    BatteryLevel::from_percent_i32(
+        i32::from(low.level.as_percent()) + ((numerator + (voltage_span / 2)) / voltage_span),
     )
 }
 

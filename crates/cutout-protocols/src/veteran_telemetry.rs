@@ -344,9 +344,7 @@ impl VeteranModelProfile {
 
         let numerator = (voltage - start) * 100;
         let denominator = end - start;
-        BatteryLevel::from_percent(
-            u8::try_from((numerator + denominator / 2) / denominator).unwrap_or(100),
-        )
+        BatteryLevel::from_percent_i32((numerator + denominator / 2) / denominator)
     }
 }
 

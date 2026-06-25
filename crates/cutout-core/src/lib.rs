@@ -4837,6 +4837,12 @@ impl BatteryLevel {
         Self::from_unit_value(value)
     }
 
+    /// Creates a battery level from a signed percent value, clamping to the stored range.
+    #[must_use]
+    pub fn from_percent_i32(value: i32) -> Self {
+        Self::from_percent(u8::try_from(value.clamp(0, 100)).unwrap_or(100))
+    }
+
     /// Returns this battery level as a percent value.
     #[must_use]
     pub const fn as_percent(self) -> u8 {
@@ -4858,6 +4864,15 @@ impl SignalStrength {
     #[must_use]
     pub const fn as_dbm(self) -> i16 {
         self.unit_value()
+    }
+
+    /// Returns this signal strength as a coarse UI quality percentage.
+    #[must_use]
+    pub fn as_quality_percent(self) -> u8 {
+        let dbm = self.as_dbm().clamp(-100, -50);
+        let offset = i32::from(dbm) + 100;
+        let percent = (offset * 100) / 50;
+        u8::try_from(percent).unwrap_or(100)
     }
 }
 
@@ -6599,6 +6614,8 @@ mod tests {
         assert_eq!(Current::from_deciamps(-124).as_milliamps(), -12_400);
         assert_eq!(Current::from_milliamps(-12_400).as_whole_amps(), -12);
         assert_eq!(Current::from_milliamps(-12_400).as_abs_whole_amps(), 12);
+        assert_eq!(BatteryLevel::from_percent_i32(-1).as_percent(), 0);
+        assert_eq!(BatteryLevel::from_percent_i32(120).as_percent(), 100);
 
         assert_eq!(Temperature::from_celsius(36).as_millicelsius(), 36_000);
         assert_eq!(
@@ -6720,7 +6737,13 @@ mod tests {
 
     #[test]
     fn signal_strength_quantity_preserves_dbm_unit() {
-        assert_eq!(crate::SignalStrength::from_dbm(-61).as_dbm(), -61);
+        let signal = crate::SignalStrength::from_dbm(-61);
+        assert_eq!(signal.as_dbm(), -61);
+        assert_eq!(signal.as_quality_percent(), 78);
+        assert_eq!(
+            crate::SignalStrength::from_dbm(-120).as_quality_percent(),
+            0
+        );
     }
 
     #[test]

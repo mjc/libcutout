@@ -388,13 +388,7 @@ impl SignalQuality {
     }
 
     fn from_signal_strength(signal: cutout_core::SignalStrength) -> Self {
-        let clamped = signal.as_dbm().clamp(-90, -50);
-        Self::new(
-            u64::try_from(i32::from(clamped) + 90)
-                .unwrap_or(0)
-                .saturating_mul(100)
-                / 40,
-        )
+        Self::new(u64::from(signal.as_quality_percent()))
     }
 
     const fn increment(self) -> Self {
@@ -4076,14 +4070,14 @@ mod tests {
         assert_eq!(state.counters.connected, ConnectedDeviceCount::new(1));
         assert_eq!(state.telemetry.battery_level, None);
         assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
-        assert_eq!(state.telemetry.signal_quality, SignalQuality::new(72));
+        assert_eq!(state.telemetry.signal_quality, SignalQuality::new(78));
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
         assert_eq!(state.profiles[0].source, "gatt");
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
-        assert!(text.contains("72% / -61 dBm"));
+        assert!(text.contains("78% / -61 dBm"));
         assert_eq!(
             dashboard_voltage_range(&state),
             Some(Voltage::from_millivolts(91_000)..=Voltage::from_millivolts(126_000))
@@ -4124,15 +4118,15 @@ mod tests {
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-61)),
-            SignalQuality::new(72)
+            SignalQuality::new(78)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-74)),
-            SignalQuality::new(40)
+            SignalQuality::new(52)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-90)),
-            SignalQuality::new(0)
+            SignalQuality::new(20)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-100)),

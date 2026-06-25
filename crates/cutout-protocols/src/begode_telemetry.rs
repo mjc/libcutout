@@ -1190,10 +1190,12 @@ pub fn estimate_begode_battery_level(
         return BatteryLevel::from_percent(0);
     }
     if wire_centivolts <= 5_440 {
-        return battery_level_from_i32(div_round(wire_centivolts - 5_120, 36).clamp(0, 100));
+        return BatteryLevel::from_percent_i32(
+            div_round(wire_centivolts - 5_120, 36).clamp(0, 100),
+        );
     }
     if wire_centivolts <= 6_680 {
-        return battery_level_from_i32(
+        return BatteryLevel::from_percent_i32(
             div_round((wire_centivolts - 5_320) * 10, 136).clamp(0, 100),
         );
     }
@@ -1309,19 +1311,6 @@ fn mph_milli_to_kmh_milli(value: i32) -> i32 {
             }
         }
     }
-}
-
-fn battery_level_from_i32(percent: i32) -> BatteryLevel {
-    BatteryLevel::from_percent(match u8::try_from(percent) {
-        Ok(value) => value,
-        Err(_) => {
-            if percent < 0 {
-                0
-            } else {
-                100
-            }
-        }
-    })
 }
 
 #[cfg(test)]
