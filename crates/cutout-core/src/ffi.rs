@@ -1,14 +1,14 @@
 use crate::{
-    Angle, BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
-    BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
-    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
-    DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState, Measured, MonotonicMillis,
-    NotificationByteLen, NotificationEvidence, NotificationIngestOutcome, ParserDiagnosticCount,
-    ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen, ParserGapEvidence,
-    PayloadBodyLen, Percent, PhaseCurrent, Power, ProtocolFamily, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
-    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLen,
+    Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
+    BatteryPagePayload, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
+    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
+    LightState, Measured, MonotonicMillis, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
+    ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
+    SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
+    Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLen,
     ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
@@ -715,9 +715,9 @@ impl From<Measured<Angle>> for MeasuredI32Dto {
     }
 }
 
-impl From<Measured<Percent>> for MeasuredU8Dto {
-    fn from(measured: Measured<Percent>) -> Self {
-        Self::from(measured.map_value(Percent::as_percent))
+impl From<Measured<BatteryLevel>> for MeasuredU8Dto {
+    fn from(measured: Measured<BatteryLevel>) -> Self {
+        Self::from(measured.map_value(BatteryLevel::as_percent))
     }
 }
 
@@ -808,11 +808,11 @@ pub struct BatteryInfoDto {
     /// Second page-specific BMS pack current in milliamps.
     pub bms_pack_current_1: Option<MeasuredI32Dto>,
 
-    /// Battery percentage reported by the device.
-    pub percent_reported: Option<MeasuredU8Dto>,
+    /// Battery level reported by the device.
+    pub level_reported: Option<MeasuredU8Dto>,
 
-    /// Battery percentage estimated by Cutout.
-    pub percent_estimated: Option<MeasuredU8Dto>,
+    /// Battery level estimated by Cutout.
+    pub level_estimated: Option<MeasuredU8Dto>,
 
     /// Battery or BMS temperature in millicelsius.
     pub temperature: Option<MeasuredI32Dto>,
@@ -858,8 +858,8 @@ impl BatteryInfoDto {
             bms_pack_current_1: bms_pack_currents.map(|currents| {
                 MeasuredI32Dto::from_bms_pack_current(currents.current_1(), currents)
             }),
-            percent_reported: battery.percent_reported.map(Into::into),
-            percent_estimated: battery.percent_estimated.map(Into::into),
+            level_reported: battery.level_reported.map(Into::into),
+            level_estimated: battery.level_estimated.map(Into::into),
             temperature: battery.temperature.map(Into::into),
             temperatures,
             raw_state: battery.raw_state.map(Into::into),
@@ -1525,11 +1525,11 @@ pub struct TelemetryDeltaDto {
     /// Roll in millidegrees.
     pub roll: Option<MeasuredI32Dto>,
 
-    /// Battery percentage reported by the device.
-    pub battery_percent_reported: Option<MeasuredU8Dto>,
+    /// Battery level reported by the device.
+    pub battery_level_reported: Option<MeasuredU8Dto>,
 
-    /// Battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<MeasuredU8Dto>,
+    /// Battery level estimated by Cutout.
+    pub battery_level_estimated: Option<MeasuredU8Dto>,
 }
 
 impl From<TelemetryDelta> for TelemetryDeltaDto {
@@ -1548,8 +1548,8 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             distance: delta.distance.map(Into::into),
             pitch: delta.pitch.map(Into::into),
             roll: delta.roll.map(Into::into),
-            battery_percent_reported: delta.battery_percent_reported.map(Into::into),
-            battery_percent_estimated: delta.battery_percent_estimated.map(Into::into),
+            battery_level_reported: delta.battery_level_reported.map(Into::into),
+            battery_level_estimated: delta.battery_level_estimated.map(Into::into),
         }
     }
 }
@@ -1596,11 +1596,11 @@ pub struct TelemetrySnapshotDto {
     /// Roll in millidegrees.
     pub roll: Option<MeasuredI32Dto>,
 
-    /// Battery percentage reported by the device.
-    pub battery_percent_reported: Option<MeasuredU8Dto>,
+    /// Battery level reported by the device.
+    pub battery_level_reported: Option<MeasuredU8Dto>,
 
-    /// Battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<MeasuredU8Dto>,
+    /// Battery level estimated by Cutout.
+    pub battery_level_estimated: Option<MeasuredU8Dto>,
 }
 
 impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
@@ -1619,8 +1619,8 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             distance: snapshot.distance.map(Into::into),
             pitch: snapshot.pitch.map(Into::into),
             roll: snapshot.roll.map(Into::into),
-            battery_percent_reported: snapshot.battery_percent_reported.map(Into::into),
-            battery_percent_estimated: snapshot.battery_percent_estimated.map(Into::into),
+            battery_level_reported: snapshot.battery_level_reported.map(Into::into),
+            battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
         }
     }
 }
@@ -1787,12 +1787,12 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
 #[cfg(test)]
 mod tests {
     use crate::{
-        BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DeviceCommand,
-        DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle,
-        FirmwareInfo, GattChannel, LinkInfo, Measured, Percent, ProtocolSelector, RawFieldValue,
-        ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
-        TelemetrySnapshot, Temperature, TransportAction, ValueQuality, ValueSource,
-        VerificationStatus, Voltage, WriteMode, WritePayload,
+        BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageMetadata, BatteryPagePayload,
+        DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity,
+        Distance, DutyCycle, FirmwareInfo, GattChannel, LinkInfo, Measured, ProtocolSelector,
+        RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry,
+        SettingsReadback, Speed, TelemetrySnapshot, Temperature, TransportAction, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
 
     use super::*;
@@ -1822,8 +1822,8 @@ mod tests {
                 BatteryInfo {
                     voltage: Some(Measured::reported(Voltage::from_millivolts(80_000))),
                     current: None,
-                    percent_reported: Some(Measured::reported(Percent::from_percent(72))),
-                    percent_estimated: None,
+                    level_reported: Some(Measured::reported(BatteryLevel::from_percent(72))),
+                    level_estimated: None,
                     temperature: Some(Measured::reported(Temperature::from_millicelsius(25_000))),
                     raw_state: Some(RawFieldValue::new(0x0008, 0x55aa)),
                 },
@@ -1859,8 +1859,8 @@ mod tests {
                 .value,
             450
         );
-        assert_eq!(battery.percent_reported.expect("percent").value, 72);
-        assert_eq!(battery.percent_estimated, None);
+        assert_eq!(battery.level_reported.expect("level").value, 72);
+        assert_eq!(battery.level_estimated, None);
         assert_eq!(battery.temperature.expect("temperature").value, 25_000);
         assert_eq!(
             battery.raw_state,
@@ -2100,8 +2100,8 @@ mod tests {
             distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
             pitch: None,
             roll: None,
-            battery_percent_reported: None,
-            battery_percent_estimated: Some(Measured::estimated(Percent::from_percent(80))),
+            battery_level_reported: None,
+            battery_level_estimated: Some(Measured::estimated(BatteryLevel::from_percent(80))),
         };
 
         let dto = TelemetrySnapshotDto::from(snapshot);
@@ -2111,6 +2111,6 @@ mod tests {
         assert_eq!(dto.voltage.expect("voltage").value, 84_000);
         assert_eq!(dto.battery_current, None);
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
-        assert_eq!(dto.battery_percent_estimated.expect("percent").value, 80);
+        assert_eq!(dto.battery_level_estimated.expect("level").value, 80);
     }
 }

@@ -4262,17 +4262,17 @@ impl DutyCycle {
     }
 }
 
-/// Ratio stored as a percentage.
-pub type Percent = Quantity<Ratio, PercentUnit, u8>;
+/// Battery state-of-charge stored as a percentage.
+pub type BatteryLevel = Quantity<Ratio, PercentUnit, u8>;
 
-impl Percent {
-    /// Creates a percentage value.
+impl BatteryLevel {
+    /// Creates a battery level from a percent value.
     #[must_use]
     pub const fn from_percent(value: u8) -> Self {
         Self::from_unit_value(value)
     }
 
-    /// Returns this percentage value.
+    /// Returns this battery level as a percent value.
     #[must_use]
     pub const fn as_percent(self) -> u8 {
         self.unit_value()
@@ -4424,11 +4424,11 @@ pub struct BatteryInfo {
     /// Pack or battery current in milliamps.
     pub current: Option<Measured<BatteryCurrent>>,
 
-    /// Battery percentage reported by the device.
-    pub percent_reported: Option<Measured<Percent>>,
+    /// Battery level reported by the device.
+    pub level_reported: Option<Measured<BatteryLevel>>,
 
-    /// Battery percentage estimated by Cutout.
-    pub percent_estimated: Option<Measured<Percent>>,
+    /// Battery level estimated by Cutout.
+    pub level_estimated: Option<Measured<BatteryLevel>>,
 
     /// Battery or BMS temperature in millicelsius.
     pub temperature: Option<Measured<Temperature>>,
@@ -4578,11 +4578,11 @@ pub struct TelemetryDelta {
     /// Roll in millidegrees.
     pub roll: Option<Measured<Angle>>,
 
-    /// Battery percentage reported by the device.
-    pub battery_percent_reported: Option<Measured<Percent>>,
+    /// Battery level reported by the device.
+    pub battery_level_reported: Option<Measured<BatteryLevel>>,
 
-    /// Battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<Measured<Percent>>,
+    /// Battery level estimated by Cutout.
+    pub battery_level_estimated: Option<Measured<BatteryLevel>>,
 }
 
 impl TelemetryDelta {
@@ -4603,8 +4603,8 @@ impl TelemetryDelta {
             distance: None,
             pitch: None,
             roll: None,
-            battery_percent_reported: None,
-            battery_percent_estimated: None,
+            battery_level_reported: None,
+            battery_level_estimated: None,
         }
     }
 }
@@ -4651,11 +4651,11 @@ pub struct TelemetrySnapshot {
     /// Latest known roll in millidegrees.
     pub roll: Option<Measured<Angle>>,
 
-    /// Latest known battery percentage reported by the device.
-    pub battery_percent_reported: Option<Measured<Percent>>,
+    /// Latest known battery level reported by the device.
+    pub battery_level_reported: Option<Measured<BatteryLevel>>,
 
-    /// Latest known battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<Measured<Percent>>,
+    /// Latest known battery level estimated by Cutout.
+    pub battery_level_estimated: Option<Measured<BatteryLevel>>,
 }
 
 impl TelemetrySnapshot {
@@ -4699,11 +4699,11 @@ impl TelemetrySnapshot {
         if delta.roll.is_some() {
             self.roll = delta.roll;
         }
-        if delta.battery_percent_reported.is_some() {
-            self.battery_percent_reported = delta.battery_percent_reported;
+        if delta.battery_level_reported.is_some() {
+            self.battery_level_reported = delta.battery_level_reported;
         }
-        if delta.battery_percent_estimated.is_some() {
-            self.battery_percent_estimated = delta.battery_percent_estimated;
+        if delta.battery_level_estimated.is_some() {
+            self.battery_level_estimated = delta.battery_level_estimated;
         }
     }
 }
@@ -4932,8 +4932,8 @@ where
                 distance: None,
                 pitch: None,
                 roll: None,
-                battery_percent_reported: None,
-                battery_percent_estimated: None,
+                battery_level_reported: None,
+                battery_level_estimated: None,
             },
             diagnostics: ParserDiagnostics::default(),
         }
@@ -5533,8 +5533,8 @@ pub const fn crate_name() -> &'static str {
 mod tests {
     use super::crate_name;
     use crate::{
-        BatteryCurrent, DeviceCommand, DeviceEvent, Distance, Duration, GattChannel, LinkInfo,
-        Measured, MonotonicMillis, Percent, PhaseCurrent, ProtocolSession, SessionInput,
+        BatteryCurrent, BatteryLevel, DeviceCommand, DeviceEvent, Distance, Duration, GattChannel,
+        LinkInfo, Measured, MonotonicMillis, PhaseCurrent, ProtocolSession, SessionInput,
         SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction,
         UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
         WritePayload,
@@ -6107,7 +6107,7 @@ mod tests {
     #[test]
     fn telemetry_keeps_distinct_current_temperature_and_estimate_fields() {
         let mut snapshot = TelemetrySnapshot::default();
-        let estimated_percent = Measured::estimated(Percent::from_percent(76));
+        let estimated_level = Measured::estimated(BatteryLevel::from_percent(76));
 
         snapshot.apply_delta(TelemetryDelta {
             at_ms: ms(300),
@@ -6118,8 +6118,8 @@ mod tests {
             ))),
             motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(45_000))),
             battery_temperature: Some(Measured::reported(Temperature::from_millicelsius(31_000))),
-            battery_percent_reported: Some(Measured::reported(Percent::from_percent(80))),
-            battery_percent_estimated: Some(estimated_percent),
+            battery_level_reported: Some(Measured::reported(BatteryLevel::from_percent(80))),
+            battery_level_estimated: Some(estimated_level),
             ..TelemetryDelta::empty(ms(300))
         });
 
@@ -6144,13 +6144,13 @@ mod tests {
             Some(Measured::reported(Temperature::from_millicelsius(31_000)))
         );
         assert_eq!(
-            snapshot.battery_percent_reported,
-            Some(Measured::reported(Percent::from_percent(80)))
+            snapshot.battery_level_reported,
+            Some(Measured::reported(BatteryLevel::from_percent(80)))
         );
-        assert_eq!(snapshot.battery_percent_estimated, Some(estimated_percent));
+        assert_eq!(snapshot.battery_level_estimated, Some(estimated_level));
         assert_eq!(
             snapshot
-                .battery_percent_estimated
+                .battery_level_estimated
                 .map(|value| value.verification),
             Some(VerificationStatus::Inferred)
         );
@@ -6197,8 +6197,8 @@ mod tests {
         let battery = crate::BatteryInfo {
             voltage: Some(Measured::reported(Voltage::from_millivolts(80_400))),
             current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
-            percent_reported: Some(Measured::reported(Percent::from_percent(0))),
-            percent_estimated: Some(Measured::estimated(Percent::from_percent(42))),
+            level_reported: Some(Measured::reported(BatteryLevel::from_percent(0))),
+            level_estimated: Some(Measured::estimated(BatteryLevel::from_percent(42))),
             temperature: None,
             raw_state: None,
         };
@@ -6222,8 +6222,8 @@ mod tests {
             Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
         assert_eq!(
-            response.battery().percent_reported,
-            Some(Measured::reported(Percent::from_percent(0)))
+            response.battery().level_reported,
+            Some(Measured::reported(BatteryLevel::from_percent(0)))
         );
         assert_eq!(
             response.battery().voltage.map(|value| value.verification),
@@ -6232,7 +6232,7 @@ mod tests {
         assert_eq!(
             response
                 .battery()
-                .percent_estimated
+                .level_estimated
                 .map(|value| value.verification),
             Some(VerificationStatus::Inferred)
         );
@@ -8384,19 +8384,19 @@ mod tests {
     proptest! {
         #[test]
         fn battery_response_keeps_unknown_distinct_from_zero(include_zero in any::<bool>()) {
-            let percent_reported = include_zero.then_some(Measured::reported(Percent::from_percent(0)));
+            let level_reported = include_zero.then_some(Measured::reported(BatteryLevel::from_percent(0)));
             let response = crate::BatteryInfo {
-                percent_reported,
+                level_reported,
                 ..crate::BatteryInfo::default()
             };
 
             if include_zero {
                 prop_assert_eq!(
-                    response.percent_reported,
-                    Some(Measured::reported(Percent::from_percent(0)))
+                    response.level_reported,
+                    Some(Measured::reported(BatteryLevel::from_percent(0)))
                 );
             } else {
-                prop_assert_eq!(response.percent_reported, None);
+                prop_assert_eq!(response.level_reported, None);
             }
         }
     }

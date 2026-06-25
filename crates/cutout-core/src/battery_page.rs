@@ -352,8 +352,8 @@ mod tests {
         let battery = BatteryInfo {
             voltage: None,
             current: None,
-            percent_reported: None,
-            percent_estimated: None,
+            level_reported: None,
+            level_estimated: None,
             temperature: None,
             raw_state: None,
         };
@@ -369,8 +369,8 @@ mod tests {
         let battery = BatteryInfo {
             voltage: None,
             current: None,
-            percent_reported: None,
-            percent_estimated: None,
+            level_reported: None,
+            level_estimated: None,
             temperature: Some(Measured::reported(Temperature::from_millicelsius(16_730))),
             raw_state: None,
         };

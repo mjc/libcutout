@@ -147,8 +147,8 @@ fn angle_mdeg(value: i32) -> Measured<cutout_core::Angle> {
 }
 
 #[cfg(test)]
-fn percent_estimated(value: u8) -> Measured<cutout_core::Percent> {
-    Measured::estimated(cutout_core::Percent::from_percent(value))
+fn level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
+    Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
 }
 
 const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
@@ -772,7 +772,7 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
     match read_battery_level(&connection.peripheral, &connection.summary).await? {
         Some(percent) => {
             info!(percent = percent.get(), "read dashboard battery level");
-            state.apply_battery_percent(percent.get());
+            state.apply_battery_level(percent.get());
         }
         None => {
             info!("dashboard battery level unavailable from standard BLE characteristic");
@@ -1940,11 +1940,11 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
             payload.bms_pack_currents(),
             cutout_core::BmsPackCurrents::current_1,
         ),
-        "percent_reported": measured_u8_json(battery.percent_reported.map(|measured| {
-            measured.map_value(cutout_core::Percent::as_percent)
+        "level_reported": measured_u8_json(battery.level_reported.map(|measured| {
+            measured.map_value(cutout_core::BatteryLevel::as_percent)
         })),
-        "percent_estimated": measured_u8_json(battery.percent_estimated.map(|measured| {
-            measured.map_value(cutout_core::Percent::as_percent)
+        "level_estimated": measured_u8_json(battery.level_estimated.map(|measured| {
+            measured.map_value(cutout_core::BatteryLevel::as_percent)
         })),
         "temperature": measured_i32_json(battery.temperature.map(|measured| {
             measured.map_value(cutout_core::Temperature::as_millicelsius)
@@ -2164,8 +2164,8 @@ impl TelemetrySnapshotLine {
             || snapshot.distance.is_some()
             || snapshot.pitch.is_some()
             || snapshot.roll.is_some()
-            || snapshot.battery_percent_reported.is_some()
-            || snapshot.battery_percent_estimated.is_some()
+            || snapshot.battery_level_reported.is_some()
+            || snapshot.battery_level_estimated.is_some()
     }
 }
 
@@ -2185,14 +2185,8 @@ impl fmt::Display for TelemetrySnapshotLine {
         fields.write_measured("distance", snapshot.distance)?;
         fields.write_measured("pitch", snapshot.pitch)?;
         fields.write_measured("roll", snapshot.roll)?;
-        fields.write_measured(
-            "battery_percent_reported",
-            snapshot.battery_percent_reported,
-        )?;
-        fields.write_measured(
-            "battery_percent_estimated",
-            snapshot.battery_percent_estimated,
-        )
+        fields.write_measured("battery_level_reported", snapshot.battery_level_reported)?;
+        fields.write_measured("battery_level_estimated", snapshot.battery_level_estimated)
     }
 }
 
@@ -2935,8 +2929,8 @@ mod tests {
                 cutout_core::BatteryInfo {
                     voltage: Some(voltage(80_000)),
                     current: Some(battery_current(-10_000)),
-                    percent_reported: None,
-                    percent_estimated: Some(percent_estimated(61)),
+                    level_reported: None,
+                    level_estimated: Some(level_estimated(61)),
                     temperature: Some(temperature(25_000)),
                     raw_state: Some(cutout_core::RawFieldValue::new(0x0008, 0x55aa)),
                 },
@@ -2969,12 +2963,9 @@ mod tests {
         assert_eq!(value["battery"]["current"]["value"], -10_000);
         assert_eq!(value["battery"]["bms_pack_current_0"]["value"], -1_230);
         assert_eq!(value["battery"]["bms_pack_current_1"]["value"], 450);
-        assert_eq!(
-            value["battery"]["percent_reported"],
-            serde_json::Value::Null
-        );
-        assert_eq!(value["battery"]["percent_estimated"]["value"], 61);
-        assert_eq!(value["battery"]["percent_estimated"]["source"], "estimated");
+        assert_eq!(value["battery"]["level_reported"], serde_json::Value::Null);
+        assert_eq!(value["battery"]["level_estimated"]["value"], 61);
+        assert_eq!(value["battery"]["level_estimated"]["source"], "estimated");
         assert_eq!(value["battery"]["temperature"]["value"], 25_000);
         assert_eq!(value["battery"]["raw_state"]["id"], 8);
         assert_eq!(value["battery"]["raw_state"]["value"], 0x55aa);
@@ -3944,14 +3935,14 @@ mod tests {
             pwm: Some(duty_cycle_permille(-1_000)),
             distance: Some(distance(1_551_169_000)),
             pitch: Some(angle_mdeg(69_060)),
-            battery_percent_estimated: Some(percent_estimated(47)),
+            battery_level_estimated: Some(level_estimated(47)),
             ..cutout_core::TelemetryDelta::empty(ms(42))
         });
 
         assert_eq!(
             render_telemetry_snapshot(&snapshot).map(|telemetry| telemetry.to_string()),
             Some(
-                "telemetry speed=1200 voltage=108760 battery_current=-1700 power=-184892 controller_temperature=33270 pwm=-1000 distance=1551169000 pitch=69060 battery_percent_estimated=47".to_owned()
+                "telemetry speed=1200 voltage=108760 battery_current=-1700 power=-184892 controller_temperature=33270 pwm=-1000 distance=1551169000 pitch=69060 battery_level_estimated=47".to_owned()
             )
         );
     }

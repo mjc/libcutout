@@ -1,10 +1,11 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
-    Angle, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsTemperatureValuesPerPage,
-    Capacity, ChargeMode, Distance, DistanceOffset, Duration, DutyCycle, FirmwareInfo, Measured,
-    MonotonicMillis, ParallelCount, Percent, PhaseCurrent, Power, ProtocolSelector, RawFieldValue,
-    ReadOnlyResponse, SeriesCount, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
-    Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    Angle, BatteryLevel, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec,
+    BmsTemperatureValuesPerPage, Capacity, ChargeMode, Distance, DistanceOffset, Duration,
+    DutyCycle, FirmwareInfo, Measured, MonotonicMillis, ParallelCount, PhaseCurrent, Power,
+    ProtocolSelector, RawFieldValue, ReadOnlyResponse, SeriesCount, SettingsEntry,
+    SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -113,8 +114,8 @@ pub struct VeteranTelemetry {
     /// Hardware PWM duty cycle.
     pub hardware_pwm: DutyCycle,
 
-    /// Cutout-estimated battery percentage from capture-backed pack range.
-    pub battery_percent_estimated: Percent,
+    /// Cutout-estimated battery level from capture-backed pack range.
+    pub battery_level_estimated: BatteryLevel,
 }
 
 /// Raw Veteran charge-mode field retained for protocol evidence.
@@ -346,26 +347,26 @@ impl VeteranModelProfile {
         self
     }
 
-    /// Estimates battery percentage from this model's pack voltage.
+    /// Estimates battery level from this model's pack voltage.
     #[must_use]
-    pub fn estimate_battery_percent(&self, voltage: Voltage) -> Percent {
+    pub fn estimate_battery_level(&self, voltage: Voltage) -> BatteryLevel {
         if let Some(battery_profile) = self.battery_profile {
-            return battery_profile.estimate_percent_from_pack_voltage(voltage, self.series_cells);
+            return battery_profile.estimate_level_from_pack_voltage(voltage, self.series_cells);
         }
 
         let start = self.voltage_range.start().as_millivolts();
         let end = self.voltage_range.end().as_millivolts();
         let voltage = voltage.as_millivolts();
         if voltage <= start {
-            return Percent::from_percent(0);
+            return BatteryLevel::from_percent(0);
         }
         if voltage >= end {
-            return Percent::from_percent(100);
+            return BatteryLevel::from_percent(100);
         }
 
         let numerator = (voltage - start) * 100;
         let denominator = end - start;
-        Percent::from_percent(
+        BatteryLevel::from_percent(
             u8::try_from((numerator + denominator / 2) / denominator).unwrap_or(100),
         )
     }
@@ -513,7 +514,7 @@ impl VeteranTelemetry {
                     .be_u16(ByteOffset::new(34))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
-            battery_percent_estimated: estimate_veteran_battery_percent(firmware.model_id, voltage),
+            battery_level_estimated: estimate_veteran_battery_level(firmware.model_id, voltage),
         })
     }
 
@@ -534,7 +535,7 @@ impl VeteranTelemetry {
                 self.total_distance.as_millimetres(),
             ))),
             pitch: Some(Measured::reported(self.pitch)),
-            battery_percent_estimated: Some(Measured::estimated(self.battery_percent_estimated)),
+            battery_level_estimated: Some(Measured::estimated(self.battery_level_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -659,15 +660,15 @@ impl VeteranFirmwareVersion {
 
 /// Estimates Aero battery percent from its model's Samsung 50S battery profile.
 #[must_use]
-pub fn estimate_nosfet_aero_battery_percent(voltage: Voltage) -> Percent {
-    estimate_veteran_battery_percent(43, voltage)
+pub fn estimate_nosfet_aero_battery_level(voltage: Voltage) -> BatteryLevel {
+    estimate_veteran_battery_level(43, voltage)
 }
 
 /// Estimates Veteran battery percent using the known model profile when possible.
 #[must_use]
-pub fn estimate_veteran_battery_percent(model_id: u16, voltage: Voltage) -> Percent {
-    VeteranModelProfile::from_model_id(model_id).map_or(Percent::from_percent(0), |profile| {
-        profile.estimate_battery_percent(voltage)
+pub fn estimate_veteran_battery_level(model_id: u16, voltage: Voltage) -> BatteryLevel {
+    VeteranModelProfile::from_model_id(model_id).map_or(BatteryLevel::from_percent(0), |profile| {
+        profile.estimate_battery_level(voltage)
     })
 }
 
@@ -705,8 +706,8 @@ mod tests {
 
     use super::*;
 
-    const fn pct(value: u8) -> Percent {
-        Percent::from_percent(value)
+    const fn pct(value: u8) -> BatteryLevel {
+        BatteryLevel::from_percent(value)
     }
 
     fn test_voltage_range(start: i32, end: i32) -> RangeInclusive<Voltage> {
@@ -783,18 +784,18 @@ mod tests {
                 pedals_mode: VeteranPedalsMode::new(1_920),
                 pitch: Angle::from_millidegrees(69_060),
                 hardware_pwm: DutyCycle::from_permille(-1_000),
-                battery_percent_estimated: Percent::from_percent(47),
+                battery_level_estimated: BatteryLevel::from_percent(47),
             }
         );
     }
 
     #[test]
-    fn veteran_telemetry_estimates_live_aero_battery_percent() {
+    fn veteran_telemetry_estimates_live_aero_battery_level() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
         assert_eq!(
-            telemetry.battery_percent_estimated,
-            Percent::from_percent(47)
+            telemetry.battery_level_estimated,
+            BatteryLevel::from_percent(47)
         );
     }
 
@@ -818,8 +819,8 @@ mod tests {
 
         assert_eq!(telemetry.voltage.as_millivolts(), 107_610);
         assert_eq!(
-            telemetry.battery_percent_estimated,
-            Percent::from_percent(42)
+            telemetry.battery_level_estimated,
+            BatteryLevel::from_percent(42)
         );
         assert_eq!(
             telemetry.auto_shutdown_time_remaining,
@@ -831,15 +832,15 @@ mod tests {
     }
 
     #[test]
-    fn aero_battery_percent_estimate_clamps_to_pack_range() {
+    fn aero_battery_level_estimate_clamps_to_pack_range() {
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(
+            estimate_nosfet_aero_battery_level(Voltage::from_millivolts(
                 NOSFET_AERO_MIN_VOLTAGE.as_millivolts() - 1,
             )),
             pct(0)
         );
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(
+            estimate_nosfet_aero_battery_level(Voltage::from_millivolts(
                 NOSFET_AERO_MAX_VOLTAGE.as_millivolts() + 1,
             )),
             pct(100)
@@ -988,22 +989,22 @@ mod tests {
 
         for (pack_voltage, percent) in sticker_points {
             assert_eq!(
-                aero.estimate_battery_percent(Voltage::from_millivolts(pack_voltage)),
+                aero.estimate_battery_level(Voltage::from_millivolts(pack_voltage)),
                 pct(percent)
             );
         }
     }
 
     #[test]
-    fn aero_parallel_count_does_not_change_voltage_percentage_estimation() {
+    fn aero_parallel_count_does_not_change_voltage_level_estimation() {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
         let profile = aero
             .battery_profile
             .expect("Aero has a cell battery profile");
 
         assert_eq!(
-            aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
-            profile.estimate_percent_from_pack_voltage(
+            aero.estimate_battery_level(Voltage::from_millivolts(107_950)),
+            profile.estimate_level_from_pack_voltage(
                 Voltage::from_millivolts(107_950),
                 aero.series_cells,
             )
@@ -1011,23 +1012,23 @@ mod tests {
     }
 
     #[test]
-    fn aero_model_profile_uses_samsung_50s_curve_for_battery_percent() {
+    fn aero_model_profile_uses_samsung_50s_curve_for_battery_level() {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
 
         assert_eq!(
-            aero.estimate_battery_percent(Voltage::from_millivolts(91_000)),
+            aero.estimate_battery_level(Voltage::from_millivolts(91_000)),
             pct(0)
         );
         assert_eq!(
-            aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
+            aero.estimate_battery_level(Voltage::from_millivolts(107_950)),
             pct(44)
         );
         assert_eq!(
-            aero.estimate_battery_percent(Voltage::from_millivolts(108_760)),
+            aero.estimate_battery_level(Voltage::from_millivolts(108_760)),
             pct(47)
         );
         assert_eq!(
-            aero.estimate_battery_percent(Voltage::from_millivolts(126_000)),
+            aero.estimate_battery_level(Voltage::from_millivolts(126_000)),
             pct(100)
         );
     }
@@ -1190,15 +1191,15 @@ mod tests {
         let oryx = VeteranModelProfile::from_model_id(8).expect("Oryx profile is known");
 
         assert_eq!(
-            aero.estimate_battery_percent(Voltage::from_millivolts(107_950)),
+            aero.estimate_battery_level(Voltage::from_millivolts(107_950)),
             pct(44)
         );
         assert_eq!(
-            lynx.estimate_battery_percent(Voltage::from_millivolts(129_540)),
+            lynx.estimate_battery_level(Voltage::from_millivolts(129_540)),
             pct(44)
         );
         assert_eq!(
-            oryx.estimate_battery_percent(Voltage::from_millivolts(151_130)),
+            oryx.estimate_battery_level(Voltage::from_millivolts(151_130)),
             pct(44)
         );
     }
@@ -1221,19 +1222,19 @@ mod tests {
     }
 
     #[test]
-    fn veteran_model_profile_estimates_battery_percent_from_profile_range() {
+    fn veteran_model_profile_estimates_battery_level_from_profile_range() {
         let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
 
         assert_eq!(
-            lynx.estimate_battery_percent(Voltage::from_millivolts(109_200)),
+            lynx.estimate_battery_level(Voltage::from_millivolts(109_200)),
             pct(0)
         );
         assert_eq!(
-            lynx.estimate_battery_percent(Voltage::from_millivolts(151_200)),
+            lynx.estimate_battery_level(Voltage::from_millivolts(151_200)),
             pct(100)
         );
         assert_eq!(
-            lynx.estimate_battery_percent(Voltage::from_millivolts(129_540)),
+            lynx.estimate_battery_level(Voltage::from_millivolts(129_540)),
             pct(44)
         );
     }
@@ -1241,15 +1242,15 @@ mod tests {
     #[test]
     fn veteran_battery_estimation_uses_model_specific_strategy() {
         assert_eq!(
-            estimate_veteran_battery_percent(43, Voltage::from_millivolts(107_950)),
+            estimate_veteran_battery_level(43, Voltage::from_millivolts(107_950)),
             pct(44)
         );
         assert_eq!(
-            estimate_veteran_battery_percent(5, Voltage::from_millivolts(129_540)),
+            estimate_veteran_battery_level(5, Voltage::from_millivolts(129_540)),
             pct(44)
         );
         assert_eq!(
-            estimate_veteran_battery_percent(99, Voltage::from_millivolts(133_535)),
+            estimate_veteran_battery_level(99, Voltage::from_millivolts(133_535)),
             pct(0)
         );
     }
@@ -1257,25 +1258,25 @@ mod tests {
     #[test]
     fn aero_battery_estimation_delegates_to_model_profile() {
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(107_950)),
-            estimate_veteran_battery_percent(43, Voltage::from_millivolts(107_950))
+            estimate_nosfet_aero_battery_level(Voltage::from_millivolts(107_950)),
+            estimate_veteran_battery_level(43, Voltage::from_millivolts(107_950))
         );
     }
 
     #[test]
-    fn veteran_telemetry_uses_model_profile_for_battery_percent() {
+    fn veteran_telemetry_uses_model_profile_for_battery_level() {
         let telemetry = VeteranTelemetry::decode(&synthetic_short_frame(5, 129_540))
             .expect("synthetic Lynx frame decodes");
 
         assert_eq!(telemetry.firmware.model_id, 5);
         assert_eq!(
-            telemetry.battery_percent_estimated,
-            Percent::from_percent(44)
+            telemetry.battery_level_estimated,
+            BatteryLevel::from_percent(44)
         );
     }
 
     #[test]
-    fn veteran_telemetry_maps_voltage_and_estimated_percent_to_delta() {
+    fn veteran_telemetry_maps_voltage_and_estimated_level_to_delta() {
         let delta = VeteranTelemetry::decode(&live_aero_frame())
             .expect("telemetry decodes")
             .to_delta(ms(42));
@@ -1318,8 +1319,8 @@ mod tests {
             Some(Measured::reported(Angle::from_millidegrees(69_060)))
         );
         assert_eq!(
-            delta.battery_percent_estimated,
-            Some(Measured::estimated(Percent::from_percent(47)))
+            delta.battery_level_estimated,
+            Some(Measured::estimated(BatteryLevel::from_percent(47)))
         );
     }
 

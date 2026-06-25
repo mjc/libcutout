@@ -35,7 +35,7 @@ pub use begode_telemetry::{
     BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodePackVoltageProfile,
     BegodeSettingsBits, BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
     BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
-    estimate_begode_battery_percent, select_begode_falcon_battery_variant,
+    estimate_begode_battery_level, select_begode_falcon_battery_variant,
     select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
     select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
     validate_begode_pack_evidence,
@@ -113,8 +113,8 @@ pub use veteran_telemetry::{
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VeteranFirmwareVersion, VeteranModelProfile,
-    VeteranPedalsMode, VeteranTelemetry, VeteranTelemetryError,
-    estimate_nosfet_aero_battery_percent, estimate_veteran_battery_percent,
+    VeteranPedalsMode, VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_level,
+    estimate_veteran_battery_level,
 };
 
 /// Returns the crate name used by setup smoke tests.

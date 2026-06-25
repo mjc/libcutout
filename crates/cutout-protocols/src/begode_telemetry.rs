@@ -1,11 +1,11 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    BatteryCurrent, Capacity, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Distance,
-    Duration, DutyCycle, Energy, Measured, MonotonicMillis, ParallelCount, Percent, PhaseCurrent,
-    Power, RawFieldValue, ReadOnlyResponse, SeriesCount, SettingsEntry, SettingsReadback, Speed,
-    TelemetryDelta, Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
-    WireVoltage,
+    BatteryCurrent, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
+    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicMillis,
+    ParallelCount, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
+    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage, WireVoltage,
 };
 use thiserror::Error;
 
@@ -889,7 +889,7 @@ pub struct BegodeLiveATelemetry {
     pub hardware_pwm: DutyCycle,
 
     /// Estimated battery percent derived from voltage.
-    pub battery_percent: Percent,
+    pub battery_level: BatteryLevel,
 }
 
 impl BegodeLiveATelemetry {
@@ -920,7 +920,7 @@ impl BegodeLiveATelemetry {
                 cursor,
                 ByteOffset::new(14),
             ))),
-            battery_percent: estimate_begode_battery_percent(
+            battery_level: estimate_begode_battery_level(
                 scaled_voltage(wire_voltage, profile),
                 profile,
             ),
@@ -952,7 +952,7 @@ impl BegodeLiveATelemetry {
                 self.hardware_pwm.as_permille(),
             ))),
             distance: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
-            battery_percent_estimated: Some(source_estimated(self.battery_percent)),
+            battery_level_estimated: Some(source_estimated(self.battery_level)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1168,21 +1168,23 @@ pub enum BegodeTelemetryError {
 
 /// Estimates Begode battery percent from scaled pack voltage and profile.
 #[must_use]
-pub fn estimate_begode_battery_percent(
+pub fn estimate_begode_battery_level(
     voltage: Voltage,
     profile: BegodePackVoltageProfile,
-) -> Percent {
+) -> BatteryLevel {
     let wire_centivolts = unscaled_centivolts(voltage, profile);
     if wire_centivolts <= 5_120 {
-        return Percent::from_percent(0);
+        return BatteryLevel::from_percent(0);
     }
     if wire_centivolts <= 5_440 {
-        return percent_from_i32(div_round(wire_centivolts - 5_120, 36).clamp(0, 100));
+        return battery_level_from_i32(div_round(wire_centivolts - 5_120, 36).clamp(0, 100));
     }
     if wire_centivolts <= 6_680 {
-        return percent_from_i32(div_round((wire_centivolts - 5_320) * 10, 136).clamp(0, 100));
+        return battery_level_from_i32(
+            div_round((wire_centivolts - 5_320) * 10, 136).clamp(0, 100),
+        );
     }
-    Percent::from_percent(100)
+    BatteryLevel::from_percent(100)
 }
 
 fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryError> {
@@ -1321,8 +1323,8 @@ fn mph_to_kmh_u16(value: u16) -> u16 {
     u16::try_from(scaled / 1_000_000).unwrap_or(u16::MAX)
 }
 
-fn percent_from_i32(percent: i32) -> Percent {
-    Percent::from_percent(match u8::try_from(percent) {
+fn battery_level_from_i32(percent: i32) -> BatteryLevel {
+    BatteryLevel::from_percent(match u8::try_from(percent) {
         Ok(value) => value,
         Err(_) => {
             if percent < 0 {
@@ -1357,7 +1359,7 @@ mod tests {
         BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeFrame, BegodeLiveATelemetry,
         BegodeLiveBTelemetry, BegodePackEvidenceConsistency, BegodePackVoltageProfile,
         BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
-        estimate_begode_battery_percent, validate_begode_pack_evidence,
+        estimate_begode_battery_level, validate_begode_pack_evidence,
     };
     use cutout_core::{Capacity, Duration, Energy};
     use cutout_core::{
@@ -1388,7 +1390,7 @@ mod tests {
         assert_eq!(telemetry.phase_current.as_milliamps(), -11_800);
         assert_eq!(telemetry.imu_temperature.as_millicelsius(), 27_930);
         assert_eq!(telemetry.hardware_pwm.as_permille(), 0x1481 / 10);
-        assert_eq!(telemetry.battery_percent.get(), 50);
+        assert_eq!(telemetry.battery_level.get(), 50);
     }
 
     #[test]
@@ -1450,9 +1452,9 @@ mod tests {
                 ))),
                 pitch: None,
                 roll: None,
-                battery_percent_reported: None,
-                battery_percent_estimated: Some(source_estimated(
-                    cutout_core::Percent::from_percent(50)
+                battery_level_reported: None,
+                battery_level_estimated: Some(source_estimated(
+                    cutout_core::BatteryLevel::from_percent(50)
                 )),
             }
         );
@@ -1622,13 +1624,13 @@ mod tests {
     }
 
     #[test]
-    fn falcon_84v_full_charge_battery_percent_uses_better_begode_curve() {
+    fn falcon_84v_full_charge_battery_level_uses_better_begode_curve() {
         assert_eq!(
-            estimate_begode_battery_percent(
+            estimate_begode_battery_level(
                 Voltage::from_millivolts(75_063),
                 BegodePackVoltageProfile::Begode84VFullCharge,
             ),
-            cutout_core::Percent::from_percent(50)
+            cutout_core::BatteryLevel::from_percent(50)
         );
     }
 
@@ -2138,15 +2140,15 @@ mod tests {
 
     proptest! {
         #[test]
-        fn falcon_battery_percent_is_monotonic(first_mv in 60_000i32..=84_000, second_mv in 60_000i32..=84_000) {
+        fn falcon_battery_level_is_monotonic(first_mv in 60_000i32..=84_000, second_mv in 60_000i32..=84_000) {
             let low = first_mv.min(second_mv);
             let high = first_mv.max(second_mv);
 
             prop_assert!(
-                estimate_begode_battery_percent(
+                estimate_begode_battery_level(
                     Voltage::from_millivolts(low),
                     BegodePackVoltageProfile::Begode84VFullCharge,
-                ) <= estimate_begode_battery_percent(
+                ) <= estimate_begode_battery_level(
                     Voltage::from_millivolts(high),
                     BegodePackVoltageProfile::Begode84VFullCharge,
                 )
@@ -2154,15 +2156,15 @@ mod tests {
         }
 
         #[test]
-        fn begode_100v_battery_percent_is_monotonic(first_mv in 72_000i32..=100_800, second_mv in 72_000i32..=100_800) {
+        fn begode_100v_battery_level_is_monotonic(first_mv in 72_000i32..=100_800, second_mv in 72_000i32..=100_800) {
             let low = first_mv.min(second_mv);
             let high = first_mv.max(second_mv);
 
             prop_assert!(
-                estimate_begode_battery_percent(
+                estimate_begode_battery_level(
                     Voltage::from_millivolts(low),
                     BegodePackVoltageProfile::Begode100VFullCharge,
-                ) <= estimate_begode_battery_percent(
+                ) <= estimate_begode_battery_level(
                     Voltage::from_millivolts(high),
                     BegodePackVoltageProfile::Begode100VFullCharge,
                 )

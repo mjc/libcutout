@@ -1133,16 +1133,16 @@ impl DashboardState {
         }
     }
 
-    pub(crate) fn apply_battery_percent(&mut self, percent: u8) {
-        let percent = DashboardBatteryLevel::from_u8(percent);
-        self.telemetry.battery_level = Some(percent);
+    pub(crate) fn apply_battery_level(&mut self, level: u8) {
+        let level = DashboardBatteryLevel::from_u8(level);
+        self.telemetry.battery_level = Some(level);
         self.telemetry.battery_source = BatterySource::StandardBle;
-        self.push_log("info", &format!("battery level {percent}%"));
+        self.push_log("info", &format!("battery level {level}%"));
     }
 
     pub(crate) fn apply_update(&mut self, update: DashboardUpdate) {
         match update {
-            DashboardUpdate::BatteryLevel(percent) => self.apply_battery_percent(percent),
+            DashboardUpdate::BatteryLevel(percent) => self.apply_battery_level(percent),
             DashboardUpdate::SessionReport(report) => self.apply_session_report(&report),
             DashboardUpdate::Log { level, message } => self.push_log_from_tracing(&level, &message),
         }
@@ -1373,10 +1373,10 @@ impl TelemetryWindow {
     }
 
     fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
-        if let Some(percent) = snapshot.battery_percent_reported {
+        if let Some(percent) = snapshot.battery_level_reported {
             self.battery_level = Some(DashboardBatteryLevel::from_u8(percent.value.get()));
             self.battery_source = BatterySource::TelemetryReported;
-        } else if let Some(percent) = snapshot.battery_percent_estimated {
+        } else if let Some(percent) = snapshot.battery_level_estimated {
             self.battery_level = Some(DashboardBatteryLevel::from_u8(percent.value.get()));
             self.battery_source = BatterySource::TelemetryEstimated;
         }
@@ -1712,8 +1712,8 @@ impl fmt::Display for MappedTelemetryLog {
             fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
         }
         if let Some(percent) = snapshot
-            .battery_percent_reported
-            .or(snapshot.battery_percent_estimated)
+            .battery_level_reported
+            .or(snapshot.battery_level_estimated)
         {
             fields.write("battery", percent.value, "%")?;
         }
@@ -1769,8 +1769,8 @@ impl fmt::Display for TelemetryDeltaLog {
             fields.write("voltage", millivolts_to_volts(voltage.value.get()), "V")?;
         }
         if let Some(percent) = delta
-            .battery_percent_reported
-            .or(delta.battery_percent_estimated)
+            .battery_level_reported
+            .or(delta.battery_level_estimated)
         {
             fields.write("battery", percent.value, "%")?;
         }
@@ -3578,12 +3578,12 @@ mod tests {
         Measured::reported(cutout_core::Angle::from_millidegrees(value))
     }
 
-    fn percent_reported(value: u8) -> Measured<cutout_core::Percent> {
-        Measured::reported(cutout_core::Percent::from_percent(value))
+    fn level_reported(value: u8) -> Measured<cutout_core::BatteryLevel> {
+        Measured::reported(cutout_core::BatteryLevel::from_percent(value))
     }
 
-    fn percent_estimated(value: u8) -> Measured<cutout_core::Percent> {
-        Measured::estimated(cutout_core::Percent::from_percent(value))
+    fn level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
+        Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
     }
 
     fn live_aero_telemetry_snapshot() -> TelemetrySnapshot {
@@ -4225,7 +4225,7 @@ mod tests {
                 battery_current: Some(battery_current(-12_400)),
                 power: Some(power(-1_046_560)),
                 controller_temperature: Some(temperature(36_600)),
-                battery_percent_reported: Some(percent_reported(77)),
+                battery_level_reported: Some(level_reported(77)),
                 ..TelemetrySnapshot::default()
             },
             read_only_responses: read_only_responses(0),
@@ -4244,7 +4244,7 @@ mod tests {
                     battery_current: Some(battery_current(-12_400)),
                     power: Some(power(-1_046_560)),
                     controller_temperature: Some(temperature(36_600)),
-                    battery_percent_reported: Some(percent_reported(77)),
+                    battery_level_reported: Some(level_reported(77)),
                     ..TelemetryDelta::empty(ms(42))
                 },
             }],
@@ -4322,14 +4322,14 @@ mod tests {
             telemetry: telemetry_events(1),
             telemetry_snapshot: TelemetrySnapshot {
                 voltage: Some(voltage(117_600)),
-                battery_percent_estimated: Some(percent_estimated(78)),
+                battery_level_estimated: Some(level_estimated(78)),
                 ..TelemetrySnapshot::default()
             },
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage: Some(voltage(117_600)),
-                    battery_percent_estimated: Some(percent_estimated(78)),
+                    battery_level_estimated: Some(level_estimated(78)),
                     ..TelemetryDelta::empty(ms(7))
                 },
             }],
@@ -4426,7 +4426,7 @@ mod tests {
         let snapshot = TelemetrySnapshot {
             speed: Some(speed(12_000)),
             voltage: Some(voltage(119_600)),
-            battery_percent_reported: Some(percent_reported(87)),
+            battery_level_reported: Some(level_reported(87)),
             motor_current: Some(battery_current(-18_500)),
             power: Some(power(-2_212_600)),
             controller_temperature: Some(temperature(36_000)),
@@ -4525,7 +4525,7 @@ mod tests {
         let delta = TelemetryDelta {
             speed: Some(speed(4_470)),
             voltage: Some(voltage(118_400)),
-            battery_percent_estimated: Some(percent_estimated(78)),
+            battery_level_estimated: Some(level_estimated(78)),
             battery_current: Some(battery_current(-12_400)),
             power: Some(power(-1_468_160)),
             motor_temperature: Some(temperature(44_600)),
@@ -4588,7 +4588,7 @@ mod tests {
         assert_display_preserves_capacity(
             MappedTelemetryLog(TelemetrySnapshot {
                 voltage: Some(voltage(119_600)),
-                battery_percent_reported: Some(percent_reported(87)),
+                battery_level_reported: Some(level_reported(87)),
                 ..TelemetrySnapshot::default()
             }),
             "telemetry mapped voltage=120V battery=87%",
@@ -4825,7 +4825,7 @@ mod tests {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 delta: TelemetryDelta {
                     voltage: Some(voltage(108_760)),
-                    battery_percent_estimated: Some(percent_estimated(47)),
+                    battery_level_estimated: Some(level_estimated(47)),
                     ..TelemetryDelta::empty(ms(7))
                 },
             }],
@@ -4959,7 +4959,7 @@ mod tests {
         let telemetry = TelemetryDelta {
             speed: Some(speed(4_470)),
             voltage: Some(voltage(108_760)),
-            battery_percent_estimated: Some(percent_estimated(47)),
+            battery_level_estimated: Some(level_estimated(47)),
             ..TelemetryDelta::empty(ms(42))
         };
         let report = SessionBridgeReport {
@@ -5169,7 +5169,7 @@ mod tests {
     fn live_battery_level_updates_battery_gauge_from_real_reading() {
         let mut state = DashboardState::empty();
 
-        state.apply_battery_percent(88);
+        state.apply_battery_level(88);
 
         assert_eq!(
             state.telemetry.battery_level,
@@ -5183,7 +5183,7 @@ mod tests {
                 .any(|entry| entry.message == "battery level 88%")
         );
 
-        state.apply_battery_percent(150);
+        state.apply_battery_level(150);
 
         assert_eq!(
             state.telemetry.battery_level,
@@ -5287,7 +5287,7 @@ mod tests {
                     pwm: Some(duty_cycle_permille(-1_000)),
                     distance: Some(distance(1_551_169_000)),
                     pitch: Some(angle_mdeg(69_060)),
-                    battery_percent_estimated: Some(percent_estimated(47)),
+                    battery_level_estimated: Some(level_estimated(47)),
                     ..TelemetryDelta::empty(ms(42))
                 },
             }],

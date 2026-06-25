@@ -2079,10 +2079,12 @@ mod tests {
     }
 
     #[test]
-    fn nosfet_aero_session_emits_estimated_battery_percent_from_live_fixture_notification() {
+    fn nosfet_aero_session_emits_estimated_battery_level_from_live_fixture_notification() {
         assert_eq!(
-            live_aero_telemetry().battery_percent_estimated,
-            Some(Measured::estimated(cutout_core::Percent::from_percent(47)))
+            live_aero_telemetry().battery_level_estimated,
+            Some(Measured::estimated(
+                cutout_core::BatteryLevel::from_percent(47)
+            ))
         );
     }
 
