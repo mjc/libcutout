@@ -918,9 +918,10 @@ impl BegodeLiveATelemetry {
                 cursor,
                 ParserOffset::from_bytes(8),
             ))),
-            phase_current: PhaseCurrent::from_milliamps(
-                i32::from(be_i16(cursor, ParserOffset::from_bytes(10))) * 10,
-            ),
+            phase_current: PhaseCurrent::from_centiamps(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(10),
+            ))),
             imu_temperature: mpu6050_temperature(be_i16(cursor, ParserOffset::from_bytes(12))),
             hardware_pwm: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
                 cursor,
@@ -1122,12 +1123,14 @@ impl BegodeExtraTelemetry {
         require_tag(frame, 0x07)?;
         let cursor = ParserCursor::new(frame.as_slice());
         Ok(Self {
-            battery_current: BatteryCurrent::from_milliamps(
-                i32::from(be_i16(cursor, ParserOffset::from_bytes(2))) * 10,
-            ),
-            motor_temperature: Temperature::from_millicelsius(
-                i32::from(be_i16(cursor, ParserOffset::from_bytes(6))) * 1_000,
-            ),
+            battery_current: BatteryCurrent::from_centiamps(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(2),
+            ))),
+            motor_temperature: Temperature::from_celsius(i64::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(6),
+            ))),
             true_pwm: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
                 cursor,
                 ParserOffset::from_bytes(8),
@@ -1218,7 +1221,7 @@ fn unscaled_centivolts(voltage: Voltage, profile: BegodePackVoltageProfile) -> i
 }
 
 fn speed_from_live_a_raw(raw_speed: i16) -> Speed {
-    Speed::from_millimetres_per_second(i32::from(raw_speed) * 10)
+    Speed::from_centimetres_per_second(i32::from(raw_speed))
 }
 
 fn speed_setting_value(value: Speed) -> u16 {

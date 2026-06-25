@@ -386,9 +386,7 @@ const fn pack_voltage_range(start: Voltage, end: Voltage) -> RangeInclusive<Volt
 }
 
 fn pack_voltage(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> Voltage {
-    Voltage::from_millivolts(
-        (cell_voltage.as_microvolts().saturating_mul(series_cells) + 500) / 1_000,
-    )
+    Voltage::from_cell_voltage(cell_voltage, series_cells)
 }
 
 const fn charge_mode_from_veteran_field(value: u16) -> ChargeMode {
@@ -412,13 +410,11 @@ impl VeteranTelemetry {
             .be_u16(ParserOffset::from_bytes(28))
             .ok_or(VeteranTelemetryError::FrameTooShort)?;
         let firmware = VeteranFirmwareVersion::from_raw(raw_version);
-        let voltage = Voltage::from_millivolts(
-            i32::from(
-                cursor
-                    .be_u16(ParserOffset::from_bytes(4))
-                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ) * 10,
-        );
+        let voltage = Voltage::from_centivolts(i32::from(
+            cursor
+                .be_u16(ParserOffset::from_bytes(4))
+                .ok_or(VeteranTelemetryError::FrameTooShort)?,
+        ));
 
         let charge_mode = charge_mode_from_veteran_field(
             cursor
@@ -444,20 +440,16 @@ impl VeteranTelemetry {
                     .veteran_swapped_u32(ParserOffset::from_bytes(12))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
-            battery_current: BatteryCurrent::from_milliamps(
-                i32::from(
-                    cursor
-                        .be_i16(ParserOffset::from_bytes(16))
-                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
-                ) * 100,
-            ),
-            mosfet_temperature: Temperature::from_millicelsius(
-                i32::from(
-                    cursor
-                        .be_i16(ParserOffset::from_bytes(18))
-                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
-                ) * 10,
-            ),
+            battery_current: BatteryCurrent::from_centiamps(i32::from(
+                cursor
+                    .be_i16(ParserOffset::from_bytes(16))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            mosfet_temperature: Temperature::from_centi_celsius(i32::from(
+                cursor
+                    .be_i16(ParserOffset::from_bytes(18))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
             auto_shutdown_time_remaining: Duration::from_seconds(u64::from(
                 cursor
                     .be_u16(ParserOffset::from_bytes(20))
@@ -479,13 +471,11 @@ impl VeteranTelemetry {
                     .be_u16(ParserOffset::from_bytes(30))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             ),
-            pitch: Angle::from_millidegrees(
-                i32::from(
-                    cursor
-                        .be_i16(ParserOffset::from_bytes(32))
-                        .ok_or(VeteranTelemetryError::FrameTooShort)?,
-                ) * 10,
-            ),
+            pitch: Angle::from_deci_degrees(i32::from(
+                cursor
+                    .be_i16(ParserOffset::from_bytes(32))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
             hardware_pwm: DutyCycle::from_permille(veteran_pwm(
                 cursor
                     .be_u16(ParserOffset::from_bytes(34))

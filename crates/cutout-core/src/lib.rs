@@ -4095,6 +4095,18 @@ impl Voltage {
         Self::from_unit_value(value)
     }
 
+    /// Creates a voltage from centivolts.
+    #[must_use]
+    pub const fn from_centivolts(value: i32) -> Self {
+        Self::from_millivolts(value.saturating_mul(10))
+    }
+
+    /// Creates a voltage from decivolts.
+    #[must_use]
+    pub const fn from_deci_volts(value: i32) -> Self {
+        Self::from_millivolts(value.saturating_mul(100))
+    }
+
     /// Returns this voltage in millivolts.
     #[must_use]
     pub const fn as_millivolts(self) -> i32 {
@@ -4159,6 +4171,18 @@ impl Voltage {
                 / (range_end - range_start),
         )
         .unwrap_or(0)
+    }
+
+    /// Creates a pack voltage from a single-cell voltage and series cell count.
+    #[must_use]
+    pub fn from_cell_voltage(cell_voltage: CellVoltage, series_cells: i32) -> Self {
+        if series_cells <= 0 {
+            return Self::from_millivolts(0);
+        }
+
+        let numerator = i64::from(cell_voltage.as_microvolts()) * i64::from(series_cells);
+        let rounded = (numerator + 500) / 1_000;
+        Self::from_millivolts(saturating_i64_to_i32(rounded))
     }
 }
 
@@ -4240,6 +4264,18 @@ impl Current {
     #[must_use]
     pub const fn from_milliamps(value: i32) -> Self {
         Self::from_unit_value(value)
+    }
+
+    /// Creates a current from centiamps.
+    #[must_use]
+    pub const fn from_centiamps(value: i32) -> Self {
+        Self::from_milliamps(value.saturating_mul(10))
+    }
+
+    /// Creates a current from deciamps.
+    #[must_use]
+    pub const fn from_deciamps(value: i32) -> Self {
+        Self::from_milliamps(value.saturating_mul(100))
     }
 
     /// Returns this current in milliamps.
@@ -4414,6 +4450,12 @@ impl Speed {
         Self::from_unit_value(value)
     }
 
+    /// Creates a speed from centimetres per second.
+    #[must_use]
+    pub const fn from_centimetres_per_second(value: i32) -> Self {
+        Self::from_millimetres_per_second(value.saturating_mul(10))
+    }
+
     /// Creates a speed from kilometres per hour.
     #[must_use]
     pub fn from_kmh(value: u64) -> Self {
@@ -4442,6 +4484,12 @@ impl Speed {
     #[must_use]
     pub const fn as_millimetres_per_second(self) -> i32 {
         self.unit_value()
+    }
+
+    /// Returns this speed in centimetres per second.
+    #[must_use]
+    pub const fn as_centimetres_per_second(self) -> i32 {
+        self.as_millimetres_per_second() / 10
     }
 
     /// Returns this speed in metres per second.
@@ -4604,6 +4652,12 @@ impl Duration {
         Self::from_unit_value(value)
     }
 
+    /// Creates a duration from deciseconds.
+    #[must_use]
+    pub const fn from_deciseconds(value: u64) -> Self {
+        Self::from_milliseconds(value.saturating_mul(100))
+    }
+
     /// Creates a duration from seconds.
     #[must_use]
     pub const fn from_seconds(value: u64) -> Self {
@@ -4651,6 +4705,18 @@ impl Temperature {
         Self::from_unit_value(value)
     }
 
+    /// Creates a temperature from decicelsius.
+    #[must_use]
+    pub const fn from_deci_celsius(value: i32) -> Self {
+        Self::from_millicelsius(value.saturating_mul(100))
+    }
+
+    /// Creates a temperature from centicelsius.
+    #[must_use]
+    pub const fn from_centi_celsius(value: i32) -> Self {
+        Self::from_millicelsius(value.saturating_mul(10))
+    }
+
     /// Returns this temperature in millicelsius.
     #[must_use]
     pub const fn as_millicelsius(self) -> i32 {
@@ -4693,6 +4759,12 @@ impl Angle {
         Self::from_unit_value(value)
     }
 
+    /// Creates an angle from decidegrees.
+    #[must_use]
+    pub const fn from_deci_degrees(value: i32) -> Self {
+        Self::from_millidegrees(value.saturating_mul(10))
+    }
+
     /// Returns this angle in millidegrees.
     #[must_use]
     pub const fn as_millidegrees(self) -> i32 {
@@ -4727,6 +4799,12 @@ impl DutyCycle {
     #[must_use]
     pub const fn from_permille(value: i16) -> Self {
         Self::from_unit_value(value)
+    }
+
+    /// Creates a duty cycle from centipercent.
+    #[must_use]
+    pub fn from_centipercent(value: u16) -> Self {
+        Self::from_permille(i16::try_from(value / 10).unwrap_or(i16::MAX))
     }
 
     /// Returns this duty cycle in permille.
@@ -6026,11 +6104,11 @@ pub const fn crate_name() -> &'static str {
 mod tests {
     use super::crate_name;
     use crate::{
-        Angle, BatteryCurrent, BatteryLevel, Current, DeviceCommand, DeviceEvent, Distance,
-        Duration, GattChannel, LinkInfo, Measured, MonotonicTimestamp, PhaseCurrent, Power,
-        ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot,
-        Temperature, TransportAction, UnsupportedReason, ValueQuality, ValueSource,
-        VerificationStatus, Voltage, WriteMode, WritePayload,
+        Angle, BatteryCurrent, BatteryLevel, CellVoltage, Current, DeviceCommand, DeviceEvent,
+        Distance, Duration, DutyCycle, GattChannel, LinkInfo, Measured, MonotonicTimestamp,
+        PhaseCurrent, Power, ProtocolSession, SessionInput, SessionOutput, Speed, TelemetryDelta,
+        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -6486,6 +6564,10 @@ mod tests {
         assert_eq!(Speed::from_millimetres_per_second(4_470).as_mph(), 10);
         assert_eq!(Speed::from_kmh(50).as_kmh_rounded(), 50);
         assert_eq!(
+            Speed::from_centimetres_per_second(1_336).as_millimetres_per_second(),
+            13_360
+        );
+        assert_eq!(
             Speed::from_millimetres_per_second(22_222).as_kmh_rounded(),
             80
         );
@@ -6496,27 +6578,41 @@ mod tests {
 
         assert_eq!(Voltage::from_volts(126).as_millivolts(), 126_000);
         assert_eq!(Voltage::from_millivolts(84_400).as_whole_volts(), 84);
+        assert_eq!(Voltage::from_deci_volts(915).as_millivolts(), 91_500);
         assert_eq!(
             Voltage::from_millivolts(91_000).as_cell_voltage(crate::SeriesCount::new(30)),
-            crate::CellVoltage::from_microvolts(3_033_333)
+            CellVoltage::from_microvolts(3_033_333)
         );
         let voltage_range = Voltage::from_volts(91)..=Voltage::from_volts(126);
         assert_eq!(
             Voltage::from_millivolts(108_500).percent_of_range(&voltage_range),
             50
         );
+        assert_eq!(Voltage::from_centivolts(9_150).as_millivolts(), 91_500);
+        assert_eq!(
+            Voltage::from_cell_voltage(CellVoltage::from_microvolts(3_050_000), 30).as_millivolts(),
+            91_500
+        );
 
         assert_eq!(Current::from_amps(-12).as_milliamps(), -12_000);
+        assert_eq!(Current::from_centiamps(-1_240).as_milliamps(), -12_400);
+        assert_eq!(Current::from_deciamps(-124).as_milliamps(), -12_400);
         assert_eq!(Current::from_milliamps(-12_400).as_whole_amps(), -12);
         assert_eq!(Current::from_milliamps(-12_400).as_abs_whole_amps(), 12);
 
         assert_eq!(Temperature::from_celsius(36).as_millicelsius(), 36_000);
         assert_eq!(
+            Temperature::from_centi_celsius(-3_660).as_millicelsius(),
+            -36_600
+        );
+        assert_eq!(
             Temperature::from_millicelsius(-36_600).as_abs_whole_celsius(),
             37
         );
+        assert_eq!(Duration::from_deciseconds(12).as_milliseconds(), 1_200);
 
         assert_eq!(Angle::from_degrees(69).as_millidegrees(), 69_000);
+        assert_eq!(Angle::from_deci_degrees(690).as_millidegrees(), 6_900);
         assert_eq!(Angle::from_millidegrees(69_060).as_whole_degrees(), 69);
 
         assert_eq!(
@@ -6530,6 +6626,7 @@ mod tests {
             ),
             Power::from_milliwatts(4_611_686_014_132_420)
         );
+        assert_eq!(DutyCycle::from_centipercent(755).as_permille(), 75);
     }
 
     #[test]

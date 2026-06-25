@@ -208,7 +208,7 @@ impl VeteranBmsTemperaturePage {
         let cursor = ParserCursor::new(values);
         for offset in (0..values.len()).step_by(2) {
             if let Some(value) = cursor.be_i16(ParserOffset::from_bytes(offset)) {
-                temperatures.push(Temperature::from_millicelsius(i32::from(value) * 10));
+                temperatures.push(Temperature::from_centi_celsius(i32::from(value)));
             }
         }
 
@@ -259,16 +259,16 @@ impl VeteranBmsMetadataPage {
         Ok(Self {
             selector,
             currents: BmsPackCurrents::reported(
-                BatteryCurrent::from_milliamps(
+                BatteryCurrent::from_centiamps(i32::from(
                     cursor
                         .be_i16(ParserOffset::from_bytes(0))
-                        .map_or(0, |value| i32::from(value) * 10),
-                ),
-                BatteryCurrent::from_milliamps(
+                        .map_or(0, |value| value),
+                )),
+                BatteryCurrent::from_centiamps(i32::from(
                     cursor
                         .be_i16(ParserOffset::from_bytes(2))
-                        .map_or(0, |value| i32::from(value) * 10),
-                ),
+                        .map_or(0, |value| value),
+                )),
             ),
         })
     }

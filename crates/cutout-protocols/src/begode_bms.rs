@@ -65,21 +65,26 @@ impl BegodeBmsSummary {
             bms_index: BmsPackIndex::new(u8::from(sub_index_value >= 2)),
             half_index: BmsHalfIndex::new(sub_index_value & 1),
             pwm_limit: centi_percent_to_permille(be_u16(cursor, ParserOffset::from_bytes(2))),
-            pack_voltage: Voltage::from_millivolts(
-                i32::from(be_u16(cursor, ParserOffset::from_bytes(6))) * 100,
-            ),
-            current: BatteryCurrent::from_milliamps(
-                i32::from(be_i16(cursor, ParserOffset::from_bytes(8))) * 100,
-            ),
-            temperature_0: Temperature::from_millicelsius(
-                i32::from(be_i16(cursor, ParserOffset::from_bytes(10))) * 1_000,
-            ),
-            temperature_1: Temperature::from_millicelsius(
-                i32::from(be_i16(cursor, ParserOffset::from_bytes(12))) * 1_000,
-            ),
-            half_pack_voltage: Voltage::from_millivolts(
-                i32::from(be_i16(cursor, ParserOffset::from_bytes(14))) * 100,
-            ),
+            pack_voltage: Voltage::from_deci_volts(i32::from(be_u16(
+                cursor,
+                ParserOffset::from_bytes(6),
+            ))),
+            current: BatteryCurrent::from_deciamps(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(8),
+            ))),
+            temperature_0: Temperature::from_celsius(i64::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(10),
+            ))),
+            temperature_1: Temperature::from_celsius(i64::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(12),
+            ))),
+            half_pack_voltage: Voltage::from_deci_volts(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(14),
+            ))),
         })
     }
 
@@ -213,7 +218,7 @@ fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
 }
 
 fn centi_percent_to_permille(value: u16) -> DutyCycle {
-    DutyCycle::from_permille(i16::try_from(value / 10).unwrap_or(i16::MAX))
+    DutyCycle::from_centipercent(value)
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {
