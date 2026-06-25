@@ -20,7 +20,7 @@ use cutout_btle::{
 };
 use cutout_core::{
     BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, DiagnosticReadback,
-    FirmwareInfo, Measured, ModelCatalog, NotificationByteLen, NotificationIngestOutcome,
+    Distance, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen, NotificationIngestOutcome,
     ParserDiagnostics, PhaseCurrent, Power, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
     SettingsEntry, SettingsReadback, TelemetryDelta, TelemetrySnapshot, Voltage,
 };
@@ -814,7 +814,7 @@ pub(crate) struct TelemetryWindow {
     pub(crate) latest_battery_current: Option<DisplayBatteryCurrent>,
     pub(crate) latest_power: Option<DisplayPower>,
     pub(crate) latest_temperature: Option<DisplayTemperature>,
-    pub(crate) latest_distance: Option<u64>,
+    pub(crate) latest_distance: Option<Distance>,
     pub(crate) latest_pitch: Option<WheelPitchDeg>,
     pub(crate) latest_pwm: Option<DisplayDutyCycle>,
     pub(crate) speed_samples: Vec<u64>,
@@ -1447,7 +1447,7 @@ impl TelemetryWindow {
             );
         }
         if let Some(distance) = snapshot.distance {
-            self.latest_distance = Some(distance.value.get() / 1_000);
+            self.latest_distance = Some(distance.value);
         }
         if let Some(pitch) = snapshot.pitch {
             self.latest_pitch = Some(WheelPitchDeg::from_angle(pitch.value));
@@ -1674,7 +1674,7 @@ fn u64_to_i64(value: u64) -> Option<i64> {
     i64::try_from(value).ok()
 }
 
-struct OptionalDisplayDistance(Option<u64>);
+struct OptionalDisplayDistance(Option<Distance>);
 
 impl fmt::Display for OptionalDisplayDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1685,14 +1685,22 @@ impl fmt::Display for OptionalDisplayDistance {
     }
 }
 
-struct DisplayDistance(u64);
+struct DisplayDistance(Distance);
+
+impl DisplayDistance {
+    #[cfg(test)]
+    fn from_millimetres(value: u64) -> Self {
+        Self(Distance::from_millimetres(value))
+    }
+}
 
 impl fmt::Display for DisplayDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0 < 1_000 {
-            write!(f, "{} m", self.0)
+        let meters = self.0.as_millimetres() / 1_000;
+        if meters < 1_000 {
+            write!(f, "{meters} m")
         } else {
-            let km_tenths = self.0.saturating_mul(10).saturating_add(500) / 1_000;
+            let km_tenths = meters.saturating_mul(10).saturating_add(500) / 1_000;
             write!(f, "{} km", TenthsDisplay(km_tenths))
         }
     }
@@ -1768,7 +1776,7 @@ impl fmt::Display for MappedTelemetryLog {
             fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
         if let Some(distance) = snapshot.distance {
-            fields.write_display("distance", DisplayTelemetryDistance(distance.value.get()))?;
+            fields.write_display("distance", DisplayTelemetryDistance(distance.value))?;
         }
         if let Some(pitch) = snapshot.pitch {
             fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
@@ -1825,7 +1833,7 @@ impl fmt::Display for TelemetryDeltaLog {
             fields.write("pwm", permille_to_percent(pwm.value.get()), "%")?;
         }
         if let Some(distance) = delta.distance {
-            fields.write_display("distance", DisplayTelemetryDistance(distance.value.get()))?;
+            fields.write_display("distance", DisplayTelemetryDistance(distance.value))?;
         }
         if let Some(pitch) = delta.pitch {
             fields.write("pitch", millidegrees_to_degrees(pitch.value.get()), "deg")?;
@@ -1932,11 +1940,18 @@ impl fmt::Display for OptionalOperationalCurrentDisplay {
     }
 }
 
-struct DisplayTelemetryDistance(u64);
+struct DisplayTelemetryDistance(Distance);
+
+impl DisplayTelemetryDistance {
+    #[cfg(test)]
+    fn from_millimetres(value: u64) -> Self {
+        Self(Distance::from_millimetres(value))
+    }
+}
 
 impl fmt::Display for DisplayTelemetryDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let meters = self.0 / 1_000;
+        let meters = self.0.as_millimetres() / 1_000;
         if meters < 1_000 {
             return write!(f, "{meters} m");
         }
@@ -3596,8 +3611,8 @@ mod tests {
         Measured::reported(cutout_core::DutyCycle::from_permille(value))
     }
 
-    fn distance(value: u64) -> Measured<cutout_core::Distance> {
-        Measured::reported(cutout_core::Distance::from_millimetres(value))
+    fn distance(value: u64) -> Measured<Distance> {
+        Measured::reported(Distance::from_millimetres(value))
     }
 
     fn angle_mdeg(value: i32) -> Measured<cutout_core::Angle> {
@@ -4080,16 +4095,22 @@ mod tests {
 
     #[test]
     fn distance_formatter_uses_odometer_scale_for_large_distances() {
-        assert_eq!(DisplayDistance(999).to_string(), "999 m");
         assert_eq!(
-            DisplayTelemetryDistance(1_551_169_000).to_string(),
+            DisplayDistance::from_millimetres(999_000).to_string(),
+            "999 m"
+        );
+        assert_eq!(
+            DisplayTelemetryDistance::from_millimetres(1_551_169_000).to_string(),
             "1551.2 km"
         );
         assert_eq!(
-            OptionalDisplayDistance(Some(1_551_169)).to_string(),
+            OptionalDisplayDistance(Some(Distance::from_millimetres(1_551_169_000))).to_string(),
             "1551.2 km"
         );
-        assert_eq!(DisplayDistance(1_550_438).to_string(), "1550.4 km");
+        assert_eq!(
+            DisplayDistance::from_millimetres(1_550_438_000).to_string(),
+            "1550.4 km"
+        );
         assert_eq!(OptionalDisplayDistance(None).to_string(), "unknown");
     }
 
@@ -5350,7 +5371,10 @@ mod tests {
             state.telemetry.latest_temperature,
             Some(DisplayTemperature::from_celsius(33))
         );
-        assert_eq!(state.telemetry.latest_distance, Some(1_551_169));
+        assert_eq!(
+            state.telemetry.latest_distance,
+            Some(Distance::from_millimetres(1_551_169_000))
+        );
         assert_eq!(state.telemetry.latest_pitch, Some(WheelPitchDeg(69)));
         assert_eq!(state.telemetry.latest_pwm, Some(DisplayDutyCycle(-100)));
         assert_eq!(state.telemetry.voltage_samples.len(), HISTORY_LIMIT);
