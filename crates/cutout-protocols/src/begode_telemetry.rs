@@ -135,7 +135,7 @@ impl BegodeUnitMode {
     fn speed_limit(self, raw_speed: u16) -> Speed {
         match self {
             Self::Metric => Speed::from_kmh(u64::from(raw_speed)),
-            Self::Imperial => Speed::from_kmh(u64::from(mph_to_kmh_u16(raw_speed))),
+            Self::Imperial => Speed::from_mph_floor_kmh(u64::from(raw_speed)),
         }
     }
 
@@ -1210,11 +1210,11 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
 }
 
 fn scaled_voltage(wire_voltage: WireVoltage, profile: BegodePackVoltageProfile) -> Voltage {
-    Voltage::from_millivolts((wire_voltage.as_millivolts() * profile.scaler_milli() + 500) / 1_000)
+    wire_voltage.as_scaled_voltage(profile.scaler_milli())
 }
 
 fn unscaled_centivolts(voltage: Voltage, profile: BegodePackVoltageProfile) -> i32 {
-    (voltage.as_millivolts() * 100 + profile.scaler_milli() / 2) / profile.scaler_milli()
+    i32::from(WireVoltage::from_scaled_voltage(voltage, profile.scaler_milli()).as_centivolts())
 }
 
 fn speed_from_live_a_raw(raw_speed: i16) -> Speed {
@@ -1292,11 +1292,6 @@ fn be_u32(cursor: ParserCursor<'_>, offset: ParserOffset) -> u32 {
 
 const fn div_round(numerator: i32, denominator: i32) -> i32 {
     (numerator + denominator / 2) / denominator
-}
-
-fn mph_to_kmh_u16(value: u16) -> u16 {
-    let scaled = u32::from(value) * 1_609_344;
-    u16::try_from(scaled / 1_000_000).unwrap_or(u16::MAX)
 }
 
 fn mph_milli_to_kmh_milli(value: i32) -> i32 {

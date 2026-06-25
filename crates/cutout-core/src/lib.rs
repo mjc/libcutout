@@ -4183,6 +4183,30 @@ impl WireVoltage {
     pub const fn as_millivolts(self) -> i32 {
         self.as_centivolts() as i32 * 10
     }
+
+    /// Scales this wire voltage into a pack voltage using a milli-ratio.
+    #[must_use]
+    pub fn as_scaled_voltage(self, scaler_milli: i32) -> Voltage {
+        if scaler_milli <= 0 {
+            return Voltage::from_millivolts(0);
+        }
+
+        let numerator = i64::from(self.as_millivolts()) * i64::from(scaler_milli);
+        let scaled = (numerator + 500) / 1_000;
+        Voltage::from_millivolts(saturating_i64_to_i32(scaled))
+    }
+
+    /// Converts a pack voltage back into wire centivolts using a milli-ratio.
+    #[must_use]
+    pub fn from_scaled_voltage(voltage: Voltage, scaler_milli: i32) -> Self {
+        if scaler_milli <= 0 {
+            return Self::from_centivolts(0);
+        }
+
+        let numerator = i64::from(voltage.as_millivolts()) * 100;
+        let centivolts = (numerator + i64::from(scaler_milli / 2)) / i64::from(scaler_milli);
+        Self::from_centivolts(u16::try_from(centivolts).unwrap_or(u16::MAX))
+    }
 }
 
 /// Single-cell voltage stored in microvolts.
@@ -4472,6 +4496,13 @@ impl Speed {
     pub fn from_mph(value: u64) -> Self {
         let millimetres_per_second = value.saturating_mul(447_388).saturating_add(500) / 1_000;
         Self::from_millimetres_per_second(i32::try_from(millimetres_per_second).unwrap_or(i32::MAX))
+    }
+
+    /// Creates a speed from whole miles per hour, truncating the km/h result to a whole number.
+    #[must_use]
+    pub fn from_mph_floor_kmh(value: u64) -> Self {
+        let kmh = value.saturating_mul(1_609_344) / 1_000_000;
+        Self::from_kmh(kmh)
     }
 
     /// Returns this speed in whole miles per hour, rounded to the nearest mph.
@@ -6069,6 +6100,14 @@ mod tests {
 
         assert_eq!(voltage.as_centivolts(), 6_005);
         assert_eq!(voltage.as_millivolts(), 60_050);
+        assert_eq!(
+            voltage.as_scaled_voltage(1_000),
+            Voltage::from_millivolts(60_050)
+        );
+        assert_eq!(
+            crate::WireVoltage::from_scaled_voltage(Voltage::from_millivolts(60_050), 1_000),
+            voltage
+        );
     }
 
     #[test]
