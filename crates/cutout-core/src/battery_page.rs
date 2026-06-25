@@ -1,5 +1,6 @@
 use crate::{
-    BatteryInfo, BmsPackCurrents, Measured, ProtocolSelector, Temperature, VerificationStatus,
+    BatteryInfo, BmsPackCurrents, BmsTemperatureValuesPerPage, Measured, ProtocolSelector,
+    Temperature, VerificationStatus,
 };
 
 /// Fixed number of temperature values carried by typed BMS temperature pages.
@@ -108,7 +109,7 @@ pub struct BatteryTemperaturePage {
     pub temperatures: [Temperature; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
 
     /// Number of populated temperature values.
-    pub temperature_count: u8,
+    pub temperature_count: BmsTemperatureValuesPerPage,
 }
 
 impl BatteryTemperaturePage {
@@ -119,7 +120,7 @@ impl BatteryTemperaturePage {
             page,
             battery,
             temperatures: [Temperature::from_millicelsius(0); BATTERY_TEMPERATURE_VALUES_PER_PAGE],
-            temperature_count: 0,
+            temperature_count: BmsTemperatureValuesPerPage::new(0),
         }
     }
 
@@ -145,7 +146,7 @@ impl BatteryTemperaturePage {
             page,
             battery,
             temperatures: values,
-            temperature_count: count,
+            temperature_count: BmsTemperatureValuesPerPage::new(count),
         }
     }
 }
@@ -247,7 +248,7 @@ impl BatteryPagePayload {
             Self::Temperature(page) => {
                 let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
                 let mut index = 0;
-                while index < page.temperature_count as usize {
+                while index < page.temperature_count.get() as usize {
                     temperatures[index] = Some(Measured::reported(
                         page.temperatures[index].as_millicelsius(),
                     ));
@@ -378,6 +379,12 @@ mod tests {
 
         assert_eq!(payload.page(), page);
         assert_eq!(payload.battery(), battery);
+        if let BatteryPagePayload::Temperature(temperature_page) = payload {
+            assert_eq!(
+                temperature_page.temperature_count,
+                BmsTemperatureValuesPerPage::new(0)
+            );
+        }
     }
 
     #[test]
