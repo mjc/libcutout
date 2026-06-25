@@ -1,4 +1,4 @@
-use cutout_core::{BatteryLevel, Capacity, CellVoltage, SeriesCount, Voltage};
+use cutout_core::{BatteryLevel, Capacity, CellVoltage, SeriesCount, Voltage, round_div_i32};
 
 /// A measured voltage/level point for a battery profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -118,7 +118,7 @@ fn interpolate_level(
     let level_span = i32::from(high.level.as_percent()) - i32::from(low.level.as_percent());
     let numerator = (cell_voltage_uv - low_uv) * level_span;
     BatteryLevel::from_percent_i32(
-        i32::from(low.level.as_percent()) + ((numerator + (voltage_span / 2)) / voltage_span),
+        i32::from(low.level.as_percent()) + round_div_i32(numerator, voltage_span),
     )
 }
 

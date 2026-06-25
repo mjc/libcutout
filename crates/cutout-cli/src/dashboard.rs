@@ -573,10 +573,6 @@ impl DisplayBatteryCurrent {
     }
 }
 
-fn battery_current_from_current(value: Current) -> BatteryCurrent {
-    BatteryCurrent::from_milliamps(value.as_milliamps())
-}
-
 impl fmt::Display for DisplayBatteryCurrent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} A", self.get())
@@ -1381,16 +1377,13 @@ impl TelemetryWindow {
             .current_samples
             .last()
             .copied()
-            .map(battery_current_from_current)
             .map(DisplayBatteryCurrent::from_current);
         self.latest_power = self
             .voltage_samples
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .map(|(voltage, current)| {
-                DisplayPower::from_voltage_current(voltage, battery_current_from_current(current))
-            });
+            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current));
         self.latest_temperature = self
             .temperature_samples
             .last()
@@ -1460,16 +1453,13 @@ impl TelemetryWindow {
             .current_samples
             .last()
             .copied()
-            .map(battery_current_from_current)
             .map(DisplayBatteryCurrent::from_current);
         self.latest_power = self
             .voltage_samples
             .last()
             .copied()
             .zip(self.current_samples.last().copied())
-            .map(|(voltage, current)| {
-                DisplayPower::from_voltage_current(voltage, battery_current_from_current(current))
-            });
+            .map(|(voltage, current)| DisplayPower::from_voltage_current(voltage, current));
         self.latest_temperature = self
             .temperature_samples
             .last()

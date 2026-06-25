@@ -4056,6 +4056,24 @@ const fn saturating_i64_to_i32(value: i64) -> i32 {
     }
 }
 
+/// Divides two signed integers and rounds the quotient to the nearest integer.
+#[must_use]
+pub fn round_div_i32(numerator: i32, denominator: i32) -> i32 {
+    if denominator == 0 {
+        return 0;
+    }
+
+    let numerator = i64::from(numerator);
+    let denominator = i64::from(denominator);
+    let sign = if (numerator < 0) ^ (denominator < 0) {
+        -1
+    } else {
+        1
+    };
+    let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
+    saturating_i64_to_i32(rounded.saturating_mul(sign))
+}
+
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -4553,6 +4571,18 @@ impl Speed {
         Self::from_kmh(kmh)
     }
 
+    /// Scales a milli-km/h value by a milli-ratio.
+    #[must_use]
+    pub fn from_milli_kmh_scaled(value: i32, scale_milli: i32) -> Self {
+        if scale_milli <= 0 {
+            return Self::from_millimetres_per_second(0);
+        }
+
+        let numerator = i64::from(value) * i64::from(scale_milli);
+        let scaled = (numerator + 500_000) / 1_000_000;
+        Self::from_milli_kmh(saturating_i64_to_i32(scaled))
+    }
+
     /// Returns this speed in whole miles per hour, rounded to the nearest mph.
     #[must_use]
     pub fn as_mph(self) -> u64 {
@@ -4805,6 +4835,26 @@ impl DutyCycle {
     #[must_use]
     pub fn from_centipercent(value: u16) -> Self {
         Self::from_permille(i16::try_from(value / 10).unwrap_or(i16::MAX))
+    }
+
+    /// Creates a duty cycle from a raw decipermille value.
+    #[must_use]
+    pub const fn from_decipermille(value: i16) -> Self {
+        Self::from_permille(value / 10)
+    }
+
+    /// Creates a duty cycle from a centered raw PWM register.
+    #[must_use]
+    pub fn from_centered_pwm(value: u16) -> Self {
+        let centered = i32::from(value) - 0x8000;
+        let permille = centered * 1_000 / 0x8000;
+        Self::from_permille(
+            i16::try_from(permille).unwrap_or(if permille.is_negative() {
+                i16::MIN
+            } else {
+                i16::MAX
+            }),
+        )
     }
 
     /// Returns this duty cycle in permille.
@@ -6118,6 +6168,7 @@ pub const fn crate_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::crate_name;
+    use crate::round_div_i32;
     use crate::{
         Angle, BatteryCurrent, BatteryLevel, CellVoltage, Current, DeviceCommand, DeviceEvent,
         Distance, Duration, DutyCycle, GattChannel, LinkInfo, Measured, MonotonicTimestamp,
@@ -6590,6 +6641,12 @@ mod tests {
             Speed::from_millimetres_per_second(15_277).as_deci_kmh_rounded(),
             550
         );
+        assert_eq!(
+            Speed::from_milli_kmh_scaled(10_000, 1_609_344).as_millimetres_per_second(),
+            4_470
+        );
+        assert_eq!(round_div_i32(5, 2), 3);
+        assert_eq!(round_div_i32(-5, 2), -3);
 
         assert_eq!(Voltage::from_volts(126).as_millivolts(), 126_000);
         assert_eq!(Voltage::from_millivolts(84_400).as_whole_volts(), 84);
@@ -6631,6 +6688,11 @@ mod tests {
         assert_eq!(Angle::from_degrees(69).as_millidegrees(), 69_000);
         assert_eq!(Angle::from_deci_degrees(690).as_millidegrees(), 6_900);
         assert_eq!(Angle::from_millidegrees(69_060).as_whole_degrees(), 69);
+
+        assert_eq!(DutyCycle::from_decipermille(524).as_permille(), 52);
+        assert_eq!(DutyCycle::from_centered_pwm(0).as_permille(), -1_000);
+        assert_eq!(DutyCycle::from_centered_pwm(0x8000).as_permille(), 0);
+        assert_eq!(DutyCycle::from_centered_pwm(u16::MAX).as_permille(), 999);
 
         assert_eq!(
             Power::from_voltage_current(Voltage::from_volts(53), Current::from_amps(-6)),

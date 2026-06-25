@@ -5,7 +5,7 @@ use cutout_core::{
     DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicTimestamp,
     ParallelCount, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
     SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
-    VerificationStatus, Voltage, WireVoltage,
+    VerificationStatus, Voltage, WireVoltage, round_div_i32,
 };
 use thiserror::Error;
 
@@ -126,9 +126,7 @@ impl BegodeUnitMode {
     fn speed(self, metric_speed: Speed) -> Speed {
         match self {
             Self::Metric => metric_speed,
-            Self::Imperial => {
-                Speed::from_milli_kmh(mph_milli_to_kmh_milli(metric_speed.as_milli_kmh()))
-            }
+            Self::Imperial => Speed::from_milli_kmh_scaled(metric_speed.as_milli_kmh(), 1_609_344),
         }
     }
 
@@ -908,8 +906,11 @@ impl BegodeLiveATelemetry {
             WireVoltage::from_centivolts(be_u16(cursor, ParserOffset::from_bytes(2)));
         Ok(Self {
             wire_voltage,
-            voltage: scaled_voltage(wire_voltage, profile),
-            speed: speed_from_live_a_raw(be_i16(cursor, ParserOffset::from_bytes(4))),
+            voltage: wire_voltage.as_scaled_voltage(profile.scaler_milli()),
+            speed: Speed::from_centimetres_per_second(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(4),
+            ))),
             trip_distance: Distance::from_metres(u64::from(be_u32(
                 cursor,
                 ParserOffset::from_bytes(6),
@@ -923,12 +924,12 @@ impl BegodeLiveATelemetry {
                 ParserOffset::from_bytes(10),
             ))),
             imu_temperature: mpu6050_temperature(be_i16(cursor, ParserOffset::from_bytes(12))),
-            hardware_pwm: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
+            hardware_pwm: DutyCycle::from_decipermille(be_i16(
                 cursor,
                 ParserOffset::from_bytes(14),
-            ))),
+            )),
             battery_level: estimate_begode_battery_level(
-                scaled_voltage(wire_voltage, profile),
+                wire_voltage.as_scaled_voltage(profile.scaler_milli()),
                 profile,
             ),
         })
@@ -953,7 +954,10 @@ impl BegodeLiveATelemetry {
             motor_current: Some(source_reported(BatteryCurrent::from_milliamps(
                 self.phase_current.as_milliamps(),
             ))),
-            power: Some(source_calculated(power(self.voltage, self.phase_current))),
+            power: Some(source_calculated(Power::from_voltage_current(
+                self.voltage,
+                self.phase_current,
+            ))),
             controller_temperature: Some(source_reported(self.imu_temperature)),
             pwm: Some(source_reported(DutyCycle::from_permille(
                 self.hardware_pwm.as_permille(),
@@ -1055,7 +1059,14 @@ impl BegodeLiveBTelemetry {
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(speed_setting_value(self.tiltback_speed)),
+                    i64::from(
+                        u16::try_from(
+                            self.tiltback_speed
+                                .as_kmh_rounded()
+                                .clamp(0, i32::from(u16::MAX)),
+                        )
+                        .unwrap_or(u16::MAX),
+                    ),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -1131,10 +1142,7 @@ impl BegodeExtraTelemetry {
                 cursor,
                 ParserOffset::from_bytes(6),
             ))),
-            true_pwm: DutyCycle::from_permille(raw_pwm_to_permille(be_i16(
-                cursor,
-                ParserOffset::from_bytes(8),
-            ))),
+            true_pwm: DutyCycle::from_decipermille(be_i16(cursor, ParserOffset::from_bytes(8))),
         })
     }
 
@@ -1185,18 +1193,20 @@ pub fn estimate_begode_battery_level(
     voltage: Voltage,
     profile: BegodePackVoltageProfile,
 ) -> BatteryLevel {
-    let wire_centivolts = unscaled_centivolts(voltage, profile);
+    let wire_centivolts = i32::from(
+        WireVoltage::from_scaled_voltage(voltage, profile.scaler_milli()).as_centivolts(),
+    );
     if wire_centivolts <= 5_120 {
         return BatteryLevel::from_percent(0);
     }
     if wire_centivolts <= 5_440 {
         return BatteryLevel::from_percent_i32(
-            div_round(wire_centivolts - 5_120, 36).clamp(0, 100),
+            round_div_i32(wire_centivolts - 5_120, 36).clamp(0, 100),
         );
     }
     if wire_centivolts <= 6_680 {
         return BatteryLevel::from_percent_i32(
-            div_round((wire_centivolts - 5_320) * 10, 136).clamp(0, 100),
+            round_div_i32((wire_centivolts - 5_320) * 10, 136).clamp(0, 100),
         );
     }
     BatteryLevel::from_percent(100)
@@ -1212,31 +1222,6 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
             actual: u8::try_from(actual.get()).unwrap_or_default(),
         })
     }
-}
-
-fn scaled_voltage(wire_voltage: WireVoltage, profile: BegodePackVoltageProfile) -> Voltage {
-    wire_voltage.as_scaled_voltage(profile.scaler_milli())
-}
-
-fn unscaled_centivolts(voltage: Voltage, profile: BegodePackVoltageProfile) -> i32 {
-    i32::from(WireVoltage::from_scaled_voltage(voltage, profile.scaler_milli()).as_centivolts())
-}
-
-fn speed_from_live_a_raw(raw_speed: i16) -> Speed {
-    Speed::from_centimetres_per_second(i32::from(raw_speed))
-}
-
-fn speed_setting_value(value: Speed) -> u16 {
-    let kmh = value.as_kmh_rounded().clamp(0, i32::from(u16::MAX));
-    u16::try_from(kmh).unwrap_or(u16::MAX)
-}
-
-fn power(voltage: Voltage, current: PhaseCurrent) -> Power {
-    Power::from_voltage_current(voltage, current)
-}
-
-fn raw_pwm_to_permille(raw_pwm: i16) -> i16 {
-    raw_pwm / 10
 }
 
 fn mpu6050_temperature(raw_temperature: i16) -> Temperature {
@@ -1293,24 +1278,6 @@ fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
 
 fn be_u32(cursor: ParserCursor<'_>, offset: ParserOffset) -> u32 {
     cursor.be_u32(offset).unwrap_or_default()
-}
-
-const fn div_round(numerator: i32, denominator: i32) -> i32 {
-    (numerator + denominator / 2) / denominator
-}
-
-fn mph_milli_to_kmh_milli(value: i32) -> i32 {
-    let scaled = i64::from(value) * 1_609_344;
-    match i32::try_from(scaled / 1_000_000) {
-        Ok(value) => value,
-        Err(_) => {
-            if scaled.is_negative() {
-                i32::MIN
-            } else {
-                i32::MAX
-            }
-        }
-    }
 }
 
 #[cfg(test)]

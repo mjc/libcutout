@@ -423,7 +423,7 @@ impl VeteranTelemetry {
         Ok(Self {
             firmware,
             voltage,
-            speed: speed_from_deci_kmh(i32::from(
+            speed: Speed::from_deci_kmh(i32::from(
                 cursor
                     .be_i16(ParserOffset::from_bytes(6))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -454,12 +454,12 @@ impl VeteranTelemetry {
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
             charge_mode,
-            speed_alert: speed_from_deci_kmh(i32::from(
+            speed_alert: Speed::from_deci_kmh(i32::from(
                 cursor
                     .be_u16(ParserOffset::from_bytes(24))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
-            speed_tiltback: speed_from_deci_kmh(i32::from(
+            speed_tiltback: Speed::from_deci_kmh(i32::from(
                 cursor
                     .be_u16(ParserOffset::from_bytes(26))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -474,11 +474,11 @@ impl VeteranTelemetry {
                     .be_i16(ParserOffset::from_bytes(32))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
-            hardware_pwm: DutyCycle::from_permille(veteran_pwm(
+            hardware_pwm: DutyCycle::from_centered_pwm(
                 cursor
                     .be_u16(ParserOffset::from_bytes(34))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            )),
+            ),
             battery_level_estimated: estimate_veteran_battery_level(firmware.model_id, voltage),
         })
     }
@@ -537,11 +537,11 @@ impl VeteranTelemetry {
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-                        i64::from(speed_setting_value(self.speed_alert)),
+                        i64::from(self.speed_alert.as_deci_kmh_rounded()),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-                        i64::from(speed_setting_value(self.speed_tiltback)),
+                        i64::from(self.speed_tiltback.as_deci_kmh_rounded()),
                     )),
                 ],
             }),
@@ -635,23 +635,6 @@ pub fn estimate_veteran_battery_level(model_id: u16, voltage: Voltage) -> Batter
     VeteranModelProfile::from_model_id(model_id).map_or(BatteryLevel::from_percent(0), |profile| {
         profile.estimate_battery_level(voltage)
     })
-}
-
-fn speed_from_deci_kmh(value: i32) -> Speed {
-    Speed::from_deci_kmh(value)
-}
-
-fn speed_setting_value(value: Speed) -> i32 {
-    value.as_deci_kmh_rounded()
-}
-
-fn veteran_pwm(raw_pwm: u16) -> i16 {
-    let centered = i32::from(raw_pwm) - 0x8000;
-    let permille = centered * 1_000 / 0x8000;
-    #[allow(clippy::cast_possible_truncation)]
-    {
-        permille as i16
-    }
 }
 
 #[cfg(test)]
@@ -1328,7 +1311,7 @@ mod tests {
     fn veteran_telemetry_delta_scales_nonzero_speed_and_current() {
         let mut telemetry =
             VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
-        telemetry.speed = speed_from_deci_kmh(36);
+        telemetry.speed = Speed::from_deci_kmh(36);
         telemetry.battery_current = BatteryCurrent::from_milliamps(-1_700);
 
         let delta = telemetry.to_delta(ms(42));
@@ -1362,7 +1345,7 @@ mod tests {
     #[test]
     fn veteran_speed_conversion_scales_nonzero_deci_kmh() {
         assert_eq!(
-            speed_from_deci_kmh(36),
+            Speed::from_deci_kmh(36),
             Speed::from_millimetres_per_second(1_000)
         );
     }
@@ -1370,11 +1353,11 @@ mod tests {
     #[test]
     fn veteran_speed_conversion_round_trips_deci_kmh_thresholds() {
         assert_eq!(
-            speed_setting_value(Speed::from_millimetres_per_second(15_277)),
+            Speed::from_millimetres_per_second(15_277).as_deci_kmh_rounded(),
             550
         );
         assert_eq!(
-            speed_setting_value(Speed::from_millimetres_per_second(15_000)),
+            Speed::from_millimetres_per_second(15_000).as_deci_kmh_rounded(),
             540
         );
     }
@@ -1392,8 +1375,8 @@ mod tests {
 
     #[test]
     fn veteran_pwm_conversion_maps_raw_bounds_and_midpoint() {
-        assert_eq!(veteran_pwm(0), -1_000);
-        assert_eq!(veteran_pwm(0x8000), 0);
-        assert_eq!(veteran_pwm(u16::MAX), 999);
+        assert_eq!(DutyCycle::from_centered_pwm(0).as_permille(), -1_000);
+        assert_eq!(DutyCycle::from_centered_pwm(0x8000).as_permille(), 0);
+        assert_eq!(DutyCycle::from_centered_pwm(u16::MAX).as_permille(), 999);
     }
 }
