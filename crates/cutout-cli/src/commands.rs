@@ -1065,7 +1065,7 @@ async fn refresh_dashboard_battery(
                 percent = percent.get(),
                 "dashboard battery refresh succeeded"
             );
-            tx.send(DashboardUpdate::BatteryPercent(percent.get()))
+            tx.send(DashboardUpdate::BatteryLevel(percent.get()))
                 .is_ok()
         }
         Ok(None) => {
@@ -3348,7 +3348,7 @@ mod tests {
             state.counters.latest_notification_len,
             Some(NotificationByteLen::new(99))
         );
-        assert_eq!(state.telemetry.latest_voltage_v, Some(108));
+        assert_eq!(state.telemetry.latest_voltage, Some(108));
         assert!(state.read_only.firmware.is_some());
         assert!(
             state
