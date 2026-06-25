@@ -2229,8 +2229,8 @@ mod tests {
                     ))
                     && payload.bms_pack_currents()
                         == Some(cutout_core::BmsPackCurrents::reported(
-                            cutout_core::BmsPackCurrent::from_milliamps(20),
-                            cutout_core::BmsPackCurrent::from_milliamps(20)
+                            BatteryCurrent::from_milliamps(20),
+                            BatteryCurrent::from_milliamps(20)
                         ))
         )));
     }
@@ -2240,8 +2240,8 @@ mod tests {
         let payload = veteran_bms_metadata_payload(VeteranBmsMetadataPage {
             selector: ProtocolSelector::new(4),
             currents: cutout_core::BmsPackCurrents::reported(
-                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
-                cutout_core::BmsPackCurrent::from_milliamps(450),
+                BatteryCurrent::from_milliamps(-1_230),
+                BatteryCurrent::from_milliamps(450),
             ),
         });
 
@@ -2254,8 +2254,8 @@ mod tests {
         assert_eq!(
             payload.bms_pack_currents(),
             Some(cutout_core::BmsPackCurrents::reported(
-                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
-                cutout_core::BmsPackCurrent::from_milliamps(450)
+                BatteryCurrent::from_milliamps(-1_230),
+                BatteryCurrent::from_milliamps(450)
             ))
         );
     }

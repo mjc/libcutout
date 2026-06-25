@@ -4218,33 +4218,14 @@ pub struct FirmwareInfo {
     pub build_id: Option<RawFieldValue>,
 }
 
-/// BMS pack current.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct BmsPackCurrent(i32);
-
-impl BmsPackCurrent {
-    /// Creates a BMS pack current value from milliamps.
-    #[must_use]
-    pub const fn from_milliamps(value: i32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the current value as milliamps.
-    #[must_use]
-    pub const fn as_milliamps(self) -> i32 {
-        self.0
-    }
-}
-
 /// Paired page-specific BMS pack-current values with shared provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsPackCurrents {
     /// First page-specific BMS pack current.
-    current_0: BmsPackCurrent,
+    current_0: BatteryCurrent,
 
     /// Second page-specific BMS pack current.
-    current_1: BmsPackCurrent,
+    current_1: BatteryCurrent,
 
     /// Source of the current values.
     pub source: ValueSource,
@@ -4259,7 +4240,7 @@ pub struct BmsPackCurrents {
 impl BmsPackCurrents {
     /// Creates known BMS pack current values reported directly by the device.
     #[must_use]
-    pub const fn reported(current_0: BmsPackCurrent, current_1: BmsPackCurrent) -> Self {
+    pub const fn reported(current_0: BatteryCurrent, current_1: BatteryCurrent) -> Self {
         Self {
             current_0,
             current_1,
@@ -4271,13 +4252,13 @@ impl BmsPackCurrents {
 
     /// Returns the first page-specific BMS pack current.
     #[must_use]
-    pub const fn current_0(self) -> BmsPackCurrent {
+    pub const fn current_0(self) -> BatteryCurrent {
         self.current_0
     }
 
     /// Returns the second page-specific BMS pack current.
     #[must_use]
-    pub const fn current_1(self) -> BmsPackCurrent {
+    pub const fn current_1(self) -> BatteryCurrent {
         self.current_1
     }
 }

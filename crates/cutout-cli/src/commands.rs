@@ -1955,7 +1955,7 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
 
 fn bms_pack_current_json(
     currents: Option<cutout_core::BmsPackCurrents>,
-    select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BmsPackCurrent,
+    select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BatteryCurrent,
 ) -> serde_json::Value {
     currents.map_or(serde_json::Value::Null, |currents| {
         measured_json_parts(
@@ -2942,8 +2942,8 @@ mod tests {
                 },
             )
             .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
-                cutout_core::BmsPackCurrent::from_milliamps(450),
+                cutout_core::BatteryCurrent::from_milliamps(-1_230),
+                cutout_core::BatteryCurrent::from_milliamps(450),
             )),
         );
 

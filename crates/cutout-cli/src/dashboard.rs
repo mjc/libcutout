@@ -4516,8 +4516,8 @@ mod tests {
                     },
                 )
                 .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-                    cutout_core::BmsPackCurrent::from_milliamps(-1_230),
-                    cutout_core::BmsPackCurrent::from_milliamps(450),
+                    cutout_core::BatteryCurrent::from_milliamps(-1_230),
+                    cutout_core::BatteryCurrent::from_milliamps(450),
                 )),
             ),
             "selector=0 kind=metadata verification=hardware_verified current=2A bms_current_0=-1A bms_current_1=0A",
@@ -4673,8 +4673,8 @@ mod tests {
                 },
             )
             .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
-                cutout_core::BmsPackCurrent::from_milliamps(-1_230),
-                cutout_core::BmsPackCurrent::from_milliamps(450),
+                cutout_core::BatteryCurrent::from_milliamps(-1_230),
+                cutout_core::BatteryCurrent::from_milliamps(450),
             )),
         );
         let report = SessionBridgeReport {

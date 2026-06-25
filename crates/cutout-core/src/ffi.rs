@@ -1,15 +1,15 @@
 use crate::{
     Angle, BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
-    BmsPackCurrent, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason,
-    DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind,
-    DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState,
-    Measured, MonotonicMillis, NotificationByteLen, NotificationEvidence,
-    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
-    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, Percent, Power, ProtocolFamily,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
-    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLen,
-    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
+    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
+    DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, LightState, Measured, MonotonicMillis,
+    NotificationByteLen, NotificationEvidence, NotificationIngestOutcome, ParserDiagnosticCount,
+    ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen, ParserGapEvidence,
+    PayloadBodyLen, Percent, Power, ProtocolFamily, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput,
+    SessionOutput, SettingsEntry, SettingsReadback, Speed, TelemetryDelta, TelemetrySnapshot,
+    Temperature, TransportAction, TransportWriteLen, ValueQuality, ValueSource, VerificationStatus,
+    Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -520,7 +520,7 @@ impl From<Measured<i32>> for MeasuredI32Dto {
 }
 
 impl MeasuredI32Dto {
-    fn from_bms_pack_current(current: BmsPackCurrent, currents: BmsPackCurrents) -> Self {
+    fn from_bms_pack_current(current: BatteryCurrent, currents: BmsPackCurrents) -> Self {
         Self {
             value: current.as_milliamps(),
             source: currents.source.into(),
@@ -1827,8 +1827,8 @@ mod tests {
                 },
             )
             .with_bms_pack_currents(BmsPackCurrents::reported(
-                BmsPackCurrent::from_milliamps(-1_230),
-                BmsPackCurrent::from_milliamps(450),
+                BatteryCurrent::from_milliamps(-1_230),
+                BatteryCurrent::from_milliamps(450),
             )),
         );
 

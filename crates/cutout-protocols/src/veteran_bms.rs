@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrent,
+    BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
     BmsPackCurrents, ProtocolSelector, Temperature, VerificationStatus, Voltage,
 };
 use thiserror::Error;
@@ -258,12 +258,12 @@ impl VeteranBmsMetadataPage {
         Ok(Self {
             selector,
             currents: BmsPackCurrents::reported(
-                BmsPackCurrent::from_milliamps(
+                BatteryCurrent::from_milliamps(
                     cursor
                         .be_i16(ByteOffset::new(0))
                         .map_or(0, |value| i32::from(value) * 10),
                 ),
-                BmsPackCurrent::from_milliamps(
+                BatteryCurrent::from_milliamps(
                     cursor
                         .be_i16(ByteOffset::new(2))
                         .map_or(0, |value| i32::from(value) * 10),
@@ -602,8 +602,8 @@ mod tests {
         assert_eq!(
             page.currents,
             BmsPackCurrents::reported(
-                BmsPackCurrent::from_milliamps(-1230),
-                BmsPackCurrent::from_milliamps(450)
+                BatteryCurrent::from_milliamps(-1230),
+                BatteryCurrent::from_milliamps(450)
             )
         );
     }
