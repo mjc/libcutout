@@ -116,10 +116,10 @@ impl BegodeUnitMode {
         }
     }
 
-    fn distance_m_to_mm(self, distance_m: u32) -> u64 {
+    fn distance_from_wire(self, distance_m: u32) -> Distance {
         match self {
-            Self::Metric => u64::from(distance_m) * 1_000,
-            Self::Imperial => miles_milli_to_metric_mm(distance_m),
+            Self::Metric => distance_from_metres(distance_m),
+            Self::Imperial => distance_from_milli_miles(distance_m),
         }
     }
 
@@ -139,9 +139,9 @@ impl BegodeUnitMode {
         }
     }
 
-    fn distance(self, raw_metric_distance: Distance) -> Distance {
-        let raw_m = raw_metric_distance.as_millimetres() / 1_000;
-        Distance::from_millimetres(self.distance_m_to_mm(u32::try_from(raw_m).unwrap_or(u32::MAX)))
+    fn distance(self, metric_distance: Distance) -> Distance {
+        let metric_metres = metric_distance.as_millimetres() / 1_000;
+        self.distance_from_wire(u32::try_from(metric_metres).unwrap_or(u32::MAX))
     }
 }
 
@@ -910,12 +910,8 @@ impl BegodeLiveATelemetry {
             raw_voltage,
             voltage: scaled_voltage(raw_voltage, profile),
             speed: speed_from_live_a_raw(be_i16(cursor, ByteOffset::new(4))),
-            trip_distance: Distance::from_millimetres(
-                u64::from(be_u32(cursor, ByteOffset::new(6))) * 1_000,
-            ),
-            trip_distance_low: Distance::from_millimetres(
-                u64::from(be_u16(cursor, ByteOffset::new(8))) * 1_000,
-            ),
+            trip_distance: distance_from_metres(be_u32(cursor, ByteOffset::new(6))),
+            trip_distance_low: distance_from_metres(u32::from(be_u16(cursor, ByteOffset::new(8)))),
             phase_current: PhaseCurrent::from_milliamps(
                 i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
             ),
@@ -1000,9 +996,7 @@ impl BegodeLiveBTelemetry {
         let settings_bits = BegodeSettingsBits::new(be_u16(cursor, ByteOffset::new(6)));
         let unit_mode = BegodeUnitMode::from_settings_bits(settings_bits);
         Ok(Self {
-            total_distance: Distance::from_millimetres(
-                unit_mode.distance_m_to_mm(be_u32(cursor, ByteOffset::new(2))),
-            ),
+            total_distance: unit_mode.distance_from_wire(be_u32(cursor, ByteOffset::new(2))),
             settings_bits,
             power_off_timer: Duration::from_minutes(u64::from(be_u16(cursor, ByteOffset::new(8)))),
             tiltback_speed: unit_mode.speed_limit(be_u16(cursor, ByteOffset::new(10))),
@@ -1316,8 +1310,12 @@ fn mph_milli_to_kmh_milli(value: i32) -> i32 {
     }
 }
 
-fn miles_milli_to_metric_mm(value: u32) -> u64 {
-    u64::from(value) * 1_609_344 / 1_000
+fn distance_from_metres(value: u32) -> Distance {
+    Distance::from_millimetres(u64::from(value) * 1_000)
+}
+
+fn distance_from_milli_miles(value: u32) -> Distance {
+    Distance::from_millimetres(u64::from(value) * 1_609_344 / 1_000)
 }
 
 fn mph_to_kmh_u16(value: u16) -> u16 {
