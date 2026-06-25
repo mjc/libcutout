@@ -123,23 +123,19 @@ impl BegodeUnitMode {
         }
     }
 
-    fn speed_milli_kmh(self, raw_metric_milli_kmh: i32) -> i32 {
+    fn speed(self, metric_speed: Speed) -> Speed {
         match self {
-            Self::Metric => raw_metric_milli_kmh,
-            Self::Imperial => mph_milli_to_kmh_milli(raw_metric_milli_kmh),
+            Self::Metric => metric_speed,
+            Self::Imperial => {
+                speed_from_milli_kmh(mph_milli_to_kmh_milli(speed_to_milli_kmh(metric_speed)))
+            }
         }
     }
 
-    fn speed(self, raw_metric_speed: Speed) -> Speed {
-        Speed::from_millimetres_per_second(milli_kmh_to_mm_s(
-            self.speed_milli_kmh(speed_to_milli_kmh(raw_metric_speed)),
-        ))
-    }
-
-    fn speed_kmh_u16(self, raw_speed: u16) -> u16 {
+    fn speed_limit(self, raw_speed: u16) -> Speed {
         match self {
-            Self::Metric => raw_speed,
-            Self::Imperial => mph_to_kmh_u16(raw_speed),
+            Self::Metric => speed_from_kmh(raw_speed),
+            Self::Imperial => speed_from_kmh(mph_to_kmh_u16(raw_speed)),
         }
     }
 
@@ -913,9 +909,7 @@ impl BegodeLiveATelemetry {
         Ok(Self {
             raw_voltage,
             voltage: scaled_voltage(raw_voltage, profile),
-            speed: Speed::from_millimetres_per_second(milli_kmh_to_mm_s(raw_speed_to_milli_kmh(
-                be_i16(cursor, ByteOffset::new(4)),
-            ))),
+            speed: speed_from_live_a_raw(be_i16(cursor, ByteOffset::new(4))),
             trip_distance: Distance::from_millimetres(
                 u64::from(be_u32(cursor, ByteOffset::new(6))) * 1_000,
             ),
@@ -1011,9 +1005,7 @@ impl BegodeLiveBTelemetry {
             ),
             settings_bits,
             power_off_timer: Duration::from_minutes(u64::from(be_u16(cursor, ByteOffset::new(8)))),
-            tiltback_speed: Speed::from_millimetres_per_second(milli_kmh_to_mm_s(
-                i32::from(unit_mode.speed_kmh_u16(be_u16(cursor, ByteOffset::new(10)))) * 1_000,
-            )),
+            tiltback_speed: unit_mode.speed_limit(be_u16(cursor, ByteOffset::new(10))),
             led_mode: BegodeLedMode::new(byte(cursor, ByteOffset::new(13))),
             alert_flags: BegodeAlertFlags::new(byte(cursor, ByteOffset::new(14))),
             light_mode: BegodeLightMode::new(byte(cursor, ByteOffset::new(15))),
@@ -1058,9 +1050,7 @@ impl BegodeLiveBTelemetry {
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(speed_to_kmh_u16(
-                        self.tiltback_speed.as_millimetres_per_second(),
-                    )),
+                    i64::from(speed_setting_value(self.tiltback_speed)),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_LED_AND_LIGHT_MODE,
@@ -1223,20 +1213,24 @@ fn unscaled_centivolts(voltage: Voltage, profile: BegodePackVoltageProfile) -> i
     (voltage.as_millivolts() * 100 + profile.scaler_milli() / 2) / profile.scaler_milli()
 }
 
-fn raw_speed_to_milli_kmh(raw_speed: i16) -> i32 {
-    i32::from(raw_speed) * 36
+fn speed_from_live_a_raw(raw_speed: i16) -> Speed {
+    Speed::from_millimetres_per_second(i32::from(raw_speed) * 10)
 }
 
-fn milli_kmh_to_mm_s(value: i32) -> i32 {
-    value * 5 / 18
+fn speed_from_kmh(value: u16) -> Speed {
+    speed_from_milli_kmh(i32::from(value) * 1_000)
+}
+
+fn speed_from_milli_kmh(value: i32) -> Speed {
+    Speed::from_millimetres_per_second(value * 5 / 18)
 }
 
 fn speed_to_milli_kmh(value: Speed) -> i32 {
     value.as_millimetres_per_second() * 18 / 5
 }
 
-fn speed_to_kmh_u16(value: i32) -> u16 {
-    let kmh = div_round(value * 18, 5_000);
+fn speed_setting_value(value: Speed) -> u16 {
+    let kmh = div_round(value.as_millimetres_per_second() * 18, 5_000);
     u16::try_from(kmh).unwrap_or(u16::MAX)
 }
 
