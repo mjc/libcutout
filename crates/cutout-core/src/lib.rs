@@ -4920,6 +4920,37 @@ impl BatteryLevel {
     pub fn as_ratio(self) -> f64 {
         f64::from(self.as_percent()) / 100.0
     }
+
+    /// Linearly interpolates a battery level between two reference points.
+    #[must_use]
+    pub fn interpolate(low: Self, high: Self, value: i64, low_value: i64, high_value: i64) -> Self {
+        let value_span = high_value - low_value;
+        if value_span <= 0 {
+            return low;
+        }
+
+        let level_span = i32::from(high.as_percent()) - i32::from(low.as_percent());
+        let value_offset = value - low_value;
+        let numerator = value_offset.saturating_mul(i64::from(level_span));
+        let level = i32::from(low.as_percent())
+            + round_div_i32(
+                i32::try_from(numerator).unwrap_or_else(|_| {
+                    if numerator.is_negative() {
+                        i32::MIN
+                    } else {
+                        i32::MAX
+                    }
+                }),
+                i32::try_from(value_span).unwrap_or_else(|_| {
+                    if value_span.is_negative() {
+                        i32::MIN
+                    } else {
+                        i32::MAX
+                    }
+                }),
+            );
+        Self::from_percent_i32(level)
+    }
 }
 
 /// Radio signal strength stored in dBm.
@@ -6706,6 +6737,17 @@ mod tests {
         assert_eq!(BatteryLevel::from_percent_i32(-1).as_percent(), 0);
         assert_eq!(BatteryLevel::from_percent_i32(120).as_percent(), 100);
         assert!((BatteryLevel::from_percent(75).as_ratio() - 0.75).abs() < f64::EPSILON);
+        assert_eq!(
+            BatteryLevel::interpolate(
+                BatteryLevel::from_percent(20),
+                BatteryLevel::from_percent(80),
+                50,
+                0,
+                100,
+            )
+            .as_percent(),
+            50
+        );
 
         assert_eq!(Temperature::from_celsius(36).as_millicelsius(), 36_000);
         assert_eq!(

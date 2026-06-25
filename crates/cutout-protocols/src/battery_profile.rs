@@ -1,4 +1,4 @@
-use cutout_core::{BatteryLevel, Capacity, CellVoltage, SeriesCount, Voltage, round_div_i32};
+use cutout_core::{BatteryLevel, Capacity, CellVoltage, SeriesCount, Voltage};
 
 /// A measured voltage/level point for a battery profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,7 +49,13 @@ impl BatteryVoltageProfile {
                 continue;
             };
             if cell_voltage.as_microvolts() <= high.cell_voltage.as_microvolts() {
-                return interpolate_level(cell_voltage, *low, *high);
+                return BatteryLevel::interpolate(
+                    low.level,
+                    high.level,
+                    i64::from(cell_voltage.as_microvolts()),
+                    i64::from(low.cell_voltage.as_microvolts()),
+                    i64::from(high.cell_voltage.as_microvolts()),
+                );
             }
         }
 
@@ -101,26 +107,6 @@ pub const SAMSUNG_50S_PROFILE: BatteryVoltageProfile = BatteryVoltageProfile {
     nominal_capacity: Capacity::from_milliamp_hours(5_000),
     points: &SAMSUNG_50S_CELL_POINTS,
 };
-
-fn interpolate_level(
-    cell_voltage: CellVoltage,
-    low: BatteryVoltagePoint,
-    high: BatteryVoltagePoint,
-) -> BatteryLevel {
-    let cell_voltage_uv = cell_voltage.as_microvolts();
-    let low_uv = low.cell_voltage.as_microvolts();
-    let high_uv = high.cell_voltage.as_microvolts();
-    let voltage_span = high_uv - low_uv;
-    if voltage_span <= 0 {
-        return low.level;
-    }
-
-    let level_span = i32::from(high.level.as_percent()) - i32::from(low.level.as_percent());
-    let numerator = (cell_voltage_uv - low_uv) * level_span;
-    BatteryLevel::from_percent_i32(
-        i32::from(low.level.as_percent()) + round_div_i32(numerator, voltage_span),
-    )
-}
 
 #[cfg(test)]
 mod tests {
