@@ -545,11 +545,9 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
 impl From<vesc::Values> for VescValuesTelemetry {
     fn from(values: vesc::Values) -> Self {
         Self {
-            rpm: RotationalSpeed::from_erpm(round_f32_to_i32(values.rpm)),
-            voltage: Voltage::from_millivolts(round_f32_to_i32(values.voltage_in * 1_000.0)),
-            input_current: BatteryCurrent::from_milliamps(round_f32_to_i32(
-                values.avg_current_input * 1_000.0,
-            )),
+            rpm: rotational_speed_from_erpm(values.rpm),
+            voltage: voltage_from_volts(values.voltage_in),
+            input_current: current_from_amps(values.avg_current_input),
             tachometer: TachometerReading::from_counts(values.tachometer),
             controller_id: VescControllerId::new(values.controller_id),
             fault_code: values.fault_code.into(),
@@ -560,29 +558,47 @@ impl From<vesc::Values> for VescValuesTelemetry {
 impl From<vesc::Stats> for VescStatsTelemetry {
     fn from(stats: vesc::Stats) -> Self {
         Self {
-            speed_avg: Speed::from_millimetres_per_second(round_f32_to_i32(
-                stats.speed_avg * 1_000.0,
-            )),
-            speed_max: Speed::from_millimetres_per_second(round_f32_to_i32(
-                stats.speed_max * 1_000.0,
-            )),
-            power_avg: Power::from_milliwatts(i64::from(round_f32_to_i32(
-                stats.power_avg * 1_000.0,
-            ))),
-            power_max: Power::from_milliwatts(i64::from(round_f32_to_i32(
-                stats.power_max * 1_000.0,
-            ))),
-            current_avg: BatteryCurrent::from_milliamps(round_f32_to_i32(
-                stats.current_avg * 1_000.0,
-            )),
-            current_max: BatteryCurrent::from_milliamps(round_f32_to_i32(
-                stats.current_max * 1_000.0,
-            )),
-            count_time: Duration::from_milliseconds(u64::from(round_f32_to_u32(
-                stats.count_time * 1_000.0,
-            ))),
+            speed_avg: speed_from_metres_per_second(stats.speed_avg),
+            speed_max: speed_from_metres_per_second(stats.speed_max),
+            power_avg: power_from_watts(stats.power_avg),
+            power_max: power_from_watts(stats.power_max),
+            current_avg: current_from_amps(stats.current_avg),
+            current_max: current_from_amps(stats.current_max),
+            count_time: duration_from_seconds(stats.count_time),
         }
     }
+}
+
+fn rotational_speed_from_erpm(value: f32) -> RotationalSpeed {
+    RotationalSpeed::from_erpm(round_f32_to_i32(value))
+}
+
+fn voltage_from_volts(value: f32) -> Voltage {
+    Voltage::from_millivolts(round_f32_to_milli_i32(value))
+}
+
+fn current_from_amps(value: f32) -> BatteryCurrent {
+    BatteryCurrent::from_milliamps(round_f32_to_milli_i32(value))
+}
+
+fn speed_from_metres_per_second(value: f32) -> Speed {
+    Speed::from_millimetres_per_second(round_f32_to_milli_i32(value))
+}
+
+fn power_from_watts(value: f32) -> Power {
+    Power::from_milliwatts(i64::from(round_f32_to_milli_i32(value)))
+}
+
+fn duration_from_seconds(value: f32) -> Duration {
+    Duration::from_milliseconds(u64::from(round_f32_to_milli_u32(value)))
+}
+
+fn round_f32_to_milli_i32(value: f32) -> i32 {
+    round_f32_to_i32(value * 1_000.0)
+}
+
+fn round_f32_to_milli_u32(value: f32) -> u32 {
+    round_f32_to_u32(value * 1_000.0)
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
