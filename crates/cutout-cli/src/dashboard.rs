@@ -355,8 +355,12 @@ fn clamp_percent(value: u64) -> u8 {
 pub(crate) struct DashboardBatteryLevel(BatteryLevel);
 
 impl DashboardBatteryLevel {
+    fn from_battery_level(value: BatteryLevel) -> Self {
+        Self(value)
+    }
+
     fn new(value: u64) -> Self {
-        Self(BatteryLevel::from_percent(clamp_percent(value)))
+        Self::from_battery_level(BatteryLevel::from_percent(clamp_percent(value)))
     }
 
     const fn decrement_for_demo(self) -> Self {
@@ -624,6 +628,7 @@ impl DisplayPower {
         Self::from_power(Power::from_watts(value))
     }
 
+    #[cfg(test)]
     fn from_milliwatts(value: i64) -> Self {
         Self::from_power(Power::from_milliwatts(value))
     }
@@ -1488,10 +1493,10 @@ impl TelemetryWindow {
 
     fn apply_snapshot(&mut self, snapshot: TelemetrySnapshot) {
         if let Some(percent) = snapshot.battery_level_reported {
-            self.battery_level = Some(DashboardBatteryLevel::new(u64::from(percent.value.get())));
+            self.battery_level = Some(DashboardBatteryLevel::from_battery_level(percent.value));
             self.battery_source = BatterySource::TelemetryReported;
         } else if let Some(percent) = snapshot.battery_level_estimated {
-            self.battery_level = Some(DashboardBatteryLevel::new(u64::from(percent.value.get())));
+            self.battery_level = Some(DashboardBatteryLevel::from_battery_level(percent.value));
             self.battery_source = BatterySource::TelemetryEstimated;
         }
         if let Some(speed) = snapshot.speed {
@@ -1518,7 +1523,7 @@ impl TelemetryWindow {
             push_sample(&mut self.current_samples, current.value.abs());
         }
         if let Some(power) = snapshot.power {
-            self.latest_power = Some(DisplayPower::from_milliwatts(power.value.get()));
+            self.latest_power = Some(DisplayPower::from_power(power.value));
         }
         if let Some(temperature) = snapshot
             .controller_temperature
@@ -1831,11 +1836,7 @@ impl fmt::Display for MappedTelemetryLog {
             )?;
         }
         if let Some(power) = snapshot.power {
-            fields.write(
-                "power",
-                DisplayPower::from_milliwatts(power.value.get()).get(),
-                "W",
-            )?;
+            fields.write("power", DisplayPower::from_power(power.value).get(), "W")?;
         }
         if let Some(temperature) = snapshot
             .controller_temperature
@@ -1900,11 +1901,7 @@ impl fmt::Display for TelemetryDeltaLog {
             )?;
         }
         if let Some(power) = delta.power {
-            fields.write(
-                "power",
-                DisplayPower::from_milliwatts(power.value.get()).get(),
-                "W",
-            )?;
+            fields.write("power", DisplayPower::from_power(power.value).get(), "W")?;
         }
         if let Some(temperature) = delta
             .controller_temperature
