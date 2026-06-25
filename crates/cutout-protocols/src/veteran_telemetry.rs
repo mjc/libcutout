@@ -2,7 +2,7 @@ use core::ops::RangeInclusive;
 use cutout_core::{
     Angle, BatteryLevel, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec,
     BmsTemperatureValuesPerPage, Capacity, ChargeMode, Distance, DistanceOffset, Duration,
-    DutyCycle, FirmwareInfo, Measured, MonotonicMillis, ParallelCount, PhaseCurrent, Power,
+    DutyCycle, FirmwareInfo, Measured, MonotonicTimestamp, ParallelCount, PhaseCurrent, Power,
     ProtocolSelector, RawFieldValue, ReadOnlyResponse, SeriesCount, SettingsEntry,
     SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
     VerificationStatus, Voltage,
@@ -520,7 +520,7 @@ impl VeteranTelemetry {
 
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         let power = Power::from_voltage_current(self.voltage, self.phase_current);
         TelemetryDelta {
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
@@ -700,8 +700,8 @@ fn veteran_pwm(raw_pwm: u16) -> i16 {
 
 #[cfg(test)]
 mod tests {
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
     use super::*;

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, MeasuredI32Dto, MeasuredU8Dto, MonotonicMillis, MonotonicMillisDto,
+    GattRoles, MeasuredI32Dto, MeasuredU8Dto, MonotonicMillisDto, MonotonicTimestamp,
     NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
     ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
     ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
@@ -12,7 +12,7 @@ use cutout_core::{
     ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
     TelemetrySnapshotDto, TransportActionDto, TransportWriteLen, TransportWriteLenDto,
     ValueQualityDto, ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    WallClockUnixMillis,
+    WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -105,8 +105,8 @@ impl MobileMonotonicMillisDto {
         }
     }
 
-    fn into_core(self) -> MonotonicMillis {
-        MonotonicMillis::new(self.milliseconds)
+    fn into_core(self) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(self.milliseconds)
     }
 }
 
@@ -118,8 +118,8 @@ pub struct MobileWallClockUnixMillisDto {
 }
 
 impl MobileWallClockUnixMillisDto {
-    fn into_core(self) -> WallClockUnixMillis {
-        WallClockUnixMillis::new(self.milliseconds)
+    fn into_core(self) -> WallClockUnixTimestamp {
+        WallClockUnixTimestamp::new(self.milliseconds)
     }
 }
 
@@ -425,7 +425,7 @@ pub struct MobileTelemetrySnapshotDto {
     pub voltage: Option<MobileMeasuredI32Dto>,
 
     /// Estimated battery percent.
-    pub battery_percent_estimated: Option<MobileMeasuredU8Dto>,
+    pub battery_level_estimated: Option<MobileMeasuredU8Dto>,
 }
 
 /// Mobile measured i32 value.
@@ -641,7 +641,7 @@ pub enum MobileCaptureExportError {
 /// Mobile-facing builder for a PEVCAP capture export.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePevcapCaptureBuilder {
-    wall_clock_start_unix_ms: WallClockUnixMillis,
+    wall_clock_start_unix_ms: WallClockUnixTimestamp,
     platform_id: String,
     write_limit: Option<TransportWriteLen>,
     advertised_services: Mutex<Vec<GattChannel>>,
@@ -1304,7 +1304,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             voltage: snapshot.voltage.map(Into::into),
-            battery_percent_estimated: snapshot.battery_percent_estimated.map(Into::into),
+            battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
         }
     }
 }
@@ -1824,6 +1824,6 @@ mod tests {
 
         assert_eq!(capture.header.platform_id, "ios-corebluetooth");
         assert_eq!(capture.records.len(), 1);
-        assert_eq!(capture.records[0].monotonic_ms, MonotonicMillis::new(9));
+        assert_eq!(capture.records[0].monotonic_ms, MonotonicTimestamp::new(9));
     }
 }

@@ -11,10 +11,10 @@ use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
 use crate::VescControllerId;
 use crate::{
-    DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicMillis,
+    DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicTimestamp,
     NotificationChunkLen, ProtocolFamily, ProtocolSession, ReplayChunkComparison, RequestTarget,
     SemanticEventCount, SessionInput, SessionOutput, TransportWriteLen, VerifiedValue,
-    WallClockUnixMillis, WriteMode,
+    WallClockUnixTimestamp, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -286,7 +286,7 @@ pub struct PevcapResolvedIdentity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapHeader {
     /// Wall-clock start time in Unix milliseconds.
-    pub wall_clock_start_unix_ms: WallClockUnixMillis,
+    pub wall_clock_start_unix_ms: WallClockUnixTimestamp,
 
     /// Platform identifier recorded by the capture producer.
     pub platform_id: String,
@@ -323,7 +323,7 @@ impl PevcapHeader {
     /// fingerprints and annotations.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        wall_clock_start_unix_ms: WallClockUnixMillis,
+        wall_clock_start_unix_ms: WallClockUnixTimestamp,
         platform_id: impl Into<String>,
         write_limit: Option<TransportWriteLen>,
         advertised_services: &[GattChannel],
@@ -435,7 +435,7 @@ fn collect_bounded_strings<const N: usize>(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapRecord {
     /// Relative monotonic timestamp in milliseconds.
-    pub monotonic_ms: MonotonicMillis,
+    pub monotonic_ms: MonotonicTimestamp,
 
     /// Transport direction for this record.
     pub direction: PevcapDirection,
@@ -463,7 +463,7 @@ impl PevcapRecord {
     /// Creates a link-up lifecycle record.
     #[must_use]
     pub fn link_up(
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         max_write_len: Option<TransportWriteLen>,
     ) -> Self {
         Self {
@@ -480,7 +480,7 @@ impl PevcapRecord {
 
     /// Creates a link-down lifecycle record.
     #[must_use]
-    pub fn link_down(monotonic_ms: MonotonicMillis) -> Self {
+    pub fn link_down(monotonic_ms: MonotonicTimestamp) -> Self {
         Self {
             monotonic_ms,
             direction: PevcapDirection::LinkDown,
@@ -496,7 +496,7 @@ impl PevcapRecord {
     /// Creates an outbound write record.
     #[must_use]
     pub fn outbound_write(
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         characteristic: GattChannel,
         write_mode: WriteMode,
         bytes: impl Into<Bytes>,
@@ -516,7 +516,7 @@ impl PevcapRecord {
     /// Creates an outbound write record with explicit request target metadata.
     #[must_use]
     pub fn targeted_outbound_write(
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         characteristic: GattChannel,
         write_mode: WriteMode,
         bytes: impl Into<Bytes>,
@@ -531,7 +531,7 @@ impl PevcapRecord {
     /// Creates an inbound notification record.
     #[must_use]
     pub fn inbound_notification(
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         characteristic: GattChannel,
         service: GattChannel,
         bytes: impl Into<Bytes>,
@@ -718,7 +718,7 @@ impl PevcapCapture {
             .any(|record| record.direction == PevcapDirection::LinkUp)
         {
             host.ingest_link_up(LinkInfo {
-                monotonic_ms: MonotonicMillis::new(0),
+                monotonic_ms: MonotonicTimestamp::new(0),
                 max_write_len: self.header.write_limit,
             });
             host.drain_outputs_into(outputs);
@@ -1365,7 +1365,7 @@ impl PevcapHeaderJson {
             .collect::<Vec<_>>();
 
         PevcapHeader::new(
-            WallClockUnixMillis::from_milliseconds(self.wall_clock_start_unix_ms),
+            WallClockUnixTimestamp::from_milliseconds(self.wall_clock_start_unix_ms),
             self.platform_id,
             self.write_limit.map(TransportWriteLen::new),
             &advertised_services,
@@ -1632,7 +1632,7 @@ impl PevcapRecordJson {
     fn try_into_record(self) -> Result<PevcapRecord, PevcapRecordError> {
         self.validate()?;
         Ok(PevcapRecord {
-            monotonic_ms: MonotonicMillis::new(self.monotonic_ms),
+            monotonic_ms: MonotonicTimestamp::new(self.monotonic_ms),
             direction: self.direction.into_direction(),
             characteristic: GattChannel::from_bytes(self.characteristic),
             service: self.service.map(GattChannel::from_bytes),
@@ -1793,12 +1793,12 @@ mod tests {
     use proptest::prelude::*;
     use std::{cell::RefCell, rc::Rc};
 
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
-    const fn wc(value: u64) -> WallClockUnixMillis {
-        WallClockUnixMillis::new(value)
+    const fn wc(value: u64) -> WallClockUnixTimestamp {
+        WallClockUnixTimestamp::new(value)
     }
 
     const fn write_len(value: u16) -> TransportWriteLen {

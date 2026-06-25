@@ -27,9 +27,9 @@ mod gatt_channel_tests;
 /// Monotonic timestamp supplied by the host.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct MonotonicMillis(u64);
+pub struct MonotonicTimestamp(u64);
 
-impl MonotonicMillis {
+impl MonotonicTimestamp {
     /// Creates a monotonic timestamp from milliseconds.
     #[must_use]
     pub const fn from_milliseconds(value: u64) -> Self {
@@ -67,7 +67,7 @@ impl MonotonicMillis {
     }
 }
 
-impl fmt::Display for MonotonicMillis {
+impl fmt::Display for MonotonicTimestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -76,9 +76,9 @@ impl fmt::Display for MonotonicMillis {
 /// Wall-clock timestamp represented as Unix epoch milliseconds.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct WallClockUnixMillis(u64);
+pub struct WallClockUnixTimestamp(u64);
 
-impl WallClockUnixMillis {
+impl WallClockUnixTimestamp {
     /// Creates a wall-clock timestamp from Unix epoch milliseconds.
     #[must_use]
     pub const fn from_milliseconds(value: u64) -> Self {
@@ -104,7 +104,7 @@ impl WallClockUnixMillis {
     }
 }
 
-impl fmt::Display for WallClockUnixMillis {
+impl fmt::Display for WallClockUnixTimestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
@@ -187,7 +187,7 @@ impl GattChannel {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LinkInfo {
     /// Host monotonic connection timestamp.
-    pub monotonic_ms: MonotonicMillis,
+    pub monotonic_ms: MonotonicTimestamp,
 
     /// Maximum write payload length reported by the host, when known.
     pub max_write_len: Option<TransportWriteLen>,
@@ -361,7 +361,7 @@ pub struct DangerousActuationArm {
     pub model: &'static str,
 
     /// Monotonic expiry time in milliseconds.
-    pub expires_at_ms: MonotonicMillis,
+    pub expires_at_ms: MonotonicTimestamp,
 }
 
 /// Dangerous actuation policy for a single model/session.
@@ -380,7 +380,7 @@ pub struct DangerousActuationPolicy {
 impl DangerousActuationPolicy {
     /// Creates an expiring arm token for this policy's model.
     #[must_use]
-    pub const fn arm(self, monotonic_ms: MonotonicMillis) -> DangerousActuationArm {
+    pub const fn arm(self, monotonic_ms: MonotonicTimestamp) -> DangerousActuationArm {
         DangerousActuationArm {
             model: self.model,
             expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
@@ -397,7 +397,7 @@ impl DangerousActuationPolicy {
     pub const fn authorize(
         self,
         command: DeviceCommand,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         arm: Option<DangerousActuationArm>,
     ) -> Result<CommandMetadata, DangerousActuationRefusal> {
         if !matches!(command.safety_class(), SafetyClass::Actuation) {
@@ -1932,7 +1932,7 @@ pub struct ParserLimits {
     pub max_queued_outputs: ParserQueuedOutputCount,
 
     /// Parser timeout threshold in host monotonic milliseconds.
-    pub timeout_ms: MonotonicMillis,
+    pub timeout_ms: MonotonicTimestamp,
 }
 
 impl Default for ParserLimits {
@@ -1941,7 +1941,7 @@ impl Default for ParserLimits {
             max_frame_len: ParserFrameLen::new(4_096),
             max_buffered_len: ParserBufferedLen::new(8_192),
             max_queued_outputs: ParserQueuedOutputCount::new(128),
-            timeout_ms: MonotonicMillis::new(1_000),
+            timeout_ms: MonotonicTimestamp::new(1_000),
         }
     }
 }
@@ -2109,10 +2109,10 @@ pub enum ParserError {
     /// A parser deadline elapsed before the expected data arrived.
     Timeout {
         /// Elapsed monotonic milliseconds.
-        elapsed_ms: MonotonicMillis,
+        elapsed_ms: MonotonicTimestamp,
 
         /// Timeout threshold in monotonic milliseconds.
-        timeout_ms: MonotonicMillis,
+        timeout_ms: MonotonicTimestamp,
     },
 
     /// A reply could not be matched to an in-flight request.
@@ -2280,10 +2280,10 @@ pub struct DiagnosticError {
     pub max_len: Option<ParserFrameLen>,
 
     /// Elapsed monotonic milliseconds for timeout errors.
-    pub elapsed_ms: Option<MonotonicMillis>,
+    pub elapsed_ms: Option<MonotonicTimestamp>,
 
     /// Timeout threshold in monotonic milliseconds for timeout errors.
-    pub timeout_ms: Option<MonotonicMillis>,
+    pub timeout_ms: Option<MonotonicTimestamp>,
 }
 
 impl DiagnosticError {
@@ -2445,7 +2445,7 @@ pub struct NotificationEvidence {
     pub channel: GattChannel,
 
     /// Host monotonic receive timestamp.
-    pub monotonic_ms: MonotonicMillis,
+    pub monotonic_ms: MonotonicTimestamp,
 
     /// Number of notification bytes observed.
     pub len: NotificationByteLen,
@@ -2458,7 +2458,7 @@ impl NotificationEvidence {
         family: Option<ProtocolFamily>,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self {
             family,
@@ -2593,7 +2593,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         event_count: SemanticEventCount,
     ) -> Self {
         Self::SemanticEvents {
@@ -2608,7 +2608,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::BufferedFragment(NotificationEvidence::new(
             Some(family),
@@ -2624,7 +2624,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         error: ParserError,
     ) -> Self {
         Self::ParserDiagnostic {
@@ -2639,7 +2639,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         payload: ReservedPayloadEvidence,
     ) -> Self {
         Self::KnownReserved {
@@ -2654,7 +2654,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         gap: ParserGapEvidence,
     ) -> Self {
         Self::ParserGap {
@@ -2668,7 +2668,7 @@ impl NotificationIngestOutcome {
     pub const fn ignored_wrong_channel(
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::Ignored(NotificationEvidence::new(None, channel, len, monotonic_ms))
     }
@@ -2745,7 +2745,7 @@ pub struct ScheduledRequest {
     pub policy: RequestPolicy,
 
     /// Monotonic start time for the current attempt.
-    pub started_at_ms: MonotonicMillis,
+    pub started_at_ms: MonotonicTimestamp,
 
     /// Zero-based retry count for the current attempt.
     pub retries: u8,
@@ -2769,7 +2769,7 @@ pub enum RequestStartError {
     /// The request key is still inside its pacing interval.
     Pacing {
         /// Earliest monotonic time when the request can be started.
-        ready_at_ms: MonotonicMillis,
+        ready_at_ms: MonotonicTimestamp,
     },
 
     /// No active request can be retried.
@@ -2827,7 +2827,7 @@ pub enum CorrelationResult {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RequestTracker {
     in_flight: Option<ScheduledRequest>,
-    last_started: Option<(RequestKey, MonotonicMillis)>,
+    last_started: Option<(RequestKey, MonotonicTimestamp)>,
 }
 
 impl RequestTracker {
@@ -2848,7 +2848,7 @@ impl RequestTracker {
         &mut self,
         key: RequestKey,
         policy: RequestPolicy,
-        now_ms: MonotonicMillis,
+        now_ms: MonotonicTimestamp,
     ) -> Result<(), RequestStartError> {
         if let Some(active) = self.in_flight {
             return Err(RequestStartError::Busy { key: active.key });
@@ -2873,7 +2873,7 @@ impl RequestTracker {
 
     /// Advances scheduler time and reports timeout or retry eligibility.
     #[must_use]
-    pub const fn on_tick(self, now_ms: MonotonicMillis) -> RequestTick {
+    pub const fn on_tick(self, now_ms: MonotonicTimestamp) -> RequestTick {
         let Some(active) = self.in_flight else {
             return RequestTick::Idle;
         };
@@ -2903,7 +2903,7 @@ impl RequestTracker {
     /// active, or [`RequestStartError::Busy`] when no retries remain.
     pub const fn retry_started(
         &mut self,
-        now_ms: MonotonicMillis,
+        now_ms: MonotonicTimestamp,
     ) -> Result<(), RequestStartError> {
         let Some(mut active) = self.in_flight else {
             return Err(RequestStartError::NoActiveRequest);
@@ -4540,7 +4540,7 @@ impl ReadOnlyResponse {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetryDelta {
     /// Host monotonic timestamp for this update.
-    pub at_ms: MonotonicMillis,
+    pub at_ms: MonotonicTimestamp,
 
     /// Reported or calculated speed in millimeters per second.
     pub speed: Option<Measured<Speed>>,
@@ -4588,7 +4588,7 @@ pub struct TelemetryDelta {
 impl TelemetryDelta {
     /// Creates an empty telemetry delta at a timestamp.
     #[must_use]
-    pub const fn empty(at_ms: MonotonicMillis) -> Self {
+    pub const fn empty(at_ms: MonotonicTimestamp) -> Self {
         Self {
             at_ms,
             speed: None,
@@ -4613,7 +4613,7 @@ impl TelemetryDelta {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TelemetrySnapshot {
     /// Timestamp of the latest applied delta.
-    pub at_ms: Option<MonotonicMillis>,
+    pub at_ms: Option<MonotonicTimestamp>,
 
     /// Latest known speed in millimeters per second.
     pub speed: Option<Measured<Speed>>,
@@ -4726,13 +4726,13 @@ pub enum SessionInput<'a> {
         bytes: &'a [u8],
 
         /// Host monotonic receive timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Timer tick supplied by the host.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Command requested by the host application.
@@ -4861,7 +4861,7 @@ pub enum DeviceEvent {
     /// Tick event accepted by the session.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Telemetry update emitted by a protocol session.
@@ -4954,7 +4954,7 @@ where
         &mut self,
         channel: GattChannel,
         bytes: Vec<u8>,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) {
         let bytes = bytes.into_boxed_slice();
         self.handle(SessionInput::Notification {
@@ -4965,7 +4965,7 @@ where
     }
 
     /// Supplies a host timer tick to the protocol session.
-    pub fn tick(&mut self, monotonic_ms: MonotonicMillis) {
+    pub fn tick(&mut self, monotonic_ms: MonotonicTimestamp) {
         self.handle(SessionInput::Tick { monotonic_ms });
     }
 
@@ -5048,13 +5048,13 @@ pub enum CaptureRecord {
         bytes: Vec<u8>,
 
         /// Host monotonic receive timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Captured timer tick.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Captured host command.
@@ -5076,7 +5076,7 @@ impl CaptureRecord {
     pub const fn notification(
         channel: GattChannel,
         bytes: Vec<u8>,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::Notification {
             channel,
@@ -5338,7 +5338,7 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<Notifica
 pub fn notification_boundary_replay_cases(
     channel: GattChannel,
     frames: &[&[u8]],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     arbitrary_lengths: &[NotificationChunkLen],
 ) -> Vec<NotificationBoundaryReplayCase> {
     let whole_records = notification_records(channel, frames, monotonic_ms);
@@ -5379,9 +5379,9 @@ pub fn notification_boundary_replay_cases(
 pub fn notification_impairment_replay_cases(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     garbage_prefix: &[u8],
-    timeout_ms: MonotonicMillis,
+    timeout_ms: MonotonicTimestamp,
 ) -> Vec<NotificationImpairmentReplayCase> {
     vec![
         NotificationImpairmentReplayCase {
@@ -5410,7 +5410,7 @@ pub fn notification_impairment_replay_cases(
 fn notification_records(
     channel: GattChannel,
     frames: &[&[u8]],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     frames
         .iter()
@@ -5421,7 +5421,7 @@ fn notification_records(
 fn coalesced_notification_record(
     channel: GattChannel,
     frames: &[&[u8]],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     let len = frames.iter().map(|frame| frame.len()).sum();
     let mut bytes = Vec::with_capacity(len);
@@ -5446,7 +5446,7 @@ fn prefixed_bytes(prefix: &[u8], bytes: &[u8]) -> Vec<u8> {
 fn duplicate_first_chunk_records(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     if frame.is_empty() {
         return Vec::new();
@@ -5473,7 +5473,7 @@ fn duplicate_first_chunk_records(
 fn missing_final_byte_record(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     let Some(truncated_len) = frame.len().checked_sub(1) else {
         return Vec::new();
@@ -5489,8 +5489,8 @@ fn missing_final_byte_record(
 fn timeout_after_partial_records(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
-    timeout_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
+    timeout_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     let split = frame.len().saturating_sub(1);
     vec![
@@ -5534,7 +5534,7 @@ mod tests {
     use super::crate_name;
     use crate::{
         BatteryCurrent, BatteryLevel, DeviceCommand, DeviceEvent, Distance, Duration, GattChannel,
-        LinkInfo, Measured, MonotonicMillis, PhaseCurrent, ProtocolSession, SessionInput,
+        LinkInfo, Measured, MonotonicTimestamp, PhaseCurrent, ProtocolSession, SessionInput,
         SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction,
         UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
         WritePayload,
@@ -5544,8 +5544,8 @@ mod tests {
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0xA1; 16]);
 
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
     const fn dropped_bytes(value: u64) -> crate::ParserDroppedBytes {

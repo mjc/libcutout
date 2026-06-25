@@ -3,7 +3,7 @@ use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
     BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, DeviceCommand,
     DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo,
-    GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis,
+    GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicTimestamp,
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector,
     ProtocolSession, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
@@ -159,7 +159,7 @@ pub trait ReadOnlyNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     );
 }
@@ -175,7 +175,7 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         output.push(SessionOutput::NotificationIngest(
@@ -216,7 +216,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         let mut completed_frames = CompletedFrameCount::default();
@@ -309,7 +309,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
 fn push_veteran_ingest_outcome_for_frame(
     frame: &VeteranFrame,
     channel: GattChannel,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     event_count: SemanticEventCount,
     output: &mut Vec<SessionOutput>,
 ) {
@@ -401,7 +401,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         let mut event_count = SemanticEventCount::default();
@@ -481,7 +481,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         match self.stream.feed_result(bytes) {
@@ -557,7 +557,7 @@ const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount
 
 fn push_vesc_reply(
     reply: &VescReadOnlyReply,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     board_profile: Option<VescBoardProfile>,
     output: &mut Vec<SessionOutput>,
 ) {
@@ -593,7 +593,7 @@ fn push_vesc_reply(
 
 fn vesc_values_to_delta(
     values: VescValuesTelemetry,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     board_profile: Option<VescBoardProfile>,
 ) -> cutout_core::TelemetryDelta {
     cutout_core::TelemetryDelta {
@@ -674,7 +674,7 @@ fn push_begode_frame(
     context: &mut BegodeTelemetryContext,
     pack_voltage_profile: BegodePackVoltageProfile,
     frame: &BegodeFrame,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     output: &mut Vec<SessionOutput>,
 ) -> SemanticEventCount {
     match frame.tag().get() {
@@ -766,7 +766,7 @@ fn push_begode_bms_error(
 
 fn push_veteran_frame(
     frame: &VeteranFrame,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     output: &mut Vec<SessionOutput>,
 ) -> SemanticEventCount {
     match VeteranTelemetry::decode(frame) {
@@ -1192,7 +1192,7 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
 pub struct DangerousControlSession<M: SupportsDangerousActuation> {
     policy: cutout_core::DangerousActuationPolicy,
     arm: Option<cutout_core::DangerousActuationArm>,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     model: PhantomData<fn() -> M>,
 }
 
@@ -1204,7 +1204,7 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
         Self {
             policy,
             arm: None,
-            monotonic_ms: MonotonicMillis::new(0),
+            monotonic_ms: MonotonicTimestamp::new(0),
             model: PhantomData,
         }
     }
@@ -1274,8 +1274,8 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
 
 #[cfg(test)]
 mod tests {
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
     const fn write_len(value: u16) -> cutout_core::TransportWriteLen {

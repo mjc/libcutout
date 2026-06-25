@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use cutout_core::{MonotonicMillis, ProtocolSelector, ProtocolTag};
+use cutout_core::{MonotonicTimestamp, ProtocolSelector, ProtocolTag};
 use thiserror::Error;
 
 /// Complete fixed-size Begode/Gotway frame length.
@@ -79,7 +79,7 @@ pub enum BegodeFrameParseResult {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFrameReassembler {
     buffer: ArrayVec<u8, BEGODE_FRAME_LEN>,
-    last_byte_ms: Option<MonotonicMillis>,
+    last_byte_ms: Option<MonotonicTimestamp>,
 }
 
 impl BegodeFrameReassembler {
@@ -94,8 +94,8 @@ impl BegodeFrameReassembler {
     #[must_use]
     pub fn expire_idle(
         &mut self,
-        monotonic_ms: MonotonicMillis,
-        timeout_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
+        timeout_ms: MonotonicTimestamp,
     ) -> bool {
         let Some(last_byte_ms) = self.last_byte_ms else {
             return false;
@@ -167,7 +167,7 @@ impl BegodeFrameReassembler {
     pub fn feed_byte_result_at(
         &mut self,
         byte: u8,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Result<BegodeFrameParseResult, BegodeFrameError> {
         let result = self.feed_byte_result(byte)?;
         self.last_byte_ms = if self.buffer.is_empty() {
@@ -201,8 +201,8 @@ impl BegodeFrameReassembler {
 
 #[cfg(test)]
 mod tests {
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
     use super::*;

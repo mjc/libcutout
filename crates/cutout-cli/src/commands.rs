@@ -23,11 +23,11 @@ use cutout_core::{
     BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
     CaptureSessionLabel, CatalogModelResolution, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    ModelCatalog, MonotonicMillis, NotificationByteLen, ParserDiagnostics, PevcapCapture,
+    ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
     ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
     SettingsReadback, TelemetrySnapshot, TransportWriteLen, ValueQuality, ValueSource,
-    VerificationStatus, VerifiedValue, WallClockUnixMillis,
+    VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -623,8 +623,8 @@ fn render_diagnostic_error_jsonl(
         "kind": diagnostic_error_kind_name(error.kind),
         "claimed_len": error.claimed_len.map(cutout_core::ParserFrameLen::get),
         "max_len": error.max_len.map(cutout_core::ParserFrameLen::get),
-        "elapsed_ms": error.elapsed_ms.map(MonotonicMillis::get),
-        "timeout_ms": error.timeout_ms.map(MonotonicMillis::get),
+        "elapsed_ms": error.elapsed_ms.map(MonotonicTimestamp::get),
+        "timeout_ms": error.timeout_ms.map(MonotonicTimestamp::get),
     }))
 }
 
@@ -771,8 +771,11 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
     let mut state = DashboardState::live_connected(&target, &connection.summary);
     match read_battery_level(&connection.peripheral, &connection.summary).await? {
         Some(percent) => {
-            info!(percent = percent.get(), "read dashboard battery level");
-            state.apply_battery_level(percent.get());
+            info!(
+                percent = percent.as_percent(),
+                "read dashboard battery level"
+            );
+            state.apply_battery_level(percent.as_percent());
         }
         None => {
             info!("dashboard battery level unavailable from standard BLE characteristic");
@@ -1062,10 +1065,10 @@ async fn refresh_dashboard_battery(
         Ok(Some(percent)) => {
             info!(
                 iteration,
-                percent = percent.get(),
+                percent = percent.as_percent(),
                 "dashboard battery refresh succeeded"
             );
-            tx.send(DashboardUpdate::BatteryLevel(percent.get()))
+            tx.send(DashboardUpdate::BatteryLevel(percent.as_percent()))
                 .is_ok()
         }
         Ok(None) => {
@@ -1645,7 +1648,7 @@ fn encode_session_capture_pevcap(
     capture: &SessionCapture,
     summary: &cutout_btle::ConnectionSummary,
     format: PevcapFormat,
-    wall_clock_start_unix_ms: WallClockUnixMillis,
+    wall_clock_start_unix_ms: WallClockUnixTimestamp,
     profile: SelectedSessionProfile,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
@@ -1671,7 +1674,7 @@ fn encode_raw_capture_pevcap(
     summary: &cutout_btle::ConnectionSummary,
     write_limit: Option<u16>,
     format: PevcapFormat,
-    wall_clock_start_unix_ms: WallClockUnixMillis,
+    wall_clock_start_unix_ms: WallClockUnixTimestamp,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
     let write_limit = write_limit.map(TransportWriteLen::new);
@@ -1684,16 +1687,19 @@ fn encode_raw_capture_pevcap(
         .collect::<Vec<_>>();
     let gatt_fingerprints = summary.gatt_fingerprints();
     let mut pevcap_records = Vec::with_capacity(records.len().saturating_add(2));
-    pevcap_records.push(PevcapRecord::link_up(MonotonicMillis::new(0), write_limit));
+    pevcap_records.push(PevcapRecord::link_up(
+        MonotonicTimestamp::new(0),
+        write_limit,
+    ));
     pevcap_records.extend(records.iter().map(|record| {
         PevcapRecord::inbound_notification(
-            MonotonicMillis::new(record.monotonic_ms.get()),
+            MonotonicTimestamp::new(record.monotonic_ms.get()),
             gatt_channel_from_uuid(record.characteristic),
             gatt_channel_from_uuid(record.service),
             record.bytes.to_raw_bytes(),
         )
     }));
-    pevcap_records.push(PevcapRecord::link_down(MonotonicMillis::new(
+    pevcap_records.push(PevcapRecord::link_down(MonotonicTimestamp::new(
         records
             .last()
             .map_or(MonotonicMs::default(), |record| record.monotonic_ms)
@@ -1720,8 +1726,8 @@ fn gatt_channel_from_uuid(uuid: uuid::Uuid) -> GattChannel {
     GattChannel::from_uuid(uuid)
 }
 
-fn capture_wall_clock_unix_ms() -> WallClockUnixMillis {
-    WallClockUnixMillis::from_milliseconds(
+fn capture_wall_clock_unix_ms() -> WallClockUnixTimestamp {
+    WallClockUnixTimestamp::from_milliseconds(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| {
@@ -2311,7 +2317,7 @@ mod tests {
         PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        DeviceEvent, GattChannel, MonotonicMillis, NotificationByteLen, ParserDiagnosticCount,
+        DeviceEvent, GattChannel, MonotonicTimestamp, NotificationByteLen, ParserDiagnosticCount,
         ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
         ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, SignalStrength,
         TransportWriteLen, VerificationStatus, VerifiedValue, WriteMode,
@@ -2321,12 +2327,12 @@ mod tests {
     use super::*;
     use crate::cli::ScanArgs;
 
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
-    const fn wc(value: u64) -> WallClockUnixMillis {
-        WallClockUnixMillis::new(value)
+    const fn wc(value: u64) -> WallClockUnixTimestamp {
+        WallClockUnixTimestamp::new(value)
     }
 
     const fn rssi(value: i16) -> SignalStrength {

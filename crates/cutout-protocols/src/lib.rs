@@ -125,8 +125,8 @@ pub const fn crate_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    const fn ms(value: u64) -> cutout_core::MonotonicMillis {
-        cutout_core::MonotonicMillis::new(value)
+    const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
+        cutout_core::MonotonicTimestamp::new(value)
     }
 
     const fn write_len(value: u16) -> cutout_core::TransportWriteLen {

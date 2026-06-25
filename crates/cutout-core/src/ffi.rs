@@ -3,7 +3,7 @@ use crate::{
     BatteryPagePayload, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
     ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
     DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
-    LightState, Measured, MonotonicMillis, NotificationByteLen, NotificationEvidence,
+    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
     NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
     ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
     ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
@@ -39,14 +39,14 @@ pub struct MonotonicMillisDto {
 }
 
 impl MonotonicMillisDto {
-    fn from_core(value: MonotonicMillis) -> Self {
+    fn from_core(value: MonotonicTimestamp) -> Self {
         Self {
             milliseconds: value.get(),
         }
     }
 
-    fn into_core(self) -> MonotonicMillis {
-        MonotonicMillis::new(self.milliseconds)
+    fn into_core(self) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(self.milliseconds)
     }
 }
 
@@ -1996,7 +1996,7 @@ mod tests {
         let notification = SessionInputDto::from(SessionInput::Notification {
             channel: GattChannel::from_bytes([0xA1; 16]),
             bytes: &[0xde, 0xad, 0xbe, 0xef],
-            monotonic_ms: MonotonicMillis::new(42),
+            monotonic_ms: MonotonicTimestamp::new(42),
         });
         let command =
             SessionInputDto::from(SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
@@ -2030,7 +2030,7 @@ mod tests {
             SessionInput::Notification {
                 channel: GattChannel::from_bytes([0xA1; 16]),
                 bytes: &[0xde, 0xad, 0xbe, 0xef],
-                monotonic_ms: MonotonicMillis::new(42),
+                monotonic_ms: MonotonicTimestamp::new(42),
             }
         );
     }
@@ -2059,7 +2059,7 @@ mod tests {
             mode: WriteMode::WithoutResponse,
         }));
         let event = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-            monotonic_ms: MonotonicMillis::new(7),
+            monotonic_ms: MonotonicTimestamp::new(7),
             max_write_len: Some(write_len(182)),
         })));
 
@@ -2083,7 +2083,7 @@ mod tests {
     #[test]
     fn telemetry_snapshot_dto_preserves_optional_fields() {
         let snapshot = TelemetrySnapshot {
-            at_ms: Some(MonotonicMillis::new(42)),
+            at_ms: Some(MonotonicTimestamp::new(42)),
             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200,
             ))),

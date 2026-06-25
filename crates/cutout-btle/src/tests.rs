@@ -24,8 +24,8 @@ use super::crate_name;
 
 type WriteRecord = (Uuid, Bytes, WriteMode);
 
-const fn ms(value: u64) -> cutout_core::MonotonicMillis {
-    cutout_core::MonotonicMillis::new(value)
+const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
+    cutout_core::MonotonicTimestamp::new(value)
 }
 
 const fn rssi(value: i16) -> SignalStrength {
@@ -120,8 +120,8 @@ fn voltage(value: i32) -> Measured<cutout_core::Voltage> {
     Measured::reported(cutout_core::Voltage::from_millivolts(value))
 }
 
-fn battery_percent_estimated(value: u8) -> Measured<cutout_core::Percent> {
-    Measured::estimated(cutout_core::Percent::from_percent(value))
+fn battery_level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
+    Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
 }
 
 fn decode_outcome_evidence(
@@ -626,16 +626,16 @@ fn connection_summary_selects_standard_battery_level_characteristic() {
 }
 
 #[test]
-fn battery_level_percent_rejects_malformed_backend_values() {
+fn battery_level_rejects_malformed_backend_values() {
     assert_eq!(
-        crate::BatteryLevelPercent::from_backend_byte(88).map(crate::BatteryLevelPercent::get),
+        crate::BtleBatteryLevel::from_backend_byte(88).map(crate::BtleBatteryLevel::as_percent),
         Some(88)
     );
     assert_eq!(
-        crate::BatteryLevelPercent::from_backend_byte(100).map(crate::BatteryLevelPercent::get),
+        crate::BtleBatteryLevel::from_backend_byte(100).map(crate::BtleBatteryLevel::as_percent),
         Some(100)
     );
-    assert_eq!(crate::BatteryLevelPercent::from_backend_byte(101), None);
+    assert_eq!(crate::BtleBatteryLevel::from_backend_byte(101), None);
 }
 
 #[test]
@@ -760,7 +760,9 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         .to_pevcap(
             &summary,
             crate::PevcapSessionMetadata {
-                wall_clock_start_unix_ms: cutout_core::WallClockUnixMillis::new(1_725_000_123_456),
+                wall_clock_start_unix_ms: cutout_core::WallClockUnixTimestamp::new(
+                    1_725_000_123_456,
+                ),
                 platform_id: "darwin",
                 library_version: "0.1.0",
                 registry_hash: [0x42; 32],
@@ -779,7 +781,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
 
     assert_eq!(
         pevcap.header.wall_clock_start_unix_ms,
-        cutout_core::WallClockUnixMillis::new(1_725_000_123_456)
+        cutout_core::WallClockUnixTimestamp::new(1_725_000_123_456)
     );
     assert_eq!(pevcap.header.platform_id, "darwin");
     assert_eq!(
@@ -886,7 +888,7 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
         .to_pevcap(
             &summary,
             crate::PevcapSessionMetadata {
-                wall_clock_start_unix_ms: cutout_core::WallClockUnixMillis::new(1),
+                wall_clock_start_unix_ms: cutout_core::WallClockUnixTimestamp::new(1),
                 platform_id: "test",
                 library_version: "0.1.0",
                 registry_hash: [0; 32],
@@ -1177,8 +1179,8 @@ async fn drive_session_relays_notifications_back_into_session() {
     assert_eq!(report.telemetry_snapshot.speed, Some(speed(1_200)));
     assert_eq!(report.telemetry_snapshot.voltage, Some(voltage(84_200)));
     assert_eq!(
-        report.telemetry_snapshot.battery_percent_estimated,
-        Some(battery_percent_estimated(61))
+        report.telemetry_snapshot.battery_level_estimated,
+        Some(battery_level_estimated(61))
     );
     assert_eq!(
         report.firmware.expect("firmware response").firmware_major,
@@ -2254,7 +2256,7 @@ impl ProtocolSession for BridgeSession {
                     TelemetryDelta {
                         speed: Some(speed(1_200)),
                         voltage: Some(voltage(84_200)),
-                        battery_percent_estimated: Some(battery_percent_estimated(61)),
+                        battery_level_estimated: Some(battery_level_estimated(61)),
                         ..TelemetryDelta::empty(ms(0))
                     },
                 )));

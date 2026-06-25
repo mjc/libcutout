@@ -266,7 +266,7 @@ where
 mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        MonotonicMillis, MonotonicMillisDto, ParserDiagnosticCountDto, SafetyClassDto,
+        MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, SafetyClassDto,
         SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto, TransportWriteLen,
         TransportWriteLenDto,
     };
@@ -420,7 +420,7 @@ mod tests {
     fn concrete_session_accepts_core_link_info_roundtrip_inputs() {
         let mut session = new_begode_falcon_read_only_session();
         let link = LinkInfo {
-            monotonic_ms: MonotonicMillis::new(7),
+            monotonic_ms: MonotonicTimestamp::new(7),
             max_write_len: Some(write_len(20)),
         };
 

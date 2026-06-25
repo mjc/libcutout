@@ -7,7 +7,7 @@ use std::sync::{
 };
 
 use cutout_core::{
-    LinkInfo, MonotonicMillis, ProtocolSession, SessionInput, SessionOutput, TransportWriteLen,
+    LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput, TransportWriteLen,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
@@ -18,8 +18,8 @@ use cutout_protocols::{
 
 struct CountingAllocator;
 
-const fn ms(value: u64) -> MonotonicMillis {
-    MonotonicMillis::new(value)
+const fn ms(value: u64) -> MonotonicTimestamp {
+    MonotonicTimestamp::new(value)
 }
 
 const fn write_len(value: u16) -> TransportWriteLen {

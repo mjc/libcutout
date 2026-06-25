@@ -5,13 +5,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_btle::{MonotonicMs, SessionBridgeEvent, SessionBridgeReport};
 use cutout_core::{
-    GattChannel, MonotonicMillis, NotificationByteLen, NotificationIngestOutcome, PayloadBodyLen,
-    PayloadClassifier, ProtocolFamily, ProtocolSelector, ReservedPayloadEvidence,
+    GattChannel, MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome,
+    PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector, ReservedPayloadEvidence,
     VerificationStatus,
 };
 
-const fn ms(value: u64) -> MonotonicMillis {
-    MonotonicMillis::new(value)
+const fn ms(value: u64) -> MonotonicTimestamp {
+    MonotonicTimestamp::new(value)
 }
 
 struct CountingAllocator;

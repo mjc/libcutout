@@ -102,8 +102,8 @@ impl MonotonicMs {
 
     /// Converts this BTLE adapter timestamp into the protocol-core timestamp type.
     #[must_use]
-    pub const fn into_core(self) -> cutout_core::MonotonicMillis {
-        cutout_core::MonotonicMillis::new(self.0)
+    pub const fn into_core(self) -> cutout_core::MonotonicTimestamp {
+        cutout_core::MonotonicTimestamp::new(self.0)
     }
 
     pub(crate) fn next(self) -> Self {
@@ -386,11 +386,11 @@ impl fmt::Display for NegotiatedWriteLen {
     }
 }
 
-/// Standard BLE Battery Level percentage.
+/// Standard BLE Battery Level service value.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct BatteryLevelPercent(u8);
+pub struct BtleBatteryLevel(u8);
 
-impl BatteryLevelPercent {
+impl BtleBatteryLevel {
     /// Parses the backend byte as a standard BLE battery percentage.
     ///
     /// Values outside 0..=100 are malformed and stay untyped.
@@ -403,9 +403,9 @@ impl BatteryLevelPercent {
         }
     }
 
-    /// Returns the percentage value for display or serialization.
+    /// Returns the battery level as a percentage value for display or serialization.
     #[must_use]
-    pub const fn get(self) -> u8 {
+    pub const fn as_percent(self) -> u8 {
         self.0
     }
 }

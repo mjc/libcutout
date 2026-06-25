@@ -3489,7 +3489,7 @@ mod tests {
     };
     use cutout_core::{
         BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticDetail,
-        DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicMillis,
+        DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicTimestamp,
         NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserError,
         ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue,
         ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry, SettingsReadback, SignalStrength,
@@ -3498,8 +3498,8 @@ mod tests {
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
     const fn rssi(value: i16) -> SignalStrength {

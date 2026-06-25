@@ -323,8 +323,8 @@ fn veteran_crc_matches(bytes: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    const fn ms(value: u64) -> cutout_core::MonotonicMillis {
-        cutout_core::MonotonicMillis::new(value)
+    const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
+        cutout_core::MonotonicTimestamp::new(value)
     }
 
     use super::*;

@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, BmsCellIndex,
-    BmsHalfIndex, BmsPackIndex, DutyCycle, Measured, MonotonicMillis, ProtocolSelector,
+    BmsHalfIndex, BmsPackIndex, DutyCycle, Measured, MonotonicTimestamp, ProtocolSelector,
     ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature, ValueQuality, ValueSource,
     VerificationStatus, Voltage,
 };
@@ -85,7 +85,7 @@ impl BegodeBmsSummary {
 
     /// Converts the authoritative BMS voltage/current into a telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
             voltage: Some(source_reported(self.pack_voltage)),
             battery_current: Some(source_reported(self.current)),
@@ -227,8 +227,8 @@ const fn source_reported<T>(value: T) -> Measured<T> {
 
 #[cfg(test)]
 mod tests {
-    const fn ms(value: u64) -> MonotonicMillis {
-        MonotonicMillis::new(value)
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
     }
 
     use cutout_core::{

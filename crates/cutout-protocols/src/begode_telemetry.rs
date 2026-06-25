@@ -2,7 +2,7 @@ use core::ops::RangeInclusive;
 
 use cutout_core::{
     BatteryCurrent, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
-    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicMillis,
+    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicTimestamp,
     ParallelCount, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
     SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
     VerificationStatus, Voltage, WireVoltage,
@@ -173,7 +173,7 @@ impl BegodeTelemetryContext {
     pub fn live_a_to_delta(
         self,
         telemetry: BegodeLiveATelemetry,
-        at_ms: MonotonicMillis,
+        at_ms: MonotonicTimestamp,
     ) -> TelemetryDelta {
         telemetry.to_delta_with_units(at_ms, self.unit_mode)
     }
@@ -183,7 +183,7 @@ impl BegodeTelemetryContext {
     pub fn live_b_to_delta(
         self,
         telemetry: BegodeLiveBTelemetry,
-        at_ms: MonotonicMillis,
+        at_ms: MonotonicTimestamp,
     ) -> TelemetryDelta {
         telemetry.to_delta_with_units(at_ms)
     }
@@ -929,7 +929,7 @@ impl BegodeLiveATelemetry {
 
     /// Converts decoded Live A fields into a transport-independent telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         self.to_delta_with_units(at_ms, BegodeUnitMode::Metric)
     }
 
@@ -937,7 +937,7 @@ impl BegodeLiveATelemetry {
     #[must_use]
     pub fn to_delta_with_units(
         self,
-        at_ms: MonotonicMillis,
+        at_ms: MonotonicTimestamp,
         unit_mode: BegodeUnitMode,
     ) -> TelemetryDelta {
         TelemetryDelta {
@@ -1008,13 +1008,13 @@ impl BegodeLiveBTelemetry {
 
     /// Converts decoded Live B fields into a telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         self.to_delta_with_units(at_ms)
     }
 
     /// Converts decoded Live B fields into a telemetry delta with unit normalization.
     #[must_use]
-    pub fn to_delta_with_units(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta_with_units(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
             distance: Some(source_reported(Distance::from_millimetres(
                 self.total_distance.as_millimetres(),
@@ -1127,7 +1127,7 @@ impl BegodeExtraTelemetry {
 
     /// Converts decoded extra telemetry into a transport-independent delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
             battery_current: Some(source_reported(self.battery_current)),
             motor_temperature: Some(source_reported(self.motor_temperature)),
@@ -1338,8 +1338,8 @@ fn battery_level_from_i32(percent: i32) -> BatteryLevel {
 
 #[cfg(test)]
 mod tests {
-    const fn ms(value: u64) -> cutout_core::MonotonicMillis {
-        cutout_core::MonotonicMillis::new(value)
+    const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
+        cutout_core::MonotonicTimestamp::new(value)
     }
 
     use super::{

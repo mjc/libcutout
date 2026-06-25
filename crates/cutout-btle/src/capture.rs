@@ -310,7 +310,7 @@ pub struct RawNotificationRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapSessionMetadata<'a> {
     /// Wall-clock capture start time in Unix milliseconds.
-    pub wall_clock_start_unix_ms: cutout_core::WallClockUnixMillis,
+    pub wall_clock_start_unix_ms: cutout_core::WallClockUnixTimestamp,
 
     /// Platform identifier recorded by the capture producer.
     pub platform_id: &'a str,

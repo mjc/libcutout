@@ -72,7 +72,7 @@ pub use types::{
 };
 /// Parsed BTLE adapter units used instead of naked primitives.
 pub use units::{
-    BatteryLevelPercent, DiagnosticEventCount, DisconnectCount, ManufacturerDataLen,
+    BtleBatteryLevel, DiagnosticEventCount, DisconnectCount, ManufacturerDataLen,
     MaxReconnectLinks, MonotonicMs, NegotiatedWriteLen, NotificationByteTotal, NotificationCount,
     NotificationWindow, ProtocolWriteCount, ReadOnlyResponseCount, ReconnectAttempt, ScanWindow,
     SubscribeCount, TelemetryEventCount, TransportWriteCount, WriteProvenance,
