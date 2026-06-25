@@ -4539,6 +4539,12 @@ impl ChargeMode {
             Self::NotCharging
         }
     }
+
+    /// Returns true when charging is active.
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Charging)
+    }
 }
 
 impl core::fmt::Display for ChargeMode {
