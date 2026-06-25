@@ -1,8 +1,9 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DutyCycle, Measured,
-    MonotonicMillis, ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature,
-    ValueQuality, ValueSource, VerificationStatus, Voltage,
+    BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, BmsCellIndex,
+    BmsHalfIndex, BmsPackIndex, DutyCycle, Measured, MonotonicMillis, ProtocolSelector,
+    ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -23,10 +24,10 @@ pub struct BegodeBmsSummary {
     pub sub_index: ProtocolSelector,
 
     /// Zero-based BMS pack index inferred from sub-index.
-    pub bms_index: u8,
+    pub bms_index: BmsPackIndex,
 
     /// Zero-based half-pack index inferred from sub-index bit 0.
-    pub half_index: u8,
+    pub half_index: BmsHalfIndex,
 
     /// PWM limit.
     pub pwm_limit: DutyCycle,
@@ -61,8 +62,8 @@ impl BegodeBmsSummary {
         let sub_index_value = sub_index.get();
         Ok(Self {
             sub_index,
-            bms_index: u8::from(sub_index_value >= 2),
-            half_index: sub_index_value & 1,
+            bms_index: BmsPackIndex::new(u8::from(sub_index_value >= 2)),
+            half_index: BmsHalfIndex::new(sub_index_value & 1),
             pwm_limit: centi_percent_to_permille(be_u16(cursor, ByteOffset::new(2))),
             pack_voltage: Voltage::from_millivolts(
                 i32::from(be_u16(cursor, ByteOffset::new(6))) * 100,
@@ -115,13 +116,13 @@ pub struct BegodeBmsCellPage {
     pub tag: ProtocolTag,
 
     /// Zero-based BMS pack index from the frame tag.
-    pub bms_index: u8,
+    pub bms_index: BmsPackIndex,
 
     /// Page index from frame offset 19.
     pub page_index: ProtocolSelector,
 
     /// First cell index represented by this page.
-    pub first_cell_index: u16,
+    pub first_cell_index: BmsCellIndex,
 
     /// Eight cell voltages.
     pub cell_voltage: ArrayVec<Voltage, BEGODE_BMS_CELL_VALUES_PER_PAGE>,
@@ -152,9 +153,13 @@ impl BegodeBmsCellPage {
 
         Ok(Self {
             tag,
-            bms_index: u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or_default(),
+            bms_index: BmsPackIndex::new(
+                u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or_default(),
+            ),
             page_index,
-            first_cell_index: u16::from(page_index.get()) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
+            first_cell_index: BmsCellIndex::new(
+                u16::from(page_index.get()) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
+            ),
             cell_voltage,
         })
     }
@@ -248,8 +253,8 @@ mod tests {
             summary,
             BegodeBmsSummary {
                 sub_index: ProtocolSelector::new(3),
-                bms_index: 1,
-                half_index: 1,
+                bms_index: BmsPackIndex::new(1),
+                half_index: BmsHalfIndex::new(1),
                 pwm_limit: DutyCycle::from_permille(1_000),
                 pack_voltage: Voltage::from_millivolts(80_000),
                 current: BatteryCurrent::from_milliamps(-10_000),
@@ -332,9 +337,9 @@ mod tests {
         let page = BegodeBmsCellPage::decode(&frame).expect("cell page decodes");
 
         assert_eq!(page.tag, ProtocolTag::new(0x02));
-        assert_eq!(page.bms_index, 0);
+        assert_eq!(page.bms_index, BmsPackIndex::new(0));
         assert_eq!(page.page_index, ProtocolSelector::new(2));
-        assert_eq!(page.first_cell_index, 16);
+        assert_eq!(page.first_cell_index, BmsCellIndex::new(16));
         assert_eq!(
             page.cell_voltage.as_slice(),
             &[

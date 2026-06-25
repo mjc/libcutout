@@ -1981,6 +1981,9 @@ enum PackSeriesCellsUnit {}
 enum BmsParallelPacksUnit {}
 enum BmsCellValuesPerPageUnit {}
 enum BmsTemperatureValuesPerPageUnit {}
+enum BmsPackIndexUnit {}
+enum BmsHalfIndexUnit {}
+enum BmsCellIndexUnit {}
 
 macro_rules! typed_protocol_value {
     ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
@@ -2425,6 +2428,27 @@ typed_protocol_value!(
     BmsTemperatureValuesPerPageUnit,
     u8,
     "Temperature value count decoded from a full BMS temperature page."
+);
+
+typed_protocol_value!(
+    BmsPackIndex,
+    BmsPackIndexUnit,
+    u8,
+    "Zero-based BMS pack index inferred from protocol page metadata."
+);
+
+typed_protocol_value!(
+    BmsHalfIndex,
+    BmsHalfIndexUnit,
+    u8,
+    "Zero-based BMS half-pack index inferred from protocol page metadata."
+);
+
+typed_protocol_value!(
+    BmsCellIndex,
+    BmsCellIndexUnit,
+    u16,
+    "Zero-based BMS cell index represented by a decoded cell page."
 );
 
 /// Bounded notification evidence shared by protocol ingest outcomes.
@@ -5659,6 +5683,9 @@ mod tests {
             size_of::<crate::BmsTemperatureValuesPerPage>(),
             size_of::<u8>()
         );
+        assert_eq!(size_of::<crate::BmsPackIndex>(), size_of::<u8>());
+        assert_eq!(size_of::<crate::BmsHalfIndex>(), size_of::<u8>());
+        assert_eq!(size_of::<crate::BmsCellIndex>(), size_of::<u16>());
         assert_eq!(size_of::<crate::ParserDiagnostics>(), 56);
         assert_eq!(size_of::<crate::DiagnosticSnapshot>(), 56);
         assert!(size_of::<crate::DiagnosticError>() <= 80);
