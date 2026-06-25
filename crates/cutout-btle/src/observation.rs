@@ -7,8 +7,10 @@ use btleplug::{
 use smallvec::SmallVec;
 use uuid::Uuid;
 
+use cutout_core::SignalStrength;
+
 use crate::{
-    BluetoothAddress, GattUuid, KnownGattUuid, ManufacturerDataLen, PeripheralIdentifier,
+    BluetoothAddress, GattUuid, KnownGattUuid, ManufacturerDataSize, PeripheralIdentifier,
     target::normalize_address, types::write_delimited,
 };
 
@@ -31,7 +33,7 @@ pub struct PeripheralObservation {
     pub name: Option<String>,
 
     /// Received signal strength, if the platform exposed it.
-    pub rssi: Option<i16>,
+    pub rssi: Option<SignalStrength>,
 
     /// Advertised service UUIDs, if the peripheral exposed them.
     pub advertised_services: AdvertisedServices,
@@ -47,7 +49,7 @@ pub struct ManufacturerDataSummary {
     pub company_id: u16,
 
     /// Payload length in bytes.
-    pub len: ManufacturerDataLen,
+    pub len: ManufacturerDataSize,
 }
 
 impl PeripheralObservation {
@@ -89,7 +91,7 @@ impl PeripheralObservation {
             identifier: peripheral.id().to_string(),
             address: normalize_address(properties.address.to_string()),
             name: properties.local_name,
-            rssi: properties.rssi,
+            rssi: properties.rssi.map(SignalStrength::from_dbm),
             advertised_services: properties.services.into_iter().collect(),
             manufacturer_data: sorted_manufacturer_data_summaries(
                 properties
@@ -119,7 +121,7 @@ impl ManufacturerDataSummary {
     {
         Self {
             company_id,
-            len: ManufacturerDataLen::new(bytes.as_ref().len()),
+            len: ManufacturerDataSize::from_bytes(bytes.as_ref().len()),
         }
     }
 }
@@ -128,7 +130,8 @@ impl fmt::Display for PeripheralObservation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_observation_identity(f, self.address.as_deref(), &self.identifier)?;
         write!(f, " name={}", self.name.as_deref().unwrap_or("<none>"))?;
-        self.rssi.map_or(Ok(()), |rssi| write!(f, " rssi={rssi}"))?;
+        self.rssi
+            .map_or(Ok(()), |rssi| write!(f, " rssi={}", rssi.as_dbm()))?;
         f.write_str(" services=[")?;
         write_delimited(f, self.advertised_services.iter(), ", ", |f, uuid| {
             write!(f, "{uuid}")
@@ -165,18 +168,18 @@ fn sorted_manufacturer_data_summaries(
 #[cfg(test)]
 mod tests {
     use super::sorted_manufacturer_data_summaries;
-    use crate::{ManufacturerDataLen, ManufacturerDataSummary};
+    use crate::{ManufacturerDataSize, ManufacturerDataSummary};
 
     #[test]
     fn manufacturer_data_summary_sorts_already_summarized_backend_payloads() {
         let summary = sorted_manufacturer_data_summaries([
             ManufacturerDataSummary {
                 company_id: 0x004c,
-                len: ManufacturerDataLen::new(4),
+                len: ManufacturerDataSize::from_bytes(4),
             },
             ManufacturerDataSummary {
                 company_id: 0x000f,
-                len: ManufacturerDataLen::new(2),
+                len: ManufacturerDataSize::from_bytes(2),
             },
         ]);
 
@@ -185,11 +188,11 @@ mod tests {
             [
                 ManufacturerDataSummary {
                     company_id: 0x000f,
-                    len: ManufacturerDataLen::new(2)
+                    len: ManufacturerDataSize::from_bytes(2)
                 },
                 ManufacturerDataSummary {
                     company_id: 0x004c,
-                    len: ManufacturerDataLen::new(4)
+                    len: ManufacturerDataSize::from_bytes(4)
                 },
             ]
         );

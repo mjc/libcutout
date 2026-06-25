@@ -1,7 +1,8 @@
 use btleplug::api::Characteristic;
 use cutout_core::{
     DeviceCommand, GattChannel, LinkInfo, NotificationEvidence, NotificationIngestOutcome,
-    ProtocolSession, SessionInput, SessionOutput, TransportAction, WriteMode, WritePayload,
+    ProtocolSession, SessionInput, SessionOutput, TransportAction, TransportWriteLimit, WriteMode,
+    WritePayload,
 };
 use futures_util::StreamExt;
 use tracing::{debug, info};
@@ -12,7 +13,7 @@ use crate::{
     identity::BridgeIdentityObserver,
     report::{process_device_event, process_notification_ingest_outcome},
     types::characteristic_from_summary,
-    units::{MonotonicMs, NegotiatedWriteLen, NotificationWindow, WriteProvenance},
+    units::{MonotonicMs, NegotiatedWriteLimit, NotificationWindow, WriteProvenance},
 };
 
 /// Drives a protocol session against the selected BTLE endpoints.
@@ -290,7 +291,7 @@ where
     monotonic_ms = monotonic_ms.next();
     session.handle(
         SessionInput::Tick {
-            monotonic_ms: monotonic_ms.get(),
+            monotonic_ms: monotonic_ms.into_core(),
         },
         &mut outputs,
     );
@@ -360,13 +361,13 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
-    let max_write_len = Some(NegotiatedWriteLen::from_mtu(context.peripheral.mtu()));
+    let max_write_len = Some(NegotiatedWriteLimit::from_bytes(context.peripheral.mtu()));
 
     info!("session bridge link-up handling starting");
     session.handle(
         SessionInput::LinkUp(LinkInfo {
-            monotonic_ms: monotonic_ms.get(),
-            max_write_len: max_write_len.map(NegotiatedWriteLen::get),
+            monotonic_ms: monotonic_ms.into_core(),
+            max_write_len: max_write_len.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
         }),
         outputs,
     );
@@ -471,10 +472,10 @@ where
                 log_notification_decode_outcome(decode_outcome, &notification, context.channel);
                 context.report.notifications = context.report.notifications.increment();
                 let notification_len = notification.len();
-                context.report.notification_bytes = context
-                    .report
-                    .notification_bytes
-                    .saturating_add_len(notification_len);
+                context.report.notification_bytes =
+                    context.report.notification_bytes.saturating_add(
+                        crate::NotificationPayloadTotal::from_bytes(notification_len.as_bytes()),
+                    );
                 context.report.latest_notification_len = Some(notification_len);
             }
             Ok(None) => {
@@ -510,8 +511,8 @@ where
         }
     }
     debug!(
-        notifications = context.report.notifications.get(),
-        notification_bytes = context.report.notification_bytes.get(),
+        notifications = context.report.notifications.as_events(),
+        notification_bytes = context.report.notification_bytes.as_bytes(),
         latest_notification_len = ?context.report.latest_notification_len,
         "session notification window completed"
     );
@@ -546,7 +547,7 @@ where
         SessionInput::Notification {
             channel: context.channel,
             bytes: notification.as_raw_bytes(),
-            monotonic_ms: monotonic_ms.get(),
+            monotonic_ms: monotonic_ms.into_core(),
         },
         outputs,
     );
@@ -680,28 +681,28 @@ fn log_notification_decode_outcome(
         Some(NotificationDecodeOutcome::SemanticEvents(_)) => {}
         Some(NotificationDecodeOutcome::BufferedFragment(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification buffered by protocol decoder"
             );
         }
         Some(NotificationDecodeOutcome::ParserDiagnostic(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification produced parser diagnostic"
             );
         }
         Some(NotificationDecodeOutcome::KnownReserved(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification produced known reserved protocol evidence"
             );
         }
         Some(NotificationDecodeOutcome::ParserGap(evidence)) => {
             debug!(
-                len = evidence.len.get(),
+                len = evidence.len.as_bytes(),
                 channel = ?evidence.channel,
                 "session notification produced parser gap evidence"
             );
@@ -710,7 +711,7 @@ fn log_notification_decode_outcome(
             debug!(
                 uuid = %notification.characteristic,
                 service = %notification.service,
-                len = notification.len().get(),
+                len = notification.len().as_bytes(),
                 channel = ?channel,
                 "session notification ignored by protocol session"
             );
@@ -829,11 +830,11 @@ where
     }
 
     context.report.protocol_writes = context.report.protocol_writes.increment();
-    let write_limit = NegotiatedWriteLen::from_mtu(context.peripheral.mtu());
+    let write_limit = NegotiatedWriteLimit::from_bytes(context.peripheral.mtu());
     for chunk in bytes.as_slice().chunks(write_limit.chunk_len()) {
         let chunk = BtleWriteChunk::new(chunk, write_limit).ok_or(
             SessionBridgeError::WriteChunkTooLong {
-                len: cutout_core::NotificationByteLen::new(chunk.len()),
+                len: cutout_core::NotificationByteLen::from_bytes(chunk.len()),
                 limit: write_limit,
             },
         )?;

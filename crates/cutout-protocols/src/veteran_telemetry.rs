@@ -1,23 +1,24 @@
 use core::ops::RangeInclusive;
 use cutout_core::{
-    BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec, BmsParallelPacks,
-    BmsTemperatureValuesPerPage, ChargeMode, FirmwareInfo, Measured, MonotonicMillis,
-    PackSeriesCells, ProtocolSelector, RawFieldValue, ReadOnlyResponse, SettingsEntry,
-    SettingsReadback, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus,
+    Angle, BatteryCurrent, BatteryLevel, BmsCellValuesPerPage, BmsLayoutSpec, BmsPageSelectorSpec,
+    BmsTemperatureValuesPerPage, Capacity, ChargeMode, Distance, DistanceOffset, Duration,
+    DutyCycle, FirmwareInfo, Measured, MonotonicTimestamp, ParallelCount, Power, ProtocolSelector,
+    RawFieldValue, ReadOnlyResponse, SeriesCount, SettingsEntry, SettingsReadback, Speed,
+    TelemetryDelta, Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
 use crate::{
     BatteryVoltageProfile, SAMSUNG_50S_PROFILE, VeteranFrame,
-    parser::{ByteCursor, ByteOffset},
+    parser::{ParserCursor, ParserOffset},
 };
 use crate::{VETERAN_BMS_CELL_VALUES_PER_PAGE, classify_veteran_bms_selector};
 
 /// Samsung 50S profile minimum pack voltage for a NOSFET Aero 30s pack.
-pub const NOSFET_AERO_MIN_VOLTAGE_MV: i32 = 91_000;
+pub const NOSFET_AERO_MIN_VOLTAGE: Voltage = Voltage::from_millivolts(91_000);
 
 /// Samsung 50S profile maximum pack voltage for a NOSFET Aero 30s pack.
-pub const NOSFET_AERO_MAX_VOLTAGE_MV: i32 = 126_000;
+pub const NOSFET_AERO_MAX_VOLTAGE: Voltage = Voltage::from_millivolts(126_000);
 
 const VETERAN_BMS_LAYOUT_VERIFICATION: VerificationStatus = VerificationStatus::Inferred;
 
@@ -53,8 +54,8 @@ const fn bms_page_selector(selector: u8) -> BmsPageSelectorSpec {
 
 const fn veteran_bms_layout(series_cells: u8, parallel_packs: u8) -> BmsLayoutSpec {
     BmsLayoutSpec {
-        series_cells: PackSeriesCells::new(series_cells),
-        parallel_packs: BmsParallelPacks::new(parallel_packs),
+        series_cells: SeriesCount::new(series_cells),
+        parallel_packs: ParallelCount::new(parallel_packs),
         cell_values_per_page: BmsCellValuesPerPage::new(VETERAN_BMS_CELL_VALUES_PER_PAGE),
         temperature_values_per_page: BmsTemperatureValuesPerPage::new(
             VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE_U8,
@@ -70,58 +71,55 @@ pub struct VeteranTelemetry {
     /// Firmware/model version fields.
     pub firmware: VeteranFirmwareVersion,
 
-    /// Pack voltage in millivolts.
-    pub voltage_mv: i32,
+    /// Pack voltage.
+    pub voltage: Voltage,
 
-    /// Speed in protocol-native deci-km/h.
-    pub speed_deci_kmh: i16,
+    /// Speed.
+    pub speed: Speed,
 
-    /// Trip distance in meters.
-    pub trip_distance_m: u32,
+    /// Trip distance.
+    pub trip_distance: Distance,
 
-    /// Total distance in meters.
-    pub total_distance_m: u32,
+    /// Total distance.
+    pub total_distance: Distance,
 
-    /// Phase current in protocol-native deci-amps.
-    pub phase_current_deci_a: i16,
+    /// Battery current reported by the realtime frame.
+    pub battery_current: BatteryCurrent,
 
-    /// MOSFET/controller temperature in millicelsius.
-    pub mosfet_temperature_mc: i32,
+    /// MOSFET/controller temperature.
+    pub mosfet_temperature: Temperature,
 
-    /// Auto shutdown time remaining field in seconds.
-    pub auto_shutdown_time_remaining_seconds: u16,
-
-    /// Raw charge-mode field retained for protocol evidence and settings readback.
-    pub raw_charge_mode: VeteranRawChargeMode,
+    /// Auto shutdown time remaining.
+    pub auto_shutdown_time_remaining: Duration,
 
     /// Decoded charging state.
     pub charge_mode: ChargeMode,
 
-    /// Speed alert threshold in protocol-native deci-km/h.
-    pub speed_alert_deci_kmh: u16,
+    /// Speed alert threshold.
+    pub speed_alert: Speed,
 
-    /// Speed tiltback threshold in protocol-native deci-km/h.
-    pub speed_tiltback_deci_kmh: u16,
+    /// Speed tiltback threshold.
+    pub speed_tiltback: Speed,
 
     /// Raw pedals-mode field.
-    pub pedals_mode: u16,
+    pub pedals_mode: VeteranPedalsMode,
 
-    /// Pitch in millidegrees.
-    pub pitch_mdeg: i32,
+    /// Pitch.
+    pub pitch: Angle,
 
-    /// Raw hardware PWM field.
-    pub hardware_pwm_raw: u16,
+    /// Hardware PWM duty cycle.
+    pub hardware_pwm: DutyCycle,
 
-    /// Cutout-estimated battery percentage from capture-backed pack range.
-    pub battery_percent_estimated: u8,
+    /// Cutout-estimated battery level from capture-backed pack range.
+    pub battery_level_estimated: BatteryLevel,
 }
 
-/// Raw Veteran charge-mode field retained for protocol evidence.
+/// Raw Veteran pedals-mode field retained for protocol evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VeteranRawChargeMode(u16);
+pub struct VeteranPedalsMode(u16);
 
-impl VeteranRawChargeMode {
-    /// Creates a raw charge-mode evidence value from the wire field.
+impl VeteranPedalsMode {
+    /// Creates a raw pedals-mode evidence value from the wire field.
     #[must_use]
     pub const fn new(value: u16) -> Self {
         Self(value)
@@ -144,19 +142,19 @@ pub struct VeteranModelProfile {
     pub name: &'static str,
 
     /// Series-connected cell count for pack-voltage interpretation.
-    pub cell_count: u8,
+    pub series_cells: SeriesCount,
 
-    /// Parallel cell count for model pack configuration.
-    pub parallel_cells: u8,
+    /// Parallel pack count for model pack configuration.
+    pub parallel_packs: ParallelCount,
 
-    /// Nominal pack capacity in milliamp-hours, when known.
-    pub nominal_capacity_mah: Option<u32>,
+    /// Nominal pack capacity, when known.
+    pub nominal_capacity: Option<Capacity>,
 
     /// Single-cell battery curve used for estimated battery percent, when known.
     pub battery_profile: Option<&'static BatteryVoltageProfile>,
 
     /// Pack-voltage range used for estimated battery percent.
-    pub voltage_range_mv: RangeInclusive<i32>,
+    pub voltage_range: RangeInclusive<Voltage>,
 
     /// Whether the fixed telemetry hardware-PWM field is valid.
     pub has_pwm_readback: bool,
@@ -167,12 +165,12 @@ pub struct VeteranModelProfile {
     /// Static smart-BMS layout for model-specific page interpretation.
     pub bms_layout: Option<&'static BmsLayoutSpec>,
 
-    /// Observed app-vs-device odometer display offset in meters, when known.
+    /// Observed app-vs-device odometer display offset, when known.
     ///
     /// This is model evidence, not a parser correction. Keep canonical decoded
     /// odometer fields unchanged until same-instant raw/app/LCD captures prove
     /// where the offset is applied.
-    pub observed_app_odometer_offset_m: Option<i32>,
+    pub observed_app_odometer_offset: Option<DistanceOffset>,
 
     /// Whether horn requires the newer binary `LeaperKim` command frame.
     pub requires_binary_horn: bool,
@@ -183,9 +181,33 @@ impl VeteranModelProfile {
     #[must_use]
     pub fn from_model_id(model_id: u16) -> Option<Self> {
         let profile = match model_id {
-            0 | 1 => Self::new_linear(model_id, "Veteran Sherman", 24, 79_350..=98_700),
-            2 => Self::new_linear(model_id, "Veteran Abrams", 24, 79_350..=98_700),
-            3 => Self::new_linear(model_id, "Veteran Sherman S", 24, 79_350..=98_700),
+            0 | 1 => Self::new_linear(
+                model_id,
+                "Veteran Sherman",
+                24,
+                pack_voltage_range(
+                    Voltage::from_millivolts(79_350),
+                    Voltage::from_millivolts(98_700),
+                ),
+            ),
+            2 => Self::new_linear(
+                model_id,
+                "Veteran Abrams",
+                24,
+                pack_voltage_range(
+                    Voltage::from_millivolts(79_350),
+                    Voltage::from_millivolts(98_700),
+                ),
+            ),
+            3 => Self::new_linear(
+                model_id,
+                "Veteran Sherman S",
+                24,
+                pack_voltage_range(
+                    Voltage::from_millivolts(79_350),
+                    Voltage::from_millivolts(98_700),
+                ),
+            ),
             4 => Self::new_with_battery_profile(
                 model_id,
                 "Veteran Patton",
@@ -233,7 +255,7 @@ impl VeteranModelProfile {
             }
             43 => {
                 Self::new_with_battery_profile(model_id, "NOSFET Aero", 30, 2, &SAMSUNG_50S_PROFILE)
-                    .with_observed_app_odometer_offset_m(805)
+                    .with_observed_app_odometer_offset(DistanceOffset::from_metres(805))
             }
             44 => {
                 Self::new_with_battery_profile(model_id, "NOSFET Aeon", 36, 2, &SAMSUNG_50S_PROFILE)
@@ -246,21 +268,21 @@ impl VeteranModelProfile {
     const fn new_linear(
         model_id: u16,
         name: &'static str,
-        cell_count: u8,
-        voltage_range_mv: RangeInclusive<i32>,
+        series_cells: u8,
+        voltage_range: RangeInclusive<Voltage>,
     ) -> Self {
         Self {
             model_id,
             name,
-            cell_count,
-            parallel_cells: 1,
-            nominal_capacity_mah: None,
+            series_cells: SeriesCount::new(series_cells),
+            parallel_packs: ParallelCount::new(1),
+            nominal_capacity: None,
             battery_profile: None,
-            voltage_range_mv,
+            voltage_range,
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
             bms_layout: None,
-            observed_app_odometer_offset_m: None,
+            observed_app_odometer_offset: None,
             requires_binary_horn: model_id >= 3,
         }
     }
@@ -268,63 +290,69 @@ impl VeteranModelProfile {
     fn new_with_battery_profile(
         model_id: u16,
         name: &'static str,
-        cell_count: u8,
-        parallel_cells: u8,
+        series_cells: u8,
+        parallel_packs: u8,
         battery_profile: &'static BatteryVoltageProfile,
     ) -> Self {
+        let series_cells = SeriesCount::new(series_cells);
+        let parallel_packs = ParallelCount::new(parallel_packs);
         Self {
             model_id,
             name,
-            cell_count,
-            parallel_cells,
-            nominal_capacity_mah: Some(
-                u32::from(battery_profile.nominal_capacity_mah) * u32::from(parallel_cells),
-            ),
+            series_cells,
+            parallel_packs,
+            nominal_capacity: Some(Capacity::from_milliamp_hours(
+                battery_profile
+                    .nominal_capacity
+                    .as_milliamp_hours()
+                    .saturating_mul(u32::from(parallel_packs.get())),
+            )),
             battery_profile: Some(battery_profile),
-            voltage_range_mv: battery_profile_pack_range(battery_profile, cell_count),
+            voltage_range: battery_profile_pack_range(battery_profile, series_cells),
             has_pwm_readback: model_id >= 2,
             has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
-            bms_layout: bms_layout_for_geometry(cell_count, parallel_cells),
-            observed_app_odometer_offset_m: None,
+            bms_layout: bms_layout_for_geometry(series_cells, parallel_packs),
+            observed_app_odometer_offset: None,
             requires_binary_horn: model_id >= 3,
         }
     }
 
-    const fn with_observed_app_odometer_offset_m(
+    const fn with_observed_app_odometer_offset(
         mut self,
-        observed_app_odometer_offset_m: i32,
+        observed_app_odometer_offset: DistanceOffset,
     ) -> Self {
-        self.observed_app_odometer_offset_m = Some(observed_app_odometer_offset_m);
+        self.observed_app_odometer_offset = Some(observed_app_odometer_offset);
         self
     }
 
-    /// Estimates battery percentage from this model's pack voltage.
+    /// Estimates battery level from this model's pack voltage.
     #[must_use]
-    pub fn estimate_battery_percent(&self, voltage_mv: i32) -> u8 {
+    pub fn estimate_battery_level(&self, voltage: Voltage) -> BatteryLevel {
         if let Some(battery_profile) = self.battery_profile {
-            return battery_profile.estimate_percent_from_pack_voltage(voltage_mv, self.cell_count);
+            return battery_profile.estimate_level_from_pack_voltage(voltage, self.series_cells);
         }
 
-        let start = *self.voltage_range_mv.start();
-        let end = *self.voltage_range_mv.end();
-        if voltage_mv <= start {
-            return 0;
+        let start = self.voltage_range.start().as_millivolts();
+        let end = self.voltage_range.end().as_millivolts();
+        let voltage = voltage.as_millivolts();
+        if voltage <= start {
+            return BatteryLevel::from_percent(0);
         }
-        if voltage_mv >= end {
-            return 100;
+        if voltage >= end {
+            return BatteryLevel::from_percent(100);
         }
 
-        let numerator = (voltage_mv - start) * 100;
+        let numerator = (voltage - start) * 100;
         let denominator = end - start;
-        u8::try_from((numerator + denominator / 2) / denominator).unwrap_or(100)
+        BatteryLevel::from_percent_i32((numerator + denominator / 2) / denominator)
     }
 }
 
 const fn bms_layout_for_geometry(
-    series_cells: u8,
-    parallel_packs: u8,
+    series_cells: SeriesCount,
+    parallel_packs: ParallelCount,
 ) -> Option<&'static BmsLayoutSpec> {
-    match (series_cells, parallel_packs) {
+    match (series_cells.get(), parallel_packs.get()) {
         (30, 2) => Some(&VETERAN_BMS_30S_2P_LAYOUT),
         (36, 2) => Some(&VETERAN_BMS_36S_2P_LAYOUT),
         (36, 4) => Some(&VETERAN_BMS_36S_4P_LAYOUT),
@@ -336,26 +364,35 @@ const fn bms_layout_for_geometry(
 
 fn battery_profile_pack_range(
     battery_profile: &'static BatteryVoltageProfile,
-    series_cells: u8,
-) -> RangeInclusive<i32> {
-    let series_cells = i32::from(series_cells);
+    series_cells: SeriesCount,
+) -> RangeInclusive<Voltage> {
+    let series_cells = i32::from(series_cells.get());
     let start = battery_profile
         .points
         .first()
-        .map_or(0, |point| pack_voltage_mv(point.cell_uv, series_cells));
-    let end = battery_profile
-        .points
-        .last()
-        .map_or(start, |point| pack_voltage_mv(point.cell_uv, series_cells));
+        .map_or(Voltage::from_millivolts(0), |point| {
+            pack_voltage(point.cell_voltage, series_cells)
+        });
+    let end = battery_profile.points.last().map_or(start, |point| {
+        pack_voltage(point.cell_voltage, series_cells)
+    });
+    pack_voltage_range(start, end)
+}
+
+const fn pack_voltage_range(start: Voltage, end: Voltage) -> RangeInclusive<Voltage> {
     start..=end
 }
 
-fn pack_voltage_mv(cell_voltage_uv: i32, series_cells: i32) -> i32 {
-    (cell_voltage_uv.saturating_mul(series_cells) + 500) / 1_000
+fn pack_voltage(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> Voltage {
+    Voltage::from_cell_voltage(cell_voltage, series_cells)
 }
 
-const fn veteran_charge_mode(raw: VeteranRawChargeMode) -> ChargeMode {
-    ChargeMode::from_active(raw.get() != 0)
+const fn charge_mode_from_veteran_field(value: u16) -> ChargeMode {
+    ChargeMode::from_active(value != 0)
+}
+
+const fn veteran_charge_mode_field(mode: ChargeMode) -> u16 {
+    if mode.is_active() { 1 } else { 0 }
 }
 
 impl VeteranTelemetry {
@@ -366,91 +403,104 @@ impl VeteranTelemetry {
     /// Returns [`VeteranTelemetryError::FrameTooShort`] if the frame does not
     /// contain the fixed voltage field.
     pub fn decode(frame: &VeteranFrame) -> Result<Self, VeteranTelemetryError> {
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         let raw_version = cursor
-            .be_u16(ByteOffset::new(28))
+            .be_u16(ParserOffset::from_bytes(28))
             .ok_or(VeteranTelemetryError::FrameTooShort)?;
         let firmware = VeteranFirmwareVersion::from_raw(raw_version);
-        let voltage_mv = i32::from(
+        let voltage = Voltage::from_centivolts(i32::from(
             cursor
-                .be_u16(ByteOffset::new(4))
+                .be_u16(ParserOffset::from_bytes(4))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
-        ) * 10;
+        ));
 
-        let raw_charge_mode = VeteranRawChargeMode::new(
+        let charge_mode = charge_mode_from_veteran_field(
             cursor
-                .be_u16(ByteOffset::new(22))
+                .be_u16(ParserOffset::from_bytes(22))
                 .ok_or(VeteranTelemetryError::FrameTooShort)?,
         );
 
         Ok(Self {
             firmware,
-            voltage_mv,
-            speed_deci_kmh: cursor
-                .be_i16(ByteOffset::new(6))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            trip_distance_m: cursor
-                .veteran_swapped_u32(ByteOffset::new(8))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            total_distance_m: cursor
-                .veteran_swapped_u32(ByteOffset::new(12))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            phase_current_deci_a: cursor
-                .be_i16(ByteOffset::new(16))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            mosfet_temperature_mc: i32::from(
+            voltage,
+            speed: Speed::from_deci_kmh(i32::from(
                 cursor
-                    .be_i16(ByteOffset::new(18))
+                    .be_i16(ParserOffset::from_bytes(6))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ) * 10,
-            auto_shutdown_time_remaining_seconds: cursor
-                .be_u16(ByteOffset::new(20))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            raw_charge_mode,
-            charge_mode: veteran_charge_mode(raw_charge_mode),
-            speed_alert_deci_kmh: cursor
-                .be_u16(ByteOffset::new(24))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            speed_tiltback_deci_kmh: cursor
-                .be_u16(ByteOffset::new(26))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            pedals_mode: cursor
-                .be_u16(ByteOffset::new(30))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            pitch_mdeg: i32::from(
+            )),
+            trip_distance: Distance::from_metres(u64::from(
                 cursor
-                    .be_i16(ByteOffset::new(32))
+                    .veteran_swapped_u32(ParserOffset::from_bytes(8))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            ) * 10,
-            hardware_pwm_raw: cursor
-                .be_u16(ByteOffset::new(34))
-                .ok_or(VeteranTelemetryError::FrameTooShort)?,
-            battery_percent_estimated: estimate_veteran_battery_percent(
-                firmware.model_id,
-                voltage_mv,
+            )),
+            total_distance: Distance::from_metres(u64::from(
+                cursor
+                    .veteran_swapped_u32(ParserOffset::from_bytes(12))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            battery_current: BatteryCurrent::from_centiamps(i32::from(
+                cursor
+                    .be_i16(ParserOffset::from_bytes(16))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            mosfet_temperature: Temperature::from_centi_celsius(i32::from(
+                cursor
+                    .be_i16(ParserOffset::from_bytes(18))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            auto_shutdown_time_remaining: Duration::from_seconds(u64::from(
+                cursor
+                    .be_u16(ParserOffset::from_bytes(20))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            charge_mode,
+            speed_alert: Speed::from_deci_kmh(i32::from(
+                cursor
+                    .be_u16(ParserOffset::from_bytes(24))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            speed_tiltback: Speed::from_deci_kmh(i32::from(
+                cursor
+                    .be_u16(ParserOffset::from_bytes(26))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            pedals_mode: VeteranPedalsMode::new(
+                cursor
+                    .be_u16(ParserOffset::from_bytes(30))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
             ),
+            pitch: Angle::from_deci_degrees(i32::from(
+                cursor
+                    .be_i16(ParserOffset::from_bytes(32))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            )),
+            hardware_pwm: DutyCycle::from_centered_pwm(
+                cursor
+                    .be_u16(ParserOffset::from_bytes(34))
+                    .ok_or(VeteranTelemetryError::FrameTooShort)?,
+            ),
+            battery_level_estimated: estimate_veteran_battery_level(firmware.model_id, voltage),
         })
     }
 
     /// Converts decoded telemetry into the transport-independent telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
-        let motor_current_ma = i32::from(self.phase_current_deci_a) * 100;
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
+        let power = Power::from_voltage_current(self.voltage, self.battery_current);
         TelemetryDelta {
-            speed_mm_s: Some(Measured::reported(deci_kmh_to_mm_s(self.speed_deci_kmh))),
-            voltage_mv: Some(Measured::reported(self.voltage_mv)),
-            motor_current_ma: Some(Measured::reported(motor_current_ma)),
-            power_mw: Some(Measured::calculated(veteran_power_mw(
-                self.voltage_mv,
-                motor_current_ma,
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
+                self.speed.as_millimetres_per_second(),
             ))),
-            controller_temperature_mc: Some(Measured::reported(self.mosfet_temperature_mc)),
-            pwm_permille: Some(Measured::reported(veteran_pwm_permille(
-                self.hardware_pwm_raw,
+            voltage: Some(Measured::reported(self.voltage)),
+            battery_current: Some(Measured::reported(self.battery_current)),
+            power: Some(Measured::calculated(power)),
+            controller_temperature: Some(Measured::reported(self.mosfet_temperature)),
+            pwm: Some(Measured::reported(self.hardware_pwm)),
+            distance: Some(Measured::reported(Distance::from_millimetres(
+                self.total_distance.as_millimetres(),
             ))),
-            distance_mm: Some(Measured::reported(u64::from(self.total_distance_m) * 1_000)),
-            pitch_mdeg: Some(Measured::reported(self.pitch_mdeg)),
-            battery_percent_estimated: Some(Measured::estimated(self.battery_percent_estimated)),
+            pitch: Some(Measured::reported(self.pitch)),
+            battery_level_estimated: Some(Measured::estimated(self.battery_level_estimated)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -478,19 +528,20 @@ impl VeteranTelemetry {
                 entries: [
                     Some(settings_entry(
                         VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-                        i64::from(self.auto_shutdown_time_remaining_seconds),
+                        i64::try_from(self.auto_shutdown_time_remaining.as_seconds())
+                            .unwrap_or(i64::MAX),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_CHARGE_MODE,
-                        i64::from(self.raw_charge_mode.get()),
+                        i64::from(veteran_charge_mode_field(self.charge_mode)),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-                        i64::from(self.speed_alert_deci_kmh),
+                        i64::from(self.speed_alert.as_deci_kmh_rounded()),
                     )),
                     Some(settings_entry(
                         VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-                        i64::from(self.speed_tiltback_deci_kmh),
+                        i64::from(self.speed_tiltback.as_deci_kmh_rounded()),
                     )),
                 ],
             }),
@@ -498,7 +549,7 @@ impl VeteranTelemetry {
                 entries: [
                     Some(settings_entry(
                         VETERAN_FIELD_PEDALS_MODE,
-                        i64::from(self.pedals_mode),
+                        i64::from(self.pedals_mode.get()),
                     )),
                     None,
                     None,
@@ -574,37 +625,36 @@ impl VeteranFirmwareVersion {
 
 /// Estimates Aero battery percent from its model's Samsung 50S battery profile.
 #[must_use]
-pub fn estimate_nosfet_aero_battery_percent(voltage_mv: i32) -> u8 {
-    estimate_veteran_battery_percent(43, voltage_mv)
+pub fn estimate_nosfet_aero_battery_level(voltage: Voltage) -> BatteryLevel {
+    estimate_veteran_battery_level(43, voltage)
 }
 
 /// Estimates Veteran battery percent using the known model profile when possible.
 #[must_use]
-pub fn estimate_veteran_battery_percent(model_id: u16, voltage_mv: i32) -> u8 {
-    VeteranModelProfile::from_model_id(model_id)
-        .map_or(0, |profile| profile.estimate_battery_percent(voltage_mv))
-}
-
-fn deci_kmh_to_mm_s(value: i16) -> i32 {
-    i32::from(value) * 250 / 9
-}
-
-fn veteran_power_mw(voltage_mv: i32, current_ma: i32) -> i64 {
-    i64::from(voltage_mv) * i64::from(current_ma) / 1_000
-}
-
-fn veteran_pwm_permille(raw_pwm: u16) -> i16 {
-    let centered = i32::from(raw_pwm) - 0x8000;
-    let permille = centered * 1_000 / 0x8000;
-    #[allow(clippy::cast_possible_truncation)]
-    {
-        permille as i16
-    }
+pub fn estimate_veteran_battery_level(model_id: u16, voltage: Voltage) -> BatteryLevel {
+    VeteranModelProfile::from_model_id(model_id).map_or(BatteryLevel::from_percent(0), |profile| {
+        profile.estimate_battery_level(voltage)
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
+    }
+
     use super::*;
+
+    const fn pct(value: u8) -> BatteryLevel {
+        BatteryLevel::from_percent(value)
+    }
+
+    fn test_voltage_range(start: i32, end: i32) -> RangeInclusive<Voltage> {
+        pack_voltage_range(
+            Voltage::from_millivolts(start),
+            Voltage::from_millivolts(end),
+        )
+    }
 
     fn live_aero_frame() -> VeteranFrame {
         VeteranFrame::try_from_slice(&hex_literal::hex!(
@@ -628,11 +678,10 @@ mod tests {
         .expect("fixture frame is valid")
     }
 
-    fn synthetic_short_frame(model_id: u16, voltage_mv: i32) -> VeteranFrame {
+    fn synthetic_short_frame(model_id: u16, voltage: i32) -> VeteranFrame {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
-        let voltage_centivolts =
-            u16::try_from(voltage_mv / 10).expect("synthetic voltage fits u16");
+        let voltage_centivolts = u16::try_from(voltage / 10).expect("synthetic voltage fits u16");
         bytes[4..6].copy_from_slice(&voltage_centivolts.to_be_bytes());
         let raw_version = model_id * 1_000;
         bytes[28..30].copy_from_slice(&raw_version.to_be_bytes());
@@ -644,7 +693,7 @@ mod tests {
     fn veteran_telemetry_decodes_live_aero_voltage() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
-        assert_eq!(telemetry.voltage_mv, 108_760);
+        assert_eq!(telemetry.voltage.as_millivolts(), 108_760);
     }
 
     #[test]
@@ -660,30 +709,32 @@ mod tests {
                     minor: 2,
                     revision: 54,
                 },
-                voltage_mv: 108_760,
-                speed_deci_kmh: 0,
-                trip_distance_m: 0,
-                total_distance_m: 1_551_169,
-                phase_current_deci_a: 0,
-                mosfet_temperature_mc: 33_270,
-                auto_shutdown_time_remaining_seconds: 0,
-                raw_charge_mode: VeteranRawChargeMode::new(0),
+                voltage: Voltage::from_millivolts(108_760),
+                speed: Speed::from_millimetres_per_second(0),
+                trip_distance: Distance::from_millimetres(0),
+                total_distance: Distance::from_millimetres(1_551_169_000),
+                battery_current: BatteryCurrent::from_milliamps(0),
+                mosfet_temperature: Temperature::from_millicelsius(33_270),
+                auto_shutdown_time_remaining: Duration::from_seconds(0),
                 charge_mode: ChargeMode::NotCharging,
-                speed_alert_deci_kmh: 550,
-                speed_tiltback_deci_kmh: 540,
-                pedals_mode: 1_920,
-                pitch_mdeg: 69_060,
-                hardware_pwm_raw: 0,
-                battery_percent_estimated: 47,
+                speed_alert: Speed::from_millimetres_per_second(15_277),
+                speed_tiltback: Speed::from_millimetres_per_second(15_000),
+                pedals_mode: VeteranPedalsMode::new(1_920),
+                pitch: Angle::from_millidegrees(69_060),
+                hardware_pwm: DutyCycle::from_permille(-1_000),
+                battery_level_estimated: BatteryLevel::from_percent(47),
             }
         );
     }
 
     #[test]
-    fn veteran_telemetry_estimates_live_aero_battery_percent() {
+    fn veteran_telemetry_estimates_live_aero_battery_level() {
         let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
 
-        assert_eq!(telemetry.battery_percent_estimated, 47);
+        assert_eq!(
+            telemetry.battery_level_estimated,
+            BatteryLevel::from_percent(47)
+        );
     }
 
     #[test]
@@ -695,7 +746,6 @@ mod tests {
 
         let telemetry = VeteranTelemetry::decode(&frame).expect("telemetry decodes");
 
-        assert_eq!(telemetry.raw_charge_mode, VeteranRawChargeMode::new(1));
         assert_eq!(telemetry.charge_mode, ChargeMode::Charging);
     }
 
@@ -704,23 +754,33 @@ mod tests {
         let telemetry =
             VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
 
-        assert_eq!(telemetry.voltage_mv, 107_610);
-        assert_eq!(telemetry.battery_percent_estimated, 42);
-        assert_eq!(telemetry.auto_shutdown_time_remaining_seconds, 1_117);
+        assert_eq!(telemetry.voltage.as_millivolts(), 107_610);
+        assert_eq!(
+            telemetry.battery_level_estimated,
+            BatteryLevel::from_percent(42)
+        );
+        assert_eq!(
+            telemetry.auto_shutdown_time_remaining,
+            Duration::from_seconds(1_117)
+        );
         assert_eq!(telemetry.firmware.model_id, 43);
         assert_eq!(telemetry.firmware.minor, 2);
         assert_eq!(telemetry.firmware.revision, 54);
     }
 
     #[test]
-    fn aero_battery_percent_estimate_clamps_to_pack_range() {
+    fn aero_battery_level_estimate_clamps_to_pack_range() {
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(NOSFET_AERO_MIN_VOLTAGE_MV - 1),
-            0
+            estimate_nosfet_aero_battery_level(Voltage::from_millivolts(
+                NOSFET_AERO_MIN_VOLTAGE.as_millivolts() - 1,
+            )),
+            pct(0)
         );
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(NOSFET_AERO_MAX_VOLTAGE_MV + 1),
-            100
+            estimate_nosfet_aero_battery_level(Voltage::from_millivolts(
+                NOSFET_AERO_MAX_VOLTAGE.as_millivolts() + 1,
+            )),
+            pct(100)
         );
     }
 
@@ -731,37 +791,46 @@ mod tests {
         let sherman = VeteranModelProfile::from_model_id(0).expect("Sherman profile is known");
 
         assert_eq!(aero.name, "NOSFET Aero");
-        assert_eq!(aero.cell_count, 30);
-        assert_eq!(aero.parallel_cells, 2);
-        assert_eq!(aero.nominal_capacity_mah, Some(10_000));
+        assert_eq!(aero.series_cells, SeriesCount::new(30));
+        assert_eq!(aero.parallel_packs, ParallelCount::new(2));
+        assert_eq!(
+            aero.nominal_capacity,
+            Some(Capacity::from_milliamp_hours(10_000))
+        );
         assert_eq!(
             aero.battery_profile.map(|profile| profile.cell_model),
             Some("Samsung 50S")
         );
-        assert_eq!(aero.voltage_range_mv, 91_000..=126_000);
+        assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
         assert!(aero.has_pwm_readback);
         assert!(aero.requires_binary_horn);
-        assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
+        assert_eq!(
+            aero.observed_app_odometer_offset,
+            Some(DistanceOffset::from_metres(805))
+        );
 
         assert_eq!(oryx.name, "Veteran Oryx");
-        assert_eq!(oryx.cell_count, 42);
-        assert_eq!(oryx.parallel_cells, 6);
-        assert_eq!(oryx.nominal_capacity_mah, Some(30_000));
+        assert_eq!(oryx.series_cells, SeriesCount::new(42));
+        assert_eq!(oryx.parallel_packs, ParallelCount::new(6));
+        assert_eq!(
+            oryx.nominal_capacity,
+            Some(Capacity::from_milliamp_hours(30_000))
+        );
         assert_eq!(
             oryx.battery_profile.map(|profile| profile.cell_model),
             Some("Samsung 50S")
         );
-        assert_eq!(oryx.voltage_range_mv, 127_400..=176_400);
+        assert_eq!(oryx.voltage_range, test_voltage_range(127_400, 176_400));
         assert!(oryx.has_smart_bms);
 
-        assert_eq!(sherman.cell_count, 24);
-        assert_eq!(sherman.parallel_cells, 1);
-        assert_eq!(sherman.nominal_capacity_mah, None);
+        assert_eq!(sherman.series_cells, SeriesCount::new(24));
+        assert_eq!(sherman.parallel_packs, ParallelCount::new(1));
+        assert_eq!(sherman.nominal_capacity, None);
         assert_eq!(sherman.battery_profile, None);
-        assert_eq!(sherman.voltage_range_mv, 79_350..=98_700);
+        assert_eq!(sherman.voltage_range, test_voltage_range(79_350, 98_700));
         assert!(!sherman.has_pwm_readback);
         assert!(!sherman.requires_binary_horn);
-        assert_eq!(sherman.observed_app_odometer_offset_m, None);
+        assert_eq!(sherman.observed_app_odometer_offset, None);
     }
 
     #[test]
@@ -769,12 +838,15 @@ mod tests {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
         let telemetry =
             VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
-        let delta = telemetry.to_delta(42);
+        let delta = telemetry.to_delta(ms(42));
 
-        assert_eq!(aero.observed_app_odometer_offset_m, Some(805));
         assert_eq!(
-            delta.distance_mm.map(|distance| distance.value),
-            Some(u64::from(telemetry.total_distance_m) * 1_000)
+            aero.observed_app_odometer_offset,
+            Some(DistanceOffset::from_metres(805))
+        );
+        assert_eq!(
+            delta.distance.map(|distance| distance.value),
+            Some(telemetry.total_distance)
         );
     }
 
@@ -788,11 +860,14 @@ mod tests {
         let last = profile.points.last().expect("profile has high point");
 
         assert_eq!(
-            aero.voltage_range_mv,
-            pack_voltage_mv(first.cell_uv, i32::from(aero.cell_count))
-                ..=pack_voltage_mv(last.cell_uv, i32::from(aero.cell_count))
+            aero.voltage_range,
+            test_voltage_range(
+                pack_voltage(first.cell_voltage, i32::from(aero.series_cells.get()))
+                    .as_millivolts(),
+                pack_voltage(last.cell_voltage, i32::from(aero.series_cells.get())).as_millivolts(),
+            )
         );
-        assert_eq!(aero.voltage_range_mv, 91_000..=126_000);
+        assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
     }
 
     #[test]
@@ -812,15 +887,25 @@ mod tests {
             .battery_profile
             .expect("Aero has a cell battery profile");
 
-        assert_eq!(aero.cell_count, 30);
-        assert_eq!(aero.parallel_cells, 2);
+        assert_eq!(aero.series_cells, SeriesCount::new(30));
+        assert_eq!(aero.parallel_packs, ParallelCount::new(2));
         assert_eq!(profile.cell_model, "Samsung 50S");
         assert_eq!(
-            profile.points.first().expect("low point").cell_uv,
+            profile
+                .points
+                .first()
+                .expect("low point")
+                .cell_voltage
+                .as_microvolts(),
             3_033_333
         );
         assert_eq!(
-            profile.points.last().expect("high point").cell_uv,
+            profile
+                .points
+                .last()
+                .expect("high point")
+                .cell_voltage
+                .as_microvolts(),
             4_200_000
         );
     }
@@ -839,67 +924,144 @@ mod tests {
             (126_000, 100),
         ];
 
-        for (pack_mv, percent) in sticker_points {
-            assert_eq!(aero.estimate_battery_percent(pack_mv), percent);
+        for (pack_voltage, percent) in sticker_points {
+            assert_eq!(
+                aero.estimate_battery_level(Voltage::from_millivolts(pack_voltage)),
+                pct(percent)
+            );
         }
     }
 
     #[test]
-    fn aero_parallel_count_does_not_change_voltage_percentage_estimation() {
+    fn aero_parallel_count_does_not_change_voltage_level_estimation() {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
         let profile = aero
             .battery_profile
             .expect("Aero has a cell battery profile");
 
         assert_eq!(
-            aero.estimate_battery_percent(107_950),
-            profile.estimate_percent_from_pack_voltage(107_950, aero.cell_count)
+            aero.estimate_battery_level(Voltage::from_millivolts(107_950)),
+            profile.estimate_level_from_pack_voltage(
+                Voltage::from_millivolts(107_950),
+                aero.series_cells,
+            )
         );
     }
 
     #[test]
-    fn aero_model_profile_uses_samsung_50s_curve_for_battery_percent() {
+    fn aero_model_profile_uses_samsung_50s_curve_for_battery_level() {
         let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
 
-        assert_eq!(aero.estimate_battery_percent(91_000), 0);
-        assert_eq!(aero.estimate_battery_percent(107_950), 44);
-        assert_eq!(aero.estimate_battery_percent(108_760), 47);
-        assert_eq!(aero.estimate_battery_percent(126_000), 100);
+        assert_eq!(
+            aero.estimate_battery_level(Voltage::from_millivolts(91_000)),
+            pct(0)
+        );
+        assert_eq!(
+            aero.estimate_battery_level(Voltage::from_millivolts(107_950)),
+            pct(44)
+        );
+        assert_eq!(
+            aero.estimate_battery_level(Voltage::from_millivolts(108_760)),
+            pct(47)
+        );
+        assert_eq!(
+            aero.estimate_battery_level(Voltage::from_millivolts(126_000)),
+            pct(100)
+        );
     }
 
     #[test]
     fn known_samsung_50s_veteran_models_share_cell_curve_with_model_geometry() {
         let models = [
-            (4, "Veteran Patton", 30, 2, Some(10_000), 91_000..=126_000),
-            (5, "Veteran Lynx", 36, 4, Some(20_000), 109_200..=151_200),
+            (
+                4,
+                "Veteran Patton",
+                30,
+                2,
+                Some(10_000),
+                test_voltage_range(91_000, 126_000),
+            ),
+            (
+                5,
+                "Veteran Lynx",
+                36,
+                4,
+                Some(20_000),
+                test_voltage_range(109_200, 151_200),
+            ),
             (
                 6,
                 "Veteran Sherman L",
                 36,
                 6,
                 Some(30_000),
-                109_200..=151_200,
+                test_voltage_range(109_200, 151_200),
             ),
-            (7, "Veteran Patton S", 30, 2, Some(10_000), 91_000..=126_000),
-            (8, "Veteran Oryx", 42, 6, Some(30_000), 127_400..=176_400),
-            (9, "Veteran Lynx S", 36, 4, Some(20_000), 109_200..=151_200),
-            (42, "NOSFET Apex", 36, 4, Some(20_000), 109_200..=151_200),
-            (43, "NOSFET Aero", 30, 2, Some(10_000), 91_000..=126_000),
-            (44, "NOSFET Aeon", 36, 2, Some(10_000), 109_200..=151_200),
+            (
+                7,
+                "Veteran Patton S",
+                30,
+                2,
+                Some(10_000),
+                test_voltage_range(91_000, 126_000),
+            ),
+            (
+                8,
+                "Veteran Oryx",
+                42,
+                6,
+                Some(30_000),
+                test_voltage_range(127_400, 176_400),
+            ),
+            (
+                9,
+                "Veteran Lynx S",
+                36,
+                4,
+                Some(20_000),
+                test_voltage_range(109_200, 151_200),
+            ),
+            (
+                42,
+                "NOSFET Apex",
+                36,
+                4,
+                Some(20_000),
+                test_voltage_range(109_200, 151_200),
+            ),
+            (
+                43,
+                "NOSFET Aero",
+                30,
+                2,
+                Some(10_000),
+                test_voltage_range(91_000, 126_000),
+            ),
+            (
+                44,
+                "NOSFET Aeon",
+                36,
+                2,
+                Some(10_000),
+                test_voltage_range(109_200, 151_200),
+            ),
         ];
 
-        for (model_id, name, cell_count, parallel_cells, nominal_capacity_mah, voltage_range_mv) in
+        for (model_id, name, series_cells, parallel_packs, nominal_capacity, voltage_range) in
             models
         {
             let profile =
                 VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
 
             assert_eq!(profile.name, name);
-            assert_eq!(profile.cell_count, cell_count);
-            assert_eq!(profile.parallel_cells, parallel_cells);
-            assert_eq!(profile.nominal_capacity_mah, nominal_capacity_mah);
+            assert_eq!(profile.series_cells, SeriesCount::new(series_cells));
+            assert_eq!(profile.parallel_packs, ParallelCount::new(parallel_packs));
+            assert_eq!(
+                profile.nominal_capacity,
+                nominal_capacity.map(Capacity::from_milliamp_hours)
+            );
             assert_eq!(profile.battery_profile, Some(&SAMSUNG_50S_PROFILE));
-            assert_eq!(profile.voltage_range_mv, voltage_range_mv);
+            assert_eq!(profile.voltage_range, voltage_range);
         }
     }
 
@@ -923,8 +1085,8 @@ mod tests {
             let layout = profile.bms_layout.expect("smart-BMS layout is known");
 
             assert_eq!(profile.name, name);
-            assert_eq!(layout.series_cells, PackSeriesCells::new(series_cells));
-            assert_eq!(layout.parallel_packs, BmsParallelPacks::new(parallel_packs));
+            assert_eq!(layout.series_cells, SeriesCount::new(series_cells));
+            assert_eq!(layout.parallel_packs, ParallelCount::new(parallel_packs));
             assert_eq!(layout.cell_values_per_page, BmsCellValuesPerPage::new(15));
             assert_eq!(
                 layout.temperature_values_per_page,
@@ -965,9 +1127,18 @@ mod tests {
         let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
         let oryx = VeteranModelProfile::from_model_id(8).expect("Oryx profile is known");
 
-        assert_eq!(aero.estimate_battery_percent(107_950), 44);
-        assert_eq!(lynx.estimate_battery_percent(129_540), 44);
-        assert_eq!(oryx.estimate_battery_percent(151_130), 44);
+        assert_eq!(
+            aero.estimate_battery_level(Voltage::from_millivolts(107_950)),
+            pct(44)
+        );
+        assert_eq!(
+            lynx.estimate_battery_level(Voltage::from_millivolts(129_540)),
+            pct(44)
+        );
+        assert_eq!(
+            oryx.estimate_battery_level(Voltage::from_millivolts(151_130)),
+            pct(44)
+        );
     }
 
     #[test]
@@ -977,8 +1148,8 @@ mod tests {
                 VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
 
             assert_eq!(profile.battery_profile, None);
-            assert_eq!(profile.parallel_cells, 1);
-            assert_eq!(profile.nominal_capacity_mah, None);
+            assert_eq!(profile.parallel_packs, ParallelCount::new(1));
+            assert_eq!(profile.nominal_capacity, None);
         }
     }
 
@@ -988,59 +1159,103 @@ mod tests {
     }
 
     #[test]
-    fn veteran_model_profile_estimates_battery_percent_from_profile_range() {
+    fn veteran_model_profile_estimates_battery_level_from_profile_range() {
         let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
 
-        assert_eq!(lynx.estimate_battery_percent(109_200), 0);
-        assert_eq!(lynx.estimate_battery_percent(151_200), 100);
-        assert_eq!(lynx.estimate_battery_percent(129_540), 44);
+        assert_eq!(
+            lynx.estimate_battery_level(Voltage::from_millivolts(109_200)),
+            pct(0)
+        );
+        assert_eq!(
+            lynx.estimate_battery_level(Voltage::from_millivolts(151_200)),
+            pct(100)
+        );
+        assert_eq!(
+            lynx.estimate_battery_level(Voltage::from_millivolts(129_540)),
+            pct(44)
+        );
     }
 
     #[test]
     fn veteran_battery_estimation_uses_model_specific_strategy() {
-        assert_eq!(estimate_veteran_battery_percent(43, 107_950), 44);
-        assert_eq!(estimate_veteran_battery_percent(5, 129_540), 44);
-        assert_eq!(estimate_veteran_battery_percent(99, 133_535), 0);
+        assert_eq!(
+            estimate_veteran_battery_level(43, Voltage::from_millivolts(107_950)),
+            pct(44)
+        );
+        assert_eq!(
+            estimate_veteran_battery_level(5, Voltage::from_millivolts(129_540)),
+            pct(44)
+        );
+        assert_eq!(
+            estimate_veteran_battery_level(99, Voltage::from_millivolts(133_535)),
+            pct(0)
+        );
     }
 
     #[test]
     fn aero_battery_estimation_delegates_to_model_profile() {
         assert_eq!(
-            estimate_nosfet_aero_battery_percent(107_950),
-            estimate_veteran_battery_percent(43, 107_950)
+            estimate_nosfet_aero_battery_level(Voltage::from_millivolts(107_950)),
+            estimate_veteran_battery_level(43, Voltage::from_millivolts(107_950))
         );
     }
 
     #[test]
-    fn veteran_telemetry_uses_model_profile_for_battery_percent() {
+    fn veteran_telemetry_uses_model_profile_for_battery_level() {
         let telemetry = VeteranTelemetry::decode(&synthetic_short_frame(5, 129_540))
             .expect("synthetic Lynx frame decodes");
 
         assert_eq!(telemetry.firmware.model_id, 5);
-        assert_eq!(telemetry.battery_percent_estimated, 44);
+        assert_eq!(
+            telemetry.battery_level_estimated,
+            BatteryLevel::from_percent(44)
+        );
     }
 
     #[test]
-    fn veteran_telemetry_maps_voltage_and_estimated_percent_to_delta() {
+    fn veteran_telemetry_maps_voltage_and_estimated_level_to_delta() {
         let delta = VeteranTelemetry::decode(&live_aero_frame())
             .expect("telemetry decodes")
-            .to_delta(42);
+            .to_delta(ms(42));
 
-        assert_eq!(delta.at_ms, 42);
-        assert_eq!(delta.speed_mm_s, Some(Measured::reported(0)));
-        assert_eq!(delta.voltage_mv, Some(Measured::reported(108_760)));
-        assert_eq!(delta.motor_current_ma, Some(Measured::reported(0)));
+        assert_eq!(delta.at_ms, ms(42));
         assert_eq!(
-            delta.controller_temperature_mc,
-            Some(Measured::reported(33_270))
+            delta.speed,
+            Some(Measured::reported(Speed::from_millimetres_per_second(0)))
         );
-        assert_eq!(delta.power_mw, Some(Measured::calculated(0)));
-        assert_eq!(delta.pwm_permille, Some(Measured::reported(-1_000)));
-        assert_eq!(delta.distance_mm, Some(Measured::reported(1_551_169_000)));
-        assert_eq!(delta.pitch_mdeg, Some(Measured::reported(69_060)));
         assert_eq!(
-            delta.battery_percent_estimated,
-            Some(Measured::estimated(47))
+            delta.voltage,
+            Some(Measured::reported(Voltage::from_millivolts(108_760)))
+        );
+        assert_eq!(
+            delta.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+        );
+        assert_eq!(
+            delta.controller_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(33_270)))
+        );
+        assert_eq!(
+            delta.power,
+            Some(Measured::calculated(Power::from_milliwatts(0)))
+        );
+        assert_eq!(
+            delta.pwm,
+            Some(Measured::reported(DutyCycle::from_permille(-1_000)))
+        );
+        assert_eq!(
+            delta.distance,
+            Some(Measured::reported(Distance::from_millimetres(
+                1_551_169_000
+            )))
+        );
+        assert_eq!(
+            delta.pitch,
+            Some(Measured::reported(Angle::from_millidegrees(69_060)))
+        );
+        assert_eq!(
+            delta.battery_level_estimated,
+            Some(Measured::estimated(BatteryLevel::from_percent(47)))
         );
     }
 
@@ -1064,9 +1279,8 @@ mod tests {
 
     #[test]
     fn veteran_telemetry_maps_fixed_header_settings_to_read_only_response() {
-        let responses = VeteranTelemetry::decode(&live_aero_frame())
-            .expect("telemetry decodes")
-            .to_settings_responses();
+        let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
+        let responses = telemetry.to_settings_responses();
 
         let present: Vec<_> = responses
             .into_iter()
@@ -1088,46 +1302,81 @@ mod tests {
                 RawFieldValue::new(VETERAN_FIELD_PEDALS_MODE, 1_920),
             ]
         );
+
+        assert_eq!(telemetry.speed_alert.as_millimetres_per_second(), 15_277);
+        assert_eq!(telemetry.speed_tiltback.as_millimetres_per_second(), 15_000);
     }
 
     #[test]
     fn veteran_telemetry_delta_scales_nonzero_speed_and_current() {
         let mut telemetry =
             VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
-        telemetry.speed_deci_kmh = 36;
-        telemetry.phase_current_deci_a = -17;
+        telemetry.speed = Speed::from_deci_kmh(36);
+        telemetry.battery_current = BatteryCurrent::from_milliamps(-1_700);
 
-        let delta = telemetry.to_delta(42);
+        let delta = telemetry.to_delta(ms(42));
 
-        assert_eq!(delta.speed_mm_s, Some(Measured::reported(1_000)));
-        assert_eq!(delta.motor_current_ma, Some(Measured::reported(-1_700)));
-        assert_eq!(delta.power_mw, Some(Measured::calculated(-184_892)));
+        assert_eq!(
+            delta.speed,
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_000
+            )))
+        );
+        assert_eq!(
+            delta.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_700)))
+        );
+        assert_eq!(
+            delta.power,
+            Some(Measured::calculated(Power::from_milliwatts(-184_892)))
+        );
     }
 
     #[test]
     fn veteran_swapped_u32_uses_veteran_byte_order_for_all_bytes() {
-        let cursor = ByteCursor::new(&[0x12, 0x34, 0x56, 0x78]);
+        let cursor = ParserCursor::new(&[0x12, 0x34, 0x56, 0x78]);
 
         assert_eq!(
-            cursor.veteran_swapped_u32(ByteOffset::new(0)),
+            cursor.veteran_swapped_u32(ParserOffset::from_bytes(0)),
             Some(0x5678_1234)
         );
     }
 
     #[test]
     fn veteran_speed_conversion_scales_nonzero_deci_kmh() {
-        assert_eq!(deci_kmh_to_mm_s(36), 1_000);
+        assert_eq!(
+            Speed::from_deci_kmh(36),
+            Speed::from_millimetres_per_second(1_000)
+        );
     }
 
     #[test]
-    fn veteran_power_conversion_uses_millivolts_and_milliamps() {
-        assert_eq!(veteran_power_mw(108_760, -1_700), -184_892);
+    fn veteran_speed_conversion_round_trips_deci_kmh_thresholds() {
+        assert_eq!(
+            Speed::from_millimetres_per_second(15_277).as_deci_kmh_rounded(),
+            550
+        );
+        assert_eq!(
+            Speed::from_millimetres_per_second(15_000).as_deci_kmh_rounded(),
+            540
+        );
+    }
+
+    #[test]
+    fn veteran_power_conversion_uses_typed_battery_current() {
+        let current = BatteryCurrent::from_milliamps(-1_700);
+
+        assert_eq!(current.as_milliamps(), -1_700);
+        assert_eq!(
+            Power::from_voltage_current(Voltage::from_millivolts(108_760), current).as_milliwatts(),
+            -184_892
+        );
     }
 
     #[test]
     fn veteran_pwm_conversion_maps_raw_bounds_and_midpoint() {
-        assert_eq!(veteran_pwm_permille(0), -1_000);
-        assert_eq!(veteran_pwm_permille(0x8000), 0);
-        assert_eq!(veteran_pwm_permille(u16::MAX), 999);
+        assert_eq!(DutyCycle::from_centered_pwm(0).as_permille(), -1_000);
+        assert_eq!(DutyCycle::from_centered_pwm(0x8000).as_permille(), 0);
+        assert_eq!(DutyCycle::from_centered_pwm(u16::MAX).as_permille(), 999);
     }
 }

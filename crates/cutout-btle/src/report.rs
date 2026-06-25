@@ -5,7 +5,7 @@ use cutout_core::{
 
 use crate::{
     BridgeIdentityResolution, DiagnosticEventCount, DisconnectCount, MonotonicMs,
-    NotificationByteTotal, NotificationCount, ProtocolWriteCount, ReadOnlyResponseCount,
+    NotificationCount, NotificationPayloadTotal, ProtocolWriteCount, ReadOnlyResponseCount,
     SubscribeCount, TelemetryEventCount, TransportWriteCount,
 };
 
@@ -25,7 +25,7 @@ pub struct SessionBridgeReport {
     pub notifications: NotificationCount,
 
     /// Total notification payload bytes relayed into the session.
-    pub notification_bytes: NotificationByteTotal,
+    pub notification_bytes: NotificationPayloadTotal,
 
     /// Length of the latest notification payload, if any were observed.
     pub latest_notification_len: Option<NotificationByteLen>,

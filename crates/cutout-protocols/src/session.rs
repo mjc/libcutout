@@ -1,14 +1,15 @@
 use core::marker::PhantomData;
 use cutout_core::{
-    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BatterySpec, Capabilities, CommandKind, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
-    GattFingerprint, GattRoles, Measured, ModelRegistryEntry, MonotonicMillis, NotificationByteLen,
-    NotificationIngestOutcome, PackSeriesCells, ParserDiagnostics, ParserError, ParserGapEvidence,
-    PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector, ProtocolSession,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, TransportAction, ValueQuality,
-    VerificationStatus, VerifiedValue, WritePayload,
+    BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
+    BatteryPageMetadata, BatteryPagePayload, BatterySpec, Capabilities, CommandKind, Count,
+    DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity,
+    FirmwareInfo, GattChannel, GattFingerprint, GattRoles, Measured, ModelRegistryEntry,
+    MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
+    ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
+    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SeriesCount,
+    SessionInput, SessionOutput, Temperature, TransportAction, Unit, ValueQuality,
+    VerificationStatus, VerifiedValue, Voltage, WritePayload,
 };
 
 use crate::{
@@ -158,7 +159,7 @@ pub trait ReadOnlyNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     );
 }
@@ -174,13 +175,13 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         output.push(SessionOutput::NotificationIngest(
             NotificationIngestOutcome::ignored_wrong_channel(
                 channel,
-                NotificationByteLen::new(bytes.len()),
+                NotificationByteLen::from_bytes(bytes.len()),
                 monotonic_ms,
             ),
         ));
@@ -193,18 +194,14 @@ pub struct VeteranNotificationDecoder {
     reassembler: VeteranFrameReassembler,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-struct CompletedFrameCount(usize);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompletedFrame;
 
-impl CompletedFrameCount {
-    const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
-    }
-
-    const fn is_zero(self) -> bool {
-        self.0 == 0
-    }
+impl Unit for CompletedFrame {
+    type Dimension = Count;
 }
+
+type CompletedFrames = Quantity<Count, CompletedFrame, usize>;
 
 impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     fn reset(&mut self) {
@@ -215,10 +212,10 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
-        let mut completed_frames = CompletedFrameCount::default();
+        let mut completed_frames = CompletedFrames::default();
         let mut buffered = false;
         for byte in bytes {
             match self.reassembler.feed_byte_result(*byte) {
@@ -246,7 +243,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             ParserError::BadChecksum,
                         ),
@@ -260,7 +257,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             error,
                         ),
@@ -273,7 +270,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             ParserError::MalformedFrame,
                         ),
@@ -283,18 +280,18 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
             }
         }
 
-        if completed_frames.is_zero() {
+        if completed_frames.has_no_events() {
             output.push(SessionOutput::NotificationIngest(if buffered {
                 NotificationIngestOutcome::buffered_fragment(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
             } else {
                 NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
             }));
@@ -305,11 +302,11 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
 fn push_veteran_ingest_outcome_for_frame(
     frame: &VeteranFrame,
     channel: GattChannel,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     event_count: SemanticEventCount,
     output: &mut Vec<SessionOutput>,
 ) {
-    let frame_len = NotificationByteLen::new(frame.as_slice().len());
+    let frame_len = NotificationByteLen::from_bytes(frame.as_slice().len());
     if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
         && evidence.kind == BatteryPageKind::Raw
     {
@@ -322,7 +319,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     monotonic_ms,
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
-                        body_len: PayloadBodyLen::new(evidence.body.len()),
+                        body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
                         verification: VerificationStatus::HardwareVerified,
                     },
                 ),
@@ -336,7 +333,7 @@ fn push_veteran_ingest_outcome_for_frame(
                     monotonic_ms,
                     ParserGapEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
-                        body_len: PayloadBodyLen::new(evidence.body.len()),
+                        body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
                     },
                 ),
             ));
@@ -397,7 +394,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         let mut event_count = SemanticEventCount::default();
@@ -419,7 +416,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::BegodeGotway,
                             channel,
-                            NotificationByteLen::new(bytes.len()),
+                            NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                             ParserError::MalformedFrame,
                         ),
@@ -430,11 +427,11 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         }
 
         output.push(SessionOutput::NotificationIngest(
-            if event_count.get() > 0 {
+            if event_count.as_events() > 0 {
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::BegodeGotway,
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                     event_count,
                 )
@@ -442,7 +439,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 NotificationIngestOutcome::buffered_fragment(
                     ProtocolFamily::BegodeGotway,
                     channel,
-                    NotificationByteLen::new(bytes.len()),
+                    NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
             },
@@ -477,7 +474,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         match self.stream.feed_result(bytes) {
@@ -494,7 +491,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::semantic_events(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                         event_count,
                     ),
@@ -506,7 +503,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                         ParserError::UnmatchedReply,
                     ),
@@ -522,7 +519,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                         ParserError::MalformedFrame,
                     ),
@@ -533,7 +530,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                     NotificationIngestOutcome::buffered_fragment(
                         ProtocolFamily::Vesc,
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                     ),
                 ));
@@ -545,15 +542,15 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
 const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount {
     match reply {
         VescReadOnlyReply::FirmwareInfo { .. } | VescReadOnlyReply::Stats(_) => {
-            SemanticEventCount::new(1)
+            SemanticEventCount::from_events(1)
         }
-        VescReadOnlyReply::Values(_) => SemanticEventCount::new(2),
+        VescReadOnlyReply::Values(_) => SemanticEventCount::from_events(2),
     }
 }
 
 fn push_vesc_reply(
     reply: &VescReadOnlyReply,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     board_profile: Option<VescBoardProfile>,
     output: &mut Vec<SessionOutput>,
 ) {
@@ -589,16 +586,16 @@ fn push_vesc_reply(
 
 fn vesc_values_to_delta(
     values: VescValuesTelemetry,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     board_profile: Option<VescBoardProfile>,
 ) -> cutout_core::TelemetryDelta {
     cutout_core::TelemetryDelta {
         at_ms: monotonic_ms,
-        speed_mm_s: board_profile
-            .and_then(|profile| profile.speed_mm_s_from_erpm(values.rpm_erpm))
+        speed: board_profile
+            .and_then(|profile| profile.speed_from_erpm(values.rpm))
             .map(Measured::calculated),
-        voltage_mv: Some(Measured::reported(values.voltage_mv)),
-        battery_current_ma: Some(Measured::reported(values.input_current_ma)),
+        voltage: Some(Measured::reported(values.voltage)),
+        battery_current: Some(Measured::reported(values.input_current)),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -608,15 +605,15 @@ fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryRead
         fields: [
             Some(RawFieldValue::new(
                 VESC_RAW_ERPM_FIELD_ID,
-                i64::from(values.rpm_erpm),
+                i64::from(values.rpm.as_erpm()),
             )),
             Some(RawFieldValue::new(
                 VESC_RAW_TACHOMETER_FIELD_ID,
-                i64::from(values.tachometer),
+                i64::from(values.tachometer.as_counts()),
             )),
             Some(RawFieldValue::new(
                 VESC_RAW_CONTROLLER_ID_FIELD_ID,
-                i64::from(values.controller_id),
+                i64::from(values.controller_id.get()),
             )),
             Some(RawFieldValue::new(
                 VESC_RAW_FAULT_CODE_FIELD_ID,
@@ -639,19 +636,19 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
         details: [
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
-                i64::from(stats.speed_avg_milli),
+                i64::from(stats.speed_avg.as_millimetres_per_second()),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-                i64::from(stats.power_avg_mw),
+                stats.power_avg.as_milliwatts(),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-                i64::from(stats.current_avg_ma),
+                i64::from(stats.current_avg.as_milliamps()),
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-                i64::from(stats.count_time_ms),
+                i64::try_from(stats.count_time.as_milliseconds()).unwrap_or(i64::MAX),
             )),
         ],
     }
@@ -670,7 +667,7 @@ fn push_begode_frame(
     context: &mut BegodeTelemetryContext,
     pack_voltage_profile: BegodePackVoltageProfile,
     frame: &BegodeFrame,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     output: &mut Vec<SessionOutput>,
 ) -> SemanticEventCount {
     match frame.tag().get() {
@@ -679,7 +676,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
                 )));
-                SemanticEventCount::new(1)
+                SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
@@ -691,7 +688,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     summary.to_battery_response(),
                 )));
-                SemanticEventCount::new(2)
+                SemanticEventCount::from_events(2)
             }
             Err(error) => push_begode_bms_error(error, output),
         },
@@ -700,7 +697,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     page.to_battery_response(),
                 )));
-                SemanticEventCount::new(1)
+                SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_bms_error(error, output),
         },
@@ -716,7 +713,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     telemetry.to_diagnostics_response(),
                 )));
-                SemanticEventCount::new(3)
+                SemanticEventCount::from_events(3)
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
@@ -725,13 +722,13 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     telemetry.to_delta(monotonic_ms),
                 )));
-                SemanticEventCount::new(1)
+                SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
         _ => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
@@ -743,7 +740,7 @@ fn push_begode_telemetry_error(
     match error {
         BegodeTelemetryError::UnexpectedFrameTag { .. } => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
@@ -755,20 +752,20 @@ fn push_begode_bms_error(
     match error {
         BegodeBmsPageError::UnexpectedFrameTag { .. } => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
 
 fn push_veteran_frame(
     frame: &VeteranFrame,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     output: &mut Vec<SessionOutput>,
 ) -> SemanticEventCount {
     match VeteranTelemetry::decode(frame) {
         Ok(telemetry) => {
             let settings_responses = telemetry.to_settings_responses();
-            let settings_count = SemanticEventCount::new(settings_responses.len());
+            let settings_count = SemanticEventCount::from_events(settings_responses.len());
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 telemetry.to_delta(monotonic_ms),
             )));
@@ -787,14 +784,14 @@ fn push_veteran_frame(
                     output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                         ReadOnlyResponse::Battery(payload),
                     )));
-                    return SemanticEventCount::new(3).saturating_add(settings_count);
+                    return SemanticEventCount::from_events(3).saturating_add(settings_count);
                 }
             }
-            SemanticEventCount::new(2).saturating_add(settings_count)
+            SemanticEventCount::from_events(2).saturating_add(settings_count)
         }
         Err(VeteranTelemetryError::FrameTooShort) => {
             push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::new(2)
+            SemanticEventCount::from_events(2)
         }
     }
 }
@@ -813,7 +810,7 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
 
     let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
         .map_or(0, |page| {
-            u8::try_from(page.cell_mv.len()).unwrap_or_default()
+            u8::try_from(page.cell_voltage.len()).unwrap_or_default()
         });
     decode_veteran_bms_page(
         evidence.selector,
@@ -825,12 +822,17 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
 }
 
 fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPagePayload {
+    let first_temperature = page
+        .temperatures
+        .first()
+        .copied()
+        .unwrap_or(Temperature::from_millicelsius(0));
     let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
-    for (slot, temperature_mc) in temperatures.iter_mut().zip(page.temperatures_mc) {
-        *slot = Some(Measured::reported(temperature_mc));
+    for (slot, temperature) in temperatures.iter_mut().zip(page.temperatures) {
+        *slot = Some(Measured::reported(temperature));
     }
     let battery = BatteryInfo {
-        temperature_mc: temperatures[0],
+        temperature: Some(Measured::reported(first_temperature)),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::temperature_values(
@@ -842,7 +844,9 @@ fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPa
 
 fn veteran_bms_metadata_payload(page: VeteranBmsMetadataPage) -> BatteryPagePayload {
     let battery = BatteryInfo {
-        current_ma: Some(Measured::reported(page.currents.current_0_ma().get())),
+        current: Some(Measured::reported(BatteryCurrent::from_milliamps(
+            page.currents.current_0().as_milliamps(),
+        ))),
         ..BatteryInfo::default()
     };
     BatteryPagePayload::raw(
@@ -942,9 +946,9 @@ impl RegisteredModelSpec for NosfetAeroModel {
             verification: VerificationStatus::HardwareVerified,
         }),
         battery: Some(BatterySpec {
-            series_cells: PackSeriesCells::new(30),
-            nominal_capacity_mah: None,
-            voltage_range_mv: 91_000..=126_000,
+            series_cells: SeriesCount::new(30),
+            nominal_capacity: None,
+            voltage_range: Voltage::from_millivolts(91_000)..=Voltage::from_millivolts(126_000),
             verification: VerificationStatus::HardwareVerified,
         }),
         bms: None,
@@ -1181,7 +1185,7 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
 pub struct DangerousControlSession<M: SupportsDangerousActuation> {
     policy: cutout_core::DangerousActuationPolicy,
     arm: Option<cutout_core::DangerousActuationArm>,
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     model: PhantomData<fn() -> M>,
 }
 
@@ -1193,7 +1197,7 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
         Self {
             policy,
             arm: None,
-            monotonic_ms: 0,
+            monotonic_ms: MonotonicTimestamp::new(0),
             model: PhantomData,
         }
     }
@@ -1263,7 +1267,16 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
+    }
+
+    const fn write_len(value: u16) -> cutout_core::TransportWriteLimit {
+        cutout_core::TransportWriteLimit::from_bytes(value)
+    }
+
     use super::*;
+    use crate::{GearRatioDenominator, MotorPolePairs};
     use core::mem::size_of;
     use cutout_core::{
         BatteryPageKind, LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
@@ -1431,8 +1444,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1442,7 +1455,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1456,8 +1469,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1468,7 +1481,7 @@ mod tests {
                 SessionInput::Notification {
                     channel: VETERAN_DATA_CHANNEL,
                     bytes,
-                    monotonic_ms: 42 + u64::try_from(index).expect("chunk index fits"),
+                    monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
                 },
                 &mut output,
             );
@@ -1483,8 +1496,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1493,7 +1506,7 @@ mod tests {
                 SessionInput::Notification {
                     channel: BEGODE_DATA_CHANNEL,
                     bytes,
-                    monotonic_ms: 42 + u64::try_from(index).expect("fixture index fits"),
+                    monotonic_ms: ms(42 + u64::try_from(index).expect("fixture index fits")),
                 },
                 &mut output,
             );
@@ -1508,8 +1521,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1517,7 +1530,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1531,8 +1544,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1540,7 +1553,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &live_aero_frame(),
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1561,8 +1574,8 @@ mod tests {
             &mut connected,
             &mut decoder,
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 7,
-                max_write_len: Some(185),
+                monotonic_ms: ms(7),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1580,8 +1593,8 @@ mod tests {
         let mut output = Vec::new();
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1592,7 +1605,7 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &malformed,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1607,7 +1620,7 @@ mod tests {
             diagnostic_counter_events(&output)
                 .last()
                 .map(|diagnostics| diagnostics.malformed_frames),
-            Some(1)
+            Some(cutout_core::ParserDiagnosticCount::from_events(1))
         );
     }
 
@@ -1623,7 +1636,7 @@ mod tests {
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
-                monotonic_ms: 11,
+                monotonic_ms: ms(11),
             },
             &mut output,
         );
@@ -1632,8 +1645,8 @@ mod tests {
             item,
             SessionOutput::NotificationIngest(NotificationIngestOutcome::Ignored(evidence))
                 if evidence.channel == TEST_CHANNEL
-                    && evidence.monotonic_ms == 11
-                    && evidence.len == NotificationByteLen::new(3)
+                    && evidence.monotonic_ms == ms(11)
+                    && evidence.len == NotificationByteLen::from_bytes(3)
         )));
     }
 
@@ -1649,7 +1662,7 @@ mod tests {
             SessionInput::Notification {
                 channel: TEST_CHANNEL,
                 bytes: &[0x01, 0x02, 0x03],
-                monotonic_ms: 11,
+                monotonic_ms: ms(11),
             },
             &mut output,
         );
@@ -1670,15 +1683,15 @@ mod tests {
 
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].voltage_mv.map(|value| value.value),
+            telemetry[0].voltage.map(|value| value.value.get()),
             Some(75_063)
         );
         assert_eq!(
-            telemetry[0].speed_mm_s.map(|value| value.value),
+            telemetry[0].speed.map(|value| value.value.get()),
             Some(13_360)
         );
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value),
+            telemetry[0].distance.map(|value| value.value.get()),
             Some(750_000)
         );
     }
@@ -1695,8 +1708,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1704,7 +1717,7 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_a,
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -1712,7 +1725,7 @@ mod tests {
         let telemetry = telemetry_events(&output);
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].voltage_mv.map(|value| value.value),
+            telemetry[0].voltage.map(|value| value.value.get()),
             Some(90_075)
         );
     }
@@ -1734,8 +1747,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1744,8 +1757,8 @@ mod tests {
             output,
             vec![
                 SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-                    monotonic_ms: 1,
-                    max_write_len: Some(185),
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
                 })),
                 SessionOutput::Transport(TransportAction::Subscribe {
                     channel: VESC_NOTIFY_CHANNEL,
@@ -1802,7 +1815,9 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1),
+            }),
             &mut output,
         );
 
@@ -1816,8 +1831,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1826,7 +1841,7 @@ mod tests {
                 SessionInput::Notification {
                     channel: VESC_NOTIFY_CHANNEL,
                     bytes: chunk,
-                    monotonic_ms: 42,
+                    monotonic_ms: ms(42),
                 },
                 &mut output,
             );
@@ -1834,10 +1849,16 @@ mod tests {
 
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
-        assert_eq!(delta.at_ms, 42);
-        assert_eq!(delta.voltage_mv, Some(Measured::reported(37_500)));
-        assert_eq!(delta.battery_current_ma, Some(Measured::reported(40)));
-        assert_eq!(delta.speed_mm_s, None);
+        assert_eq!(delta.at_ms, ms(42));
+        assert_eq!(
+            delta.voltage,
+            Some(Measured::reported(Voltage::from_millivolts(37_500),))
+        );
+        assert_eq!(
+            delta.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(40)))
+        );
+        assert_eq!(delta.speed, None);
 
         let responses = read_only_response_events(&output);
         let ReadOnlyResponse::RawTelemetry(raw) =
@@ -1865,14 +1886,18 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_emits_calculated_speed_when_board_profile_is_explicit() {
-        let decoder = VescNotificationDecoder::with_board_profile(VescBoardProfile::new(1, 1, 60));
+        let decoder = VescNotificationDecoder::with_board_profile(VescBoardProfile::new(
+            MotorPolePairs::new(1),
+            GearRatioDenominator::new(1),
+            cutout_core::Distance::from_millimetres(60),
+        ));
         let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);
         let mut output = Vec::new();
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1880,14 +1905,19 @@ mod tests {
             SessionInput::Notification {
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_selective_values_frame(),
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
 
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
-        assert_eq!(delta.speed_mm_s, Some(Measured::calculated(989)));
+        assert_eq!(
+            delta.speed,
+            Some(Measured::calculated(
+                cutout_core::Speed::from_millimetres_per_second(989)
+            ))
+        );
 
         let responses = read_only_response_events(&output);
         let ReadOnlyResponse::RawTelemetry(raw) =
@@ -1908,8 +1938,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1917,7 +1947,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &vesc_stats_frame(),
-                monotonic_ms: 43,
+                monotonic_ms: ms(43),
             },
             &mut output,
         );
@@ -1953,7 +1983,7 @@ mod tests {
 
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value),
+            telemetry[0].distance.map(|value| value.value.get()),
             Some(50_000)
         );
     }
@@ -1966,15 +1996,15 @@ mod tests {
 
         assert_eq!(telemetry.len(), 2);
         assert_eq!(
-            telemetry[0].distance_mm.map(|value| value.value),
+            telemetry[0].distance.map(|value| value.value.get()),
             Some(80_467)
         );
         assert_eq!(
-            telemetry[1].speed_mm_s.map(|value| value.value),
+            telemetry[1].speed.map(|value| value.value.get()),
             Some(21_500)
         );
         assert_eq!(
-            telemetry[1].distance_mm.map(|value| value.value),
+            telemetry[1].distance.map(|value| value.value.get()),
             Some(1_207_008)
         );
     }
@@ -1988,8 +2018,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -1997,15 +2027,15 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_b,
-                monotonic_ms: 2,
+                monotonic_ms: ms(2),
             },
             &mut output,
         );
         session.handle(SessionInput::LinkDown, &mut output);
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 3,
-                max_write_len: Some(185),
+                monotonic_ms: ms(3),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -2013,7 +2043,7 @@ mod tests {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &live_a,
-                monotonic_ms: 4,
+                monotonic_ms: ms(4),
             },
             &mut output,
         );
@@ -2022,13 +2052,13 @@ mod tests {
         assert_eq!(
             telemetry
                 .last()
-                .and_then(|delta| delta.speed_mm_s.map(|value| value.value)),
+                .and_then(|delta| delta.speed.map(|value| value.value.get())),
             Some(13_360)
         );
         assert_eq!(
             telemetry
                 .last()
-                .and_then(|delta| delta.distance_mm.map(|value| value.value)),
+                .and_then(|delta| delta.distance.map(|value| value.value.get())),
             Some(750_000)
         );
     }
@@ -2036,16 +2066,18 @@ mod tests {
     #[test]
     fn nosfet_aero_session_emits_voltage_from_live_fixture_notification() {
         assert_eq!(
-            live_aero_telemetry().voltage_mv,
-            Some(Measured::reported(108_760))
+            live_aero_telemetry().voltage,
+            Some(Measured::reported(Voltage::from_millivolts(108_760),))
         );
     }
 
     #[test]
-    fn nosfet_aero_session_emits_estimated_battery_percent_from_live_fixture_notification() {
+    fn nosfet_aero_session_emits_estimated_battery_level_from_live_fixture_notification() {
         assert_eq!(
-            live_aero_telemetry().battery_percent_estimated,
-            Some(Measured::estimated(47))
+            live_aero_telemetry().battery_level_estimated,
+            Some(Measured::estimated(
+                cutout_core::BatteryLevel::from_percent(47)
+            ))
         );
     }
 
@@ -2053,19 +2085,43 @@ mod tests {
     fn nosfet_aero_session_emits_fixed_header_telemetry_from_live_fixture_notification() {
         let telemetry = live_aero_telemetry();
 
-        assert_eq!(telemetry.speed_mm_s, Some(Measured::reported(0)));
-        assert_eq!(telemetry.motor_current_ma, Some(Measured::reported(0)));
-        assert_eq!(telemetry.power_mw, Some(Measured::calculated(0)));
         assert_eq!(
-            telemetry.controller_temperature_mc,
-            Some(Measured::reported(33_270))
+            telemetry.speed,
+            Some(Measured::reported(
+                cutout_core::Speed::from_millimetres_per_second(0)
+            ))
         );
-        assert_eq!(telemetry.pwm_permille, Some(Measured::reported(-1_000)));
         assert_eq!(
-            telemetry.distance_mm,
-            Some(Measured::reported(1_551_169_000))
+            telemetry.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
-        assert_eq!(telemetry.pitch_mdeg, Some(Measured::reported(69_060)));
+        assert_eq!(telemetry.motor_current, None);
+        assert_eq!(
+            telemetry.power,
+            Some(Measured::calculated(cutout_core::Power::from_milliwatts(0)))
+        );
+        assert_eq!(
+            telemetry.controller_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(33_270)))
+        );
+        assert_eq!(
+            telemetry.pwm,
+            Some(Measured::reported(cutout_core::DutyCycle::from_permille(
+                -1_000
+            )))
+        );
+        assert_eq!(
+            telemetry.distance,
+            Some(Measured::reported(cutout_core::Distance::from_millimetres(
+                1_551_169_000
+            )))
+        );
+        assert_eq!(
+            telemetry.pitch,
+            Some(Measured::reported(cutout_core::Angle::from_millidegrees(
+                69_060
+            )))
+        );
     }
 
     #[test]
@@ -2075,8 +2131,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -2084,7 +2140,7 @@ mod tests {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &live_aero_frame(),
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             },
             &mut output,
         );
@@ -2127,8 +2183,18 @@ mod tests {
                 if payload.page().selector == ProtocolSelector::new(3)
                     && payload.page().kind == BatteryPageKind::Temperature
                     && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload.battery().temperature_mc.expect("representative temperature").value == 16_730
-                    && payload.temperatures_mc()[5].expect("sixth temperature").value == 17_830
+                    && payload
+                        .battery()
+                        .temperature
+                        .expect("representative temperature")
+                        .value
+                        .get()
+                        == 16_730
+                    && payload
+                        .temperatures()[5]
+                        .expect("sixth temperature")
+                        .value
+                        == 17_830
         )));
     }
 
@@ -2155,8 +2221,14 @@ mod tests {
                 if payload.page().selector == ProtocolSelector::new(0)
                     && payload.page().kind == BatteryPageKind::Metadata
                     && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload.battery().current_ma == Some(Measured::reported(20))
-                    && payload.bms_pack_currents() == Some(cutout_core::BmsPackCurrents::reported(20, 20))
+                    && payload.battery().current == Some(Measured::reported(
+                        BatteryCurrent::from_milliamps(20)
+                    ))
+                    && payload.bms_pack_currents()
+                        == Some(cutout_core::BmsPackCurrents::reported(
+                            BatteryCurrent::from_milliamps(20),
+                            BatteryCurrent::from_milliamps(20)
+                        ))
         )));
     }
 
@@ -2164,15 +2236,24 @@ mod tests {
     fn veteran_bms_metadata_payload_preserves_two_distinct_pack_currents() {
         let payload = veteran_bms_metadata_payload(VeteranBmsMetadataPage {
             selector: ProtocolSelector::new(4),
-            currents: cutout_core::BmsPackCurrents::reported(-1_230, 450),
+            currents: cutout_core::BmsPackCurrents::reported(
+                BatteryCurrent::from_milliamps(-1_230),
+                BatteryCurrent::from_milliamps(450),
+            ),
         });
 
         let battery = payload.battery();
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
-        assert_eq!(battery.current_ma, Some(Measured::reported(-1_230)));
+        assert_eq!(
+            battery.current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_230)))
+        );
         assert_eq!(
             payload.bms_pack_currents(),
-            Some(cutout_core::BmsPackCurrents::reported(-1_230, 450))
+            Some(cutout_core::BmsPackCurrents::reported(
+                BatteryCurrent::from_milliamps(-1_230),
+                BatteryCurrent::from_milliamps(450)
+            ))
         );
     }
 
@@ -2201,8 +2282,8 @@ mod tests {
             vec![NotificationIngestOutcome::buffered_fragment(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(20),
-                42,
+                NotificationByteLen::from_bytes(20),
+                ms(42),
             )]
         );
         assert!(telemetry_events(&output).is_empty());
@@ -2220,9 +2301,9 @@ mod tests {
             vec![NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
-                42,
-                SemanticEventCount::new(5),
+                NotificationByteLen::from_bytes(frame.len()),
+                ms(42),
+                SemanticEventCount::from_events(5),
             )]
         );
         assert!(!telemetry_events(&output).is_empty());
@@ -2240,11 +2321,11 @@ mod tests {
             vec![NotificationIngestOutcome::known_reserved(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
-                42,
+                NotificationByteLen::from_bytes(frame.len()),
+                ms(42),
                 ReservedPayloadEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-                    body_len: PayloadBodyLen::new(24),
+                    body_len: PayloadBodyLen::from_bytes(24),
                     verification: VerificationStatus::HardwareVerified,
                 },
             )]
@@ -2263,11 +2344,11 @@ mod tests {
             vec![NotificationIngestOutcome::parser_gap(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
-                42,
+                NotificationByteLen::from_bytes(frame.len()),
+                ms(42),
                 ParserGapEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
-                    body_len: PayloadBodyLen::new(26),
+                    body_len: PayloadBodyLen::from_bytes(26),
                 },
             )]
         );
@@ -2295,8 +2376,8 @@ mod tests {
             vec![NotificationIngestOutcome::parser_diagnostic(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
-                42,
+                NotificationByteLen::from_bytes(frame.len()),
+                ms(42),
                 ParserError::BadChecksum,
             )]
         );
@@ -2314,19 +2395,19 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], 42, &mut output);
+        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output);
 
         let error = ParserError::OversizedFrame {
-            claimed: crate::MAX_VETERAN_FRAME_LEN + 1,
-            max: crate::MAX_VETERAN_FRAME_LEN,
+            claimed: cutout_core::ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN + 1),
+            max: cutout_core::ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN),
         };
         assert_eq!(
             notification_ingest_outcomes(&output),
             vec![NotificationIngestOutcome::parser_diagnostic(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(1),
-                42,
+                NotificationByteLen::from_bytes(1),
+                ms(42),
                 error,
             )]
         );
@@ -2355,9 +2436,9 @@ mod tests {
             Some(NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::new(frame.len()),
-                42 + u64::try_from(frame.len() - 1).expect("fixture length fits"),
-                SemanticEventCount::new(5),
+                NotificationByteLen::from_bytes(frame.len()),
+                ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1),
+                SemanticEventCount::from_events(5),
             ))
         );
     }
@@ -2386,7 +2467,7 @@ mod tests {
                         payload.classifier,
                         PayloadClassifier::selector(ProtocolSelector::new(8))
                     );
-                    assert_eq!(payload.body_len, PayloadBodyLen::new(26));
+                    assert_eq!(payload.body_len, PayloadBodyLen::from_bytes(26));
                     assert_eq!(payload.verification, VerificationStatus::HardwareVerified);
                 }
                 (0..=7, NotificationIngestOutcome::SemanticEvents { notification, .. }) => {
@@ -2419,18 +2500,18 @@ mod tests {
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::new(semantic_frame.len()),
-                    42,
-                    SemanticEventCount::new(5),
+                    NotificationByteLen::from_bytes(semantic_frame.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(5),
                 ),
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::new(reserved_frame.len()),
-                    42,
+                    NotificationByteLen::from_bytes(reserved_frame.len()),
+                    ms(42),
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-                        body_len: PayloadBodyLen::new(24),
+                        body_len: PayloadBodyLen::from_bytes(24),
                         verification: VerificationStatus::HardwareVerified,
                     },
                 ),
@@ -2468,9 +2549,9 @@ mod tests {
                 Some(NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::new(frame.len()),
-                    42 + u64::try_from(chunks.len() - 1).expect("chunk count fits"),
-                    SemanticEventCount::new(5),
+                    NotificationByteLen::from_bytes(frame.len()),
+                    ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
+                    SemanticEventCount::from_events(5),
                 ))
             );
         }
@@ -2591,7 +2672,7 @@ mod tests {
         );
         assert_eq!(
             gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SetRawMotorCurrent {
-                current_ma: 1
+                current: cutout_core::PhaseCurrent::from_milliamps(1)
             }),
             ReadOnlyCommandGate::Unsupported(CommandKind::SetRawMotorCurrent)
         );
@@ -2673,7 +2754,9 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1),
+            }),
             &mut output,
         );
 
@@ -2690,13 +2773,15 @@ mod tests {
         let mut session =
             DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
                 model: TestModel::MODEL,
-                max_current_ma: 5_000,
-                arm_duration_ms: 1_000,
+                max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
+                arm_duration: cutout_core::Duration::from_milliseconds(1_000),
             });
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+            }),
             &mut output,
         );
 
@@ -2722,21 +2807,23 @@ mod tests {
     fn dangerous_control_session_refuses_expired_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
 
-        session.arm(policy.arm(10));
+        session.arm(policy.arm(ms(10)));
         session.handle(
             SessionInput::Tick {
-                monotonic_ms: 1_011,
+                monotonic_ms: ms(1_011),
             },
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+            }),
             &mut output,
         );
 
@@ -2761,21 +2848,28 @@ mod tests {
     fn dangerous_control_session_refuses_wrong_model_arm_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let wrong_model_policy = cutout_core::DangerousActuationPolicy {
             model: "other model",
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
 
-        session.arm(wrong_model_policy.arm(10));
-        session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
+        session.arm(wrong_model_policy.arm(ms(10)));
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 }),
+            SessionInput::Tick {
+                monotonic_ms: ms(42),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+            }),
             &mut output,
         );
 
@@ -2800,16 +2894,23 @@ mod tests {
     fn dangerous_control_session_refuses_over_current_without_transport() {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
 
-        session.arm(policy.arm(10));
-        session.handle(SessionInput::Tick { monotonic_ms: 42 }, &mut output);
+        session.arm(policy.arm(ms(10)));
         session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: 5_001 }),
+            SessionInput::Tick {
+                monotonic_ms: ms(42),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(5_001),
+            }),
             &mut output,
         );
 

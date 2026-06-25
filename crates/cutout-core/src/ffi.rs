@@ -1,12 +1,15 @@
 use crate::{
-    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrentMa,
-    BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
-    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
-    DiagnosticSeverity, FirmwareInfo, LightState, Measured, NotificationEvidence,
-    NotificationIngestOutcome, ParserDiagnostics, ParserError, ParserGapEvidence, ProtocolFamily,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, TelemetryDelta,
-    TelemetrySnapshot, TransportAction, ValueQuality, ValueSource, VerificationStatus, WriteMode,
+    Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
+    BatteryPagePayload, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
+    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
+    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
+    ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
+    SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
+    Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
+    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only response DTO.
@@ -24,6 +27,132 @@ impl From<ReadOnlyResponse> for ReadOnlyResponseDto {
         Self {
             command_kind: response.command_kind().into(),
             payload: response.into(),
+        }
+    }
+}
+
+/// UniFFI-ready monotonic timestamp in milliseconds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MonotonicMillisDto {
+    /// Milliseconds on the host monotonic clock.
+    pub milliseconds: u64,
+}
+
+impl MonotonicMillisDto {
+    fn from_core(value: MonotonicTimestamp) -> Self {
+        Self {
+            milliseconds: value.get(),
+        }
+    }
+
+    fn into_core(self) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(self.milliseconds)
+    }
+}
+
+/// UniFFI-ready notification payload length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationByteLenDto {
+    /// Length in bytes.
+    pub bytes: usize,
+}
+
+impl NotificationByteLenDto {
+    fn from_core(value: NotificationByteLen) -> Self {
+        Self {
+            bytes: value.as_bytes(),
+        }
+    }
+}
+
+/// UniFFI-ready protocol payload body length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PayloadBodyLenDto {
+    /// Length in bytes.
+    pub bytes: usize,
+}
+
+impl PayloadBodyLenDto {
+    fn from_core(value: PayloadBodyLen) -> Self {
+        Self {
+            bytes: value.as_bytes(),
+        }
+    }
+}
+
+/// UniFFI-ready semantic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SemanticEventCountDto {
+    /// Count of emitted semantic events.
+    pub count: usize,
+}
+
+impl SemanticEventCountDto {
+    fn from_core(value: SemanticEventCount) -> Self {
+        Self {
+            count: value.as_events(),
+        }
+    }
+}
+
+/// UniFFI-ready dropped parser byte count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDroppedBytesDto {
+    /// Count of dropped bytes.
+    pub bytes: u64,
+}
+
+impl ParserDroppedBytesDto {
+    fn from_core(value: ParserDroppedBytes) -> Self {
+        Self {
+            bytes: value.as_bytes(),
+        }
+    }
+}
+
+/// UniFFI-ready parser diagnostic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDiagnosticCountDto {
+    /// Count of parser diagnostic events.
+    pub count: u64,
+}
+
+impl ParserDiagnosticCountDto {
+    fn from_core(value: ParserDiagnosticCount) -> Self {
+        Self {
+            count: value.as_events(),
+        }
+    }
+}
+
+/// UniFFI-ready maximum transport write payload length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransportWriteLimitDto {
+    /// Length in bytes.
+    pub bytes: u16,
+}
+
+impl TransportWriteLimitDto {
+    fn from_core(value: TransportWriteLimit) -> Self {
+        Self { bytes: value.get() }
+    }
+
+    fn into_core(self) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(self.bytes)
+    }
+}
+
+/// UniFFI-ready parser frame length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserFrameLenDto {
+    /// Length in bytes.
+    pub bytes: usize,
+}
+
+impl ParserFrameLenDto {
+    fn from_core(value: ParserFrameLen) -> Self {
+        Self {
+            bytes: value.as_bytes(),
         }
     }
 }
@@ -136,7 +265,7 @@ pub enum DeviceCommandDto {
     /// Set raw motor current.
     SetRawMotorCurrent {
         /// Target motor/phase current in milliamps.
-        current_ma: i32,
+        current: i32,
     },
 }
 
@@ -151,9 +280,9 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
-            DeviceCommand::SetRawMotorCurrent { current_ma } => {
-                Self::SetRawMotorCurrent { current_ma }
-            }
+            DeviceCommand::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
+                current: current.as_milliamps(),
+            },
         }
     }
 }
@@ -169,9 +298,9 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
-            DeviceCommandDto::SetRawMotorCurrent { current_ma } => {
-                Self::SetRawMotorCurrent { current_ma }
-            }
+            DeviceCommandDto::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
+                current: PhaseCurrent::from_milliamps(current),
+            },
         }
     }
 }
@@ -405,9 +534,9 @@ impl From<Measured<i32>> for MeasuredI32Dto {
 }
 
 impl MeasuredI32Dto {
-    fn from_bms_pack_current(current: BmsPackCurrentMa, currents: BmsPackCurrents) -> Self {
+    fn from_bms_pack_current(current: BatteryCurrent, currents: BmsPackCurrents) -> Self {
         Self {
-            value: current.get(),
+            value: current.as_milliamps(),
             source: currents.source.into(),
             quality: currents.quality.into(),
             verification: currents.verification.into(),
@@ -550,6 +679,66 @@ impl From<Measured<u16>> for MeasuredU16Dto {
     }
 }
 
+impl From<Measured<Voltage>> for MeasuredI32Dto {
+    fn from(measured: Measured<Voltage>) -> Self {
+        Self::from(measured.map_value(Voltage::as_millivolts))
+    }
+}
+
+impl From<Measured<BatteryCurrent>> for MeasuredI32Dto {
+    fn from(measured: Measured<BatteryCurrent>) -> Self {
+        Self::from(measured.map_value(BatteryCurrent::as_milliamps))
+    }
+}
+
+impl From<Measured<PhaseCurrent>> for MeasuredI32Dto {
+    fn from(measured: Measured<PhaseCurrent>) -> Self {
+        Self::from(measured.map_value(PhaseCurrent::as_milliamps))
+    }
+}
+
+impl From<Measured<Power>> for MeasuredI64Dto {
+    fn from(measured: Measured<Power>) -> Self {
+        Self::from(measured.map_value(Power::as_milliwatts))
+    }
+}
+
+impl From<Measured<Speed>> for MeasuredI32Dto {
+    fn from(measured: Measured<Speed>) -> Self {
+        Self::from(measured.map_value(Speed::as_millimetres_per_second))
+    }
+}
+
+impl From<Measured<Temperature>> for MeasuredI32Dto {
+    fn from(measured: Measured<Temperature>) -> Self {
+        Self::from(measured.map_value(Temperature::as_millicelsius))
+    }
+}
+
+impl From<Measured<DutyCycle>> for MeasuredI16Dto {
+    fn from(measured: Measured<DutyCycle>) -> Self {
+        Self::from(measured.map_value(DutyCycle::as_permille))
+    }
+}
+
+impl From<Measured<Distance>> for MeasuredU64Dto {
+    fn from(measured: Measured<Distance>) -> Self {
+        Self::from(measured.map_value(Distance::as_millimetres))
+    }
+}
+
+impl From<Measured<Angle>> for MeasuredI32Dto {
+    fn from(measured: Measured<Angle>) -> Self {
+        Self::from(measured.map_value(Angle::as_millidegrees))
+    }
+}
+
+impl From<Measured<BatteryLevel>> for MeasuredU8Dto {
+    fn from(measured: Measured<BatteryLevel>) -> Self {
+        Self::from(measured.map_value(BatteryLevel::as_percent))
+    }
+}
+
 /// UniFFI-ready measured u64 value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MeasuredU64Dto {
@@ -626,28 +815,28 @@ pub struct BatteryInfoDto {
     pub page: BatteryPageMetadataDto,
 
     /// Pack or input voltage in millivolts.
-    pub voltage_mv: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredI32Dto>,
 
     /// Pack or battery current in milliamps.
-    pub current_ma: Option<MeasuredI32Dto>,
+    pub current: Option<MeasuredI32Dto>,
 
     /// First page-specific BMS pack current in milliamps.
-    pub bms_pack_current_0_ma: Option<MeasuredI32Dto>,
+    pub bms_pack_current_0: Option<MeasuredI32Dto>,
 
     /// Second page-specific BMS pack current in milliamps.
-    pub bms_pack_current_1_ma: Option<MeasuredI32Dto>,
+    pub bms_pack_current_1: Option<MeasuredI32Dto>,
 
-    /// Battery percentage reported by the device.
-    pub percent_reported: Option<MeasuredU8Dto>,
+    /// Battery level reported by the device.
+    pub level_reported: Option<MeasuredU8Dto>,
 
-    /// Battery percentage estimated by Cutout.
-    pub percent_estimated: Option<MeasuredU8Dto>,
+    /// Battery level estimated by Cutout.
+    pub level_estimated: Option<MeasuredU8Dto>,
 
     /// Battery or BMS temperature in millicelsius.
-    pub temperature_mc: Option<MeasuredI32Dto>,
+    pub temperature: Option<MeasuredI32Dto>,
 
     /// Page-specific BMS temperature values in millicelsius.
-    pub temperatures_mc: Vec<Option<MeasuredI32Dto>>,
+    pub temperatures: Vec<Option<MeasuredI32Dto>>,
 
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
@@ -656,8 +845,8 @@ pub struct BatteryInfoDto {
 impl From<BatteryPagePayload> for BatteryInfoDto {
     fn from(payload: BatteryPagePayload) -> Self {
         let battery = payload.battery();
-        let temperatures_mc = payload
-            .temperatures_mc()
+        let temperatures = payload
+            .temperatures()
             .into_iter()
             .map(|measured| measured.map(Into::into))
             .collect();
@@ -665,7 +854,7 @@ impl From<BatteryPagePayload> for BatteryInfoDto {
             payload.page(),
             battery,
             payload.bms_pack_currents(),
-            temperatures_mc,
+            temperatures,
         )
     }
 }
@@ -675,22 +864,22 @@ impl BatteryInfoDto {
         page: BatteryPageMetadata,
         battery: BatteryInfo,
         bms_pack_currents: Option<BmsPackCurrents>,
-        temperatures_mc: Vec<Option<MeasuredI32Dto>>,
+        temperatures: Vec<Option<MeasuredI32Dto>>,
     ) -> Self {
         Self {
             page: page.into(),
-            voltage_mv: battery.voltage_mv.map(Into::into),
-            current_ma: battery.current_ma.map(Into::into),
-            bms_pack_current_0_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_0_ma(), currents)
+            voltage: battery.voltage.map(Into::into),
+            current: battery.current.map(Into::into),
+            bms_pack_current_0: bms_pack_currents.map(|currents| {
+                MeasuredI32Dto::from_bms_pack_current(currents.current_0(), currents)
             }),
-            bms_pack_current_1_ma: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_1_ma(), currents)
+            bms_pack_current_1: bms_pack_currents.map(|currents| {
+                MeasuredI32Dto::from_bms_pack_current(currents.current_1(), currents)
             }),
-            percent_reported: battery.percent_reported.map(Into::into),
-            percent_estimated: battery.percent_estimated.map(Into::into),
-            temperature_mc: battery.temperature_mc.map(Into::into),
-            temperatures_mc,
+            level_reported: battery.level_reported.map(Into::into),
+            level_estimated: battery.level_estimated.map(Into::into),
+            temperature: battery.temperature.map(Into::into),
+            temperatures,
             raw_state: battery.raw_state.map(Into::into),
         }
     }
@@ -842,10 +1031,10 @@ pub enum SessionInputDto {
     /// The underlying transport link is available.
     LinkUp {
         /// Host monotonic connection timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
 
         /// Maximum write payload length reported by the host, when known.
-        max_write_len: Option<u16>,
+        max_write_len: Option<TransportWriteLimitDto>,
     },
 
     /// The underlying transport link is no longer available.
@@ -860,13 +1049,13 @@ pub enum SessionInputDto {
         bytes: Vec<u8>,
 
         /// Host monotonic receive timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
     },
 
     /// Timer tick supplied by the host.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
     },
 
     /// Command requested by the host application.
@@ -877,8 +1066,8 @@ impl From<SessionInput<'_>> for SessionInputDto {
     fn from(input: SessionInput<'_>) -> Self {
         match input {
             SessionInput::LinkUp(link) => Self::LinkUp {
-                monotonic_ms: link.monotonic_ms,
-                max_write_len: link.max_write_len,
+                monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
+                max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
             },
             SessionInput::LinkDown => Self::LinkDown,
             SessionInput::Notification {
@@ -888,9 +1077,11 @@ impl From<SessionInput<'_>> for SessionInputDto {
             } => Self::Notification {
                 channel: channel.as_bytes(),
                 bytes: bytes.to_vec(),
-                monotonic_ms,
+                monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
             },
-            SessionInput::Tick { monotonic_ms } => Self::Tick { monotonic_ms },
+            SessionInput::Tick { monotonic_ms } => Self::Tick {
+                monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
+            },
             SessionInput::Command(command) => Self::Command(command.into()),
         }
     }
@@ -905,8 +1096,8 @@ impl SessionInputDto {
                 monotonic_ms,
                 max_write_len,
             } => SessionInput::LinkUp(crate::LinkInfo {
-                monotonic_ms: *monotonic_ms,
-                max_write_len: *max_write_len,
+                monotonic_ms: (*monotonic_ms).into_core(),
+                max_write_len: max_write_len.map(TransportWriteLimitDto::into_core),
             }),
             Self::LinkDown => SessionInput::LinkDown,
             Self::Notification {
@@ -916,10 +1107,10 @@ impl SessionInputDto {
             } => SessionInput::Notification {
                 channel: crate::GattChannel::from_bytes(*channel),
                 bytes: bytes.as_slice(),
-                monotonic_ms: *monotonic_ms,
+                monotonic_ms: (*monotonic_ms).into_core(),
             },
             Self::Tick { monotonic_ms } => SessionInput::Tick {
-                monotonic_ms: *monotonic_ms,
+                monotonic_ms: (*monotonic_ms).into_core(),
             },
             Self::Command(command) => SessionInput::Command((*command).into()),
         }
@@ -958,7 +1149,7 @@ pub enum NotificationIngestOutcomeDto {
         notification: NotificationEvidenceDto,
 
         /// Number of semantic events emitted from this notification.
-        event_count: usize,
+        event_count: SemanticEventCountDto,
     },
 
     /// Notification bytes are a valid partial frame.
@@ -1003,7 +1194,7 @@ impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
                 event_count,
             } => Self::SemanticEvents {
                 notification: notification.into(),
-                event_count: event_count.get(),
+                event_count: SemanticEventCountDto::from_core(event_count),
             },
             NotificationIngestOutcome::BufferedFragment(notification) => {
                 Self::BufferedFragment(notification.into())
@@ -1041,10 +1232,10 @@ pub struct NotificationEvidenceDto {
     pub channel: [u8; 16],
 
     /// Notification payload length.
-    pub len: usize,
+    pub len: NotificationByteLenDto,
 
     /// Host monotonic receive timestamp.
-    pub monotonic_ms: u64,
+    pub monotonic_ms: MonotonicMillisDto,
 }
 
 impl From<NotificationEvidence> for NotificationEvidenceDto {
@@ -1052,8 +1243,8 @@ impl From<NotificationEvidence> for NotificationEvidenceDto {
         Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.as_bytes(),
-            len: evidence.len.get(),
-            monotonic_ms: evidence.monotonic_ms,
+            len: NotificationByteLenDto::from_core(evidence.len),
+            monotonic_ms: MonotonicMillisDto::from_core(evidence.monotonic_ms),
         }
     }
 }
@@ -1087,10 +1278,10 @@ pub enum ParserErrorDto {
     /// A frame claimed or accumulated more bytes than allowed.
     OversizedFrame {
         /// Claimed or observed frame length.
-        claimed: usize,
+        claimed: ParserFrameLenDto,
 
         /// Configured maximum accepted frame length.
-        max: usize,
+        max: ParserFrameLenDto,
     },
 
     /// A frame checksum did not match its payload.
@@ -1102,10 +1293,10 @@ pub enum ParserErrorDto {
     /// A parser deadline elapsed before the expected data arrived.
     Timeout {
         /// Elapsed monotonic milliseconds.
-        elapsed_ms: u64,
+        elapsed_ms: MonotonicMillisDto,
 
         /// Timeout threshold in monotonic milliseconds.
-        timeout_ms: u64,
+        timeout_ms: MonotonicMillisDto,
     },
 
     /// A reply could not be matched to an in-flight request.
@@ -1115,15 +1306,18 @@ pub enum ParserErrorDto {
 impl From<ParserError> for ParserErrorDto {
     fn from(error: ParserError) -> Self {
         match error {
-            ParserError::OversizedFrame { claimed, max } => Self::OversizedFrame { claimed, max },
+            ParserError::OversizedFrame { claimed, max } => Self::OversizedFrame {
+                claimed: ParserFrameLenDto::from_core(claimed),
+                max: ParserFrameLenDto::from_core(max),
+            },
             ParserError::BadChecksum => Self::BadChecksum,
             ParserError::MalformedFrame => Self::MalformedFrame,
             ParserError::Timeout {
                 elapsed_ms,
                 timeout_ms,
             } => Self::Timeout {
-                elapsed_ms,
-                timeout_ms,
+                elapsed_ms: MonotonicMillisDto::from_core(elapsed_ms),
+                timeout_ms: MonotonicMillisDto::from_core(timeout_ms),
             },
             ParserError::UnmatchedReply => Self::UnmatchedReply,
         }
@@ -1140,7 +1334,7 @@ pub struct ReservedPayloadEvidenceDto {
     pub tag: Option<u16>,
 
     /// Reserved payload body length.
-    pub body_len: usize,
+    pub body_len: PayloadBodyLenDto,
 
     /// Evidence verification status.
     pub verification: VerificationStatusDto,
@@ -1154,7 +1348,7 @@ impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
                 .selector_value()
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
-            body_len: evidence.body_len.get(),
+            body_len: PayloadBodyLenDto::from_core(evidence.body_len),
             verification: evidence.verification.into(),
         }
     }
@@ -1170,7 +1364,7 @@ pub struct ParserGapEvidenceDto {
     pub tag: Option<u16>,
 
     /// Unparsed body length.
-    pub body_len: usize,
+    pub body_len: PayloadBodyLenDto,
 }
 
 impl From<ParserGapEvidence> for ParserGapEvidenceDto {
@@ -1181,7 +1375,7 @@ impl From<ParserGapEvidence> for ParserGapEvidenceDto {
                 .selector_value()
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
-            body_len: evidence.body_len.get(),
+            body_len: PayloadBodyLenDto::from_core(evidence.body_len),
         }
     }
 }
@@ -1256,10 +1450,10 @@ pub enum SessionEventDto {
     /// Link-up event accepted by the session.
     LinkUp {
         /// Host monotonic connection timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
 
         /// Maximum write payload length reported by the host, when known.
-        max_write_len: Option<u16>,
+        max_write_len: Option<TransportWriteLimitDto>,
     },
 
     /// Link-down event accepted by the session.
@@ -1268,7 +1462,7 @@ pub enum SessionEventDto {
     /// Tick event accepted by the session.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: u64,
+        monotonic_ms: MonotonicMillisDto,
     },
 
     /// Telemetry update emitted by a protocol session.
@@ -1291,11 +1485,13 @@ impl From<DeviceEvent> for SessionEventDto {
     fn from(event: DeviceEvent) -> Self {
         match event {
             DeviceEvent::LinkUp(link) => Self::LinkUp {
-                monotonic_ms: link.monotonic_ms,
-                max_write_len: link.max_write_len,
+                monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
+                max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
             },
             DeviceEvent::LinkDown => Self::LinkDown,
-            DeviceEvent::Tick { monotonic_ms } => Self::Tick { monotonic_ms },
+            DeviceEvent::Tick { monotonic_ms } => Self::Tick {
+                monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
+            },
             DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
             DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnlyResponse(response.into()),
             DeviceEvent::ControlRefusal(refusal) => Self::ControlRefusal(refusal.into()),
@@ -1309,69 +1505,69 @@ impl From<DeviceEvent> for SessionEventDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetryDeltaDto {
     /// Host monotonic timestamp for this update.
-    pub at_ms: u64,
+    pub at_ms: MonotonicMillisDto,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed_mm_s: Option<MeasuredI32Dto>,
+    pub speed: Option<MeasuredI32Dto>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage_mv: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredI32Dto>,
 
     /// Battery/input current in milliamps.
-    pub battery_current_ma: Option<MeasuredI32Dto>,
+    pub battery_current: Option<MeasuredI32Dto>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current_ma: Option<MeasuredI32Dto>,
+    pub motor_current: Option<MeasuredI32Dto>,
 
     /// Electrical power in milliwatts.
-    pub power_mw: Option<MeasuredI64Dto>,
+    pub power: Option<MeasuredI64Dto>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<MeasuredI32Dto>,
+    pub controller_temperature: Option<MeasuredI32Dto>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<MeasuredI32Dto>,
+    pub motor_temperature: Option<MeasuredI32Dto>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<MeasuredI32Dto>,
+    pub battery_temperature: Option<MeasuredI32Dto>,
 
     /// PWM duty in permille.
-    pub pwm_permille: Option<MeasuredI16Dto>,
+    pub pwm: Option<MeasuredI16Dto>,
 
     /// Total or trip distance in millimeters.
-    pub distance_mm: Option<MeasuredU64Dto>,
+    pub distance: Option<MeasuredU64Dto>,
 
     /// Pitch in millidegrees.
-    pub pitch_mdeg: Option<MeasuredI32Dto>,
+    pub pitch: Option<MeasuredI32Dto>,
 
     /// Roll in millidegrees.
-    pub roll_mdeg: Option<MeasuredI32Dto>,
+    pub roll: Option<MeasuredI32Dto>,
 
-    /// Battery percentage reported by the device.
-    pub battery_percent_reported: Option<MeasuredU8Dto>,
+    /// Battery level reported by the device.
+    pub battery_level_reported: Option<MeasuredU8Dto>,
 
-    /// Battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<MeasuredU8Dto>,
+    /// Battery level estimated by Cutout.
+    pub battery_level_estimated: Option<MeasuredU8Dto>,
 }
 
 impl From<TelemetryDelta> for TelemetryDeltaDto {
     fn from(delta: TelemetryDelta) -> Self {
         Self {
-            at_ms: delta.at_ms,
-            speed_mm_s: delta.speed_mm_s.map(Into::into),
-            voltage_mv: delta.voltage_mv.map(Into::into),
-            battery_current_ma: delta.battery_current_ma.map(Into::into),
-            motor_current_ma: delta.motor_current_ma.map(Into::into),
-            power_mw: delta.power_mw.map(Into::into),
-            controller_temperature_mc: delta.controller_temperature_mc.map(Into::into),
-            motor_temperature_mc: delta.motor_temperature_mc.map(Into::into),
-            battery_temperature_mc: delta.battery_temperature_mc.map(Into::into),
-            pwm_permille: delta.pwm_permille.map(Into::into),
-            distance_mm: delta.distance_mm.map(Into::into),
-            pitch_mdeg: delta.pitch_mdeg.map(Into::into),
-            roll_mdeg: delta.roll_mdeg.map(Into::into),
-            battery_percent_reported: delta.battery_percent_reported.map(Into::into),
-            battery_percent_estimated: delta.battery_percent_estimated.map(Into::into),
+            at_ms: MonotonicMillisDto::from_core(delta.at_ms),
+            speed: delta.speed.map(Into::into),
+            voltage: delta.voltage.map(Into::into),
+            battery_current: delta.battery_current.map(Into::into),
+            motor_current: delta.motor_current.map(Into::into),
+            power: delta.power.map(Into::into),
+            controller_temperature: delta.controller_temperature.map(Into::into),
+            motor_temperature: delta.motor_temperature.map(Into::into),
+            battery_temperature: delta.battery_temperature.map(Into::into),
+            pwm: delta.pwm.map(Into::into),
+            distance: delta.distance.map(Into::into),
+            pitch: delta.pitch.map(Into::into),
+            roll: delta.roll.map(Into::into),
+            battery_level_reported: delta.battery_level_reported.map(Into::into),
+            battery_level_estimated: delta.battery_level_estimated.map(Into::into),
         }
     }
 }
@@ -1380,69 +1576,69 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetrySnapshotDto {
     /// Host monotonic timestamp for the latest update, when known.
-    pub at_ms: Option<u64>,
+    pub at_ms: Option<MonotonicMillisDto>,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed_mm_s: Option<MeasuredI32Dto>,
+    pub speed: Option<MeasuredI32Dto>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage_mv: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredI32Dto>,
 
     /// Battery/input current in milliamps.
-    pub battery_current_ma: Option<MeasuredI32Dto>,
+    pub battery_current: Option<MeasuredI32Dto>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current_ma: Option<MeasuredI32Dto>,
+    pub motor_current: Option<MeasuredI32Dto>,
 
     /// Electrical power in milliwatts.
-    pub power_mw: Option<MeasuredI64Dto>,
+    pub power: Option<MeasuredI64Dto>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<MeasuredI32Dto>,
+    pub controller_temperature: Option<MeasuredI32Dto>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<MeasuredI32Dto>,
+    pub motor_temperature: Option<MeasuredI32Dto>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<MeasuredI32Dto>,
+    pub battery_temperature: Option<MeasuredI32Dto>,
 
     /// PWM duty in permille.
-    pub pwm_permille: Option<MeasuredI16Dto>,
+    pub pwm: Option<MeasuredI16Dto>,
 
     /// Total or trip distance in millimeters.
-    pub distance_mm: Option<MeasuredU64Dto>,
+    pub distance: Option<MeasuredU64Dto>,
 
     /// Pitch in millidegrees.
-    pub pitch_mdeg: Option<MeasuredI32Dto>,
+    pub pitch: Option<MeasuredI32Dto>,
 
     /// Roll in millidegrees.
-    pub roll_mdeg: Option<MeasuredI32Dto>,
+    pub roll: Option<MeasuredI32Dto>,
 
-    /// Battery percentage reported by the device.
-    pub battery_percent_reported: Option<MeasuredU8Dto>,
+    /// Battery level reported by the device.
+    pub battery_level_reported: Option<MeasuredU8Dto>,
 
-    /// Battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<MeasuredU8Dto>,
+    /// Battery level estimated by Cutout.
+    pub battery_level_estimated: Option<MeasuredU8Dto>,
 }
 
 impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshot) -> Self {
         Self {
-            at_ms: snapshot.at_ms,
-            speed_mm_s: snapshot.speed_mm_s.map(Into::into),
-            voltage_mv: snapshot.voltage_mv.map(Into::into),
-            battery_current_ma: snapshot.battery_current_ma.map(Into::into),
-            motor_current_ma: snapshot.motor_current_ma.map(Into::into),
-            power_mw: snapshot.power_mw.map(Into::into),
-            controller_temperature_mc: snapshot.controller_temperature_mc.map(Into::into),
-            motor_temperature_mc: snapshot.motor_temperature_mc.map(Into::into),
-            battery_temperature_mc: snapshot.battery_temperature_mc.map(Into::into),
-            pwm_permille: snapshot.pwm_permille.map(Into::into),
-            distance_mm: snapshot.distance_mm.map(Into::into),
-            pitch_mdeg: snapshot.pitch_mdeg.map(Into::into),
-            roll_mdeg: snapshot.roll_mdeg.map(Into::into),
-            battery_percent_reported: snapshot.battery_percent_reported.map(Into::into),
-            battery_percent_estimated: snapshot.battery_percent_estimated.map(Into::into),
+            at_ms: snapshot.at_ms.map(MonotonicMillisDto::from_core),
+            speed: snapshot.speed.map(Into::into),
+            voltage: snapshot.voltage.map(Into::into),
+            battery_current: snapshot.battery_current.map(Into::into),
+            motor_current: snapshot.motor_current.map(Into::into),
+            power: snapshot.power.map(Into::into),
+            controller_temperature: snapshot.controller_temperature.map(Into::into),
+            motor_temperature: snapshot.motor_temperature.map(Into::into),
+            battery_temperature: snapshot.battery_temperature.map(Into::into),
+            pwm: snapshot.pwm.map(Into::into),
+            distance: snapshot.distance.map(Into::into),
+            pitch: snapshot.pitch.map(Into::into),
+            roll: snapshot.roll.map(Into::into),
+            battery_level_reported: snapshot.battery_level_reported.map(Into::into),
+            battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
         }
     }
 }
@@ -1509,37 +1705,37 @@ impl From<ControlRefusalReason> for ControlRefusalReasonDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParserDiagnosticsDto {
     /// Bytes dropped while recovering from malformed or excessive input.
-    pub dropped_bytes: u64,
+    pub dropped_bytes: ParserDroppedBytesDto,
 
     /// Parser resynchronization attempts.
-    pub resyncs: u64,
+    pub resyncs: ParserDiagnosticCountDto,
 
     /// Frames rejected because their checksum did not match.
-    pub bad_checksums: u64,
+    pub bad_checksums: ParserDiagnosticCountDto,
 
     /// Parser deadlines that elapsed before expected data arrived.
-    pub timeouts: u64,
+    pub timeouts: ParserDiagnosticCountDto,
 
     /// Frames rejected because they exceeded parser limits.
-    pub oversized_frames: u64,
+    pub oversized_frames: ParserDiagnosticCountDto,
 
     /// Frames rejected because their structure was invalid.
-    pub malformed_frames: u64,
+    pub malformed_frames: ParserDiagnosticCountDto,
 
     /// Replies that could not be matched to an in-flight request.
-    pub unmatched_replies: u64,
+    pub unmatched_replies: ParserDiagnosticCountDto,
 }
 
 impl From<ParserDiagnostics> for ParserDiagnosticsDto {
     fn from(diagnostics: ParserDiagnostics) -> Self {
         Self {
-            dropped_bytes: diagnostics.dropped_bytes,
-            resyncs: diagnostics.resyncs,
-            bad_checksums: diagnostics.bad_checksums,
-            timeouts: diagnostics.timeouts,
-            oversized_frames: diagnostics.oversized_frames,
-            malformed_frames: diagnostics.malformed_frames,
-            unmatched_replies: diagnostics.unmatched_replies,
+            dropped_bytes: ParserDroppedBytesDto::from_core(diagnostics.dropped_bytes),
+            resyncs: ParserDiagnosticCountDto::from_core(diagnostics.resyncs),
+            bad_checksums: ParserDiagnosticCountDto::from_core(diagnostics.bad_checksums),
+            timeouts: ParserDiagnosticCountDto::from_core(diagnostics.timeouts),
+            oversized_frames: ParserDiagnosticCountDto::from_core(diagnostics.oversized_frames),
+            malformed_frames: ParserDiagnosticCountDto::from_core(diagnostics.malformed_frames),
+            unmatched_replies: ParserDiagnosticCountDto::from_core(diagnostics.unmatched_replies),
         }
     }
 }
@@ -1582,26 +1778,26 @@ pub struct DiagnosticErrorDto {
     pub kind: DiagnosticErrorKindDto,
 
     /// Claimed or observed frame length for oversized-frame errors.
-    pub claimed_len: Option<u64>,
+    pub claimed_len: Option<ParserFrameLenDto>,
 
     /// Configured maximum frame length for oversized-frame errors.
-    pub max_len: Option<u64>,
+    pub max_len: Option<ParserFrameLenDto>,
 
     /// Elapsed monotonic milliseconds for timeout errors.
-    pub elapsed_ms: Option<u64>,
+    pub elapsed_ms: Option<MonotonicMillisDto>,
 
     /// Timeout threshold in monotonic milliseconds for timeout errors.
-    pub timeout_ms: Option<u64>,
+    pub timeout_ms: Option<MonotonicMillisDto>,
 }
 
 impl From<DiagnosticError> for DiagnosticErrorDto {
     fn from(error: DiagnosticError) -> Self {
         Self {
             kind: error.kind.into(),
-            claimed_len: error.claimed_len.map(|len| len as u64),
-            max_len: error.max_len.map(|len| len as u64),
-            elapsed_ms: error.elapsed_ms,
-            timeout_ms: error.timeout_ms,
+            claimed_len: error.claimed_len.map(ParserFrameLenDto::from_core),
+            max_len: error.max_len.map(ParserFrameLenDto::from_core),
+            elapsed_ms: error.elapsed_ms.map(MonotonicMillisDto::from_core),
+            timeout_ms: error.timeout_ms.map(MonotonicMillisDto::from_core),
         }
     }
 }
@@ -1609,14 +1805,29 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
 #[cfg(test)]
 mod tests {
     use crate::{
-        BatteryInfo, BatteryPageMetadata, BatteryPagePayload, DeviceCommand, DeviceEvent,
-        DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, FirmwareInfo, GattChannel,
-        LinkInfo, Measured, ProtocolSelector, RawFieldValue, ReadOnlyResponse, SessionInput,
-        SessionOutput, SettingsEntry, SettingsReadback, TelemetrySnapshot, TransportAction,
-        ValueQuality, ValueSource, VerificationStatus, WriteMode, WritePayload,
+        BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageMetadata, BatteryPagePayload,
+        DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity,
+        Distance, DutyCycle, FirmwareInfo, GattChannel, LinkInfo, Measured, ProtocolSelector,
+        RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry,
+        SettingsReadback, Speed, TelemetrySnapshot, Temperature, TransportAction, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
 
     use super::*;
+
+    const fn ms(value: u64) -> MonotonicMillisDto {
+        MonotonicMillisDto {
+            milliseconds: value,
+        }
+    }
+
+    const fn write_len(value: u16) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(value)
+    }
+
+    const fn write_len_dto(value: u16) -> TransportWriteLimitDto {
+        TransportWriteLimitDto { bytes: value }
+    }
 
     #[test]
     fn read_only_battery_dto_preserves_page_and_unknown_values() {
@@ -1627,15 +1838,18 @@ mod tests {
                     VerificationStatus::SourceVerified,
                 ),
                 BatteryInfo {
-                    voltage_mv: Some(Measured::reported(80_000)),
-                    current_ma: None,
-                    percent_reported: Some(Measured::reported(72)),
-                    percent_estimated: None,
-                    temperature_mc: Some(Measured::reported(25_000)),
+                    voltage: Some(Measured::reported(Voltage::from_millivolts(80_000))),
+                    current: None,
+                    level_reported: Some(Measured::reported(BatteryLevel::from_percent(72))),
+                    level_estimated: None,
+                    temperature: Some(Measured::reported(Temperature::from_millicelsius(25_000))),
                     raw_state: Some(RawFieldValue::new(0x0008, 0x55aa)),
                 },
             )
-            .with_bms_pack_currents(BmsPackCurrents::reported(-1_230, 450)),
+            .with_bms_pack_currents(BmsPackCurrents::reported(
+                BatteryCurrent::from_milliamps(-1_230),
+                BatteryCurrent::from_milliamps(450),
+            )),
         );
 
         let dto = ReadOnlyResponseDto::from(response);
@@ -1650,25 +1864,22 @@ mod tests {
             battery.page.verification,
             VerificationStatusDto::SourceVerified
         );
-        assert_eq!(battery.voltage_mv.expect("voltage").value, 80_000);
-        assert_eq!(battery.current_ma, None);
+        assert_eq!(battery.voltage.expect("voltage").value, 80_000);
+        assert_eq!(battery.current, None);
         assert_eq!(
-            battery
-                .bms_pack_current_0_ma
-                .expect("first BMS current")
-                .value,
+            battery.bms_pack_current_0.expect("first BMS current").value,
             -1_230
         );
         assert_eq!(
             battery
-                .bms_pack_current_1_ma
+                .bms_pack_current_1
                 .expect("second BMS current")
                 .value,
             450
         );
-        assert_eq!(battery.percent_reported.expect("percent").value, 72);
-        assert_eq!(battery.percent_estimated, None);
-        assert_eq!(battery.temperature_mc.expect("temperature").value, 25_000);
+        assert_eq!(battery.level_reported.expect("level").value, 72);
+        assert_eq!(battery.level_estimated, None);
+        assert_eq!(battery.temperature.expect("temperature").value, 25_000);
         assert_eq!(
             battery.raw_state,
             Some(RawFieldValueDto {
@@ -1803,11 +2014,11 @@ mod tests {
         let notification = SessionInputDto::from(SessionInput::Notification {
             channel: GattChannel::from_bytes([0xA1; 16]),
             bytes: &[0xde, 0xad, 0xbe, 0xef],
-            monotonic_ms: 42,
+            monotonic_ms: MonotonicTimestamp::new(42),
         });
         let command =
             SessionInputDto::from(SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current_ma: -1_500,
+                current: PhaseCurrent::from_milliamps(-1_500),
             }));
 
         assert_eq!(
@@ -1815,12 +2026,12 @@ mod tests {
             SessionInputDto::Notification {
                 channel: [0xA1; 16],
                 bytes: vec![0xde, 0xad, 0xbe, 0xef],
-                monotonic_ms: 42,
+                monotonic_ms: ms(42),
             }
         );
         assert_eq!(
             command,
-            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current_ma: -1_500 })
+            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current: -1_500 })
         );
     }
 
@@ -1829,7 +2040,7 @@ mod tests {
         let dto = SessionInputDto::Notification {
             channel: [0xA1; 16],
             bytes: vec![0xde, 0xad, 0xbe, 0xef],
-            monotonic_ms: 42,
+            monotonic_ms: ms(42),
         };
 
         assert_eq!(
@@ -1837,7 +2048,7 @@ mod tests {
             SessionInput::Notification {
                 channel: GattChannel::from_bytes([0xA1; 16]),
                 bytes: &[0xde, 0xad, 0xbe, 0xef],
-                monotonic_ms: 42,
+                monotonic_ms: MonotonicTimestamp::new(42),
             }
         );
     }
@@ -1850,9 +2061,11 @@ mod tests {
             SessionInput::Command(DeviceCommand::SetLights(LightState::On))
         );
         assert_eq!(
-            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current_ma: -1_500 })
+            SessionInputDto::Command(DeviceCommandDto::SetRawMotorCurrent { current: -1_500 })
                 .as_session_input(),
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent { current_ma: -1_500 })
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: PhaseCurrent::from_milliamps(-1_500),
+            })
         );
     }
 
@@ -1864,8 +2077,8 @@ mod tests {
             mode: WriteMode::WithoutResponse,
         }));
         let event = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::LinkUp(LinkInfo {
-            monotonic_ms: 7,
-            max_write_len: Some(182),
+            monotonic_ms: MonotonicTimestamp::new(7),
+            max_write_len: Some(write_len(182)),
         })));
 
         assert_eq!(
@@ -1879,8 +2092,8 @@ mod tests {
         assert_eq!(
             event,
             SessionOutputDto::Event(SessionEventDto::LinkUp {
-                monotonic_ms: 7,
-                max_write_len: Some(182),
+                monotonic_ms: ms(7),
+                max_write_len: Some(write_len_dto(182)),
             })
         );
     }
@@ -1888,30 +2101,34 @@ mod tests {
     #[test]
     fn telemetry_snapshot_dto_preserves_optional_fields() {
         let snapshot = TelemetrySnapshot {
-            at_ms: Some(42),
-            speed_mm_s: Some(Measured::reported(1_200)),
-            voltage_mv: Some(Measured::reported(84_000)),
-            battery_current_ma: None,
-            motor_current_ma: Some(Measured::reported(-1_500)),
-            power_mw: None,
-            controller_temperature_mc: Some(Measured::reported(31_000)),
-            motor_temperature_mc: None,
-            battery_temperature_mc: None,
-            pwm_permille: Some(Measured::reported(250)),
-            distance_mm: Some(Measured::reported(12_345)),
-            pitch_mdeg: None,
-            roll_mdeg: None,
-            battery_percent_reported: None,
-            battery_percent_estimated: Some(Measured::estimated(80)),
+            at_ms: Some(MonotonicTimestamp::new(42)),
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_200,
+            ))),
+            voltage: Some(Measured::reported(Voltage::from_millivolts(84_000))),
+            battery_current: None,
+            motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(-1_500))),
+            power: None,
+            controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
+                31_000,
+            ))),
+            motor_temperature: None,
+            battery_temperature: None,
+            pwm: Some(Measured::reported(DutyCycle::from_permille(250))),
+            distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
+            pitch: None,
+            roll: None,
+            battery_level_reported: None,
+            battery_level_estimated: Some(Measured::estimated(BatteryLevel::from_percent(80))),
         };
 
         let dto = TelemetrySnapshotDto::from(snapshot);
 
-        assert_eq!(dto.at_ms, Some(42));
-        assert_eq!(dto.speed_mm_s.expect("speed").value, 1_200);
-        assert_eq!(dto.voltage_mv.expect("voltage").value, 84_000);
-        assert_eq!(dto.battery_current_ma, None);
-        assert_eq!(dto.motor_current_ma.expect("current").value, -1_500);
-        assert_eq!(dto.battery_percent_estimated.expect("percent").value, 80);
+        assert_eq!(dto.at_ms, Some(ms(42)));
+        assert_eq!(dto.speed.expect("speed").value, 1_200);
+        assert_eq!(dto.voltage.expect("voltage").value, 84_000);
+        assert_eq!(dto.battery_current, None);
+        assert_eq!(dto.motor_current.expect("current").value, -1_500);
+        assert_eq!(dto.battery_level_estimated.expect("level").value, 80);
     }
 }

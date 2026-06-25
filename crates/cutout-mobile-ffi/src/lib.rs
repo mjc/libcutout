@@ -4,11 +4,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticsDto,
-    ParserErrorDto, ParserGapEvidenceDto, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
-    ReservedPayloadEvidenceDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
-    TransportActionDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    GattRoles, MeasuredI32Dto, MeasuredU8Dto, MonotonicMillisDto, MonotonicTimestamp,
+    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
+    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
+    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
+    PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
+    ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
+    TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
+    ValueQualityDto, ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -65,11 +69,11 @@ pub struct MobileSessionInputDto {
     /// Input kind.
     pub kind: MobileSessionInputKindDto,
 
-    /// Monotonic timestamp in milliseconds.
-    pub monotonic_ms: u64,
+    /// Monotonic timestamp.
+    pub monotonic_ms: MobileMonotonicMillisDto,
 
     /// Maximum write length, when known.
-    pub max_write_len: Option<u16>,
+    pub max_write_len: Option<MobileTransportWriteLimitDto>,
 
     /// Transport channel bytes for notification inputs.
     pub channel: Vec<u8>,
@@ -79,6 +83,134 @@ pub struct MobileSessionInputDto {
 
     /// Command for command inputs.
     pub command: Option<MobileCommandDto>,
+}
+
+/// Mobile DTO monotonic timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMonotonicMillisDto {
+    /// Timestamp value in milliseconds.
+    pub milliseconds: u64,
+}
+
+impl MobileMonotonicMillisDto {
+    const fn from_core_ffi_timestamp(timestamp: MonotonicMillisDto) -> Self {
+        Self {
+            milliseconds: timestamp.milliseconds,
+        }
+    }
+
+    fn into_core_ffi(self) -> MonotonicMillisDto {
+        MonotonicMillisDto {
+            milliseconds: self.milliseconds,
+        }
+    }
+
+    fn into_core(self) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(self.milliseconds)
+    }
+}
+
+/// Mobile DTO wall-clock Unix timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileWallClockUnixMillisDto {
+    /// Timestamp value in Unix epoch milliseconds.
+    pub milliseconds: u64,
+}
+
+impl MobileWallClockUnixMillisDto {
+    fn into_core(self) -> WallClockUnixTimestamp {
+        WallClockUnixTimestamp::new(self.milliseconds)
+    }
+}
+
+/// Mobile maximum transport write payload length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileTransportWriteLimitDto {
+    /// Length in bytes.
+    pub bytes: u16,
+}
+
+impl MobileTransportWriteLimitDto {
+    const fn into_core_ffi(self) -> TransportWriteLimitDto {
+        TransportWriteLimitDto { bytes: self.bytes }
+    }
+}
+
+impl From<TransportWriteLimitDto> for MobileTransportWriteLimitDto {
+    fn from(value: TransportWriteLimitDto) -> Self {
+        Self { bytes: value.bytes }
+    }
+}
+
+/// Mobile notification payload length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileNotificationByteLenDto {
+    /// Length in bytes.
+    pub bytes: u64,
+}
+
+impl From<NotificationByteLenDto> for MobileNotificationByteLenDto {
+    fn from(value: NotificationByteLenDto) -> Self {
+        Self {
+            bytes: value.bytes as u64,
+        }
+    }
+}
+
+/// Mobile protocol payload body length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePayloadBodyLenDto {
+    /// Length in bytes.
+    pub bytes: u64,
+}
+
+impl From<PayloadBodyLenDto> for MobilePayloadBodyLenDto {
+    fn from(value: PayloadBodyLenDto) -> Self {
+        Self {
+            bytes: value.bytes as u64,
+        }
+    }
+}
+
+/// Mobile semantic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSemanticEventCountDto {
+    /// Count of emitted semantic events.
+    pub count: u64,
+}
+
+impl From<SemanticEventCountDto> for MobileSemanticEventCountDto {
+    fn from(value: SemanticEventCountDto) -> Self {
+        Self {
+            count: value.count as u64,
+        }
+    }
+}
+
+/// Mobile dropped parser byte count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserDroppedBytesDto {
+    /// Count of dropped bytes.
+    pub bytes: u64,
+}
+
+impl From<ParserDroppedBytesDto> for MobileParserDroppedBytesDto {
+    fn from(value: ParserDroppedBytesDto) -> Self {
+        Self { bytes: value.bytes }
+    }
+}
+
+/// Mobile parser diagnostic event count.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserDiagnosticCountDto {
+    /// Count of parser diagnostic events.
+    pub count: u64,
+}
+
+impl From<ParserDiagnosticCountDto> for MobileParserDiagnosticCountDto {
+    fn from(value: ParserDiagnosticCountDto) -> Self {
+        Self { count: value.count }
+    }
 }
 
 /// Mobile output kind.
@@ -164,16 +296,23 @@ pub struct MobileParserErrorDto {
     pub kind: MobileParserErrorKindDto,
 
     /// Claimed or observed frame length.
-    pub claimed: Option<u64>,
+    pub claimed: Option<MobileParserFrameLenDto>,
 
     /// Configured maximum accepted frame length.
-    pub max: Option<u64>,
+    pub max: Option<MobileParserFrameLenDto>,
 
-    /// Elapsed monotonic milliseconds.
-    pub elapsed_ms: Option<u64>,
+    /// Elapsed monotonic time.
+    pub elapsed_ms: Option<MobileMonotonicMillisDto>,
 
-    /// Timeout threshold in monotonic milliseconds.
-    pub timeout_ms: Option<u64>,
+    /// Timeout threshold in monotonic time.
+    pub timeout_ms: Option<MobileMonotonicMillisDto>,
+}
+
+/// Mobile parser frame length DTO.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileParserFrameLenDto {
+    /// Length in bytes.
+    pub bytes: u64,
 }
 
 /// Mobile reserved payload evidence DTO.
@@ -186,7 +325,7 @@ pub struct MobileReservedPayloadEvidenceDto {
     pub tag: Option<u16>,
 
     /// Reserved payload body length.
-    pub body_len: u64,
+    pub body_len: MobilePayloadBodyLenDto,
 
     /// Evidence verification status.
     pub verification: MobileVerificationStatusDto,
@@ -202,7 +341,7 @@ pub struct MobileParserGapEvidenceDto {
     pub tag: Option<u16>,
 
     /// Unparsed body length.
-    pub body_len: u64,
+    pub body_len: MobilePayloadBodyLenDto,
 }
 
 /// Mobile notification evidence DTO.
@@ -215,10 +354,10 @@ pub struct MobileNotificationEvidenceDto {
     pub channel: Vec<u8>,
 
     /// Notification payload length without retaining payload bytes.
-    pub len: u64,
+    pub len: MobileNotificationByteLenDto,
 
     /// Host monotonic receive timestamp.
-    pub monotonic_ms: u64,
+    pub monotonic_ms: MobileMonotonicMillisDto,
 }
 
 /// Mobile parser-first notification ingest outcome DTO.
@@ -231,7 +370,7 @@ pub struct MobileNotificationIngestOutcomeDto {
     pub notification: MobileNotificationEvidenceDto,
 
     /// Number of semantic events emitted from this notification.
-    pub event_count: Option<u64>,
+    pub event_count: Option<MobileSemanticEventCountDto>,
 
     /// Parser error for diagnostic outcomes.
     pub parser_error: Option<MobileParserErrorDto>,
@@ -279,27 +418,71 @@ pub struct MobileSessionStepResultDto {
 /// Mobile telemetry snapshot DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileTelemetrySnapshotDto {
-    /// Snapshot timestamp in monotonic milliseconds.
-    pub at_ms: Option<u64>,
+    /// Snapshot timestamp.
+    pub at_ms: Option<MobileMonotonicMillisDto>,
 
     /// Reported voltage in millivolts.
-    pub voltage_mv: Option<i32>,
+    pub voltage: Option<MobileMeasuredI32Dto>,
 
     /// Estimated battery percent.
-    pub battery_percent_estimated: Option<u8>,
+    pub battery_level_estimated: Option<MobileMeasuredU8Dto>,
+}
+
+/// Mobile measured i32 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMeasuredI32Dto {
+    /// Fixed-unit value.
+    pub value: i32,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Mobile measured u8 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMeasuredU8Dto {
+    /// Fixed-unit value.
+    pub value: u8,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
 }
 
 /// Mobile parser diagnostics DTO.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileParserDiagnosticsDto {
+    /// Bytes dropped while recovering from malformed or excessive input.
+    pub dropped_bytes: MobileParserDroppedBytesDto,
+
+    /// Parser resynchronization attempts.
+    pub resyncs: MobileParserDiagnosticCountDto,
+
     /// Malformed frame count.
-    pub malformed_frames: u64,
+    pub malformed_frames: MobileParserDiagnosticCountDto,
 
     /// Bad checksum count.
-    pub bad_checksums: u64,
+    pub bad_checksums: MobileParserDiagnosticCountDto,
+
+    /// Parser timeout count.
+    pub timeouts: MobileParserDiagnosticCountDto,
 
     /// Oversized frame count.
-    pub oversized_frames: u64,
+    pub oversized_frames: MobileParserDiagnosticCountDto,
+
+    /// Unmatched reply count.
+    pub unmatched_replies: MobileParserDiagnosticCountDto,
 }
 
 /// Mobile Falcon construction profile.
@@ -333,6 +516,29 @@ pub enum MobileProtocolFamilyDto {
 
     /// VESC UART/CAN-derived family.
     Vesc,
+}
+
+/// Mobile value source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileValueSourceDto {
+    /// Value was reported directly by the device.
+    Reported,
+
+    /// Value was calculated from other values.
+    Calculated,
+
+    /// Value was estimated from incomplete evidence.
+    Estimated,
+}
+
+/// Mobile value quality.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileValueQualityDto {
+    /// Value is directly supported by observed data.
+    Known,
+
+    /// Value is inferred from partial or indirect evidence.
+    Inferred,
 }
 
 /// Mobile verification status.
@@ -435,9 +641,9 @@ pub enum MobileCaptureExportError {
 /// Mobile-facing builder for a PEVCAP capture export.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePevcapCaptureBuilder {
-    wall_clock_start_unix_ms: u64,
+    wall_clock_start_unix_ms: WallClockUnixTimestamp,
     platform_id: String,
-    write_limit: Option<u16>,
+    write_limit: Option<TransportWriteLimit>,
     advertised_services: Mutex<Vec<GattChannel>>,
     gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
@@ -451,14 +657,14 @@ impl MobilePevcapCaptureBuilder {
     #[uniffi::constructor]
     #[must_use]
     pub fn new(
-        wall_clock_start_unix_ms: u64,
+        wall_clock_start_unix_ms: MobileWallClockUnixMillisDto,
         platform_id: String,
-        write_limit: Option<u16>,
+        write_limit: Option<MobileTransportWriteLimitDto>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            wall_clock_start_unix_ms,
+            wall_clock_start_unix_ms: wall_clock_start_unix_ms.into_core(),
             platform_id,
-            write_limit,
+            write_limit: write_limit.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
             advertised_services: Mutex::new(Vec::new()),
             gatt_fingerprints: Mutex::new(Vec::new()),
             resolved_identity: Mutex::new(None),
@@ -501,26 +707,33 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records a link-up lifecycle event.
-    pub fn record_link_up(&self, monotonic_ms: u64, max_write_len: Option<u16>) {
+    pub fn record_link_up(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+        max_write_len: Option<MobileTransportWriteLimitDto>,
+    ) {
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::link_up(monotonic_ms, max_write_len));
+            .push(PevcapRecord::link_up(
+                monotonic_ms.into_core(),
+                max_write_len.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
+            ));
     }
 
     /// Records a link-down lifecycle event.
-    pub fn record_link_down(&self, monotonic_ms: u64) {
+    pub fn record_link_down(&self, monotonic_ms: MobileMonotonicMillisDto) {
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::link_down(monotonic_ms));
+            .push(PevcapRecord::link_down(monotonic_ms.into_core()));
     }
 
     /// Records inbound notification bytes.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_notification(
         &self,
-        monotonic_ms: u64,
+        monotonic_ms: MobileMonotonicMillisDto,
         characteristic: Vec<u8>,
         service: Vec<u8>,
         bytes: Vec<u8>,
@@ -529,7 +742,7 @@ impl MobilePevcapCaptureBuilder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(PevcapRecord::inbound_notification(
-                monotonic_ms,
+                monotonic_ms.into_core(),
                 mobile_gatt_channel(&characteristic),
                 mobile_gatt_channel(&service),
                 bytes,
@@ -609,6 +822,25 @@ impl From<ProtocolFamilyDto> for MobileProtocolFamilyDto {
             ProtocolFamilyDto::VeteranLeaperkimNosfet => Self::VeteranLeaperkimNosfet,
             ProtocolFamilyDto::BegodeGotway => Self::BegodeGotway,
             ProtocolFamilyDto::Vesc => Self::Vesc,
+        }
+    }
+}
+
+impl From<ValueSourceDto> for MobileValueSourceDto {
+    fn from(source: ValueSourceDto) -> Self {
+        match source {
+            ValueSourceDto::Reported => Self::Reported,
+            ValueSourceDto::Calculated => Self::Calculated,
+            ValueSourceDto::Estimated => Self::Estimated,
+        }
+    }
+}
+
+impl From<ValueQualityDto> for MobileValueQualityDto {
+    fn from(quality: ValueQualityDto) -> Self {
+        match quality {
+            ValueQualityDto::Known => Self::Known,
+            ValueQualityDto::Inferred => Self::Inferred,
         }
     }
 }
@@ -767,17 +999,19 @@ impl From<MobileSessionInputDto> for SessionInputDto {
     fn from(input: MobileSessionInputDto) -> Self {
         match input.kind {
             MobileSessionInputKindDto::LinkUp => Self::LinkUp {
-                monotonic_ms: input.monotonic_ms,
-                max_write_len: input.max_write_len,
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
+                max_write_len: input
+                    .max_write_len
+                    .map(MobileTransportWriteLimitDto::into_core_ffi),
             },
             MobileSessionInputKindDto::LinkDown => Self::LinkDown,
             MobileSessionInputKindDto::Notification => Self::Notification {
                 channel: mobile_channel_bytes(&input.channel),
                 bytes: input.bytes,
-                monotonic_ms: input.monotonic_ms,
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
             MobileSessionInputKindDto::Tick => Self::Tick {
-                monotonic_ms: input.monotonic_ms,
+                monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
             MobileSessionInputKindDto::Command => Self::Command(
                 input
@@ -871,7 +1105,7 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::SemanticEvents,
                 notification: notification.into(),
-                event_count: Some(event_count as u64),
+                event_count: Some(event_count.into()),
                 parser_error: None,
                 reserved: None,
                 gap: None,
@@ -926,13 +1160,43 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
     }
 }
 
+impl From<MeasuredI32Dto> for MobileMeasuredI32Dto {
+    fn from(measured: MeasuredI32Dto) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
+impl From<MeasuredU8Dto> for MobileMeasuredU8Dto {
+    fn from(measured: MeasuredU8Dto) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.to_vec(),
-            len: evidence.len as u64,
-            monotonic_ms: evidence.monotonic_ms,
+            len: evidence.len.into(),
+            monotonic_ms: MobileMonotonicMillisDto::from_core_ffi_timestamp(evidence.monotonic_ms),
+        }
+    }
+}
+
+impl From<ParserFrameLenDto> for MobileParserFrameLenDto {
+    fn from(value: ParserFrameLenDto) -> Self {
+        Self {
+            bytes: value.bytes as u64,
         }
     }
 }
@@ -942,8 +1206,8 @@ impl From<ParserErrorDto> for MobileParserErrorDto {
         match error {
             ParserErrorDto::OversizedFrame { claimed, max } => Self {
                 kind: MobileParserErrorKindDto::OversizedFrame,
-                claimed: Some(claimed as u64),
-                max: Some(max as u64),
+                claimed: Some(claimed.into()),
+                max: Some(max.into()),
                 elapsed_ms: None,
                 timeout_ms: None,
             },
@@ -968,8 +1232,12 @@ impl From<ParserErrorDto> for MobileParserErrorDto {
                 kind: MobileParserErrorKindDto::Timeout,
                 claimed: None,
                 max: None,
-                elapsed_ms: Some(elapsed_ms),
-                timeout_ms: Some(timeout_ms),
+                elapsed_ms: Some(MobileMonotonicMillisDto::from_core_ffi_timestamp(
+                    elapsed_ms,
+                )),
+                timeout_ms: Some(MobileMonotonicMillisDto::from_core_ffi_timestamp(
+                    timeout_ms,
+                )),
             },
             ParserErrorDto::UnmatchedReply => Self {
                 kind: MobileParserErrorKindDto::UnmatchedReply,
@@ -987,7 +1255,7 @@ impl From<ReservedPayloadEvidenceDto> for MobileReservedPayloadEvidenceDto {
         Self {
             selector: evidence.selector,
             tag: evidence.tag,
-            body_len: evidence.body_len as u64,
+            body_len: evidence.body_len.into(),
             verification: evidence.verification.into(),
         }
     }
@@ -998,7 +1266,7 @@ impl From<ParserGapEvidenceDto> for MobileParserGapEvidenceDto {
         Self {
             selector: evidence.selector,
             tag: evidence.tag,
-            body_len: evidence.body_len as u64,
+            body_len: evidence.body_len.into(),
         }
     }
 }
@@ -1032,9 +1300,11 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
         Self {
-            at_ms: snapshot.at_ms,
-            voltage_mv: snapshot.voltage_mv.map(|value| value.value),
-            battery_percent_estimated: snapshot.battery_percent_estimated.map(|value| value.value),
+            at_ms: snapshot
+                .at_ms
+                .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
+            voltage: snapshot.voltage.map(Into::into),
+            battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
         }
     }
 }
@@ -1042,9 +1312,13 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
 impl From<ParserDiagnosticsDto> for MobileParserDiagnosticsDto {
     fn from(diagnostics: ParserDiagnosticsDto) -> Self {
         Self {
-            malformed_frames: diagnostics.malformed_frames,
-            bad_checksums: diagnostics.bad_checksums,
-            oversized_frames: diagnostics.oversized_frames,
+            dropped_bytes: diagnostics.dropped_bytes.into(),
+            resyncs: diagnostics.resyncs.into(),
+            malformed_frames: diagnostics.malformed_frames.into(),
+            bad_checksums: diagnostics.bad_checksums.into(),
+            timeouts: diagnostics.timeouts.into(),
+            oversized_frames: diagnostics.oversized_frames.into(),
+            unmatched_replies: diagnostics.unmatched_replies.into(),
         }
     }
 }
@@ -1150,12 +1424,64 @@ impl FalconReadOnlySession {
 mod tests {
     use super::*;
 
+    const fn ms(value: u64) -> MobileMonotonicMillisDto {
+        MobileMonotonicMillisDto {
+            milliseconds: value,
+        }
+    }
+
+    const fn wc(value: u64) -> MobileWallClockUnixMillisDto {
+        MobileWallClockUnixMillisDto {
+            milliseconds: value,
+        }
+    }
+
+    const fn notification_len(value: usize) -> NotificationByteLenDto {
+        NotificationByteLenDto { bytes: value }
+    }
+
+    const fn mobile_notification_len(value: u64) -> MobileNotificationByteLenDto {
+        MobileNotificationByteLenDto { bytes: value }
+    }
+
+    const fn body_len(value: usize) -> PayloadBodyLenDto {
+        PayloadBodyLenDto { bytes: value }
+    }
+
+    const fn mobile_body_len(value: u64) -> MobilePayloadBodyLenDto {
+        MobilePayloadBodyLenDto { bytes: value }
+    }
+
+    const fn frame_len(value: usize) -> ParserFrameLenDto {
+        ParserFrameLenDto { bytes: value }
+    }
+
+    const fn mobile_frame_len(value: u64) -> MobileParserFrameLenDto {
+        MobileParserFrameLenDto { bytes: value }
+    }
+
+    const fn event_count(value: usize) -> SemanticEventCountDto {
+        SemanticEventCountDto { count: value }
+    }
+
+    const fn mobile_event_count(value: u64) -> MobileSemanticEventCountDto {
+        MobileSemanticEventCountDto { count: value }
+    }
+
+    const fn mobile_diag_count(value: u64) -> MobileParserDiagnosticCountDto {
+        MobileParserDiagnosticCountDto { count: value }
+    }
+
+    const fn mobile_write_len(value: u16) -> MobileTransportWriteLimitDto {
+        MobileTransportWriteLimitDto { bytes: value }
+    }
+
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
             family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
             channel: [0x7a; 16],
-            len: 17,
-            monotonic_ms: 42,
+            len: notification_len(17),
+            monotonic_ms: MonotonicMillisDto { milliseconds: 42 },
         }
     }
 
@@ -1172,7 +1498,7 @@ mod tests {
     fn mobile_notification_ingest_dto_preserves_each_typed_outcome_class() {
         let semantic = mobile_ingest(NotificationIngestOutcomeDto::SemanticEvents {
             notification: notification_fixture(),
-            event_count: 3,
+            event_count: event_count(3),
         });
         assert_eq!(
             semantic.kind,
@@ -1183,8 +1509,8 @@ mod tests {
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         );
         assert_eq!(semantic.notification.channel, vec![0x7a; 16]);
-        assert_eq!(semantic.notification.len, 17);
-        assert_eq!(semantic.event_count, Some(3));
+        assert_eq!(semantic.notification.len, mobile_notification_len(17));
+        assert_eq!(semantic.event_count, Some(mobile_event_count(3)));
         assert_eq!(semantic.parser_error, None);
 
         let buffered = mobile_ingest(NotificationIngestOutcomeDto::BufferedFragment(
@@ -1199,16 +1525,16 @@ mod tests {
         let diagnostic = mobile_ingest(NotificationIngestOutcomeDto::ParserDiagnostic {
             notification: notification_fixture(),
             error: ParserErrorDto::OversizedFrame {
-                claimed: 257,
-                max: 256,
+                claimed: frame_len(257),
+                max: frame_len(256),
             },
         });
         assert_eq!(
             diagnostic.parser_error,
             Some(MobileParserErrorDto {
                 kind: MobileParserErrorKindDto::OversizedFrame,
-                claimed: Some(257),
-                max: Some(256),
+                claimed: Some(mobile_frame_len(257)),
+                max: Some(mobile_frame_len(256)),
                 elapsed_ms: None,
                 timeout_ms: None,
             })
@@ -1219,7 +1545,7 @@ mod tests {
             payload: ReservedPayloadEvidenceDto {
                 selector: Some(8),
                 tag: Some(0x5a5c),
-                body_len: 84,
+                body_len: body_len(84),
                 verification: VerificationStatusDto::SourceVerified,
             },
         });
@@ -1228,7 +1554,7 @@ mod tests {
             Some(MobileReservedPayloadEvidenceDto {
                 selector: Some(8),
                 tag: Some(0x5a5c),
-                body_len: 84,
+                body_len: mobile_body_len(84),
                 verification: MobileVerificationStatusDto::SourceVerified,
             })
         );
@@ -1238,7 +1564,7 @@ mod tests {
             gap: ParserGapEvidenceDto {
                 selector: Some(9),
                 tag: None,
-                body_len: 11,
+                body_len: body_len(11),
             },
         });
         assert_eq!(
@@ -1246,7 +1572,7 @@ mod tests {
             Some(MobileParserGapEvidenceDto {
                 selector: Some(9),
                 tag: None,
-                body_len: 11,
+                body_len: mobile_body_len(11),
             })
         );
 
@@ -1262,7 +1588,7 @@ mod tests {
     fn aero_wrapper_constructs_and_exposes_diagnostics() {
         let session = AeroReadOnlySession::new();
 
-        assert_eq!(session.diagnostics().malformed_frames, 0);
+        assert_eq!(session.diagnostics().malformed_frames, mobile_diag_count(0));
     }
 
     #[test]
@@ -1271,7 +1597,7 @@ mod tests {
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
-            monotonic_ms: 0,
+            monotonic_ms: ms(0),
             max_write_len: None,
             channel: Vec::new(),
             bytes: Vec::new(),
@@ -1302,8 +1628,8 @@ mod tests {
         let session = AeroReadOnlySession::new();
         let link_result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::LinkUp,
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(mobile_write_len(185)),
             channel: Vec::new(),
             bytes: Vec::new(),
             command: None,
@@ -1318,7 +1644,7 @@ mod tests {
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Notification,
-            monotonic_ms: 2,
+            monotonic_ms: ms(2),
             max_write_len: None,
             channel,
             bytes: hex_literal::hex!(
@@ -1346,30 +1672,38 @@ mod tests {
             ingest.notification.family,
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         );
-        assert_eq!(ingest.notification.len, 87);
-        assert_eq!(ingest.notification.monotonic_ms, 2);
-        assert_eq!(ingest.event_count, Some(5));
+        assert_eq!(ingest.notification.len, mobile_notification_len(87));
+        assert_eq!(ingest.notification.monotonic_ms, ms(2));
+        assert_eq!(ingest.event_count, Some(mobile_event_count(5)));
         assert_eq!(ingest.parser_error, None);
         assert_eq!(ingest.reserved, None);
         assert_eq!(ingest.gap, None);
         assert!(result.outputs.iter().all(|output| output.bytes.is_empty()));
-        assert_eq!(session.current_snapshot().voltage_mv, Some(108_760));
+        assert_eq!(
+            session.current_snapshot().voltage,
+            Some(MobileMeasuredI32Dto {
+                value: 108_760,
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            })
+        );
     }
 
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
         let builder = MobilePevcapCaptureBuilder::new(
-            1_700_000_000_000,
+            wc(1_700_000_000_000),
             "ios-corebluetooth".into(),
-            Some(185),
+            Some(mobile_write_len(185)),
         );
         builder.add_annotation("capture_label=powered_on_stationary".into());
         builder.add_annotation("capture_privacy=redacted".into());
         builder.add_annotation("capture_distribution=redistributable".into());
         builder.add_annotation("capture_evidence=hardware_tested".into());
-        builder.record_link_up(1, Some(185));
+        builder.record_link_up(ms(1), Some(mobile_write_len(185)));
         builder.record_notification(
-            2,
+            ms(2),
             vec![0x11; 16],
             vec![0x22; 16],
             vec![0xde, 0xad, 0xbe, 0xef],
@@ -1397,8 +1731,11 @@ mod tests {
 
     #[test]
     fn mobile_capture_builder_exports_ble_inventory_metadata() {
-        let builder =
-            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
         let service = vec![0x22; 16];
         let characteristic = vec![0x11; 16];
 
@@ -1437,8 +1774,11 @@ mod tests {
 
     #[test]
     fn mobile_capture_builder_exports_resolved_identity_metadata() {
-        let builder =
-            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
 
         builder.set_resolved_identity(MobileResolvedIdentityDto {
             protocol_family: Some(MobileProtocolFamilyDto::BegodeGotway),
@@ -1469,9 +1809,12 @@ mod tests {
 
     #[test]
     fn mobile_capture_builder_exports_binary_container() {
-        let builder =
-            MobilePevcapCaptureBuilder::new(1_700_000_000_000, "ios-corebluetooth".into(), None);
-        builder.record_link_down(9);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        builder.record_link_down(ms(9));
 
         let bytes = builder
             .export(MobilePevcapEncodingDto::Binary)
@@ -1481,6 +1824,6 @@ mod tests {
 
         assert_eq!(capture.header.platform_id, "ios-corebluetooth");
         assert_eq!(capture.records.len(), 1);
-        assert_eq!(capture.records[0].monotonic_ms, 9);
+        assert_eq!(capture.records[0].monotonic_ms, MonotonicTimestamp::new(9));
     }
 }

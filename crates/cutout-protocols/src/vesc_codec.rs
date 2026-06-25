@@ -1,5 +1,9 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
+use cutout_core::{
+    BatteryCurrent, Distance, Duration, PeakCurrent, Power, RotationalSpeed, Speed,
+    TachometerReading, Voltage,
+};
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -162,88 +166,124 @@ pub enum VescReadOnlyReply {
 /// Owned VESC values telemetry subset used by the generic read-only session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescValuesTelemetry {
-    /// Raw electrical RPM.
-    pub rpm_erpm: i32,
+    /// Electrical RPM.
+    pub rpm: RotationalSpeed,
 
-    /// Input voltage in millivolts.
-    pub voltage_mv: i32,
+    /// Input voltage.
+    pub voltage: Voltage,
 
-    /// Input current in milliamps.
-    pub input_current_ma: i32,
+    /// Input current.
+    pub input_current: BatteryCurrent,
 
     /// Relative tachometer.
-    pub tachometer: i32,
+    pub tachometer: TachometerReading,
 
     /// Controller identifier.
-    pub controller_id: u8,
+    pub controller_id: VescControllerId,
 
     /// Current VESC fault code.
     pub fault_code: VescFaultCode,
 }
 
+/// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MotorPolePairs(u8);
+
+impl MotorPolePairs {
+    /// Creates a motor pole-pair count.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the motor pole-pair count.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Mechanical gear-reduction denominator.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GearRatioDenominator(u8);
+
+impl GearRatioDenominator {
+    /// Creates a gear-reduction denominator.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the gear-reduction denominator.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 /// Owned VESC statistics telemetry subset.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescStatsTelemetry {
-    /// Average speed in milli-units reported by VESC.
-    pub speed_avg_milli: i32,
+    /// Average speed.
+    pub speed_avg: Speed,
 
-    /// Maximum speed in milli-units reported by VESC.
-    pub speed_max_milli: i32,
+    /// Maximum speed.
+    pub speed_max: Speed,
 
-    /// Average power in milliwatts.
-    pub power_avg_mw: i32,
+    /// Average power.
+    pub power_avg: Power,
 
-    /// Maximum power in milliwatts.
-    pub power_max_mw: i32,
+    /// Maximum power.
+    pub power_max: Power,
 
-    /// Average current in milliamps.
-    pub current_avg_ma: i32,
+    /// Average current.
+    pub current_avg: BatteryCurrent,
 
-    /// Maximum current in milliamps.
-    pub current_max_ma: i32,
+    /// Peak current.
+    pub peak_current: PeakCurrent,
 
-    /// Statistics accumulation time in milliseconds.
-    pub count_time_ms: u32,
+    /// Statistics accumulation time.
+    pub count_time: Duration,
 }
 
 /// Verified VESC board geometry used to calculate road speed from eRPM.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescBoardProfile {
     /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
-    pub motor_pole_pairs: u8,
+    pub motor_pole_pairs: MotorPolePairs,
 
     /// Mechanical gear reduction denominator.
-    pub gear_ratio_denominator: u8,
+    pub gear_ratio_denominator: GearRatioDenominator,
 
-    /// Wheel circumference in millimeters.
-    pub wheel_circumference_mm: u16,
+    /// Wheel circumference.
+    pub wheel_circumference: Distance,
 }
 
 impl VescBoardProfile {
     /// Creates a board profile from explicit geometry.
     #[must_use]
     pub const fn new(
-        motor_pole_pairs: u8,
-        gear_ratio_denominator: u8,
-        wheel_circumference_mm: u16,
+        motor_pole_pairs: MotorPolePairs,
+        gear_ratio_denominator: GearRatioDenominator,
+        wheel_circumference: Distance,
     ) -> Self {
         Self {
             motor_pole_pairs,
             gear_ratio_denominator,
-            wheel_circumference_mm,
+            wheel_circumference,
         }
     }
 
-    /// Calculates signed road speed in millimeters per second from eRPM.
+    /// Calculates signed road speed from eRPM.
     #[must_use]
-    pub const fn speed_mm_s_from_erpm(self, erpm: i32) -> Option<i32> {
-        let denominator = self.motor_pole_pairs as i64 * self.gear_ratio_denominator as i64 * 60;
-        if denominator == 0 {
-            return None;
-        }
-
-        let numerator = erpm as i64 * self.wheel_circumference_mm as i64;
-        Some(round_div_i64_to_i32(numerator, denominator))
+    pub fn speed_from_erpm(self, erpm: RotationalSpeed) -> Option<Speed> {
+        erpm.as_speed(
+            self.motor_pole_pairs.get(),
+            self.gear_ratio_denominator.get(),
+            self.wheel_circumference,
+        )
     }
 }
 
@@ -497,11 +537,11 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
 impl From<vesc::Values> for VescValuesTelemetry {
     fn from(values: vesc::Values) -> Self {
         Self {
-            rpm_erpm: round_f32_to_i32(values.rpm),
-            voltage_mv: round_f32_to_i32(values.voltage_in * 1_000.0),
-            input_current_ma: round_f32_to_i32(values.avg_current_input * 1_000.0),
-            tachometer: values.tachometer,
-            controller_id: values.controller_id,
+            rpm: RotationalSpeed::from_erpm_f32(values.rpm),
+            voltage: Voltage::from_volts_f32(values.voltage_in),
+            input_current: BatteryCurrent::from_amps_f32(values.avg_current_input),
+            tachometer: TachometerReading::from_counts(values.tachometer),
+            controller_id: VescControllerId::new(values.controller_id),
             fault_code: values.fault_code.into(),
         }
     }
@@ -510,35 +550,15 @@ impl From<vesc::Values> for VescValuesTelemetry {
 impl From<vesc::Stats> for VescStatsTelemetry {
     fn from(stats: vesc::Stats) -> Self {
         Self {
-            speed_avg_milli: round_f32_to_i32(stats.speed_avg * 1_000.0),
-            speed_max_milli: round_f32_to_i32(stats.speed_max * 1_000.0),
-            power_avg_mw: round_f32_to_i32(stats.power_avg * 1_000.0),
-            power_max_mw: round_f32_to_i32(stats.power_max * 1_000.0),
-            current_avg_ma: round_f32_to_i32(stats.current_avg * 1_000.0),
-            current_max_ma: round_f32_to_i32(stats.current_max * 1_000.0),
-            count_time_ms: round_f32_to_u32(stats.count_time * 1_000.0),
+            speed_avg: Speed::from_metres_per_second(stats.speed_avg),
+            speed_max: Speed::from_metres_per_second(stats.speed_max),
+            power_avg: Power::from_watts_f32(stats.power_avg),
+            power_max: Power::from_watts_f32(stats.power_max),
+            current_avg: BatteryCurrent::from_amps_f32(stats.current_avg),
+            peak_current: PeakCurrent::from_amps_f32(stats.current_max),
+            count_time: Duration::from_seconds_f32(stats.count_time),
         }
     }
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn round_f32_to_i32(value: f32) -> i32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss
-)]
-fn round_f32_to_u32(value: f32) -> u32 {
-    if !value.is_finite() {
-        return 0;
-    }
-    value.round().clamp(0.0, u32::MAX as f32) as u32
 }
 
 impl From<vesc::FaultCode> for VescFaultCode {
@@ -548,23 +568,6 @@ impl From<vesc::FaultCode> for VescFaultCode {
             vesc::FaultCode::AbsOverCurrent => Self::AbsOverCurrent,
             other => Self::Other(other as u8),
         }
-    }
-}
-
-#[allow(clippy::cast_possible_truncation)]
-const fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
-    let half = denominator / 2;
-    let rounded = if numerator >= 0 {
-        (numerator + half) / denominator
-    } else {
-        (numerator - half) / denominator
-    };
-    if rounded > i32::MAX as i64 {
-        i32::MAX
-    } else if rounded < i32::MIN as i64 {
-        i32::MIN
-    } else {
-        rounded as i32
     }
 }
 
@@ -666,11 +669,14 @@ mod tests {
             panic!("expected values reply");
         };
 
-        assert_eq!(telemetry.rpm_erpm, 989);
-        assert_eq!(telemetry.voltage_mv, 37_500);
-        assert_eq!(telemetry.input_current_ma, 40);
-        assert_eq!(telemetry.tachometer, -21_973);
-        assert_eq!(telemetry.controller_id, 20);
+        assert_eq!(telemetry.rpm, RotationalSpeed::from_erpm(989));
+        assert_eq!(telemetry.voltage.as_millivolts(), 37_500);
+        assert_eq!(telemetry.input_current.as_milliamps(), 40);
+        assert_eq!(
+            telemetry.tachometer,
+            TachometerReading::from_counts(-21_973)
+        );
+        assert_eq!(telemetry.controller_id, VescControllerId::new(20));
         assert_eq!(telemetry.fault_code, VescFaultCode::None);
     }
 
@@ -687,46 +693,84 @@ mod tests {
             panic!("expected stats reply");
         };
 
-        assert_eq!(stats.speed_avg_milli, 1_000);
-        assert_eq!(stats.speed_max_milli, 2_000);
-        assert_eq!(stats.power_avg_mw, 3_000);
-        assert_eq!(stats.power_max_mw, 4_000);
-        assert_eq!(stats.current_avg_ma, 5_000);
-        assert_eq!(stats.current_max_ma, 6_000);
-        assert_eq!(stats.count_time_ms, 11_000);
+        assert_eq!(stats.speed_avg.as_millimetres_per_second(), 1_000);
+        assert_eq!(stats.speed_max.as_millimetres_per_second(), 2_000);
+        assert_eq!(stats.power_avg.as_milliwatts(), 3_000);
+        assert_eq!(stats.power_max.as_milliwatts(), 4_000);
+        assert_eq!(stats.current_avg.as_milliamps(), 5_000);
+        assert_eq!(stats.peak_current.as_milliamps(), 6_000);
+        assert_eq!(stats.count_time, Duration::from_seconds(11));
     }
 
     #[test]
     fn vesc_board_profile_calculates_speed_from_erpm() {
-        let profile = VescBoardProfile::new(15, 1, 2_100);
+        let profile = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(1),
+            Distance::from_millimetres(2_100),
+        );
 
-        assert_eq!(profile.speed_mm_s_from_erpm(4_500), Some(10_500));
+        assert_eq!(
+            profile.speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
+            Some(Speed::from_millimetres_per_second(10_500))
+        );
     }
 
     #[test]
     fn vesc_board_profile_preserves_reverse_erpm_sign() {
-        let profile = VescBoardProfile::new(15, 1, 2_100);
+        let profile = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(1),
+            Distance::from_millimetres(2_100),
+        );
 
-        assert_eq!(profile.speed_mm_s_from_erpm(-4_500), Some(-10_500));
+        assert_eq!(
+            profile.speed_from_erpm(RotationalSpeed::from_erpm(-4_500)),
+            Some(Speed::from_millimetres_per_second(-10_500))
+        );
     }
 
     #[test]
     fn vesc_board_profile_applies_gear_reduction() {
-        let direct_drive = VescBoardProfile::new(15, 1, 2_100);
-        let geared = VescBoardProfile::new(15, 2, 2_100);
+        let direct_drive = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(1),
+            Distance::from_millimetres(2_100),
+        );
+        let geared = VescBoardProfile::new(
+            MotorPolePairs::new(15),
+            GearRatioDenominator::new(2),
+            Distance::from_millimetres(2_100),
+        );
 
-        assert_eq!(direct_drive.speed_mm_s_from_erpm(4_500), Some(10_500));
-        assert_eq!(geared.speed_mm_s_from_erpm(4_500), Some(5_250));
+        assert_eq!(
+            direct_drive.speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
+            Some(Speed::from_millimetres_per_second(10_500))
+        );
+        assert_eq!(
+            geared.speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
+            Some(Speed::from_millimetres_per_second(5_250))
+        );
     }
 
     #[test]
     fn vesc_board_profile_refuses_zero_denominators() {
         assert_eq!(
-            VescBoardProfile::new(0, 1, 2_100).speed_mm_s_from_erpm(4_500),
+            VescBoardProfile::new(
+                MotorPolePairs::new(0),
+                GearRatioDenominator::new(1),
+                Distance::from_millimetres(2_100)
+            )
+            .speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
             None
         );
         assert_eq!(
-            VescBoardProfile::new(15, 0, 2_100).speed_mm_s_from_erpm(4_500),
+            VescBoardProfile::new(
+                MotorPolePairs::new(15),
+                GearRatioDenominator::new(0),
+                Distance::from_millimetres(2_100)
+            )
+            .speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
             None
         );
     }

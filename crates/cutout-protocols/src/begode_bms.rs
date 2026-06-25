@@ -1,14 +1,15 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryInfo, BatteryPageMetadata, BatteryPagePayload, Measured, MonotonicMillis,
-    ProtocolSelector, ProtocolTag, ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource,
-    VerificationStatus,
+    BatteryCurrent, BatteryInfo, BatteryPageMetadata, BatteryPagePayload, BmsCellIndex,
+    BmsHalfIndex, BmsPackIndex, DutyCycle, Measured, MonotonicTimestamp, ProtocolSelector,
+    ProtocolTag, ReadOnlyResponse, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
 use crate::{
     BegodeFrame,
-    parser::{ByteCursor, ByteOffset},
+    parser::{ParserCursor, ParserOffset},
 };
 
 /// Cell-voltage count carried by one Begode/Gotway BMS cell page.
@@ -23,28 +24,28 @@ pub struct BegodeBmsSummary {
     pub sub_index: ProtocolSelector,
 
     /// Zero-based BMS pack index inferred from sub-index.
-    pub bms_index: u8,
+    pub bms_index: BmsPackIndex,
 
     /// Zero-based half-pack index inferred from sub-index bit 0.
-    pub half_index: u8,
+    pub half_index: BmsHalfIndex,
 
-    /// PWM limit in centi-percent.
-    pub pwm_limit_centi_percent: u16,
+    /// PWM limit.
+    pub pwm_limit: DutyCycle,
 
     /// BMS-authoritative pack voltage in millivolts.
-    pub pack_voltage_mv: i32,
+    pub pack_voltage: Voltage,
 
     /// BMS-reported pack current in milliamps.
-    pub current_ma: i32,
+    pub current: BatteryCurrent,
 
     /// First temperature for the selected half in millicelsius.
-    pub temperature_0_mc: i32,
+    pub temperature_0: Temperature,
 
     /// Second temperature for the selected half in millicelsius.
-    pub temperature_1_mc: i32,
+    pub temperature_1: Temperature,
 
     /// Half-pack voltage in millivolts.
-    pub half_pack_voltage_mv: i32,
+    pub half_pack_voltage: Voltage,
 }
 
 impl BegodeBmsSummary {
@@ -56,29 +57,44 @@ impl BegodeBmsSummary {
     /// not `0x01`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeBmsPageError> {
         require_tag(frame, 0x01)?;
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         let sub_index = frame.sub_index();
         let sub_index_value = sub_index.get();
         Ok(Self {
             sub_index,
-            bms_index: u8::from(sub_index_value >= 2),
-            half_index: sub_index_value & 1,
-            pwm_limit_centi_percent: be_u16(cursor, ByteOffset::new(2)),
-            pack_voltage_mv: i32::from(be_u16(cursor, ByteOffset::new(6))) * 100,
-            current_ma: i32::from(be_i16(cursor, ByteOffset::new(8))) * 100,
-            temperature_0_mc: i32::from(be_i16(cursor, ByteOffset::new(10))) * 1_000,
-            temperature_1_mc: i32::from(be_i16(cursor, ByteOffset::new(12))) * 1_000,
-            half_pack_voltage_mv: i32::from(be_i16(cursor, ByteOffset::new(14))) * 100,
+            bms_index: BmsPackIndex::new(u8::from(sub_index_value >= 2)),
+            half_index: BmsHalfIndex::new(sub_index_value & 1),
+            pwm_limit: DutyCycle::from_centipercent(be_u16(cursor, ParserOffset::from_bytes(2))),
+            pack_voltage: Voltage::from_deci_volts(i32::from(be_u16(
+                cursor,
+                ParserOffset::from_bytes(6),
+            ))),
+            current: BatteryCurrent::from_deciamps(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(8),
+            ))),
+            temperature_0: Temperature::from_celsius(i64::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(10),
+            ))),
+            temperature_1: Temperature::from_celsius(i64::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(12),
+            ))),
+            half_pack_voltage: Voltage::from_deci_volts(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(14),
+            ))),
         })
     }
 
     /// Converts the authoritative BMS voltage/current into a telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
-            voltage_mv: Some(source_reported(self.pack_voltage_mv)),
-            battery_current_ma: Some(source_reported(self.current_ma)),
-            battery_temperature_mc: Some(source_reported(self.temperature_0_mc)),
+            voltage: Some(source_reported(self.pack_voltage)),
+            battery_current: Some(source_reported(self.current)),
+            battery_temperature: Some(source_reported(self.temperature_0)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -89,9 +105,9 @@ impl BegodeBmsSummary {
         ReadOnlyResponse::Battery(BatteryPagePayload::raw(
             BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
             BatteryInfo {
-                voltage_mv: Some(source_reported(self.pack_voltage_mv)),
-                current_ma: Some(source_reported(self.current_ma)),
-                temperature_mc: Some(source_reported(self.temperature_0_mc)),
+                voltage: Some(source_reported(self.pack_voltage)),
+                current: Some(source_reported(self.current)),
+                temperature: Some(source_reported(self.temperature_0)),
                 ..BatteryInfo::default()
             },
         ))
@@ -105,16 +121,16 @@ pub struct BegodeBmsCellPage {
     pub tag: ProtocolTag,
 
     /// Zero-based BMS pack index from the frame tag.
-    pub bms_index: u8,
+    pub bms_index: BmsPackIndex,
 
     /// Page index from frame offset 19.
     pub page_index: ProtocolSelector,
 
     /// First cell index represented by this page.
-    pub first_cell_index: u16,
+    pub first_cell_index: BmsCellIndex,
 
-    /// Eight cell voltages in millivolts.
-    pub cell_mv: ArrayVec<u16, BEGODE_BMS_CELL_VALUES_PER_PAGE>,
+    /// Eight cell voltages.
+    pub cell_voltage: ArrayVec<Voltage, BEGODE_BMS_CELL_VALUES_PER_PAGE>,
 }
 
 impl BegodeBmsCellPage {
@@ -133,19 +149,23 @@ impl BegodeBmsCellPage {
             });
         }
 
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         let page_index = frame.sub_index();
-        let mut cell_mv = ArrayVec::new();
-        for offset in (2..18).step_by(2).map(ByteOffset::new) {
-            cell_mv.push(be_u16(cursor, offset));
+        let mut cell_voltage = ArrayVec::new();
+        for offset in (2..18).step_by(2).map(ParserOffset::from_bytes) {
+            cell_voltage.push(Voltage::from_millivolts(i32::from(be_u16(cursor, offset))));
         }
 
         Ok(Self {
             tag,
-            bms_index: u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or_default(),
+            bms_index: BmsPackIndex::new(
+                u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or_default(),
+            ),
             page_index,
-            first_cell_index: u16::from(page_index.get()) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
-            cell_mv,
+            first_cell_index: BmsCellIndex::new(
+                u16::from(page_index.get()) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
+            ),
+            cell_voltage,
         })
     }
 
@@ -189,11 +209,11 @@ fn tag_byte(tag: ProtocolTag) -> u8 {
     u8::try_from(tag.get()).unwrap_or_default()
 }
 
-fn be_u16(cursor: ByteCursor<'_>, offset: ByteOffset) -> u16 {
+fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
     cursor.be_u16(offset).unwrap_or_default()
 }
 
-fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
+fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
     cursor.be_i16(offset).unwrap_or_default()
 }
 
@@ -208,6 +228,10 @@ const fn source_reported<T>(value: T) -> Measured<T> {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
+    }
+
     use cutout_core::{
         BatteryPageKind, Measured, ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource,
         VerificationStatus,
@@ -230,14 +254,14 @@ mod tests {
             summary,
             BegodeBmsSummary {
                 sub_index: ProtocolSelector::new(3),
-                bms_index: 1,
-                half_index: 1,
-                pwm_limit_centi_percent: 10_000,
-                pack_voltage_mv: 80_000,
-                current_ma: -10_000,
-                temperature_0_mc: 25_000,
-                temperature_1_mc: 26_000,
-                half_pack_voltage_mv: 40_000,
+                bms_index: BmsPackIndex::new(1),
+                half_index: BmsHalfIndex::new(1),
+                pwm_limit: DutyCycle::from_permille(1_000),
+                pack_voltage: Voltage::from_millivolts(80_000),
+                current: BatteryCurrent::from_milliamps(-10_000),
+                temperature_0: Temperature::from_millicelsius(25_000),
+                temperature_1: Temperature::from_millicelsius(26_000),
+                half_pack_voltage: Voltage::from_millivolts(40_000),
             }
         );
     }
@@ -248,12 +272,12 @@ mod tests {
         let summary = BegodeBmsSummary::decode(&frame).expect("summary decodes");
 
         assert_eq!(
-            summary.to_delta(77),
+            summary.to_delta(ms(77)),
             TelemetryDelta {
-                voltage_mv: Some(source_reported(80_000)),
-                battery_current_ma: Some(source_reported(-10_000)),
-                battery_temperature_mc: Some(source_reported(25_000)),
-                ..TelemetryDelta::empty(77)
+                voltage: Some(source_reported(Voltage::from_millivolts(80_000))),
+                battery_current: Some(source_reported(BatteryCurrent::from_milliamps(-10_000))),
+                battery_temperature: Some(source_reported(Temperature::from_millicelsius(25_000,))),
+                ..TelemetryDelta::empty(ms(77))
             }
         );
     }
@@ -268,13 +292,19 @@ mod tests {
             BegodePackVoltageProfile::Begode84VFullCharge,
         )
         .expect("live A decodes")
-        .to_delta(1);
+        .to_delta(ms(1));
         let bms_delta = BegodeBmsSummary::decode(&bms_frame)
             .expect("summary decodes")
-            .to_delta(2);
+            .to_delta(ms(2));
 
-        assert_eq!(live_delta.voltage_mv, Some(source_reported(75_063)));
-        assert_eq!(bms_delta.voltage_mv, Some(source_reported(80_000)));
+        assert_eq!(
+            live_delta.voltage,
+            Some(source_reported(Voltage::from_millivolts(75_063)))
+        );
+        assert_eq!(
+            bms_delta.voltage,
+            Some(source_reported(Voltage::from_millivolts(80_000)))
+        );
     }
 
     #[test]
@@ -292,8 +322,14 @@ mod tests {
             payload.page().verification,
             VerificationStatus::SourceVerified
         );
-        assert_eq!(payload.battery().voltage_mv, Some(source_reported(80_000)));
-        assert_eq!(payload.battery().current_ma, Some(source_reported(-10_000)));
+        assert_eq!(
+            payload.battery().voltage,
+            Some(source_reported(Voltage::from_millivolts(80_000)))
+        );
+        assert_eq!(
+            payload.battery().current,
+            Some(source_reported(BatteryCurrent::from_milliamps(-10_000)))
+        );
     }
 
     #[test]
@@ -302,12 +338,21 @@ mod tests {
         let page = BegodeBmsCellPage::decode(&frame).expect("cell page decodes");
 
         assert_eq!(page.tag, ProtocolTag::new(0x02));
-        assert_eq!(page.bms_index, 0);
+        assert_eq!(page.bms_index, BmsPackIndex::new(0));
         assert_eq!(page.page_index, ProtocolSelector::new(2));
-        assert_eq!(page.first_cell_index, 16);
+        assert_eq!(page.first_cell_index, BmsCellIndex::new(16));
         assert_eq!(
-            page.cell_mv.as_slice(),
-            &[4_000, 4_001, 4_002, 4_003, 4_004, 4_005, 4_006, 4_007]
+            page.cell_voltage.as_slice(),
+            &[
+                Voltage::from_millivolts(4_000),
+                Voltage::from_millivolts(4_001),
+                Voltage::from_millivolts(4_002),
+                Voltage::from_millivolts(4_003),
+                Voltage::from_millivolts(4_004),
+                Voltage::from_millivolts(4_005),
+                Voltage::from_millivolts(4_006),
+                Voltage::from_millivolts(4_007),
+            ]
         );
     }
 

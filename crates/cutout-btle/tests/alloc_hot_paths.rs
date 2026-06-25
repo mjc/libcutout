@@ -5,9 +5,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cutout_btle::{MonotonicMs, SessionBridgeEvent, SessionBridgeReport};
 use cutout_core::{
-    GattChannel, NotificationByteLen, NotificationIngestOutcome, PayloadBodyLen, PayloadClassifier,
-    ProtocolFamily, ProtocolSelector, ReservedPayloadEvidence, VerificationStatus,
+    GattChannel, MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome,
+    PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector, ReservedPayloadEvidence,
+    VerificationStatus,
 };
+
+const fn ms(value: u64) -> MonotonicTimestamp {
+    MonotonicTimestamp::new(value)
+}
 
 struct CountingAllocator;
 
@@ -64,11 +69,11 @@ fn btle_report_records_typed_ingest_outcomes_without_allocating_after_setup() {
     let outcome = NotificationIngestOutcome::known_reserved(
         ProtocolFamily::VeteranLeaperkimNosfet,
         channel,
-        NotificationByteLen::new(75),
-        4,
+        NotificationByteLen::from_bytes(75),
+        ms(4),
         ReservedPayloadEvidence {
             classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-            body_len: PayloadBodyLen::new(24),
+            body_len: PayloadBodyLen::from_bytes(24),
             verification: VerificationStatus::HardwareVerified,
         },
     );

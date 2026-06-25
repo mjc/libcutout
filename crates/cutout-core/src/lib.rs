@@ -8,7 +8,7 @@
 
 //! Core types and setup scaffolding for Cutout.
 
-use std::{fmt, marker::PhantomData, ops::RangeInclusive};
+use std::{cmp::Ordering, fmt, marker::PhantomData, ops::RangeInclusive};
 
 use arrayvec::ArrayVec;
 use thiserror::Error;
@@ -24,14 +24,100 @@ pub use ffi::*;
 #[cfg(test)]
 mod gatt_channel_tests;
 
-/// Monotonic timestamp in milliseconds, supplied by the host.
-pub type MonotonicMillis = u64;
+/// Monotonic timestamp supplied by the host.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MonotonicTimestamp(u64);
+
+impl MonotonicTimestamp {
+    /// Creates a monotonic timestamp from milliseconds.
+    #[must_use]
+    pub const fn from_milliseconds(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Creates a monotonic timestamp from milliseconds.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self::from_milliseconds(value)
+    }
+
+    /// Returns the timestamp as milliseconds.
+    #[must_use]
+    pub const fn as_milliseconds(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the timestamp as milliseconds.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.as_milliseconds()
+    }
+
+    /// Adds a duration to this timestamp, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn saturating_add_duration(self, duration: Duration) -> Self {
+        Self::from_milliseconds(self.0.saturating_add(duration.as_milliseconds()))
+    }
+
+    /// Returns the elapsed duration between this timestamp and an earlier one.
+    #[must_use]
+    pub const fn saturating_duration_since(self, earlier: Self) -> Duration {
+        Duration::from_milliseconds(self.0.saturating_sub(earlier.0))
+    }
+}
+
+impl fmt::Display for MonotonicTimestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Wall-clock timestamp represented as Unix epoch milliseconds.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct WallClockUnixTimestamp(u64);
+
+impl WallClockUnixTimestamp {
+    /// Creates a wall-clock timestamp from Unix epoch milliseconds.
+    #[must_use]
+    pub const fn from_milliseconds(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Creates a wall-clock timestamp from Unix epoch milliseconds.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self::from_milliseconds(value)
+    }
+
+    /// Returns the timestamp as Unix epoch milliseconds.
+    #[must_use]
+    pub const fn as_milliseconds(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the timestamp as Unix epoch milliseconds.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.as_milliseconds()
+    }
+}
+
+impl fmt::Display for WallClockUnixTimestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Maximum payload bytes accepted for a single GATT write value.
 pub const MAX_TRANSPORT_WRITE_LEN: usize = 512;
 
 /// Payload bytes stored inline before falling back to an explicit large write.
 pub const MAX_INLINE_TRANSPORT_WRITE_LEN: usize = 32;
+
+/// Maximum payload accepted by a transport write.
+pub type TransportWriteLimit = Quantity<Information, Byte, u16>;
 
 /// Transport-independent identifier for a GATT characteristic or endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -67,10 +153,10 @@ impl GattChannel {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LinkInfo {
     /// Host monotonic connection timestamp.
-    pub monotonic_ms: MonotonicMillis,
+    pub monotonic_ms: MonotonicTimestamp,
 
     /// Maximum write payload length reported by the host, when known.
-    pub max_write_len: Option<u16>,
+    pub max_write_len: Option<TransportWriteLimit>,
 }
 
 /// Command requested by the host application.
@@ -103,7 +189,7 @@ pub enum DeviceCommand {
     /// Set raw motor current in milliamps.
     SetRawMotorCurrent {
         /// Target motor/phase current in milliamps.
-        current_ma: i32,
+        current: PhaseCurrent,
     },
 }
 
@@ -241,7 +327,7 @@ pub struct DangerousActuationArm {
     pub model: &'static str,
 
     /// Monotonic expiry time in milliseconds.
-    pub expires_at_ms: MonotonicMillis,
+    pub expires_at_ms: MonotonicTimestamp,
 }
 
 /// Dangerous actuation policy for a single model/session.
@@ -250,20 +336,20 @@ pub struct DangerousActuationPolicy {
     /// Model this policy allows.
     pub model: &'static str,
 
-    /// Maximum absolute raw motor current allowed by this policy.
-    pub max_current_ma: i32,
+    /// Maximum absolute motor/phase current allowed by this policy.
+    pub max_current: PhaseCurrent,
 
     /// Duration of newly issued arming tokens.
-    pub arm_duration_ms: MonotonicMillis,
+    pub arm_duration: Duration,
 }
 
 impl DangerousActuationPolicy {
     /// Creates an expiring arm token for this policy's model.
     #[must_use]
-    pub const fn arm(self, monotonic_ms: MonotonicMillis) -> DangerousActuationArm {
+    pub const fn arm(self, monotonic_ms: MonotonicTimestamp) -> DangerousActuationArm {
         DangerousActuationArm {
             model: self.model,
-            expires_at_ms: monotonic_ms.saturating_add(self.arm_duration_ms),
+            expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
         }
     }
 
@@ -277,7 +363,7 @@ impl DangerousActuationPolicy {
     pub const fn authorize(
         self,
         command: DeviceCommand,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         arm: Option<DangerousActuationArm>,
     ) -> Result<CommandMetadata, DangerousActuationRefusal> {
         if !matches!(command.safety_class(), SafetyClass::Actuation) {
@@ -291,11 +377,11 @@ impl DangerousActuationPolicy {
         if !str_eq(arm.model, self.model) {
             return Err(DangerousActuationRefusal::WrongModel);
         }
-        if monotonic_ms > arm.expires_at_ms {
+        if monotonic_ms.get() > arm.expires_at_ms.get() {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
-        if let DeviceCommand::SetRawMotorCurrent { current_ma } = command
-            && current_ma.saturating_abs() > self.max_current_ma
+        if let DeviceCommand::SetRawMotorCurrent { current } = command
+            && current.as_milliamps().saturating_abs() > self.max_current.as_milliamps()
         {
             return Err(DangerousActuationRefusal::CurrentLimitExceeded);
         }
@@ -433,13 +519,13 @@ pub struct VerifiedValue<T> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatterySpec {
     /// Series cell count.
-    pub series_cells: PackSeriesCells,
+    pub series_cells: SeriesCount,
 
-    /// Nominal pack capacity in milliamp-hours, when known.
-    pub nominal_capacity_mah: Option<u32>,
+    /// Nominal pack capacity, when known.
+    pub nominal_capacity: Option<Capacity>,
 
-    /// Expected pack voltage range in millivolts.
-    pub voltage_range_mv: RangeInclusive<u32>,
+    /// Expected pack voltage range.
+    pub voltage_range: RangeInclusive<Voltage>,
 
     /// Verification status for the battery metadata.
     pub verification: VerificationStatus,
@@ -462,10 +548,10 @@ pub struct BmsPageSelectorSpec {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsLayoutSpec {
     /// Series-connected cell count covered by this BMS layout.
-    pub series_cells: PackSeriesCells,
+    pub series_cells: SeriesCount,
 
     /// Parallel pack count for this model.
-    pub parallel_packs: BmsParallelPacks,
+    pub parallel_packs: ParallelCount,
 
     /// Cell-voltage values decoded from a full cell-voltage page.
     pub cell_values_per_page: BmsCellValuesPerPage,
@@ -1573,9 +1659,9 @@ impl RegistryHashBuilder {
             Some(battery) => {
                 self.write_u8(1);
                 self.write_u8(battery.series_cells.get());
-                self.write_optional_u32(battery.nominal_capacity_mah);
-                self.write_u32(*battery.voltage_range_mv.start());
-                self.write_u32(*battery.voltage_range_mv.end());
+                self.write_optional_u32(battery.nominal_capacity.map(Capacity::as_milliamp_hours));
+                self.write_i32(battery.voltage_range.start().as_millivolts());
+                self.write_i32(battery.voltage_range.end().as_millivolts());
                 self.write_u8(verification_code(battery.verification));
             }
             None => self.write_u8(0),
@@ -1642,6 +1728,10 @@ impl RegistryHashBuilder {
     }
 
     fn write_u32(&mut self, value: u32) {
+        self.write_bytes(&value.to_le_bytes());
+    }
+
+    fn write_i32(&mut self, value: i32) {
         self.write_bytes(&value.to_le_bytes());
     }
 
@@ -1799,25 +1889,25 @@ impl CommandKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParserLimits {
     /// Maximum accepted logical frame length in bytes.
-    pub max_frame_len: usize,
+    pub max_frame_len: ParserFrameLen,
 
     /// Maximum buffered input length in bytes before a parser should shed data.
-    pub max_buffered_len: usize,
+    pub max_buffered_len: ParserBufferedLen,
 
     /// Maximum queued outputs a parser should retain before yielding to host code.
-    pub max_queued_outputs: usize,
+    pub max_queued_outputs: ParserQueuedOutputCount,
 
     /// Parser timeout threshold in host monotonic milliseconds.
-    pub timeout_ms: MonotonicMillis,
+    pub timeout_ms: MonotonicTimestamp,
 }
 
 impl Default for ParserLimits {
     fn default() -> Self {
         Self {
-            max_frame_len: 4_096,
-            max_buffered_len: 8_192,
-            max_queued_outputs: 128,
-            timeout_ms: 1_000,
+            max_frame_len: ParserFrameLen::from_bytes(4_096),
+            max_buffered_len: ParserBufferedLen::from_bytes(8_192),
+            max_queued_outputs: ParserQueuedOutputCount::from_outputs(128),
+            timeout_ms: MonotonicTimestamp::new(1_000),
         }
     }
 }
@@ -1829,8 +1919,8 @@ impl ParserLimits {
     ///
     /// Returns [`ParserError::OversizedFrame`] when `claimed` exceeds
     /// [`Self::max_frame_len`].
-    pub const fn validate_frame_len(self, claimed: usize) -> Result<(), ParserError> {
-        if claimed <= self.max_frame_len {
+    pub const fn validate_frame_len(self, claimed: ParserFrameLen) -> Result<(), ParserError> {
+        if claimed.is_at_most(self.max_frame_len) {
             Ok(())
         } else {
             Err(ParserError::OversizedFrame {
@@ -1841,16 +1931,148 @@ impl ParserLimits {
     }
 }
 
+enum ProtocolSelectorUnit {}
+enum ProtocolTagUnit {}
+enum VescControllerIdUnit {}
+enum BmsCellValuesPerPageUnit {}
+enum BmsTemperatureValuesPerPageUnit {}
+enum BmsPackIndexUnit {}
+enum BmsHalfIndexUnit {}
+enum BmsCellIndexUnit {}
+
+macro_rules! typed_protocol_value {
+    ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name {
+            value: $inner,
+            _unit: PhantomData<fn() -> $unit>,
+        }
+
+        impl $name {
+            /// Creates the typed protocol value.
+            #[must_use]
+            pub const fn new(value: $inner) -> Self {
+                Self {
+                    value,
+                    _unit: PhantomData,
+                }
+            }
+
+            /// Returns the underlying primitive value for FFI/rendering edges.
+            #[must_use]
+            pub const fn get(self) -> $inner {
+                self.value
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_tuple(stringify!($name)).field(&self.value).finish()
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.value.fmt(f)
+            }
+        }
+    };
+}
+
+/// Bytes dropped while recovering from malformed or excessive parser input.
+pub type ParserDroppedBytes = Quantity<Information, ParserDroppedByte, u64>;
+
+impl ParserDroppedBytes {
+    /// Creates a dropped parser byte count from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this dropped parser byte count in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> u64 {
+        self.unit_value()
+    }
+
+    /// Adds dropped bytes, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::from_bytes(self.as_bytes().saturating_add(other.as_bytes()))
+    }
+}
+
+/// Saturating count for one class of parser diagnostic event.
+pub type ParserDiagnosticCount = Quantity<Count, ParserDiagnosticEvent, u64>;
+
+impl ParserDiagnosticCount {
+    /// Creates a parser diagnostic count from event count.
+    #[must_use]
+    pub const fn from_events(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this parser diagnostic count as event count.
+    #[must_use]
+    pub const fn as_events(self) -> u64 {
+        self.unit_value()
+    }
+
+    /// Adds one diagnostic event, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self::from_events(self.as_events().saturating_add(1))
+    }
+
+    /// Adds diagnostic events, saturating at `u64::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::from_events(self.as_events().saturating_add(other.as_events()))
+    }
+}
+
+/// Size of one parser frame or claimed parser frame.
+pub type ParserFrameLen = Quantity<Information, ParserFrameByte, usize>;
+
+impl ParserFrameLen {
+    /// Returns true when this frame length is less than or equal to another.
+    #[must_use]
+    pub const fn is_at_most(self, other: Self) -> bool {
+        self.as_bytes() <= other.as_bytes()
+    }
+}
+
+/// Maximum buffered parser input size.
+pub type ParserBufferedLen = Quantity<Information, ParserBufferByte, usize>;
+
+/// Maximum queued parser output count.
+pub type ParserQueuedOutputCount = Quantity<Count, ParserQueuedOutput, usize>;
+
+impl ParserQueuedOutputCount {
+    /// Creates a parser queued-output count from output count.
+    #[must_use]
+    pub const fn from_outputs(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this parser queued-output count as output count.
+    #[must_use]
+    pub const fn as_outputs(self) -> usize {
+        self.unit_value()
+    }
+}
+
 /// Parser failure reason that can be counted without tying core to a protocol.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParserError {
     /// A frame claimed or accumulated more bytes than allowed.
     OversizedFrame {
         /// Claimed or observed frame length.
-        claimed: usize,
+        claimed: ParserFrameLen,
 
         /// Configured maximum accepted frame length.
-        max: usize,
+        max: ParserFrameLen,
     },
 
     /// A frame checksum did not match its payload.
@@ -1862,10 +2084,10 @@ pub enum ParserError {
     /// A parser deadline elapsed before the expected data arrived.
     Timeout {
         /// Elapsed monotonic milliseconds.
-        elapsed_ms: MonotonicMillis,
+        elapsed_ms: MonotonicTimestamp,
 
         /// Timeout threshold in monotonic milliseconds.
-        timeout_ms: MonotonicMillis,
+        timeout_ms: MonotonicTimestamp,
     },
 
     /// A reply could not be matched to an in-flight request.
@@ -1876,55 +2098,55 @@ pub enum ParserError {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ParserDiagnostics {
     /// Bytes dropped while recovering from malformed or excessive input.
-    pub dropped_bytes: u64,
+    pub dropped_bytes: ParserDroppedBytes,
 
     /// Parser resynchronization attempts.
-    pub resyncs: u64,
+    pub resyncs: ParserDiagnosticCount,
 
     /// Frames rejected because their checksum did not match.
-    pub bad_checksums: u64,
+    pub bad_checksums: ParserDiagnosticCount,
 
     /// Parser deadlines that elapsed before expected data arrived.
-    pub timeouts: u64,
+    pub timeouts: ParserDiagnosticCount,
 
     /// Frames rejected because they exceeded parser limits.
-    pub oversized_frames: u64,
+    pub oversized_frames: ParserDiagnosticCount,
 
     /// Frames rejected because their structure was invalid.
-    pub malformed_frames: u64,
+    pub malformed_frames: ParserDiagnosticCount,
 
     /// Replies that could not be matched to an in-flight request.
-    pub unmatched_replies: u64,
+    pub unmatched_replies: ParserDiagnosticCount,
 }
 
 impl ParserDiagnostics {
     /// Adds dropped bytes using saturating arithmetic.
-    pub const fn add_dropped_bytes(&mut self, count: u64) {
+    pub const fn add_dropped_bytes(&mut self, count: ParserDroppedBytes) {
         self.dropped_bytes = self.dropped_bytes.saturating_add(count);
     }
 
     /// Records one parser resynchronization attempt.
     pub const fn record_resync(&mut self) {
-        saturating_increment(&mut self.resyncs);
+        self.resyncs = self.resyncs.next();
     }
 
     /// Records one parser error in the corresponding diagnostics counter.
     pub const fn record_error(&mut self, error: ParserError) {
         match error {
             ParserError::OversizedFrame { .. } => {
-                saturating_increment(&mut self.oversized_frames);
+                self.oversized_frames = self.oversized_frames.next();
             }
             ParserError::BadChecksum => {
-                saturating_increment(&mut self.bad_checksums);
+                self.bad_checksums = self.bad_checksums.next();
             }
             ParserError::MalformedFrame => {
-                saturating_increment(&mut self.malformed_frames);
+                self.malformed_frames = self.malformed_frames.next();
             }
             ParserError::Timeout { .. } => {
-                saturating_increment(&mut self.timeouts);
+                self.timeouts = self.timeouts.next();
             }
             ParserError::UnmatchedReply => {
-                saturating_increment(&mut self.unmatched_replies);
+                self.unmatched_replies = self.unmatched_replies.next();
             }
         }
     }
@@ -1943,33 +2165,29 @@ impl ParserDiagnostics {
     }
 }
 
-const fn saturating_increment(counter: &mut u64) {
-    *counter = counter.saturating_add(1);
-}
-
 /// Stable host-facing diagnostic counter snapshot.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticSnapshot {
     /// Bytes dropped while recovering from malformed or excessive input.
-    pub dropped_bytes: u64,
+    pub dropped_bytes: ParserDroppedBytes,
 
     /// Parser resynchronization attempts.
-    pub resyncs: u64,
+    pub resyncs: ParserDiagnosticCount,
 
     /// Frames rejected because their checksum did not match.
-    pub bad_checksums: u64,
+    pub bad_checksums: ParserDiagnosticCount,
 
     /// Parser deadlines that elapsed before expected data arrived.
-    pub timeouts: u64,
+    pub timeouts: ParserDiagnosticCount,
 
     /// Frames rejected because they exceeded parser limits.
-    pub oversized_frames: u64,
+    pub oversized_frames: ParserDiagnosticCount,
 
     /// Frames rejected because their structure was invalid.
-    pub malformed_frames: u64,
+    pub malformed_frames: ParserDiagnosticCount,
 
     /// Replies that could not be matched to an in-flight request.
-    pub unmatched_replies: u64,
+    pub unmatched_replies: ParserDiagnosticCount,
 }
 
 impl DiagnosticSnapshot {
@@ -2031,16 +2249,16 @@ pub struct DiagnosticError {
     pub kind: DiagnosticErrorKind,
 
     /// Claimed or observed frame length for oversized-frame errors.
-    pub claimed_len: Option<usize>,
+    pub claimed_len: Option<ParserFrameLen>,
 
     /// Configured maximum frame length for oversized-frame errors.
-    pub max_len: Option<usize>,
+    pub max_len: Option<ParserFrameLen>,
 
     /// Elapsed monotonic milliseconds for timeout errors.
-    pub elapsed_ms: Option<MonotonicMillis>,
+    pub elapsed_ms: Option<MonotonicTimestamp>,
 
     /// Timeout threshold in monotonic milliseconds for timeout errors.
-    pub timeout_ms: Option<MonotonicMillis>,
+    pub timeout_ms: Option<MonotonicTimestamp>,
 }
 
 impl DiagnosticError {
@@ -2086,107 +2304,25 @@ impl DiagnosticError {
     }
 }
 
-enum NotificationByteLenUnit {}
-enum NotificationChunkLenUnit {}
-enum PayloadBodyLenUnit {}
-enum SemanticEventCountUnit {}
-enum ProtocolSelectorUnit {}
-enum ProtocolTagUnit {}
-enum VescControllerIdUnit {}
-enum PackSeriesCellsUnit {}
-enum BmsParallelPacksUnit {}
-enum BmsCellValuesPerPageUnit {}
-enum BmsTemperatureValuesPerPageUnit {}
+/// Size of one transport notification payload after capture/parser admission.
+pub type NotificationByteLen = Quantity<Information, NotificationPayloadByte, usize>;
 
-macro_rules! typed_protocol_value {
-    ($name:ident, $unit:ident, $inner:ty, $doc:literal) => {
-        #[doc = $doc]
-        #[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        pub struct $name {
-            value: $inner,
-            _unit: PhantomData<fn() -> $unit>,
-        }
-
-        impl $name {
-            /// Creates the typed protocol value.
-            #[must_use]
-            pub const fn new(value: $inner) -> Self {
-                Self {
-                    value,
-                    _unit: PhantomData,
-                }
-            }
-
-            /// Returns the underlying primitive value for FFI/rendering edges.
-            #[must_use]
-            pub const fn get(self) -> $inner {
-                self.value
-            }
-        }
-
-        impl fmt::Debug for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.debug_tuple(stringify!($name)).field(&self.value).finish()
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.value.fmt(f)
-            }
-        }
-    };
-}
-
-typed_protocol_value!(
-    NotificationByteLen,
-    NotificationByteLenUnit,
-    usize,
-    "Length of one transport notification payload after capture/parser admission."
-);
-
-typed_protocol_value!(
-    NotificationChunkLen,
-    NotificationChunkLenUnit,
-    usize,
-    "Replay split length for one notification chunk; zero preserves whole-notification replay."
-);
+/// Replay split size for one notification chunk; zero preserves whole-notification replay.
+pub type NotificationChunkLen = Quantity<Information, NotificationChunkByte, usize>;
 
 impl NotificationChunkLen {
     /// Returns true when replay should preserve whole notifications.
     #[must_use]
     pub const fn is_whole(self) -> bool {
-        self.value == 0
+        self.as_bytes() == 0
     }
 }
 
-typed_protocol_value!(
-    PayloadBodyLen,
-    PayloadBodyLenUnit,
-    usize,
-    "Length of a protocol payload body after selector/tag framing bytes are removed."
-);
+/// Size of a protocol payload body after selector/tag framing bytes are removed.
+pub type PayloadBodyLen = Quantity<Information, PayloadBodyByte, usize>;
 
-typed_protocol_value!(
-    SemanticEventCount,
-    SemanticEventCountUnit,
-    usize,
-    "Number of semantic events emitted from one protocol ingest operation."
-);
-
-impl SemanticEventCount {
-    /// Adds one observed semantic event, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn next(self) -> Self {
-        Self::new(self.value.saturating_add(1))
-    }
-
-    /// Adds another semantic event count, saturating at `usize::MAX`.
-    #[must_use]
-    pub const fn saturating_add(self, other: Self) -> Self {
-        Self::new(self.value.saturating_add(other.value))
-    }
-}
+/// Number of semantic events emitted from one protocol ingest operation.
+pub type SemanticEventCount = Quantity<Count, SemanticEvent, usize>;
 
 typed_protocol_value!(
     ProtocolSelector,
@@ -2210,20 +2346,6 @@ typed_protocol_value!(
 );
 
 typed_protocol_value!(
-    PackSeriesCells,
-    PackSeriesCellsUnit,
-    u8,
-    "Series-connected cell count for model battery and BMS metadata."
-);
-
-typed_protocol_value!(
-    BmsParallelPacks,
-    BmsParallelPacksUnit,
-    u8,
-    "Parallel pack count for model BMS metadata."
-);
-
-typed_protocol_value!(
     BmsCellValuesPerPage,
     BmsCellValuesPerPageUnit,
     u8,
@@ -2237,6 +2359,27 @@ typed_protocol_value!(
     "Temperature value count decoded from a full BMS temperature page."
 );
 
+typed_protocol_value!(
+    BmsPackIndex,
+    BmsPackIndexUnit,
+    u8,
+    "Zero-based BMS pack index inferred from protocol page metadata."
+);
+
+typed_protocol_value!(
+    BmsHalfIndex,
+    BmsHalfIndexUnit,
+    u8,
+    "Zero-based BMS half-pack index inferred from protocol page metadata."
+);
+
+typed_protocol_value!(
+    BmsCellIndex,
+    BmsCellIndexUnit,
+    u16,
+    "Zero-based BMS cell index represented by a decoded cell page."
+);
+
 /// Bounded notification evidence shared by protocol ingest outcomes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NotificationEvidence {
@@ -2247,7 +2390,7 @@ pub struct NotificationEvidence {
     pub channel: GattChannel,
 
     /// Host monotonic receive timestamp.
-    pub monotonic_ms: MonotonicMillis,
+    pub monotonic_ms: MonotonicTimestamp,
 
     /// Number of notification bytes observed.
     pub len: NotificationByteLen,
@@ -2260,7 +2403,7 @@ impl NotificationEvidence {
         family: Option<ProtocolFamily>,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self {
             family,
@@ -2395,7 +2538,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         event_count: SemanticEventCount,
     ) -> Self {
         Self::SemanticEvents {
@@ -2410,7 +2553,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::BufferedFragment(NotificationEvidence::new(
             Some(family),
@@ -2426,7 +2569,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         error: ParserError,
     ) -> Self {
         Self::ParserDiagnostic {
@@ -2441,7 +2584,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         payload: ReservedPayloadEvidence,
     ) -> Self {
         Self::KnownReserved {
@@ -2456,7 +2599,7 @@ impl NotificationIngestOutcome {
         family: ProtocolFamily,
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
         gap: ParserGapEvidence,
     ) -> Self {
         Self::ParserGap {
@@ -2470,7 +2613,7 @@ impl NotificationIngestOutcome {
     pub const fn ignored_wrong_channel(
         channel: GattChannel,
         len: NotificationByteLen,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::Ignored(NotificationEvidence::new(None, channel, len, monotonic_ms))
     }
@@ -2517,22 +2660,22 @@ impl RequestKey {
 /// Retry, timeout, and pacing policy for one scheduled request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RequestPolicy {
-    /// Deadline for one attempt in monotonic milliseconds.
-    pub timeout_ms: MonotonicMillis,
+    /// Deadline duration for one attempt.
+    pub timeout: Duration,
 
     /// Maximum retries after the first attempt.
     pub max_retries: u8,
 
     /// Minimum interval between starts for the same key.
-    pub min_interval_ms: MonotonicMillis,
+    pub min_interval: Duration,
 }
 
 impl Default for RequestPolicy {
     fn default() -> Self {
         Self {
-            timeout_ms: 1_000,
+            timeout: Duration::from_milliseconds(1_000),
             max_retries: 0,
-            min_interval_ms: 0,
+            min_interval: Duration::from_milliseconds(0),
         }
     }
 }
@@ -2547,7 +2690,7 @@ pub struct ScheduledRequest {
     pub policy: RequestPolicy,
 
     /// Monotonic start time for the current attempt.
-    pub started_at_ms: MonotonicMillis,
+    pub started_at_ms: MonotonicTimestamp,
 
     /// Zero-based retry count for the current attempt.
     pub retries: u8,
@@ -2571,7 +2714,7 @@ pub enum RequestStartError {
     /// The request key is still inside its pacing interval.
     Pacing {
         /// Earliest monotonic time when the request can be started.
-        ready_at_ms: MonotonicMillis,
+        ready_at_ms: MonotonicTimestamp,
     },
 
     /// No active request can be retried.
@@ -2629,7 +2772,7 @@ pub enum CorrelationResult {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RequestTracker {
     in_flight: Option<ScheduledRequest>,
-    last_started: Option<(RequestKey, MonotonicMillis)>,
+    last_started: Option<(RequestKey, MonotonicTimestamp)>,
 }
 
 impl RequestTracker {
@@ -2650,14 +2793,14 @@ impl RequestTracker {
         &mut self,
         key: RequestKey,
         policy: RequestPolicy,
-        now_ms: MonotonicMillis,
+        now_ms: MonotonicTimestamp,
     ) -> Result<(), RequestStartError> {
         if let Some(active) = self.in_flight {
             return Err(RequestStartError::Busy { key: active.key });
         }
 
         if let Some((last_key, started_at_ms)) = self.last_started {
-            let ready_at_ms = started_at_ms.saturating_add(policy.min_interval_ms);
+            let ready_at_ms = started_at_ms.saturating_add_duration(policy.min_interval);
             if last_key == key && now_ms < ready_at_ms {
                 return Err(RequestStartError::Pacing { ready_at_ms });
             }
@@ -2675,14 +2818,14 @@ impl RequestTracker {
 
     /// Advances scheduler time and reports timeout or retry eligibility.
     #[must_use]
-    pub const fn on_tick(self, now_ms: MonotonicMillis) -> RequestTick {
+    pub const fn on_tick(self, now_ms: MonotonicTimestamp) -> RequestTick {
         let Some(active) = self.in_flight else {
             return RequestTick::Idle;
         };
         let deadline_ms = active
             .started_at_ms
-            .saturating_add(active.policy.timeout_ms);
-        if now_ms < deadline_ms {
+            .saturating_add_duration(active.policy.timeout);
+        if now_ms.get() < deadline_ms.get() {
             RequestTick::Waiting
         } else if active.retries < active.policy.max_retries {
             RequestTick::Retry {
@@ -2705,7 +2848,7 @@ impl RequestTracker {
     /// active, or [`RequestStartError::Busy`] when no retries remain.
     pub const fn retry_started(
         &mut self,
-        now_ms: MonotonicMillis,
+        now_ms: MonotonicTimestamp,
     ) -> Result<(), RequestStartError> {
         let Some(mut active) = self.in_flight else {
             return Err(RequestStartError::NoActiveRequest);
@@ -3344,7 +3487,1798 @@ impl<T> Measured<T> {
             verification: VerificationStatus::Inferred,
         }
     }
+
+    /// Transforms the underlying value while keeping provenance metadata.
+    #[must_use]
+    pub fn map_value<U>(self, f: impl FnOnce(T) -> U) -> Measured<U> {
+        Measured {
+            value: f(self.value),
+            source: self.source,
+            quality: self.quality,
+            verification: self.verification,
+        }
+    }
 }
+
+/// Marker trait for zero-sized quantity dimensions.
+pub trait Dimension: Copy + Eq {}
+
+/// Electrical potential dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricPotential;
+
+impl Dimension for ElectricPotential {}
+
+/// Electrical current dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricCurrent;
+
+impl Dimension for ElectricCurrent {}
+
+/// Electrical power dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricPower;
+
+impl Dimension for ElectricPower {}
+
+/// Electrical energy dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricEnergy;
+
+impl Dimension for ElectricEnergy {}
+
+/// Electrical charge capacity dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricCharge;
+
+impl Dimension for ElectricCharge {}
+
+/// Linear velocity dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Velocity;
+
+impl Dimension for Velocity {}
+
+/// Length dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Length;
+
+impl Dimension for Length {}
+
+/// Information size dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Information;
+
+impl Dimension for Information {}
+
+/// Thermodynamic temperature dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ThermodynamicTemperature;
+
+impl Dimension for ThermodynamicTemperature {}
+
+/// Plane angle dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlaneAngle;
+
+impl Dimension for PlaneAngle {}
+
+/// Rotational speed dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AngularVelocity;
+
+impl Dimension for AngularVelocity {}
+
+/// Rotation-count dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Rotation;
+
+impl Dimension for Rotation {}
+
+/// Dimensionless ratio dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ratio;
+
+impl Dimension for Ratio {}
+
+/// Radio signal power dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignalPower;
+
+impl Dimension for SignalPower {}
+
+/// Time duration dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Time;
+
+impl Dimension for Time {}
+
+/// Discrete count dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Count;
+
+impl Dimension for Count {}
+
+/// Marker trait for zero-sized quantity units.
+pub trait Unit: Copy + Eq {
+    /// Dimension measured by this unit.
+    type Dimension: Dimension;
+}
+
+/// Millivolt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliVolt;
+
+impl Unit for MilliVolt {
+    type Dimension = ElectricPotential;
+}
+
+/// Centivolt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CentiVolt;
+
+impl Unit for CentiVolt {
+    type Dimension = ElectricPotential;
+}
+
+/// Microvolt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MicroVolt;
+
+impl Unit for MicroVolt {
+    type Dimension = ElectricPotential;
+}
+
+/// Milliamp storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliAmp;
+
+impl Unit for MilliAmp {
+    type Dimension = ElectricCurrent;
+}
+
+/// Milliwatt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliWatt;
+
+impl Unit for MilliWatt {
+    type Dimension = ElectricPower;
+}
+
+/// Watt-hour storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WattHour;
+
+impl Unit for WattHour {
+    type Dimension = ElectricEnergy;
+}
+
+/// Milliamp-hour storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliAmpHour;
+
+impl Unit for MilliAmpHour {
+    type Dimension = ElectricCharge;
+}
+
+/// Millimetres per second storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MillimetrePerSecond;
+
+impl Unit for MillimetrePerSecond {
+    type Dimension = Velocity;
+}
+
+/// Millimetre storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Millimetre;
+
+impl Unit for Millimetre {
+    type Dimension = Length;
+}
+
+/// Byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Byte;
+
+impl Unit for Byte {
+    type Dimension = Information;
+}
+
+/// Parser frame byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserFrameByte;
+
+impl Unit for ParserFrameByte {
+    type Dimension = Information;
+}
+
+/// Parser buffer byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserBufferByte;
+
+impl Unit for ParserBufferByte {
+    type Dimension = Information;
+}
+
+/// Notification payload byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationPayloadByte;
+
+impl Unit for NotificationPayloadByte {
+    type Dimension = Information;
+}
+
+/// Notification chunk byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NotificationChunkByte;
+
+impl Unit for NotificationChunkByte {
+    type Dimension = Information;
+}
+
+/// Protocol payload body byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PayloadBodyByte;
+
+impl Unit for PayloadBodyByte {
+    type Dimension = Information;
+}
+
+/// Parser-dropped byte storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDroppedByte;
+
+impl Unit for ParserDroppedByte {
+    type Dimension = Information;
+}
+
+/// Millisecond storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Millisecond;
+
+impl Unit for Millisecond {
+    type Dimension = Time;
+}
+
+/// Millicelsius storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliCelsius;
+
+impl Unit for MilliCelsius {
+    type Dimension = ThermodynamicTemperature;
+}
+
+/// Millidegree storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MilliDegree;
+
+impl Unit for MilliDegree {
+    type Dimension = PlaneAngle;
+}
+
+/// Electrical revolutions per minute storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricalRevolutionPerMinute;
+
+impl Unit for ElectricalRevolutionPerMinute {
+    type Dimension = AngularVelocity;
+}
+
+/// Relative tachometer count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TachometerCountUnit;
+
+impl Unit for TachometerCountUnit {
+    type Dimension = Rotation;
+}
+
+/// Permille storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Permille;
+
+impl Unit for Permille {
+    type Dimension = Ratio;
+}
+
+/// Percent storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PercentUnit;
+
+impl Unit for PercentUnit {
+    type Dimension = Ratio;
+}
+
+/// Decibel-milliwatt storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecibelMilliwatt;
+
+impl Unit for DecibelMilliwatt {
+    type Dimension = SignalPower;
+}
+
+/// Cell-count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Cell;
+
+impl Unit for Cell {
+    type Dimension = Count;
+}
+
+/// Pack-count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Pack;
+
+impl Unit for Pack {
+    type Dimension = Count;
+}
+
+/// Parser diagnostic event count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserDiagnosticEvent;
+
+impl Unit for ParserDiagnosticEvent {
+    type Dimension = Count;
+}
+
+/// Parser queued-output count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParserQueuedOutput;
+
+impl Unit for ParserQueuedOutput {
+    type Dimension = Count;
+}
+
+/// Semantic event count storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SemanticEvent;
+
+impl Unit for SemanticEvent {
+    type Dimension = Count;
+}
+
+/// Fixed-point quantity tagged by zero-sized dimension and unit markers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+{
+    value: T,
+    dimension: PhantomData<D>,
+    unit: PhantomData<U>,
+}
+
+impl<D, U, T> Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+{
+    /// Creates a quantity from a value already expressed in its storage unit.
+    #[must_use]
+    pub const fn new(value: T) -> Self {
+        Self {
+            value,
+            dimension: PhantomData,
+            unit: PhantomData,
+        }
+    }
+
+    /// Creates a quantity from a value already expressed in its storage unit.
+    #[must_use]
+    pub const fn from_unit_value(value: T) -> Self {
+        Self::new(value)
+    }
+
+    /// Returns the value in this quantity's storage unit.
+    #[must_use]
+    pub const fn unit_value(self) -> T
+    where
+        T: Copy,
+    {
+        self.value
+    }
+
+    /// Returns the value in this quantity's storage unit.
+    #[must_use]
+    pub const fn get(self) -> T
+    where
+        T: Copy,
+    {
+        self.unit_value()
+    }
+}
+
+impl<U> Quantity<Information, U, usize>
+where
+    U: Unit<Dimension = Information>,
+{
+    /// Creates an information quantity from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this information quantity in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> usize {
+        self.unit_value()
+    }
+
+    /// Adds another information quantity, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::from_bytes(self.as_bytes().saturating_add(other.as_bytes()))
+    }
+}
+
+impl<U> Quantity<Information, U, u16>
+where
+    U: Unit<Dimension = Information>,
+{
+    /// Creates an information quantity from bytes.
+    #[must_use]
+    pub const fn from_bytes(value: u16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this information quantity in bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> u16 {
+        self.unit_value()
+    }
+
+    /// Returns a non-zero chunk length suitable for transport writes.
+    #[must_use]
+    pub fn chunk_len(self) -> usize {
+        usize::from(self.as_bytes()).max(1)
+    }
+}
+
+impl<U> Quantity<Count, U, usize>
+where
+    U: Unit<Dimension = Count>,
+{
+    /// Creates a count quantity from event count.
+    #[must_use]
+    pub const fn from_events(value: usize) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this count quantity as event count.
+    #[must_use]
+    pub const fn as_events(self) -> usize {
+        self.unit_value()
+    }
+
+    /// Returns true when this count has no observed events.
+    #[must_use]
+    pub const fn has_no_events(self) -> bool {
+        self.as_events() == 0
+    }
+
+    /// Returns true when this count has at least one observed event.
+    #[must_use]
+    pub const fn has_events(self) -> bool {
+        !self.has_no_events()
+    }
+
+    /// Adds one counted event, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self::from_events(self.as_events().saturating_add(1))
+    }
+
+    /// Adds one counted event, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn increment(self) -> Self {
+        self.next()
+    }
+
+    /// Adds another count quantity, saturating at `usize::MAX`.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self::from_events(self.as_events().saturating_add(other.as_events()))
+    }
+}
+
+impl<D, U, T> Default for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: Default,
+{
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+impl<D, U, T> fmt::Display for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+impl<D, U, T> Ord for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.value.cmp(&other.value)
+    }
+}
+
+impl<D, U, T> PartialOrd for Quantity<D, U, T>
+where
+    D: Dimension,
+    U: Unit<Dimension = D>,
+    T: Ord,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Electrical voltage stored in millivolts.
+pub type Voltage = Quantity<ElectricPotential, MilliVolt, i32>;
+
+const fn saturating_u64_to_i32(value: u64) -> i32 {
+    if value > i32::MAX as u64 {
+        i32::MAX
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            value as i32
+        }
+    }
+}
+
+const fn saturating_i64_to_i32(value: i64) -> i32 {
+    const I32_MAX_I64: i64 = 2_147_483_647;
+    const I32_MIN_I64: i64 = -2_147_483_648;
+
+    if value > I32_MAX_I64 {
+        i32::MAX
+    } else if value < I32_MIN_I64 {
+        i32::MIN
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            value as i32
+        }
+    }
+}
+
+/// Divides two signed integers and rounds the quotient to the nearest integer.
+#[must_use]
+pub fn round_div_i32(numerator: i32, denominator: i32) -> i32 {
+    if denominator == 0 {
+        return 0;
+    }
+
+    let numerator = i64::from(numerator);
+    let denominator = i64::from(denominator);
+    let sign = if (numerator < 0) ^ (denominator < 0) {
+        -1
+    } else {
+        1
+    };
+    let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
+    saturating_i64_to_i32(rounded.saturating_mul(sign))
+}
+
+#[must_use]
+fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
+    if denominator == 0 {
+        return 0;
+    }
+
+    let sign = if (numerator < 0) ^ (denominator < 0) {
+        -1
+    } else {
+        1
+    };
+    let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
+    saturating_i64_to_i32(rounded.saturating_mul(sign))
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn round_f32_to_i32(value: f32) -> i32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn round_f32_to_i64(value: f32) -> i64 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(i64::MIN as f32, i64::MAX as f32) as i64
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn round_f32_to_u64(value: f32) -> u64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    value.round().clamp(0.0, u64::MAX as f32) as u64
+}
+
+impl Voltage {
+    /// Creates a voltage from millivolts.
+    #[must_use]
+    pub const fn from_millivolts(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a voltage from centivolts.
+    #[must_use]
+    pub const fn from_centivolts(value: i32) -> Self {
+        Self::from_millivolts(value.saturating_mul(10))
+    }
+
+    /// Creates a voltage from decivolts.
+    #[must_use]
+    pub const fn from_deci_volts(value: i32) -> Self {
+        Self::from_millivolts(value.saturating_mul(100))
+    }
+
+    /// Returns this voltage in millivolts.
+    #[must_use]
+    pub const fn as_millivolts(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this voltage in volts.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_volts(self) -> f32 {
+        self.as_millivolts() as f32 / 1_000.0
+    }
+
+    /// Returns this voltage in whole volts, rounded to the nearest volt.
+    #[must_use]
+    pub fn as_whole_volts(self) -> u64 {
+        u64::from(self.as_millivolts().unsigned_abs()).saturating_add(500) / 1_000
+    }
+
+    /// Creates a voltage from whole volts.
+    #[must_use]
+    pub const fn from_volts(value: u64) -> Self {
+        Self::from_millivolts(saturating_u64_to_i32(value.saturating_mul(1_000)))
+    }
+
+    /// Creates a voltage from volts represented as a floating-point number.
+    #[must_use]
+    pub fn from_volts_f32(value: f32) -> Self {
+        Self::from_millivolts(round_f32_to_i32(value * 1_000.0))
+    }
+
+    /// Returns this pack voltage as a single-cell voltage for the given series count.
+    #[must_use]
+    pub fn as_cell_voltage(self, series_cells: SeriesCount) -> CellVoltage {
+        let series_cells = i32::from(series_cells.get());
+        if series_cells <= 0 {
+            return CellVoltage::from_microvolts(0);
+        }
+
+        let numerator = i64::from(self.as_millivolts()).saturating_mul(1_000);
+        let rounded = (numerator + i64::from(series_cells / 2)) / i64::from(series_cells);
+        CellVoltage::from_microvolts(saturating_i64_to_i32(rounded))
+    }
+
+    /// Returns this voltage's position inside a voltage range as a whole percent.
+    #[must_use]
+    pub fn percent_of_range(self, voltage_range: &RangeInclusive<Self>) -> BatteryLevel {
+        let voltage = i64::from(self.as_millivolts());
+        let range_start = i64::from(voltage_range.start().as_millivolts());
+        let range_end = i64::from(voltage_range.end().as_millivolts());
+        if range_end <= range_start || voltage <= range_start {
+            return BatteryLevel::from_percent(0);
+        }
+        if voltage >= range_end {
+            return BatteryLevel::from_percent(100);
+        }
+
+        let percent = u64::try_from(
+            (voltage - range_start)
+                .saturating_mul(100)
+                .saturating_add((range_end - range_start) / 2)
+                / (range_end - range_start),
+        )
+        .unwrap_or(0);
+        BatteryLevel::from_percent(u8::try_from(percent).unwrap_or(100))
+    }
+
+    /// Creates a pack voltage from a single-cell voltage and series cell count.
+    #[must_use]
+    pub fn from_cell_voltage(cell_voltage: CellVoltage, series_cells: i32) -> Self {
+        if series_cells <= 0 {
+            return Self::from_millivolts(0);
+        }
+
+        let numerator = i64::from(cell_voltage.as_microvolts()) * i64::from(series_cells);
+        let rounded = (numerator + 500) / 1_000;
+        Self::from_millivolts(saturating_i64_to_i32(rounded))
+    }
+}
+
+/// Wire-encoded electrical voltage stored in centivolts.
+pub type WireVoltage = Quantity<ElectricPotential, CentiVolt, u16>;
+
+impl WireVoltage {
+    /// Creates a voltage from centivolts.
+    #[must_use]
+    pub const fn from_centivolts(value: u16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this voltage in centivolts.
+    #[must_use]
+    pub const fn as_centivolts(self) -> u16 {
+        self.unit_value()
+    }
+
+    /// Converts this centivolt quantity into millivolts.
+    #[must_use]
+    pub const fn as_millivolts(self) -> i32 {
+        self.as_centivolts() as i32 * 10
+    }
+
+    /// Scales this wire voltage into a pack voltage using a milli-ratio.
+    #[must_use]
+    pub fn as_scaled_voltage(self, scaler_milli: i32) -> Voltage {
+        if scaler_milli <= 0 {
+            return Voltage::from_millivolts(0);
+        }
+
+        let numerator = i64::from(self.as_millivolts()) * i64::from(scaler_milli);
+        let scaled = (numerator + 500) / 1_000;
+        Voltage::from_millivolts(saturating_i64_to_i32(scaled))
+    }
+
+    /// Converts a pack voltage back into wire centivolts using a milli-ratio.
+    #[must_use]
+    pub fn from_scaled_voltage(voltage: Voltage, scaler_milli: i32) -> Self {
+        if scaler_milli <= 0 {
+            return Self::from_centivolts(0);
+        }
+
+        let numerator = i64::from(voltage.as_millivolts()) * 100;
+        let centivolts = (numerator + i64::from(scaler_milli / 2)) / i64::from(scaler_milli);
+        Self::from_centivolts(u16::try_from(centivolts).unwrap_or(u16::MAX))
+    }
+}
+
+/// Single-cell voltage stored in microvolts.
+pub type CellVoltage = Quantity<ElectricPotential, MicroVolt, i32>;
+
+impl CellVoltage {
+    /// Creates a cell voltage from microvolts.
+    #[must_use]
+    pub const fn from_microvolts(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this cell voltage in microvolts.
+    #[must_use]
+    pub const fn as_microvolts(self) -> i32 {
+        self.unit_value()
+    }
+}
+
+/// Electrical current stored in milliamps.
+pub type Current = Quantity<ElectricCurrent, MilliAmp, i32>;
+
+/// Battery/input current stored in milliamps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct BatteryCurrent(Current);
+
+impl BatteryCurrent {
+    /// Creates a battery current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self(Current::from_milliamps(value))
+    }
+
+    /// Creates a battery current from centiamps.
+    #[must_use]
+    pub const fn from_centiamps(value: i32) -> Self {
+        Self(Current::from_centiamps(value))
+    }
+
+    /// Creates a battery current from deciamps.
+    #[must_use]
+    pub const fn from_deciamps(value: i32) -> Self {
+        Self(Current::from_deciamps(value))
+    }
+
+    /// Creates a battery current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self(Current::from_amps(value))
+    }
+
+    /// Creates a battery current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self(Current::from_amps_f32(value))
+    }
+
+    /// Returns this battery current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.0.as_milliamps()
+    }
+
+    /// Returns this battery current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.0.as_amps()
+    }
+}
+
+impl core::ops::Deref for BatteryCurrent {
+    type Target = Current;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Current> for BatteryCurrent {
+    fn from(value: Current) -> Self {
+        Self(value)
+    }
+}
+
+impl From<BatteryCurrent> for Current {
+    fn from(value: BatteryCurrent) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for BatteryCurrent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Motor/phase current stored in milliamps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct PhaseCurrent(Current);
+
+impl PhaseCurrent {
+    /// Creates a phase current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self(Current::from_milliamps(value))
+    }
+
+    /// Creates a phase current from centiamps.
+    #[must_use]
+    pub const fn from_centiamps(value: i32) -> Self {
+        Self(Current::from_centiamps(value))
+    }
+
+    /// Creates a phase current from deciamps.
+    #[must_use]
+    pub const fn from_deciamps(value: i32) -> Self {
+        Self(Current::from_deciamps(value))
+    }
+
+    /// Creates a phase current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self(Current::from_amps(value))
+    }
+
+    /// Creates a phase current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self(Current::from_amps_f32(value))
+    }
+
+    /// Returns this phase current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.0.as_milliamps()
+    }
+
+    /// Returns this phase current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.0.as_amps()
+    }
+}
+
+impl core::ops::Deref for PhaseCurrent {
+    type Target = Current;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Current> for PhaseCurrent {
+    fn from(value: Current) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PhaseCurrent> for Current {
+    fn from(value: PhaseCurrent) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for PhaseCurrent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Current {
+    /// Creates a current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a current from centiamps.
+    #[must_use]
+    pub const fn from_centiamps(value: i32) -> Self {
+        Self::from_milliamps(value.saturating_mul(10))
+    }
+
+    /// Creates a current from deciamps.
+    #[must_use]
+    pub const fn from_deciamps(value: i32) -> Self {
+        Self::from_milliamps(value.saturating_mul(100))
+    }
+
+    /// Returns this current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.as_milliamps() as f32 / 1_000.0
+    }
+
+    /// Returns this current magnitude as a current value.
+    #[must_use]
+    pub fn abs(self) -> Self {
+        Self::from_milliamps(self.as_milliamps().saturating_abs())
+    }
+
+    /// Returns this current in whole amps, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_amps(self) -> i64 {
+        i64::from(self.as_milliamps() / 1_000)
+    }
+
+    /// Returns this current magnitude in whole amps, rounded to the nearest amp.
+    #[must_use]
+    pub fn as_abs_whole_amps(self) -> u64 {
+        u64::from(self.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000
+    }
+
+    /// Creates a current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self::from_milliamps(saturating_i64_to_i32(value.saturating_mul(1_000)))
+    }
+
+    /// Creates a current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self::from_milliamps(round_f32_to_i32(value * 1_000.0))
+    }
+}
+
+/// Peak current stored in milliamps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct PeakCurrent(Current);
+
+impl PeakCurrent {
+    /// Creates a peak current from milliamps.
+    #[must_use]
+    pub const fn from_milliamps(value: i32) -> Self {
+        Self(Current::from_milliamps(value))
+    }
+
+    /// Creates a peak current from amps represented as a floating-point number.
+    #[must_use]
+    pub fn from_amps_f32(value: f32) -> Self {
+        Self(Current::from_amps_f32(value))
+    }
+
+    /// Creates a peak current from whole amps.
+    #[must_use]
+    pub const fn from_amps(value: i64) -> Self {
+        Self(Current::from_amps(value))
+    }
+
+    /// Returns this peak current in milliamps.
+    #[must_use]
+    pub const fn as_milliamps(self) -> i32 {
+        self.0.as_milliamps()
+    }
+
+    /// Returns this peak current in amps.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_amps(self) -> f32 {
+        self.0.as_amps()
+    }
+}
+
+impl core::ops::Deref for PeakCurrent {
+    type Target = Current;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Current> for PeakCurrent {
+    fn from(value: Current) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PeakCurrent> for Current {
+    fn from(value: PeakCurrent) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for PeakCurrent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Rotational speed stored in electrical revolutions per minute.
+pub type RotationalSpeed = Quantity<AngularVelocity, ElectricalRevolutionPerMinute, i32>;
+
+impl RotationalSpeed {
+    /// Creates a rotational speed from electrical revolutions per minute.
+    #[must_use]
+    pub const fn from_erpm(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this rotational speed in electrical revolutions per minute.
+    #[must_use]
+    pub const fn as_erpm(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Creates a rotational speed from electrical RPM represented as a floating-point number.
+    #[must_use]
+    pub fn from_erpm_f32(value: f32) -> Self {
+        Self::from_erpm(round_f32_to_i32(value))
+    }
+
+    /// Converts this electrical rotational speed to linear speed using drive geometry.
+    #[must_use]
+    pub fn as_speed(
+        self,
+        motor_pole_pairs: u8,
+        gear_ratio_denominator: u8,
+        wheel_circumference: Distance,
+    ) -> Option<Speed> {
+        let denominator = i64::from(motor_pole_pairs) * i64::from(gear_ratio_denominator) * 60;
+        if denominator == 0 {
+            return None;
+        }
+
+        let wheel_circumference_mm = i64::try_from(wheel_circumference.as_millimetres()).ok()?;
+        let numerator = i64::from(self.as_erpm()) * wheel_circumference_mm;
+        Some(Speed::from_millimetres_per_second(round_div_i64_to_i32(
+            numerator,
+            denominator,
+        )))
+    }
+}
+
+/// Relative tachometer reading stored as signed counts.
+pub type TachometerReading = Quantity<Rotation, TachometerCountUnit, i32>;
+
+impl TachometerReading {
+    /// Creates a relative tachometer reading from signed counts.
+    #[must_use]
+    pub const fn from_counts(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this relative tachometer reading as signed counts.
+    #[must_use]
+    pub const fn as_counts(self) -> i32 {
+        self.unit_value()
+    }
+}
+
+/// Electrical power stored in milliwatts.
+pub type Power = Quantity<ElectricPower, MilliWatt, i64>;
+
+impl Power {
+    /// Creates a power value from milliwatts.
+    #[must_use]
+    pub const fn from_milliwatts(value: i64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Calculates electrical power from voltage and current.
+    #[must_use]
+    pub fn from_voltage_current(voltage: Voltage, current: impl Into<Current>) -> Self {
+        let current = current.into();
+        Self::from_milliwatts(
+            i64::from(voltage.as_millivolts()) * i64::from(current.as_milliamps()) / 1_000,
+        )
+    }
+
+    /// Returns this power in milliwatts.
+    #[must_use]
+    pub const fn as_milliwatts(self) -> i64 {
+        self.unit_value()
+    }
+
+    /// Returns this power in watts.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_watts(self) -> f32 {
+        self.as_milliwatts() as f32 / 1_000.0
+    }
+
+    /// Returns this power in whole watts, rounded toward zero.
+    #[must_use]
+    pub const fn as_whole_watts(self) -> i64 {
+        self.as_milliwatts() / 1_000
+    }
+
+    /// Creates a power from whole watts.
+    #[must_use]
+    pub const fn from_watts(value: i64) -> Self {
+        Self::from_milliwatts(value.saturating_mul(1_000))
+    }
+
+    /// Creates a power from watts represented as a floating-point number.
+    #[must_use]
+    pub fn from_watts_f32(value: f32) -> Self {
+        Self::from_milliwatts(round_f32_to_i64(value * 1_000.0))
+    }
+}
+
+/// Electrical energy stored in watt-hours.
+pub type Energy = Quantity<ElectricEnergy, WattHour, u32>;
+
+impl Energy {
+    /// Creates an energy value from watt-hours.
+    #[must_use]
+    pub const fn from_watt_hours(value: u32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates an energy value from per-cell watt-hours and pack geometry.
+    #[must_use]
+    pub const fn from_cell_geometry(
+        cell_watt_hours: u32,
+        series_cells: SeriesCount,
+        parallel_packs: ParallelCount,
+    ) -> Self {
+        let value = cell_watt_hours
+            .saturating_mul(series_cells.get() as u32)
+            .saturating_mul(parallel_packs.get() as u32);
+        Self::from_watt_hours(value)
+    }
+
+    /// Returns this energy in watt-hours.
+    #[must_use]
+    pub const fn as_watt_hours(self) -> u32 {
+        self.unit_value()
+    }
+}
+
+/// Electrical charge capacity stored in milliamp-hours.
+pub type Capacity = Quantity<ElectricCharge, MilliAmpHour, u32>;
+
+impl Capacity {
+    /// Creates a capacity value from milliamp-hours.
+    #[must_use]
+    pub const fn from_milliamp_hours(value: u32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a capacity value from per-cell milliamp-hours and parallel packs.
+    #[must_use]
+    pub const fn from_parallel_packs(
+        cell_capacity_milliamp_hours: u32,
+        parallel_packs: ParallelCount,
+    ) -> Self {
+        Self::from_milliamp_hours(
+            cell_capacity_milliamp_hours.saturating_mul(parallel_packs.get() as u32),
+        )
+    }
+
+    /// Returns this capacity in milliamp-hours.
+    #[must_use]
+    pub const fn as_milliamp_hours(self) -> u32 {
+        self.unit_value()
+    }
+}
+
+/// Linear speed stored in millimetres per second.
+pub type Speed = Quantity<Velocity, MillimetrePerSecond, i32>;
+
+impl Speed {
+    /// Creates a speed from millimetres per second.
+    #[must_use]
+    pub const fn from_millimetres_per_second(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a speed from centimetres per second.
+    #[must_use]
+    pub const fn from_centimetres_per_second(value: i32) -> Self {
+        Self::from_millimetres_per_second(value.saturating_mul(10))
+    }
+
+    /// Creates a speed from kilometres per hour.
+    #[must_use]
+    pub fn from_kmh(value: u64) -> Self {
+        Self::from_milli_kmh(saturating_u64_to_i32(value.saturating_mul(1_000)))
+    }
+
+    /// Creates a speed from metres per second represented as a floating-point number.
+    #[must_use]
+    pub fn from_metres_per_second(value: f32) -> Self {
+        Self::from_millimetres_per_second(round_f32_to_i32(value * 1_000.0))
+    }
+
+    /// Creates a speed from milli-kilometres per hour.
+    #[must_use]
+    pub const fn from_milli_kmh(value: i32) -> Self {
+        Self::from_millimetres_per_second(value.saturating_mul(5) / 18)
+    }
+
+    /// Creates a speed from deci-kilometres per hour.
+    #[must_use]
+    pub const fn from_deci_kmh(value: i32) -> Self {
+        Self::from_milli_kmh(value.saturating_mul(100))
+    }
+
+    /// Returns this speed in millimetres per second.
+    #[must_use]
+    pub const fn as_millimetres_per_second(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this speed in centimetres per second.
+    #[must_use]
+    pub const fn as_centimetres_per_second(self) -> i32 {
+        self.as_millimetres_per_second() / 10
+    }
+
+    /// Returns this speed in metres per second.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_metres_per_second(self) -> f32 {
+        self.as_millimetres_per_second() as f32 / 1_000.0
+    }
+
+    /// Returns this speed in kilometres per hour.
+    #[must_use]
+    pub fn as_kmh(self) -> i32 {
+        self.as_milli_kmh() / 1_000
+    }
+
+    /// Returns this speed in whole kilometres per hour, rounded to the nearest km/h.
+    #[must_use]
+    pub fn as_kmh_rounded(self) -> i32 {
+        let numerator = i64::from(self.as_millimetres_per_second()) * 18;
+        if numerator >= 0 {
+            i32::try_from((numerator + 2_500) / 5_000).unwrap_or(i32::MAX)
+        } else {
+            i32::try_from((numerator - 2_500) / 5_000).unwrap_or(i32::MIN)
+        }
+    }
+
+    /// Returns this speed in milli-kilometres per hour.
+    #[must_use]
+    pub const fn as_milli_kmh(self) -> i32 {
+        self.as_millimetres_per_second().saturating_mul(18) / 5
+    }
+
+    /// Returns this speed in deci-kilometres per hour.
+    #[must_use]
+    pub const fn as_deci_kmh(self) -> i32 {
+        self.as_milli_kmh() / 100
+    }
+
+    /// Returns this speed in deci-kilometres per hour, rounded to the nearest tenth.
+    #[must_use]
+    pub fn as_deci_kmh_rounded(self) -> i32 {
+        let numerator = i64::from(self.as_millimetres_per_second()) * 36;
+        if numerator >= 0 {
+            i32::try_from((numerator + 500) / 1_000).unwrap_or(i32::MAX)
+        } else {
+            i32::try_from((numerator - 500) / 1_000).unwrap_or(i32::MIN)
+        }
+    }
+
+    /// Creates a speed from miles per hour.
+    #[must_use]
+    pub fn from_mph(value: u64) -> Self {
+        let millimetres_per_second = value.saturating_mul(447_388).saturating_add(500) / 1_000;
+        Self::from_millimetres_per_second(i32::try_from(millimetres_per_second).unwrap_or(i32::MAX))
+    }
+
+    /// Creates a speed from whole miles per hour, truncating the km/h result to a whole number.
+    #[must_use]
+    pub fn from_mph_floor_kmh(value: u64) -> Self {
+        let kmh = value.saturating_mul(1_609_344) / 1_000_000;
+        Self::from_kmh(kmh)
+    }
+
+    /// Scales a milli-km/h value by a milli-ratio.
+    #[must_use]
+    pub fn from_milli_kmh_scaled(value: i32, scale_milli: i32) -> Self {
+        if scale_milli <= 0 {
+            return Self::from_millimetres_per_second(0);
+        }
+
+        let numerator = i64::from(value) * i64::from(scale_milli);
+        let scaled = (numerator + 500_000) / 1_000_000;
+        Self::from_milli_kmh(saturating_i64_to_i32(scaled))
+    }
+
+    /// Returns this speed in whole miles per hour, rounded to the nearest mph.
+    #[must_use]
+    pub fn as_mph(self) -> u64 {
+        u64::from(self.as_millimetres_per_second().unsigned_abs())
+            .saturating_mul(1_000)
+            .saturating_add(223_694)
+            / 447_388
+    }
+}
+
+/// Linear distance stored in millimetres.
+pub type Distance = Quantity<Length, Millimetre, u64>;
+
+impl Distance {
+    /// Creates a distance from millimetres.
+    #[must_use]
+    pub const fn from_millimetres(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a distance from metres.
+    #[must_use]
+    pub const fn from_metres(value: u64) -> Self {
+        Self::from_millimetres(value.saturating_mul(1_000))
+    }
+
+    /// Creates a distance from milli-miles.
+    #[must_use]
+    pub fn from_milli_miles(value: u32) -> Self {
+        Self::from_millimetres(u64::from(value).saturating_mul(1_609_344) / 1_000)
+    }
+
+    /// Creates a distance from metres represented as a floating-point number.
+    #[must_use]
+    pub fn from_metres_f32(value: f32) -> Self {
+        Self::from_millimetres(round_f32_to_u64(value * 1_000.0))
+    }
+
+    /// Returns this distance in millimetres.
+    #[must_use]
+    pub const fn as_millimetres(self) -> u64 {
+        self.unit_value()
+    }
+
+    /// Returns this distance in metres.
+    #[must_use]
+    pub const fn as_metres(self) -> u64 {
+        self.as_whole_metres()
+    }
+
+    /// Returns this distance in whole metres, rounded toward zero.
+    #[must_use]
+    pub const fn as_whole_metres(self) -> u64 {
+        self.as_millimetres() / 1_000
+    }
+
+    /// Returns this distance in tenths of a kilometre, rounded to the nearest tenth.
+    #[must_use]
+    pub const fn as_kilometre_tenths(self) -> u64 {
+        self.as_whole_metres()
+            .saturating_mul(10)
+            .saturating_add(500)
+            / 1_000
+    }
+}
+
+/// Signed linear distance offset stored in millimetres.
+pub type DistanceOffset = Quantity<Length, Millimetre, i64>;
+
+impl DistanceOffset {
+    /// Creates a signed distance offset from millimetres.
+    #[must_use]
+    pub const fn from_millimetres(value: i64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a signed distance offset from metres.
+    #[must_use]
+    pub const fn from_metres(value: i64) -> Self {
+        Self::from_millimetres(value.saturating_mul(1_000))
+    }
+
+    /// Returns this signed distance offset in millimetres.
+    #[must_use]
+    pub const fn as_millimetres(self) -> i64 {
+        self.unit_value()
+    }
+}
+
+/// Time duration stored in milliseconds.
+pub type Duration = Quantity<Time, Millisecond, u64>;
+
+impl Duration {
+    /// Creates a duration from milliseconds.
+    #[must_use]
+    pub const fn from_milliseconds(value: u64) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a duration from deciseconds.
+    #[must_use]
+    pub const fn from_deciseconds(value: u64) -> Self {
+        Self::from_milliseconds(value.saturating_mul(100))
+    }
+
+    /// Creates a duration from seconds.
+    #[must_use]
+    pub const fn from_seconds(value: u64) -> Self {
+        Self::from_milliseconds(value.saturating_mul(1_000))
+    }
+
+    /// Creates a duration from minutes.
+    #[must_use]
+    pub const fn from_minutes(value: u64) -> Self {
+        Self::from_seconds(value.saturating_mul(60))
+    }
+
+    /// Returns this duration in milliseconds.
+    #[must_use]
+    pub const fn as_milliseconds(self) -> u64 {
+        self.unit_value()
+    }
+
+    /// Returns this duration in whole seconds.
+    #[must_use]
+    pub const fn as_seconds(self) -> u64 {
+        self.as_milliseconds() / 1_000
+    }
+
+    /// Returns this duration in whole minutes.
+    #[must_use]
+    pub const fn as_minutes(self) -> u64 {
+        self.as_seconds() / 60
+    }
+
+    /// Creates a duration from seconds represented as a floating-point number.
+    #[must_use]
+    pub fn from_seconds_f32(value: f32) -> Self {
+        Self::from_milliseconds(round_f32_to_u64(value * 1_000.0))
+    }
+}
+
+/// Temperature stored in millicelsius.
+pub type Temperature = Quantity<ThermodynamicTemperature, MilliCelsius, i32>;
+
+impl Temperature {
+    /// Creates a temperature from millicelsius.
+    #[must_use]
+    pub const fn from_millicelsius(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a temperature from decicelsius.
+    #[must_use]
+    pub const fn from_deci_celsius(value: i32) -> Self {
+        Self::from_millicelsius(value.saturating_mul(100))
+    }
+
+    /// Creates a temperature from centicelsius.
+    #[must_use]
+    pub const fn from_centi_celsius(value: i32) -> Self {
+        Self::from_millicelsius(value.saturating_mul(10))
+    }
+
+    /// Returns this temperature in millicelsius.
+    #[must_use]
+    pub const fn as_millicelsius(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this temperature in celsius.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_celsius(self) -> f32 {
+        self.as_millicelsius() as f32 / 1_000.0
+    }
+
+    /// Returns this temperature in whole celsius, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_celsius(self) -> i64 {
+        i64::from(self.as_millicelsius() / 1_000)
+    }
+
+    /// Returns this temperature magnitude in whole celsius, rounded to the nearest degree.
+    #[must_use]
+    pub fn as_abs_whole_celsius(self) -> u64 {
+        u64::from(self.as_millicelsius().unsigned_abs()).saturating_add(500) / 1_000
+    }
+
+    /// Creates a temperature from whole celsius.
+    #[must_use]
+    pub const fn from_celsius(value: i64) -> Self {
+        Self::from_millicelsius(saturating_i64_to_i32(value.saturating_mul(1_000)))
+    }
+
+    /// Creates a temperature from raw MPU6050 sensor counts.
+    #[must_use]
+    pub const fn from_mpu6050_counts(value: i16) -> Self {
+        Self::from_millicelsius(36_530 + (value as i32 * 1_000) / 340)
+    }
+}
+
+/// Plane angle stored in millidegrees.
+pub type Angle = Quantity<PlaneAngle, MilliDegree, i32>;
+
+impl Angle {
+    /// Creates an angle from millidegrees.
+    #[must_use]
+    pub const fn from_millidegrees(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates an angle from decidegrees.
+    #[must_use]
+    pub const fn from_deci_degrees(value: i32) -> Self {
+        Self::from_millidegrees(value.saturating_mul(10))
+    }
+
+    /// Returns this angle in millidegrees.
+    #[must_use]
+    pub const fn as_millidegrees(self) -> i32 {
+        self.unit_value()
+    }
+
+    /// Returns this angle in degrees.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_degrees(self) -> f32 {
+        self.as_millidegrees() as f32 / 1_000.0
+    }
+
+    /// Returns this angle in whole degrees, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_degrees(self) -> i64 {
+        i64::from(self.as_millidegrees() / 1_000)
+    }
+
+    /// Creates an angle from whole degrees.
+    #[must_use]
+    pub const fn from_degrees(value: i64) -> Self {
+        Self::from_millidegrees(saturating_i64_to_i32(value.saturating_mul(1_000)))
+    }
+}
+
+/// Ratio stored in permille.
+pub type DutyCycle = Quantity<Ratio, Permille, i16>;
+
+impl DutyCycle {
+    /// Creates a duty cycle from permille.
+    #[must_use]
+    pub const fn from_permille(value: i16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a duty cycle from centipercent.
+    #[must_use]
+    pub fn from_centipercent(value: u16) -> Self {
+        Self::from_permille(i16::try_from(value / 10).unwrap_or(i16::MAX))
+    }
+
+    /// Creates a duty cycle from a raw decipermille value.
+    #[must_use]
+    pub const fn from_decipermille(value: i16) -> Self {
+        Self::from_permille(value / 10)
+    }
+
+    /// Creates a duty cycle from a centered raw PWM register.
+    #[must_use]
+    pub fn from_centered_pwm(value: u16) -> Self {
+        let centered = i32::from(value) - 0x8000;
+        let permille = centered * 1_000 / 0x8000;
+        Self::from_permille(
+            i16::try_from(permille).unwrap_or(if permille.is_negative() {
+                i16::MIN
+            } else {
+                i16::MAX
+            }),
+        )
+    }
+
+    /// Returns this duty cycle in permille.
+    #[must_use]
+    pub const fn as_permille(self) -> i16 {
+        self.unit_value()
+    }
+
+    /// Returns this duty cycle as percent.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn as_percent(self) -> f32 {
+        f32::from(self.as_permille()) / 10.0
+    }
+
+    /// Returns this duty cycle as whole percent, rounded toward zero.
+    #[must_use]
+    pub fn as_whole_percent(self) -> i64 {
+        i64::from(self.as_permille() / 10)
+    }
+}
+
+/// Battery state-of-charge stored as a percentage.
+pub type BatteryLevel = Quantity<Ratio, PercentUnit, u8>;
+
+impl BatteryLevel {
+    /// Creates a battery level from a percent value.
+    #[must_use]
+    pub const fn from_percent(value: u8) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Creates a battery level from a signed percent value, clamping to the stored range.
+    #[must_use]
+    pub fn from_percent_i32(value: i32) -> Self {
+        Self::from_percent(u8::try_from(value.clamp(0, 100)).unwrap_or(100))
+    }
+
+    /// Returns this battery level as a percent value.
+    #[must_use]
+    pub const fn as_percent(self) -> u8 {
+        self.unit_value()
+    }
+
+    /// Returns this battery level as a unitless fraction in the range `0.0..=1.0`.
+    #[must_use]
+    pub fn as_ratio(self) -> f64 {
+        f64::from(self.as_percent()) / 100.0
+    }
+
+    /// Linearly interpolates a battery level between two reference points.
+    #[must_use]
+    pub fn interpolate(low: Self, high: Self, value: i64, low_value: i64, high_value: i64) -> Self {
+        let value_span = high_value - low_value;
+        if value_span <= 0 {
+            return low;
+        }
+
+        let level_span = i32::from(high.as_percent()) - i32::from(low.as_percent());
+        let value_offset = value - low_value;
+        let numerator = value_offset.saturating_mul(i64::from(level_span));
+        let level = i32::from(low.as_percent())
+            + round_div_i32(
+                i32::try_from(numerator).unwrap_or_else(|_| {
+                    if numerator.is_negative() {
+                        i32::MIN
+                    } else {
+                        i32::MAX
+                    }
+                }),
+                i32::try_from(value_span).unwrap_or_else(|_| {
+                    if value_span.is_negative() {
+                        i32::MIN
+                    } else {
+                        i32::MAX
+                    }
+                }),
+            );
+        Self::from_percent_i32(level)
+    }
+
+    /// Evaluates a piecewise-linear battery curve over typed percentage points.
+    #[must_use]
+    pub fn from_piecewise_linear(value: i64, points: &[(i64, Self)]) -> Self {
+        let Some((first_value, first_level)) = points.first().copied() else {
+            return Self::from_percent(0);
+        };
+        if value <= first_value {
+            return first_level;
+        }
+
+        for window in points.windows(2) {
+            let [low, high] = window else {
+                continue;
+            };
+            let (low_value, low_level) = *low;
+            let (high_value, high_level) = *high;
+            if value <= high_value {
+                return Self::interpolate(low_level, high_level, value, low_value, high_value);
+            }
+        }
+
+        points
+            .last()
+            .copied()
+            .map_or_else(|| Self::from_percent(0), |(_, level)| level)
+    }
+}
+
+/// Radio signal strength stored in dBm.
+pub type SignalStrength = Quantity<SignalPower, DecibelMilliwatt, i16>;
+
+impl SignalStrength {
+    /// Creates a signal-strength value from dBm.
+    #[must_use]
+    pub const fn from_dbm(value: i16) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this signal strength in dBm.
+    #[must_use]
+    pub const fn as_dbm(self) -> i16 {
+        self.unit_value()
+    }
+
+    /// Returns this signal strength as a coarse UI quality percentage.
+    #[must_use]
+    pub fn as_quality_percent(self) -> u8 {
+        let dbm = self.as_dbm().clamp(-100, -50);
+        let offset = i32::from(dbm) + 100;
+        let percent = (offset * 100) / 50;
+        u8::try_from(percent).unwrap_or(100)
+    }
+}
+
+/// Series-connected cell count for model battery and BMS metadata.
+pub type SeriesCount = Quantity<Count, Cell, u8>;
+
+/// Parallel pack count for model BMS metadata.
+pub type ParallelCount = Quantity<Count, Pack, u8>;
 
 /// Raw numeric field reported by a protocol-specific response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3383,33 +5317,14 @@ pub struct FirmwareInfo {
     pub build_id: Option<RawFieldValue>,
 }
 
-/// BMS pack current in milliamps.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct BmsPackCurrentMa(i32);
-
-impl BmsPackCurrentMa {
-    /// Creates a BMS pack current value in milliamps.
-    #[must_use]
-    pub const fn new(value: i32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the current value in milliamps.
-    #[must_use]
-    pub const fn get(self) -> i32 {
-        self.0
-    }
-}
-
 /// Paired page-specific BMS pack-current values with shared provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BmsPackCurrents {
-    /// First page-specific BMS pack current in milliamps.
-    current_0_ma: BmsPackCurrentMa,
+    /// First page-specific BMS pack current.
+    current_0: BatteryCurrent,
 
-    /// Second page-specific BMS pack current in milliamps.
-    current_1_ma: BmsPackCurrentMa,
+    /// Second page-specific BMS pack current.
+    current_1: BatteryCurrent,
 
     /// Source of the current values.
     pub source: ValueSource,
@@ -3424,10 +5339,10 @@ pub struct BmsPackCurrents {
 impl BmsPackCurrents {
     /// Creates known BMS pack current values reported directly by the device.
     #[must_use]
-    pub const fn reported(current_0_ma: i32, current_1_ma: i32) -> Self {
+    pub const fn reported(current_0: BatteryCurrent, current_1: BatteryCurrent) -> Self {
         Self {
-            current_0_ma: BmsPackCurrentMa::new(current_0_ma),
-            current_1_ma: BmsPackCurrentMa::new(current_1_ma),
+            current_0,
+            current_1,
             source: ValueSource::Reported,
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
@@ -3436,14 +5351,14 @@ impl BmsPackCurrents {
 
     /// Returns the first page-specific BMS pack current.
     #[must_use]
-    pub const fn current_0_ma(self) -> BmsPackCurrentMa {
-        self.current_0_ma
+    pub const fn current_0(self) -> BatteryCurrent {
+        self.current_0
     }
 
     /// Returns the second page-specific BMS pack current.
     #[must_use]
-    pub const fn current_1_ma(self) -> BmsPackCurrentMa {
-        self.current_1_ma
+    pub const fn current_1(self) -> BatteryCurrent {
+        self.current_1
     }
 }
 
@@ -3467,6 +5382,12 @@ impl ChargeMode {
             Self::NotCharging
         }
     }
+
+    /// Returns true when charging is active.
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Charging)
+    }
 }
 
 impl core::fmt::Display for ChargeMode {
@@ -3482,19 +5403,19 @@ impl core::fmt::Display for ChargeMode {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BatteryInfo {
     /// Pack or input voltage in millivolts.
-    pub voltage_mv: Option<Measured<i32>>,
+    pub voltage: Option<Measured<Voltage>>,
 
     /// Pack or battery current in milliamps.
-    pub current_ma: Option<Measured<i32>>,
+    pub current: Option<Measured<BatteryCurrent>>,
 
-    /// Battery percentage reported by the device.
-    pub percent_reported: Option<Measured<u8>>,
+    /// Battery level reported by the device.
+    pub level_reported: Option<Measured<BatteryLevel>>,
 
-    /// Battery percentage estimated by Cutout.
-    pub percent_estimated: Option<Measured<u8>>,
+    /// Battery level estimated by Cutout.
+    pub level_estimated: Option<Measured<BatteryLevel>>,
 
     /// Battery or BMS temperature in millicelsius.
-    pub temperature_mc: Option<Measured<i32>>,
+    pub temperature: Option<Measured<Temperature>>,
 
     /// Raw battery/BMS state field, when present.
     pub raw_state: Option<RawFieldValue>,
@@ -3603,71 +5524,71 @@ impl ReadOnlyResponse {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TelemetryDelta {
     /// Host monotonic timestamp for this update.
-    pub at_ms: MonotonicMillis,
+    pub at_ms: MonotonicTimestamp,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed_mm_s: Option<Measured<i32>>,
+    pub speed: Option<Measured<Speed>>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage_mv: Option<Measured<i32>>,
+    pub voltage: Option<Measured<Voltage>>,
 
     /// Battery/input current in milliamps.
-    pub battery_current_ma: Option<Measured<i32>>,
+    pub battery_current: Option<Measured<BatteryCurrent>>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current_ma: Option<Measured<i32>>,
+    pub motor_current: Option<Measured<PhaseCurrent>>,
 
     /// Electrical power in milliwatts.
-    pub power_mw: Option<Measured<i64>>,
+    pub power: Option<Measured<Power>>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<Measured<i32>>,
+    pub controller_temperature: Option<Measured<Temperature>>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<Measured<i32>>,
+    pub motor_temperature: Option<Measured<Temperature>>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<Measured<i32>>,
+    pub battery_temperature: Option<Measured<Temperature>>,
 
     /// PWM duty in permille.
-    pub pwm_permille: Option<Measured<i16>>,
+    pub pwm: Option<Measured<DutyCycle>>,
 
     /// Total or trip distance in millimeters.
-    pub distance_mm: Option<Measured<u64>>,
+    pub distance: Option<Measured<Distance>>,
 
     /// Pitch in millidegrees.
-    pub pitch_mdeg: Option<Measured<i32>>,
+    pub pitch: Option<Measured<Angle>>,
 
     /// Roll in millidegrees.
-    pub roll_mdeg: Option<Measured<i32>>,
+    pub roll: Option<Measured<Angle>>,
 
-    /// Battery percentage reported by the device.
-    pub battery_percent_reported: Option<Measured<u8>>,
+    /// Battery level reported by the device.
+    pub battery_level_reported: Option<Measured<BatteryLevel>>,
 
-    /// Battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<Measured<u8>>,
+    /// Battery level estimated by Cutout.
+    pub battery_level_estimated: Option<Measured<BatteryLevel>>,
 }
 
 impl TelemetryDelta {
     /// Creates an empty telemetry delta at a timestamp.
     #[must_use]
-    pub const fn empty(at_ms: MonotonicMillis) -> Self {
+    pub const fn empty(at_ms: MonotonicTimestamp) -> Self {
         Self {
             at_ms,
-            speed_mm_s: None,
-            voltage_mv: None,
-            battery_current_ma: None,
-            motor_current_ma: None,
-            power_mw: None,
-            controller_temperature_mc: None,
-            motor_temperature_mc: None,
-            battery_temperature_mc: None,
-            pwm_permille: None,
-            distance_mm: None,
-            pitch_mdeg: None,
-            roll_mdeg: None,
-            battery_percent_reported: None,
-            battery_percent_estimated: None,
+            speed: None,
+            voltage: None,
+            battery_current: None,
+            motor_current: None,
+            power: None,
+            controller_temperature: None,
+            motor_temperature: None,
+            battery_temperature: None,
+            pwm: None,
+            distance: None,
+            pitch: None,
+            roll: None,
+            battery_level_reported: None,
+            battery_level_estimated: None,
         }
     }
 }
@@ -3676,49 +5597,49 @@ impl TelemetryDelta {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TelemetrySnapshot {
     /// Timestamp of the latest applied delta.
-    pub at_ms: Option<MonotonicMillis>,
+    pub at_ms: Option<MonotonicTimestamp>,
 
     /// Latest known speed in millimeters per second.
-    pub speed_mm_s: Option<Measured<i32>>,
+    pub speed: Option<Measured<Speed>>,
 
     /// Latest known input voltage in millivolts.
-    pub voltage_mv: Option<Measured<i32>>,
+    pub voltage: Option<Measured<Voltage>>,
 
     /// Latest known battery/input current in milliamps.
-    pub battery_current_ma: Option<Measured<i32>>,
+    pub battery_current: Option<Measured<BatteryCurrent>>,
 
     /// Latest known motor/phase current in milliamps.
-    pub motor_current_ma: Option<Measured<i32>>,
+    pub motor_current: Option<Measured<PhaseCurrent>>,
 
     /// Latest known electrical power in milliwatts.
-    pub power_mw: Option<Measured<i64>>,
+    pub power: Option<Measured<Power>>,
 
     /// Latest known controller temperature in millicelsius.
-    pub controller_temperature_mc: Option<Measured<i32>>,
+    pub controller_temperature: Option<Measured<Temperature>>,
 
     /// Latest known motor temperature in millicelsius.
-    pub motor_temperature_mc: Option<Measured<i32>>,
+    pub motor_temperature: Option<Measured<Temperature>>,
 
     /// Latest known battery temperature in millicelsius.
-    pub battery_temperature_mc: Option<Measured<i32>>,
+    pub battery_temperature: Option<Measured<Temperature>>,
 
     /// Latest known PWM duty in permille.
-    pub pwm_permille: Option<Measured<i16>>,
+    pub pwm: Option<Measured<DutyCycle>>,
 
     /// Latest known total or trip distance in millimeters.
-    pub distance_mm: Option<Measured<u64>>,
+    pub distance: Option<Measured<Distance>>,
 
     /// Latest known pitch in millidegrees.
-    pub pitch_mdeg: Option<Measured<i32>>,
+    pub pitch: Option<Measured<Angle>>,
 
     /// Latest known roll in millidegrees.
-    pub roll_mdeg: Option<Measured<i32>>,
+    pub roll: Option<Measured<Angle>>,
 
-    /// Latest known battery percentage reported by the device.
-    pub battery_percent_reported: Option<Measured<u8>>,
+    /// Latest known battery level reported by the device.
+    pub battery_level_reported: Option<Measured<BatteryLevel>>,
 
-    /// Latest known battery percentage estimated by Cutout.
-    pub battery_percent_estimated: Option<Measured<u8>>,
+    /// Latest known battery level estimated by Cutout.
+    pub battery_level_estimated: Option<Measured<BatteryLevel>>,
 }
 
 impl TelemetrySnapshot {
@@ -3726,47 +5647,47 @@ impl TelemetrySnapshot {
     pub const fn apply_delta(&mut self, delta: TelemetryDelta) {
         self.at_ms = Some(delta.at_ms);
 
-        if delta.speed_mm_s.is_some() {
-            self.speed_mm_s = delta.speed_mm_s;
+        if delta.speed.is_some() {
+            self.speed = delta.speed;
         }
-        if delta.voltage_mv.is_some() {
-            self.voltage_mv = delta.voltage_mv;
+        if delta.voltage.is_some() {
+            self.voltage = delta.voltage;
         }
-        if delta.battery_current_ma.is_some() {
-            self.battery_current_ma = delta.battery_current_ma;
+        if delta.battery_current.is_some() {
+            self.battery_current = delta.battery_current;
         }
-        if delta.motor_current_ma.is_some() {
-            self.motor_current_ma = delta.motor_current_ma;
+        if delta.motor_current.is_some() {
+            self.motor_current = delta.motor_current;
         }
-        if delta.power_mw.is_some() {
-            self.power_mw = delta.power_mw;
+        if delta.power.is_some() {
+            self.power = delta.power;
         }
-        if delta.controller_temperature_mc.is_some() {
-            self.controller_temperature_mc = delta.controller_temperature_mc;
+        if delta.controller_temperature.is_some() {
+            self.controller_temperature = delta.controller_temperature;
         }
-        if delta.motor_temperature_mc.is_some() {
-            self.motor_temperature_mc = delta.motor_temperature_mc;
+        if delta.motor_temperature.is_some() {
+            self.motor_temperature = delta.motor_temperature;
         }
-        if delta.battery_temperature_mc.is_some() {
-            self.battery_temperature_mc = delta.battery_temperature_mc;
+        if delta.battery_temperature.is_some() {
+            self.battery_temperature = delta.battery_temperature;
         }
-        if delta.pwm_permille.is_some() {
-            self.pwm_permille = delta.pwm_permille;
+        if delta.pwm.is_some() {
+            self.pwm = delta.pwm;
         }
-        if delta.distance_mm.is_some() {
-            self.distance_mm = delta.distance_mm;
+        if delta.distance.is_some() {
+            self.distance = delta.distance;
         }
-        if delta.pitch_mdeg.is_some() {
-            self.pitch_mdeg = delta.pitch_mdeg;
+        if delta.pitch.is_some() {
+            self.pitch = delta.pitch;
         }
-        if delta.roll_mdeg.is_some() {
-            self.roll_mdeg = delta.roll_mdeg;
+        if delta.roll.is_some() {
+            self.roll = delta.roll;
         }
-        if delta.battery_percent_reported.is_some() {
-            self.battery_percent_reported = delta.battery_percent_reported;
+        if delta.battery_level_reported.is_some() {
+            self.battery_level_reported = delta.battery_level_reported;
         }
-        if delta.battery_percent_estimated.is_some() {
-            self.battery_percent_estimated = delta.battery_percent_estimated;
+        if delta.battery_level_estimated.is_some() {
+            self.battery_level_estimated = delta.battery_level_estimated;
         }
     }
 }
@@ -3789,13 +5710,13 @@ pub enum SessionInput<'a> {
         bytes: &'a [u8],
 
         /// Host monotonic receive timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Timer tick supplied by the host.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Command requested by the host application.
@@ -3924,7 +5845,7 @@ pub enum DeviceEvent {
     /// Tick event accepted by the session.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Telemetry update emitted by a protocol session.
@@ -3983,30 +5904,22 @@ where
             output: Vec::with_capacity(4),
             snapshot: TelemetrySnapshot {
                 at_ms: None,
-                speed_mm_s: None,
-                voltage_mv: None,
-                battery_current_ma: None,
-                motor_current_ma: None,
-                power_mw: None,
-                controller_temperature_mc: None,
-                motor_temperature_mc: None,
-                battery_temperature_mc: None,
-                pwm_permille: None,
-                distance_mm: None,
-                pitch_mdeg: None,
-                roll_mdeg: None,
-                battery_percent_reported: None,
-                battery_percent_estimated: None,
+                speed: None,
+                voltage: None,
+                battery_current: None,
+                motor_current: None,
+                power: None,
+                controller_temperature: None,
+                motor_temperature: None,
+                battery_temperature: None,
+                pwm: None,
+                distance: None,
+                pitch: None,
+                roll: None,
+                battery_level_reported: None,
+                battery_level_estimated: None,
             },
-            diagnostics: ParserDiagnostics {
-                dropped_bytes: 0,
-                resyncs: 0,
-                bad_checksums: 0,
-                timeouts: 0,
-                oversized_frames: 0,
-                malformed_frames: 0,
-                unmatched_replies: 0,
-            },
+            diagnostics: ParserDiagnostics::default(),
         }
     }
 
@@ -4025,7 +5938,7 @@ where
         &mut self,
         channel: GattChannel,
         bytes: Vec<u8>,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) {
         let bytes = bytes.into_boxed_slice();
         self.handle(SessionInput::Notification {
@@ -4036,7 +5949,7 @@ where
     }
 
     /// Supplies a host timer tick to the protocol session.
-    pub fn tick(&mut self, monotonic_ms: MonotonicMillis) {
+    pub fn tick(&mut self, monotonic_ms: MonotonicTimestamp) {
         self.handle(SessionInput::Tick { monotonic_ms });
     }
 
@@ -4119,13 +6032,13 @@ pub enum CaptureRecord {
         bytes: Vec<u8>,
 
         /// Host monotonic receive timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Captured timer tick.
     Tick {
         /// Host monotonic tick timestamp.
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     },
 
     /// Captured host command.
@@ -4147,7 +6060,7 @@ impl CaptureRecord {
     pub const fn notification(
         channel: GattChannel,
         bytes: Vec<u8>,
-        monotonic_ms: MonotonicMillis,
+        monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::Notification {
             channel,
@@ -4182,7 +6095,7 @@ impl CaptureRecord {
         }
 
         bytes
-            .chunks(chunk_len.get())
+            .chunks(chunk_len.as_bytes())
             .map(|chunk| Self::notification(channel, chunk.to_vec(), monotonic_ms))
             .collect()
     }
@@ -4208,7 +6121,7 @@ impl CaptureRecord {
             if offset >= bytes.len() {
                 break;
             }
-            let end = offset.saturating_add(length.get()).min(bytes.len());
+            let end = offset.saturating_add(length.as_bytes()).min(bytes.len());
             records.push(Self::notification(
                 channel,
                 bytes[offset..end].to_vec(),
@@ -4347,7 +6260,7 @@ where
 {
     let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
     let one_byte_records =
-        split_capture_notifications_by_len(records, NotificationChunkLen::new(1));
+        split_capture_notifications_by_len(records, NotificationChunkLen::from_bytes(1));
     let one_byte =
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
     let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
@@ -4355,9 +6268,9 @@ where
         replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
 
     ReplayChunkComparison {
-        whole_semantic_events: SemanticEventCount::new(whole.len()),
-        one_byte_semantic_events: SemanticEventCount::new(one_byte.len()),
-        arbitrary_semantic_events: SemanticEventCount::new(arbitrary.len()),
+        whole_semantic_events: SemanticEventCount::from_events(whole.len()),
+        one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
+        arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
         one_byte_matches: one_byte == whole,
         arbitrary_matches: arbitrary == whole,
     }
@@ -4392,7 +6305,7 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<Notifica
         }
         let remaining = max_notification_len - covered;
         let next = chunk_len.min(remaining);
-        lengths.push(NotificationChunkLen::new(next));
+        lengths.push(NotificationChunkLen::from_bytes(next));
         covered += next;
     }
     lengths
@@ -4409,12 +6322,12 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<Notifica
 pub fn notification_boundary_replay_cases(
     channel: GattChannel,
     frames: &[&[u8]],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     arbitrary_lengths: &[NotificationChunkLen],
 ) -> Vec<NotificationBoundaryReplayCase> {
     let whole_records = notification_records(channel, frames, monotonic_ms);
     let one_byte_records =
-        split_capture_notifications_by_len(&whole_records, NotificationChunkLen::new(1));
+        split_capture_notifications_by_len(&whole_records, NotificationChunkLen::from_bytes(1));
     let arbitrary_records =
         split_capture_notifications_by_lengths(&whole_records, arbitrary_lengths);
     let coalesced_records = coalesced_notification_record(channel, frames, monotonic_ms);
@@ -4450,9 +6363,9 @@ pub fn notification_boundary_replay_cases(
 pub fn notification_impairment_replay_cases(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
     garbage_prefix: &[u8],
-    timeout_ms: MonotonicMillis,
+    timeout_ms: MonotonicTimestamp,
 ) -> Vec<NotificationImpairmentReplayCase> {
     vec![
         NotificationImpairmentReplayCase {
@@ -4481,7 +6394,7 @@ pub fn notification_impairment_replay_cases(
 fn notification_records(
     channel: GattChannel,
     frames: &[&[u8]],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     frames
         .iter()
@@ -4492,7 +6405,7 @@ fn notification_records(
 fn coalesced_notification_record(
     channel: GattChannel,
     frames: &[&[u8]],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     let len = frames.iter().map(|frame| frame.len()).sum();
     let mut bytes = Vec::with_capacity(len);
@@ -4517,7 +6430,7 @@ fn prefixed_bytes(prefix: &[u8], bytes: &[u8]) -> Vec<u8> {
 fn duplicate_first_chunk_records(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     if frame.is_empty() {
         return Vec::new();
@@ -4544,7 +6457,7 @@ fn duplicate_first_chunk_records(
 fn missing_final_byte_record(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     let Some(truncated_len) = frame.len().checked_sub(1) else {
         return Vec::new();
@@ -4560,8 +6473,8 @@ fn missing_final_byte_record(
 fn timeout_after_partial_records(
     channel: GattChannel,
     frame: &[u8],
-    monotonic_ms: MonotonicMillis,
-    timeout_ms: MonotonicMillis,
+    monotonic_ms: MonotonicTimestamp,
+    timeout_ms: MonotonicTimestamp,
 ) -> Vec<CaptureRecord> {
     let split = frame.len().saturating_sub(1);
     vec![
@@ -4603,15 +6516,39 @@ pub const fn crate_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::crate_name;
+    use crate::round_div_i32;
     use crate::{
-        DeviceCommand, DeviceEvent, GattChannel, LinkInfo, Measured, ProtocolSession, SessionInput,
-        SessionOutput, TelemetryDelta, TelemetrySnapshot, TransportAction, UnsupportedReason,
-        ValueQuality, ValueSource, VerificationStatus, WriteMode, WritePayload,
+        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
+        DeviceEvent, Distance, Duration, DutyCycle, Energy, GattChannel, LinkInfo, Measured,
+        MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power, ProtocolSession,
+        SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot,
+        Temperature, TransportAction, UnsupportedReason, ValueQuality, ValueSource,
+        VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
 
     const TEST_CHANNEL: GattChannel = GattChannel::from_bytes([0xA1; 16]);
+
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
+    }
+
+    const fn dropped_bytes(value: u64) -> crate::ParserDroppedBytes {
+        crate::ParserDroppedBytes::from_bytes(value)
+    }
+
+    const fn diag_count(value: u64) -> crate::ParserDiagnosticCount {
+        crate::ParserDiagnosticCount::from_events(value)
+    }
+
+    const fn write_len(value: u16) -> crate::TransportWriteLimit {
+        crate::TransportWriteLimit::from_bytes(value)
+    }
+
+    const fn frame_len(value: usize) -> crate::ParserFrameLen {
+        crate::ParserFrameLen::from_bytes(value)
+    }
 
     #[test]
     fn exposes_the_expected_name() {
@@ -4647,6 +6584,22 @@ mod tests {
                 len: crate::MAX_TRANSPORT_WRITE_LEN + 1,
                 max: crate::MAX_TRANSPORT_WRITE_LEN,
             })
+        );
+    }
+
+    #[test]
+    fn wire_voltage_keeps_protocol_voltage_units_explicit() {
+        let voltage = crate::WireVoltage::from_centivolts(6_005);
+
+        assert_eq!(voltage.as_centivolts(), 6_005);
+        assert_eq!(voltage.as_millivolts(), 60_050);
+        assert_eq!(
+            voltage.as_scaled_voltage(1_000),
+            Voltage::from_millivolts(60_050)
+        );
+        assert_eq!(
+            crate::WireVoltage::from_scaled_voltage(Voltage::from_millivolts(60_050), 1_000),
+            voltage
         );
     }
 
@@ -4729,13 +6682,16 @@ mod tests {
         assert_eq!(size_of::<crate::SemanticEventCount>(), size_of::<usize>());
         assert_eq!(size_of::<crate::ProtocolSelector>(), size_of::<u8>());
         assert_eq!(size_of::<crate::ProtocolTag>(), size_of::<u16>());
-        assert_eq!(size_of::<crate::PackSeriesCells>(), size_of::<u8>());
-        assert_eq!(size_of::<crate::BmsParallelPacks>(), size_of::<u8>());
+        assert_eq!(size_of::<SeriesCount>(), size_of::<u8>());
+        assert_eq!(size_of::<ParallelCount>(), size_of::<u8>());
         assert_eq!(size_of::<crate::BmsCellValuesPerPage>(), size_of::<u8>());
         assert_eq!(
             size_of::<crate::BmsTemperatureValuesPerPage>(),
             size_of::<u8>()
         );
+        assert_eq!(size_of::<crate::BmsPackIndex>(), size_of::<u8>());
+        assert_eq!(size_of::<crate::BmsHalfIndex>(), size_of::<u8>());
+        assert_eq!(size_of::<crate::BmsCellIndex>(), size_of::<u16>());
         assert_eq!(size_of::<crate::ParserDiagnostics>(), 56);
         assert_eq!(size_of::<crate::DiagnosticSnapshot>(), 56);
         assert!(size_of::<crate::DiagnosticError>() <= 80);
@@ -4750,15 +6706,15 @@ mod tests {
 
     #[test]
     fn notification_ingest_evidence_uses_distinct_typed_protocol_values() {
-        let notification_len = crate::NotificationByteLen::new(77);
-        let body_len = crate::PayloadBodyLen::new(24);
-        let event_count = crate::SemanticEventCount::new(3);
+        let notification_len = crate::NotificationByteLen::from_bytes(77);
+        let body_len = crate::PayloadBodyLen::from_bytes(24);
+        let event_count = crate::SemanticEventCount::from_events(3);
         let selector = crate::ProtocolSelector::new(8);
         let tag = crate::ProtocolTag::new(0x5c);
 
-        assert_eq!(notification_len.get(), 77);
-        assert_eq!(body_len.get(), 24);
-        assert_eq!(event_count.get(), 3);
+        assert_eq!(notification_len.as_bytes(), 77);
+        assert_eq!(body_len.as_bytes(), 24);
+        assert_eq!(event_count.as_events(), 3);
         assert_eq!(selector.get(), 8);
         assert_eq!(tag.get(), 0x5c);
     }
@@ -4768,13 +6724,13 @@ mod tests {
         let buffered = crate::NotificationIngestOutcome::buffered_fragment(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(20),
-            7,
+            crate::NotificationByteLen::from_bytes(20),
+            ms(7),
         );
         let ignored = crate::NotificationIngestOutcome::ignored_wrong_channel(
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(20),
-            7,
+            crate::NotificationByteLen::from_bytes(20),
+            ms(7),
         );
 
         assert!(matches!(
@@ -4782,16 +6738,16 @@ mod tests {
             crate::NotificationIngestOutcome::BufferedFragment(evidence)
                 if evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                     && evidence.channel == TEST_CHANNEL
-                    && evidence.len == crate::NotificationByteLen::new(20)
-                    && evidence.monotonic_ms == 7
+                    && evidence.len == crate::NotificationByteLen::from_bytes(20)
+                    && evidence.monotonic_ms == ms(7)
         ));
         assert!(matches!(
             ignored,
             crate::NotificationIngestOutcome::Ignored(evidence)
                 if evidence.family.is_none()
                     && evidence.channel == TEST_CHANNEL
-                    && evidence.len == crate::NotificationByteLen::new(20)
-                    && evidence.monotonic_ms == 7
+                    && evidence.len == crate::NotificationByteLen::from_bytes(20)
+                    && evidence.monotonic_ms == ms(7)
         ));
     }
 
@@ -4800,11 +6756,11 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::known_reserved(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(75),
-            12,
+            crate::NotificationByteLen::from_bytes(75),
+            ms(12),
             crate::ReservedPayloadEvidence {
                 classifier: crate::PayloadClassifier::selector(crate::ProtocolSelector::new(8)),
-                body_len: crate::PayloadBodyLen::new(68),
+                body_len: crate::PayloadBodyLen::from_bytes(68),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -4816,11 +6772,11 @@ mod tests {
                 payload,
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
-                && notification.len == crate::NotificationByteLen::new(75)
-                && notification.monotonic_ms == 12
+                && notification.len == crate::NotificationByteLen::from_bytes(75)
+                && notification.monotonic_ms == ms(12)
                 && payload.classifier.selector_value() == Some(crate::ProtocolSelector::new(8))
                 && payload.classifier.tag_value().is_none()
-                && payload.body_len == crate::PayloadBodyLen::new(68)
+                && payload.body_len == crate::PayloadBodyLen::from_bytes(68)
                 && payload.verification == VerificationStatus::HardwareVerified
         ));
     }
@@ -4830,9 +6786,9 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::semantic_events(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(77),
-            21,
-            crate::SemanticEventCount::new(3),
+            crate::NotificationByteLen::from_bytes(77),
+            ms(21),
+            crate::SemanticEventCount::from_events(3),
         );
 
         assert!(matches!(
@@ -4842,9 +6798,9 @@ mod tests {
                 event_count,
             } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
                 && notification.channel == TEST_CHANNEL
-                && notification.len == crate::NotificationByteLen::new(77)
-                && notification.monotonic_ms == 21
-                && event_count == crate::SemanticEventCount::new(3)
+                && notification.len == crate::NotificationByteLen::from_bytes(77)
+                && notification.monotonic_ms == ms(21)
+                && event_count == crate::SemanticEventCount::from_events(3)
         ));
     }
 
@@ -4853,8 +6809,8 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::parser_diagnostic(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(77),
-            22,
+            crate::NotificationByteLen::from_bytes(77),
+            ms(22),
             crate::ParserError::BadChecksum,
         );
 
@@ -4873,17 +6829,18 @@ mod tests {
         let outcome = crate::NotificationIngestOutcome::parser_gap(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
-            crate::NotificationByteLen::new(77),
-            15,
+            crate::NotificationByteLen::from_bytes(77),
+            ms(15),
             crate::ParserGapEvidence {
                 classifier: crate::PayloadClassifier::tag(crate::ProtocolTag::new(0x5c)),
-                body_len: crate::PayloadBodyLen::new(70),
+                body_len: crate::PayloadBodyLen::from_bytes(70),
             },
         );
         let debug = format!("{outcome:?}");
 
         assert!(debug.contains("ParserGap"));
-        assert!(debug.contains("body_len: PayloadBodyLen(70)"));
+        assert!(debug.contains("body_len"));
+        assert!(debug.contains("value: 70"));
         assert!(!debug.contains("dc5a5c"));
         assert!(!debug.contains("bytes"));
     }
@@ -4914,7 +6871,7 @@ mod tests {
                     output.push(SessionOutput::NotificationIngest(
                         crate::NotificationIngestOutcome::ignored_wrong_channel(
                             channel,
-                            crate::NotificationByteLen::new(bytes.len()),
+                            crate::NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                         ),
                     ));
@@ -4953,8 +6910,8 @@ mod tests {
         let mut session = EchoSession::default();
         let mut output = Vec::new();
         let link = LinkInfo {
-            monotonic_ms: 10,
-            max_write_len: Some(185),
+            monotonic_ms: ms(10),
+            max_write_len: Some(write_len(185)),
         };
 
         session.handle(SessionInput::LinkUp(link), &mut output);
@@ -4976,7 +6933,7 @@ mod tests {
             SessionInput::Notification {
                 channel,
                 bytes: &[0xdc, 0x5a, 0x5c],
-                monotonic_ms: 20,
+                monotonic_ms: ms(20),
             },
             &mut output,
         );
@@ -4987,8 +6944,8 @@ mod tests {
             &[SessionOutput::NotificationIngest(
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    crate::NotificationByteLen::new(3),
-                    20
+                    crate::NotificationByteLen::from_bytes(3),
+                    ms(20)
                 )
             )]
         );
@@ -5017,30 +6974,182 @@ mod tests {
     }
 
     #[test]
+    fn quantity_conversions_keep_unit_math_in_core() {
+        assert_eq!(Speed::from_mph(10).as_millimetres_per_second(), 4_474);
+        assert_eq!(Speed::from_millimetres_per_second(4_470).as_mph(), 10);
+        assert_eq!(Speed::from_kmh(50).as_kmh_rounded(), 50);
+        assert_eq!(
+            Speed::from_centimetres_per_second(1_336).as_millimetres_per_second(),
+            13_360
+        );
+        assert_eq!(
+            Speed::from_millimetres_per_second(22_222).as_kmh_rounded(),
+            80
+        );
+        assert_eq!(
+            Speed::from_millimetres_per_second(15_277).as_deci_kmh_rounded(),
+            550
+        );
+        assert_eq!(
+            Speed::from_milli_kmh_scaled(10_000, 1_609_344).as_millimetres_per_second(),
+            4_470
+        );
+        assert_eq!(round_div_i32(5, 2), 3);
+        assert_eq!(round_div_i32(-5, 2), -3);
+
+        assert_eq!(Voltage::from_volts(126).as_millivolts(), 126_000);
+        assert_eq!(Voltage::from_millivolts(84_400).as_whole_volts(), 84);
+        assert_eq!(Voltage::from_deci_volts(915).as_millivolts(), 91_500);
+        assert_eq!(
+            Current::from_milliamps(-1_700).abs(),
+            Current::from_milliamps(1_700)
+        );
+        assert_eq!(
+            Temperature::from_mpu6050_counts(0).as_millicelsius(),
+            36_530
+        );
+        assert_eq!(
+            Voltage::from_millivolts(91_000).as_cell_voltage(SeriesCount::new(30)),
+            CellVoltage::from_microvolts(3_033_333)
+        );
+        let voltage_range = Voltage::from_volts(91)..=Voltage::from_volts(126);
+        assert_eq!(
+            Voltage::from_millivolts(108_500)
+                .percent_of_range(&voltage_range)
+                .as_percent(),
+            50
+        );
+        assert_eq!(Voltage::from_centivolts(9_150).as_millivolts(), 91_500);
+        assert_eq!(
+            Voltage::from_cell_voltage(CellVoltage::from_microvolts(3_050_000), 30).as_millivolts(),
+            91_500
+        );
+        assert_eq!(
+            Capacity::from_parallel_packs(5_000, ParallelCount::new(2)).as_milliamp_hours(),
+            10_000
+        );
+        assert_eq!(
+            Energy::from_cell_geometry(18, SeriesCount::new(20), ParallelCount::new(2))
+                .as_watt_hours(),
+            720
+        );
+
+        assert_eq!(Current::from_amps(-12).as_milliamps(), -12_000);
+        assert_eq!(Current::from_centiamps(-1_240).as_milliamps(), -12_400);
+        assert_eq!(Current::from_deciamps(-124).as_milliamps(), -12_400);
+        assert_eq!(Current::from_milliamps(-12_400).as_whole_amps(), -12);
+        assert_eq!(Current::from_milliamps(-12_400).as_abs_whole_amps(), 12);
+        assert_eq!(BatteryLevel::from_percent_i32(-1).as_percent(), 0);
+        assert_eq!(BatteryLevel::from_percent_i32(120).as_percent(), 100);
+        assert!((BatteryLevel::from_percent(75).as_ratio() - 0.75).abs() < f64::EPSILON);
+        assert_eq!(
+            BatteryLevel::interpolate(
+                BatteryLevel::from_percent(20),
+                BatteryLevel::from_percent(80),
+                50,
+                0,
+                100,
+            )
+            .as_percent(),
+            50
+        );
+        assert_eq!(
+            BatteryLevel::from_piecewise_linear(
+                5_440,
+                &[
+                    (5_120, BatteryLevel::from_percent(0)),
+                    (5_440, BatteryLevel::from_percent(9)),
+                    (6_680, BatteryLevel::from_percent(100)),
+                ],
+            )
+            .as_percent(),
+            9
+        );
+    }
+
+    #[test]
+    fn quantity_conversions_cover_angles_ratios_and_power() {
+        assert_eq!(Temperature::from_celsius(36).as_millicelsius(), 36_000);
+        assert_eq!(
+            Temperature::from_centi_celsius(-3_660).as_millicelsius(),
+            -36_600
+        );
+        assert_eq!(
+            Temperature::from_millicelsius(-36_600).as_abs_whole_celsius(),
+            37
+        );
+        assert_eq!(Duration::from_deciseconds(12).as_milliseconds(), 1_200);
+
+        assert_eq!(Angle::from_degrees(69).as_millidegrees(), 69_000);
+        assert_eq!(Angle::from_deci_degrees(690).as_millidegrees(), 6_900);
+        assert_eq!(Angle::from_millidegrees(69_060).as_whole_degrees(), 69);
+
+        assert_eq!(DutyCycle::from_decipermille(524).as_permille(), 52);
+        assert_eq!(DutyCycle::from_centered_pwm(0).as_permille(), -1_000);
+        assert_eq!(DutyCycle::from_centered_pwm(0x8000).as_permille(), 0);
+        assert_eq!(DutyCycle::from_centered_pwm(u16::MAX).as_permille(), 999);
+
+        assert_eq!(
+            Power::from_voltage_current(Voltage::from_volts(53), Current::from_amps(-6)),
+            Power::from_watts(-318)
+        );
+        assert_eq!(
+            Power::from_voltage_current(
+                Voltage::from_millivolts(i32::MAX),
+                Current::from_milliamps(i32::MAX),
+            ),
+            Power::from_milliwatts(4_611_686_014_132_420)
+        );
+        assert_eq!(DutyCycle::from_centipercent(755).as_permille(), 75);
+    }
+
+    #[test]
+    fn whole_unit_constructors_saturate_at_storage_bounds() {
+        assert_eq!(Voltage::from_volts(u64::MAX).as_millivolts(), i32::MAX);
+        assert_eq!(Current::from_amps(i64::MAX).as_milliamps(), i32::MAX);
+        assert_eq!(Current::from_amps(i64::MIN).as_milliamps(), i32::MIN);
+        assert_eq!(
+            Temperature::from_celsius(i64::MAX).as_millicelsius(),
+            i32::MAX
+        );
+        assert_eq!(Angle::from_degrees(i64::MIN).as_millidegrees(), i32::MIN);
+    }
+
+    #[test]
     fn telemetry_delta_updates_only_present_fields() {
         let mut snapshot = TelemetrySnapshot::default();
         let first = TelemetryDelta {
-            at_ms: 100,
-            speed_mm_s: Some(Measured::reported(1_500)),
-            voltage_mv: Some(Measured::reported(81_000)),
-            battery_current_ma: Some(Measured::reported(-2_000)),
-            ..TelemetryDelta::empty(100)
+            at_ms: ms(100),
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_500,
+            ))),
+            voltage: Some(Measured::reported(Voltage::from_millivolts(81_000))),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
+            ..TelemetryDelta::empty(ms(100))
         };
         let second = TelemetryDelta {
-            at_ms: 150,
-            motor_temperature_mc: Some(Measured::reported(42_500)),
-            ..TelemetryDelta::empty(150)
+            at_ms: ms(150),
+            motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(42_500))),
+            ..TelemetryDelta::empty(ms(150))
         };
 
         snapshot.apply_delta(first);
         snapshot.apply_delta(second);
 
-        assert_eq!(snapshot.at_ms, Some(150));
-        assert_eq!(snapshot.speed_mm_s, Some(Measured::reported(1_500)));
-        assert_eq!(snapshot.voltage_mv, Some(Measured::reported(81_000)));
+        assert_eq!(snapshot.at_ms, Some(ms(150)));
         assert_eq!(
-            snapshot.motor_temperature_mc,
-            Some(Measured::reported(42_500))
+            snapshot.speed,
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_500
+            )))
+        );
+        assert_eq!(
+            snapshot.voltage,
+            Some(Measured::reported(Voltage::from_millivolts(81_000)))
+        );
+        assert_eq!(
+            snapshot.motor_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(42_500)))
         );
     }
 
@@ -5048,15 +7157,97 @@ mod tests {
     fn zero_measurement_is_not_unknown() {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(TelemetryDelta {
-            at_ms: 200,
-            speed_mm_s: Some(Measured::reported(0)),
-            battery_current_ma: Some(Measured::reported(0)),
-            ..TelemetryDelta::empty(200)
+            at_ms: ms(200),
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(0))),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            ..TelemetryDelta::empty(ms(200))
         });
 
-        assert_eq!(snapshot.speed_mm_s, Some(Measured::reported(0)));
-        assert_eq!(snapshot.battery_current_ma, Some(Measured::reported(0)));
-        assert_eq!(snapshot.motor_current_ma, None);
+        assert_eq!(
+            snapshot.speed,
+            Some(Measured::reported(Speed::from_millimetres_per_second(0)))
+        );
+        assert_eq!(
+            snapshot.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+        );
+        assert_eq!(snapshot.motor_current, None);
+    }
+
+    #[test]
+    fn duration_quantity_converts_protocol_time_units_to_milliseconds() {
+        assert_eq!(Duration::from_milliseconds(750).as_milliseconds(), 750);
+        assert_eq!(Duration::from_seconds(11).as_milliseconds(), 11_000);
+        assert_eq!(Duration::from_minutes(15).as_milliseconds(), 900_000);
+        assert_eq!(Duration::from_minutes(15).as_seconds(), 900);
+        assert_eq!(Duration::from_minutes(15).as_minutes(), 15);
+    }
+
+    #[test]
+    fn battery_quantity_types_preserve_capacity_and_energy_units() {
+        assert_eq!(
+            Capacity::from_milliamp_hours(10_000).as_milliamp_hours(),
+            10_000
+        );
+        assert_eq!(Energy::from_watt_hours(900).as_watt_hours(), 900);
+        assert_eq!(BatteryCurrent::from_milliamps(1_250).as_milliamps(), 1_250);
+        assert_eq!(PhaseCurrent::from_amps_f32(-1.25).as_milliamps(), -1_250);
+        assert_eq!(PeakCurrent::from_milliamps(1_250).as_milliamps(), 1_250);
+        assert_eq!(PeakCurrent::from_amps_f32(-1.25).as_milliamps(), -1_250);
+    }
+
+    #[test]
+    fn signal_strength_quantity_preserves_dbm_unit() {
+        let signal = crate::SignalStrength::from_dbm(-61);
+        assert_eq!(signal.as_dbm(), -61);
+        assert_eq!(signal.as_quality_percent(), 78);
+        assert_eq!(
+            crate::SignalStrength::from_dbm(-120).as_quality_percent(),
+            0
+        );
+    }
+
+    #[test]
+    fn rotational_speed_quantity_preserves_erpm_unit() {
+        assert_eq!(crate::RotationalSpeed::from_erpm(4_500).as_erpm(), 4_500);
+    }
+
+    #[test]
+    fn rotational_speed_quantity_converts_to_linear_speed_with_drive_geometry() {
+        let wheel = Distance::from_millimetres(2_100);
+
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(4_500).as_speed(15, 1, wheel),
+            Some(Speed::from_millimetres_per_second(10_500))
+        );
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(4_500).as_speed(15, 2, wheel),
+            Some(Speed::from_millimetres_per_second(5_250))
+        );
+        assert_eq!(
+            crate::RotationalSpeed::from_erpm(4_500).as_speed(0, 1, wheel),
+            None
+        );
+    }
+
+    #[test]
+    fn tachometer_reading_quantity_preserves_signed_counts() {
+        assert_eq!(
+            crate::TachometerReading::from_counts(-21_973).as_counts(),
+            -21_973
+        );
+    }
+
+    #[test]
+    fn distance_offset_quantity_preserves_signed_length_unit() {
+        assert_eq!(
+            crate::DistanceOffset::from_metres(805).as_millimetres(),
+            805_000
+        );
+        assert_eq!(
+            crate::DistanceOffset::from_metres(-2).as_millimetres(),
+            -2_000
+        );
     }
 
     #[test]
@@ -5081,45 +7272,50 @@ mod tests {
     #[test]
     fn telemetry_keeps_distinct_current_temperature_and_estimate_fields() {
         let mut snapshot = TelemetrySnapshot::default();
-        let estimated_percent = Measured::estimated(76);
+        let estimated_level = Measured::estimated(BatteryLevel::from_percent(76));
 
         snapshot.apply_delta(TelemetryDelta {
-            at_ms: 300,
-            battery_current_ma: Some(Measured::reported(-1_200)),
-            motor_current_ma: Some(Measured::reported(3_400)),
-            controller_temperature_mc: Some(Measured::reported(35_000)),
-            motor_temperature_mc: Some(Measured::reported(45_000)),
-            battery_temperature_mc: Some(Measured::reported(31_000)),
-            battery_percent_reported: Some(Measured::reported(80)),
-            battery_percent_estimated: Some(estimated_percent),
-            ..TelemetryDelta::empty(300)
+            at_ms: ms(300),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200))),
+            motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(3_400))),
+            controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
+                35_000,
+            ))),
+            motor_temperature: Some(Measured::reported(Temperature::from_millicelsius(45_000))),
+            battery_temperature: Some(Measured::reported(Temperature::from_millicelsius(31_000))),
+            battery_level_reported: Some(Measured::reported(BatteryLevel::from_percent(80))),
+            battery_level_estimated: Some(estimated_level),
+            ..TelemetryDelta::empty(ms(300))
         });
 
         assert_eq!(
-            snapshot.battery_current_ma,
-            Some(Measured::reported(-1_200))
-        );
-        assert_eq!(snapshot.motor_current_ma, Some(Measured::reported(3_400)));
-        assert_eq!(
-            snapshot.controller_temperature_mc,
-            Some(Measured::reported(35_000))
+            snapshot.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(-1_200)))
         );
         assert_eq!(
-            snapshot.motor_temperature_mc,
-            Some(Measured::reported(45_000))
+            snapshot.motor_current,
+            Some(Measured::reported(PhaseCurrent::from_milliamps(3_400)))
         );
         assert_eq!(
-            snapshot.battery_temperature_mc,
-            Some(Measured::reported(31_000))
+            snapshot.controller_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(35_000)))
         );
         assert_eq!(
-            snapshot.battery_percent_reported,
-            Some(Measured::reported(80))
+            snapshot.motor_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(45_000)))
         );
-        assert_eq!(snapshot.battery_percent_estimated, Some(estimated_percent));
+        assert_eq!(
+            snapshot.battery_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(31_000)))
+        );
+        assert_eq!(
+            snapshot.battery_level_reported,
+            Some(Measured::reported(BatteryLevel::from_percent(80)))
+        );
+        assert_eq!(snapshot.battery_level_estimated, Some(estimated_level));
         assert_eq!(
             snapshot
-                .battery_percent_estimated
+                .battery_level_estimated
                 .map(|value| value.verification),
             Some(VerificationStatus::Inferred)
         );
@@ -5128,17 +7324,17 @@ mod tests {
     #[test]
     fn telemetry_delta_can_be_emitted_as_device_event() {
         let delta = TelemetryDelta {
-            at_ms: 400,
-            distance_mm: Some(Measured::reported(12_345)),
-            ..TelemetryDelta::empty(400)
+            at_ms: ms(400),
+            distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
+            ..TelemetryDelta::empty(ms(400))
         };
 
         assert_eq!(
             DeviceEvent::Telemetry(delta),
             DeviceEvent::Telemetry(TelemetryDelta {
-                at_ms: 400,
-                distance_mm: Some(Measured::reported(12_345)),
-                ..TelemetryDelta::empty(400)
+                at_ms: ms(400),
+                distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
+                ..TelemetryDelta::empty(ms(400))
             })
         );
     }
@@ -5164,11 +7360,11 @@ mod tests {
     #[test]
     fn battery_response_distinguishes_reported_estimated_and_unknown_percent() {
         let battery = crate::BatteryInfo {
-            voltage_mv: Some(Measured::reported(80_400)),
-            current_ma: Some(Measured::reported(0)),
-            percent_reported: Some(Measured::reported(0)),
-            percent_estimated: Some(Measured::estimated(42)),
-            temperature_mc: None,
+            voltage: Some(Measured::reported(Voltage::from_millivolts(80_400))),
+            current: Some(Measured::reported(BatteryCurrent::from_milliamps(0))),
+            level_reported: Some(Measured::reported(BatteryLevel::from_percent(0))),
+            level_estimated: Some(Measured::estimated(BatteryLevel::from_percent(42))),
+            temperature: None,
             raw_state: None,
         };
         let response = crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
@@ -5186,26 +7382,26 @@ mod tests {
                 VerificationStatus::SourceVerified,
             )
         );
-        assert_eq!(response.battery().current_ma, Some(Measured::reported(0)));
         assert_eq!(
-            response.battery().percent_reported,
-            Some(Measured::reported(0))
+            response.battery().current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
         assert_eq!(
-            response
-                .battery()
-                .voltage_mv
-                .map(|value| value.verification),
+            response.battery().level_reported,
+            Some(Measured::reported(BatteryLevel::from_percent(0)))
+        );
+        assert_eq!(
+            response.battery().voltage.map(|value| value.verification),
             Some(VerificationStatus::HardwareVerified)
         );
         assert_eq!(
             response
                 .battery()
-                .percent_estimated
+                .level_estimated
                 .map(|value| value.verification),
             Some(VerificationStatus::Inferred)
         );
-        assert_eq!(response.battery().temperature_mc, None);
+        assert_eq!(response.battery().temperature, None);
     }
 
     #[test]
@@ -5284,14 +7480,14 @@ mod tests {
                 verification: VerificationStatus::HardwareVerified,
             }),
             battery: Some(crate::BatterySpec {
-                series_cells: crate::PackSeriesCells::new(30),
-                nominal_capacity_mah: Some(10_000),
-                voltage_range_mv: 99_180..=123_370,
+                series_cells: SeriesCount::new(30),
+                nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                voltage_range: Voltage::from_millivolts(99_180)..=Voltage::from_millivolts(123_370),
                 verification: VerificationStatus::SourceAndHardwareVerified,
             }),
             bms: Some(crate::BmsLayoutSpec {
-                series_cells: crate::PackSeriesCells::new(30),
-                parallel_packs: crate::BmsParallelPacks::new(2),
+                series_cells: SeriesCount::new(30),
+                parallel_packs: ParallelCount::new(2),
                 cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
                 temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
                 selectors: &AERO_BMS_SELECTORS,
@@ -5332,8 +7528,8 @@ mod tests {
         let bms = entry
             .bms
             .expect("Aero registry entry should carry BMS layout");
-        assert_eq!(bms.series_cells, crate::PackSeriesCells::new(30));
-        assert_eq!(bms.parallel_packs, crate::BmsParallelPacks::new(2));
+        assert_eq!(bms.series_cells, SeriesCount::new(30));
+        assert_eq!(bms.parallel_packs, ParallelCount::new(2));
         assert_eq!(bms.selectors[1].kind, crate::BatteryPageKind::CellVoltage);
     }
 
@@ -5823,8 +8019,8 @@ mod tests {
             },
         ];
         let layout = crate::BmsLayoutSpec {
-            series_cells: crate::PackSeriesCells::new(30),
-            parallel_packs: crate::BmsParallelPacks::new(2),
+            series_cells: SeriesCount::new(30),
+            parallel_packs: ParallelCount::new(2),
             cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
             temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
             selectors: &SELECTORS,
@@ -5980,8 +8176,8 @@ mod tests {
         }];
         let mut entry = sample_registry_entry(manufacturer, model);
         entry.bms = Some(crate::BmsLayoutSpec {
-            series_cells: crate::PackSeriesCells::new(series_cells),
-            parallel_packs: crate::BmsParallelPacks::new(parallel_packs),
+            series_cells: SeriesCount::new(series_cells),
+            parallel_packs: ParallelCount::new(parallel_packs),
             cell_values_per_page: crate::BmsCellValuesPerPage::new(15),
             temperature_values_per_page: crate::BmsTemperatureValuesPerPage::new(6),
             selectors: &SELECTORS,
@@ -6274,7 +8470,9 @@ mod tests {
     #[test]
     fn actuation_commands_are_not_supported_without_capability() {
         let capabilities = crate::Capabilities::default();
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(1_000),
+        };
 
         assert_eq!(command.safety_class(), crate::SafetyClass::Actuation);
         assert_eq!(
@@ -6287,13 +8485,15 @@ mod tests {
     fn dangerous_actuation_policy_requires_arm_token() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: PhaseCurrent::from_milliamps(5_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(1_000),
+        };
 
         assert_eq!(
-            policy.authorize(command, 42, None),
+            policy.authorize(command, ms(42), None),
             Err(crate::DangerousActuationRefusal::MissingArm)
         );
     }
@@ -6302,24 +8502,26 @@ mod tests {
     fn dangerous_actuation_policy_rejects_expired_or_wrong_model_arms() {
         let falcon = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: PhaseCurrent::from_milliamps(5_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let aero = crate::DangerousActuationPolicy {
             model: "NOSFET Aero",
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: PhaseCurrent::from_milliamps(5_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: 1_000 };
-        let falcon_arm = falcon.arm(10);
-        let aero_arm = aero.arm(10);
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(1_000),
+        };
+        let falcon_arm = falcon.arm(ms(10));
+        let aero_arm = aero.arm(ms(10));
 
         assert_eq!(
-            falcon.authorize(command, 1_011, Some(falcon_arm)),
+            falcon.authorize(command, ms(1_011), Some(falcon_arm)),
             Err(crate::DangerousActuationRefusal::ExpiredArm)
         );
         assert_eq!(
-            falcon.authorize(command, 42, Some(aero_arm)),
+            falcon.authorize(command, ms(42), Some(aero_arm)),
             Err(crate::DangerousActuationRefusal::WrongModel)
         );
     }
@@ -6328,19 +8530,21 @@ mod tests {
     fn dangerous_actuation_policy_rejects_non_actuation_and_over_limit_commands() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: PhaseCurrent::from_milliamps(5_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
-        let arm = policy.arm(10);
+        let arm = policy.arm(ms(10));
 
         assert_eq!(
-            policy.authorize(DeviceCommand::SoundHorn, 42, Some(arm)),
+            policy.authorize(DeviceCommand::SoundHorn, ms(42), Some(arm)),
             Err(crate::DangerousActuationRefusal::WrongSafetyClass)
         );
         assert_eq!(
             policy.authorize(
-                DeviceCommand::SetRawMotorCurrent { current_ma: 5_001 },
-                42,
+                DeviceCommand::SetRawMotorCurrent {
+                    current: PhaseCurrent::from_milliamps(5_001)
+                },
+                ms(42),
                 Some(arm)
             ),
             Err(crate::DangerousActuationRefusal::CurrentLimitExceeded)
@@ -6351,14 +8555,16 @@ mod tests {
     fn dangerous_actuation_policy_accepts_armed_in_limit_actuation() {
         let policy = crate::DangerousActuationPolicy {
             model: "Begode Falcon",
-            max_current_ma: 5_000,
-            arm_duration_ms: 1_000,
+            max_current: PhaseCurrent::from_milliamps(5_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
-        let command = DeviceCommand::SetRawMotorCurrent { current_ma: -5_000 };
-        let arm = policy.arm(10);
+        let command = DeviceCommand::SetRawMotorCurrent {
+            current: PhaseCurrent::from_milliamps(-5_000),
+        };
+        let arm = policy.arm(ms(10));
 
         assert_eq!(
-            policy.authorize(command, 1_010, Some(arm)),
+            policy.authorize(command, ms(1_010), Some(arm)),
             Ok(crate::CommandMetadata {
                 kind: crate::CommandKind::SetRawMotorCurrent,
                 safety_class: crate::SafetyClass::Actuation,
@@ -6391,16 +8597,16 @@ mod tests {
     #[test]
     fn parser_limits_reject_oversized_frame_lengths() {
         let limits = crate::ParserLimits {
-            max_frame_len: 24,
+            max_frame_len: frame_len(24),
             ..crate::ParserLimits::default()
         };
 
-        assert_eq!(limits.validate_frame_len(24), Ok(()));
+        assert_eq!(limits.validate_frame_len(frame_len(24)), Ok(()));
         assert_eq!(
-            limits.validate_frame_len(25),
+            limits.validate_frame_len(frame_len(25)),
             Err(crate::ParserError::OversizedFrame {
-                claimed: 25,
-                max: 24,
+                claimed: frame_len(25),
+                max: frame_len(24),
             })
         );
     }
@@ -6408,37 +8614,37 @@ mod tests {
     #[test]
     fn parser_diagnostics_saturate_counters() {
         let mut diagnostics = crate::ParserDiagnostics {
-            dropped_bytes: u64::MAX,
+            dropped_bytes: dropped_bytes(u64::MAX),
             ..crate::ParserDiagnostics::default()
         };
 
-        diagnostics.add_dropped_bytes(10);
+        diagnostics.add_dropped_bytes(dropped_bytes(10));
         diagnostics.record_resync();
         diagnostics.record_error(crate::ParserError::BadChecksum);
 
-        assert_eq!(diagnostics.dropped_bytes, u64::MAX);
-        assert_eq!(diagnostics.resyncs, 1);
-        assert_eq!(diagnostics.bad_checksums, 1);
+        assert_eq!(diagnostics.dropped_bytes, dropped_bytes(u64::MAX));
+        assert_eq!(diagnostics.resyncs, diag_count(1));
+        assert_eq!(diagnostics.bad_checksums, diag_count(1));
     }
 
     #[test]
     fn parser_diagnostics_merge_with_saturating_counts() {
         let mut left = crate::ParserDiagnostics {
-            timeouts: u64::MAX,
-            malformed_frames: 2,
+            timeouts: diag_count(u64::MAX),
+            malformed_frames: diag_count(2),
             ..crate::ParserDiagnostics::default()
         };
         let right = crate::ParserDiagnostics {
-            timeouts: 1,
-            unmatched_replies: 3,
+            timeouts: diag_count(1),
+            unmatched_replies: diag_count(3),
             ..crate::ParserDiagnostics::default()
         };
 
         left.merge(right);
 
-        assert_eq!(left.timeouts, u64::MAX);
-        assert_eq!(left.malformed_frames, 2);
-        assert_eq!(left.unmatched_replies, 3);
+        assert_eq!(left.timeouts, diag_count(u64::MAX));
+        assert_eq!(left.malformed_frames, diag_count(2));
+        assert_eq!(left.unmatched_replies, diag_count(3));
     }
 
     #[test]
@@ -6446,35 +8652,35 @@ mod tests {
         let mut diagnostics = crate::ParserDiagnostics::default();
 
         diagnostics.record_error(crate::ParserError::OversizedFrame {
-            claimed: 4_097,
-            max: 4_096,
+            claimed: frame_len(4_097),
+            max: frame_len(4_096),
         });
         diagnostics.record_error(crate::ParserError::MalformedFrame);
         diagnostics.record_error(crate::ParserError::Timeout {
-            elapsed_ms: 1_500,
-            timeout_ms: 1_000,
+            elapsed_ms: ms(1_500),
+            timeout_ms: ms(1_000),
         });
         diagnostics.record_error(crate::ParserError::UnmatchedReply);
 
-        assert_eq!(diagnostics.oversized_frames, 1);
-        assert_eq!(diagnostics.malformed_frames, 1);
-        assert_eq!(diagnostics.timeouts, 1);
-        assert_eq!(diagnostics.unmatched_replies, 1);
+        assert_eq!(diagnostics.oversized_frames, diag_count(1));
+        assert_eq!(diagnostics.malformed_frames, diag_count(1));
+        assert_eq!(diagnostics.timeouts, diag_count(1));
+        assert_eq!(diagnostics.unmatched_replies, diag_count(1));
     }
 
     #[test]
     fn parser_diagnostics_can_be_emitted_as_device_event() {
         let diagnostics = crate::ParserDiagnostics {
-            bad_checksums: 2,
-            resyncs: 1,
+            bad_checksums: diag_count(2),
+            resyncs: diag_count(1),
             ..crate::ParserDiagnostics::default()
         };
 
         assert_eq!(
             DeviceEvent::Diagnostics(diagnostics),
             DeviceEvent::Diagnostics(crate::ParserDiagnostics {
-                bad_checksums: 2,
-                resyncs: 1,
+                bad_checksums: diag_count(2),
+                resyncs: diag_count(1),
                 ..crate::ParserDiagnostics::default()
             })
         );
@@ -6483,8 +8689,8 @@ mod tests {
     #[test]
     fn diagnostic_error_can_be_emitted_as_device_event() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
-            elapsed_ms: 1_500,
-            timeout_ms: 1_000,
+            elapsed_ms: ms(1_500),
+            timeout_ms: ms(1_000),
         });
 
         assert_eq!(
@@ -6493,8 +8699,8 @@ mod tests {
                 kind: crate::DiagnosticErrorKind::Timeout,
                 claimed_len: None,
                 max_len: None,
-                elapsed_ms: Some(1_500),
-                timeout_ms: Some(1_000),
+                elapsed_ms: Some(ms(1_500)),
+                timeout_ms: Some(ms(1_000)),
             })
         );
     }
@@ -6502,25 +8708,25 @@ mod tests {
     #[test]
     fn diagnostic_snapshot_preserves_counter_fields() {
         let diagnostics = crate::ParserDiagnostics {
-            dropped_bytes: 1,
-            resyncs: 2,
-            bad_checksums: 3,
-            timeouts: 4,
-            oversized_frames: 5,
-            malformed_frames: 6,
-            unmatched_replies: 7,
+            dropped_bytes: dropped_bytes(1),
+            resyncs: diag_count(2),
+            bad_checksums: diag_count(3),
+            timeouts: diag_count(4),
+            oversized_frames: diag_count(5),
+            malformed_frames: diag_count(6),
+            unmatched_replies: diag_count(7),
         };
 
         assert_eq!(
             crate::DiagnosticSnapshot::from_parser_diagnostics(diagnostics),
             crate::DiagnosticSnapshot {
-                dropped_bytes: 1,
-                resyncs: 2,
-                bad_checksums: 3,
-                timeouts: 4,
-                oversized_frames: 5,
-                malformed_frames: 6,
-                unmatched_replies: 7,
+                dropped_bytes: dropped_bytes(1),
+                resyncs: diag_count(2),
+                bad_checksums: diag_count(3),
+                timeouts: diag_count(4),
+                oversized_frames: diag_count(5),
+                malformed_frames: diag_count(6),
+                unmatched_replies: diag_count(7),
             }
         );
     }
@@ -6528,16 +8734,16 @@ mod tests {
     #[test]
     fn diagnostic_error_preserves_oversized_frame_details() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::OversizedFrame {
-            claimed: 4_097,
-            max: 4_096,
+            claimed: frame_len(4_097),
+            max: frame_len(4_096),
         });
 
         assert_eq!(
             error,
             crate::DiagnosticError {
                 kind: crate::DiagnosticErrorKind::OversizedFrame,
-                claimed_len: Some(4_097),
-                max_len: Some(4_096),
+                claimed_len: Some(frame_len(4_097)),
+                max_len: Some(frame_len(4_096)),
                 elapsed_ms: None,
                 timeout_ms: None,
             }
@@ -6547,8 +8753,8 @@ mod tests {
     #[test]
     fn diagnostic_error_preserves_timeout_details() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
-            elapsed_ms: 1_500,
-            timeout_ms: 1_000,
+            elapsed_ms: ms(1_500),
+            timeout_ms: ms(1_000),
         });
 
         assert_eq!(
@@ -6557,8 +8763,8 @@ mod tests {
                 kind: crate::DiagnosticErrorKind::Timeout,
                 claimed_len: None,
                 max_len: None,
-                elapsed_ms: Some(1_500),
-                timeout_ms: Some(1_000),
+                elapsed_ms: Some(ms(1_500)),
+                timeout_ms: Some(ms(1_000)),
             }
         );
     }
@@ -6566,14 +8772,14 @@ mod tests {
     #[test]
     fn diagnostic_snapshot_maps_from_device_event() {
         let diagnostics = crate::ParserDiagnostics {
-            bad_checksums: 2,
+            bad_checksums: diag_count(2),
             ..crate::ParserDiagnostics::default()
         };
 
         assert_eq!(
             crate::DiagnosticSnapshot::from_device_event(DeviceEvent::Diagnostics(diagnostics)),
             Some(crate::DiagnosticSnapshot {
-                bad_checksums: 2,
+                bad_checksums: diag_count(2),
                 ..crate::DiagnosticSnapshot::default()
             })
         );
@@ -6586,49 +8792,51 @@ mod tests {
     #[test]
     fn request_tracker_enforces_write_pacing() {
         let policy = crate::RequestPolicy {
-            min_interval_ms: 100,
+            min_interval: Duration::from_milliseconds(100),
             ..crate::RequestPolicy::default()
         };
         let mut tracker = crate::RequestTracker::default();
         let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
 
-        assert_eq!(tracker.start(key, policy, 1_000), Ok(()));
+        assert_eq!(tracker.start(key, policy, ms(1_000)), Ok(()));
         assert_eq!(
             tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
             crate::CorrelationResult::Matched { key, attempts: 1 }
         );
         assert_eq!(
-            tracker.start(key, policy, 1_050),
-            Err(crate::RequestStartError::Pacing { ready_at_ms: 1_100 })
+            tracker.start(key, policy, ms(1_050)),
+            Err(crate::RequestStartError::Pacing {
+                ready_at_ms: ms(1_100)
+            })
         );
-        assert_eq!(tracker.start(key, policy, 1_100), Ok(()));
+        assert_eq!(tracker.start(key, policy, ms(1_100)), Ok(()));
     }
 
     #[test]
     fn request_tracker_reports_retry_after_timeout() {
         let policy = crate::RequestPolicy {
-            timeout_ms: 250,
+            timeout: Duration::from_milliseconds(250),
             max_retries: 2,
             ..crate::RequestPolicy::default()
         };
         let mut tracker = crate::RequestTracker::default();
         let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
 
-        tracker.start(key, policy, 10).unwrap();
+        tracker.start(key, policy, ms(10)).unwrap();
 
-        assert_eq!(tracker.on_tick(259), crate::RequestTick::Waiting);
+        assert_eq!(tracker.on_tick(ms(259)), crate::RequestTick::Waiting);
         assert_eq!(
-            tracker.on_tick(260),
+            tracker.on_tick(ms(260)),
             crate::RequestTick::Retry { key, attempt: 1 }
         );
-        assert_eq!(tracker.retry_started(260), Ok(()));
+        assert_eq!(tracker.retry_started(ms(260)), Ok(()));
         assert_eq!(
-            tracker.on_tick(510),
+            tracker.on_tick(ms(510)),
             crate::RequestTick::Retry { key, attempt: 2 }
         );
-        assert_eq!(tracker.retry_started(510), Ok(()));
+        assert_eq!(tracker.retry_started(ms(510)), Ok(()));
         assert_eq!(
-            tracker.on_tick(760),
+            tracker.on_tick(ms(760)),
             crate::RequestTick::TimedOut { key, attempts: 3 }
         );
     }
@@ -6639,14 +8847,14 @@ mod tests {
         let mut tracker = crate::RequestTracker::default();
         let key = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
 
-        tracker.start(key, policy, 20).unwrap();
+        tracker.start(key, policy, ms(20)).unwrap();
 
         assert_eq!(
             tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
             crate::CorrelationResult::Matched { key, attempts: 1 }
         );
         assert_eq!(tracker.in_flight(), None);
-        assert_eq!(tracker.start(key, policy, 21), Ok(()));
+        assert_eq!(tracker.start(key, policy, ms(21)), Ok(()));
     }
 
     #[test]
@@ -6659,7 +8867,7 @@ mod tests {
             tracker.correlate_reply(key, &mut diagnostics),
             crate::CorrelationResult::Unmatched { key }
         );
-        assert_eq!(diagnostics.unmatched_replies, 1);
+        assert_eq!(diagnostics.unmatched_replies, diag_count(1));
     }
 
     #[test]
@@ -6669,10 +8877,10 @@ mod tests {
         let telemetry = crate::RequestKey::new(crate::CommandKind::RequestTelemetry);
         let identity = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
 
-        tracker.start(telemetry, policy, 20).unwrap();
+        tracker.start(telemetry, policy, ms(20)).unwrap();
 
         assert_eq!(
-            tracker.start(identity, policy, 21),
+            tracker.start(identity, policy, ms(21)),
             Err(crate::RequestStartError::Busy { key: telemetry })
         );
     }
@@ -6690,13 +8898,13 @@ mod tests {
         );
         let mut diagnostics = crate::ParserDiagnostics::default();
 
-        tracker.start(can, policy, 20).unwrap();
+        tracker.start(can, policy, ms(20)).unwrap();
 
         assert_eq!(
             tracker.correlate_reply(local, &mut diagnostics),
             crate::CorrelationResult::Unmatched { key: local }
         );
-        assert_eq!(diagnostics.unmatched_replies, 1);
+        assert_eq!(diagnostics.unmatched_replies, diag_count(1));
         assert_eq!(
             tracker.correlate_reply(can, &mut diagnostics),
             crate::CorrelationResult::Matched {
@@ -7134,9 +9342,9 @@ mod tests {
     #[test]
     fn poll_request_converts_read_only_command_to_queued_request() {
         let policy = crate::RequestPolicy {
-            timeout_ms: 250,
+            timeout: Duration::from_milliseconds(250),
             max_retries: 2,
-            min_interval_ms: 50,
+            min_interval: Duration::from_milliseconds(50),
         };
         let request = crate::PollRequest::new(
             crate::CommandKind::RequestIdentity,
@@ -7341,16 +9549,19 @@ mod tests {
     proptest! {
         #[test]
         fn battery_response_keeps_unknown_distinct_from_zero(include_zero in any::<bool>()) {
-            let percent_reported = include_zero.then_some(Measured::reported(0));
+            let level_reported = include_zero.then_some(Measured::reported(BatteryLevel::from_percent(0)));
             let response = crate::BatteryInfo {
-                percent_reported,
+                level_reported,
                 ..crate::BatteryInfo::default()
             };
 
             if include_zero {
-                prop_assert_eq!(response.percent_reported, Some(Measured::reported(0)));
+                prop_assert_eq!(
+                    response.level_reported,
+                    Some(Measured::reported(BatteryLevel::from_percent(0)))
+                );
             } else {
-                prop_assert_eq!(response.percent_reported, None);
+                prop_assert_eq!(response.level_reported, None);
             }
         }
     }
@@ -7390,8 +9601,8 @@ mod tests {
     fn host_session_drives_link_events_and_drains_outputs() {
         let mut host = crate::HostSession::new(EchoSession::default());
         let link = LinkInfo {
-            monotonic_ms: 10,
-            max_write_len: Some(185),
+            monotonic_ms: ms(10),
+            max_write_len: Some(write_len(185)),
         };
 
         host.ingest_link_up(link);
@@ -7409,15 +9620,15 @@ mod tests {
         let mut host = crate::HostSession::new(EchoSession::default());
         let channel = GattChannel::from_bytes([0xfe; 16]);
 
-        host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], 20);
+        host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], ms(20));
 
         assert_eq!(
             host.drain_outputs().as_slice(),
             &[SessionOutput::NotificationIngest(
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    crate::NotificationByteLen::new(3),
-                    20
+                    crate::NotificationByteLen::from_bytes(3),
+                    ms(20)
                 )
             )]
         );
@@ -7432,7 +9643,7 @@ mod tests {
         host.ingest(SessionInput::Notification {
             channel,
             bytes: &bytes,
-            monotonic_ms: 42,
+            monotonic_ms: ms(42),
         });
 
         assert_eq!(
@@ -7440,8 +9651,8 @@ mod tests {
             &[SessionOutput::NotificationIngest(
                 crate::NotificationIngestOutcome::ignored_wrong_channel(
                     channel,
-                    crate::NotificationByteLen::new(4),
-                    42
+                    crate::NotificationByteLen::from_bytes(4),
+                    ms(42)
                 )
             )]
         );
@@ -7472,16 +9683,18 @@ mod tests {
                 SessionInput::Command(DeviceCommand::RequestTelemetry) => {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                         TelemetryDelta {
-                            at_ms: 40,
-                            speed_mm_s: Some(Measured::reported(1_200)),
-                            ..TelemetryDelta::empty(40)
+                            at_ms: ms(40),
+                            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
+                                1_200,
+                            ))),
+                            ..TelemetryDelta::empty(ms(40))
                         },
                     )));
                 }
                 SessionInput::Tick { monotonic_ms } => {
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         crate::ParserDiagnostics {
-                            timeouts: monotonic_ms,
+                            timeouts: diag_count(monotonic_ms.get()),
                             ..crate::ParserDiagnostics::default()
                         },
                     )));
@@ -7500,10 +9713,12 @@ mod tests {
 
         host.issue_command(DeviceCommand::RequestTelemetry);
 
-        assert_eq!(host.current_snapshot().at_ms, Some(40));
+        assert_eq!(host.current_snapshot().at_ms, Some(ms(40)));
         assert_eq!(
-            host.current_snapshot().speed_mm_s,
-            Some(Measured::reported(1_200))
+            host.current_snapshot().speed,
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_200
+            )))
         );
     }
 
@@ -7511,22 +9726,22 @@ mod tests {
     fn host_session_merges_diagnostics_from_events() {
         let mut host = crate::HostSession::new(StateSession);
 
-        host.tick(2);
-        host.tick(3);
+        host.tick(ms(2));
+        host.tick(ms(3));
 
-        assert_eq!(host.diagnostics().timeouts, 5);
+        assert_eq!(host.diagnostics().timeouts, diag_count(5));
     }
 
     #[test]
     fn diagnostic_snapshot_maps_from_host_session_diagnostics() {
         let mut host = crate::HostSession::new(StateSession);
 
-        host.tick(2);
+        host.tick(ms(2));
 
         assert_eq!(
             crate::DiagnosticSnapshot::from_parser_diagnostics(host.diagnostics()),
             crate::DiagnosticSnapshot {
-                timeouts: 2,
+                timeouts: diag_count(2),
                 ..crate::DiagnosticSnapshot::default()
             }
         );
@@ -7551,9 +9766,11 @@ mod tests {
                         if *byte == 0xff {
                             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                                 TelemetryDelta {
-                                    at_ms: 90,
-                                    speed_mm_s: Some(Measured::reported(self.sum)),
-                                    ..TelemetryDelta::empty(90)
+                                    at_ms: ms(90),
+                                    speed: Some(Measured::reported(
+                                        Speed::from_millimetres_per_second(self.sum),
+                                    )),
+                                    ..TelemetryDelta::empty(ms(90))
                                 },
                             )));
                             self.sum = 0;
@@ -7568,7 +9785,7 @@ mod tests {
                 SessionInput::Command(command) => {
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                         crate::ParserDiagnostics {
-                            unmatched_replies: command.kind() as u64,
+                            unmatched_replies: diag_count(command.kind() as u64),
                             ..crate::ParserDiagnostics::default()
                         },
                     )));
@@ -7592,14 +9809,14 @@ mod tests {
     fn capture_record_owns_notification_payloads() {
         let channel = GattChannel::from_bytes([0x11; 16]);
         let source = vec![1, 2, 0xff];
-        let record = crate::CaptureRecord::notification(channel, source.clone(), 10);
+        let record = crate::CaptureRecord::notification(channel, source.clone(), ms(10));
 
         assert_eq!(
             record,
             crate::CaptureRecord::Notification {
                 channel,
                 bytes: source,
-                monotonic_ms: 10,
+                monotonic_ms: ms(10),
             }
         );
     }
@@ -7625,14 +9842,16 @@ mod tests {
     fn replay_capture_drives_link_tick_command_and_notification_records() {
         let channel = GattChannel::from_bytes([0x22; 16]);
         let link = LinkInfo {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len(185)),
         };
         let records = [
             crate::CaptureRecord::LinkUp(link),
-            crate::CaptureRecord::Tick { monotonic_ms: 2 },
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(2),
+            },
             crate::CaptureRecord::Command(DeviceCommand::RequestIdentity),
-            crate::CaptureRecord::notification(channel, vec![4, 5, 0xff], 3),
+            crate::CaptureRecord::notification(channel, vec![4, 5, 0xff], ms(3)),
             crate::CaptureRecord::LinkDown,
         ];
 
@@ -7640,15 +9859,17 @@ mod tests {
             replay_events(&records).as_slice(),
             &[
                 DeviceEvent::LinkUp(link),
-                DeviceEvent::Tick { monotonic_ms: 2 },
+                DeviceEvent::Tick {
+                    monotonic_ms: ms(2)
+                },
                 DeviceEvent::Diagnostics(crate::ParserDiagnostics {
-                    unmatched_replies: crate::CommandKind::RequestIdentity as u64,
+                    unmatched_replies: diag_count(crate::CommandKind::RequestIdentity as u64),
                     ..crate::ParserDiagnostics::default()
                 }),
                 DeviceEvent::Telemetry(TelemetryDelta {
-                    at_ms: 90,
-                    speed_mm_s: Some(Measured::reported(9)),
-                    ..TelemetryDelta::empty(90)
+                    at_ms: ms(90),
+                    speed: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
+                    ..TelemetryDelta::empty(ms(90))
                 }),
                 DeviceEvent::LinkDown,
             ]
@@ -7668,7 +9889,7 @@ mod tests {
         assert_eq!(
             replay_events(&records).as_slice(),
             &[DeviceEvent::Diagnostics(crate::ParserDiagnostics {
-                unmatched_replies: crate::CommandKind::RequestTelemetry as u64,
+                unmatched_replies: diag_count(crate::CommandKind::RequestTelemetry as u64),
                 ..crate::ParserDiagnostics::default()
             })]
         );
@@ -7685,13 +9906,13 @@ mod tests {
         assert_eq!(
             record
                 .clone()
-                .split_notification_bytes(crate::NotificationChunkLen::new(1)),
+                .split_notification_bytes(crate::NotificationChunkLen::from_bytes(1)),
             vec![record.clone()]
         );
         assert_eq!(
             record.clone().split_notification_by_lengths(&[
-                crate::NotificationChunkLen::new(1),
-                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::from_bytes(1),
+                crate::NotificationChunkLen::from_bytes(2),
             ]),
             vec![record]
         );
@@ -7703,10 +9924,10 @@ mod tests {
         let whole = [crate::CaptureRecord::notification(
             channel,
             vec![1, 2, 3, 0xff],
-            10,
+            ms(10),
         )];
-        let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], 10)
-            .split_notification_bytes(crate::NotificationChunkLen::new(1));
+        let one_byte = crate::CaptureRecord::notification(channel, vec![1, 2, 3, 0xff], ms(10))
+            .split_notification_bytes(crate::NotificationChunkLen::from_bytes(1));
 
         assert_eq!(replay_events(&one_byte), replay_events(&whole));
     }
@@ -7717,24 +9938,24 @@ mod tests {
         let records = [crate::CaptureRecord::notification(
             channel,
             vec![1, 2, 3, 0xff],
-            10,
+            ms(10),
         )];
 
         let comparison = crate::compare_replay_capture_chunks(
             FramedCaptureSession::default,
             &records,
             &[
-                crate::NotificationChunkLen::new(2),
-                crate::NotificationChunkLen::new(1),
+                crate::NotificationChunkLen::from_bytes(2),
+                crate::NotificationChunkLen::from_bytes(1),
             ],
         );
 
         assert_eq!(
             comparison,
             crate::ReplayChunkComparison {
-                whole_semantic_events: crate::SemanticEventCount::new(1),
-                one_byte_semantic_events: crate::SemanticEventCount::new(1),
-                arbitrary_semantic_events: crate::SemanticEventCount::new(1),
+                whole_semantic_events: crate::SemanticEventCount::from_events(1),
+                one_byte_semantic_events: crate::SemanticEventCount::from_events(1),
+                arbitrary_semantic_events: crate::SemanticEventCount::from_events(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             }
@@ -7759,9 +9980,9 @@ mod tests {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
                         at_ms: monotonic_ms,
-                        speed_mm_s: Some(Measured::reported(
+                        speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                             i32::try_from(bytes.len()).unwrap_or(0),
-                        )),
+                        ))),
                         ..TelemetryDelta::empty(monotonic_ms)
                     },
                 )));
@@ -7772,15 +9993,15 @@ mod tests {
         let records = [crate::CaptureRecord::notification(
             channel,
             vec![1, 2, 3, 4],
-            10,
+            ms(10),
         )];
 
         let comparison = crate::compare_replay_capture_chunks(
             || NotificationLengthSession,
             &records,
             &[
-                crate::NotificationChunkLen::new(2),
-                crate::NotificationChunkLen::new(2),
+                crate::NotificationChunkLen::from_bytes(2),
+                crate::NotificationChunkLen::from_bytes(2),
             ],
         );
 
@@ -7792,18 +10013,20 @@ mod tests {
     fn replay_arbitrary_chunk_lengths_are_derived_from_capture_notifications() {
         let channel = GattChannel::from_bytes([0x78; 16]);
         let records = [
-            crate::CaptureRecord::Tick { monotonic_ms: 1 },
-            crate::CaptureRecord::notification(channel, vec![0; 4], 2),
-            crate::CaptureRecord::notification(channel, vec![0; 10], 3),
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(1),
+            },
+            crate::CaptureRecord::notification(channel, vec![0; 4], ms(2)),
+            crate::CaptureRecord::notification(channel, vec![0; 10], ms(3)),
             crate::CaptureRecord::LinkDown,
         ];
 
         assert_eq!(
             crate::replay_arbitrary_chunk_lengths(&records),
             vec![
-                crate::NotificationChunkLen::new(2),
-                crate::NotificationChunkLen::new(3),
-                crate::NotificationChunkLen::new(5),
+                crate::NotificationChunkLen::from_bytes(2),
+                crate::NotificationChunkLen::from_bytes(3),
+                crate::NotificationChunkLen::from_bytes(5),
             ]
         );
     }
@@ -7812,7 +10035,7 @@ mod tests {
     fn replay_arbitrary_chunk_lengths_are_empty_without_notifications() {
         assert_eq!(
             crate::replay_arbitrary_chunk_lengths(&[crate::CaptureRecord::Tick {
-                monotonic_ms: 1
+                monotonic_ms: ms(1)
             }]),
             Vec::<crate::NotificationChunkLen>::new()
         );
@@ -7827,8 +10050,8 @@ mod tests {
         let cases = crate::notification_boundary_replay_cases(
             channel,
             &[frame_a.as_slice(), frame_b.as_slice()],
-            10,
-            &[crate::NotificationChunkLen::new(2)],
+            ms(10),
+            &[crate::NotificationChunkLen::from_bytes(2)],
         );
 
         assert_eq!(
@@ -7852,9 +10075,9 @@ mod tests {
         let cases = crate::notification_impairment_replay_cases(
             channel,
             frame.as_slice(),
-            10,
+            ms(10),
             &[0x00, 0x01],
-            99,
+            ms(99),
         );
 
         assert_eq!(
@@ -7884,12 +10107,12 @@ mod tests {
             let channel = GattChannel::from_bytes([0x44; 16]);
             let mut payload = payload_prefix;
             payload.push(0xff);
-            let whole = [crate::CaptureRecord::notification(channel, payload.clone(), 20)];
+            let whole = [crate::CaptureRecord::notification(channel, payload.clone(), ms(20))];
             let chunk_lengths = lengths
                 .into_iter()
-                .map(crate::NotificationChunkLen::new)
+                .map(crate::NotificationChunkLen::from_bytes)
                 .collect::<Vec<_>>();
-            let chunks = crate::CaptureRecord::notification(channel, payload, 20)
+            let chunks = crate::CaptureRecord::notification(channel, payload, ms(20))
                 .split_notification_by_lengths(&chunk_lengths);
 
             prop_assert_eq!(replay_events(&chunks), replay_events(&whole));
@@ -7900,22 +10123,30 @@ mod tests {
     fn replay_summary_preserves_output_order() {
         let channel = GattChannel::from_bytes([0x55; 16]);
         let records = [
-            crate::CaptureRecord::Tick { monotonic_ms: 1 },
-            crate::CaptureRecord::notification(channel, vec![9, 0xff], 2),
-            crate::CaptureRecord::Tick { monotonic_ms: 3 },
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(1),
+            },
+            crate::CaptureRecord::notification(channel, vec![9, 0xff], ms(2)),
+            crate::CaptureRecord::Tick {
+                monotonic_ms: ms(3),
+            },
         ];
         let mut host = crate::HostSession::new(FramedCaptureSession::default());
 
         assert_eq!(
             crate::replay_capture(&mut host, &records).as_slice(),
             &[
-                SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 1 }),
+                SessionOutput::Event(DeviceEvent::Tick {
+                    monotonic_ms: ms(1)
+                }),
                 SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
-                    at_ms: 90,
-                    speed_mm_s: Some(Measured::reported(9)),
-                    ..TelemetryDelta::empty(90)
+                    at_ms: ms(90),
+                    speed: Some(Measured::reported(Speed::from_millimetres_per_second(9),)),
+                    ..TelemetryDelta::empty(ms(90))
                 })),
-                SessionOutput::Event(DeviceEvent::Tick { monotonic_ms: 3 }),
+                SessionOutput::Event(DeviceEvent::Tick {
+                    monotonic_ms: ms(3)
+                }),
             ]
         );
     }

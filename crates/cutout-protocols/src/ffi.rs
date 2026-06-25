@@ -266,7 +266,9 @@ where
 mod tests {
     use cutout_core::{
         CommandKindDto, ControlRefusalDto, ControlRefusalReasonDto, DeviceCommandDto, LinkInfo,
-        SafetyClassDto, SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
+        MonotonicMillisDto, MonotonicTimestamp, ParserDiagnosticCountDto, SafetyClassDto,
+        SessionEventDto, SessionInputDto, SessionOutputDto, TransportActionDto,
+        TransportWriteLimit, TransportWriteLimitDto,
     };
 
     use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
@@ -276,13 +278,27 @@ mod tests {
         new_nosfet_aero_read_only_session, try_new_begode_falcon_read_only_session,
     };
 
+    const fn ms(value: u64) -> MonotonicMillisDto {
+        MonotonicMillisDto {
+            milliseconds: value,
+        }
+    }
+
+    const fn write_len(value: u16) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(value)
+    }
+
+    const fn write_len_dto(value: u16) -> TransportWriteLimitDto {
+        TransportWriteLimitDto { bytes: value }
+    }
+
     #[test]
     fn concrete_aero_session_drives_link_up_and_drains_owned_outputs() {
         let mut session = new_nosfet_aero_read_only_session();
 
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len_dto(185)),
         });
 
         assert!(session.drain_outputs().iter().any(|output| matches!(
@@ -296,8 +312,8 @@ mod tests {
     fn concrete_falcon_session_maps_command_dto_to_write_output() {
         let mut session = new_begode_falcon_read_only_session();
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len_dto(185)),
         });
         let _ = session.drain_outputs();
 
@@ -314,8 +330,8 @@ mod tests {
     fn checked_ingest_surfaces_unsupported_command_as_error_dto() {
         let mut session = new_begode_falcon_read_only_session();
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len_dto(185)),
         });
         let _ = session.drain_outputs();
 
@@ -356,8 +372,8 @@ mod tests {
                 .expect("default Falcon profile should construct");
 
         let result = session.ingest_checked(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len_dto(185)),
         });
 
         assert_eq!(result.error, None);
@@ -376,19 +392,22 @@ mod tests {
         malformed[20] = 0;
 
         session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len_dto(185)),
         });
         let _ = session.drain_outputs();
 
         session.ingest(&SessionInputDto::Notification {
             channel,
             bytes: malformed.to_vec(),
-            monotonic_ms: 42,
+            monotonic_ms: ms(42),
         });
 
         assert_eq!(session.current_snapshot().at_ms, None);
-        assert!(session.diagnostics().malformed_frames > 0);
+        assert_eq!(
+            session.diagnostics().malformed_frames,
+            ParserDiagnosticCountDto { count: 1 }
+        );
         assert!(session.drain_outputs().iter().any(|output| {
             matches!(
                 output,
@@ -401,8 +420,8 @@ mod tests {
     fn concrete_session_accepts_core_link_info_roundtrip_inputs() {
         let mut session = new_begode_falcon_read_only_session();
         let link = LinkInfo {
-            monotonic_ms: 7,
-            max_write_len: Some(20),
+            monotonic_ms: MonotonicTimestamp::new(7),
+            max_write_len: Some(write_len(20)),
         };
 
         session.ingest(&SessionInputDto::from(cutout_core::SessionInput::LinkUp(

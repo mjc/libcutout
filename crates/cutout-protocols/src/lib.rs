@@ -28,13 +28,14 @@ mod begode_telemetry;
 pub use begode_telemetry::{
     BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BEGODE_FIELD_ALERT_FLAGS,
     BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
-    BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeCapacityEvidence,
-    BegodeCapacitySelection, BegodeCellModel, BegodeExtraTelemetry, BegodeFalconBatteryVariant,
-    BegodeFalconBatteryVariantSelection, BegodeLiveATelemetry, BegodeLiveBTelemetry,
-    BegodePackEvidenceConsistency, BegodePackLayoutEvidence, BegodePackLayoutSelection,
-    BegodePackVoltageProfile, BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
+    BEGODE_FIELD_SETTINGS_BITS, BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeAlertFlags,
+    BegodeCapacityEvidence, BegodeCapacitySelection, BegodeCellModel, BegodeExtraTelemetry,
+    BegodeFalconBatteryVariant, BegodeFalconBatteryVariantSelection, BegodeLedMode,
+    BegodeLightMode, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackEvidenceConsistency,
+    BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodePackVoltageProfile,
+    BegodeSettingsBits, BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
     BegodeVoltageEvidence, BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
-    estimate_begode_battery_percent, select_begode_falcon_battery_variant,
+    estimate_begode_battery_level, select_begode_falcon_battery_variant,
     select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
     select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
     validate_begode_pack_evidence,
@@ -90,10 +91,11 @@ pub use session::{
     VescNotificationDecoder, VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
-    VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN, VESC_MAX_STREAM_REPLIES, VescBoardProfile,
-    VescCanReadOnlyRequest, VescCodecError, VescFaultCode, VescReadOnlyCodec, VescReadOnlyReply,
-    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask,
-    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
+    GearRatioDenominator, MotorPolePairs, VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN,
+    VESC_MAX_STREAM_REPLIES, VescBoardProfile, VescCanReadOnlyRequest, VescCodecError,
+    VescFaultCode, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask, VescStatsTelemetry,
+    VescValuesMask, VescValuesTelemetry,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,
@@ -107,12 +109,12 @@ pub use veteran_frame::{
     VeteranReassemblyError,
 };
 pub use veteran_telemetry::{
-    NOSFET_AERO_MAX_VOLTAGE_MV, NOSFET_AERO_MIN_VOLTAGE_MV,
+    NOSFET_AERO_MAX_VOLTAGE, NOSFET_AERO_MIN_VOLTAGE,
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
     VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VeteranFirmwareVersion, VeteranModelProfile,
-    VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_percent,
-    estimate_veteran_battery_percent,
+    VeteranPedalsMode, VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_level,
+    estimate_veteran_battery_level,
 };
 
 /// Returns the crate name used by setup smoke tests.
@@ -123,6 +125,14 @@ pub const fn crate_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
+        cutout_core::MonotonicTimestamp::new(value)
+    }
+
+    const fn write_len(value: u16) -> cutout_core::TransportWriteLimit {
+        cutout_core::TransportWriteLimit::from_bytes(value)
+    }
+
     use super::crate_name;
     use cutout_core::{
         Capabilities, CommandKind, LinkInfo, ProtocolSession, SessionInput, SessionOutput,
@@ -157,8 +167,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );
@@ -178,8 +188,8 @@ mod tests {
 
         session.handle(
             SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: 1,
-                max_write_len: Some(185),
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
             }),
             &mut output,
         );

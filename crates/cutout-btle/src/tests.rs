@@ -9,12 +9,12 @@ use btleplug::api::{CharPropFlags, Characteristic};
 use bytes::Bytes;
 use cutout_core::{
     DeviceCommand, DeviceEvent, DiagnosticError, FirmwareInfo, GattChannel, Measured,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, ParserError,
-    ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection, PevcapResolvedIdentity,
-    ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue, ReadOnlyResponse,
-    ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
-    SettingsReadback, TelemetryDelta, TransportAction, ValueQuality, ValueSource,
-    VerificationStatus, VerifiedValue, WriteMode,
+    NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics,
+    ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
+    ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput,
+    SettingsEntry, SettingsReadback, SignalStrength, TelemetryDelta, TransportAction, ValueQuality,
+    ValueSource, VerificationStatus, VerifiedValue, WriteMode,
 };
 use futures_util::{StreamExt, stream};
 use smallvec::smallvec;
@@ -23,6 +23,14 @@ use uuid::Uuid;
 use super::crate_name;
 
 type WriteRecord = (Uuid, Bytes, WriteMode);
+
+const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
+    cutout_core::MonotonicTimestamp::new(value)
+}
+
+const fn rssi(value: i16) -> SignalStrength {
+    SignalStrength::from_dbm(value)
+}
 type WriteLog = Arc<Mutex<Vec<WriteRecord>>>;
 type NotificationLog = Arc<Mutex<Vec<crate::BtleNotification>>>;
 
@@ -69,35 +77,51 @@ impl crate::BridgeIdentityObserver for TestIdentityObserver {
 static OVERSIZED_BTLE_VALUE: [u8; 513] = [0; 513];
 
 const fn protocol_writes(value: usize) -> crate::ProtocolWriteCount {
-    crate::ProtocolWriteCount::new(value)
+    crate::ProtocolWriteCount::from_events(value)
 }
 
 const fn writes(value: usize) -> crate::TransportWriteCount {
-    crate::TransportWriteCount::new(value)
+    crate::TransportWriteCount::from_events(value)
 }
 
 const fn subscribes(value: usize) -> crate::SubscribeCount {
-    crate::SubscribeCount::new(value)
+    crate::SubscribeCount::from_events(value)
 }
 
 const fn notifications(value: usize) -> crate::NotificationCount {
-    crate::NotificationCount::new(value)
+    crate::NotificationCount::from_events(value)
 }
 
 const fn telemetry_events(value: usize) -> crate::TelemetryEventCount {
-    crate::TelemetryEventCount::new(value)
+    crate::TelemetryEventCount::from_events(value)
 }
 
 const fn read_only_responses(value: usize) -> crate::ReadOnlyResponseCount {
-    crate::ReadOnlyResponseCount::new(value)
+    crate::ReadOnlyResponseCount::from_events(value)
 }
 
 const fn diagnostic_events(value: usize) -> crate::DiagnosticEventCount {
-    crate::DiagnosticEventCount::new(value)
+    crate::DiagnosticEventCount::from_events(value)
+}
+
+const fn parser_diag_count(value: u64) -> ParserDiagnosticCount {
+    ParserDiagnosticCount::from_events(value)
 }
 
 const fn disconnects(value: usize) -> crate::DisconnectCount {
-    crate::DisconnectCount::new(value)
+    crate::DisconnectCount::from_events(value)
+}
+
+fn speed(value: i32) -> Measured<cutout_core::Speed> {
+    Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
+}
+
+fn voltage(value: i32) -> Measured<cutout_core::Voltage> {
+    Measured::reported(cutout_core::Voltage::from_millivolts(value))
+}
+
+fn battery_level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
+    Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
 }
 
 fn decode_outcome_evidence(
@@ -232,7 +256,7 @@ fn connection_target_matches_on_address_and_name() {
         identifier: "peripheral-id".to_owned(),
         address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
         name: Some("NOSFET Aero".to_owned()),
-        rssi: Some(-42),
+        rssi: Some(rssi(-42)),
         advertised_services: smallvec![],
         manufacturer_data: crate::ManufacturerDataSummaries::new(),
     };
@@ -341,7 +365,7 @@ fn connection_target_matches_on_platform_identifier() {
         identifier: "cb-uuid-1234".to_owned(),
         address: None,
         name: Some("NF2557".to_owned()),
-        rssi: Some(-42),
+        rssi: Some(rssi(-42)),
         advertised_services: smallvec![],
         manufacturer_data: crate::ManufacturerDataSummaries::new(),
     };
@@ -355,16 +379,16 @@ fn peripheral_observation_renders_manufacturer_data_without_payload_bytes() {
         identifier: "peripheral-id".to_owned(),
         address: None,
         name: Some("Generic".to_owned()),
-        rssi: Some(-60),
+        rssi: Some(rssi(-60)),
         advertised_services: smallvec![],
         manufacturer_data: smallvec![
             crate::ManufacturerDataSummary {
                 company_id: 0x004c,
-                len: crate::ManufacturerDataLen::new(6),
+                len: crate::ManufacturerDataSize::from_bytes(6),
             },
             crate::ManufacturerDataSummary {
                 company_id: 0x000f,
-                len: crate::ManufacturerDataLen::new(2),
+                len: crate::ManufacturerDataSize::from_bytes(2),
             },
         ],
     };
@@ -426,7 +450,7 @@ fn connection_summary_renders_services_and_characteristics() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -576,7 +600,7 @@ fn connection_summary_selects_standard_battery_level_characteristic() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -602,16 +626,16 @@ fn connection_summary_selects_standard_battery_level_characteristic() {
 }
 
 #[test]
-fn battery_level_percent_rejects_malformed_backend_values() {
+fn battery_level_rejects_malformed_backend_values() {
     assert_eq!(
-        crate::BatteryLevelPercent::from_backend_byte(88).map(crate::BatteryLevelPercent::get),
+        crate::BtleBatteryLevel::from_backend_byte(88).map(crate::BtleBatteryLevel::as_percent),
         Some(88)
     );
     assert_eq!(
-        crate::BatteryLevelPercent::from_backend_byte(100).map(crate::BatteryLevelPercent::get),
+        crate::BtleBatteryLevel::from_backend_byte(100).map(crate::BtleBatteryLevel::as_percent),
         Some(100)
     );
-    assert_eq!(crate::BatteryLevelPercent::from_backend_byte(101), None);
+    assert_eq!(crate::BtleBatteryLevel::from_backend_byte(101), None);
 }
 
 #[test]
@@ -621,7 +645,7 @@ fn connection_summary_uses_identifier_when_address_is_unavailable() {
             identifier: "cb-uuid-1234".to_owned(),
             address: None,
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -682,7 +706,7 @@ fn captured_btle_packet_distinguishes_malformed_bytes_from_attribute_values() {
     assert_eq!(
         malformed.reason(),
         crate::MalformedBtlePacketReason::OversizedAttributeValue {
-            max: NotificationByteLen::new(512)
+            max: NotificationByteLen::from_bytes(512)
         }
     );
     assert_eq!(malformed.as_raw_bytes().len(), 513);
@@ -709,7 +733,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
             identifier: "cb-uuid".to_owned(),
             address: None,
             name: Some("NF2557".to_owned()),
-            rssi: Some(-67),
+            rssi: Some(rssi(-67)),
             advertised_services: smallvec![Uuid::from_u128(
                 0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
             )],
@@ -736,7 +760,9 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         .to_pevcap(
             &summary,
             crate::PevcapSessionMetadata {
-                wall_clock_start_unix_ms: 1_725_000_123_456,
+                wall_clock_start_unix_ms: cutout_core::WallClockUnixTimestamp::new(
+                    1_725_000_123_456,
+                ),
                 platform_id: "darwin",
                 library_version: "0.1.0",
                 registry_hash: [0x42; 32],
@@ -753,9 +779,15 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
         )
         .expect("session capture converts to PEVCAP");
 
-    assert_eq!(pevcap.header.wall_clock_start_unix_ms, 1_725_000_123_456);
+    assert_eq!(
+        pevcap.header.wall_clock_start_unix_ms,
+        cutout_core::WallClockUnixTimestamp::new(1_725_000_123_456)
+    );
     assert_eq!(pevcap.header.platform_id, "darwin");
-    assert_eq!(pevcap.header.write_limit, Some(23));
+    assert_eq!(
+        pevcap.header.write_limit,
+        Some(cutout_core::TransportWriteLimit::from_bytes(23))
+    );
     assert_eq!(pevcap.header.advertised_services.len(), 1);
     assert_eq!(pevcap.header.gatt_fingerprints.len(), 1);
     assert_eq!(
@@ -768,8 +800,11 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     );
     assert_eq!(pevcap.records.len(), 4);
     assert_eq!(pevcap.records[0].direction, PevcapDirection::LinkUp);
-    assert_eq!(pevcap.records[0].monotonic_ms, 0);
-    assert_eq!(pevcap.records[0].link_max_write_len, Some(23));
+    assert_eq!(pevcap.records[0].monotonic_ms, ms(0));
+    assert_eq!(
+        pevcap.records[0].link_max_write_len,
+        Some(cutout_core::TransportWriteLimit::from_bytes(23))
+    );
     assert_eq!(pevcap.records[1].direction, PevcapDirection::Outbound);
     assert_eq!(
         pevcap.records[1].write_mode,
@@ -781,7 +816,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
     assert_eq!(pevcap.records[2].service, advertised_service);
     assert_eq!(pevcap.records[2].bytes.as_ref(), b"NAME=NF2557");
     assert_eq!(pevcap.records[3].direction, PevcapDirection::LinkDown);
-    assert_eq!(pevcap.records[3].monotonic_ms, 4);
+    assert_eq!(pevcap.records[3].monotonic_ms, ms(4));
 }
 
 fn pevcap_conversion_capture_records() -> Vec<crate::SessionCaptureRecord> {
@@ -790,7 +825,7 @@ fn pevcap_conversion_capture_records() -> Vec<crate::SessionCaptureRecord> {
     vec![
         crate::SessionCaptureRecord::Link {
             monotonic_ms: crate::MonotonicMs::new(0),
-            max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(23)),
+            max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(23)),
         },
         crate::SessionCaptureRecord::Subscribe {
             monotonic_ms: crate::MonotonicMs::new(1),
@@ -853,7 +888,7 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
         .to_pevcap(
             &summary,
             crate::PevcapSessionMetadata {
-                wall_clock_start_unix_ms: 1,
+                wall_clock_start_unix_ms: cutout_core::WallClockUnixTimestamp::new(1),
                 platform_id: "test",
                 library_version: "0.1.0",
                 registry_hash: [0; 32],
@@ -877,7 +912,7 @@ fn connection_summary_finds_write_and_notify_candidates() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -912,7 +947,7 @@ fn connection_summary_selects_session_endpoints() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -1040,7 +1075,7 @@ async fn drive_session_subscribes_and_writes_matching_transport_channels() {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some("NOSFET Aero".to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![],
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },
@@ -1126,11 +1161,11 @@ async fn drive_session_relays_notifications_back_into_session() {
     assert_eq!(report.notifications, notifications(1));
     assert_eq!(
         report.notification_bytes,
-        crate::NotificationByteTotal::new(2)
+        crate::NotificationPayloadTotal::from_bytes(2)
     );
     assert_eq!(
         report.latest_notification_len,
-        Some(NotificationByteLen::new(2))
+        Some(NotificationByteLen::from_bytes(2))
     );
     assert_eq!(
         *session
@@ -1141,17 +1176,11 @@ async fn drive_session_relays_notifications_back_into_session() {
     );
     assert_eq!(report.telemetry, telemetry_events(1));
     assert_eq!(report.read_only_responses, read_only_responses(2));
+    assert_eq!(report.telemetry_snapshot.speed, Some(speed(1_200)));
+    assert_eq!(report.telemetry_snapshot.voltage, Some(voltage(84_200)));
     assert_eq!(
-        report.telemetry_snapshot.speed_mm_s,
-        Some(Measured::reported(1_200))
-    );
-    assert_eq!(
-        report.telemetry_snapshot.voltage_mv,
-        Some(Measured::reported(84_200))
-    );
-    assert_eq!(
-        report.telemetry_snapshot.battery_percent_estimated,
-        Some(Measured::estimated(61))
+        report.telemetry_snapshot.battery_level_estimated,
+        Some(battery_level_estimated(61))
     );
     assert_eq!(
         report.firmware.expect("firmware response").firmware_major,
@@ -1164,7 +1193,10 @@ async fn drive_session_relays_notifications_back_into_session() {
         RawFieldValue::new(0x0014, 30)
     );
     assert_eq!(report.diagnostics, diagnostic_events(1));
-    assert_eq!(report.diagnostics_snapshot.malformed_frames, 1);
+    assert_eq!(
+        report.diagnostics_snapshot.malformed_frames,
+        parser_diag_count(1)
+    );
     assert_eq!(
         report.diagnostic_errors.as_slice(),
         &[DiagnosticError::from_parser_error(
@@ -1194,7 +1226,8 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::Diagnostics {
             monotonic_ms,
             diagnostics,
-        } if *monotonic_ms == crate::MonotonicMs::new(2) && diagnostics.malformed_frames == 1
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && diagnostics.malformed_frames == parser_diag_count(1)
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
@@ -1228,9 +1261,9 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
         NotificationIngestOutcome::semantic_events(
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(77),
-            7,
-            SemanticEventCount::new(5),
+            NotificationByteLen::from_bytes(77),
+            ms(7),
+            SemanticEventCount::from_events(5),
         ),
     )];
 
@@ -1242,7 +1275,7 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 }
 
@@ -1261,8 +1294,8 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
         NotificationIngestOutcome::buffered_fragment(
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(20),
-            3,
+            NotificationByteLen::from_bytes(20),
+            ms(3),
         ),
     )];
 
@@ -1274,7 +1307,7 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(20)
+        NotificationByteLen::from_bytes(20)
     );
 }
 
@@ -1283,8 +1316,8 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
     let outputs = [SessionOutput::NotificationIngest(
         NotificationIngestOutcome::ignored_wrong_channel(
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(20),
-            3,
+            NotificationByteLen::from_bytes(20),
+            ms(3),
         ),
     )];
 
@@ -1296,7 +1329,7 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(20)
+        NotificationByteLen::from_bytes(20)
     );
 }
 
@@ -1306,8 +1339,8 @@ fn drive_session_reports_fragment_notifications_as_typed_ingest_events() {
     let outcome = NotificationIngestOutcome::buffered_fragment(
         ProtocolFamily::VeteranLeaperkimNosfet,
         GattChannel::from_bytes([0xA1; 16]),
-        NotificationByteLen::new(20),
-        3,
+        NotificationByteLen::from_bytes(20),
+        ms(3),
     );
 
     crate::report::process_notification_ingest_outcome(
@@ -1331,13 +1364,13 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
         SessionOutput::NotificationIngest(NotificationIngestOutcome::semantic_events(
             ProtocolFamily::VeteranLeaperkimNosfet,
             GattChannel::from_bytes([0xA1; 16]),
-            NotificationByteLen::new(77),
-            3,
-            SemanticEventCount::new(5),
+            NotificationByteLen::from_bytes(77),
+            ms(3),
+            SemanticEventCount::from_events(5),
         )),
         SessionOutput::Event(DeviceEvent::Telemetry(TelemetryDelta {
-            voltage_mv: Some(Measured::reported(126_000)),
-            ..TelemetryDelta::empty(0)
+            voltage: Some(voltage(126_000)),
+            ..TelemetryDelta::empty(ms(0))
         })),
     ];
 
@@ -1349,7 +1382,7 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
     );
     assert_eq!(
         decode_outcome_evidence(outcome).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 }
 
@@ -1360,11 +1393,11 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         NotificationIngestOutcome::known_reserved(
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
-            NotificationByteLen::new(75),
-            4,
+            NotificationByteLen::from_bytes(75),
+            ms(4),
             ReservedPayloadEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
-                body_len: PayloadBodyLen::new(24),
+                body_len: PayloadBodyLen::from_bytes(24),
                 verification: VerificationStatus::HardwareVerified,
             },
         ),
@@ -1373,11 +1406,11 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         NotificationIngestOutcome::parser_gap(
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
-            NotificationByteLen::new(77),
-            5,
+            NotificationByteLen::from_bytes(77),
+            ms(5),
             ParserGapEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
-                body_len: PayloadBodyLen::new(26),
+                body_len: PayloadBodyLen::from_bytes(26),
             },
         ),
     )];
@@ -1385,8 +1418,8 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         NotificationIngestOutcome::parser_diagnostic(
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
-            NotificationByteLen::new(77),
-            6,
+            NotificationByteLen::from_bytes(77),
+            ms(6),
             ParserError::BadChecksum,
         ),
     )];
@@ -1399,14 +1432,14 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
     );
     assert_eq!(
         decode_outcome_evidence(reserved).len,
-        NotificationByteLen::new(75)
+        NotificationByteLen::from_bytes(75)
     );
 
     let gap = crate::bridge::notification_decode_outcome(&gap).expect("gap outcome present");
     assert_eq!(gap.kind(), crate::bridge::NotificationDecodeKind::ParserGap);
     assert_eq!(
         decode_outcome_evidence(gap).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 
     let diagnostic = crate::bridge::notification_decode_outcome(&diagnostic)
@@ -1417,7 +1450,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
     );
     assert_eq!(
         decode_outcome_evidence(diagnostic).len,
-        NotificationByteLen::new(77)
+        NotificationByteLen::from_bytes(77)
     );
 }
 
@@ -1452,7 +1485,7 @@ async fn capture_session_records_subscribe_write_and_notification_bytes() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(0),
@@ -1508,7 +1541,7 @@ async fn capture_session_with_commands_records_command_writes_before_tick() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(0),
@@ -1652,7 +1685,7 @@ async fn capture_session_records_link_down_after_intentional_disconnect() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::LinkDown {
                 monotonic_ms: crate::MonotonicMs::new(1)
@@ -1739,7 +1772,7 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
         vec![
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(0),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(0),
@@ -1750,7 +1783,7 @@ async fn capture_reconnecting_session_restores_subscription_after_disconnect() {
             },
             crate::SessionCaptureRecord::Link {
                 monotonic_ms: crate::MonotonicMs::new(2),
-                max_write_len: Some(crate::NegotiatedWriteLen::from_mtu(185)),
+                max_write_len: Some(crate::NegotiatedWriteLimit::from_bytes(185)),
             },
             crate::SessionCaptureRecord::Subscribe {
                 monotonic_ms: crate::MonotonicMs::new(2),
@@ -2214,17 +2247,17 @@ impl ProtocolSession for BridgeSession {
                     NotificationIngestOutcome::semantic_events(
                         ProtocolFamily::VeteranLeaperkimNosfet,
                         GattChannel::from_bytes([0xA1; 16]),
-                        NotificationByteLen::new(2),
-                        0,
-                        SemanticEventCount::new(1),
+                        NotificationByteLen::from_bytes(2),
+                        ms(0),
+                        SemanticEventCount::from_events(1),
                     ),
                 ));
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
-                        speed_mm_s: Some(Measured::reported(1_200)),
-                        voltage_mv: Some(Measured::reported(84_200)),
-                        battery_percent_estimated: Some(Measured::estimated(61)),
-                        ..TelemetryDelta::empty(0)
+                        speed: Some(speed(1_200)),
+                        voltage: Some(voltage(84_200)),
+                        battery_level_estimated: Some(battery_level_estimated(61)),
+                        ..TelemetryDelta::empty(ms(0))
                     },
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
@@ -2253,7 +2286,7 @@ impl ProtocolSession for BridgeSession {
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                     ParserDiagnostics {
-                        malformed_frames: 1,
+                        malformed_frames: parser_diag_count(1),
                         ..ParserDiagnostics::default()
                     },
                 )));
@@ -2320,7 +2353,7 @@ fn begode_falcon_summary(name: &str) -> crate::ConnectionSummary {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some(name.to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: smallvec![Uuid::from_u128(
                 0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
             )],
@@ -2346,7 +2379,7 @@ fn shared_write_notify_summary(name: &str) -> crate::ConnectionSummary {
             identifier: "peripheral-id".to_owned(),
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             name: Some(name.to_owned()),
-            rssi: Some(-42),
+            rssi: Some(rssi(-42)),
             advertised_services: crate::AdvertisedServices::new(),
             manufacturer_data: crate::ManufacturerDataSummaries::new(),
         },

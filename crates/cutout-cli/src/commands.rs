@@ -10,8 +10,8 @@ use std::{
 use anyhow::{Result, bail};
 use cutout_btle::{
     BridgeIdentityResolution, BtleError, BtleplugReconnectHost, ConnectedPeripheral,
-    ConnectionTarget, DiagnosticEventCount, DisconnectCount, MonotonicMs, NotificationByteTotal,
-    NotificationCount, NotificationWindow, PevcapSessionMetadata, ProtocolWriteCount,
+    ConnectionTarget, DiagnosticEventCount, DisconnectCount, MonotonicMs, NotificationCount,
+    NotificationPayloadTotal, NotificationWindow, PevcapSessionMetadata, ProtocolWriteCount,
     RawNotificationRecord, ReadOnlyResponseCount, ReconnectAttemptReport, ScanWindow,
     SessionBridgeEvent, SessionBridgeReport, SessionCapture, SessionEndpoints, SessionPeripheral,
     SubscribeCount, TelemetryEventCount, TransportWriteCount, WriteProvenance,
@@ -23,10 +23,11 @@ use cutout_core::{
     BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
     CaptureSessionLabel, CatalogModelResolution, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
-    ModelCatalog, NotificationByteLen, ParserDiagnostics, PevcapCapture, PevcapDirection,
-    PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily,
-    ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput, SettingsReadback,
-    TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
+    ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
+    PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
+    ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
+    SettingsReadback, TelemetrySnapshot, TransportWriteLimit, ValueQuality, ValueSource,
+    VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -103,6 +104,51 @@ fn convert_pevcap_bytes(
 ) -> Result<Vec<u8>> {
     let capture = PevcapCapture::decode(input, pevcap_encoding(input_format));
     Ok(capture?.encode(pevcap_encoding(output_format))?)
+}
+
+#[cfg(test)]
+fn speed(value: i32) -> Measured<cutout_core::Speed> {
+    Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
+}
+
+#[cfg(test)]
+fn voltage(value: i32) -> Measured<cutout_core::Voltage> {
+    Measured::reported(cutout_core::Voltage::from_millivolts(value))
+}
+
+#[cfg(test)]
+fn battery_current(value: i32) -> Measured<cutout_core::BatteryCurrent> {
+    Measured::reported(cutout_core::BatteryCurrent::from_milliamps(value))
+}
+
+#[cfg(test)]
+fn temperature(value: i32) -> Measured<cutout_core::Temperature> {
+    Measured::reported(cutout_core::Temperature::from_millicelsius(value))
+}
+
+#[cfg(test)]
+fn power(value: i64) -> Measured<cutout_core::Power> {
+    Measured::calculated(cutout_core::Power::from_milliwatts(value))
+}
+
+#[cfg(test)]
+fn duty_cycle_permille(value: i16) -> Measured<cutout_core::DutyCycle> {
+    Measured::reported(cutout_core::DutyCycle::from_permille(value))
+}
+
+#[cfg(test)]
+fn distance(value: u64) -> Measured<cutout_core::Distance> {
+    Measured::reported(cutout_core::Distance::from_millimetres(value))
+}
+
+#[cfg(test)]
+fn angle_mdeg(value: i32) -> Measured<cutout_core::Angle> {
+    Measured::reported(cutout_core::Angle::from_millidegrees(value))
+}
+
+#[cfg(test)]
+fn level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
+    Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
 }
 
 const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
@@ -307,9 +353,9 @@ fn falcon_replay_bms_voltage_evidence(
         }
         let frame = BegodeFrame::try_from_slice(record.bytes.as_ref()).ok()?;
         let summary = BegodeBmsSummary::decode(&frame).ok()?;
-        u32::try_from(summary.pack_voltage_mv)
-            .ok()
-            .map(BegodeVoltageEvidence::ObservedPackVoltageMv)
+        Some(BegodeVoltageEvidence::ObservedPackVoltage(
+            summary.pack_voltage,
+        ))
     })
 }
 
@@ -409,7 +455,7 @@ const fn notification_ingest_monotonic_ms(
         | cutout_core::NotificationIngestOutcome::ParserGap { notification, .. }
         | cutout_core::NotificationIngestOutcome::BufferedFragment(notification)
         | cutout_core::NotificationIngestOutcome::Ignored(notification) => {
-            notification.monotonic_ms
+            notification.monotonic_ms.get()
         }
     })
 }
@@ -449,13 +495,13 @@ fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<Dashboard
         notifications: replay_notification_count(capture),
         notification_bytes: replay_notification_bytes(capture),
         latest_notification_len: latest_replay_notification_len(capture),
-        telemetry: TelemetryEventCount::new(report.telemetry.get()),
+        telemetry: TelemetryEventCount::from_events(report.telemetry.get()),
         telemetry_snapshot: report.telemetry_snapshot,
-        read_only_responses: ReadOnlyResponseCount::new(report.read_only_responses.get()),
+        read_only_responses: ReadOnlyResponseCount::from_events(report.read_only_responses.get()),
         read_only_response_events: report.read_only_response_events,
         firmware: report.firmware,
         settings: Vec::new(),
-        diagnostics: DiagnosticEventCount::new(report.diagnostics.get()),
+        diagnostics: DiagnosticEventCount::from_events(report.diagnostics.get()),
         diagnostics_snapshot: ParserDiagnostics::default(),
         diagnostic_errors: report.diagnostic_errors,
         identity: None,
@@ -513,14 +559,14 @@ fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
         .fold(NotificationCount::default(), |count, _| count.increment())
 }
 
-fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationByteTotal {
+fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationPayloadTotal {
     capture
         .records
         .iter()
         .filter(|record| record.direction == PevcapDirection::Inbound)
-        .map(|record| NotificationByteLen::new(record.bytes.len()))
-        .fold(NotificationByteTotal::default(), |total, len| {
-            total.saturating_add_len(len)
+        .map(|record| NotificationByteLen::from_bytes(record.bytes.len()))
+        .fold(NotificationPayloadTotal::default(), |total, len| {
+            total.saturating_add(NotificationPayloadTotal::from_bytes(len.as_bytes()))
         })
 }
 
@@ -530,7 +576,7 @@ fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<Notificatio
         .iter()
         .rev()
         .find(|record| record.direction == PevcapDirection::Inbound)
-        .map(|record| NotificationByteLen::new(record.bytes.len()))
+        .map(|record| NotificationByteLen::from_bytes(record.bytes.len()))
 }
 
 fn render_diagnostic_snapshots_jsonl(
@@ -557,13 +603,13 @@ fn render_diagnostic_snapshot_jsonl(
     serde_json::to_string(&serde_json::json!({
         "type": "diagnostic_snapshot",
         "sequence": sequence.get(),
-        "dropped_bytes": snapshot.dropped_bytes,
-        "resyncs": snapshot.resyncs,
-        "bad_checksums": snapshot.bad_checksums,
-        "timeouts": snapshot.timeouts,
-        "oversized_frames": snapshot.oversized_frames,
-        "malformed_frames": snapshot.malformed_frames,
-        "unmatched_replies": snapshot.unmatched_replies,
+        "dropped_bytes": snapshot.dropped_bytes.as_bytes(),
+        "resyncs": snapshot.resyncs.as_events(),
+        "bad_checksums": snapshot.bad_checksums.as_events(),
+        "timeouts": snapshot.timeouts.as_events(),
+        "oversized_frames": snapshot.oversized_frames.as_events(),
+        "malformed_frames": snapshot.malformed_frames.as_events(),
+        "unmatched_replies": snapshot.unmatched_replies.as_events(),
     }))
 }
 
@@ -575,10 +621,10 @@ fn render_diagnostic_error_jsonl(
         "type": "diagnostic_error",
         "sequence": sequence.get(),
         "kind": diagnostic_error_kind_name(error.kind),
-        "claimed_len": error.claimed_len,
-        "max_len": error.max_len,
-        "elapsed_ms": error.elapsed_ms,
-        "timeout_ms": error.timeout_ms,
+        "claimed_len": error.claimed_len.map(cutout_core::ParserFrameLen::get),
+        "max_len": error.max_len.map(cutout_core::ParserFrameLen::get),
+        "elapsed_ms": error.elapsed_ms.map(MonotonicTimestamp::get),
+        "timeout_ms": error.timeout_ms.map(MonotonicTimestamp::get),
     }))
 }
 
@@ -651,11 +697,19 @@ fn write_selected_capacity_evidence(
     output: &mut fmt::Formatter<'_>,
     evidence: BegodeCapacityEvidence,
 ) -> fmt::Result {
-    if let Some(nominal_capacity_mah) = evidence.nominal_capacity_mah {
-        write!(output, " capacity_nominal_mah={nominal_capacity_mah}")?;
+    if let Some(nominal_capacity) = evidence.nominal_capacity {
+        write!(
+            output,
+            " capacity_nominal_mah={}",
+            nominal_capacity.as_milliamp_hours()
+        )?;
     }
-    if let Some(reported_wh) = evidence.reported_wh {
-        write!(output, " capacity_reported_wh={reported_wh}")?;
+    if let Some(reported_energy) = evidence.reported_energy {
+        write!(
+            output,
+            " capacity_reported_wh={}",
+            reported_energy.as_watt_hours()
+        )?;
     }
     Ok(())
 }
@@ -717,8 +771,11 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
     let mut state = DashboardState::live_connected(&target, &connection.summary);
     match read_battery_level(&connection.peripheral, &connection.summary).await? {
         Some(percent) => {
-            info!(percent = percent.get(), "read dashboard battery level");
-            state.apply_battery_percent(percent.get());
+            info!(
+                percent = percent.as_percent(),
+                "read dashboard battery level"
+            );
+            state.apply_battery_level(percent.as_percent());
         }
         None => {
             info!("dashboard battery level unavailable from standard BLE characteristic");
@@ -953,19 +1010,19 @@ fn send_dashboard_session_report(
 ) -> bool {
     info!(
         iteration,
-        notifications = report.notifications.get(),
-        read_only_responses = report.read_only_responses.get(),
-        telemetry = report.telemetry.get(),
+        notifications = report.notifications.as_events(),
+        read_only_responses = report.read_only_responses.as_events(),
+        telemetry = report.telemetry.as_events(),
         "dashboard drive_session returned"
     );
     debug!(
         iteration,
-        subscribes = report.subscribes.get(),
-        notifications = report.notifications.get(),
-        notification_bytes = report.notification_bytes.get(),
-        telemetry = report.telemetry.get(),
-        read_only_responses = report.read_only_responses.get(),
-        diagnostics = report.diagnostics.get(),
+        subscribes = report.subscribes.as_events(),
+        notifications = report.notifications.as_events(),
+        notification_bytes = report.notification_bytes.as_bytes(),
+        telemetry = report.telemetry.as_events(),
+        read_only_responses = report.read_only_responses.as_events(),
+        diagnostics = report.diagnostics.as_events(),
         latest_notification_len = ?report.latest_notification_len,
         "dashboard drive_session completed"
     );
@@ -1008,10 +1065,10 @@ async fn refresh_dashboard_battery(
         Ok(Some(percent)) => {
             info!(
                 iteration,
-                percent = percent.get(),
+                percent = percent.as_percent(),
                 "dashboard battery refresh succeeded"
             );
-            tx.send(DashboardUpdate::BatteryPercent(percent.get()))
+            tx.send(DashboardUpdate::BatteryLevel(percent.as_percent()))
                 .is_ok()
         }
         Ok(None) => {
@@ -1591,7 +1648,7 @@ fn encode_session_capture_pevcap(
     capture: &SessionCapture,
     summary: &cutout_btle::ConnectionSummary,
     format: PevcapFormat,
-    wall_clock_start_unix_ms: u64,
+    wall_clock_start_unix_ms: WallClockUnixTimestamp,
     profile: SelectedSessionProfile,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
@@ -1617,9 +1674,10 @@ fn encode_raw_capture_pevcap(
     summary: &cutout_btle::ConnectionSummary,
     write_limit: Option<u16>,
     format: PevcapFormat,
-    wall_clock_start_unix_ms: u64,
+    wall_clock_start_unix_ms: WallClockUnixTimestamp,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
+    let write_limit = write_limit.map(TransportWriteLimit::from_bytes);
     let advertised_services = summary
         .observation
         .advertised_services
@@ -1629,21 +1687,24 @@ fn encode_raw_capture_pevcap(
         .collect::<Vec<_>>();
     let gatt_fingerprints = summary.gatt_fingerprints();
     let mut pevcap_records = Vec::with_capacity(records.len().saturating_add(2));
-    pevcap_records.push(PevcapRecord::link_up(0, write_limit));
+    pevcap_records.push(PevcapRecord::link_up(
+        MonotonicTimestamp::new(0),
+        write_limit,
+    ));
     pevcap_records.extend(records.iter().map(|record| {
         PevcapRecord::inbound_notification(
-            record.monotonic_ms.get(),
+            MonotonicTimestamp::new(record.monotonic_ms.get()),
             gatt_channel_from_uuid(record.characteristic),
             gatt_channel_from_uuid(record.service),
             record.bytes.to_raw_bytes(),
         )
     }));
-    pevcap_records.push(PevcapRecord::link_down(
+    pevcap_records.push(PevcapRecord::link_down(MonotonicTimestamp::new(
         records
             .last()
             .map_or(MonotonicMs::default(), |record| record.monotonic_ms)
             .get(),
-    ));
+    )));
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
     capture_annotations.push("cutout-cli subscribe-raw");
     capture_annotations.extend_from_slice(annotations);
@@ -1665,24 +1726,26 @@ fn gatt_channel_from_uuid(uuid: uuid::Uuid) -> GattChannel {
     GattChannel::from_uuid(uuid)
 }
 
-fn capture_wall_clock_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-        })
+fn capture_wall_clock_unix_ms() -> WallClockUnixTimestamp {
+    WallClockUnixTimestamp::from_milliseconds(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| {
+                u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+            }),
+    )
 }
 
 fn print_session_report(report: &SessionBridgeReport) {
     info!(
-        protocol_writes = report.protocol_writes.get(),
-        writes = report.writes.get(),
-        subscribes = report.subscribes.get(),
-        notifications = report.notifications.get(),
-        telemetry = report.telemetry.get(),
-        read_only_responses = report.read_only_responses.get(),
-        diagnostics = report.diagnostics.get(),
-        disconnects = report.disconnects.get(),
+        protocol_writes = report.protocol_writes.as_events(),
+        writes = report.writes.as_events(),
+        subscribes = report.subscribes.as_events(),
+        notifications = report.notifications.as_events(),
+        telemetry = report.telemetry.as_events(),
+        read_only_responses = report.read_only_responses.as_events(),
+        diagnostics = report.diagnostics.as_events(),
+        disconnects = report.disconnects.as_events(),
         "session report"
     );
     if let Some(telemetry) = render_telemetry_snapshot(&report.telemetry_snapshot) {
@@ -1743,15 +1806,15 @@ fn render_session_diagnostics_jsonl(
     serde_json::to_string(&serde_json::json!({
         "type": "diagnostic_snapshot",
         "sequence": 0,
-        "protocol_writes": report.protocol_writes.get(),
-        "writes": report.writes.get(),
-        "dropped_bytes": diagnostics.dropped_bytes,
-        "resyncs": diagnostics.resyncs,
-        "bad_checksums": diagnostics.bad_checksums,
-        "timeouts": diagnostics.timeouts,
-        "oversized_frames": diagnostics.oversized_frames,
-        "malformed_frames": diagnostics.malformed_frames,
-        "unmatched_replies": diagnostics.unmatched_replies,
+        "protocol_writes": report.protocol_writes.as_events(),
+        "writes": report.writes.as_events(),
+        "dropped_bytes": diagnostics.dropped_bytes.as_bytes(),
+        "resyncs": diagnostics.resyncs.as_events(),
+        "bad_checksums": diagnostics.bad_checksums.as_events(),
+        "timeouts": diagnostics.timeouts.as_events(),
+        "oversized_frames": diagnostics.oversized_frames.as_events(),
+        "malformed_frames": diagnostics.malformed_frames.as_events(),
+        "unmatched_replies": diagnostics.unmatched_replies.as_events(),
     }))
 }
 
@@ -1765,22 +1828,22 @@ fn render_reconnect_attempt_diagnostics_jsonl(
         "attempt": attempt.attempt.get(),
         "identifier": attempt.summary.observation.identifier,
         "name": attempt.summary.observation.name,
-        "rssi": attempt.summary.observation.rssi,
-        "protocol_writes": attempt.report.protocol_writes.get(),
-        "writes": attempt.report.writes.get(),
-        "subscribes": attempt.report.subscribes.get(),
-        "notifications": attempt.report.notifications.get(),
-        "telemetry": attempt.report.telemetry.get(),
-        "read_only_responses": attempt.report.read_only_responses.get(),
-        "diagnostics": attempt.report.diagnostics.get(),
-        "disconnects": attempt.report.disconnects.get(),
-        "dropped_bytes": diagnostics.dropped_bytes,
-        "resyncs": diagnostics.resyncs,
-        "bad_checksums": diagnostics.bad_checksums,
-        "timeouts": diagnostics.timeouts,
-        "oversized_frames": diagnostics.oversized_frames,
-        "malformed_frames": diagnostics.malformed_frames,
-        "unmatched_replies": diagnostics.unmatched_replies,
+        "rssi": attempt.summary.observation.rssi.map(cutout_core::SignalStrength::as_dbm),
+        "protocol_writes": attempt.report.protocol_writes.as_events(),
+        "writes": attempt.report.writes.as_events(),
+        "subscribes": attempt.report.subscribes.as_events(),
+        "notifications": attempt.report.notifications.as_events(),
+        "telemetry": attempt.report.telemetry.as_events(),
+        "read_only_responses": attempt.report.read_only_responses.as_events(),
+        "diagnostics": attempt.report.diagnostics.as_events(),
+        "disconnects": attempt.report.disconnects.as_events(),
+        "dropped_bytes": diagnostics.dropped_bytes.as_bytes(),
+        "resyncs": diagnostics.resyncs.as_events(),
+        "bad_checksums": diagnostics.bad_checksums.as_events(),
+        "timeouts": diagnostics.timeouts.as_events(),
+        "oversized_frames": diagnostics.oversized_frames.as_events(),
+        "malformed_frames": diagnostics.malformed_frames.as_events(),
+        "unmatched_replies": diagnostics.unmatched_replies.as_events(),
     }))
 }
 
@@ -1849,7 +1912,7 @@ fn render_battery_response_jsonl(
             "verification": verification_status_name(page.verification),
         },
         "battery": battery_info_json(payload),
-        "temperatures_mc": battery_temperature_values_json(payload),
+        "temperatures": battery_temperature_values_json(payload),
     }))
 }
 
@@ -1857,7 +1920,7 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
     match payload {
         BatteryPagePayload::Temperature(_) => serde_json::json!(
             payload
-                .temperatures_mc()
+                .temperatures()
                 .into_iter()
                 .map(measured_i32_json)
                 .collect::<Vec<_>>()
@@ -1869,30 +1932,40 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
 fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
     let battery = payload.battery();
     serde_json::json!({
-        "voltage_mv": measured_i32_json(battery.voltage_mv),
-        "current_ma": measured_i32_json(battery.current_ma),
-        "bms_pack_current_0_ma": bms_pack_current_json(
+        "voltage": measured_i32_json(battery.voltage.map(|measured| {
+            measured.map_value(cutout_core::Voltage::as_millivolts)
+        })),
+        "current": measured_i32_json(battery.current.map(|measured| {
+            measured.map_value(cutout_core::BatteryCurrent::as_milliamps)
+        })),
+        "bms_pack_current_0": bms_pack_current_json(
             payload.bms_pack_currents(),
-            cutout_core::BmsPackCurrents::current_0_ma,
+            cutout_core::BmsPackCurrents::current_0,
         ),
-        "bms_pack_current_1_ma": bms_pack_current_json(
+        "bms_pack_current_1": bms_pack_current_json(
             payload.bms_pack_currents(),
-            cutout_core::BmsPackCurrents::current_1_ma,
+            cutout_core::BmsPackCurrents::current_1,
         ),
-        "percent_reported": measured_u8_json(battery.percent_reported),
-        "percent_estimated": measured_u8_json(battery.percent_estimated),
-        "temperature_mc": measured_i32_json(battery.temperature_mc),
+        "level_reported": measured_u8_json(battery.level_reported.map(|measured| {
+            measured.map_value(cutout_core::BatteryLevel::as_percent)
+        })),
+        "level_estimated": measured_u8_json(battery.level_estimated.map(|measured| {
+            measured.map_value(cutout_core::BatteryLevel::as_percent)
+        })),
+        "temperature": measured_i32_json(battery.temperature.map(|measured| {
+            measured.map_value(cutout_core::Temperature::as_millicelsius)
+        })),
         "raw_state": raw_field_json(battery.raw_state),
     })
 }
 
 fn bms_pack_current_json(
     currents: Option<cutout_core::BmsPackCurrents>,
-    select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BmsPackCurrentMa,
+    select: impl FnOnce(cutout_core::BmsPackCurrents) -> cutout_core::BatteryCurrent,
 ) -> serde_json::Value {
     currents.map_or(serde_json::Value::Null, |currents| {
         measured_json_parts(
-            i64::from(select(currents).get()),
+            i64::from(select(currents).as_milliamps()),
             currents.source,
             currents.quality,
             currents.verification,
@@ -2085,20 +2158,20 @@ struct TelemetrySnapshotLine(TelemetrySnapshot);
 impl TelemetrySnapshotLine {
     const fn has_fields(self) -> bool {
         let snapshot = self.0;
-        snapshot.speed_mm_s.is_some()
-            || snapshot.voltage_mv.is_some()
-            || snapshot.battery_current_ma.is_some()
-            || snapshot.motor_current_ma.is_some()
-            || snapshot.power_mw.is_some()
-            || snapshot.controller_temperature_mc.is_some()
-            || snapshot.motor_temperature_mc.is_some()
-            || snapshot.battery_temperature_mc.is_some()
-            || snapshot.pwm_permille.is_some()
-            || snapshot.distance_mm.is_some()
-            || snapshot.pitch_mdeg.is_some()
-            || snapshot.roll_mdeg.is_some()
-            || snapshot.battery_percent_reported.is_some()
-            || snapshot.battery_percent_estimated.is_some()
+        snapshot.speed.is_some()
+            || snapshot.voltage.is_some()
+            || snapshot.battery_current.is_some()
+            || snapshot.motor_current.is_some()
+            || snapshot.power.is_some()
+            || snapshot.controller_temperature.is_some()
+            || snapshot.motor_temperature.is_some()
+            || snapshot.battery_temperature.is_some()
+            || snapshot.pwm.is_some()
+            || snapshot.distance.is_some()
+            || snapshot.pitch.is_some()
+            || snapshot.roll.is_some()
+            || snapshot.battery_level_reported.is_some()
+            || snapshot.battery_level_estimated.is_some()
     }
 }
 
@@ -2106,29 +2179,20 @@ impl fmt::Display for TelemetrySnapshotLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let snapshot = self.0;
         let mut fields = CommandFieldWriter::new(f, "telemetry");
-        fields.write_measured("speed_mm_s", snapshot.speed_mm_s)?;
-        fields.write_measured("voltage_mv", snapshot.voltage_mv)?;
-        fields.write_measured("battery_current_ma", snapshot.battery_current_ma)?;
-        fields.write_measured("motor_current_ma", snapshot.motor_current_ma)?;
-        fields.write_measured("power_mw", snapshot.power_mw)?;
-        fields.write_measured(
-            "controller_temperature_mc",
-            snapshot.controller_temperature_mc,
-        )?;
-        fields.write_measured("motor_temperature_mc", snapshot.motor_temperature_mc)?;
-        fields.write_measured("battery_temperature_mc", snapshot.battery_temperature_mc)?;
-        fields.write_measured("pwm_permille", snapshot.pwm_permille)?;
-        fields.write_measured("distance_mm", snapshot.distance_mm)?;
-        fields.write_measured("pitch_mdeg", snapshot.pitch_mdeg)?;
-        fields.write_measured("roll_mdeg", snapshot.roll_mdeg)?;
-        fields.write_measured(
-            "battery_percent_reported",
-            snapshot.battery_percent_reported,
-        )?;
-        fields.write_measured(
-            "battery_percent_estimated",
-            snapshot.battery_percent_estimated,
-        )
+        fields.write_measured("speed", snapshot.speed)?;
+        fields.write_measured("voltage", snapshot.voltage)?;
+        fields.write_measured("battery_current", snapshot.battery_current)?;
+        fields.write_measured("motor_current", snapshot.motor_current)?;
+        fields.write_measured("power", snapshot.power)?;
+        fields.write_measured("controller_temperature", snapshot.controller_temperature)?;
+        fields.write_measured("motor_temperature", snapshot.motor_temperature)?;
+        fields.write_measured("battery_temperature", snapshot.battery_temperature)?;
+        fields.write_measured("pwm", snapshot.pwm)?;
+        fields.write_measured("distance", snapshot.distance)?;
+        fields.write_measured("pitch", snapshot.pitch)?;
+        fields.write_measured("roll", snapshot.roll)?;
+        fields.write_measured("battery_level_reported", snapshot.battery_level_reported)?;
+        fields.write_measured("battery_level_estimated", snapshot.battery_level_estimated)
     }
 }
 
@@ -2253,14 +2317,43 @@ mod tests {
         PeripheralObservation, RawNotificationRecord, ServiceSummary, SessionCaptureRecord,
     };
     use cutout_core::{
-        DeviceEvent, GattChannel, NotificationByteLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
-        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, VerificationStatus,
-        VerifiedValue, WriteMode,
+        DeviceEvent, GattChannel, MonotonicTimestamp, NotificationByteLen, ParserDiagnosticCount,
+        ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
+        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, SignalStrength,
+        TransportWriteLimit, VerificationStatus, VerifiedValue, WriteMode,
     };
     use uuid::Uuid;
 
     use super::*;
     use crate::cli::ScanArgs;
+
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
+    }
+
+    const fn wc(value: u64) -> WallClockUnixTimestamp {
+        WallClockUnixTimestamp::new(value)
+    }
+
+    const fn rssi(value: i16) -> SignalStrength {
+        SignalStrength::from_dbm(value)
+    }
+
+    const fn write_len(value: u16) -> TransportWriteLimit {
+        TransportWriteLimit::from_bytes(value)
+    }
+
+    const fn dropped_bytes(value: u64) -> ParserDroppedBytes {
+        ParserDroppedBytes::from_bytes(value)
+    }
+
+    const fn diag_count(value: u64) -> ParserDiagnosticCount {
+        ParserDiagnosticCount::from_events(value)
+    }
+
+    const fn frame_len(value: usize) -> ParserFrameLen {
+        ParserFrameLen::from_bytes(value)
+    }
 
     struct DropSignal(mpsc::Sender<()>);
 
@@ -2289,7 +2382,7 @@ mod tests {
                 } => output.push(SessionOutput::NotificationIngest(
                     cutout_core::NotificationIngestOutcome::ignored_wrong_channel(
                         channel,
-                        NotificationByteLen::new(bytes.len()),
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                     ),
                 )),
@@ -2315,9 +2408,9 @@ mod tests {
         let service = GattChannel::from_bytes([0xFE; 16]);
         let characteristic = GattChannel::from_bytes([0xE1; 16]);
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
-            Some(182),
+            Some(write_len(182)),
             &[service],
             &[],
             Some(PevcapResolvedIdentity {
@@ -2338,13 +2431,13 @@ mod tests {
             header,
             vec![
                 PevcapRecord::outbound_write(
-                    7,
+                    ms(7),
                     characteristic,
                     WriteMode::WithoutResponse,
                     b"N".to_vec(),
                 ),
                 PevcapRecord::inbound_notification(
-                    9,
+                    ms(9),
                     characteristic,
                     service,
                     b"NAME=Falcon".to_vec(),
@@ -2357,7 +2450,7 @@ mod tests {
         sample_falcon_replay_capture_with_records(
             annotations,
             vec![PevcapRecord::inbound_notification(
-                42,
+                ms(42),
                 BEGODE_DATA_CHANNEL,
                 BEGODE_DATA_CHANNEL,
                 hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
@@ -2370,9 +2463,9 @@ mod tests {
         records: Vec<PevcapRecord>,
     ) -> PevcapCapture {
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
-            Some(182),
+            Some(write_len(182)),
             &[BEGODE_DATA_CHANNEL],
             &[],
             Some(PevcapResolvedIdentity {
@@ -2394,9 +2487,9 @@ mod tests {
 
     fn sample_aero_replay_capture() -> PevcapCapture {
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
-            Some(23),
+            Some(write_len(23)),
             &[VETERAN_DATA_CHANNEL],
             &[],
             None,
@@ -2408,7 +2501,7 @@ mod tests {
         PevcapCapture::new(
             header,
             vec![PevcapRecord::inbound_notification(
-                42,
+                ms(42),
                 VETERAN_DATA_CHANNEL,
                 VETERAN_DATA_CHANNEL,
                 hex_literal::hex!(
@@ -2425,9 +2518,9 @@ mod tests {
 
     fn sample_aero_reserved_replay_capture() -> PevcapCapture {
         let header = PevcapHeader::new(
-            1_725_000_123_456,
+            wc(1_725_000_123_456),
             "darwin",
-            Some(23),
+            Some(write_len(23)),
             &[VETERAN_DATA_CHANNEL],
             &[],
             None,
@@ -2439,7 +2532,7 @@ mod tests {
         PevcapCapture::new(
             header,
             vec![PevcapRecord::inbound_notification(
-                42,
+                ms(42),
                 VETERAN_DATA_CHANNEL,
                 VETERAN_DATA_CHANNEL,
                 hex_literal::hex!(
@@ -2487,7 +2580,7 @@ mod tests {
                 identifier: "cb-uuid".to_owned(),
                 address: None,
                 name: Some("NF2557".to_owned()),
-                rssi: Some(-67),
+                rssi: Some(rssi(-67)),
                 advertised_services: vec![Uuid::from_u128(
                     0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
                 )]
@@ -2510,7 +2603,7 @@ mod tests {
             records: vec![
                 SessionCaptureRecord::Link {
                     monotonic_ms: MonotonicMs::new(0),
-                    max_write_len: Some(cutout_btle::NegotiatedWriteLen::from_mtu(23)),
+                    max_write_len: Some(cutout_btle::NegotiatedWriteLimit::from_bytes(23)),
                 },
                 SessionCaptureRecord::Write {
                     monotonic_ms: MonotonicMs::new(2),
@@ -2535,7 +2628,7 @@ mod tests {
             &capture,
             &summary,
             PevcapFormat::Binary,
-            42,
+            wc(42),
             selected_aero_session_profile(),
             &["capture_label=charging", "capture_privacy=private"],
         )
@@ -2543,8 +2636,8 @@ mod tests {
         let decoded =
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
-        assert_eq!(decoded.header.wall_clock_start_unix_ms, 42);
-        assert_eq!(decoded.header.write_limit, Some(23));
+        assert_eq!(decoded.header.wall_clock_start_unix_ms, wc(42));
+        assert_eq!(decoded.header.write_limit, Some(write_len(23)));
         assert_eq!(
             decoded.header.annotations.as_slice(),
             &[
@@ -2610,7 +2703,7 @@ mod tests {
                 identifier: "first-link".to_owned(),
                 address: None,
                 name: Some("NF2557".to_owned()),
-                rssi: Some(-67),
+                rssi: Some(rssi(-67)),
                 advertised_services: vec![ffe0].into(),
                 manufacturer_data: Vec::new().into(),
             },
@@ -2631,7 +2724,7 @@ mod tests {
                 identifier: "second-link".to_owned(),
                 address: None,
                 name: Some("NF2557".to_owned()),
-                rssi: Some(-70),
+                rssi: Some(rssi(-70)),
                 advertised_services: vec![ffe0, battery].into(),
                 manufacturer_data: Vec::new().into(),
             },
@@ -2695,7 +2788,7 @@ mod tests {
                 identifier: "cb-uuid".to_owned(),
                 address: None,
                 name: Some("Unknown PEV".to_owned()),
-                rssi: Some(-67),
+                rssi: Some(rssi(-67)),
                 advertised_services: vec![service].into(),
                 manufacturer_data: Vec::new().into(),
             },
@@ -2725,7 +2818,7 @@ mod tests {
             &summary,
             Some(185),
             PevcapFormat::Binary,
-            99,
+            wc(99),
             &[
                 "capture_label=powered_on_stationary",
                 "capture_privacy=private",
@@ -2735,8 +2828,8 @@ mod tests {
         let decoded =
             PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
 
-        assert_eq!(decoded.header.wall_clock_start_unix_ms, 99);
-        assert_eq!(decoded.header.write_limit, Some(185));
+        assert_eq!(decoded.header.wall_clock_start_unix_ms, wc(99));
+        assert_eq!(decoded.header.write_limit, Some(write_len(185)));
         assert_eq!(
             decoded.header.advertised_services.as_slice(),
             &[gatt_channel_from_uuid(service)]
@@ -2760,13 +2853,13 @@ mod tests {
         assert!(matches!(
             replay[0],
             SessionOutput::Event(DeviceEvent::LinkUp(link))
-                if link.monotonic_ms == 0 && link.max_write_len == Some(185)
+                if link.monotonic_ms == ms(0) && link.max_write_len == Some(write_len(185))
         ));
         assert!(matches!(
             replay[1],
             SessionOutput::NotificationIngest(
                 cutout_core::NotificationIngestOutcome::Ignored(evidence)
-            ) if evidence.monotonic_ms == 7 && evidence.len == NotificationByteLen::new(4)
+            ) if evidence.monotonic_ms == ms(7) && evidence.len == NotificationByteLen::from_bytes(4)
         ));
         assert!(matches!(
             replay[2],
@@ -2807,13 +2900,13 @@ mod tests {
         let line = render_diagnostic_snapshot_jsonl(
             JsonSequence::new(7),
             DiagnosticSnapshot {
-                dropped_bytes: 11,
-                resyncs: 2,
-                bad_checksums: 3,
-                timeouts: 5,
-                oversized_frames: 8,
-                malformed_frames: 13,
-                unmatched_replies: 21,
+                dropped_bytes: dropped_bytes(11),
+                resyncs: diag_count(2),
+                bad_checksums: diag_count(3),
+                timeouts: diag_count(5),
+                oversized_frames: diag_count(8),
+                malformed_frames: diag_count(13),
+                unmatched_replies: diag_count(21),
             },
         )
         .expect("diagnostic snapshot serializes");
@@ -2840,15 +2933,18 @@ mod tests {
                     VerificationStatus::SourceVerified,
                 ),
                 cutout_core::BatteryInfo {
-                    voltage_mv: Some(Measured::reported(80_000)),
-                    current_ma: Some(Measured::reported(-10_000)),
-                    percent_reported: None,
-                    percent_estimated: Some(Measured::estimated(61)),
-                    temperature_mc: Some(Measured::reported(25_000)),
+                    voltage: Some(voltage(80_000)),
+                    current: Some(battery_current(-10_000)),
+                    level_reported: None,
+                    level_estimated: Some(level_estimated(61)),
+                    temperature: Some(temperature(25_000)),
                     raw_state: Some(cutout_core::RawFieldValue::new(0x0008, 0x55aa)),
                 },
             )
-            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(-1_230, 450)),
+            .with_bms_pack_currents(cutout_core::BmsPackCurrents::reported(
+                cutout_core::BatteryCurrent::from_milliamps(-1_230),
+                cutout_core::BatteryCurrent::from_milliamps(450),
+            )),
         );
 
         let line = render_read_only_response_jsonl(JsonSequence::new(2), response)
@@ -2863,37 +2959,34 @@ mod tests {
         assert_eq!(value["page"]["selector"], 8);
         assert_eq!(value["page"]["kind"], "raw");
         assert_eq!(value["page"]["verification"], "source_verified");
-        assert_eq!(value["battery"]["voltage_mv"]["value"], 80_000);
-        assert_eq!(value["battery"]["voltage_mv"]["source"], "reported");
-        assert_eq!(value["battery"]["voltage_mv"]["quality"], "known");
+        assert_eq!(value["battery"]["voltage"]["value"], 80_000);
+        assert_eq!(value["battery"]["voltage"]["source"], "reported");
+        assert_eq!(value["battery"]["voltage"]["quality"], "known");
         assert_eq!(
-            value["battery"]["voltage_mv"]["verification"],
+            value["battery"]["voltage"]["verification"],
             "hardware_verified"
         );
-        assert_eq!(value["battery"]["current_ma"]["value"], -10_000);
-        assert_eq!(value["battery"]["bms_pack_current_0_ma"]["value"], -1_230);
-        assert_eq!(value["battery"]["bms_pack_current_1_ma"]["value"], 450);
-        assert_eq!(
-            value["battery"]["percent_reported"],
-            serde_json::Value::Null
-        );
-        assert_eq!(value["battery"]["percent_estimated"]["value"], 61);
-        assert_eq!(value["battery"]["percent_estimated"]["source"], "estimated");
-        assert_eq!(value["battery"]["temperature_mc"]["value"], 25_000);
+        assert_eq!(value["battery"]["current"]["value"], -10_000);
+        assert_eq!(value["battery"]["bms_pack_current_0"]["value"], -1_230);
+        assert_eq!(value["battery"]["bms_pack_current_1"]["value"], 450);
+        assert_eq!(value["battery"]["level_reported"], serde_json::Value::Null);
+        assert_eq!(value["battery"]["level_estimated"]["value"], 61);
+        assert_eq!(value["battery"]["level_estimated"]["source"], "estimated");
+        assert_eq!(value["battery"]["temperature"]["value"], 25_000);
         assert_eq!(value["battery"]["raw_state"]["id"], 8);
         assert_eq!(value["battery"]["raw_state"]["value"], 0x55aa);
-        assert_eq!(value["temperatures_mc"], serde_json::Value::Null);
+        assert_eq!(value["temperatures"], serde_json::Value::Null);
     }
 
     #[test]
     fn read_only_battery_jsonl_preserves_temperature_page_values() {
         let temperatures = [
-            Some(Measured::reported(16_730)),
-            Some(Measured::reported(17_030)),
-            Some(Measured::reported(17_330)),
-            Some(Measured::reported(17_060)),
-            Some(Measured::reported(17_080)),
-            Some(Measured::reported(17_830)),
+            Some(temperature(16_730)),
+            Some(temperature(17_030)),
+            Some(temperature(17_330)),
+            Some(temperature(17_060)),
+            Some(temperature(17_080)),
+            Some(temperature(17_830)),
         ];
         let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
             cutout_core::BatteryPageMetadata::temperature(
@@ -2901,7 +2994,7 @@ mod tests {
                 VerificationStatus::HardwareVerified,
             ),
             cutout_core::BatteryInfo {
-                temperature_mc: temperatures[0],
+                temperature: Some(temperature(16_730)),
                 ..cutout_core::BatteryInfo::default()
             },
             temperatures,
@@ -2917,9 +3010,9 @@ mod tests {
         assert_eq!(value["page"]["selector"], 3);
         assert_eq!(value["page"]["kind"], "temperature");
         assert_eq!(value["page"]["verification"], "hardware_verified");
-        assert_eq!(value["battery"]["temperature_mc"]["value"], 16_730);
-        assert_eq!(value["temperatures_mc"][0]["value"], 16_730);
-        assert_eq!(value["temperatures_mc"][5]["value"], 17_830);
+        assert_eq!(value["battery"]["temperature"]["value"], 16_730);
+        assert_eq!(value["temperatures"][0]["value"], 16_730);
+        assert_eq!(value["temperatures"][5]["value"], 17_830);
     }
 
     #[test]
@@ -2940,9 +3033,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: SemanticEventCount::new(1),
-                one_byte_semantic_events: SemanticEventCount::new(1),
-                arbitrary_semantic_events: SemanticEventCount::new(1),
+                whole_semantic_events: SemanticEventCount::from_events(1),
+                one_byte_semantic_events: SemanticEventCount::from_events(1),
+                arbitrary_semantic_events: SemanticEventCount::from_events(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },
@@ -2956,11 +3049,11 @@ mod tests {
         let outcome = cutout_core::NotificationIngestOutcome::known_reserved(
             ProtocolFamily::VeteranLeaperkimNosfet,
             VETERAN_DATA_CHANNEL,
-            NotificationByteLen::new(75),
-            42,
+            NotificationByteLen::from_bytes(75),
+            ms(42),
             cutout_core::ReservedPayloadEvidence {
                 classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
-                body_len: PayloadBodyLen::new(24),
+                body_len: PayloadBodyLen::from_bytes(24),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -2971,9 +3064,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: SemanticEventCount::new(0),
-                one_byte_semantic_events: SemanticEventCount::new(0),
-                arbitrary_semantic_events: SemanticEventCount::new(0),
+                whole_semantic_events: SemanticEventCount::from_events(0),
+                one_byte_semantic_events: SemanticEventCount::from_events(0),
+                arbitrary_semantic_events: SemanticEventCount::from_events(0),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },
@@ -3061,16 +3154,16 @@ mod tests {
     #[test]
     fn live_session_diagnostics_jsonl_uses_aggregate_report_snapshot() {
         let report = SessionBridgeReport {
-            protocol_writes: ProtocolWriteCount::new(1),
-            writes: TransportWriteCount::new(3),
+            protocol_writes: ProtocolWriteCount::from_events(1),
+            writes: TransportWriteCount::from_events(3),
             diagnostics_snapshot: ParserDiagnostics {
-                dropped_bytes: 1,
-                resyncs: 2,
-                bad_checksums: 3,
-                timeouts: 4,
-                oversized_frames: 5,
-                malformed_frames: 6,
-                unmatched_replies: 7,
+                dropped_bytes: dropped_bytes(1),
+                resyncs: diag_count(2),
+                bad_checksums: diag_count(3),
+                timeouts: diag_count(4),
+                oversized_frames: diag_count(5),
+                malformed_frames: diag_count(6),
+                unmatched_replies: diag_count(7),
             },
             diagnostic_errors: vec![DiagnosticError::from_parser_error(
                 cutout_core::ParserError::MalformedFrame,
@@ -3113,26 +3206,26 @@ mod tests {
                     identifier: "NF2557".to_owned(),
                     address: None,
                     name: Some("NF2557".to_owned()),
-                    rssi: Some(-71),
+                    rssi: Some(rssi(-71)),
                     advertised_services: Vec::new().into(),
                     manufacturer_data: Vec::new().into(),
                 },
                 services: Vec::new().into(),
             },
             report: SessionBridgeReport {
-                protocol_writes: ProtocolWriteCount::new(2),
-                writes: TransportWriteCount::new(3),
-                subscribes: SubscribeCount::new(1),
-                notifications: NotificationCount::new(8),
+                protocol_writes: ProtocolWriteCount::from_events(2),
+                writes: TransportWriteCount::from_events(3),
+                subscribes: SubscribeCount::from_events(1),
+                notifications: NotificationCount::from_events(8),
                 disconnects: DisconnectCount::default(),
                 diagnostics_snapshot: ParserDiagnostics {
-                    dropped_bytes: 5,
-                    resyncs: 1,
-                    bad_checksums: 0,
-                    timeouts: 0,
-                    oversized_frames: 0,
-                    malformed_frames: 2,
-                    unmatched_replies: 0,
+                    dropped_bytes: dropped_bytes(5),
+                    resyncs: diag_count(1),
+                    bad_checksums: diag_count(0),
+                    timeouts: diag_count(0),
+                    oversized_frames: diag_count(0),
+                    malformed_frames: diag_count(2),
+                    unmatched_replies: diag_count(0),
                 },
                 ..SessionBridgeReport::default()
             },
@@ -3159,8 +3252,8 @@ mod tests {
     #[test]
     fn diagnostic_error_jsonl_preserves_kind_and_fixed_unit_details() {
         let error = DiagnosticError::from_parser_error(cutout_core::ParserError::Timeout {
-            elapsed_ms: 1_234,
-            timeout_ms: 5_000,
+            elapsed_ms: ms(1_234),
+            timeout_ms: ms(5_000),
         });
 
         let line = render_diagnostic_error_jsonl(JsonSequence::new(3), error)
@@ -3180,8 +3273,8 @@ mod tests {
     #[test]
     fn pevcap_replay_summary_collects_diagnostic_error_events() {
         let error = DiagnosticError::from_parser_error(cutout_core::ParserError::OversizedFrame {
-            claimed: 33,
-            max: 24,
+            claimed: frame_len(33),
+            max: frame_len(24),
         });
         let outputs = [SessionOutput::Event(DeviceEvent::DiagnosticError(error))];
 
@@ -3190,9 +3283,9 @@ mod tests {
             ReplayChunkPlanLen::new(1),
             &outputs,
             ReplayChunkComparison {
-                whole_semantic_events: SemanticEventCount::new(1),
-                one_byte_semantic_events: SemanticEventCount::new(1),
-                arbitrary_semantic_events: SemanticEventCount::new(1),
+                whole_semantic_events: SemanticEventCount::from_events(1),
+                one_byte_semantic_events: SemanticEventCount::from_events(1),
+                arbitrary_semantic_events: SemanticEventCount::from_events(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
             },
@@ -3218,8 +3311,8 @@ mod tests {
         assert_eq!(
             report
                 .telemetry_snapshot
-                .voltage_mv
-                .map(|voltage| voltage.value),
+                .voltage
+                .map(|voltage| voltage.value.get()),
             Some(107_610)
         );
         assert_eq!(
@@ -3243,16 +3336,25 @@ mod tests {
         );
         assert_eq!(state.device.identifier, "darwin");
         assert_eq!(state.device.connection_state, "replayed");
-        assert_eq!(state.counters.notifications, NotificationCount::new(1));
+        assert_eq!(
+            state.counters.notifications,
+            NotificationCount::from_events(1)
+        );
         assert_eq!(
             state.counters.notification_bytes,
-            NotificationByteTotal::new(99)
+            NotificationPayloadTotal::from_bytes(99)
         );
         assert_eq!(
             state.counters.latest_notification_len,
-            Some(NotificationByteLen::new(99))
+            Some(NotificationByteLen::from_bytes(99))
         );
-        assert_eq!(state.telemetry.latest_voltage_v, Some(108));
+        assert_eq!(
+            state
+                .telemetry
+                .latest_voltage
+                .map(crate::dashboard::DisplayVoltage::get),
+            Some(108)
+        );
         assert!(state.read_only.firmware.is_some());
         assert!(
             state
@@ -3396,8 +3498,8 @@ mod tests {
         assert_eq!(
             report
                 .telemetry_snapshot
-                .voltage_mv
-                .map(|voltage| voltage.value),
+                .voltage
+                .map(|voltage| voltage.value.get()),
             Some(90_075)
         );
     }
@@ -3590,13 +3692,13 @@ mod tests {
             &[],
             vec![
                 PevcapRecord::inbound_notification(
-                    41,
+                    ms(41),
                     BEGODE_DATA_CHANNEL,
                     BEGODE_DATA_CHANNEL,
                     hex_literal::hex!("55aa2710000003b6ff9c0019001a0190000001035a5a5a5a").to_vec(),
                 ),
                 PevcapRecord::inbound_notification(
-                    42,
+                    ms(42),
                     BEGODE_DATA_CHANNEL,
                     BEGODE_DATA_CHANNEL,
                     hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a").to_vec(),
@@ -3611,8 +3713,8 @@ mod tests {
         assert_eq!(
             report
                 .telemetry_snapshot
-                .voltage_mv
-                .map(|voltage| voltage.value),
+                .voltage
+                .map(|voltage| voltage.value.get()),
             Some(90_075)
         );
     }
@@ -3622,7 +3724,7 @@ mod tests {
         let capture = sample_falcon_replay_capture_with_records(
             &[],
             vec![PevcapRecord::inbound_notification(
-                41,
+                ms(41),
                 BEGODE_DATA_CHANNEL,
                 BEGODE_DATA_CHANNEL,
                 hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a").to_vec(),
@@ -3698,13 +3800,17 @@ mod tests {
                     .bms_pack_currents()
                     .expect("metadata page should carry typed BMS currents");
                 assert_eq!(
-                    payload.battery().current_ma,
-                    Some(Measured::reported(currents.current_0_ma().get()))
+                    payload.battery().current,
+                    Some(Measured::reported(
+                        cutout_core::BatteryCurrent::from_milliamps(
+                            currents.current_0().as_milliamps()
+                        )
+                    ))
                 );
                 observed.insert((
                     payload.page().selector.get(),
-                    currents.current_0_ma().get(),
-                    currents.current_1_ma().get(),
+                    currents.current_0().as_milliamps(),
+                    currents.current_1().as_milliamps(),
                 ));
             }
         }
@@ -3740,22 +3846,22 @@ mod tests {
         assert_eq!(
             report
                 .telemetry_snapshot
-                .speed_mm_s
-                .map(|speed| speed.value),
+                .speed
+                .map(|speed| speed.value.get()),
             Some(0)
         );
         assert_eq!(
             report
                 .telemetry_snapshot
-                .voltage_mv
-                .map(|voltage| voltage.value),
+                .voltage
+                .map(|voltage| voltage.value.get()),
             Some(125_230)
         );
         assert_eq!(
             report
                 .telemetry_snapshot
-                .distance_mm
-                .map(|distance| distance.value),
+                .distance
+                .map(|distance| distance.value.get()),
             Some(1_551_216_000)
         );
         assert_eq!(
@@ -3776,8 +3882,8 @@ mod tests {
                         .expect("metadata page should carry typed BMS currents");
                     observed_currents.insert((
                         payload.page().selector.get(),
-                        currents.current_0_ma().get(),
-                        currents.current_1_ma().get(),
+                        currents.current_0().as_milliamps(),
+                        currents.current_1().as_milliamps(),
                     ));
                 }
             }
@@ -3830,22 +3936,22 @@ mod tests {
     fn telemetry_snapshot_renderer_includes_present_fields() {
         let mut snapshot = TelemetrySnapshot::default();
         snapshot.apply_delta(cutout_core::TelemetryDelta {
-            speed_mm_s: Some(Measured::reported(1_200)),
-            voltage_mv: Some(Measured::reported(108_760)),
-            motor_current_ma: Some(Measured::reported(-1_700)),
-            power_mw: Some(Measured::calculated(-184_892)),
-            controller_temperature_mc: Some(Measured::reported(33_270)),
-            pwm_permille: Some(Measured::reported(-1_000)),
-            distance_mm: Some(Measured::reported(1_551_169_000)),
-            pitch_mdeg: Some(Measured::reported(69_060)),
-            battery_percent_estimated: Some(Measured::estimated(47)),
-            ..cutout_core::TelemetryDelta::empty(42)
+            speed: Some(speed(1_200)),
+            voltage: Some(voltage(108_760)),
+            battery_current: Some(battery_current(-1_700)),
+            power: Some(power(-184_892)),
+            controller_temperature: Some(temperature(33_270)),
+            pwm: Some(duty_cycle_permille(-1_000)),
+            distance: Some(distance(1_551_169_000)),
+            pitch: Some(angle_mdeg(69_060)),
+            battery_level_estimated: Some(level_estimated(47)),
+            ..cutout_core::TelemetryDelta::empty(ms(42))
         });
 
         assert_eq!(
             render_telemetry_snapshot(&snapshot).map(|telemetry| telemetry.to_string()),
             Some(
-                "telemetry speed_mm_s=1200 voltage_mv=108760 motor_current_ma=-1700 power_mw=-184892 controller_temperature_mc=33270 pwm_permille=-1000 distance_mm=1551169000 pitch_mdeg=69060 battery_percent_estimated=47".to_owned()
+                "telemetry speed=1200 voltage=108760 battery_current=-1700 power=-184892 controller_temperature=33270 pwm=-1000 distance=1551169000 pitch=69060 battery_level_estimated=47".to_owned()
             )
         );
     }

@@ -2,13 +2,14 @@ use std::fmt::{self, Write as _};
 
 use bytes::Bytes;
 use cutout_core::{
-    NotificationByteLen, PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord, WriteMode,
+    NotificationByteLen, PevcapCapture, PevcapHeader, PevcapHeaderError, PevcapRecord,
+    TransportWriteLimit, WriteMode,
 };
 use futures_util::StreamExt;
 use uuid::Uuid;
 
 use crate::{
-    BtleError, CharacteristicSummary, ConnectionSummary, MonotonicMs, NegotiatedWriteLen,
+    BtleError, CharacteristicSummary, ConnectionSummary, MonotonicMs, NegotiatedWriteLimit,
     NotificationWindow, SessionBridgeReport, SessionPeripheral, WriteProvenance,
     gatt::gatt_channel_from_uuid, types::characteristic_from_summary,
 };
@@ -61,7 +62,7 @@ impl CapturedBtlePacket {
     /// Returns the captured byte length.
     #[must_use]
     pub fn len(&self) -> NotificationByteLen {
-        NotificationByteLen::new(self.as_raw_bytes().len())
+        NotificationByteLen::from_bytes(self.as_raw_bytes().len())
     }
 
     /// Returns true when no bytes were captured.
@@ -106,7 +107,7 @@ impl BtleAttributeValue {
             Err(MalformedBtlePacket {
                 bytes,
                 reason: MalformedBtlePacketReason::OversizedAttributeValue {
-                    max: NotificationByteLen::new(MAX_BTLE_ATTRIBUTE_VALUE_LEN),
+                    max: NotificationByteLen::from_bytes(MAX_BTLE_ATTRIBUTE_VALUE_LEN),
                 },
             })
         }
@@ -171,7 +172,7 @@ pub enum SessionCaptureRecord {
         monotonic_ms: MonotonicMs,
 
         /// Negotiated maximum write length, when known.
-        max_write_len: Option<NegotiatedWriteLen>,
+        max_write_len: Option<NegotiatedWriteLimit>,
     },
 
     /// Link-down event observed after the session requested disconnect.
@@ -309,7 +310,7 @@ pub struct RawNotificationRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapSessionMetadata<'a> {
     /// Wall-clock capture start time in Unix milliseconds.
-    pub wall_clock_start_unix_ms: u64,
+    pub wall_clock_start_unix_ms: cutout_core::WallClockUnixTimestamp,
 
     /// Platform identifier recorded by the capture producer.
     pub platform_id: &'a str,
@@ -406,7 +407,7 @@ impl SessionCapture {
         let header = PevcapHeader::new(
             metadata.wall_clock_start_unix_ms,
             metadata.platform_id,
-            write_limit.map(NegotiatedWriteLen::get),
+            write_limit.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
             &advertised_services,
             &gatt_fingerprints,
             metadata.resolved_identity,
@@ -440,11 +441,11 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             monotonic_ms,
             max_write_len,
         } => Some(PevcapRecord::link_up(
-            monotonic_ms.get(),
-            max_write_len.map(NegotiatedWriteLen::get),
+            monotonic_ms.into_core(),
+            max_write_len.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
         )),
         SessionCaptureRecord::LinkDown { monotonic_ms } => {
-            Some(PevcapRecord::link_down(monotonic_ms.get()))
+            Some(PevcapRecord::link_down(monotonic_ms.into_core()))
         }
         SessionCaptureRecord::Write {
             monotonic_ms,
@@ -453,7 +454,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             bytes,
             provenance: _,
         } => Some(PevcapRecord::outbound_write(
-            monotonic_ms.get(),
+            monotonic_ms.into_core(),
             gatt_channel_from_uuid(*characteristic),
             *mode,
             bytes.to_raw_bytes(),
@@ -464,7 +465,7 @@ fn session_record_to_pevcap_record(record: &SessionCaptureRecord) -> Option<Pevc
             service,
             bytes,
         } => Some(PevcapRecord::inbound_notification(
-            monotonic_ms.get(),
+            monotonic_ms.into_core(),
             gatt_channel_from_uuid(*characteristic),
             gatt_channel_from_uuid(*service),
             bytes.to_raw_bytes(),

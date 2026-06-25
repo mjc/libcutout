@@ -6,7 +6,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use cutout_core::{LinkInfo, ProtocolSession, SessionInput, SessionOutput};
+use cutout_core::{
+    LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput, TransportWriteLimit,
+};
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
     BegodeFrameReassembler, NosfetAeroModel, ReadOnlyModelSpec, ReadOnlySession,
@@ -15,6 +17,14 @@ use cutout_protocols::{
 };
 
 struct CountingAllocator;
+
+const fn ms(value: u64) -> MonotonicTimestamp {
+    MonotonicTimestamp::new(value)
+}
+
+const fn write_len(value: u16) -> TransportWriteLimit {
+    TransportWriteLimit::from_bytes(value)
+}
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static REALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -93,8 +103,8 @@ where
     let mut output = Vec::with_capacity(8);
     session.handle(
         SessionInput::LinkUp(LinkInfo {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len(185)),
         }),
         &mut output,
     );
@@ -115,8 +125,8 @@ fn veteran_parser_owned_results_do_not_allocate() {
     let mut veteran_output = Vec::with_capacity(8);
     veteran.handle(
         SessionInput::LinkUp(LinkInfo {
-            monotonic_ms: 1,
-            max_write_len: Some(185),
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len(185)),
         }),
         &mut veteran_output,
     );
@@ -126,7 +136,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &LIVE_AERO_SELECTOR_0[..20],
-                monotonic_ms: 2,
+                monotonic_ms: ms(2),
             },
             &mut veteran_output,
         );
@@ -139,7 +149,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &LIVE_AERO_SELECTOR_0,
-                monotonic_ms: 3,
+                monotonic_ms: ms(3),
             },
             &mut veteran_output,
         );
@@ -154,7 +164,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &reserved,
-                monotonic_ms: 4,
+                monotonic_ms: ms(4),
             },
             &mut veteran_output,
         );
@@ -169,7 +179,7 @@ fn veteran_parser_owned_results_do_not_allocate() {
             SessionInput::Notification {
                 channel: VETERAN_DATA_CHANNEL,
                 bytes: &gap,
-                monotonic_ms: 5,
+                monotonic_ms: ms(5),
             },
             &mut veteran_output,
         );
@@ -182,7 +192,7 @@ fn begode_parser_owned_results_do_not_allocate() {
     assert_no_allocations("Begode fixed-frame parser", || {
         for (offset, byte) in BEGODE_LIVE_A.iter().copied().enumerate() {
             let result = begode_reassembler
-                .feed_byte_result_at(byte, offset as u64)
+                .feed_byte_result_at(byte, ms(offset as u64))
                 .expect("Begode fixture parses");
             if let BegodeFrameParseResult::Complete(_) = result {
                 break;
@@ -196,7 +206,7 @@ fn begode_parser_owned_results_do_not_allocate() {
             SessionInput::Notification {
                 channel: BEGODE_DATA_CHANNEL,
                 bytes: &BEGODE_LIVE_A,
-                monotonic_ms: 6,
+                monotonic_ms: ms(6),
             },
             &mut begode_output,
         );
@@ -219,7 +229,7 @@ fn vesc_parser_owned_results_do_not_allocate() {
             SessionInput::Notification {
                 channel: VESC_NOTIFY_CHANNEL,
                 bytes: &VESC_VALUES,
-                monotonic_ms: 7,
+                monotonic_ms: ms(7),
             },
             &mut vesc_output,
         );

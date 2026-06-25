@@ -72,10 +72,11 @@ pub use types::{
 };
 /// Parsed BTLE adapter units used instead of naked primitives.
 pub use units::{
-    BatteryLevelPercent, DiagnosticEventCount, DisconnectCount, ManufacturerDataLen,
-    MaxReconnectLinks, MonotonicMs, NegotiatedWriteLen, NotificationByteTotal, NotificationCount,
-    NotificationWindow, ProtocolWriteCount, ReadOnlyResponseCount, ReconnectAttempt, ScanWindow,
-    SubscribeCount, TelemetryEventCount, TransportWriteCount, WriteProvenance,
+    BtleBatteryLevel, DiagnosticEventCount, DisconnectCount, ManufacturerDataSize,
+    MaxReconnectLinks, MonotonicMs, NegotiatedWriteLimit, NotificationCount,
+    NotificationPayloadTotal, NotificationWindow, ProtocolWriteCount, ReadOnlyResponseCount,
+    ReconnectAttempt, ScanWindow, SubscribeCount, TelemetryEventCount, TransportWriteCount,
+    WriteProvenance,
 };
 
 /// Returns the crate name used by setup smoke tests.

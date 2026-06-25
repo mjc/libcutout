@@ -1,13 +1,14 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BmsPackCurrents,
-    ProtocolSelector, VerificationStatus,
+    BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
+    BmsPackCurrents, Information, ProtocolSelector, Quantity, Temperature, Unit,
+    VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
 use crate::{
     VeteranFrame,
-    parser::{ByteCursor, ByteLen, ByteOffset, ByteRange},
+    parser::{ParserCursor, ParserOffset, ParserRange, ParserSpan},
 };
 
 /// Cell-voltage count observed for typed Veteran/NOSFET BMS pages.
@@ -25,37 +26,36 @@ pub const VETERAN_BMS_TEMPERATURE_VALUES_OFFSET: usize = 47;
 /// Absolute offset of the first pack-current value in complete Veteran BMS frames.
 pub const VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET: usize = 69;
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct FrameByteOffset(usize);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FrameOffsetByte;
 
-impl FrameByteOffset {
-    const fn new(value: usize) -> Self {
-        Self(value)
-    }
-
-    const fn to_body_offset(self) -> BodyByteOffset {
-        BodyByteOffset(self.0 - VeteranBmsPageEvidence::BODY_OFFSET)
-    }
+impl Unit for FrameOffsetByte {
+    type Dimension = Information;
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct BodyByteOffset(usize);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BodyOffsetByte;
 
-impl BodyByteOffset {
-    const fn get(self) -> usize {
-        self.0
-    }
-
-    const fn end_after(self, len: usize) -> usize {
-        self.0 + len
-    }
+impl Unit for BodyOffsetByte {
+    type Dimension = Information;
 }
 
-const CELL_VALUES_OFFSET: FrameByteOffset = FrameByteOffset::new(VETERAN_BMS_CELL_VALUES_OFFSET);
-const TEMPERATURE_VALUES_OFFSET: FrameByteOffset =
-    FrameByteOffset::new(VETERAN_BMS_TEMPERATURE_VALUES_OFFSET);
-const PACK_CURRENT_VALUES_OFFSET: FrameByteOffset =
-    FrameByteOffset::new(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
+type FrameOffset = Quantity<Information, FrameOffsetByte, usize>;
+type BodyOffset = Quantity<Information, BodyOffsetByte, usize>;
+
+const fn body_offset_from_frame_offset(offset: FrameOffset) -> BodyOffset {
+    BodyOffset::from_bytes(offset.as_bytes() - VeteranBmsPageEvidence::BODY_OFFSET)
+}
+
+const fn body_offset_end_after(offset: BodyOffset, len: usize) -> usize {
+    offset.as_bytes() + len
+}
+
+const CELL_VALUES_OFFSET: FrameOffset = FrameOffset::from_bytes(VETERAN_BMS_CELL_VALUES_OFFSET);
+const TEMPERATURE_VALUES_OFFSET: FrameOffset =
+    FrameOffset::from_bytes(VETERAN_BMS_TEMPERATURE_VALUES_OFFSET);
+const PACK_CURRENT_VALUES_OFFSET: FrameOffset =
+    FrameOffset::from_bytes(VETERAN_BMS_PACK_CURRENT_VALUES_OFFSET);
 
 /// Classifies a Veteran/NOSFET BMS page selector from hardware-backed Aero captures.
 #[must_use]
@@ -91,17 +91,18 @@ impl<'frame> VeteranBmsPageEvidence<'frame> {
     /// Extracts conservative BMS page evidence from a complete frame.
     #[must_use]
     pub fn from_frame(frame: &'frame VeteranFrame) -> Option<Self> {
-        let cursor = ByteCursor::new(frame.as_slice());
-        let selector = ProtocolSelector::new(cursor.byte(ByteOffset::new(Self::SELECTOR_OFFSET))?);
+        let cursor = ParserCursor::new(frame.as_slice());
+        let selector =
+            ProtocolSelector::new(cursor.byte(ParserOffset::from_bytes(Self::SELECTOR_OFFSET))?);
         let body_start = Self::SELECTOR_OFFSET + 1;
         let body_len = frame
             .as_slice()
             .len()
             .checked_sub(Self::CRC_TRAILER_LEN)?
             .checked_sub(body_start)?;
-        let body = cursor.range(ByteRange::new(
-            ByteOffset::new(body_start),
-            ByteLen::new(body_len),
+        let body = cursor.range(ParserRange::new(
+            ParserOffset::from_bytes(body_start),
+            ParserSpan::from_bytes(body_len),
         ))?;
 
         Some(Self {
@@ -121,8 +122,8 @@ pub struct VeteranBmsCellPage {
     /// BMS page selector.
     pub selector: ProtocolSelector,
 
-    /// Cell voltage values in millivolts.
-    pub cell_mv: ArrayVec<u16, { VETERAN_BMS_CELL_VALUES_PER_PAGE as usize }>,
+    /// Cell voltage values.
+    pub cell_voltage: ArrayVec<Voltage, { VETERAN_BMS_CELL_VALUES_PER_PAGE as usize }>,
 }
 
 impl VeteranBmsCellPage {
@@ -145,24 +146,27 @@ impl VeteranBmsCellPage {
             });
         }
 
-        let offset = CELL_VALUES_OFFSET.to_body_offset();
-        let end = offset.end_after(usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE) * 2);
-        let values = body
-            .get(offset.get()..end)
-            .ok_or(VeteranBmsPageError::PageBodyTooShort {
-                selector: selector.get(),
-                expected: end,
-                observed: body.len(),
-            })?;
-        let mut cell_mv = ArrayVec::new();
-        let cursor = ByteCursor::new(values);
+        let offset = body_offset_from_frame_offset(CELL_VALUES_OFFSET);
+        let end = body_offset_end_after(offset, usize::from(VETERAN_BMS_CELL_VALUES_PER_PAGE) * 2);
+        let values =
+            body.get(offset.as_bytes()..end)
+                .ok_or(VeteranBmsPageError::PageBodyTooShort {
+                    selector: selector.get(),
+                    expected: end,
+                    observed: body.len(),
+                })?;
+        let mut cell_voltage = ArrayVec::new();
+        let cursor = ParserCursor::new(values);
         for offset in (0..values.len()).step_by(2) {
-            if let Some(value) = cursor.be_u16(ByteOffset::new(offset)) {
-                cell_mv.push(value);
+            if let Some(value) = cursor.be_u16(ParserOffset::from_bytes(offset)) {
+                cell_voltage.push(Voltage::from_millivolts(i32::from(value)));
             }
         }
 
-        Ok(Self { selector, cell_mv })
+        Ok(Self {
+            selector,
+            cell_voltage,
+        })
     }
 }
 
@@ -173,7 +177,7 @@ pub struct VeteranBmsTemperaturePage {
     pub selector: ProtocolSelector,
 
     /// Temperature values in millicelsius.
-    pub temperatures_mc: ArrayVec<i32, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
+    pub temperatures: ArrayVec<Temperature, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE>,
 }
 
 impl VeteranBmsTemperaturePage {
@@ -191,26 +195,26 @@ impl VeteranBmsTemperaturePage {
             });
         }
 
-        let offset = TEMPERATURE_VALUES_OFFSET.to_body_offset();
-        let end = offset.end_after(VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE * 2);
-        let values = body
-            .get(offset.get()..end)
-            .ok_or(VeteranBmsPageError::PageBodyTooShort {
-                selector: selector.get(),
-                expected: end,
-                observed: body.len(),
-            })?;
-        let mut temperatures_mc = ArrayVec::new();
-        let cursor = ByteCursor::new(values);
+        let offset = body_offset_from_frame_offset(TEMPERATURE_VALUES_OFFSET);
+        let end = body_offset_end_after(offset, VETERAN_BMS_TEMPERATURE_VALUES_PER_PAGE * 2);
+        let values =
+            body.get(offset.as_bytes()..end)
+                .ok_or(VeteranBmsPageError::PageBodyTooShort {
+                    selector: selector.get(),
+                    expected: end,
+                    observed: body.len(),
+                })?;
+        let mut temperatures = ArrayVec::new();
+        let cursor = ParserCursor::new(values);
         for offset in (0..values.len()).step_by(2) {
-            if let Some(value) = cursor.be_i16(ByteOffset::new(offset)) {
-                temperatures_mc.push(i32::from(value) * 10);
+            if let Some(value) = cursor.be_i16(ParserOffset::from_bytes(offset)) {
+                temperatures.push(Temperature::from_centi_celsius(i32::from(value)));
             }
         }
 
         Ok(Self {
             selector,
-            temperatures_mc,
+            temperatures,
         })
     }
 }
@@ -240,27 +244,31 @@ impl VeteranBmsMetadataPage {
             });
         }
 
-        let offset = PACK_CURRENT_VALUES_OFFSET.to_body_offset();
-        let end = offset.end_after(4);
-        let values = body
-            .get(offset.get()..end)
-            .ok_or(VeteranBmsPageError::PageBodyTooShort {
-                selector: selector.get(),
-                expected: end,
-                observed: body.len(),
-            })?;
+        let offset = body_offset_from_frame_offset(PACK_CURRENT_VALUES_OFFSET);
+        let end = body_offset_end_after(offset, 4);
+        let values =
+            body.get(offset.as_bytes()..end)
+                .ok_or(VeteranBmsPageError::PageBodyTooShort {
+                    selector: selector.get(),
+                    expected: end,
+                    observed: body.len(),
+                })?;
 
-        let cursor = ByteCursor::new(values);
+        let cursor = ParserCursor::new(values);
 
         Ok(Self {
             selector,
             currents: BmsPackCurrents::reported(
-                cursor
-                    .be_i16(ByteOffset::new(0))
-                    .map_or(0, |value| i32::from(value) * 10),
-                cursor
-                    .be_i16(ByteOffset::new(2))
-                    .map_or(0, |value| i32::from(value) * 10),
+                BatteryCurrent::from_centiamps(i32::from(
+                    cursor
+                        .be_i16(ParserOffset::from_bytes(0))
+                        .map_or(0, |value| value),
+                )),
+                BatteryCurrent::from_centiamps(i32::from(
+                    cursor
+                        .be_i16(ParserOffset::from_bytes(2))
+                        .map_or(0, |value| value),
+                )),
             ),
         })
     }
@@ -268,7 +276,7 @@ impl VeteranBmsMetadataPage {
 
 #[cfg(test)]
 const fn body_offset(absolute_offset: usize) -> usize {
-    FrameByteOffset::new(absolute_offset).to_body_offset().get()
+    body_offset_from_frame_offset(FrameOffset::from_bytes(absolute_offset)).as_bytes()
 }
 
 /// Error returned when a typed Veteran/NOSFET BMS page violates invariants.
@@ -532,9 +540,9 @@ mod tests {
         let page = VeteranBmsCellPage::from_body(sel(1), &body).expect("documented body decodes");
 
         assert_eq!(page.selector, sel(1));
-        assert_eq!(page.cell_mv.len(), 15);
-        assert_eq!(page.cell_mv[0], 3700);
-        assert_eq!(page.cell_mv[14], 3714);
+        assert_eq!(page.cell_voltage.len(), 15);
+        assert_eq!(page.cell_voltage[0], Voltage::from_millivolts(3700));
+        assert_eq!(page.cell_voltage[14], Voltage::from_millivolts(3714));
     }
 
     #[test]
@@ -554,7 +562,7 @@ mod tests {
         assert_eq!(
             VeteranBmsCellPage::from_body(sel(2), &sixteen_value_body)
                 .expect("extra trailing data after 15 documented values is ignored")
-                .cell_mv
+                .cell_voltage
                 .len(),
             15
         );
@@ -569,8 +577,15 @@ mod tests {
 
         assert_eq!(page.selector, sel(3));
         assert_eq!(
-            page.temperatures_mc.as_slice(),
-            &[16730, 16230, 16980, 16700, 16600, 17830]
+            page.temperatures.as_slice(),
+            &[
+                Temperature::from_millicelsius(16_730),
+                Temperature::from_millicelsius(16_230),
+                Temperature::from_millicelsius(16_980),
+                Temperature::from_millicelsius(16_700),
+                Temperature::from_millicelsius(16_600),
+                Temperature::from_millicelsius(17_830),
+            ]
         );
     }
 
@@ -585,7 +600,13 @@ mod tests {
             .expect("documented metadata current body decodes");
 
         assert_eq!(page.selector, sel(0));
-        assert_eq!(page.currents, BmsPackCurrents::reported(-1230, 450));
+        assert_eq!(
+            page.currents,
+            BmsPackCurrents::reported(
+                BatteryCurrent::from_milliamps(-1230),
+                BatteryCurrent::from_milliamps(450)
+            )
+        );
     }
 
     #[test]

@@ -1,16 +1,24 @@
 use core::ops::RangeInclusive;
 
 use cutout_core::{
-    DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity, Measured, MonotonicMillis,
-    RawFieldValue, ReadOnlyResponse, SettingsEntry, SettingsReadback, TelemetryDelta, ValueQuality,
-    ValueSource, VerificationStatus,
+    BatteryCurrent, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
+    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicTimestamp,
+    ParallelCount, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
+    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
+    VerificationStatus, Voltage, WireVoltage,
 };
 use thiserror::Error;
 
 use crate::{
     BegodeFrame,
-    parser::{ByteCursor, ByteOffset},
+    parser::{ParserCursor, ParserOffset},
 };
+
+const SERIES_CELLS_20: SeriesCount = SeriesCount::new(20);
+const SERIES_CELLS_24: SeriesCount = SeriesCount::new(24);
+#[cfg(test)]
+const PARALLEL_PACKS_1: ParallelCount = ParallelCount::new(1);
+const PARALLEL_PACKS_2: ParallelCount = ParallelCount::new(2);
 
 /// Begode speed/distance unit mode inferred from Live B settings bit 0.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -23,34 +31,114 @@ pub enum BegodeUnitMode {
     Imperial,
 }
 
+/// Raw Begode settings bitfield.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeSettingsBits(u16);
+
+impl BegodeSettingsBits {
+    /// Creates a raw Begode settings bitfield.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw settings bitfield.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+/// Raw Begode LED mode.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeLedMode(u8);
+
+impl BegodeLedMode {
+    /// Creates a raw Begode LED mode.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw LED mode.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Raw Begode alert bitfield.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeAlertFlags(u8);
+
+impl BegodeAlertFlags {
+    /// Creates a raw Begode alert bitfield.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw alert bitfield.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// Begode light mode stored in the low two bits of the source byte.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BegodeLightMode(u8);
+
+impl BegodeLightMode {
+    /// Creates a Begode light mode, preserving only the encoded low two bits.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value & 0x03)
+    }
+
+    /// Returns the low two light-mode bits.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 impl BegodeUnitMode {
-    const fn from_settings_bits(settings_bits: u16) -> Self {
-        if settings_bits & 0x0001 == 0 {
+    const fn from_settings_bits(settings_bits: BegodeSettingsBits) -> Self {
+        if settings_bits.get() & 0x0001 == 0 {
             Self::Metric
         } else {
             Self::Imperial
         }
     }
 
-    fn distance_m_to_mm(self, distance_m: u32) -> u64 {
+    fn distance_from_wire(self, distance_m: u32) -> Distance {
         match self {
-            Self::Metric => u64::from(distance_m) * 1_000,
-            Self::Imperial => miles_milli_to_metric_mm(distance_m),
+            Self::Metric => Distance::from_metres(u64::from(distance_m)),
+            Self::Imperial => Distance::from_milli_miles(distance_m),
         }
     }
 
-    fn speed_milli_kmh(self, raw_metric_milli_kmh: i32) -> i32 {
+    fn speed(self, metric_speed: Speed) -> Speed {
         match self {
-            Self::Metric => raw_metric_milli_kmh,
-            Self::Imperial => mph_milli_to_kmh_milli(raw_metric_milli_kmh),
+            Self::Metric => metric_speed,
+            Self::Imperial => Speed::from_milli_kmh_scaled(metric_speed.as_milli_kmh(), 1_609_344),
         }
     }
 
-    fn speed_kmh_u16(self, raw_speed: u16) -> u16 {
+    fn speed_limit(self, raw_speed: u16) -> Speed {
         match self {
-            Self::Metric => raw_speed,
-            Self::Imperial => mph_to_kmh_u16(raw_speed),
+            Self::Metric => Speed::from_kmh(u64::from(raw_speed)),
+            Self::Imperial => Speed::from_mph_floor_kmh(u64::from(raw_speed)),
         }
+    }
+
+    fn distance(self, metric_distance: Distance) -> Distance {
+        self.distance_from_wire(u32::try_from(metric_distance.as_metres()).unwrap_or(u32::MAX))
     }
 }
 
@@ -82,7 +170,7 @@ impl BegodeTelemetryContext {
     pub fn live_a_to_delta(
         self,
         telemetry: BegodeLiveATelemetry,
-        at_ms: MonotonicMillis,
+        at_ms: MonotonicTimestamp,
     ) -> TelemetryDelta {
         telemetry.to_delta_with_units(at_ms, self.unit_mode)
     }
@@ -92,7 +180,7 @@ impl BegodeTelemetryContext {
     pub fn live_b_to_delta(
         self,
         telemetry: BegodeLiveBTelemetry,
-        at_ms: MonotonicMillis,
+        at_ms: MonotonicTimestamp,
     ) -> TelemetryDelta {
         telemetry.to_delta_with_units(at_ms)
     }
@@ -130,7 +218,7 @@ pub enum BegodeVoltageEvidence {
     VoltageClass100V,
 
     /// A capture/app/BMS value reports an observed pack voltage.
-    ObservedPackVoltageMv(u32),
+    ObservedPackVoltage(Voltage),
 }
 
 /// Result of selecting a Begode pack voltage profile from explicit evidence.
@@ -149,11 +237,11 @@ pub enum BegodeVoltageProfileSelection {
 /// Explicit Begode pack capacity evidence from capture/app/pack labels.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeCapacityEvidence {
-    /// Nominal pack capacity in milliamp-hours, when explicitly reported.
-    pub nominal_capacity_mah: Option<u32>,
+    /// Nominal pack capacity, when explicitly reported.
+    pub nominal_capacity: Option<Capacity>,
 
-    /// Pack energy in watt-hours, when explicitly reported.
-    pub reported_wh: Option<u32>,
+    /// Pack energy, when explicitly reported.
+    pub reported_energy: Option<Energy>,
 }
 
 /// Result of selecting Begode pack capacity evidence from explicit inputs.
@@ -193,10 +281,10 @@ pub struct BegodePackLayoutEvidence {
     pub cell_model: Option<BegodeCellModel>,
 
     /// Series cell count, when explicitly reported.
-    pub series_cells: Option<u8>,
+    pub series_cells: Option<SeriesCount>,
 
     /// Parallel cell count, when explicitly reported.
-    pub parallel_count: Option<u8>,
+    pub parallel_count: Option<ParallelCount>,
 }
 
 /// Result of selecting Begode pack-layout evidence from explicit inputs.
@@ -247,7 +335,7 @@ impl BegodeFalconBatteryVariant {
 
     /// Series cell count selected for this Falcon variant.
     #[must_use]
-    pub const fn series_cells(self) -> u8 {
+    pub const fn series_cells(self) -> SeriesCount {
         self.voltage_profile().series_cells()
     }
 
@@ -260,30 +348,30 @@ impl BegodeFalconBatteryVariant {
         }
     }
 
-    /// Parallel cell count selected for this Falcon variant, when evidence-backed.
+    /// Parallel pack count selected for this Falcon variant, when evidence-backed.
     #[must_use]
-    pub const fn parallel_count(self) -> Option<u8> {
+    pub const fn parallel_count(self) -> Option<ParallelCount> {
         match self {
             Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(2),
+            Self::Planned100V24S900WhSamsung50S => Some(PARALLEL_PACKS_2),
         }
     }
 
     /// Nominal pack capacity selected for this Falcon variant, when evidence-backed.
     #[must_use]
-    pub const fn nominal_capacity_mah(self) -> Option<u32> {
+    pub const fn nominal_capacity(self) -> Option<Capacity> {
         match self {
             Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(10_000),
+            Self::Planned100V24S900WhSamsung50S => Some(Capacity::from_milliamp_hours(10_000)),
         }
     }
 
     /// Pack energy selected for this Falcon variant, when evidence-backed.
     #[must_use]
-    pub const fn reported_wh(self) -> Option<u32> {
+    pub const fn reported_energy(self) -> Option<Energy> {
         match self {
             Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(900),
+            Self::Planned100V24S900WhSamsung50S => Some(Energy::from_watt_hours(900)),
         }
     }
 }
@@ -311,27 +399,31 @@ impl BegodePackVoltageProfile {
 
     /// Series cell count for this pack profile.
     #[must_use]
-    pub const fn series_cells(self) -> u8 {
+    pub const fn series_cells(self) -> SeriesCount {
         match self {
-            Self::Begode84VFullCharge => 20,
-            Self::Begode100VFullCharge => 24,
+            Self::Begode84VFullCharge => SERIES_CELLS_20,
+            Self::Begode100VFullCharge => SERIES_CELLS_24,
         }
     }
 
     /// Nominal pack capacity in milliamp-hours, when known.
     #[must_use]
-    pub const fn nominal_capacity_mah(self) -> Option<u32> {
+    pub const fn nominal_capacity(self) -> Option<Capacity> {
         match self {
             Self::Begode84VFullCharge | Self::Begode100VFullCharge => None,
         }
     }
 
-    /// Expected pack voltage range in millivolts.
+    /// Expected pack voltage range.
     #[must_use]
-    pub fn voltage_range_mv(self) -> RangeInclusive<u32> {
+    pub fn voltage_range(self) -> RangeInclusive<Voltage> {
         match self {
-            Self::Begode84VFullCharge => 60_000..=84_000,
-            Self::Begode100VFullCharge => 72_000..=100_800,
+            Self::Begode84VFullCharge => {
+                Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+            }
+            Self::Begode100VFullCharge => {
+                Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
+            }
         }
     }
 }
@@ -347,7 +439,7 @@ pub const fn begode_falcon_target_voltage_profile() -> BegodePackVoltageProfile 
 
 /// Selects a Falcon-specific battery variant from already parsed evidence.
 #[must_use]
-pub const fn select_begode_falcon_battery_variant(
+pub fn select_begode_falcon_battery_variant(
     profile: BegodeVoltageProfileSelection,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
@@ -420,7 +512,7 @@ where
         .filter_map(|annotation| capacity_evidence_from_annotation(annotation.as_ref()))
         .try_fold(BegodeCapacityEvidence::default(), merge_capacity_evidence)
         .map_or(BegodeCapacitySelection::Conflicting, |evidence| {
-            if evidence.nominal_capacity_mah.is_some() || evidence.reported_wh.is_some() {
+            if evidence.nominal_capacity.is_some() || evidence.reported_energy.is_some() {
                 BegodeCapacitySelection::Selected(evidence)
             } else {
                 BegodeCapacitySelection::Missing
@@ -453,7 +545,7 @@ where
 
 /// Cross-checks selected Begode pack evidence for internal consistency.
 #[must_use]
-pub const fn validate_begode_pack_evidence(
+pub fn validate_begode_pack_evidence(
     profile: BegodeVoltageProfileSelection,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
@@ -474,7 +566,7 @@ pub const fn validate_begode_pack_evidence(
     }
 }
 
-const fn validate_selected_begode_pack_evidence(
+fn validate_selected_begode_pack_evidence(
     profile: BegodePackVoltageProfile,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutEvidence,
@@ -494,7 +586,7 @@ const fn validate_selected_begode_pack_evidence(
     }
 }
 
-const fn validate_selected_begode_pack_capacity(
+fn validate_selected_begode_pack_capacity(
     capacity: BegodeCapacityEvidence,
     layout: BegodePackLayoutEvidence,
 ) -> BegodePackEvidenceConsistency {
@@ -510,21 +602,25 @@ const fn validate_selected_begode_pack_capacity(
     }
 }
 
-const fn validate_samsung_50s_capacity(
+fn validate_samsung_50s_capacity(
     capacity: BegodeCapacityEvidence,
-    series_cells: u8,
-    parallel_count: u8,
+    series_cells: SeriesCount,
+    parallel_count: ParallelCount,
 ) -> BegodePackEvidenceConsistency {
-    let expected_mah = parallel_count as u32 * 5_000;
-    if let Some(nominal_capacity_mah) = capacity.nominal_capacity_mah
-        && nominal_capacity_mah != expected_mah
+    let expected_capacity = Capacity::from_parallel_packs(5_000, parallel_count);
+    if let Some(nominal_capacity) = capacity.nominal_capacity
+        && nominal_capacity != expected_capacity
     {
         return BegodePackEvidenceConsistency::Inconsistent;
     }
 
-    if let Some(reported_wh) = capacity.reported_wh {
-        let expected_wh = series_cells as u32 * parallel_count as u32 * 18;
-        if !within_percent(reported_wh, expected_wh, 5) {
+    if let Some(reported_energy) = capacity.reported_energy {
+        let expected_wh = Energy::from_cell_geometry(18, series_cells, parallel_count);
+        if !within_percent(
+            reported_energy.as_watt_hours(),
+            expected_wh.as_watt_hours(),
+            5,
+        ) {
             return BegodePackEvidenceConsistency::Inconsistent;
         }
     }
@@ -532,7 +628,7 @@ const fn validate_samsung_50s_capacity(
     BegodePackEvidenceConsistency::Consistent
 }
 
-const fn select_consistent_begode_falcon_battery_variant(
+fn select_consistent_begode_falcon_battery_variant(
     profile: BegodeVoltageProfileSelection,
     capacity: BegodeCapacitySelection,
     layout: BegodePackLayoutSelection,
@@ -542,7 +638,7 @@ const fn select_consistent_begode_falcon_battery_variant(
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge),
             BegodeCapacitySelection::Missing,
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
-                series_cells: Some(20),
+                series_cells: Some(SERIES_CELLS_20),
                 ..
             }),
         ) => {
@@ -550,18 +646,19 @@ const fn select_consistent_begode_falcon_battery_variant(
         }
         (
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge),
-            BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(10_000),
-                reported_wh: Some(900),
-            }),
+            BegodeCapacitySelection::Selected(capacity),
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                 cell_model: Some(BegodeCellModel::Samsung50S),
-                series_cells: Some(24),
-                parallel_count: Some(2),
+                series_cells: Some(SERIES_CELLS_24),
+                parallel_count: Some(PARALLEL_PACKS_2),
             }),
-        ) => BegodeFalconBatteryVariantSelection::Selected(
-            BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
-        ),
+        ) if capacity.nominal_capacity == Some(Capacity::from_milliamp_hours(10_000))
+            && capacity.reported_energy == Some(Energy::from_watt_hours(900)) =>
+        {
+            BegodeFalconBatteryVariantSelection::Selected(
+                BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
+            )
+        }
         _ => BegodeFalconBatteryVariantSelection::Missing,
     }
 }
@@ -574,10 +671,8 @@ const fn within_percent(value: u32, expected: u32, percent: u32) -> bool {
 fn voltage_evidence_from_annotation(annotation: &str) -> Option<BegodeVoltageEvidence> {
     let (key, value) = annotation.split_once('=')?;
     match key.trim() {
-        "battery" | "app_voltage_class" | "charger_voltage" | "charger_voltage_class" => {
-            voltage_class_evidence(value)
-        }
-        "charger_voltage_mv" | "observed_pack_voltage_mv" | "bms_voltage_mv" | "app_voltage_mv" => {
+        "battery" | "app_voltage_class" | "charger_voltage_class" => voltage_class_evidence(value),
+        "charger_voltage" | "observed_pack_voltage" | "bms_voltage" | "app_voltage" => {
             parse_mv_evidence(value)
         }
         _ => None,
@@ -588,15 +683,15 @@ fn capacity_evidence_from_annotation(annotation: &str) -> Option<BegodeCapacityE
     let (key, value) = annotation.split_once('=')?;
     let parsed = value.trim().parse::<u32>().ok()?;
     match key.trim() {
-        "nominal_capacity_mah" | "capacity_mah" | "pack_capacity_mah" => {
+        "nominal_capacity_mah" | "nominal_capacity" | "capacity_mah" | "pack_capacity_mah" => {
             Some(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(parsed),
-                reported_wh: None,
+                nominal_capacity: Some(Capacity::from_milliamp_hours(parsed)),
+                reported_energy: None,
             })
         }
-        "reported_wh" | "pack_wh" => Some(BegodeCapacityEvidence {
-            nominal_capacity_mah: None,
-            reported_wh: Some(parsed),
+        "reported_wh" | "reported_energy" | "pack_wh" => Some(BegodeCapacityEvidence {
+            nominal_capacity: None,
+            reported_energy: Some(Energy::from_watt_hours(parsed)),
         }),
         _ => None,
     }
@@ -609,7 +704,7 @@ fn layout_evidence_from_annotation(annotation: &str) -> Option<BegodePackLayoutE
         "series_cells" | "pack_series_cells" => {
             parse_u8_evidence(value).map(|series_cells| BegodePackLayoutEvidence {
                 cell_model: None,
-                series_cells: Some(series_cells),
+                series_cells: Some(SeriesCount::new(series_cells)),
                 parallel_count: None,
             })
         }
@@ -617,7 +712,7 @@ fn layout_evidence_from_annotation(annotation: &str) -> Option<BegodePackLayoutE
             parse_u8_evidence(value).map(|parallel_count| BegodePackLayoutEvidence {
                 cell_model: None,
                 series_cells: None,
-                parallel_count: Some(parallel_count),
+                parallel_count: Some(ParallelCount::new(parallel_count)),
             })
         }
         _ => None,
@@ -663,9 +758,11 @@ fn voltage_class_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
 fn parse_mv_evidence(value: &str) -> Option<BegodeVoltageEvidence> {
     value
         .trim()
-        .parse::<u32>()
+        .parse::<i32>()
         .ok()
-        .map(BegodeVoltageEvidence::ObservedPackVoltageMv)
+        .filter(|millivolts| *millivolts >= 0)
+        .map(Voltage::from_millivolts)
+        .map(BegodeVoltageEvidence::ObservedPackVoltage)
 }
 
 fn parse_u8_evidence(value: &str) -> Option<u8> {
@@ -688,13 +785,15 @@ const fn evidence_profile(evidence: BegodeVoltageEvidence) -> Option<BegodePackV
         BegodeVoltageEvidence::VoltageClass100V => {
             Some(BegodePackVoltageProfile::Begode100VFullCharge)
         }
-        BegodeVoltageEvidence::ObservedPackVoltageMv(mv) if mv < 72_000 => {
+        BegodeVoltageEvidence::ObservedPackVoltage(voltage) if voltage.as_millivolts() < 72_000 => {
             Some(BegodePackVoltageProfile::Begode84VFullCharge)
         }
-        BegodeVoltageEvidence::ObservedPackVoltageMv(mv) if mv > 84_000 && mv <= 100_800 => {
+        BegodeVoltageEvidence::ObservedPackVoltage(voltage)
+            if voltage.as_millivolts() > 84_000 && voltage.as_millivolts() <= 100_800 =>
+        {
             Some(BegodePackVoltageProfile::Begode100VFullCharge)
         }
-        BegodeVoltageEvidence::ObservedPackVoltageMv(_) => None,
+        BegodeVoltageEvidence::ObservedPackVoltage(_) => None,
     }
 }
 
@@ -714,11 +813,14 @@ fn merge_capacity_evidence(
     evidence: BegodeCapacityEvidence,
 ) -> Result<BegodeCapacityEvidence, ()> {
     Ok(BegodeCapacityEvidence {
-        nominal_capacity_mah: merge_optional_u32(
-            selected.nominal_capacity_mah,
-            evidence.nominal_capacity_mah,
+        nominal_capacity: merge_optional_quantity(
+            selected.nominal_capacity,
+            evidence.nominal_capacity,
         )?,
-        reported_wh: merge_optional_u32(selected.reported_wh, evidence.reported_wh)?,
+        reported_energy: merge_optional_quantity(
+            selected.reported_energy,
+            evidence.reported_energy,
+        )?,
     })
 }
 
@@ -728,8 +830,8 @@ fn merge_layout_evidence(
 ) -> Result<BegodePackLayoutEvidence, ()> {
     Ok(BegodePackLayoutEvidence {
         cell_model: merge_optional_cell_model(selected.cell_model, evidence.cell_model)?,
-        series_cells: merge_optional_u8(selected.series_cells, evidence.series_cells)?,
-        parallel_count: merge_optional_u8(selected.parallel_count, evidence.parallel_count)?,
+        series_cells: merge_optional_quantity(selected.series_cells, evidence.series_cells)?,
+        parallel_count: merge_optional_quantity(selected.parallel_count, evidence.parallel_count)?,
     })
 }
 
@@ -745,16 +847,10 @@ const fn merge_optional_cell_model(
     }
 }
 
-const fn merge_optional_u8(left: Option<u8>, right: Option<u8>) -> Result<Option<u8>, ()> {
-    match (left, right) {
-        (None, None) => Ok(None),
-        (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
-        (Some(left), Some(right)) if left == right => Ok(Some(left)),
-        (Some(_), Some(_)) => Err(()),
-    }
-}
-
-const fn merge_optional_u32(left: Option<u32>, right: Option<u32>) -> Result<Option<u32>, ()> {
+fn merge_optional_quantity<T: Copy + Eq>(
+    left: Option<T>,
+    right: Option<T>,
+) -> Result<Option<T>, ()> {
     match (left, right) {
         (None, None) => Ok(None),
         (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
@@ -766,32 +862,32 @@ const fn merge_optional_u32(left: Option<u32>, right: Option<u32>) -> Result<Opt
 /// Primary Begode live telemetry decoded from frame tag `0x00`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeLiveATelemetry {
-    /// Raw unscaled voltage in centivolts.
-    pub raw_voltage_centivolts: u16,
+    /// Wire-encoded voltage before profile scaling.
+    pub wire_voltage: WireVoltage,
 
-    /// Scaled pack voltage in millivolts.
-    pub voltage_mv: i32,
+    /// Scaled pack voltage.
+    pub voltage: Voltage,
 
-    /// Raw signed speed converted to milli-km/h.
-    pub speed_milli_kmh: i32,
+    /// Signed speed.
+    pub speed: Speed,
 
-    /// Full four-byte trip distance candidate in meters.
-    pub trip_distance_m: u32,
+    /// Full four-byte trip distance candidate.
+    pub trip_distance: Distance,
 
-    /// Low-word trip distance in meters for firmwares that do not populate the high word.
-    pub trip_distance_low_m: u16,
+    /// Low-word trip distance for firmwares that do not populate the high word.
+    pub trip_distance_low: Distance,
 
-    /// Signed phase current in milliamps.
-    pub phase_current_ma: i32,
+    /// Signed phase current.
+    pub phase_current: PhaseCurrent,
 
-    /// Default MPU6050 IMU temperature in millicelsius.
-    pub imu_temperature_mc: i32,
+    /// Default MPU6050 IMU temperature.
+    pub imu_temperature: Temperature,
 
-    /// Raw hardware PWM field.
-    pub hardware_pwm_raw: i16,
+    /// Hardware PWM as a signed duty-cycle percentage.
+    pub hardware_pwm: DutyCycle,
 
     /// Estimated battery percent derived from voltage.
-    pub battery_percent_estimated: u8,
+    pub battery_level: BatteryLevel,
 }
 
 impl BegodeLiveATelemetry {
@@ -806,19 +902,38 @@ impl BegodeLiveATelemetry {
         profile: BegodePackVoltageProfile,
     ) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x00)?;
-        let cursor = ByteCursor::new(frame.as_slice());
-        let raw_voltage_centivolts = be_u16(cursor, ByteOffset::new(2));
+        let cursor = ParserCursor::new(frame.as_slice());
+        let wire_voltage =
+            WireVoltage::from_centivolts(be_u16(cursor, ParserOffset::from_bytes(2)));
         Ok(Self {
-            raw_voltage_centivolts,
-            voltage_mv: scaled_voltage_mv(raw_voltage_centivolts, profile),
-            speed_milli_kmh: raw_speed_to_milli_kmh(be_i16(cursor, ByteOffset::new(4))),
-            trip_distance_m: be_u32(cursor, ByteOffset::new(6)),
-            trip_distance_low_m: be_u16(cursor, ByteOffset::new(8)),
-            phase_current_ma: i32::from(be_i16(cursor, ByteOffset::new(10))) * 10,
-            imu_temperature_mc: mpu6050_temperature_mc(be_i16(cursor, ByteOffset::new(12))),
-            hardware_pwm_raw: be_i16(cursor, ByteOffset::new(14)),
-            battery_percent_estimated: estimate_begode_battery_percent(
-                scaled_voltage_mv(raw_voltage_centivolts, profile),
+            wire_voltage,
+            voltage: wire_voltage.as_scaled_voltage(profile.scaler_milli()),
+            speed: Speed::from_centimetres_per_second(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(4),
+            ))),
+            trip_distance: Distance::from_metres(u64::from(be_u32(
+                cursor,
+                ParserOffset::from_bytes(6),
+            ))),
+            trip_distance_low: Distance::from_metres(u64::from(be_u16(
+                cursor,
+                ParserOffset::from_bytes(8),
+            ))),
+            phase_current: PhaseCurrent::from_centiamps(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(10),
+            ))),
+            imu_temperature: Temperature::from_mpu6050_counts(be_i16(
+                cursor,
+                ParserOffset::from_bytes(12),
+            )),
+            hardware_pwm: DutyCycle::from_decipermille(be_i16(
+                cursor,
+                ParserOffset::from_bytes(14),
+            )),
+            battery_level: estimate_begode_battery_level(
+                wire_voltage.as_scaled_voltage(profile.scaler_milli()),
                 profile,
             ),
         })
@@ -826,7 +941,7 @@ impl BegodeLiveATelemetry {
 
     /// Converts decoded Live A fields into a transport-independent telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         self.to_delta_with_units(at_ms, BegodeUnitMode::Metric)
     }
 
@@ -834,25 +949,25 @@ impl BegodeLiveATelemetry {
     #[must_use]
     pub fn to_delta_with_units(
         self,
-        at_ms: MonotonicMillis,
+        at_ms: MonotonicTimestamp,
         unit_mode: BegodeUnitMode,
     ) -> TelemetryDelta {
         TelemetryDelta {
-            speed_mm_s: Some(source_reported(milli_kmh_to_mm_s(
-                unit_mode.speed_milli_kmh(self.speed_milli_kmh),
+            speed: Some(source_reported(unit_mode.speed(self.speed))),
+            voltage: Some(source_reported(self.voltage)),
+            motor_current: Some(source_reported(PhaseCurrent::from_milliamps(
+                self.phase_current.as_milliamps(),
             ))),
-            voltage_mv: Some(source_reported(self.voltage_mv)),
-            motor_current_ma: Some(source_reported(self.phase_current_ma)),
-            power_mw: Some(source_calculated(power_mw(
-                self.voltage_mv,
-                self.phase_current_ma,
+            power: Some(source_calculated(Power::from_voltage_current(
+                self.voltage,
+                self.phase_current,
             ))),
-            controller_temperature_mc: Some(source_reported(self.imu_temperature_mc)),
-            pwm_permille: Some(source_reported(raw_pwm_to_permille(self.hardware_pwm_raw))),
-            distance_mm: Some(source_reported(
-                unit_mode.distance_m_to_mm(u32::from(self.trip_distance_low_m)),
-            )),
-            battery_percent_estimated: Some(source_estimated(self.battery_percent_estimated)),
+            controller_temperature: Some(source_reported(self.imu_temperature)),
+            pwm: Some(source_reported(DutyCycle::from_permille(
+                self.hardware_pwm.as_permille(),
+            ))),
+            distance: Some(source_reported(unit_mode.distance(self.trip_distance_low))),
+            battery_level_estimated: Some(source_estimated(self.battery_level)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -862,25 +977,25 @@ impl BegodeLiveATelemetry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeLiveBTelemetry {
     /// Lifetime total distance in meters.
-    pub total_distance_m: u32,
+    pub total_distance: Distance,
 
     /// Raw settings bitfield.
-    pub settings_bits: u16,
+    pub settings_bits: BegodeSettingsBits,
 
-    /// Power-off timer in minutes.
-    pub power_off_timer_minutes: u16,
+    /// Power-off timer.
+    pub power_off_timer: Duration,
 
     /// Tiltback / max-speed field in km/h.
-    pub tiltback_speed_kmh: u16,
+    pub tiltback_speed: Speed,
 
     /// LED mode.
-    pub led_mode: u8,
+    pub led_mode: BegodeLedMode,
 
     /// Raw alert bitfield.
-    pub alert_flags: u8,
+    pub alert_flags: BegodeAlertFlags,
 
     /// Low two bits of the light-mode byte.
-    pub light_mode: u8,
+    pub light_mode: BegodeLightMode,
 }
 
 impl BegodeLiveBTelemetry {
@@ -892,31 +1007,37 @@ impl BegodeLiveBTelemetry {
     /// is not `0x04`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x04)?;
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
+        let settings_bits = BegodeSettingsBits::new(be_u16(cursor, ParserOffset::from_bytes(6)));
+        let unit_mode = BegodeUnitMode::from_settings_bits(settings_bits);
         Ok(Self {
-            total_distance_m: be_u32(cursor, ByteOffset::new(2)),
-            settings_bits: be_u16(cursor, ByteOffset::new(6)),
-            power_off_timer_minutes: be_u16(cursor, ByteOffset::new(8)),
-            tiltback_speed_kmh: be_u16(cursor, ByteOffset::new(10)),
-            led_mode: byte(cursor, ByteOffset::new(13)),
-            alert_flags: byte(cursor, ByteOffset::new(14)),
-            light_mode: byte(cursor, ByteOffset::new(15)) & 0x03,
+            total_distance: unit_mode
+                .distance_from_wire(be_u32(cursor, ParserOffset::from_bytes(2))),
+            settings_bits,
+            power_off_timer: Duration::from_minutes(u64::from(be_u16(
+                cursor,
+                ParserOffset::from_bytes(8),
+            ))),
+            tiltback_speed: unit_mode.speed_limit(be_u16(cursor, ParserOffset::from_bytes(10))),
+            led_mode: BegodeLedMode::new(byte(cursor, ParserOffset::from_bytes(13))),
+            alert_flags: BegodeAlertFlags::new(byte(cursor, ParserOffset::from_bytes(14))),
+            light_mode: BegodeLightMode::new(byte(cursor, ParserOffset::from_bytes(15))),
         })
     }
 
     /// Converts decoded Live B fields into a telemetry delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         self.to_delta_with_units(at_ms)
     }
 
     /// Converts decoded Live B fields into a telemetry delta with unit normalization.
     #[must_use]
-    pub fn to_delta_with_units(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta_with_units(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
-            distance_mm: Some(source_reported(
-                self.unit_mode().distance_m_to_mm(self.total_distance_m),
-            )),
+            distance: Some(source_reported(Distance::from_millimetres(
+                self.total_distance.as_millimetres(),
+            ))),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -934,19 +1055,28 @@ impl BegodeLiveBTelemetry {
             entries: [
                 Some(settings_entry(
                     BEGODE_FIELD_SETTINGS_BITS,
-                    i64::from(self.settings_bits),
+                    i64::from(self.settings_bits.get()),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
-                    i64::from(self.power_off_timer_minutes),
+                    i64::try_from(self.power_off_timer.as_minutes()).unwrap_or(i64::MAX),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(self.unit_mode().speed_kmh_u16(self.tiltback_speed_kmh)),
+                    i64::from(
+                        u16::try_from(
+                            self.tiltback_speed
+                                .as_kmh_rounded()
+                                .clamp(0, i32::from(u16::MAX)),
+                        )
+                        .unwrap_or(u16::MAX),
+                    ),
                 )),
                 Some(settings_entry(
                     BEGODE_FIELD_LED_AND_LIGHT_MODE,
-                    i64::from((u16::from(self.led_mode) << 8) | u16::from(self.light_mode)),
+                    i64::from(
+                        (u16::from(self.led_mode.get()) << 8) | u16::from(self.light_mode.get()),
+                    ),
                 )),
             ],
         })
@@ -966,9 +1096,9 @@ impl BegodeLiveBTelemetry {
                 Some(DiagnosticDetail {
                     field: RawFieldValue::new(
                         BEGODE_FIELD_ALERT_FLAGS,
-                        i64::from(self.alert_flags),
+                        i64::from(self.alert_flags.get()),
                     ),
-                    severity: if self.alert_flags == 0 {
+                    severity: if self.alert_flags.get() == 0 {
                         DiagnosticSeverity::Info
                     } else {
                         DiagnosticSeverity::Warning
@@ -988,13 +1118,13 @@ impl BegodeLiveBTelemetry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BegodeExtraTelemetry {
     /// True battery current in milliamps.
-    pub battery_current_ma: i32,
+    pub battery_current: BatteryCurrent,
 
-    /// Motor temperature in millicelsius.
-    pub motor_temperature_mc: i32,
+    /// Motor temperature.
+    pub motor_temperature: Temperature,
 
-    /// True PWM raw field.
-    pub true_pwm_raw: i16,
+    /// True PWM as a signed duty-cycle percentage.
+    pub true_pwm: DutyCycle,
 }
 
 impl BegodeExtraTelemetry {
@@ -1006,21 +1136,27 @@ impl BegodeExtraTelemetry {
     /// is not `0x07`.
     pub fn decode(frame: &BegodeFrame) -> Result<Self, BegodeTelemetryError> {
         require_tag(frame, 0x07)?;
-        let cursor = ByteCursor::new(frame.as_slice());
+        let cursor = ParserCursor::new(frame.as_slice());
         Ok(Self {
-            battery_current_ma: i32::from(be_i16(cursor, ByteOffset::new(2))) * 10,
-            motor_temperature_mc: i32::from(be_i16(cursor, ByteOffset::new(6))) * 1_000,
-            true_pwm_raw: be_i16(cursor, ByteOffset::new(8)),
+            battery_current: BatteryCurrent::from_centiamps(i32::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(2),
+            ))),
+            motor_temperature: Temperature::from_celsius(i64::from(be_i16(
+                cursor,
+                ParserOffset::from_bytes(6),
+            ))),
+            true_pwm: DutyCycle::from_decipermille(be_i16(cursor, ParserOffset::from_bytes(8))),
         })
     }
 
     /// Converts decoded extra telemetry into a transport-independent delta.
     #[must_use]
-    pub fn to_delta(self, at_ms: MonotonicMillis) -> TelemetryDelta {
+    pub fn to_delta(self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
         TelemetryDelta {
-            battery_current_ma: Some(source_reported(self.battery_current_ma)),
-            motor_temperature_mc: Some(source_reported(self.motor_temperature_mc)),
-            pwm_permille: Some(source_reported(raw_pwm_to_permille(self.true_pwm_raw))),
+            battery_current: Some(source_reported(self.battery_current)),
+            motor_temperature: Some(source_reported(self.motor_temperature)),
+            pwm: Some(source_reported(self.true_pwm)),
             ..TelemetryDelta::empty(at_ms)
         }
     }
@@ -1057,18 +1193,21 @@ pub enum BegodeTelemetryError {
 
 /// Estimates Begode battery percent from scaled pack voltage and profile.
 #[must_use]
-pub fn estimate_begode_battery_percent(voltage_mv: i32, profile: BegodePackVoltageProfile) -> u8 {
-    let raw_centivolts = unscaled_centivolts(voltage_mv, profile);
-    if raw_centivolts <= 5_120 {
-        return 0;
-    }
-    if raw_centivolts <= 5_440 {
-        return percent_from_i32(div_round(raw_centivolts - 5_120, 36).clamp(0, 100));
-    }
-    if raw_centivolts <= 6_680 {
-        return percent_from_i32(div_round((raw_centivolts - 5_320) * 10, 136).clamp(0, 100));
-    }
-    100
+pub fn estimate_begode_battery_level(
+    voltage: Voltage,
+    profile: BegodePackVoltageProfile,
+) -> BatteryLevel {
+    let wire_centivolts = i32::from(
+        WireVoltage::from_scaled_voltage(voltage, profile.scaler_milli()).as_centivolts(),
+    );
+    BatteryLevel::from_piecewise_linear(
+        i64::from(wire_centivolts),
+        &[
+            (5_120, BatteryLevel::from_percent(0)),
+            (5_440, BatteryLevel::from_percent(9)),
+            (6_680, BatteryLevel::from_percent(100)),
+        ],
+    )
 }
 
 fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryError> {
@@ -1081,34 +1220,6 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
             actual: u8::try_from(actual.get()).unwrap_or_default(),
         })
     }
-}
-
-fn scaled_voltage_mv(raw_centivolts: u16, profile: BegodePackVoltageProfile) -> i32 {
-    (i32::from(raw_centivolts) * 10 * profile.scaler_milli() + 500) / 1_000
-}
-
-fn unscaled_centivolts(voltage_mv: i32, profile: BegodePackVoltageProfile) -> i32 {
-    (voltage_mv * 100 + profile.scaler_milli() / 2) / profile.scaler_milli()
-}
-
-fn raw_speed_to_milli_kmh(raw_speed: i16) -> i32 {
-    i32::from(raw_speed) * 36
-}
-
-fn milli_kmh_to_mm_s(value: i32) -> i32 {
-    value * 5 / 18
-}
-
-fn power_mw(voltage_mv: i32, current_ma: i32) -> i64 {
-    i64::from(voltage_mv) * i64::from(current_ma) / 1_000
-}
-
-fn raw_pwm_to_permille(raw_pwm: i16) -> i16 {
-    raw_pwm / 10
-}
-
-fn mpu6050_temperature_mc(raw_temperature: i16) -> i32 {
-    36_530 + (i32::from(raw_temperature) * 1_000) / 340
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {
@@ -1147,69 +1258,35 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
     }
 }
 
-fn byte(cursor: ByteCursor<'_>, offset: ByteOffset) -> u8 {
+fn byte(cursor: ParserCursor<'_>, offset: ParserOffset) -> u8 {
     cursor.byte(offset).unwrap_or_default()
 }
 
-fn be_u16(cursor: ByteCursor<'_>, offset: ByteOffset) -> u16 {
+fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
     cursor.be_u16(offset).unwrap_or_default()
 }
 
-fn be_i16(cursor: ByteCursor<'_>, offset: ByteOffset) -> i16 {
+fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
     cursor.be_i16(offset).unwrap_or_default()
 }
 
-fn be_u32(cursor: ByteCursor<'_>, offset: ByteOffset) -> u32 {
+fn be_u32(cursor: ParserCursor<'_>, offset: ParserOffset) -> u32 {
     cursor.be_u32(offset).unwrap_or_default()
-}
-
-const fn div_round(numerator: i32, denominator: i32) -> i32 {
-    (numerator + denominator / 2) / denominator
-}
-
-fn mph_milli_to_kmh_milli(value: i32) -> i32 {
-    let scaled = i64::from(value) * 1_609_344;
-    match i32::try_from(scaled / 1_000_000) {
-        Ok(value) => value,
-        Err(_) => {
-            if scaled.is_negative() {
-                i32::MIN
-            } else {
-                i32::MAX
-            }
-        }
-    }
-}
-
-fn miles_milli_to_metric_mm(value: u32) -> u64 {
-    u64::from(value) * 1_609_344 / 1_000
-}
-
-fn mph_to_kmh_u16(value: u16) -> u16 {
-    let scaled = u32::from(value) * 1_609_344;
-    u16::try_from(scaled / 1_000_000).unwrap_or(u16::MAX)
-}
-
-fn percent_from_i32(percent: i32) -> u8 {
-    match u8::try_from(percent) {
-        Ok(value) => value,
-        Err(_) => {
-            if percent < 0 {
-                0
-            } else {
-                100
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
+        cutout_core::MonotonicTimestamp::new(value)
+    }
+
     use super::{
-        BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeCapacityEvidence, BegodeCapacitySelection,
-        BegodeCellModel, BegodeFalconBatteryVariant, BegodeFalconBatteryVariantSelection,
-        BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeVoltageEvidence,
-        BegodeVoltageProfileSelection, begode_falcon_target_voltage_profile,
+        BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BegodeAlertFlags, BegodeCapacityEvidence,
+        BegodeCapacitySelection, BegodeCellModel, BegodeFalconBatteryVariant,
+        BegodeFalconBatteryVariantSelection, BegodeLedMode, BegodeLightMode,
+        BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeSettingsBits,
+        BegodeVoltageEvidence, BegodeVoltageProfileSelection, PARALLEL_PACKS_1, PARALLEL_PACKS_2,
+        SERIES_CELLS_20, SERIES_CELLS_24, begode_falcon_target_voltage_profile,
         select_begode_falcon_battery_variant, select_begode_pack_capacity_from_annotations,
         select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
         select_begode_pack_voltage_profile_from_annotations,
@@ -1220,11 +1297,12 @@ mod tests {
         BEGODE_FIELD_TILTBACK_SPEED_KMH, BegodeExtraTelemetry, BegodeFrame, BegodeLiveATelemetry,
         BegodeLiveBTelemetry, BegodePackEvidenceConsistency, BegodePackVoltageProfile,
         BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
-        estimate_begode_battery_percent, validate_begode_pack_evidence,
+        estimate_begode_battery_level, validate_begode_pack_evidence,
     };
+    use cutout_core::{Capacity, Duration, Energy};
     use cutout_core::{
-        DiagnosticSeverity, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
-        ValueQuality, ValueSource, VerificationStatus,
+        DiagnosticSeverity, Measured, ParallelCount, ProtocolTag, RawFieldValue, ReadOnlyResponse,
+        SeriesCount, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus, Voltage,
     };
     use proptest::prelude::*;
 
@@ -1242,15 +1320,15 @@ mod tests {
             BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A frame decodes");
 
-        assert_eq!(telemetry.raw_voltage_centivolts, 6005);
-        assert_eq!(telemetry.voltage_mv, 75_063);
-        assert_eq!(telemetry.speed_milli_kmh, 48_096);
-        assert_eq!(telemetry.trip_distance_m, 0x0076_02ee);
-        assert_eq!(telemetry.trip_distance_low_m, 750);
-        assert_eq!(telemetry.phase_current_ma, -11_800);
-        assert_eq!(telemetry.imu_temperature_mc, 27_930);
-        assert_eq!(telemetry.hardware_pwm_raw, 0x1481);
-        assert_eq!(telemetry.battery_percent_estimated, 50);
+        assert_eq!(telemetry.wire_voltage.as_centivolts(), 6005);
+        assert_eq!(telemetry.voltage.as_millivolts(), 75_063);
+        assert_eq!(telemetry.speed.as_millimetres_per_second(), 13_360);
+        assert_eq!(telemetry.trip_distance.as_millimetres(), 7_733_998_000);
+        assert_eq!(telemetry.trip_distance_low.as_millimetres(), 750_000);
+        assert_eq!(telemetry.phase_current.as_milliamps(), -11_800);
+        assert_eq!(telemetry.imu_temperature.as_millicelsius(), 27_930);
+        assert_eq!(telemetry.hardware_pwm.as_permille(), 0x1481 / 10);
+        assert_eq!(telemetry.battery_level.get(), 50);
     }
 
     #[test]
@@ -1258,13 +1336,13 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
 
-        assert_eq!(telemetry.total_distance_m, 50);
-        assert_eq!(telemetry.settings_bits, 0);
-        assert_eq!(telemetry.power_off_timer_minutes, 15);
-        assert_eq!(telemetry.tiltback_speed_kmh, 50);
-        assert_eq!(telemetry.led_mode, 3);
-        assert_eq!(telemetry.alert_flags, 5);
-        assert_eq!(telemetry.light_mode, 2);
+        assert_eq!(telemetry.total_distance.as_millimetres(), 50_000);
+        assert_eq!(telemetry.settings_bits, BegodeSettingsBits::new(0));
+        assert_eq!(telemetry.power_off_timer, Duration::from_minutes(15));
+        assert_eq!(telemetry.tiltback_speed.as_millimetres_per_second(), 13_888);
+        assert_eq!(telemetry.led_mode, BegodeLedMode::new(3));
+        assert_eq!(telemetry.alert_flags, BegodeAlertFlags::new(5));
+        assert_eq!(telemetry.light_mode, BegodeLightMode::new(2));
     }
 
     #[test]
@@ -1272,9 +1350,9 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&EXTRA).expect("fixture frame is valid");
         let telemetry = BegodeExtraTelemetry::decode(&frame).expect("extra frame decodes");
 
-        assert_eq!(telemetry.battery_current_ma, -1_000);
-        assert_eq!(telemetry.motor_temperature_mc, 42_000);
-        assert_eq!(telemetry.true_pwm_raw, -40);
+        assert_eq!(telemetry.battery_current.as_milliamps(), -1_000);
+        assert_eq!(telemetry.motor_temperature.as_millicelsius(), 42_000);
+        assert_eq!(telemetry.true_pwm.as_permille(), -4);
     }
 
     #[test]
@@ -1284,26 +1362,38 @@ mod tests {
             BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A frame decodes");
 
-        let delta = telemetry.to_delta(42);
+        let delta = telemetry.to_delta(ms(42));
 
         assert_eq!(
             delta,
             TelemetryDelta {
-                at_ms: 42,
-                speed_mm_s: Some(source_reported(13_360)),
-                voltage_mv: Some(source_reported(75_063)),
-                battery_current_ma: None,
-                motor_current_ma: Some(source_reported(-11_800)),
-                power_mw: Some(source_calculated(-885_743)),
-                controller_temperature_mc: Some(source_reported(27_930)),
-                motor_temperature_mc: None,
-                battery_temperature_mc: None,
-                pwm_permille: Some(source_reported(524)),
-                distance_mm: Some(source_reported(750_000)),
-                pitch_mdeg: None,
-                roll_mdeg: None,
-                battery_percent_reported: None,
-                battery_percent_estimated: Some(source_estimated(50)),
+                at_ms: ms(42),
+                speed: Some(source_reported(
+                    cutout_core::Speed::from_millimetres_per_second(13_360,)
+                )),
+                voltage: Some(source_reported(Voltage::from_millivolts(75_063))),
+                battery_current: None,
+                motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
+                    -11_800,
+                ))),
+                power: Some(source_calculated(cutout_core::Power::from_milliwatts(
+                    -885_743
+                ))),
+                controller_temperature: Some(source_reported(
+                    cutout_core::Temperature::from_millicelsius(27_930,)
+                )),
+                motor_temperature: None,
+                battery_temperature: None,
+                pwm: Some(source_reported(cutout_core::DutyCycle::from_permille(524))),
+                distance: Some(source_reported(cutout_core::Distance::from_millimetres(
+                    750_000
+                ))),
+                pitch: None,
+                roll: None,
+                battery_level_reported: None,
+                battery_level_estimated: Some(source_estimated(
+                    cutout_core::BatteryLevel::from_percent(50)
+                )),
             }
         );
     }
@@ -1314,8 +1404,10 @@ mod tests {
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B frame decodes");
 
         assert_eq!(
-            telemetry.to_delta(99).distance_mm,
-            Some(source_reported(50_000))
+            telemetry.to_delta(ms(99)).distance,
+            Some(source_reported(cutout_core::Distance::from_millimetres(
+                50_000
+            )))
         );
         let ReadOnlyResponse::Settings(settings) = telemetry.to_settings_response() else {
             panic!("expected settings response");
@@ -1363,10 +1455,20 @@ mod tests {
             BegodeLiveATelemetry::decode(&live_a, BegodePackVoltageProfile::Begode84VFullCharge)
                 .expect("live A decodes");
 
-        let delta = context.live_a_to_delta(telemetry, 42);
+        let delta = context.live_a_to_delta(telemetry, ms(42));
 
-        assert_eq!(delta.speed_mm_s, Some(source_reported(21_500)));
-        assert_eq!(delta.distance_mm, Some(source_reported(1_207_008)));
+        assert_eq!(
+            delta.speed,
+            Some(source_reported(
+                cutout_core::Speed::from_millimetres_per_second(21_500)
+            ))
+        );
+        assert_eq!(
+            delta.distance,
+            Some(source_reported(cutout_core::Distance::from_millimetres(
+                1_207_008
+            )))
+        );
     }
 
     #[test]
@@ -1387,8 +1489,10 @@ mod tests {
         let telemetry = BegodeLiveBTelemetry::decode(&frame).expect("live B decodes");
 
         assert_eq!(
-            telemetry.to_delta(7).distance_mm,
-            Some(source_reported(80_467))
+            telemetry.to_delta(ms(7)).distance,
+            Some(source_reported(cutout_core::Distance::from_millimetres(
+                80_467
+            )))
         );
         let ReadOnlyResponse::Settings(settings) = telemetry.to_settings_response() else {
             panic!("expected settings response");
@@ -1424,11 +1528,24 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&EXTRA).expect("fixture frame is valid");
         let telemetry = BegodeExtraTelemetry::decode(&frame).expect("extra frame decodes");
 
-        let delta = telemetry.to_delta(7);
+        let delta = telemetry.to_delta(ms(7));
 
-        assert_eq!(delta.battery_current_ma, Some(source_reported(-1_000)));
-        assert_eq!(delta.motor_temperature_mc, Some(source_reported(42_000)));
-        assert_eq!(delta.pwm_permille, Some(source_reported(-4)));
+        assert_eq!(
+            delta.battery_current,
+            Some(source_reported(
+                cutout_core::BatteryCurrent::from_milliamps(-1_000)
+            ))
+        );
+        assert_eq!(
+            delta.motor_temperature,
+            Some(source_reported(
+                cutout_core::Temperature::from_millicelsius(42_000)
+            ))
+        );
+        assert_eq!(
+            delta.pwm,
+            Some(source_reported(cutout_core::DutyCycle::from_permille(-4)))
+        );
     }
 
     #[test]
@@ -1445,10 +1562,13 @@ mod tests {
     }
 
     #[test]
-    fn falcon_84v_full_charge_battery_percent_uses_better_begode_curve() {
+    fn falcon_84v_full_charge_battery_level_uses_better_begode_curve() {
         assert_eq!(
-            estimate_begode_battery_percent(75_063, BegodePackVoltageProfile::Begode84VFullCharge),
-            50
+            estimate_begode_battery_level(
+                Voltage::from_millivolts(75_063),
+                BegodePackVoltageProfile::Begode84VFullCharge,
+            ),
+            cutout_core::BatteryLevel::from_percent(50)
         );
     }
 
@@ -1456,18 +1576,24 @@ mod tests {
     fn falcon_84v_full_charge_profile_exposes_pack_geometry_without_capacity_guess() {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
-        assert_eq!(profile.series_cells(), 20);
-        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.series_cells(), SeriesCount::new(20));
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+        );
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
     fn begode_84v_profile_records_user_confirmed_falcon_target() {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
-        assert_eq!(profile.series_cells(), 20);
-        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.series_cells(), SeriesCount::new(20));
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+        );
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
@@ -1476,18 +1602,24 @@ mod tests {
 
         assert_eq!(profile, BEGODE_FALCON_TARGET_VOLTAGE_PROFILE);
         assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
-        assert_eq!(profile.series_cells(), 20);
-        assert_eq!(profile.voltage_range_mv(), 60_000..=84_000);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.series_cells(), SeriesCount::new(20));
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+        );
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
     fn begode_100v_profile_records_public_falcon_variant_evidence() {
         let profile = BegodePackVoltageProfile::Begode100VFullCharge;
 
-        assert_eq!(profile.series_cells(), 24);
-        assert_eq!(profile.voltage_range_mv(), 72_000..=100_800);
-        assert_eq!(profile.nominal_capacity_mah(), None);
+        assert_eq!(profile.series_cells(), SeriesCount::new(24));
+        assert_eq!(
+            profile.voltage_range(),
+            Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
+        );
+        assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
@@ -1520,8 +1652,8 @@ mod tests {
     #[test]
     fn voltage_profile_selection_does_not_guess_from_overlap_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
-                80_000
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(
+                Voltage::from_millivolts(80_000)
             )]),
             BegodeVoltageProfileSelection::Missing
         );
@@ -1530,14 +1662,14 @@ mod tests {
     #[test]
     fn voltage_profile_selection_uses_non_overlapping_observed_voltage() {
         assert_eq!(
-            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
-                95_000
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(
+                Voltage::from_millivolts(95_000)
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
         );
         assert_eq!(
-            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(
-                65_000
+            select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(
+                Voltage::from_millivolts(65_000)
             )]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
         );
@@ -1579,7 +1711,7 @@ mod tests {
     fn voltage_evidence_from_annotations_uses_non_overlapping_observed_voltage() {
         assert_eq!(
             select_begode_pack_voltage_profile_from_annotations([
-                "observed_pack_voltage_mv=95000",
+                "observed_pack_voltage=95000",
                 "capture_label=rolling_forward",
             ]),
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
@@ -1603,7 +1735,7 @@ mod tests {
             select_begode_pack_voltage_profile_from_annotations([
                 "model=Falcon",
                 "cell_model=Samsung 50S",
-                "observed_pack_voltage_mv=80000",
+                "observed_pack_voltage=80000",
             ]),
             BegodeVoltageProfileSelection::Missing
         );
@@ -1626,22 +1758,22 @@ mod tests {
                 "nominal_capacity_mah=10000",
             ]),
             BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(10_000),
-                reported_wh: None,
+                nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                reported_energy: None,
             })
         );
     }
 
     #[test]
-    fn capacity_evidence_from_annotations_preserves_reported_wh_separately() {
+    fn capacity_evidence_from_annotations_preserves_reported_energy_separately() {
         assert_eq!(
             select_begode_pack_capacity_from_annotations([
                 "reported_wh=900",
                 "nominal_capacity_mah=9000",
             ]),
             BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                nominal_capacity_mah: Some(9_000),
-                reported_wh: Some(900),
+                nominal_capacity: Some(Capacity::from_milliamp_hours(9_000)),
+                reported_energy: Some(Energy::from_watt_hours(900)),
             })
         );
     }
@@ -1650,13 +1782,16 @@ mod tests {
     fn capacity_evidence_from_annotations_rejects_conflicting_values() {
         assert_eq!(
             select_begode_pack_capacity_from_annotations([
-                "nominal_capacity_mah=10000",
-                "nominal_capacity_mah=9000",
+                "nominal_capacity=10000",
+                "nominal_capacity=9000",
             ]),
             BegodeCapacitySelection::Conflicting
         );
         assert_eq!(
-            select_begode_pack_capacity_from_annotations(["reported_wh=672", "reported_wh=900",]),
+            select_begode_pack_capacity_from_annotations([
+                "reported_energy=672",
+                "reported_energy=900",
+            ]),
             BegodeCapacitySelection::Conflicting
         );
     }
@@ -1671,8 +1806,8 @@ mod tests {
             ]),
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                 cell_model: Some(BegodeCellModel::Samsung50S),
-                series_cells: Some(20),
-                parallel_count: Some(1),
+                series_cells: Some(SERIES_CELLS_20),
+                parallel_count: Some(PARALLEL_PACKS_1),
             })
         );
     }
@@ -1694,7 +1829,7 @@ mod tests {
     #[test]
     fn pack_layout_evidence_from_annotations_reports_missing_and_conflicts() {
         assert_eq!(
-            select_begode_pack_layout_from_annotations(["battery=84v", "reported_wh=672"]),
+            select_begode_pack_layout_from_annotations(["battery=84v", "reported_energy=672"]),
             BegodePackLayoutSelection::Missing
         );
         assert_eq!(
@@ -1735,7 +1870,7 @@ mod tests {
                 BegodeCapacitySelection::Missing,
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: None,
-                    series_cells: Some(24),
+                    series_cells: Some(SERIES_CELLS_24),
                     parallel_count: None,
                 }),
             ),
@@ -1753,7 +1888,7 @@ mod tests {
                 BegodeCapacitySelection::Missing,
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: None,
-                    series_cells: Some(20),
+                    series_cells: Some(SERIES_CELLS_20),
                     parallel_count: None,
                 }),
             ),
@@ -1769,13 +1904,13 @@ mod tests {
                     BegodePackVoltageProfile::Begode84VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: None,
-                    reported_wh: Some(900),
+                    nominal_capacity: None,
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(20),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_20),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodePackEvidenceConsistency::Inconsistent
@@ -1790,13 +1925,13 @@ mod tests {
                     BegodePackVoltageProfile::Begode100VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodePackEvidenceConsistency::Consistent
@@ -1811,12 +1946,12 @@ mod tests {
                     BegodePackVoltageProfile::Begode84VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: None,
-                    reported_wh: Some(900),
+                    nominal_capacity: None,
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(20),
+                    series_cells: Some(SERIES_CELLS_20),
                     parallel_count: None,
                 }),
             ),
@@ -1834,7 +1969,7 @@ mod tests {
                 BegodeCapacitySelection::Missing,
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: None,
-                    series_cells: Some(20),
+                    series_cells: Some(SERIES_CELLS_20),
                     parallel_count: None,
                 }),
             ),
@@ -1850,13 +1985,13 @@ mod tests {
                     BegodePackVoltageProfile::Begode100VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodeFalconBatteryVariantSelection::Selected(
@@ -1871,13 +2006,13 @@ mod tests {
             select_begode_falcon_battery_variant(
                 BegodeVoltageProfileSelection::Missing,
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodeFalconBatteryVariantSelection::Missing
@@ -1892,13 +2027,13 @@ mod tests {
                     BegodePackVoltageProfile::Begode84VFullCharge,
                 ),
                 BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
-                    nominal_capacity_mah: Some(10_000),
-                    reported_wh: Some(900),
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
                 }),
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: Some(BegodeCellModel::Samsung50S),
-                    series_cells: Some(24),
-                    parallel_count: Some(2),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
                 }),
             ),
             BegodeFalconBatteryVariantSelection::Conflicting
@@ -1913,11 +2048,11 @@ mod tests {
             variant.voltage_profile(),
             BegodePackVoltageProfile::Begode84VFullCharge
         );
-        assert_eq!(variant.series_cells(), 20);
+        assert_eq!(variant.series_cells(), SeriesCount::new(20));
         assert_eq!(variant.cell_model(), None);
         assert_eq!(variant.parallel_count(), None);
-        assert_eq!(variant.nominal_capacity_mah(), None);
-        assert_eq!(variant.reported_wh(), None);
+        assert_eq!(variant.nominal_capacity(), None);
+        assert_eq!(variant.reported_energy(), None);
     }
 
     #[test]
@@ -1928,56 +2063,72 @@ mod tests {
             variant.voltage_profile(),
             BegodePackVoltageProfile::Begode100VFullCharge
         );
-        assert_eq!(variant.series_cells(), 24);
+        assert_eq!(variant.series_cells(), SeriesCount::new(24));
         assert_eq!(variant.cell_model(), Some(BegodeCellModel::Samsung50S));
-        assert_eq!(variant.parallel_count(), Some(2));
-        assert_eq!(variant.nominal_capacity_mah(), Some(10_000));
-        assert_eq!(variant.reported_wh(), Some(900));
+        assert_eq!(variant.parallel_count(), Some(ParallelCount::new(2)));
+        assert_eq!(
+            variant.nominal_capacity(),
+            Some(Capacity::from_milliamp_hours(10_000))
+        );
+        assert_eq!(
+            variant.reported_energy(),
+            Some(Energy::from_watt_hours(900))
+        );
     }
 
     proptest! {
         #[test]
-        fn falcon_battery_percent_is_monotonic(first_mv in 60_000i32..=84_000, second_mv in 60_000i32..=84_000) {
+        fn falcon_battery_level_is_monotonic(first_mv in 60_000i32..=84_000, second_mv in 60_000i32..=84_000) {
             let low = first_mv.min(second_mv);
             let high = first_mv.max(second_mv);
 
             prop_assert!(
-                estimate_begode_battery_percent(low, BegodePackVoltageProfile::Begode84VFullCharge)
-                    <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Begode84VFullCharge)
+                estimate_begode_battery_level(
+                    Voltage::from_millivolts(low),
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                ) <= estimate_begode_battery_level(
+                    Voltage::from_millivolts(high),
+                    BegodePackVoltageProfile::Begode84VFullCharge,
+                )
             );
         }
 
         #[test]
-        fn begode_100v_battery_percent_is_monotonic(first_mv in 72_000i32..=100_800, second_mv in 72_000i32..=100_800) {
+        fn begode_100v_battery_level_is_monotonic(first_mv in 72_000i32..=100_800, second_mv in 72_000i32..=100_800) {
             let low = first_mv.min(second_mv);
             let high = first_mv.max(second_mv);
 
             prop_assert!(
-                estimate_begode_battery_percent(low, BegodePackVoltageProfile::Begode100VFullCharge)
-                    <= estimate_begode_battery_percent(high, BegodePackVoltageProfile::Begode100VFullCharge)
+                estimate_begode_battery_level(
+                    Voltage::from_millivolts(low),
+                    BegodePackVoltageProfile::Begode100VFullCharge,
+                ) <= estimate_begode_battery_level(
+                    Voltage::from_millivolts(high),
+                    BegodePackVoltageProfile::Begode100VFullCharge,
+                )
             );
         }
 
         #[test]
-        fn voltage_profile_selection_maps_low_non_overlap_voltage_to_84v(mv in 1u32..72_000) {
+        fn voltage_profile_selection_maps_low_non_overlap_voltage_to_84v(mv in 1i32..72_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(Voltage::from_millivolts(mv))]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge)
             );
         }
 
         #[test]
-        fn voltage_profile_selection_maps_high_non_overlap_voltage_to_100v(mv in 84_001u32..=100_800) {
+        fn voltage_profile_selection_maps_high_non_overlap_voltage_to_100v(mv in 84_001i32..=100_800) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(Voltage::from_millivolts(mv))]),
                 BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge)
             );
         }
 
         #[test]
-        fn voltage_profile_selection_keeps_overlap_voltage_ambiguous(mv in 72_000u32..=84_000) {
+        fn voltage_profile_selection_keeps_overlap_voltage_ambiguous(mv in 72_000i32..=84_000) {
             prop_assert_eq!(
-                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltageMv(mv)]),
+                select_begode_pack_voltage_profile([BegodeVoltageEvidence::ObservedPackVoltage(Voltage::from_millivolts(mv))]),
                 BegodeVoltageProfileSelection::Missing
             );
         }
@@ -1985,13 +2136,13 @@ mod tests {
         #[test]
         fn live_b_unit_mode_follows_settings_bit_zero(settings_bits in any::<u16>()) {
             let telemetry = BegodeLiveBTelemetry {
-                total_distance_m: 0,
-                settings_bits,
-                power_off_timer_minutes: 0,
-                tiltback_speed_kmh: 0,
-                led_mode: 0,
-                alert_flags: 0,
-                light_mode: 0,
+                total_distance: cutout_core::Distance::from_millimetres(0),
+                settings_bits: BegodeSettingsBits::new(settings_bits),
+                power_off_timer: Duration::from_minutes(0),
+                tiltback_speed: cutout_core::Speed::from_millimetres_per_second(0),
+                led_mode: BegodeLedMode::new(0),
+                alert_flags: BegodeAlertFlags::new(0),
+                light_mode: BegodeLightMode::new(0),
             };
 
             prop_assert_eq!(

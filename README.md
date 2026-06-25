@@ -16,13 +16,6 @@ cutout capture --name-contains NF2557 --seconds 20
 cutout capture --name-contains Falcon --profile falcon --probe identity --probe firmware
 ```
 
-For dashboard work under bacon, use the dev-shell wrapper so bacon runs
-headless and does not draw over the dashboard TUI:
-
-```console
-cutout-dashboard-watch --device NF2557 --seconds 30
-```
-
 Target selection can use `--address`, `--name-contains`, or neither. When no
 target filter is supplied, the first matching peripheral from the scan results
 is used.
