@@ -15,10 +15,10 @@ use crate::{
 use crate::{VETERAN_BMS_CELL_VALUES_PER_PAGE, classify_veteran_bms_selector};
 
 /// Samsung 50S profile minimum pack voltage for a NOSFET Aero 30s pack.
-pub const NOSFET_AERO_MIN_VOLTAGE_MV: i32 = 91_000;
+pub const NOSFET_AERO_MIN_VOLTAGE: Voltage = Voltage::from_millivolts(91_000);
 
 /// Samsung 50S profile maximum pack voltage for a NOSFET Aero 30s pack.
-pub const NOSFET_AERO_MAX_VOLTAGE_MV: i32 = 126_000;
+pub const NOSFET_AERO_MAX_VOLTAGE: Voltage = Voltage::from_millivolts(126_000);
 
 const VETERAN_BMS_LAYOUT_VERIFICATION: VerificationStatus = VerificationStatus::Inferred;
 
@@ -206,19 +206,28 @@ impl VeteranModelProfile {
                 model_id,
                 "Veteran Sherman",
                 24,
-                pack_voltage_range(79_350, 98_700),
+                pack_voltage_range(
+                    Voltage::from_millivolts(79_350),
+                    Voltage::from_millivolts(98_700),
+                ),
             ),
             2 => Self::new_linear(
                 model_id,
                 "Veteran Abrams",
                 24,
-                pack_voltage_range(79_350, 98_700),
+                pack_voltage_range(
+                    Voltage::from_millivolts(79_350),
+                    Voltage::from_millivolts(98_700),
+                ),
             ),
             3 => Self::new_linear(
                 model_id,
                 "Veteran Sherman S",
                 24,
-                pack_voltage_range(79_350, 98_700),
+                pack_voltage_range(
+                    Voltage::from_millivolts(79_350),
+                    Voltage::from_millivolts(98_700),
+                ),
             ),
             4 => Self::new_with_battery_profile(
                 model_id,
@@ -384,19 +393,23 @@ fn battery_profile_pack_range(
     let start = battery_profile
         .points
         .first()
-        .map_or(0, |point| pack_voltage(point.cell_voltage, series_cells));
+        .map_or(Voltage::from_millivolts(0), |point| {
+            pack_voltage(point.cell_voltage, series_cells)
+        });
     let end = battery_profile.points.last().map_or(start, |point| {
         pack_voltage(point.cell_voltage, series_cells)
     });
     pack_voltage_range(start, end)
 }
 
-const fn pack_voltage_range(start_mv: i32, end_mv: i32) -> RangeInclusive<Voltage> {
-    Voltage::from_millivolts(start_mv)..=Voltage::from_millivolts(end_mv)
+const fn pack_voltage_range(start: Voltage, end: Voltage) -> RangeInclusive<Voltage> {
+    start..=end
 }
 
-fn pack_voltage(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> i32 {
-    (cell_voltage.as_microvolts().saturating_mul(series_cells) + 500) / 1_000
+fn pack_voltage(cell_voltage: cutout_core::CellVoltage, series_cells: i32) -> Voltage {
+    Voltage::from_millivolts(
+        (cell_voltage.as_microvolts().saturating_mul(series_cells) + 500) / 1_000,
+    )
 }
 
 const fn veteran_charge_mode(raw: VeteranRawChargeMode) -> ChargeMode {
@@ -700,8 +713,11 @@ mod tests {
         Percent::from_percent(value)
     }
 
-    fn test_voltage_range(start_mv: i32, end_mv: i32) -> RangeInclusive<Voltage> {
-        Voltage::from_millivolts(start_mv)..=Voltage::from_millivolts(end_mv)
+    fn test_voltage_range(start: i32, end: i32) -> RangeInclusive<Voltage> {
+        pack_voltage_range(
+            Voltage::from_millivolts(start),
+            Voltage::from_millivolts(end),
+        )
     }
 
     fn live_aero_frame() -> VeteranFrame {
@@ -822,13 +838,13 @@ mod tests {
     fn aero_battery_percent_estimate_clamps_to_pack_range() {
         assert_eq!(
             estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(
-                NOSFET_AERO_MIN_VOLTAGE_MV - 1,
+                NOSFET_AERO_MIN_VOLTAGE.as_millivolts() - 1,
             )),
             pct(0)
         );
         assert_eq!(
             estimate_nosfet_aero_battery_percent(Voltage::from_millivolts(
-                NOSFET_AERO_MAX_VOLTAGE_MV + 1,
+                NOSFET_AERO_MAX_VOLTAGE.as_millivolts() + 1,
             )),
             pct(100)
         );
@@ -912,8 +928,9 @@ mod tests {
         assert_eq!(
             aero.voltage_range,
             test_voltage_range(
-                pack_voltage(first.cell_voltage, i32::from(aero.series_cells.get())),
-                pack_voltage(last.cell_voltage, i32::from(aero.series_cells.get())),
+                pack_voltage(first.cell_voltage, i32::from(aero.series_cells.get()))
+                    .as_millivolts(),
+                pack_voltage(last.cell_voltage, i32::from(aero.series_cells.get())).as_millivolts(),
             )
         );
         assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
@@ -973,9 +990,9 @@ mod tests {
             (126_000, 100),
         ];
 
-        for (pack_mv, percent) in sticker_points {
+        for (pack_voltage, percent) in sticker_points {
             assert_eq!(
-                aero.estimate_battery_percent(Voltage::from_millivolts(pack_mv)),
+                aero.estimate_battery_percent(Voltage::from_millivolts(pack_voltage)),
                 pct(percent)
             );
         }

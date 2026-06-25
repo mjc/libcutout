@@ -3,6 +3,7 @@ use std::{
     fmt::{self, Write as FmtWrite},
     io::{self, Read, Write},
     marker::PhantomData,
+    ops::RangeInclusive,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -21,7 +22,7 @@ use cutout_core::{
     BatteryPagePayload, CatalogModelResolution, DiagnosticReadback, FirmwareInfo, Measured,
     ModelCatalog, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
     ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-    TelemetryDelta, TelemetrySnapshot,
+    TelemetryDelta, TelemetrySnapshot, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
@@ -2762,8 +2763,8 @@ fn render_metric_tile(
 
 fn operational_voltage_ratio(state: &DashboardState) -> Option<f64> {
     let voltage = state.telemetry.latest_voltage?;
-    let (min_mv, max_mv) = dashboard_voltage_range_mv(state)?;
-    let percent = voltage_range_percent(voltage, min_mv, max_mv);
+    let voltage_range = dashboard_voltage_range(state)?;
+    let percent = voltage_range_percent(voltage, &voltage_range);
     Some(to_f64(percent) / 100.0)
 }
 
@@ -2972,8 +2973,10 @@ fn voltage_sparkline_title(state: &DashboardState) -> String {
 }
 
 fn voltage_sparkline_max(state: &DashboardState) -> u64 {
-    dashboard_voltage_range_mv(state)
-        .map_or(100, |(_min_mv, max_mv)| millivolts_to_volts(max_mv))
+    dashboard_voltage_range(state)
+        .map_or(100, |range| {
+            millivolts_to_volts(range.end().as_millivolts())
+        })
         .max(state.telemetry.latest_voltage.unwrap_or(0))
         .max(1)
 }
@@ -2982,9 +2985,9 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
     let mut data = [0; HISTORY_LIMIT];
     let len = state.telemetry.voltage_samples.len().min(HISTORY_LIMIT);
 
-    if let Some((min_mv, max_mv)) = dashboard_voltage_range_mv(state) {
+    if let Some(voltage_range) = dashboard_voltage_range(state) {
         for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-            *slot = voltage_range_percent(*voltage_samples, min_mv, max_mv);
+            *slot = voltage_range_percent(*voltage_samples, &voltage_range);
         }
         return (data, len, 100);
     }
@@ -2995,33 +2998,32 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
     (data, len, voltage_sparkline_max(state))
 }
 
-fn voltage_range_percent(sample_v: u64, min_mv: i32, max_mv: i32) -> u64 {
+fn voltage_range_percent(sample_v: u64, voltage_range: &RangeInclusive<Voltage>) -> u64 {
     let voltage = i64::try_from(sample_v)
         .unwrap_or(i64::MAX / 1_000)
         .saturating_mul(1_000);
-    let min_mv = i64::from(min_mv);
-    let max_mv = i64::from(max_mv);
-    if max_mv <= min_mv || voltage <= min_mv {
+    let range_start = i64::from(voltage_range.start().as_millivolts());
+    let range_end = i64::from(voltage_range.end().as_millivolts());
+    if range_end <= range_start || voltage <= range_start {
         return 0;
     }
-    if voltage >= max_mv {
+    if voltage >= range_end {
         return 100;
     }
 
-    u64::try_from(((voltage - min_mv) * 100 + (max_mv - min_mv) / 2) / (max_mv - min_mv))
-        .unwrap_or(100)
+    u64::try_from(
+        ((voltage - range_start) * 100 + (range_end - range_start) / 2) / (range_end - range_start),
+    )
+    .unwrap_or(100)
 }
 
-fn dashboard_voltage_range_mv(state: &DashboardState) -> Option<(i32, i32)> {
+fn dashboard_voltage_range(state: &DashboardState) -> Option<RangeInclusive<Voltage>> {
     if ModelCatalog::new(&MODEL_CATALOG)
         .find_model_names(&state.device.make, &state.device.model)
         .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY))
         && let Some(profile) = VeteranModelProfile::from_model_id(43)
     {
-        return Some((
-            profile.voltage_range.start().as_millivolts(),
-            profile.voltage_range.end().as_millivolts(),
-        ));
+        return Some(profile.voltage_range);
     }
 
     None
@@ -3486,8 +3488,8 @@ mod tests {
         Measured::reported(cutout_core::Speed::from_millimetres_per_second(value))
     }
 
-    fn voltage(value: i32) -> Measured<cutout_core::Voltage> {
-        Measured::reported(cutout_core::Voltage::from_millivolts(value))
+    fn voltage(value: i32) -> Measured<Voltage> {
+        Measured::reported(Voltage::from_millivolts(value))
     }
 
     fn battery_current(value: i32) -> Measured<cutout_core::BatteryCurrent> {
@@ -3776,7 +3778,10 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("72% / -61 dBm"));
-        assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
+        assert_eq!(
+            dashboard_voltage_range(&state),
+            Some(Voltage::from_millivolts(91_000)..=Voltage::from_millivolts(126_000))
+        );
     }
 
     #[test]
@@ -4028,7 +4033,10 @@ mod tests {
         state.telemetry.voltage_samples = vec![109, 120, 126];
         state.telemetry.battery_level = Some(DashboardBatteryLevel::new(85));
 
-        assert_eq!(dashboard_voltage_range_mv(&state), Some((91_000, 126_000)));
+        assert_eq!(
+            dashboard_voltage_range(&state),
+            Some(Voltage::from_millivolts(91_000)..=Voltage::from_millivolts(126_000))
+        );
         assert_eq!(voltage_sparkline_max(&state), 126);
         assert_eq!(voltage_sparkline_title(&state), "Voltage 120 V / 85%");
 
@@ -4044,7 +4052,7 @@ mod tests {
         state.telemetry.latest_voltage = Some(151);
         state.telemetry.voltage_samples = vec![149, 151];
 
-        assert_eq!(dashboard_voltage_range_mv(&state), None);
+        assert_eq!(dashboard_voltage_range(&state), None);
         assert_eq!(voltage_sparkline_max(&state), 151);
         assert_eq!(voltage_sparkline_title(&state), "Voltage 151 V");
 
