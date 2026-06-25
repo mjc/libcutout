@@ -426,7 +426,9 @@ impl DisplaySpeed {
     }
 
     pub(crate) fn get(self) -> u64 {
-        mm_s_to_mph(self.0.as_millimetres_per_second())
+        u64::from(self.0.as_millimetres_per_second().unsigned_abs())
+            .saturating_add(223_694)
+            / 447_388
     }
 
     const fn is_stationary(self) -> bool {
@@ -453,7 +455,7 @@ impl DisplayVoltage {
     }
 
     pub(crate) fn get(self) -> u64 {
-        millivolts_to_volts(self.0.as_millivolts())
+        u64::from(self.0.as_millivolts().unsigned_abs()).saturating_add(500) / 1_000
     }
 }
 
@@ -496,7 +498,7 @@ impl DisplayDutyCycle {
     }
 
     fn get(self) -> i64 {
-        permille_to_percent(self.0.as_permille())
+        i64::from(self.0.as_permille()) / 10
     }
 }
 
@@ -515,7 +517,7 @@ impl DisplayTemperature {
     }
 
     fn get(self) -> i64 {
-        millicelsius_to_celsius_signed(self.0.as_millicelsius())
+        i64::from(self.0.as_millicelsius()) / 1_000
     }
 }
 
@@ -1429,7 +1431,9 @@ impl TelemetryWindow {
                 .current_samples
                 .last()
                 .copied()
-                .map_or(5, |current| milliamps_to_amps_abs(current.as_milliamps()))
+                .map_or(5, |current| {
+                    u64::from(current.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000
+                })
                 + 1)
                 % 9);
         let next_temperature = 30
@@ -1438,7 +1442,8 @@ impl TelemetryWindow {
                 .last()
                 .copied()
                 .map_or(32, |temperature| {
-                    millicelsius_to_celsius(temperature.as_millicelsius())
+                    u64::from(temperature.as_millicelsius().unsigned_abs()).saturating_add(500)
+                        / 1_000
                 })
                 + 1)
                 % 9);
@@ -1449,23 +1454,28 @@ impl TelemetryWindow {
         self.signal_quality = self.signal_quality.increment();
         push_sample(
             &mut self.speed_samples,
-            Speed::from_millimetres_per_second(mph_to_mm_s(next_speed)),
+            Speed::from_millimetres_per_second(
+                i32::try_from(next_speed.saturating_mul(447_388).saturating_add(500) / 1_000)
+                    .unwrap_or(i32::MAX),
+            ),
         );
         push_sample(
             &mut self.voltage_samples,
-            Voltage::from_millivolts(volts_to_millivolts(next_voltage)),
+            Voltage::from_millivolts(
+                i32::try_from(next_voltage.saturating_mul(1_000)).unwrap_or(i32::MAX),
+            ),
         );
         push_sample(
             &mut self.current_samples,
-            Current::from_milliamps(amps_to_milliamps(
-                u64_to_i64(next_current).unwrap_or(i64::MAX / 1_000),
-            )),
+            Current::from_milliamps(
+                i32::try_from(next_current.saturating_mul(1_000)).unwrap_or(i32::MAX),
+            ),
         );
         push_sample(
             &mut self.temperature_samples,
-            Temperature::from_millicelsius(celsius_to_millicelsius(
-                u64_to_i64(next_temperature).unwrap_or(i64::MAX / 1_000),
-            )),
+            Temperature::from_millicelsius(
+                i32::try_from(next_temperature.saturating_mul(1_000)).unwrap_or(i32::MAX),
+            ),
         );
         self.latest_speed = self
             .speed_samples
@@ -1508,14 +1518,14 @@ impl TelemetryWindow {
         for (index, value) in self.current_samples.iter().enumerate() {
             self.current_points.push((
                 index_to_f64(index),
-                to_f64(milliamps_to_amps_abs(value.as_milliamps())),
+                to_f64(u64::from(value.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000),
             ));
         }
 
         for (index, value) in self.temperature_samples.iter().enumerate() {
             self.temperature_points.push((
                 index_to_f64(index),
-                to_f64(millicelsius_to_celsius(value.as_millicelsius())),
+                to_f64(u64::from(value.as_millicelsius().unsigned_abs()).saturating_add(500) / 1_000),
             ));
         }
     }
@@ -1770,77 +1780,25 @@ const fn verification_name(verification: cutout_core::VerificationStatus) -> &'s
     }
 }
 
-fn mm_s_to_mph(value: i32) -> u64 {
-    let numerator = u64::from(value.unsigned_abs()) * 1_000;
-    numerator.saturating_add(223_694) / 447_388
-}
-
 fn demo_speed_samples() -> &'static [Speed] {
     DEMO_SPEED
         .get_or_init(|| {
             DEMO_SPEED_MPH
                 .iter()
                 .copied()
-                .map(|value| Speed::from_millimetres_per_second(mph_to_mm_s(value)))
+                .map(|value| {
+                    Speed::from_millimetres_per_second(
+                        i32::try_from(value.saturating_mul(447_388).saturating_add(500) / 1_000)
+                            .unwrap_or(i32::MAX),
+                    )
+                })
                 .collect::<Vec<_>>()
                 .into_boxed_slice()
         })
         .as_ref()
 }
-
-fn mph_to_mm_s(value: u64) -> i32 {
-    let millimetres_per_second = value.saturating_mul(447_388).saturating_add(500) / 1_000;
-    i32::try_from(millimetres_per_second).unwrap_or(i32::MAX)
-}
-
-fn millivolts_to_volts(value: i32) -> u64 {
-    u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
-}
-
-fn volts_to_millivolts(value: u64) -> i32 {
-    i32::try_from(value.saturating_mul(1_000)).unwrap_or(i32::MAX)
-}
-
-fn amps_to_milliamps(value: i64) -> i32 {
-    let milliamps = value.saturating_mul(1_000);
-    i32::try_from(milliamps).unwrap_or(if milliamps.is_negative() {
-        i32::MIN
-    } else {
-        i32::MAX
-    })
-}
-
-fn milliamps_to_amps_abs(value: i32) -> u64 {
-    u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
-}
-
-fn millicelsius_to_celsius_signed(value: i32) -> i64 {
-    i64::from(value) / 1_000
-}
-
-fn millicelsius_to_celsius(value: i32) -> u64 {
-    u64::from(value.unsigned_abs()).saturating_add(500) / 1_000
-}
-
-fn celsius_to_millicelsius(value: i64) -> i32 {
-    let millicelsius = value.saturating_mul(1_000);
-    i32::try_from(millicelsius).unwrap_or(if millicelsius.is_negative() {
-        i32::MIN
-    } else {
-        i32::MAX
-    })
-}
-
 fn millidegrees_to_degrees(value: i32) -> i64 {
     i64::from(value) / 1_000
-}
-
-fn permille_to_percent(value: i16) -> i64 {
-    i64::from(value) / 10
-}
-
-fn u64_to_i64(value: u64) -> Option<i64> {
-    i64::try_from(value).ok()
 }
 
 struct OptionalDisplayDistance(Option<Distance>);
@@ -3300,7 +3258,7 @@ fn voltage_sparkline_title(state: &DashboardState) -> String {
 fn voltage_sparkline_max(state: &DashboardState) -> u64 {
     dashboard_voltage_range(state)
         .map_or(100, |range| {
-            millivolts_to_volts(range.end().as_millivolts())
+            u64::from(range.end().as_millivolts().unsigned_abs()).saturating_add(500) / 1_000
         })
         .max(
             state
@@ -3318,7 +3276,8 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
     if let Some(voltage_range) = dashboard_voltage_range(state) {
         for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
             *slot = voltage_range_percent(
-                millivolts_to_volts(voltage_samples.as_millivolts()),
+                u64::from(voltage_samples.as_millivolts().unsigned_abs()).saturating_add(500)
+                    / 1_000,
                 &voltage_range,
             );
         }
@@ -3326,7 +3285,8 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
     }
 
     for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-        *slot = millivolts_to_volts(voltage_samples.as_millivolts());
+        *slot = u64::from(voltage_samples.as_millivolts().unsigned_abs()).saturating_add(500)
+            / 1_000;
     }
     (data, len, voltage_sparkline_max(state))
 }
@@ -3336,7 +3296,9 @@ fn speed_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize)
     let len = state.telemetry.speed_samples.len().min(HISTORY_LIMIT);
 
     for (slot, speed_sample) in data.iter_mut().zip(state.telemetry.speed_samples.iter()) {
-        *slot = mm_s_to_mph(speed_sample.as_millimetres_per_second());
+        *slot = u64::from(speed_sample.as_millimetres_per_second().unsigned_abs())
+            .saturating_add(223_694)
+            / 447_388;
     }
 
     (data, len)
@@ -3800,7 +3762,10 @@ mod tests {
     }
 
     fn display_speed_mph(value: u64) -> DisplaySpeed {
-        DisplaySpeed::from_speed(Speed::from_millimetres_per_second(mph_to_mm_s(value)))
+        DisplaySpeed::from_speed(Speed::from_millimetres_per_second(
+            i32::try_from(value.saturating_mul(447_388).saturating_add(500) / 1_000)
+                .unwrap_or(i32::MAX),
+        ))
     }
 
     fn voltage(value: i32) -> Measured<Voltage> {
@@ -3808,7 +3773,9 @@ mod tests {
     }
 
     fn display_voltage_volts(value: u64) -> DisplayVoltage {
-        DisplayVoltage::from_voltage(Voltage::from_millivolts(volts_to_millivolts(value)))
+        DisplayVoltage::from_voltage(Voltage::from_millivolts(
+            i32::try_from(value.saturating_mul(1_000)).unwrap_or(i32::MAX),
+        ))
     }
 
     fn battery_current(value: i32) -> Measured<BatteryCurrent> {
@@ -3825,7 +3792,11 @@ mod tests {
 
     fn display_temperature_celsius(value: i64) -> DisplayTemperature {
         DisplayTemperature::from_temperature(Temperature::from_millicelsius(
-            celsius_to_millicelsius(value),
+            i32::try_from(value.saturating_mul(1_000)).unwrap_or(if value.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }),
         ))
     }
 
@@ -4350,8 +4321,8 @@ mod tests {
         assert_eq!(DisplayPower::from_milliwatts(-184_892).get(), -184);
         assert_eq!(
             DisplayPower::from_voltage_current(
-                Voltage::from_millivolts(volts_to_millivolts(53)),
-                BatteryCurrent::from_milliamps(amps_to_milliamps(6)),
+                Voltage::from_millivolts(53_000),
+                BatteryCurrent::from_milliamps(6_000),
             ),
             Some(DisplayPower::from_watts(318))
         );
