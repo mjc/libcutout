@@ -338,7 +338,7 @@ impl BegodeFalconBatteryVariant {
 
     /// Series cell count selected for this Falcon variant.
     #[must_use]
-    pub const fn series_cells(self) -> u8 {
+    pub const fn series_cells(self) -> PackSeriesCells {
         self.voltage_profile().series_cells()
     }
 
@@ -402,10 +402,10 @@ impl BegodePackVoltageProfile {
 
     /// Series cell count for this pack profile.
     #[must_use]
-    pub const fn series_cells(self) -> u8 {
+    pub const fn series_cells(self) -> PackSeriesCells {
         match self {
-            Self::Begode84VFullCharge => 20,
-            Self::Begode100VFullCharge => 24,
+            Self::Begode84VFullCharge => SERIES_CELLS_20,
+            Self::Begode100VFullCharge => SERIES_CELLS_24,
         }
     }
 
@@ -575,7 +575,7 @@ fn validate_selected_begode_pack_evidence(
     layout: BegodePackLayoutEvidence,
 ) -> BegodePackEvidenceConsistency {
     if let Some(series_cells) = layout.series_cells
-        && series_cells.get() != profile.series_cells()
+        && series_cells != profile.series_cells()
     {
         return BegodePackEvidenceConsistency::Inconsistent;
     }
@@ -1363,8 +1363,8 @@ mod tests {
     };
     use cutout_core::{Capacity, Duration, Energy};
     use cutout_core::{
-        DiagnosticSeverity, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
-        ValueQuality, ValueSource, VerificationStatus, Voltage,
+        DiagnosticSeverity, Measured, PackSeriesCells, ProtocolTag, RawFieldValue,
+        ReadOnlyResponse, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus, Voltage,
     };
     use proptest::prelude::*;
 
@@ -1638,7 +1638,7 @@ mod tests {
     fn falcon_84v_full_charge_profile_exposes_pack_geometry_without_capacity_guess() {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
-        assert_eq!(profile.series_cells(), 20);
+        assert_eq!(profile.series_cells(), PackSeriesCells::new(20));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
@@ -1650,7 +1650,7 @@ mod tests {
     fn begode_84v_profile_records_user_confirmed_falcon_target() {
         let profile = BegodePackVoltageProfile::Begode84VFullCharge;
 
-        assert_eq!(profile.series_cells(), 20);
+        assert_eq!(profile.series_cells(), PackSeriesCells::new(20));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
@@ -1664,7 +1664,7 @@ mod tests {
 
         assert_eq!(profile, BEGODE_FALCON_TARGET_VOLTAGE_PROFILE);
         assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
-        assert_eq!(profile.series_cells(), 20);
+        assert_eq!(profile.series_cells(), PackSeriesCells::new(20));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
@@ -1676,7 +1676,7 @@ mod tests {
     fn begode_100v_profile_records_public_falcon_variant_evidence() {
         let profile = BegodePackVoltageProfile::Begode100VFullCharge;
 
-        assert_eq!(profile.series_cells(), 24);
+        assert_eq!(profile.series_cells(), PackSeriesCells::new(24));
         assert_eq!(
             profile.voltage_range(),
             Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
@@ -2110,7 +2110,7 @@ mod tests {
             variant.voltage_profile(),
             BegodePackVoltageProfile::Begode84VFullCharge
         );
-        assert_eq!(variant.series_cells(), 20);
+        assert_eq!(variant.series_cells(), PackSeriesCells::new(20));
         assert_eq!(variant.cell_model(), None);
         assert_eq!(variant.parallel_count(), None);
         assert_eq!(variant.nominal_capacity(), None);
@@ -2125,7 +2125,7 @@ mod tests {
             variant.voltage_profile(),
             BegodePackVoltageProfile::Begode100VFullCharge
         );
-        assert_eq!(variant.series_cells(), 24);
+        assert_eq!(variant.series_cells(), PackSeriesCells::new(24));
         assert_eq!(variant.cell_model(), Some(BegodeCellModel::Samsung50S));
         assert_eq!(variant.parallel_count(), Some(2));
         assert_eq!(
