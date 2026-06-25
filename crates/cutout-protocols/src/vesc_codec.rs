@@ -1,6 +1,6 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::VescControllerId;
-use cutout_core::{BatteryCurrent, Distance, Duration, Power, Speed, Voltage};
+use cutout_core::{BatteryCurrent, Distance, Duration, Power, RotationalSpeed, Speed, Voltage};
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
@@ -164,7 +164,7 @@ pub enum VescReadOnlyReply {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescValuesTelemetry {
     /// Electrical RPM.
-    pub rpm: ElectricalRpm,
+    pub rpm: RotationalSpeed,
 
     /// Input voltage.
     pub voltage: Voltage,
@@ -180,25 +180,6 @@ pub struct VescValuesTelemetry {
 
     /// Current VESC fault code.
     pub fault_code: VescFaultCode,
-}
-
-/// VESC electrical RPM.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ElectricalRpm(i32);
-
-impl ElectricalRpm {
-    /// Creates an electrical RPM value.
-    #[must_use]
-    pub const fn from_erpm(value: i32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the value as electrical RPM.
-    #[must_use]
-    pub const fn as_erpm(self) -> i32 {
-        self.0
-    }
 }
 
 /// VESC relative tachometer count.
@@ -313,7 +294,7 @@ impl VescBoardProfile {
 
     /// Calculates signed road speed from eRPM.
     #[must_use]
-    pub fn speed_from_erpm(self, erpm: ElectricalRpm) -> Option<Speed> {
+    pub fn speed_from_erpm(self, erpm: RotationalSpeed) -> Option<Speed> {
         let denominator = i64::from(self.motor_pole_pairs.get())
             * i64::from(self.gear_ratio_denominator.get())
             * 60;
@@ -581,7 +562,7 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
 impl From<vesc::Values> for VescValuesTelemetry {
     fn from(values: vesc::Values) -> Self {
         Self {
-            rpm: ElectricalRpm::from_erpm(round_f32_to_i32(values.rpm)),
+            rpm: RotationalSpeed::from_erpm(round_f32_to_i32(values.rpm)),
             voltage: Voltage::from_millivolts(round_f32_to_i32(values.voltage_in * 1_000.0)),
             input_current: BatteryCurrent::from_milliamps(round_f32_to_i32(
                 values.avg_current_input * 1_000.0,
@@ -766,7 +747,7 @@ mod tests {
             panic!("expected values reply");
         };
 
-        assert_eq!(telemetry.rpm, ElectricalRpm::from_erpm(989));
+        assert_eq!(telemetry.rpm, RotationalSpeed::from_erpm(989));
         assert_eq!(telemetry.voltage.as_millivolts(), 37_500);
         assert_eq!(telemetry.input_current.as_milliamps(), 40);
         assert_eq!(telemetry.tachometer, VescTachometer::from_counts(-21_973));
@@ -805,7 +786,7 @@ mod tests {
         );
 
         assert_eq!(
-            profile.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            profile.speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
             Some(Speed::from_millimetres_per_second(10_500))
         );
     }
@@ -819,7 +800,7 @@ mod tests {
         );
 
         assert_eq!(
-            profile.speed_from_erpm(ElectricalRpm::from_erpm(-4_500)),
+            profile.speed_from_erpm(RotationalSpeed::from_erpm(-4_500)),
             Some(Speed::from_millimetres_per_second(-10_500))
         );
     }
@@ -838,11 +819,11 @@ mod tests {
         );
 
         assert_eq!(
-            direct_drive.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            direct_drive.speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
             Some(Speed::from_millimetres_per_second(10_500))
         );
         assert_eq!(
-            geared.speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            geared.speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
             Some(Speed::from_millimetres_per_second(5_250))
         );
     }
@@ -855,7 +836,7 @@ mod tests {
                 GearRatioDenominator::new(1),
                 Distance::from_millimetres(2_100)
             )
-            .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            .speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
             None
         );
         assert_eq!(
@@ -864,7 +845,7 @@ mod tests {
                 GearRatioDenominator::new(0),
                 Distance::from_millimetres(2_100)
             )
-            .speed_from_erpm(ElectricalRpm::from_erpm(4_500)),
+            .speed_from_erpm(RotationalSpeed::from_erpm(4_500)),
             None
         );
     }

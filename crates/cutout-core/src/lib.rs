@@ -3604,6 +3604,12 @@ pub struct PlaneAngle;
 
 impl Dimension for PlaneAngle {}
 
+/// Rotational speed dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AngularVelocity;
+
+impl Dimension for AngularVelocity {}
+
 /// Dimensionless ratio dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Ratio;
@@ -3722,6 +3728,14 @@ pub struct MilliDegree;
 
 impl Unit for MilliDegree {
     type Dimension = PlaneAngle;
+}
+
+/// Electrical revolutions per minute storage unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricalRevolutionPerMinute;
+
+impl Unit for ElectricalRevolutionPerMinute {
+    type Dimension = AngularVelocity;
 }
 
 /// Permille storage unit.
@@ -3924,6 +3938,23 @@ impl Current {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_amps(self) -> f32 {
         self.as_milliamps() as f32 / 1_000.0
+    }
+}
+
+/// Rotational speed stored in electrical revolutions per minute.
+pub type RotationalSpeed = Quantity<AngularVelocity, ElectricalRevolutionPerMinute, i32>;
+
+impl RotationalSpeed {
+    /// Creates a rotational speed from electrical revolutions per minute.
+    #[must_use]
+    pub const fn from_erpm(value: i32) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    /// Returns this rotational speed in electrical revolutions per minute.
+    #[must_use]
+    pub const fn as_erpm(self) -> i32 {
+        self.unit_value()
     }
 }
 
@@ -5934,6 +5965,11 @@ mod tests {
     #[test]
     fn signal_strength_quantity_preserves_dbm_unit() {
         assert_eq!(crate::SignalStrength::from_dbm(-61).as_dbm(), -61);
+    }
+
+    #[test]
+    fn rotational_speed_quantity_preserves_erpm_unit() {
+        assert_eq!(crate::RotationalSpeed::from_erpm(4_500).as_erpm(), 4_500);
     }
 
     #[test]
