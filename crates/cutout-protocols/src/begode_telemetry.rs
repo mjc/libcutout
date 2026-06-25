@@ -607,8 +607,7 @@ fn validate_samsung_50s_capacity(
     series_cells: SeriesCount,
     parallel_count: ParallelCount,
 ) -> BegodePackEvidenceConsistency {
-    let expected_capacity =
-        Capacity::from_milliamp_hours(u32::from(parallel_count.get()).saturating_mul(5_000));
+    let expected_capacity = Capacity::from_parallel_packs(5_000, parallel_count);
     if let Some(nominal_capacity) = capacity.nominal_capacity
         && nominal_capacity != expected_capacity
     {
@@ -616,10 +615,12 @@ fn validate_samsung_50s_capacity(
     }
 
     if let Some(reported_energy) = capacity.reported_energy {
-        let expected_wh = u32::from(series_cells.get())
-            .saturating_mul(u32::from(parallel_count.get()))
-            .saturating_mul(18);
-        if !within_percent(reported_energy.as_watt_hours(), expected_wh, 5) {
+        let expected_wh = Energy::from_cell_geometry(18, series_cells, parallel_count);
+        if !within_percent(
+            reported_energy.as_watt_hours(),
+            expected_wh.as_watt_hours(),
+            5,
+        ) {
             return BegodePackEvidenceConsistency::Inconsistent;
         }
     }
