@@ -427,6 +427,7 @@ impl DisplaySpeed {
 
     pub(crate) fn get(self) -> u64 {
         u64::from(self.0.as_millimetres_per_second().unsigned_abs())
+            .saturating_mul(1_000)
             .saturating_add(223_694)
             / 447_388
     }
@@ -1427,14 +1428,9 @@ impl TelemetryWindow {
                 + 1)
                 % 6);
         let next_current = 4
-            + ((self
-                .current_samples
-                .last()
-                .copied()
-                .map_or(5, |current| {
-                    u64::from(current.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000
-                })
-                + 1)
+            + ((self.current_samples.last().copied().map_or(5, |current| {
+                u64::from(current.as_milliamps().unsigned_abs()).saturating_add(500) / 1_000
+            }) + 1)
                 % 9);
         let next_temperature = 30
             + ((self
@@ -1525,7 +1521,9 @@ impl TelemetryWindow {
         for (index, value) in self.temperature_samples.iter().enumerate() {
             self.temperature_points.push((
                 index_to_f64(index),
-                to_f64(u64::from(value.as_millicelsius().unsigned_abs()).saturating_add(500) / 1_000),
+                to_f64(
+                    u64::from(value.as_millicelsius().unsigned_abs()).saturating_add(500) / 1_000,
+                ),
             ));
         }
     }
@@ -3285,8 +3283,8 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
     }
 
     for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-        *slot = u64::from(voltage_samples.as_millivolts().unsigned_abs()).saturating_add(500)
-            / 1_000;
+        *slot =
+            u64::from(voltage_samples.as_millivolts().unsigned_abs()).saturating_add(500) / 1_000;
     }
     (data, len, voltage_sparkline_max(state))
 }
@@ -3297,6 +3295,7 @@ fn speed_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize)
 
     for (slot, speed_sample) in data.iter_mut().zip(state.telemetry.speed_samples.iter()) {
         *slot = u64::from(speed_sample.as_millimetres_per_second().unsigned_abs())
+            .saturating_mul(1_000)
             .saturating_add(223_694)
             / 447_388;
     }
