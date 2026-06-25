@@ -19,11 +19,11 @@ use cutout_btle::{
     ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Current,
-    DiagnosticReadback, Distance, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen,
-    NotificationIngestOutcome, ParserDiagnostics, PhaseCurrent, Power, ProtocolFamily,
-    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
-    TelemetrySnapshot, Temperature, Voltage,
+    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Current,
+    DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
+    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PhaseCurrent, Power,
+    ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, Speed,
+    TelemetryDelta, TelemetrySnapshot, Temperature, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
@@ -418,109 +418,120 @@ impl fmt::Display for SignalQuality {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DisplaySpeed(u64);
+pub(crate) struct DisplaySpeed(Speed);
 
 impl DisplaySpeed {
     fn from_speed(value: Speed) -> Self {
-        Self(mm_s_to_mph(value.as_millimetres_per_second()))
+        Self(value)
     }
 
     fn from_mph(value: u64) -> Self {
         Self::from_speed(Speed::from_millimetres_per_second(mph_to_mm_s(value)))
     }
 
-    pub(crate) const fn get(self) -> u64 {
-        self.0
+    pub(crate) fn get(self) -> u64 {
+        mm_s_to_mph(self.0.as_millimetres_per_second())
     }
 
     const fn is_stationary(self) -> bool {
-        self.0 == 0
+        self.0.as_millimetres_per_second() == 0
     }
 
     const fn is_moving(self) -> bool {
-        self.0 > 0
+        self.0.as_millimetres_per_second() > 0
     }
 }
 
 impl fmt::Display for DisplaySpeed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} mph", self.0)
+        write!(f, "{} mph", self.get())
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DisplayVoltage(u64);
+pub(crate) struct DisplayVoltage(Voltage);
 
 impl DisplayVoltage {
     fn from_voltage(value: Voltage) -> Self {
-        Self(millivolts_to_volts(value.as_millivolts()))
+        Self(value)
     }
 
     fn from_volts(value: u64) -> Self {
         Self::from_voltage(Voltage::from_millivolts(volts_to_millivolts(value)))
     }
 
-    pub(crate) const fn get(self) -> u64 {
-        self.0
+    pub(crate) fn get(self) -> u64 {
+        millivolts_to_volts(self.0.as_millivolts())
     }
 }
 
 impl fmt::Display for DisplayVoltage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} V", self.0)
+        write!(f, "{} V", self.get())
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct WheelPitchDeg(i64);
+pub(crate) struct WheelPitchDeg(Angle);
 
 impl WheelPitchDeg {
-    fn from_angle(value: cutout_core::Angle) -> Self {
-        Self(millidegrees_to_degrees(value.as_millidegrees()))
+    fn from_angle(value: Angle) -> Self {
+        Self(value)
     }
 
     const fn is_lifted_or_tilted(self) -> bool {
-        self.0.abs() >= 45
+        let millidegrees = self.0.as_millidegrees();
+        millidegrees <= -45_000 || millidegrees >= 45_000
     }
 }
 
 impl fmt::Display for WheelPitchDeg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} deg", self.0)
+        write!(
+            f,
+            "{} deg",
+            millidegrees_to_degrees(self.0.as_millidegrees())
+        )
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DisplayDutyCycle(i64);
+pub(crate) struct DisplayDutyCycle(DutyCycle);
 
 impl DisplayDutyCycle {
-    fn from_duty_cycle(value: cutout_core::DutyCycle) -> Self {
-        Self(permille_to_percent(value.as_permille()))
+    fn from_duty_cycle(value: DutyCycle) -> Self {
+        Self(value)
     }
 }
 
 impl fmt::Display for DisplayDutyCycle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}%", self.0)
+        write!(f, "{}%", permille_to_percent(self.0.as_permille()))
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DisplayTemperature(i64);
+pub(crate) struct DisplayTemperature(Temperature);
 
 impl DisplayTemperature {
     fn from_temperature(value: Temperature) -> Self {
-        Self(millicelsius_to_celsius_signed(value.as_millicelsius()))
+        Self(value)
     }
 
-    const fn from_celsius(value: i64) -> Self {
-        Self(value)
+    fn from_celsius(value: i64) -> Self {
+        Self(Temperature::from_millicelsius(celsius_to_millicelsius(
+            value,
+        )))
     }
 }
 
 impl fmt::Display for DisplayTemperature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} C", self.0)
+        write!(
+            f,
+            "{} C",
+            millicelsius_to_celsius_signed(self.0.as_millicelsius())
+        )
     }
 }
 
@@ -3762,16 +3773,52 @@ mod tests {
         }
     }
 
-    fn duty_cycle_permille(value: i16) -> Measured<cutout_core::DutyCycle> {
-        Measured::reported(cutout_core::DutyCycle::from_permille(value))
+    fn estimated_battery_report() -> SessionBridgeReport {
+        SessionBridgeReport {
+            protocol_writes: protocol_writes(0),
+            writes: writes(0),
+            subscribes: subscribes(1),
+            notifications: notifications(1),
+            notification_bytes: NotificationPayloadTotal::from_bytes(20),
+            latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
+            telemetry: telemetry_events(1),
+            telemetry_snapshot: live_aero_telemetry_snapshot(),
+            read_only_responses: read_only_responses(0),
+            read_only_response_events: Vec::new(),
+            firmware: None,
+            settings: Vec::new(),
+            diagnostics: diagnostic_events(0),
+            diagnostics_snapshot: ParserDiagnostics::default(),
+            diagnostic_errors: Vec::new(),
+            identity: None,
+            events: vec![SessionBridgeEvent::ProcessedTelemetry {
+                monotonic_ms: cutout_btle::MonotonicMs::new(42),
+                delta: TelemetryDelta {
+                    speed: Some(speed(0)),
+                    voltage: Some(voltage(108_760)),
+                    motor_current: Some(battery_current(0)),
+                    controller_temperature: Some(temperature(33_270)),
+                    pwm: Some(duty_cycle_permille(-1_000)),
+                    distance: Some(distance(1_551_169_000)),
+                    pitch: Some(angle_mdeg(69_060)),
+                    battery_level_estimated: Some(level_estimated(47)),
+                    ..TelemetryDelta::empty(ms(42))
+                },
+            }],
+            disconnects: disconnects(0),
+        }
+    }
+
+    fn duty_cycle_permille(value: i16) -> Measured<DutyCycle> {
+        Measured::reported(DutyCycle::from_permille(value))
     }
 
     fn distance(value: u64) -> Measured<Distance> {
         Measured::reported(Distance::from_millimetres(value))
     }
 
-    fn angle_mdeg(value: i32) -> Measured<cutout_core::Angle> {
-        Measured::reported(cutout_core::Angle::from_millidegrees(value))
+    fn angle_mdeg(value: i32) -> Measured<Angle> {
+        Measured::reported(Angle::from_millidegrees(value))
     }
 
     fn level_reported(value: u8) -> Measured<BatteryLevel> {
@@ -4136,7 +4183,8 @@ mod tests {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
-        state.telemetry.latest_pitch = Some(WheelPitchDeg(69));
+        state.telemetry.latest_pitch =
+            Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(69_000)));
 
         assert_eq!(
             operational_wheel_state(&state),
@@ -4149,7 +4197,7 @@ mod tests {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(4_000));
-        state.telemetry.latest_pitch = Some(WheelPitchDeg(0));
+        state.telemetry.latest_pitch = Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(0)));
 
         assert_eq!(
             operational_wheel_state(&state),
@@ -4162,7 +4210,7 @@ mod tests {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
-        state.telemetry.latest_pitch = Some(WheelPitchDeg(0));
+        state.telemetry.latest_pitch = Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(0)));
 
         assert_eq!(
             operational_wheel_state(&state),
@@ -4177,11 +4225,15 @@ mod tests {
 
         state.telemetry.latest_speed = Some(DisplaySpeed::from_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
-        state.telemetry.latest_pwm = Some(DisplayDutyCycle(-100));
+        state.telemetry.latest_pwm = Some(DisplayDutyCycle::from_duty_cycle(
+            DutyCycle::from_permille(-1_000),
+        ));
 
         assert_eq!(
             operational_pwm(&state),
-            OperationalDutyCycle::Known(DisplayDutyCycle(-100))
+            OperationalDutyCycle::Known(DisplayDutyCycle::from_duty_cycle(
+                DutyCycle::from_permille(-1_000),
+            ))
         );
         assert_eq!(operational_pwm(&state).to_string(), "-100%");
     }
@@ -4431,11 +4483,15 @@ mod tests {
         );
         assert_eq!(
             state.telemetry.latest_speed,
-            Some(DisplaySpeed::from_mph(10))
+            Some(DisplaySpeed::from_speed(
+                Speed::from_millimetres_per_second(4_470,)
+            ))
         );
         assert_eq!(
             state.telemetry.latest_voltage,
-            Some(DisplayVoltage::from_volts(84))
+            Some(DisplayVoltage::from_voltage(Voltage::from_millivolts(
+                84_400
+            )))
         );
         assert_eq!(
             state
@@ -4451,7 +4507,9 @@ mod tests {
         );
         assert_eq!(
             state.telemetry.latest_temperature,
-            Some(DisplayTemperature::from_celsius(36))
+            Some(DisplayTemperature::from_temperature(
+                Temperature::from_millicelsius(36_600),
+            ))
         );
         assert_eq!(
             state.telemetry.speed_samples,
@@ -5010,7 +5068,9 @@ mod tests {
 
         assert_eq!(
             state.telemetry.latest_voltage,
-            Some(DisplayVoltage::from_volts(109))
+            Some(DisplayVoltage::from_voltage(Voltage::from_millivolts(
+                108_760
+            )))
         );
         assert_eq!(state.telemetry.voltage_samples.len(), HISTORY_LIMIT);
         assert!(
@@ -5207,11 +5267,15 @@ mod tests {
         assert_eq!(state.counters.notifications, notifications(4));
         assert_eq!(
             state.telemetry.latest_speed,
-            Some(DisplaySpeed::from_mph(10))
+            Some(DisplaySpeed::from_speed(
+                Speed::from_millimetres_per_second(4_470,)
+            ))
         );
         assert_eq!(
             state.telemetry.latest_voltage,
-            Some(DisplayVoltage::from_volts(109))
+            Some(DisplayVoltage::from_voltage(Voltage::from_millivolts(
+                108_760
+            )))
         );
         assert_eq!(
             state.telemetry.battery_level,
@@ -5434,39 +5498,7 @@ mod tests {
     #[test]
     fn live_session_report_uses_estimated_battery_from_voltage_telemetry() {
         let mut state = DashboardState::empty();
-        let report = SessionBridgeReport {
-            protocol_writes: protocol_writes(0),
-            writes: writes(0),
-            subscribes: subscribes(1),
-            notifications: notifications(1),
-            notification_bytes: NotificationPayloadTotal::from_bytes(20),
-            latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
-            telemetry: telemetry_events(1),
-            telemetry_snapshot: live_aero_telemetry_snapshot(),
-            read_only_responses: read_only_responses(0),
-            read_only_response_events: Vec::new(),
-            firmware: None,
-            settings: Vec::new(),
-            diagnostics: diagnostic_events(0),
-            diagnostics_snapshot: ParserDiagnostics::default(),
-            diagnostic_errors: Vec::new(),
-            identity: None,
-            events: vec![SessionBridgeEvent::ProcessedTelemetry {
-                monotonic_ms: cutout_btle::MonotonicMs::new(42),
-                delta: TelemetryDelta {
-                    speed: Some(speed(0)),
-                    voltage: Some(voltage(108_760)),
-                    motor_current: Some(battery_current(0)),
-                    controller_temperature: Some(temperature(33_270)),
-                    pwm: Some(duty_cycle_permille(-1_000)),
-                    distance: Some(distance(1_551_169_000)),
-                    pitch: Some(angle_mdeg(69_060)),
-                    battery_level_estimated: Some(level_estimated(47)),
-                    ..TelemetryDelta::empty(ms(42))
-                },
-            }],
-            disconnects: disconnects(0),
-        };
+        let report = estimated_battery_report();
 
         state.apply_session_report(&report);
 
@@ -5484,7 +5516,9 @@ mod tests {
         );
         assert_eq!(
             state.telemetry.latest_voltage,
-            Some(DisplayVoltage::from_volts(109))
+            Some(DisplayVoltage::from_voltage(Voltage::from_millivolts(
+                108_760
+            )))
         );
         assert_eq!(
             state
@@ -5499,14 +5533,24 @@ mod tests {
         );
         assert_eq!(
             state.telemetry.latest_temperature,
-            Some(DisplayTemperature::from_celsius(33))
+            Some(DisplayTemperature::from_temperature(
+                Temperature::from_millicelsius(33_270),
+            ))
         );
         assert_eq!(
             state.telemetry.latest_distance,
             Some(Distance::from_millimetres(1_551_169_000))
         );
-        assert_eq!(state.telemetry.latest_pitch, Some(WheelPitchDeg(69)));
-        assert_eq!(state.telemetry.latest_pwm, Some(DisplayDutyCycle(-100)));
+        assert_eq!(
+            state.telemetry.latest_pitch,
+            Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(69_060)))
+        );
+        assert_eq!(
+            state.telemetry.latest_pwm,
+            Some(DisplayDutyCycle::from_duty_cycle(DutyCycle::from_permille(
+                -1_000,
+            )))
+        );
         assert_eq!(state.telemetry.voltage_samples.len(), HISTORY_LIMIT);
         assert!(
             state
