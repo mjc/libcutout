@@ -3348,7 +3348,13 @@ mod tests {
             state.counters.latest_notification_len,
             Some(NotificationByteLen::new(99))
         );
-        assert_eq!(state.telemetry.latest_voltage, Some(108));
+        assert_eq!(
+            state
+                .telemetry
+                .latest_voltage
+                .map(crate::dashboard::DisplayVoltage::get),
+            Some(108)
+        );
         assert!(state.read_only.firmware.is_some());
         assert!(
             state
