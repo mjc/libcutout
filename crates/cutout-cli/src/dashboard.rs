@@ -344,11 +344,8 @@ pub(crate) type ReadOnlyDiagnosticResponseCount =
     ReadOnlySummaryCount<ReadOnlyDiagnosticResponseCountTag>;
 pub(crate) type RawTelemetryResponseCount = ReadOnlySummaryCount<RawTelemetryResponseCountTag>;
 
-fn clamp_percent(value: u64) -> u8 {
-    match u8::try_from(value) {
-        Ok(value) if value <= 100 => value,
-        _ => 100,
-    }
+fn clamp_percent(value: u8) -> u8 {
+    value.min(100)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -359,7 +356,7 @@ impl DashboardBatteryLevel {
         Self(value)
     }
 
-    fn new(value: u64) -> Self {
+    fn from_percent(value: u8) -> Self {
         Self::from_battery_level(BatteryLevel::from_percent(clamp_percent(value)))
     }
 
@@ -387,12 +384,12 @@ impl fmt::Display for DashboardBatteryLevel {
 pub(crate) struct SignalQuality(BatteryLevel);
 
 impl SignalQuality {
-    fn new(value: u64) -> Self {
+    fn from_percent(value: u8) -> Self {
         Self(BatteryLevel::from_percent(clamp_percent(value)))
     }
 
     fn from_signal_strength(signal: SignalStrength) -> Self {
-        Self::new(u64::from(signal.as_quality_percent()))
+        Self::from_percent(signal.as_quality_percent())
     }
 
     const fn increment(self) -> Self {
@@ -1003,8 +1000,8 @@ impl DashboardState {
             latest_notification_len: None,
         };
         self.telemetry.load_window(
-            DashboardBatteryLevel::new(74),
-            SignalQuality::new(81),
+            DashboardBatteryLevel::from_percent(74),
+            SignalQuality::from_percent(81),
             demo_speed_samples(),
             DEMO_VOLTAGE,
             DEMO_CURRENT,
@@ -1192,7 +1189,7 @@ impl DashboardState {
     }
 
     pub(crate) fn apply_battery_level(&mut self, level: u8) {
-        let level = DashboardBatteryLevel::new(u64::from(level));
+        let level = DashboardBatteryLevel::from_percent(level);
         self.telemetry.battery_level = Some(level);
         self.telemetry.battery_source = BatterySource::StandardBle;
         self.push_log("info", &format!("battery level {level}%"));
@@ -4061,7 +4058,10 @@ mod tests {
         assert_eq!(state.counters.connected, ConnectedDeviceCount::new(1));
         assert_eq!(state.telemetry.battery_level, None);
         assert_eq!(state.telemetry.battery_source, BatterySource::Unknown);
-        assert_eq!(state.telemetry.signal_quality, SignalQuality::new(78));
+        assert_eq!(
+            state.telemetry.signal_quality,
+            SignalQuality::from_percent(78)
+        );
         assert_eq!(state.scan_browser.observations.len(), 1);
         assert!(state.scan_browser.observations[0].real_device);
         assert_eq!(state.profiles.len(), 1);
@@ -4101,35 +4101,35 @@ mod tests {
     fn signal_quality_clamps_to_reasonable_ble_range() {
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-40)),
-            SignalQuality::new(100)
+            SignalQuality::from_percent(100)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-50)),
-            SignalQuality::new(100)
+            SignalQuality::from_percent(100)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-61)),
-            SignalQuality::new(78)
+            SignalQuality::from_percent(78)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-74)),
-            SignalQuality::new(52)
+            SignalQuality::from_percent(52)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-90)),
-            SignalQuality::new(20)
+            SignalQuality::from_percent(20)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-100)),
-            SignalQuality::new(0)
+            SignalQuality::from_percent(0)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-120)),
-            SignalQuality::new(0)
+            SignalQuality::from_percent(0)
         );
         assert_eq!(
             SignalQuality::from_signal_strength(rssi(-20)),
-            SignalQuality::new(100)
+            SignalQuality::from_percent(100)
         );
     }
 
@@ -4321,7 +4321,7 @@ mod tests {
             "unknown"
         );
         assert_eq!(
-            OptionalBatteryLevelDisplay(Some(DashboardBatteryLevel::new(47))).to_string(),
+            OptionalBatteryLevelDisplay(Some(DashboardBatteryLevel::from_percent(47))).to_string(),
             "47%"
         );
         assert_eq!(OptionalBatteryLevelDisplay(None).to_string(), "unknown");
@@ -4346,7 +4346,7 @@ mod tests {
             Voltage::from_millivolts(120_000),
             Voltage::from_millivolts(126_000),
         ];
-        state.telemetry.battery_level = Some(DashboardBatteryLevel::new(85));
+        state.telemetry.battery_level = Some(DashboardBatteryLevel::from_percent(85));
 
         assert_eq!(
             dashboard_voltage_range(&state),
@@ -4464,7 +4464,7 @@ mod tests {
 
         assert_eq!(
             state.telemetry.battery_level,
-            Some(DashboardBatteryLevel::new(77))
+            Some(DashboardBatteryLevel::from_percent(77))
         );
         assert_eq!(
             state.telemetry.battery_source,
@@ -5268,7 +5268,7 @@ mod tests {
         );
         assert_eq!(
             state.telemetry.battery_level,
-            Some(DashboardBatteryLevel::new(47))
+            Some(DashboardBatteryLevel::from_percent(47))
         );
         assert_eq!(firmware_summary_text(&state), Some("43.2.54".to_owned()));
         assert_eq!(state.read_only.settings.len(), 1);
@@ -5400,7 +5400,7 @@ mod tests {
 
         assert_eq!(
             state.telemetry.battery_level,
-            Some(DashboardBatteryLevel::new(88))
+            Some(DashboardBatteryLevel::from_percent(88))
         );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
@@ -5414,7 +5414,7 @@ mod tests {
 
         assert_eq!(
             state.telemetry.battery_level,
-            Some(DashboardBatteryLevel::new(100))
+            Some(DashboardBatteryLevel::from_percent(100))
         );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(
@@ -5437,7 +5437,7 @@ mod tests {
 
         assert_eq!(
             state.telemetry.battery_level,
-            Some(DashboardBatteryLevel::new(45))
+            Some(DashboardBatteryLevel::from_percent(45))
         );
         assert_eq!(state.telemetry.battery_source, BatterySource::StandardBle);
         assert!(state.logs.iter().any(|entry| {
@@ -5493,7 +5493,7 @@ mod tests {
 
         assert_eq!(
             state.telemetry.battery_level,
-            Some(DashboardBatteryLevel::new(47))
+            Some(DashboardBatteryLevel::from_percent(47))
         );
         assert_eq!(
             state.telemetry.battery_source,
