@@ -361,14 +361,14 @@ mod tests {
     }
 
     #[test]
-    fn begode_falcon_84v_profile_remains_available_for_confirmed_variant() {
+    fn begode_falcon_100v_profile_remains_available_for_confirmed_variant() {
         let profile = begode_falcon_target_voltage_profile();
 
-        assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
-        assert_eq!(profile.series_cells(), cutout_core::SeriesCount::new(20));
+        assert_eq!(profile, BegodePackVoltageProfile::Begode100VFullCharge);
+        assert_eq!(profile.series_cells(), cutout_core::SeriesCount::new(24));
         assert_eq!(
             profile.voltage_range(),
-            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+            Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
         );
         assert_eq!(profile.nominal_capacity(), None);
     }

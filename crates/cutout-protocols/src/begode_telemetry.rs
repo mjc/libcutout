@@ -206,7 +206,7 @@ pub enum BegodePackVoltageProfile {
 ///
 /// This is not generic Falcon identity evidence and does not imply capacity.
 pub const BEGODE_FALCON_TARGET_VOLTAGE_PROFILE: BegodePackVoltageProfile =
-    BegodePackVoltageProfile::Begode84VFullCharge;
+    BegodePackVoltageProfile::Begode100VFullCharge;
 
 /// Explicit evidence used to select a Begode pack voltage profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -316,11 +316,8 @@ pub enum BegodePackEvidenceConsistency {
 /// Explicit Falcon battery variant selected from voltage/capacity/layout evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BegodeFalconBatteryVariant {
-    /// Current live target hardware: 84 V / 20S, capacity still evidence-gated.
-    Target84V20S,
-
-    /// Planned/high-voltage Falcon mapping: 100.8 V / 24S / 900 Wh Samsung 50S.
-    Planned100V24S900WhSamsung50S,
+    /// Current live target hardware: 100.8 V / 24S / 900 Wh Samsung 50S.
+    Current100V24S900WhSamsung50S,
 }
 
 impl BegodeFalconBatteryVariant {
@@ -328,8 +325,7 @@ impl BegodeFalconBatteryVariant {
     #[must_use]
     pub const fn voltage_profile(self) -> BegodePackVoltageProfile {
         match self {
-            Self::Target84V20S => BegodePackVoltageProfile::Begode84VFullCharge,
-            Self::Planned100V24S900WhSamsung50S => BegodePackVoltageProfile::Begode100VFullCharge,
+            Self::Current100V24S900WhSamsung50S => BegodePackVoltageProfile::Begode100VFullCharge,
         }
     }
 
@@ -343,8 +339,7 @@ impl BegodeFalconBatteryVariant {
     #[must_use]
     pub const fn cell_model(self) -> Option<BegodeCellModel> {
         match self {
-            Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(BegodeCellModel::Samsung50S),
+            Self::Current100V24S900WhSamsung50S => Some(BegodeCellModel::Samsung50S),
         }
     }
 
@@ -352,8 +347,7 @@ impl BegodeFalconBatteryVariant {
     #[must_use]
     pub const fn parallel_count(self) -> Option<ParallelCount> {
         match self {
-            Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(PARALLEL_PACKS_2),
+            Self::Current100V24S900WhSamsung50S => Some(PARALLEL_PACKS_2),
         }
     }
 
@@ -361,8 +355,7 @@ impl BegodeFalconBatteryVariant {
     #[must_use]
     pub const fn nominal_capacity(self) -> Option<Capacity> {
         match self {
-            Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(Capacity::from_milliamp_hours(10_000)),
+            Self::Current100V24S900WhSamsung50S => Some(Capacity::from_milliamp_hours(10_000)),
         }
     }
 
@@ -370,8 +363,7 @@ impl BegodeFalconBatteryVariant {
     #[must_use]
     pub const fn reported_energy(self) -> Option<Energy> {
         match self {
-            Self::Target84V20S => None,
-            Self::Planned100V24S900WhSamsung50S => Some(Energy::from_watt_hours(900)),
+            Self::Current100V24S900WhSamsung50S => Some(Energy::from_watt_hours(900)),
         }
     }
 }
@@ -635,28 +627,19 @@ fn select_consistent_begode_falcon_battery_variant(
 ) -> BegodeFalconBatteryVariantSelection {
     match (profile, capacity, layout) {
         (
-            BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode84VFullCharge),
-            BegodeCapacitySelection::Missing,
-            BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
-                series_cells: Some(SERIES_CELLS_20),
-                ..
-            }),
-        ) => {
-            BegodeFalconBatteryVariantSelection::Selected(BegodeFalconBatteryVariant::Target84V20S)
-        }
-        (
             BegodeVoltageProfileSelection::Selected(BegodePackVoltageProfile::Begode100VFullCharge),
             BegodeCapacitySelection::Selected(capacity),
             BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                 cell_model: Some(BegodeCellModel::Samsung50S),
                 series_cells: Some(SERIES_CELLS_24),
                 parallel_count: Some(PARALLEL_PACKS_2),
+                ..
             }),
         ) if capacity.nominal_capacity == Some(Capacity::from_milliamp_hours(10_000))
             && capacity.reported_energy == Some(Energy::from_watt_hours(900)) =>
         {
             BegodeFalconBatteryVariantSelection::Selected(
-                BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
+                BegodeFalconBatteryVariant::Current100V24S900WhSamsung50S,
             )
         }
         _ => BegodeFalconBatteryVariantSelection::Missing,
@@ -1313,15 +1296,15 @@ mod tests {
     const EXTRA: [u8; 24] = hex_literal::hex!("55aaff9c0000002affd8000000000000000007185a5a5a5a");
 
     #[test]
-    fn live_a_decodes_source_backed_primary_fields_for_falcon_84v_full_charge() {
+    fn live_a_decodes_source_backed_primary_fields_for_falcon_100v_full_charge() {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
         assert_eq!(frame.tag(), ProtocolTag::new(0x00));
         let telemetry =
-            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
+            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode100VFullCharge)
                 .expect("live A frame decodes");
 
         assert_eq!(telemetry.wire_voltage.as_centivolts(), 6005);
-        assert_eq!(telemetry.voltage.as_millivolts(), 75_063);
+        assert_eq!(telemetry.voltage.as_millivolts(), 90_075);
         assert_eq!(telemetry.speed.as_millimetres_per_second(), 13_360);
         assert_eq!(telemetry.trip_distance.as_millimetres(), 7_733_998_000);
         assert_eq!(telemetry.trip_distance_low.as_millimetres(), 750_000);
@@ -1359,7 +1342,7 @@ mod tests {
     fn live_a_maps_source_backed_fields_to_canonical_delta() {
         let frame = BegodeFrame::try_from_slice(&LIVE_A).expect("fixture frame is valid");
         let telemetry =
-            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode84VFullCharge)
+            BegodeLiveATelemetry::decode(&frame, BegodePackVoltageProfile::Begode100VFullCharge)
                 .expect("live A frame decodes");
 
         let delta = telemetry.to_delta(ms(42));
@@ -1371,13 +1354,13 @@ mod tests {
                 speed: Some(source_reported(
                     cutout_core::Speed::from_millimetres_per_second(13_360,)
                 )),
-                voltage: Some(source_reported(Voltage::from_millivolts(75_063))),
+                voltage: Some(source_reported(Voltage::from_millivolts(90_075))),
                 battery_current: None,
                 motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
                     -11_800,
                 ))),
                 power: Some(source_calculated(cutout_core::Power::from_milliwatts(
-                    -885_743
+                    -1_062_885
                 ))),
                 controller_temperature: Some(source_reported(
                     cutout_core::Temperature::from_millicelsius(27_930,)
@@ -1452,7 +1435,7 @@ mod tests {
         let mut context = BegodeTelemetryContext::default();
         context.observe_live_b(BegodeLiveBTelemetry::decode(&live_b).expect("live B decodes"));
         let telemetry =
-            BegodeLiveATelemetry::decode(&live_a, BegodePackVoltageProfile::Begode84VFullCharge)
+            BegodeLiveATelemetry::decode(&live_a, BegodePackVoltageProfile::Begode100VFullCharge)
                 .expect("live A decodes");
 
         let delta = context.live_a_to_delta(telemetry, ms(42));
@@ -1553,7 +1536,7 @@ mod tests {
         let live_b = BegodeFrame::try_from_slice(&LIVE_B).expect("fixture frame is valid");
 
         assert_eq!(
-            BegodeLiveATelemetry::decode(&live_b, BegodePackVoltageProfile::Begode84VFullCharge),
+            BegodeLiveATelemetry::decode(&live_b, BegodePackVoltageProfile::Begode100VFullCharge),
             Err(BegodeTelemetryError::UnexpectedFrameTag {
                 expected: 0,
                 actual: 4
@@ -1562,50 +1545,50 @@ mod tests {
     }
 
     #[test]
-    fn falcon_84v_full_charge_battery_level_uses_better_begode_curve() {
+    fn falcon_100v_full_charge_battery_level_uses_better_begode_curve() {
         assert_eq!(
             estimate_begode_battery_level(
                 Voltage::from_millivolts(75_063),
-                BegodePackVoltageProfile::Begode84VFullCharge,
+                BegodePackVoltageProfile::Begode100VFullCharge,
             ),
-            cutout_core::BatteryLevel::from_percent(50)
+            cutout_core::BatteryLevel::from_percent(0)
         );
     }
 
     #[test]
-    fn falcon_84v_full_charge_profile_exposes_pack_geometry_without_capacity_guess() {
-        let profile = BegodePackVoltageProfile::Begode84VFullCharge;
+    fn falcon_100v_full_charge_profile_exposes_pack_geometry_without_capacity_guess() {
+        let profile = BegodePackVoltageProfile::Begode100VFullCharge;
 
-        assert_eq!(profile.series_cells(), SeriesCount::new(20));
+        assert_eq!(profile.series_cells(), SeriesCount::new(24));
         assert_eq!(
             profile.voltage_range(),
-            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+            Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
         );
         assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
-    fn begode_84v_profile_records_user_confirmed_falcon_target() {
-        let profile = BegodePackVoltageProfile::Begode84VFullCharge;
+    fn begode_100v_profile_records_user_confirmed_falcon_target() {
+        let profile = BegodePackVoltageProfile::Begode100VFullCharge;
 
-        assert_eq!(profile.series_cells(), SeriesCount::new(20));
+        assert_eq!(profile.series_cells(), SeriesCount::new(24));
         assert_eq!(
             profile.voltage_range(),
-            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+            Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
         );
         assert_eq!(profile.nominal_capacity(), None);
     }
 
     #[test]
-    fn falcon_target_voltage_profile_is_explicit_84v_without_capacity() {
+    fn falcon_target_voltage_profile_is_explicit_100v_without_capacity() {
         let profile = begode_falcon_target_voltage_profile();
 
         assert_eq!(profile, BEGODE_FALCON_TARGET_VOLTAGE_PROFILE);
-        assert_eq!(profile, BegodePackVoltageProfile::Begode84VFullCharge);
-        assert_eq!(profile.series_cells(), SeriesCount::new(20));
+        assert_eq!(profile, BegodePackVoltageProfile::Begode100VFullCharge);
+        assert_eq!(profile.series_cells(), SeriesCount::new(24));
         assert_eq!(
             profile.voltage_range(),
-            Voltage::from_millivolts(60_000)..=Voltage::from_millivolts(84_000)
+            Voltage::from_millivolts(72_000)..=Voltage::from_millivolts(100_800)
         );
         assert_eq!(profile.nominal_capacity(), None);
     }
@@ -1883,12 +1866,12 @@ mod tests {
         assert_eq!(
             validate_begode_pack_evidence(
                 BegodeVoltageProfileSelection::Selected(
-                    BegodePackVoltageProfile::Begode84VFullCharge,
+                    BegodePackVoltageProfile::Begode100VFullCharge,
                 ),
                 BegodeCapacitySelection::Missing,
                 BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
                     cell_model: None,
-                    series_cells: Some(SERIES_CELLS_20),
+                    series_cells: Some(SERIES_CELLS_24),
                     parallel_count: None,
                 }),
             ),
@@ -1960,25 +1943,7 @@ mod tests {
     }
 
     #[test]
-    fn falcon_battery_variant_selects_current_84v_target_from_explicit_voltage_and_layout() {
-        assert_eq!(
-            select_begode_falcon_battery_variant(
-                BegodeVoltageProfileSelection::Selected(
-                    BegodePackVoltageProfile::Begode84VFullCharge,
-                ),
-                BegodeCapacitySelection::Missing,
-                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
-                    cell_model: None,
-                    series_cells: Some(SERIES_CELLS_20),
-                    parallel_count: None,
-                }),
-            ),
-            BegodeFalconBatteryVariantSelection::Selected(BegodeFalconBatteryVariant::Target84V20S)
-        );
-    }
-
-    #[test]
-    fn falcon_battery_variant_selects_planned_100v_900wh_50s_mapping_from_full_evidence() {
+    fn falcon_battery_variant_selects_current_100v_target_from_explicit_voltage_and_layout() {
         assert_eq!(
             select_begode_falcon_battery_variant(
                 BegodeVoltageProfileSelection::Selected(
@@ -1995,7 +1960,30 @@ mod tests {
                 }),
             ),
             BegodeFalconBatteryVariantSelection::Selected(
-                BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S,
+                BegodeFalconBatteryVariant::Current100V24S900WhSamsung50S
+            )
+        );
+    }
+
+    #[test]
+    fn falcon_battery_variant_selects_current_100v_900wh_50s_mapping_from_full_evidence() {
+        assert_eq!(
+            select_begode_falcon_battery_variant(
+                BegodeVoltageProfileSelection::Selected(
+                    BegodePackVoltageProfile::Begode100VFullCharge,
+                ),
+                BegodeCapacitySelection::Selected(BegodeCapacityEvidence {
+                    nominal_capacity: Some(Capacity::from_milliamp_hours(10_000)),
+                    reported_energy: Some(Energy::from_watt_hours(900)),
+                }),
+                BegodePackLayoutSelection::Selected(BegodePackLayoutEvidence {
+                    cell_model: Some(BegodeCellModel::Samsung50S),
+                    series_cells: Some(SERIES_CELLS_24),
+                    parallel_count: Some(PARALLEL_PACKS_2),
+                }),
+            ),
+            BegodeFalconBatteryVariantSelection::Selected(
+                BegodeFalconBatteryVariant::Current100V24S900WhSamsung50S,
             )
         );
     }
@@ -2041,23 +2029,29 @@ mod tests {
     }
 
     #[test]
-    fn falcon_target_84v_variant_metadata_keeps_capacity_unknown() {
-        let variant = BegodeFalconBatteryVariant::Target84V20S;
+    fn falcon_target_100v_variant_metadata_keeps_capacity_known() {
+        let variant = BegodeFalconBatteryVariant::Current100V24S900WhSamsung50S;
 
         assert_eq!(
             variant.voltage_profile(),
-            BegodePackVoltageProfile::Begode84VFullCharge
+            BegodePackVoltageProfile::Begode100VFullCharge
         );
-        assert_eq!(variant.series_cells(), SeriesCount::new(20));
-        assert_eq!(variant.cell_model(), None);
-        assert_eq!(variant.parallel_count(), None);
-        assert_eq!(variant.nominal_capacity(), None);
-        assert_eq!(variant.reported_energy(), None);
+        assert_eq!(variant.series_cells(), SeriesCount::new(24));
+        assert_eq!(variant.cell_model(), Some(BegodeCellModel::Samsung50S));
+        assert_eq!(variant.parallel_count(), Some(ParallelCount::new(2)));
+        assert_eq!(
+            variant.nominal_capacity(),
+            Some(Capacity::from_milliamp_hours(10_000))
+        );
+        assert_eq!(
+            variant.reported_energy(),
+            Some(Energy::from_watt_hours(900))
+        );
     }
 
     #[test]
-    fn falcon_planned_100v_variant_metadata_preserves_source_backed_shape() {
-        let variant = BegodeFalconBatteryVariant::Planned100V24S900WhSamsung50S;
+    fn falcon_current_100v_variant_metadata_preserves_source_backed_shape() {
+        let variant = BegodeFalconBatteryVariant::Current100V24S900WhSamsung50S;
 
         assert_eq!(
             variant.voltage_profile(),

@@ -1684,7 +1684,7 @@ mod tests {
         assert_eq!(telemetry.len(), 1);
         assert_eq!(
             telemetry[0].voltage.map(|value| value.value.get()),
-            Some(75_063)
+            Some(90_075)
         );
         assert_eq!(
             telemetry[0].speed.map(|value| value.value.get()),
