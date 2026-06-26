@@ -1,0 +1,40 @@
+wing: libcutout
+rooms:
+- name: captures
+  description: Files from captures/
+  keywords:
+  - captures
+  - captures
+- name: crates
+  description: Files from crates/
+  keywords:
+  - crates
+  - crates
+- name: target
+  description: Files from target/
+  keywords:
+  - target
+  - target
+- name: testing
+  description: Files from tests/
+  keywords:
+  - testing
+  - tests
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: scripts
+  description: Files from scripts/
+  keywords:
+  - scripts
+  - scripts
+- name: fuzz
+  description: Files from fuzz/
+  keywords:
+  - fuzz
+  - fuzz
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []

@@ -9,3 +9,7 @@ debug.log
 .DS_Store
 # br doctor per-run artifacts
 .doctor/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
