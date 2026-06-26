@@ -10,6 +10,5 @@ debug.log
 # br doctor per-run artifacts
 .doctor/
 
-# MemPalace per-project files (issue #185)
-mempalace.yaml
+# MemPalace generated file
 entities.json
