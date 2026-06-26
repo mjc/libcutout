@@ -32,7 +32,7 @@ const VALIDATION_ROWS: &[ValidationRow] = &[
     ValidationRow {
         device: "Begode Falcon",
         firmware: "unknown",
-        variant_scope: "84V target hardware; registry selection gated on app/BMS voltage evidence",
+        variant_scope: "100.8V target hardware; registry selection gated on app/BMS voltage evidence",
         capture_id: "pending capture",
         bms_status: "source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified",
         tested_fields: "identity probe, firmware probe, typed capacity/layout annotations",
@@ -139,7 +139,7 @@ mod tests {
         assert!(report.contains("selector 8 reserved/raw"));
         assert!(report.contains("idle and changing-load Bluetooth evidence"));
         assert!(report.contains("live dashboard parser-first typed-ingest verification"));
-        assert!(report.contains("84V target hardware; registry selection gated"));
+        assert!(report.contains("100.8V target hardware; registry selection gated"));
         assert!(report.contains("capture advertisement, GATT, PEVCAP replay, and protocol frames"));
     }
 
@@ -152,8 +152,8 @@ mod tests {
         assert!(report.contains("cell_model/series_cells/parallel_count"));
         assert!(report.contains("concrete Falcon BMS layout unverified"));
         assert!(report.contains("app/BMS/label/Bluetooth evidence"));
-        assert!(report.contains("Begode Falcon | unknown | 84V target hardware"));
-        assert!(report.contains("Begode Falcon | unknown | 84V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified"));
-        assert!(!report.contains("Begode Falcon | unknown | 84V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified | identity probe, firmware probe | telemetry family | battery, controls, frame mapping | read-only probe only | capture advertisement, GATT, PEVCAP replay, and protocol frames | hardware-tested"));
+        assert!(report.contains("Begode Falcon | unknown | 100.8V target hardware"));
+        assert!(report.contains("Begode Falcon | unknown | 100.8V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified"));
+        assert!(!report.contains("Begode Falcon | unknown | 100.8V target hardware; registry selection gated on app/BMS voltage evidence | pending capture | source-backed 0x01/0x02/0x03 decoder; concrete Falcon BMS layout unverified | identity probe, firmware probe | telemetry family | battery, controls, frame mapping | read-only probe only | capture advertisement, GATT, PEVCAP replay, and protocol frames | hardware-tested"));
     }
 }
