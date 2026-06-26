@@ -1,40 +1,192 @@
 wing: libcutout
 rooms:
-- name: captures
-  description: Files from captures/
+- name: architecture
+  description: Workspace architecture, crate boundaries, sync protocol engine decisions, and cross-crate API contracts
+  keywords:
+  - workspace
+  - architecture
+  - synchronous
+  - transport-independent
+  - workspace.package
+  - workspace.dependencies
+  - default-members
+- name: core_domain
+  description: Core PEV domain types, quantities, telemetry snapshots, battery pages, PEVCAP schema, and FFI-safe data shapes
+  keywords:
+  - cutout-core
+  - domain
+  - telemetry
+  - units
+  - pevcap
+  - battery-page
+  - ffi
+- name: protocols
+  description: Protocol parser/session design, frame codecs, request encoders, registry classification, fixtures, and family abstractions
+  keywords:
+  - cutout-protocols
+  - ReadOnlySession
+  - ProtocolEvent
+  - ProtocolFamily
+  - parser
+  - session
+  - frame
+  - registry
+  - fixture
+  - probe
+  - request-encoder
+- name: nosfet_aero
+  description: NOSFET Aero read-only support, Veteran/LeaperKim/NOSFET mappings, live NF2557 evidence, dashboard verification, and hardware notes
+  keywords:
+  - nosfet
+  - NOSFET
+  - aero
+  - Aero
+  - nf2557
+  - NF2557
+  - veteran
+  - Veteran
+  - leaperkim
+  - LeaperKim
+  - hardware
+  - dashboard
+- name: begode_falcon
+  description: Begode Falcon support, Begode/Gotway framing, battery/BMS mapping, identity probes, and future hardware verification
+  keywords:
+  - begode
+  - Begode
+  - falcon
+  - Falcon
+  - gotway
+  - Gotway
+  - bms
+  - BMS
+  - identity
+  - firmware
+- name: vesc_refloat
+  description: VESC and Refloat read-only boundary decisions, UART packet framing, custom-app payload scope, and safety limits
+  keywords:
+  - vesc
+  - refloat
+  - uart
+  - custom-app
+  - safety
+- name: battery_domain
+  description: Battery profile crate planning, cell provenance, pack geometry, model bindings, fixed-point units, and redistributability decisions
+  keywords:
+  - battery
+  - cell
+  - pack
+  - samsung-50s
+  - provenance
+  - redistributable
+  - schema
+- name: btle_transport
+  description: BTLE adapter behavior, GATT inventory, scanning, reconnects, capture sessions, typed transport events, and energy-sensitive loops
+  keywords:
+  - cutout-btle
+  - DriveSession
+  - DeviceBrowser
+  - Btle
+  - BTLE
+  - btle
+  - ble
+  - BLE
+  - gatt
+  - GATT
+  - scan
+  - reconnect
+  - capture
+  - notifications
+- name: cli_dashboard
+  description: cutout CLI commands, dashboard TUI, logging, replay views, operational display state, and hardware-facing workflows
+  keywords:
+  - cutout-cli
+  - DashboardState
+  - DashboardTelemetry
+  - DashboardApp
+  - cli
+  - dashboard
+  - tui
+  - logging
+  - replay
+  - bacon
+- name: mobile_ffi
+  description: UniFFI mobile binding surface, Swift and Kotlin smoke tests, mobile DTO ownership, and Android/iOS shell planning
+  keywords:
+  - uniffi
+  - mobile
+  - ios
+  - android
+  - swift
+  - kotlin
+  - dto
+- name: captures_provenance
+  description: PEVCAP captures, source audits, licensing provenance, external protocol references, fixture metadata, and redaction notes
   keywords:
   - captures
-  - captures
-- name: crates
-  description: Files from crates/
+  - pevcap
+  - PEVCAP
+  - capture_label
+  - capture_evidence
+  - HardwareVerified
+  - provenance
+  - source-audit
+  - license
+  - fixture
+  - redaction
+- name: testing_quality
+  description: TDD workflow, nextest, property tests, fuzz targets, allocation gates, mutation-test candidates, and validation commands
   keywords:
-  - crates
-  - crates
-- name: target
-  description: Files from target/
-  keywords:
-  - target
-  - target
-- name: testing
-  description: Files from tests/
-  keywords:
-  - testing
   - tests
-- name: documentation
-  description: Files from docs/
-  keywords:
-  - documentation
-  - docs
-- name: scripts
-  description: Files from scripts/
-  keywords:
-  - scripts
-  - scripts
-- name: fuzz
-  description: Files from fuzz/
-  keywords:
+  - tdd
+  - nextest
+  - proptest
   - fuzz
-  - fuzz
+  - allocation
+  - validation
+  - clippy
+- name: safety_controls
+  description: Control safety architecture, dangerous actuation gates, benign settings, refusal states, arming tokens, and future write paths
+  keywords:
+  - controls
+  - safety
+  - actuation
+  - arming
+  - settings
+  - refusal
+- name: tooling_operations
+  description: Nix flake, direnv, cargo-deny, bacon, MemPalace, Beads, scripts, developer workflow, and operational setup
+  keywords:
+  - nix
+  - flake
+  - direnv
+  - cargo-deny
+  - bacon
+  - mempalace
+  - beads
+  - scripts
+- name: roadmap_backlog
+  description: Beads epics, roadmap order, refactor plans, later protocol families, planning notes, and cross-session decisions
+  keywords:
+  - beads
+  - backlog
+  - roadmap
+  - epic
+  - refactor
+  - planning
+  - future-protocols
+- name: licensing_policy
+  description: MIT OR Apache-2.0 project licensing, dependency license allowances, GPL avoidance, source attribution, and data redistribution policy
+  keywords:
+  - license
+  - mit
+  - apache-2.0
+  - gpl
+  - mpl-2.0
+  - attribution
+  - redistribution
 - name: general
-  description: Files that don't fit other rooms
-  keywords: []
+  description: General repository notes that do not fit a more specific libcutout room
+  keywords:
+  - libcutout
+  - general
