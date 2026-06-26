@@ -48,7 +48,10 @@ use crate::cli::{
     CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
     PevcapFormat, RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs,
 };
-use crate::dashboard::{DashboardState, DashboardUpdate, run_dashboard_with_updates};
+use crate::dashboard::{
+    DashboardCaptureProvenance, DashboardState, DashboardUpdate, firmware_summary_string,
+    run_dashboard_with_updates,
+};
 use crate::logging::install_dashboard_log_sink;
 use crate::validation::render_validation_report;
 
@@ -543,6 +546,16 @@ fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<Dashboard
         events: report.events,
         disconnects: DisconnectCount::default(),
     });
+    if state.device.firmware == "unknown" {
+        if let Some(firmware) = state.read_only.firmware {
+            state.device.firmware = firmware_summary_string(firmware);
+        }
+    }
+    state.capture_provenance = Some(DashboardCaptureProvenance::from_pevcap_header(
+        &capture.header,
+        &state.device.model,
+        &state.device.firmware,
+    ));
     Ok(state)
 }
 
@@ -957,8 +970,21 @@ async fn run_dashboard_live_updates(
     }
     info!("dashboard live update selected session endpoints");
 
-    info!("dashboard live update constructing registered Aero read-only session");
-    let registration = match selected_session_profile(SessionProfile::Aero).session_registration() {
+    let selected_session = match dashboard_session_profile_from_summary(&connection.summary) {
+        Ok(selected_session) => selected_session,
+        Err(error) => {
+            let _ = tx.send(DashboardUpdate::Log {
+                level: "error".to_owned(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+    info!(
+        session = %selected_session.session_key().as_str(),
+        "dashboard live update constructing registered read-only session"
+    );
+    let registration = match selected_session.session_registration() {
         Ok(registration) => registration,
         Err(error) => {
             let _ = tx.send(DashboardUpdate::Log {
@@ -969,7 +995,10 @@ async fn run_dashboard_live_updates(
         }
     };
     let mut session = registration.construct();
-    info!("dashboard live update constructed registered Aero read-only session");
+    info!(
+        session = %selected_session.session_key().as_str(),
+        "dashboard live update constructed registered read-only session"
+    );
     let mut iteration = 0_u64;
     debug!("dashboard live update checking battery refresh capability");
     let refresh_battery = connection.summary.battery_level_characteristic().is_some();
@@ -1679,6 +1708,24 @@ fn selected_session_profile_for_catalog_entry(
     })
 }
 
+fn dashboard_session_profile_from_summary(
+    summary: &cutout_btle::ConnectionSummary,
+) -> Result<SelectedSessionProfile> {
+    let Some(name) = summary.observation.name.as_deref() else {
+        bail!("dashboard cannot resolve a session profile from unnamed device evidence");
+    };
+
+    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
+        CatalogModelResolution::Matched(entry) => selected_session_profile_for_catalog_entry(entry),
+        CatalogModelResolution::NoMatch => {
+            bail!("dashboard cannot resolve a session profile from device evidence: {name}")
+        }
+        CatalogModelResolution::Ambiguous => {
+            bail!("dashboard found ambiguous catalog entries for advertised name {name}")
+        }
+    }
+}
+
 fn pevcap_identity_for_profile(profile: SessionProfile) -> Option<PevcapResolvedIdentity> {
     match profile {
         SessionProfile::Auto => None,
@@ -2151,6 +2198,7 @@ fn render_battery_response_jsonl(
         "response": "battery",
         "page": {
             "selector": page.selector.get(),
+            "side": battery_page_side_name(page.kind, page.selector.get()),
             "kind": battery_page_kind_name(page.kind),
             "verification": verification_status_name(page.verification),
         },
@@ -2313,6 +2361,18 @@ const fn battery_page_kind_name(kind: BatteryPageKind) -> &'static str {
         BatteryPageKind::CellVoltage => "cell_voltage",
         BatteryPageKind::Temperature => "temperature",
         BatteryPageKind::Raw => "raw",
+    }
+}
+
+fn battery_page_side_name(kind: BatteryPageKind, selector: u8) -> Option<&'static str> {
+    if kind != BatteryPageKind::Temperature {
+        return None;
+    }
+
+    match selector {
+        3 => Some("left"),
+        7 => Some("right"),
+        _ => None,
     }
 }
 
@@ -3446,6 +3506,7 @@ mod tests {
         assert_eq!(value["command_kind"], "request_battery_info");
         assert_eq!(value["response"], "battery");
         assert_eq!(value["page"]["selector"], 8);
+        assert_eq!(value["page"]["side"], serde_json::Value::Null);
         assert_eq!(value["page"]["kind"], "raw");
         assert_eq!(value["page"]["verification"], "source_verified");
         assert_eq!(value["battery"]["voltage"]["value"], 80_000);
@@ -3497,11 +3558,45 @@ mod tests {
         assert_eq!(value["type"], "read_only_response");
         assert_eq!(value["sequence"], 3);
         assert_eq!(value["page"]["selector"], 3);
+        assert_eq!(value["page"]["side"], "left");
         assert_eq!(value["page"]["kind"], "temperature");
         assert_eq!(value["page"]["verification"], "hardware_verified");
         assert_eq!(value["battery"]["temperature"]["value"], 16_730);
         assert_eq!(value["temperatures"][0]["value"], 16_730);
         assert_eq!(value["temperatures"][5]["value"], 17_830);
+    }
+
+    #[test]
+    fn read_only_battery_jsonl_labels_selector_seven_as_right() {
+        let temperatures = [
+            Some(temperature(16_030)),
+            Some(temperature(15_630)),
+            Some(temperature(16_230)),
+            Some(temperature(16_930)),
+            Some(temperature(16_530)),
+            Some(temperature(17_430)),
+        ];
+        let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+            cutout_core::BatteryPageMetadata::temperature(
+                ProtocolSelector::new(7),
+                VerificationStatus::HardwareVerified,
+            ),
+            cutout_core::BatteryInfo {
+                temperature: Some(temperature(16_030)),
+                ..cutout_core::BatteryInfo::default()
+            },
+            temperatures,
+        ));
+
+        let line = render_read_only_response_jsonl(JsonSequence::new(4), response)
+            .expect("read-only temperature battery response serializes");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&line).expect("read-only response JSONL is JSON");
+        assert_eq!(value["page"]["selector"], 7);
+        assert_eq!(value["page"]["side"], "right");
+        assert_eq!(value["page"]["kind"], "temperature");
+        assert_eq!(value["page"]["verification"], "hardware_verified");
     }
 
     #[test]
@@ -3823,6 +3918,18 @@ mod tests {
             state.provenance.as_deref(),
             Some("pevcap replay platform=darwin annotations=aero replay")
         );
+        let capture_provenance = state
+            .capture_provenance
+            .as_ref()
+            .expect("dashboard replay tracks capture provenance");
+        assert_eq!(capture_provenance.capture_label, None);
+        assert_eq!(capture_provenance.capture_privacy, None);
+        assert_eq!(capture_provenance.capture_evidence, None);
+        assert_eq!(capture_provenance.capture_distribution, None);
+        assert_eq!(capture_provenance.platform_id, "darwin");
+        assert_eq!(capture_provenance.advertised_service_count, 1);
+        assert_eq!(capture_provenance.gatt_fingerprint_count, 0);
+        assert_eq!(capture_provenance.selected_session_key.as_deref(), None);
         assert_eq!(state.device.identifier, "darwin");
         assert_eq!(state.device.connection_state, "replayed");
         assert_eq!(
@@ -4589,6 +4696,65 @@ mod tests {
                 .expect("Aero summary resolves")
                 .selected_session,
             selected_aero_session_profile()
+        );
+    }
+
+    #[test]
+    fn dashboard_session_profile_from_summary_uses_catalog_identity() {
+        let falcon_summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "GotWay_002441".to_owned(),
+                address: None,
+                name: Some("GotWay_002441".to_owned()),
+                rssi: None,
+                advertised_services: Vec::new().into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        };
+        let aero_summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "NF2557".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: None,
+                advertised_services: Vec::new().into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        };
+
+        assert_eq!(
+            dashboard_session_profile_from_summary(&falcon_summary)
+                .expect("Falcon summary resolves"),
+            selected_falcon_session_profile()
+        );
+        assert_eq!(
+            dashboard_session_profile_from_summary(&aero_summary).expect("Aero summary resolves"),
+            selected_aero_session_profile()
+        );
+    }
+
+    #[test]
+    fn dashboard_session_profile_from_summary_rejects_unsupported_devices() {
+        let summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "unknown".to_owned(),
+                address: None,
+                name: Some("unknown".to_owned()),
+                rssi: None,
+                advertised_services: Vec::new().into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        };
+
+        let error = dashboard_session_profile_from_summary(&summary)
+            .expect_err("unsupported device should not silently fall back");
+        assert!(
+            error
+                .to_string()
+                .contains("dashboard cannot resolve a session profile")
         );
     }
 
