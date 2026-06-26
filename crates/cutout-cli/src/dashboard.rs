@@ -999,6 +999,9 @@ impl DashboardState {
             DEMO_CURRENT,
             DEMO_TEMPERATURE,
         );
+        self.telemetry.latest_phase_current = Some(DisplayPhaseCurrent::from_current(
+            PhaseCurrent::from_amps(18),
+        ));
         self.read_only.firmware = Some(FirmwareInfo {
             firmware_major: Some(Measured::reported(43)),
             firmware_minor: Some(Measured::reported(2)),
@@ -2024,17 +2027,6 @@ impl fmt::Display for OptionalPowerDisplay {
     }
 }
 
-struct OptionalOperationalCurrentDisplay(Option<OperationalCurrent>);
-
-impl fmt::Display for OptionalOperationalCurrentDisplay {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(value) => value.fmt(f),
-            None => f.write_str("unknown"),
-        }
-    }
-}
-
 struct DisplayTelemetryDistance(Distance);
 
 impl DisplayTelemetryDistance {
@@ -2885,10 +2877,11 @@ fn render_operational_middle_metrics(frame: &mut Frame<'_>, area: Rect, state: &
     let middle = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
         ])
         .split(area);
 
@@ -2911,14 +2904,22 @@ fn render_operational_middle_metrics(frame: &mut Frame<'_>, area: Rect, state: &
     render_metric_tile(
         frame,
         middle[2],
-        "Amps",
-        OptionalOperationalCurrentDisplay(operational_current(state)).to_string(),
+        "Pack current",
+        OptionalDisplay(state.telemetry.latest_battery_current).to_string(),
         None,
         Color::LightBlue,
     );
     render_metric_tile(
         frame,
         middle[3],
+        "Phase current",
+        OptionalDisplay(state.telemetry.latest_phase_current).to_string(),
+        None,
+        Color::LightBlue,
+    );
+    render_metric_tile(
+        frame,
+        middle[4],
         "Temp",
         OptionalDisplay(state.telemetry.latest_temperature).to_string(),
         None,
@@ -3441,10 +3442,10 @@ fn render_session_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardSt
                 Span::raw(OptionalBatteryLevelDisplay(state.telemetry.battery_level).to_string()),
             ]),
             Line::from(vec![
-                Span::styled("amps ", Style::new().fg(Color::Gray)),
-                Span::raw(
-                    OptionalOperationalCurrentDisplay(operational_current(state)).to_string(),
-                ),
+                Span::styled("pack ", Style::new().fg(Color::Gray)),
+                Span::raw(OptionalDisplay(state.telemetry.latest_battery_current).to_string()),
+                Span::styled(" phase ", Style::new().fg(Color::Gray)),
+                Span::raw(OptionalDisplay(state.telemetry.latest_phase_current).to_string()),
                 Span::styled(" power ", Style::new().fg(Color::Gray)),
                 Span::raw(OptionalPowerDisplay(state.telemetry.latest_power).to_string()),
             ]),
@@ -4263,13 +4264,9 @@ mod tests {
 
         assert_eq!(current.get(), -12);
         assert_eq!(current.to_string(), "-12 A");
+        assert_eq!(OptionalDisplay(Some(current)).to_string(), "-12 A");
         assert_eq!(
-            OptionalOperationalCurrentDisplay(Some(OperationalCurrent::Charge(current)))
-                .to_string(),
-            "-12 A"
-        );
-        assert_eq!(
-            OptionalOperationalCurrentDisplay(None).to_string(),
+            OptionalDisplay::<DisplayBatteryCurrent>(None).to_string(),
             "unknown"
         );
     }
@@ -5716,8 +5713,10 @@ mod tests {
         assert!(text.contains("riding"));
         assert!(text.contains("Power"));
         assert!(text.contains("318 W"));
-        assert!(text.contains("Amps"));
+        assert!(text.contains("Pack current"));
         assert!(text.contains("6 A"));
+        assert!(text.contains("Phase current"));
+        assert!(text.contains("18 A"));
         assert!(text.contains("Temp"));
         assert!(text.contains("33 C"));
         assert!(text.contains("PWM"));
