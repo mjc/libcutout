@@ -35,7 +35,7 @@ use ratatui::termina::{
 use ratatui::{
     Frame, Terminal,
     backend::TerminaBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
@@ -2756,30 +2756,54 @@ fn render_operational_dashboard(
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(12), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Length(10),
+            Constraint::Fill(1),
+        ])
         .split(area);
 
-    let dashboard = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Fill(1)])
-        .split(chunks[0]);
-    let summary = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(dashboard[1]);
-
-    render_operational_heading(frame, dashboard[0], &profile_heading);
-    render_operational_speed_panel(frame, summary[0], state, &firmware);
-    render_operational_metric_grid(frame, summary[1], state);
-    render_read_only_summary(frame, chunks[1], state);
+    render_operational_heading(frame, chunks[0], state, &profile_heading, &firmware);
+    render_operational_speed_panel(frame, chunks[1], state, &firmware);
+    render_operational_metric_grid(frame, chunks[2], state);
 }
 
-fn render_operational_heading(frame: &mut Frame<'_>, area: Rect, profile_heading: &str) {
-    let heading = Paragraph::new(Line::from(Span::styled(
-        profile_heading.to_owned(),
-        Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-    )))
-    .block(panel_block("Operational dashboard"))
+fn render_operational_heading(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &DashboardState,
+    profile_heading: &str,
+    firmware: &str,
+) {
+    let device = operational_device_identity(state);
+    let voltage = OptionalDisplay(state.telemetry.latest_voltage).to_string();
+    let signal = format!("signal {}%", state.telemetry.signal_quality);
+    let notifications = format!("rx {}", state.counters.notifications);
+    let mode = match state.source {
+        DashboardSource::Live => "LIVE",
+        DashboardSource::Demo => "DEMO",
+    };
+    let heading = Paragraph::new(vec![
+        Line::from(Span::styled(
+            profile_heading.to_owned(),
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled(device, Style::new().fg(Color::Gray)),
+            Span::raw(" | "),
+            Span::raw(voltage),
+            Span::raw(" | "),
+            Span::raw(signal),
+            Span::raw(" | "),
+            Span::raw(notifications),
+            Span::raw(" | firmware "),
+            Span::raw(firmware.to_owned()),
+            Span::raw(" | read only mode | "),
+            Span::raw(mode),
+        ]),
+    ])
+    .block(panel_block("Cutout dash"))
+    .alignment(Alignment::Center)
     .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(heading, area);
 }
@@ -2790,32 +2814,36 @@ fn render_operational_speed_panel(
     state: &DashboardState,
     firmware: &str,
 ) {
-    let speed = OptionalDisplay(state.telemetry.latest_speed).to_string();
+    let speed = state
+        .telemetry
+        .latest_speed
+        .map_or_else(|| "unknown".to_owned(), |speed| speed.get().to_string());
+    let wheel_state = operational_wheel_state(state).label();
     let lines = vec![
-        Line::from(vec![Span::styled(
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
             speed,
             Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(vec![
-            Span::styled("device ", Style::new().fg(Color::Gray)),
-            Span::raw(state.device.name.as_str()),
-        ]),
-        Line::from(vec![
-            Span::styled("state ", Style::new().fg(Color::Gray)),
-            Span::raw(state.device.connection_state.as_str()),
-        ]),
-        Line::from(vec![
-            Span::styled("source ", Style::new().fg(Color::Gray)),
-            Span::raw(state.provenance.as_deref().unwrap_or("live")),
-        ]),
-        Line::from(vec![
-            Span::styled("firmware ", Style::new().fg(Color::Gray)),
-            Span::raw(firmware.to_owned()),
-        ]),
+        )),
+        Line::from(Span::styled(
+            "MPH",
+            Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            wheel_state,
+            Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            firmware.to_owned(),
+            Style::new().fg(Color::DarkGray),
+        )),
+        Line::from(""),
     ];
 
     let panel = Paragraph::new(lines)
         .block(panel_block("Speed"))
+        .alignment(Alignment::Center)
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(panel, area);
 }
@@ -2824,9 +2852,9 @@ fn render_operational_metric_grid(frame: &mut Frame<'_>, area: Rect, state: &Das
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Fill(1),
         ])
         .split(area);
 
@@ -2838,39 +2866,29 @@ fn render_operational_metric_grid(frame: &mut Frame<'_>, area: Rect, state: &Das
 fn render_operational_top_metrics(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let top = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    render_metric_tile(
+    render_battery_gauge(
         frame,
         top[0],
-        "Battery",
-        OptionalBatteryLevelDisplay(state.telemetry.battery_level).to_string(),
-        state
-            .telemetry
-            .battery_level
-            .map(DashboardBatteryLevel::ratio),
-        Color::Green,
+        state.telemetry.battery_level,
+        state.telemetry.battery_source,
+        state.telemetry.latest_voltage,
     );
     render_metric_tile(
         frame,
         top[1],
-        "Voltage",
-        OptionalDisplay(state.telemetry.latest_voltage).to_string(),
-        operational_voltage_ratio(state),
-        Color::Magenta,
-    );
-    render_metric_tile(
-        frame,
-        top[2],
-        "Signal",
-        format!("{}%", state.telemetry.signal_quality),
-        Some(state.telemetry.signal_quality.ratio()),
-        Color::Cyan,
+        "PWM",
+        match operational_pwm(state) {
+            OperationalDutyCycle::Known(pwm) => {
+                let value = pwm.get().abs().min(100);
+                format!("{}%\nheadroom {}%", pwm, 100 - value)
+            }
+            OperationalDutyCycle::Unknown => "unknown".to_owned(),
+        },
+        operational_pwm_ratio(state),
+        Color::Yellow,
     );
 }
 
@@ -2889,79 +2907,97 @@ fn render_operational_middle_metrics(frame: &mut Frame<'_>, area: Rect, state: &
     render_metric_tile(
         frame,
         middle[0],
-        "Wheel state",
-        operational_wheel_state(state).label().to_owned(),
-        None,
-        Color::Green,
+        "Voltage",
+        match state.telemetry.latest_voltage {
+            Some(voltage) => format!("{}\nsignal {}%", voltage, state.telemetry.signal_quality),
+            None => format!("unknown\nsignal {}%", state.telemetry.signal_quality),
+        },
+        operational_voltage_ratio(state),
+        Color::Magenta,
     );
     render_metric_tile(
         frame,
         middle[1],
-        "Power",
-        OptionalPowerDisplay(state.telemetry.latest_power).to_string(),
+        "Current",
+        operational_current(state).map_or_else(
+            || "unknown".to_owned(),
+            |current| format!("{}\n{}", current, operational_wheel_state(state).label()),
+        ),
         None,
-        Color::Yellow,
+        Color::LightBlue,
     );
     render_metric_tile(
         frame,
         middle[2],
-        "Pack current",
-        OptionalDisplay(state.telemetry.latest_battery_current).to_string(),
-        None,
-        Color::LightBlue,
-    );
-    render_metric_tile(
-        frame,
-        middle[3],
-        "Phase current",
-        OptionalDisplay(state.telemetry.latest_phase_current).to_string(),
-        None,
-        Color::LightBlue,
-    );
-    render_metric_tile(
-        frame,
-        middle[4],
-        "Temp",
-        OptionalDisplay(state.telemetry.latest_temperature).to_string(),
-        None,
-        Color::Red,
-    );
-}
-
-fn render_operational_bottom_metrics(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let bottom = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-        ])
-        .split(area);
-
-    render_metric_tile(
-        frame,
-        bottom[0],
-        "PWM",
-        operational_pwm(state).to_string(),
+        "Power",
+        match state.telemetry.latest_power {
+            Some(power) => format!("{}\nPWM {}%", power, operational_pwm(state)),
+            None => "unknown".to_owned(),
+        },
         None,
         Color::Yellow,
     );
     render_metric_tile(
         frame,
-        bottom[1],
-        "Trip",
-        OptionalDisplayDistance(state.telemetry.latest_distance).to_string(),
+        middle[3],
+        "Temp",
+        match state.telemetry.latest_temperature {
+            Some(temperature) => format!("{}\nmotor", temperature),
+            None => "unknown".to_owned(),
+        },
         None,
-        Color::Cyan,
+        Color::Red,
     );
     render_metric_tile(
         frame,
-        bottom[2],
-        "Read-only mode",
-        "active".to_owned(),
+        middle[4],
+        "Range",
+        match state.telemetry.latest_distance {
+            Some(distance) => format!("{}\nest.", distance),
+            None => "unknown".to_owned(),
+        },
         None,
-        Color::DarkGray,
+        Color::Cyan,
     );
+}
+
+fn render_operational_bottom_metrics(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let pwm = match operational_pwm(state) {
+        OperationalDutyCycle::Known(pwm) => {
+            let value = pwm.get().abs().min(100);
+            format!("PWM {}% / headroom {}%", pwm, 100 - value)
+        }
+        OperationalDutyCycle::Unknown => "PWM unknown".to_owned(),
+    };
+    let status = Paragraph::new(vec![Line::from(vec![
+        Span::styled(
+            pwm,
+            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("state {}", operational_wheel_state(state).label()),
+            Style::new().fg(Color::Gray),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            format!("signal {}%", state.telemetry.signal_quality),
+            Style::new().fg(Color::Gray),
+        ),
+        Span::raw(" | "),
+        Span::styled(
+            match state.read_only.firmware {
+                Some(firmware) => FirmwareSummary(firmware).to_string(),
+                None => state.device.firmware.clone(),
+            },
+            Style::new().fg(Color::DarkGray),
+        ),
+    ])])
+    .block(panel_block("Status"))
+    .alignment(Alignment::Center)
+    .wrap(ratatui::widgets::Wrap { trim: true });
+
+    frame.render_widget(status, area);
 }
 
 fn render_metric_tile(
@@ -2972,22 +3008,23 @@ fn render_metric_tile(
     ratio: Option<f64>,
     color: Color,
 ) {
+    let mut lines = value;
     if let Some(ratio) = ratio {
-        let gauge = Gauge::default()
-            .block(panel_block(title))
-            .gauge_style(Style::new().fg(color).bg(Color::Black))
-            .label(value)
-            .ratio(ratio.clamp(0.0, 1.0));
-        frame.render_widget(gauge, area);
-        return;
+        let bar_width = area.width.saturating_sub(4).max(8) as usize;
+        let filled = (ratio.clamp(0.0, 1.0) * bar_width as f64).round() as usize;
+        let empty = bar_width.saturating_sub(filled);
+        if !lines.is_empty() {
+            lines.push('\n');
+        }
+        lines.push_str(&"█".repeat(filled));
+        lines.push_str(&"░".repeat(empty));
     }
 
-    let panel = Paragraph::new(vec![Line::from(Span::styled(
-        value,
-        Style::new().fg(color).add_modifier(Modifier::BOLD),
-    ))])
-    .block(panel_block(title))
-    .wrap(ratatui::widgets::Wrap { trim: true });
+    let panel = Paragraph::new(lines)
+        .style(Style::new().fg(color).add_modifier(Modifier::BOLD))
+        .block(panel_block(title))
+        .alignment(Alignment::Center)
+        .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(panel, area);
 }
 
@@ -2995,6 +3032,13 @@ fn operational_voltage_ratio(state: &DashboardState) -> Option<f64> {
     let voltage = state.telemetry.latest_voltage?;
     let voltage_range = dashboard_voltage_range(state)?;
     Some(voltage.0.percent_of_range(&voltage_range).as_ratio())
+}
+
+fn operational_pwm_ratio(state: &DashboardState) -> Option<f64> {
+    match operational_pwm(state) {
+        OperationalDutyCycle::Known(pwm) => Some((pwm.get().abs().min(100) as f64) / 100.0),
+        OperationalDutyCycle::Unknown => None,
+    }
 }
 
 fn operational_wheel_state(state: &DashboardState) -> OperationalWheelState {
@@ -3149,20 +3193,25 @@ fn render_battery_gauge(
     source: BatterySource,
     latest_voltage: Option<DisplayVoltage>,
 ) {
-    if let Some(battery_level) = battery_level {
-        let battery = Gauge::default()
-            .block(Block::bordered().title(source.label()))
-            .gauge_style(Style::new().fg(Color::Green).bg(Color::Black))
-            .ratio(battery_level.ratio());
-        frame.render_widget(battery, area);
+    let (value, ratio) = if let Some(battery_level) = battery_level {
+        (
+            latest_voltage.map_or_else(
+                || format!("{}%", battery_level),
+                |voltage| format!("{}%\n{}", battery_level, voltage),
+            ),
+            Some(battery_level.ratio()),
+        )
     } else {
-        let message = latest_voltage.map_or_else(
-            || "unknown".to_owned(),
-            |voltage| format!("voltage {voltage} / battery unknown"),
-        );
-        let battery = Paragraph::new(message).block(Block::bordered().title("Battery"));
-        frame.render_widget(battery, area);
-    }
+        (
+            latest_voltage.map_or_else(
+                || source.label().to_owned(),
+                |voltage| format!("voltage {}\nbattery unknown", voltage),
+            ),
+            None,
+        )
+    };
+
+    render_metric_tile(frame, area, "Battery", value, ratio, Color::Green);
 }
 
 fn render_signal_gauge(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -5699,34 +5748,32 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
-        assert!(text.contains("Operational dashboard"));
+        assert!(text.contains("Cutout dash"));
         assert!(
             text.contains("NOSFET Aero (via Veteran Protocol) Current 45A / Raw Tail Preserved")
         );
-        assert!(text.contains("18 mph"));
+        assert!(text.contains("NOSFET Aero"));
+        assert!(text.contains("53 V"));
+        assert!(text.contains("signal 81%"));
+        assert!(text.contains("read only mode"));
+        assert!(text.contains("DEMO"));
+        assert!(text.contains("Speed"));
+        assert!(text.contains("18"));
+        assert!(text.contains("MPH"));
+        assert!(text.contains("riding"));
         assert!(text.contains("Battery"));
         assert!(text.contains("74%"));
         assert!(text.contains("Voltage"));
         assert!(text.contains("53 V"));
-        assert!(text.contains("Signal"));
-        assert!(text.contains("81%"));
-        assert!(text.contains("Wheel state"));
-        assert!(text.contains("riding"));
+        assert!(text.contains("Current"));
         assert!(text.contains("Power"));
         assert!(text.contains("318 W"));
-        assert!(text.contains("Pack current"));
         assert!(text.contains("6 A"));
-        assert!(text.contains("Phase current"));
-        assert!(text.contains("18 A"));
         assert!(text.contains("Temp"));
         assert!(text.contains("33 C"));
         assert!(text.contains("PWM"));
-        assert!(text.contains("unknown"));
-        assert!(text.contains("Trip"));
+        assert!(text.contains("Range"));
         assert!(text.contains("firmware 43.2.54"));
-        assert!(text.contains("Read-only mode"));
-        assert!(text.contains("active"));
-        assert!(!text.contains("Load/PWM"));
         assert!(!text.contains("Controls"));
         assert!(!text.contains("disabled"));
     }
@@ -5743,7 +5790,8 @@ mod tests {
 
         assert!(text.contains("Profiles"));
         assert!(text.contains("Read-only responses"));
-        assert!(!text.contains("Operational dashboard"));
+        assert!(!text.contains("headroom"));
+        assert!(!text.contains("MPH"));
     }
 
     #[test]
@@ -5756,7 +5804,7 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
-        assert!(text.contains("Operational dashboard"));
+        assert!(text.contains("Cutout dash"));
         assert!(
             text.contains(
                 "NOSFET Aero (profile pending) Pending Begode/Falcon Unsupported / Pending"
