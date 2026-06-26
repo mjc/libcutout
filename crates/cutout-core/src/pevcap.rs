@@ -306,6 +306,12 @@ pub struct PevcapHeader {
     /// Resolved device identity, when known.
     pub resolved_identity: Option<PevcapResolvedIdentity>,
 
+    /// Resolver evidence recorded alongside the selected session.
+    pub resolver_evidence: ArrayVec<String, PEVCAP_MAX_ANNOTATIONS>,
+
+    /// Resolver warnings recorded alongside the selected session.
+    pub resolver_warnings: ArrayVec<String, PEVCAP_MAX_ANNOTATIONS>,
+
     /// Version of the Cutout library that produced the capture.
     pub library_version: String,
 
@@ -353,6 +359,8 @@ impl PevcapHeader {
             )?,
             selected_session_key: selected_session_key.map(str::to_owned),
             resolved_identity,
+            resolver_evidence: ArrayVec::new(),
+            resolver_warnings: ArrayVec::new(),
             library_version: library_version.into(),
             registry_hash,
             annotations: collect_bounded_strings(
@@ -361,6 +369,33 @@ impl PevcapHeader {
                 PevcapHeaderField::Annotations,
             )?,
         })
+    }
+
+    /// Returns a copy of this header with resolver evidence attached.
+    ///
+    /// This keeps the constructor stable for older fixtures while allowing
+    /// live capture paths to record typed resolver context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapHeaderError::TooManyItems`] if the supplied resolver
+    /// evidence or warning lists exceed the PEVCAP header bound.
+    pub fn with_resolver_context(
+        mut self,
+        resolver_evidence: &[&str],
+        resolver_warnings: &[&str],
+    ) -> Result<Self, PevcapHeaderError> {
+        self.resolver_evidence = collect_bounded_strings(
+            resolver_evidence,
+            PEVCAP_MAX_ANNOTATIONS,
+            PevcapHeaderField::ResolverEvidence,
+        )?;
+        self.resolver_warnings = collect_bounded_strings(
+            resolver_warnings,
+            PEVCAP_MAX_ANNOTATIONS,
+            PevcapHeaderField::ResolverWarnings,
+        )?;
+        Ok(self)
     }
 }
 
@@ -389,6 +424,12 @@ pub enum PevcapHeaderField {
 
     /// GATT fingerprints observed during discovery.
     GattFingerprints,
+
+    /// Resolver evidence recorded in the header.
+    ResolverEvidence,
+
+    /// Resolver warnings recorded in the header.
+    ResolverWarnings,
 
     /// Free-form capture annotations.
     Annotations,
@@ -1297,6 +1338,7 @@ fn read_len_prefixed<'input>(
 }
 
 #[cfg(feature = "serde")]
+#[allow(clippy::large_enum_variant)]
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum PevcapJsonlLine {
@@ -1320,6 +1362,10 @@ struct PevcapHeaderJson {
     gatt_fingerprints: Vec<GattFingerprintJson>,
     selected_session_key: Option<String>,
     resolved_identity: Option<PevcapResolvedIdentityJson>,
+    #[serde(default)]
+    resolver_evidence: Vec<String>,
+    #[serde(default)]
+    resolver_warnings: Vec<String>,
     library_version: String,
     registry_hash: [u8; 32],
     annotations: Vec<String>,
@@ -1347,6 +1393,8 @@ impl From<&PevcapHeader> for PevcapHeaderJson {
                 .resolved_identity
                 .as_ref()
                 .map(PevcapResolvedIdentityJson::from),
+            resolver_evidence: header.resolver_evidence.iter().cloned().collect(),
+            resolver_warnings: header.resolver_warnings.iter().cloned().collect(),
             library_version: header.library_version.clone(),
             registry_hash: header.registry_hash,
             annotations: header.annotations.iter().cloned().collect(),
@@ -1367,6 +1415,16 @@ impl PevcapHeaderJson {
             .into_iter()
             .map(GattFingerprintJson::into_fingerprint)
             .collect::<Vec<_>>();
+        let resolver_evidence = self
+            .resolver_evidence
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let resolver_warnings = self
+            .resolver_warnings
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         let annotations = self
             .annotations
             .iter()
@@ -1385,7 +1443,8 @@ impl PevcapHeaderJson {
             self.library_version,
             self.registry_hash,
             &annotations,
-        )
+        )?
+        .with_resolver_context(&resolver_evidence, &resolver_warnings)
     }
 }
 
@@ -2508,6 +2567,15 @@ mod tests {
             &["identity_confidence=Model", "battery=84v"],
         )
         .expect("header should validate");
+        let header = header
+            .with_resolver_context(
+                &[
+                    "selected_session_key=begode-falcon-read-only",
+                    "resolved_model=Begode Falcon",
+                ],
+                &["missing_falcon_battery_voltage_evidence"],
+            )
+            .expect("resolver context should validate");
         let capture = PevcapCapture::new(
             header,
             vec![
@@ -2532,6 +2600,17 @@ mod tests {
 
         assert_eq!(decoded, capture);
         assert_eq!(decoded.records[0].target, Some(can_target));
+        assert_eq!(
+            decoded.header.resolver_evidence.as_slice(),
+            &[
+                "selected_session_key=begode-falcon-read-only".to_owned(),
+                "resolved_model=Begode Falcon".to_owned(),
+            ]
+        );
+        assert_eq!(
+            decoded.header.resolver_warnings.as_slice(),
+            &["missing_falcon_battery_voltage_evidence".to_owned()]
+        );
         assert_eq!(jsonl.lines().count(), 3);
     }
 
@@ -2741,6 +2820,8 @@ mod tests {
             gatt_fingerprints: Vec::new(),
             selected_session_key: None,
             resolved_identity: None,
+            resolver_evidence: Vec::new(),
+            resolver_warnings: Vec::new(),
             library_version: "0.1.0".to_owned(),
             registry_hash: [0x00; 32],
             annotations: vec!["note".to_owned(); PEVCAP_MAX_ANNOTATIONS + 1],

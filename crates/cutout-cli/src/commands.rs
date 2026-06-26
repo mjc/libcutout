@@ -1,6 +1,6 @@
 use std::{
     fmt, fs,
-    future::Future,
+    future::{Future, poll_fn},
     marker::PhantomData,
     sync::mpsc,
     thread,
@@ -877,17 +877,22 @@ where
         };
 
         runtime.block_on(async move {
-            let mut live_updates = tokio::spawn(start_live_updates(tx));
-            let _ = started_tx.send(Ok(()));
-            info!("dashboard live update task spawned in dedicated runtime");
+            let mut started_tx = Some(started_tx);
+            let mut live_updates = Box::pin(start_live_updates(tx));
+            let live_updates = poll_fn(move |context| {
+                if let Some(started_tx) = started_tx.take() {
+                    let _ = started_tx.send(Ok(()));
+                    info!("dashboard live update task entered in dedicated runtime");
+                }
+                live_updates.as_mut().poll(context)
+            });
+            tokio::pin!(live_updates);
             tokio::select! {
                 _ = &mut live_updates => {
                     info!("dashboard live update task finished");
                 }
                 _ = shutdown_rx => {
-                    info!("dashboard live update task aborting after shutdown");
-                    live_updates.abort();
-                    let _ = live_updates.await;
+                    info!("dashboard live update task dropping after shutdown");
                 }
             }
         });
@@ -1748,6 +1753,42 @@ fn encode_session_capture_pevcap(
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
     capture_annotations.push("cutout-cli capture");
     capture_annotations.extend_from_slice(annotations);
+    let mut resolver_evidence = Vec::new();
+    resolver_evidence.push(format!(
+        "selected_session_key={}",
+        profile.session_key().as_str()
+    ));
+    if let Some(identity) = resolved_identity.as_ref() {
+        if let Some(protocol_family) = identity.protocol_family {
+            resolver_evidence.push(format!("resolved_protocol_family={protocol_family:?}"));
+        }
+        if let Some(model) = identity.model.as_ref() {
+            resolver_evidence.push(format!("resolved_model={}", model.value));
+        }
+        if let Some(firmware) = identity.firmware.as_ref() {
+            resolver_evidence.push(format!("resolved_firmware={}", firmware.value));
+        }
+    }
+    let mut resolver_warnings = Vec::new();
+    if profile.is_falcon() {
+        match select_begode_pack_voltage_profile_from_annotations(annotations.iter().copied()) {
+            BegodeVoltageProfileSelection::Missing => {
+                resolver_warnings.push("missing_falcon_battery_voltage_evidence".to_owned());
+            }
+            BegodeVoltageProfileSelection::Conflicting => {
+                resolver_warnings.push("conflicting_falcon_battery_voltage_evidence".to_owned());
+            }
+            BegodeVoltageProfileSelection::Selected(_) => {}
+        }
+    }
+    let resolver_evidence_refs = resolver_evidence
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let resolver_warnings_refs = resolver_warnings
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     let pevcap = capture.to_pevcap(
         summary,
         PevcapSessionMetadata {
@@ -1757,6 +1798,8 @@ fn encode_session_capture_pevcap(
             registry_hash: cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
             selected_session_key: Some(profile.session_key().as_str()),
             resolved_identity,
+            resolver_evidence: resolver_evidence_refs.as_slice(),
+            resolver_warnings: resolver_warnings_refs.as_slice(),
             annotations: capture_annotations.as_slice(),
         },
     )?;
@@ -2673,6 +2716,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn cli_encodes_session_capture_to_pevcap_bytes() {
         let summary = ConnectionSummary {
             observation: PeripheralObservation {
@@ -2751,6 +2795,14 @@ mod tests {
             ]
         );
         assert_eq!(
+            decoded.header.resolver_evidence.as_slice(),
+            &[
+                "selected_session_key=nosfet-aero-read-only".to_owned(),
+                "resolved_protocol_family=VeteranLeaperkimNosfet".to_owned(),
+            ]
+        );
+        assert!(decoded.header.resolver_warnings.is_empty());
+        assert_eq!(
             decoded.header.registry_hash,
             cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY])
         );
@@ -2770,6 +2822,87 @@ mod tests {
             Some(WriteMode::WithoutResponse)
         );
         assert_eq!(decoded.records[2].bytes.as_ref(), b"NAME=NF2557");
+    }
+
+    #[test]
+    fn capture_pevcap_records_falcon_resolver_warning_when_voltage_evidence_is_missing() {
+        let summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "cb-uuid".to_owned(),
+                address: None,
+                name: Some("GotWay_002441".to_owned()),
+                rssi: Some(rssi(-67)),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )]
+                .into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: vec![ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
+                }]
+                .into(),
+            }]
+            .into(),
+        };
+        let capture = SessionCapture {
+            records: vec![
+                SessionCaptureRecord::Link {
+                    monotonic_ms: MonotonicMs::new(0),
+                    max_write_len: Some(cutout_btle::NegotiatedWriteLimit::from_bytes(23)),
+                },
+                SessionCaptureRecord::Notification {
+                    monotonic_ms: MonotonicMs::new(7),
+                    characteristic: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::from_static(
+                        b"GW1621003",
+                    )),
+                },
+            ],
+            report: SessionBridgeReport::default(),
+        };
+
+        let bytes = encode_session_capture_pevcap(
+            &capture,
+            &summary,
+            PevcapFormat::Binary,
+            wc(42),
+            selected_falcon_session_profile(),
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::BegodeGotway),
+                model: Some(VerifiedValue {
+                    value: "Begode Falcon".to_owned(),
+                    verification: VerificationStatus::Inferred,
+                }),
+                firmware: None,
+            }),
+            &[
+                "capture_label=powered_on_stationary",
+                "capture_privacy=private",
+            ],
+        )
+        .expect("falcon capture encodes");
+        let decoded =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
+
+        assert_eq!(
+            decoded.header.resolver_evidence.as_slice(),
+            &[
+                "selected_session_key=begode-falcon-read-only".to_owned(),
+                "resolved_protocol_family=BegodeGotway".to_owned(),
+                "resolved_model=Begode Falcon".to_owned(),
+            ]
+        );
+        assert_eq!(
+            decoded.header.resolver_warnings.as_slice(),
+            &["missing_falcon_battery_voltage_evidence".to_owned()]
+        );
     }
 
     #[test]

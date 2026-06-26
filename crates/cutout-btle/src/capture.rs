@@ -327,6 +327,12 @@ pub struct PevcapSessionMetadata<'a> {
     /// Resolved identity used while producing the capture, when known.
     pub resolved_identity: Option<cutout_core::PevcapResolvedIdentity>,
 
+    /// Resolver evidence recorded while producing the capture.
+    pub resolver_evidence: &'a [&'a str],
+
+    /// Resolver warnings recorded while producing the capture.
+    pub resolver_warnings: &'a [&'a str],
+
     /// Human annotations attached to the capture.
     pub annotations: &'a [&'a str],
 }
@@ -418,7 +424,8 @@ impl SessionCapture {
             metadata.library_version,
             metadata.registry_hash,
             metadata.annotations,
-        )?;
+        )?
+        .with_resolver_context(metadata.resolver_evidence, metadata.resolver_warnings)?;
         let records = self
             .records
             .iter()

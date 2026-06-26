@@ -775,6 +775,8 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
                     }),
                     firmware: None,
                 }),
+                resolver_evidence: &["selected_session_key=NOSFET Aero"],
+                resolver_warnings: &[],
                 annotations: &["live aero"],
             },
         )
@@ -895,6 +897,8 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
                 registry_hash: [0; 32],
                 selected_session_key: None,
                 resolved_identity: None,
+                resolver_evidence: &[],
+                resolver_warnings: &[],
                 annotations: &[],
             },
         )
