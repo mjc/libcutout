@@ -4287,6 +4287,29 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_replay_falcon_riding_capture_parses_all_events() {
+        let capture = PevcapCapture::decode(
+            include_str!("../fixtures/pevcap/falcon-riding-60s.jsonl").as_bytes(),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("falcon riding capture should decode");
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("falcon riding capture should auto-select");
+        let report =
+            replay_pevcap_capture(&capture, profile).expect("falcon riding capture should replay");
+
+        assert_eq!(profile, selected_falcon_session_profile());
+        assert_eq!(report.replay_records.get(), 1153);
+        assert_eq!(report.outputs.get(), 2687);
+        assert_eq!(report.telemetry.get(), 767);
+        assert_eq!(report.read_only_responses.get(), 766);
+        assert_eq!(report.diagnostics.get(), 0);
+        assert!(report.diagnostic_errors.is_empty());
+        assert!(report.chunk_one_byte_matches);
+        assert!(report.chunk_arbitrary_matches);
+    }
+
+    #[test]
     fn pevcap_replay_lifted_wheel_exposes_typed_aero_bms_metadata_currents() {
         let capture = PevcapCapture::decode(
             include_str!(
