@@ -1185,12 +1185,14 @@ fn encode_hex(bytes: &[u8]) -> String {
 
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let seconds = args.seconds();
-    let profile = selected_session_profile(args.profile());
+    let requested_profile = args.profile();
     let commands = read_probe_commands(args.probes());
     let diagnostics_jsonl = args.diagnostics_jsonl();
     let read_only_jsonl = args.read_only_jsonl();
     let connection =
         connect_and_discover(&args.into_target(), ScanWindow::from_secs(seconds)).await?;
+    let resolution =
+        selected_session_resolution_for_summary(requested_profile, &connection.summary)?;
 
     info!("{}", connection.summary);
     if let Some(endpoints) = connection.summary.select_session_endpoints() {
@@ -1198,12 +1200,13 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
         mode.run(
             &connection,
             endpoints,
-            profile,
+            resolution.selected_session,
             SessionRunOptions {
                 commands: &commands,
                 window: NotificationWindow::from_secs(seconds),
                 diagnostics_jsonl,
                 read_only_jsonl,
+                resolved_identity: resolution.resolved_identity,
             },
         )
         .await?;
@@ -1236,13 +1239,14 @@ fn capture_output(
 
 async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Result<()> {
     let seconds = args.target.seconds();
-    let profile = selected_session_profile(args.target.profile());
-    let registration = profile.session_registration()?;
+    let requested_profile = args.target.profile();
+    let target = args.target.clone().into_target();
     let commands = read_probe_commands(args.target.probes());
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
     let read_only_jsonl = args.target.read_only_jsonl();
-    let mut host =
-        BtleplugReconnectHost::new(args.target.into_target(), ScanWindow::from_secs(seconds));
+    let mut host = BtleplugReconnectHost::new(target, ScanWindow::from_secs(seconds));
+    let resolution = selected_session_resolution_for_target(requested_profile, host.target())?;
+    let registration = resolution.selected_session.session_registration()?;
     let mut session = registration.construct();
     let reconnecting_capture = capture_reconnecting_session_with_commands(
         &mut host,
@@ -1261,13 +1265,18 @@ async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Resul
             .map(|attempt| &attempt.summary),
     )
     .ok_or(BtleError::NoPeripheralMatched)?;
+    let summary_resolution = selected_session_resolution_for_summary(requested_profile, &summary)?;
+    let resolved_identity = resolution
+        .resolved_identity
+        .or(summary_resolution.resolved_identity);
     write_or_print_capture(
         reconnecting_capture.capture,
         &summary,
         &output,
-        profile,
+        resolution.selected_session,
         diagnostics_jsonl,
         read_only_jsonl,
+        resolved_identity,
     )?;
     print_reconnect_attempt_diagnostics_jsonl(&reconnecting_capture.attempts, diagnostics_jsonl)?;
     Ok(())
@@ -1342,12 +1351,13 @@ enum CaptureOutput {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct SessionRunOptions<'a> {
     commands: &'a [DeviceCommand],
     window: NotificationWindow,
     diagnostics_jsonl: bool,
     read_only_jsonl: bool,
+    resolved_identity: Option<PevcapResolvedIdentity>,
 }
 
 impl SessionMode {
@@ -1415,6 +1425,7 @@ impl SessionMode {
                     binding.profile,
                     options.diagnostics_jsonl,
                     options.read_only_jsonl,
+                    options.resolved_identity,
                 )?;
             }
         }
@@ -1456,17 +1467,6 @@ impl SelectedSessionProfile {
         session_registration_by_key(self.session_key())
     }
 
-    fn catalog_entry(self) -> Result<&'static cutout_core::ModelCatalogEntry> {
-        ModelCatalog::new(&MODEL_CATALOG)
-            .find_session(self.session_key())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "selected session has no catalog entry: {}",
-                    self.session_key().as_str()
-                )
-            })
-    }
-
     fn is_falcon(self) -> bool {
         self.0 == BEGODE_FALCON_SESSION_KEY
     }
@@ -1498,6 +1498,79 @@ const fn selected_session_profile(profile: SessionProfile) -> SelectedSessionPro
             SelectedSessionProfile(NOSFET_AERO_SESSION_KEY)
         }
         SessionProfile::Falcon => SelectedSessionProfile(BEGODE_FALCON_SESSION_KEY),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SessionResolution {
+    selected_session: SelectedSessionProfile,
+    resolved_identity: Option<PevcapResolvedIdentity>,
+    source: SessionResolutionSource,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SessionResolutionSource {
+    Explicit(SessionProfile),
+    AdvertisedName(String),
+    Fallback,
+}
+
+fn selected_session_resolution_for_summary(
+    profile: SessionProfile,
+    summary: &cutout_btle::ConnectionSummary,
+) -> Result<SessionResolution> {
+    match profile {
+        SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
+            selected_session: selected_session_profile(profile),
+            resolved_identity: pevcap_identity_for_profile(profile),
+            source: SessionResolutionSource::Explicit(profile),
+        }),
+        SessionProfile::Auto => auto_session_resolution(summary.observation.name.as_deref()),
+    }
+}
+
+fn selected_session_resolution_for_target(
+    profile: SessionProfile,
+    target: &ConnectionTarget,
+) -> Result<SessionResolution> {
+    match profile {
+        SessionProfile::Aero | SessionProfile::Falcon => Ok(SessionResolution {
+            selected_session: selected_session_profile(profile),
+            resolved_identity: pevcap_identity_for_profile(profile),
+            source: SessionResolutionSource::Explicit(profile),
+        }),
+        SessionProfile::Auto => auto_session_resolution(target.name_contains.as_deref()),
+    }
+}
+
+fn auto_session_resolution(name: Option<&str>) -> Result<SessionResolution> {
+    let Some(name) = name else {
+        return Ok(SessionResolution {
+            selected_session: selected_aero_session_profile(),
+            resolved_identity: None,
+            source: SessionResolutionSource::Fallback,
+        });
+    };
+
+    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
+        CatalogModelResolution::Matched(entry) => {
+            let selected_session = selected_session_profile_for_catalog_entry(entry)?;
+            Ok(SessionResolution {
+                selected_session,
+                resolved_identity: Some(pevcap_identity_for_catalog_entry(entry)),
+                source: SessionResolutionSource::AdvertisedName(name.to_owned()),
+            })
+        }
+        CatalogModelResolution::NoMatch => Ok(SessionResolution {
+            selected_session: selected_aero_session_profile(),
+            resolved_identity: None,
+            source: SessionResolutionSource::Fallback,
+        }),
+        CatalogModelResolution::Ambiguous => {
+            bail!(
+                "auto session resolution found ambiguous catalog entries for advertised name {name}"
+            )
+        }
     }
 }
 
@@ -1566,21 +1639,38 @@ fn selected_session_profile_for_catalog_entry(
     })
 }
 
-fn pevcap_identity_for_profile(profile: SelectedSessionProfile) -> PevcapResolvedIdentity {
-    match profile.catalog_entry() {
-        Ok(entry) => PevcapResolvedIdentity {
-            protocol_family: Some(entry.registry.protocol_family),
+fn pevcap_identity_for_profile(profile: SessionProfile) -> Option<PevcapResolvedIdentity> {
+    match profile {
+        SessionProfile::Auto => None,
+        SessionProfile::Aero => Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
             model: Some(VerifiedValue {
-                value: entry.registry.model.to_owned(),
+                value: "NOSFET Aero".to_owned(),
                 verification: VerificationStatus::Inferred,
             }),
             firmware: None,
-        },
-        Err(_) => PevcapResolvedIdentity {
-            protocol_family: None,
-            model: None,
+        }),
+        SessionProfile::Falcon => Some(PevcapResolvedIdentity {
+            protocol_family: Some(ProtocolFamily::BegodeGotway),
+            model: Some(VerifiedValue {
+                value: "Begode Falcon".to_owned(),
+                verification: VerificationStatus::Inferred,
+            }),
             firmware: None,
-        },
+        }),
+    }
+}
+
+fn pevcap_identity_for_catalog_entry(
+    entry: &cutout_core::ModelCatalogEntry,
+) -> PevcapResolvedIdentity {
+    PevcapResolvedIdentity {
+        protocol_family: Some(entry.registry.protocol_family),
+        model: Some(VerifiedValue {
+            value: entry.registry.model.to_owned(),
+            verification: VerificationStatus::Inferred,
+        }),
+        firmware: None,
     }
 }
 
@@ -1613,6 +1703,7 @@ fn write_or_print_capture(
     profile: SelectedSessionProfile,
     diagnostics_jsonl: bool,
     read_only_jsonl: bool,
+    resolved_identity: Option<PevcapResolvedIdentity>,
 ) -> Result<()> {
     match output {
         CaptureOutput::Text => {
@@ -1632,6 +1723,7 @@ fn write_or_print_capture(
                 *format,
                 capture_wall_clock_unix_ms(),
                 profile,
+                resolved_identity,
                 annotation_refs.as_slice(),
             )?;
             fs::write(path, bytes)?;
@@ -1650,6 +1742,7 @@ fn encode_session_capture_pevcap(
     format: PevcapFormat,
     wall_clock_start_unix_ms: WallClockUnixTimestamp,
     profile: SelectedSessionProfile,
+    resolved_identity: Option<PevcapResolvedIdentity>,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
@@ -1662,7 +1755,8 @@ fn encode_session_capture_pevcap(
             platform_id: std::env::consts::OS,
             library_version: env!("CARGO_PKG_VERSION"),
             registry_hash: cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
-            resolved_identity: Some(pevcap_identity_for_profile(profile)),
+            selected_session_key: Some(profile.session_key().as_str()),
+            resolved_identity,
             annotations: capture_annotations.as_slice(),
         },
     )?;
@@ -1714,6 +1808,7 @@ fn encode_raw_capture_pevcap(
         write_limit,
         &advertised_services,
         &gatt_fingerprints,
+        None,
         None,
         env!("CARGO_PKG_VERSION"),
         cutout_core::registry_entries_hash(&[&BEGODE_FALCON_REGISTRY_ENTRY]),
@@ -2413,6 +2508,7 @@ mod tests {
             Some(write_len(182)),
             &[service],
             &[],
+            None,
             Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::BegodeGotway),
                 model: Some(VerifiedValue {
@@ -2468,6 +2564,7 @@ mod tests {
             Some(write_len(182)),
             &[BEGODE_DATA_CHANNEL],
             &[],
+            None,
             Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::BegodeGotway),
                 model: Some(VerifiedValue {
@@ -2492,6 +2589,7 @@ mod tests {
             Some(write_len(23)),
             &[VETERAN_DATA_CHANNEL],
             &[],
+            None,
             None,
             "0.1.0",
             [0x24; 32],
@@ -2523,6 +2621,7 @@ mod tests {
             Some(write_len(23)),
             &[VETERAN_DATA_CHANNEL],
             &[],
+            None,
             None,
             "0.1.0",
             [0x25; 32],
@@ -2630,6 +2729,11 @@ mod tests {
             PevcapFormat::Binary,
             wc(42),
             selected_aero_session_profile(),
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+                model: None,
+                firmware: None,
+            }),
             &["capture_label=charging", "capture_privacy=private"],
         )
         .expect("capture encodes");
@@ -4019,6 +4123,45 @@ mod tests {
         );
         assert_eq!(aero, selected_aero_session_profile());
         assert_eq!(aero.session_key(), NOSFET_AERO_SESSION_KEY);
+    }
+
+    #[test]
+    fn selected_session_profile_for_summary_uses_advertised_name_hints() {
+        let falcon_summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "GotWay_002441".to_owned(),
+                address: None,
+                name: Some("GotWay_002441".to_owned()),
+                rssi: None,
+                advertised_services: Vec::new().into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        };
+        let aero_summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "NF2557".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: None,
+                advertised_services: Vec::new().into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        };
+
+        assert_eq!(
+            selected_session_resolution_for_summary(SessionProfile::Auto, &falcon_summary)
+                .expect("Falcon summary resolves")
+                .selected_session,
+            selected_falcon_session_profile()
+        );
+        assert_eq!(
+            selected_session_resolution_for_summary(SessionProfile::Auto, &aero_summary)
+                .expect("Aero summary resolves")
+                .selected_session,
+            selected_aero_session_profile()
+        );
     }
 
     #[test]

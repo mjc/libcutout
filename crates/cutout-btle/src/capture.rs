@@ -321,6 +321,9 @@ pub struct PevcapSessionMetadata<'a> {
     /// Registry hash used while producing the capture.
     pub registry_hash: [u8; 32],
 
+    /// Selected session key used while producing the capture.
+    pub selected_session_key: Option<&'a str>,
+
     /// Resolved identity used while producing the capture, when known.
     pub resolved_identity: Option<cutout_core::PevcapResolvedIdentity>,
 
@@ -410,6 +413,7 @@ impl SessionCapture {
             write_limit.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
             &advertised_services,
             &gatt_fingerprints,
+            metadata.selected_session_key,
             metadata.resolved_identity,
             metadata.library_version,
             metadata.registry_hash,

@@ -300,6 +300,9 @@ pub struct PevcapHeader {
     /// GATT fingerprints observed during discovery.
     pub gatt_fingerprints: ArrayVec<GattFingerprint, PEVCAP_MAX_GATT_FINGERPRINTS>,
 
+    /// Session key selected to talk to the device, even when identity remains unresolved.
+    pub selected_session_key: Option<String>,
+
     /// Resolved device identity, when known.
     pub resolved_identity: Option<PevcapResolvedIdentity>,
 
@@ -328,6 +331,7 @@ impl PevcapHeader {
         write_limit: Option<TransportWriteLimit>,
         advertised_services: &[GattChannel],
         gatt_fingerprints: &[GattFingerprint],
+        selected_session_key: Option<&str>,
         resolved_identity: Option<PevcapResolvedIdentity>,
         library_version: impl Into<String>,
         registry_hash: [u8; 32],
@@ -347,6 +351,7 @@ impl PevcapHeader {
                 PEVCAP_MAX_GATT_FINGERPRINTS,
                 PevcapHeaderField::GattFingerprints,
             )?,
+            selected_session_key: selected_session_key.map(str::to_owned),
             resolved_identity,
             library_version: library_version.into(),
             registry_hash,
@@ -1313,6 +1318,7 @@ struct PevcapHeaderJson {
     write_limit: Option<u16>,
     advertised_services: Vec<[u8; 16]>,
     gatt_fingerprints: Vec<GattFingerprintJson>,
+    selected_session_key: Option<String>,
     resolved_identity: Option<PevcapResolvedIdentityJson>,
     library_version: String,
     registry_hash: [u8; 32],
@@ -1336,6 +1342,7 @@ impl From<&PevcapHeader> for PevcapHeaderJson {
                 .iter()
                 .map(GattFingerprintJson::from)
                 .collect(),
+            selected_session_key: header.selected_session_key.clone(),
             resolved_identity: header
                 .resolved_identity
                 .as_ref()
@@ -1372,6 +1379,7 @@ impl PevcapHeaderJson {
             self.write_limit.map(TransportWriteLimit::from_bytes),
             &advertised_services,
             &gatt_fingerprints,
+            self.selected_session_key.as_deref(),
             self.resolved_identity
                 .map(PevcapResolvedIdentityJson::into_identity),
             self.library_version,
@@ -1898,6 +1906,7 @@ mod tests {
             &[],
             &[],
             None,
+            None,
             "0.1.0",
             [0; 32],
             &[label.as_str()],
@@ -1945,6 +1954,7 @@ mod tests {
             &[],
             &[],
             None,
+            None,
             "0.1.0",
             [0; 32],
             &[
@@ -1977,6 +1987,7 @@ mod tests {
             Some(write_len(185)),
             &[service],
             &[fingerprint],
+            None,
             Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
                 model: Some(VerifiedValue {
@@ -2050,6 +2061,7 @@ mod tests {
             Some(write_len(185)),
             &[service],
             &gatt,
+            None,
             Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
                 model: Some(VerifiedValue {
@@ -2076,6 +2088,7 @@ mod tests {
             None,
             &[],
             &[],
+            None,
             None,
             "0.1.0",
             [0x00; 32],
@@ -2150,6 +2163,7 @@ mod tests {
             &[],
             &[],
             None,
+            None,
             "0.1.0",
             [0x11; 32],
             &[],
@@ -2179,6 +2193,7 @@ mod tests {
             Some(write_len(23)),
             &[service],
             &[],
+            None,
             None,
             "0.1.0",
             [0x11; 32],
@@ -2245,6 +2260,7 @@ mod tests {
             &[service],
             &[],
             None,
+            None,
             "0.1.0",
             [0x11; 32],
             &[],
@@ -2300,9 +2316,19 @@ mod tests {
     #[test]
     fn pevcap_capture_without_inbound_records_has_only_link_replay_input() {
         let characteristic = GattChannel::from_bytes([0x55; 16]);
-        let header =
-            PevcapHeader::new(wc(1), "darwin", None, &[], &[], None, "0.1.0", [0; 32], &[])
-                .expect("header should validate");
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
         let capture = PevcapCapture::new(
             header,
             vec![PevcapRecord::outbound_write(
@@ -2333,6 +2359,7 @@ mod tests {
             Some(write_len(128)),
             &[],
             &[],
+            None,
             None,
             "0.1.0",
             [0; 32],
@@ -2371,6 +2398,7 @@ mod tests {
             Some(write_len(128)),
             &[],
             &[],
+            None,
             None,
             "0.1.0",
             [0; 32],
@@ -2412,11 +2440,12 @@ mod tests {
         ) {
             let characteristic = GattChannel::from_bytes([0x77; 16]);
             let header = PevcapHeader::new(
-            wc(1),
+                wc(1),
                 "darwin",
                 Some(write_len(128)),
                 &[],
                 &[],
+                None,
                 None,
                 "0.1.0",
                 [0; 32],
@@ -2465,6 +2494,7 @@ mod tests {
                     .with_notify(),
                 verification: VerificationStatus::HardwareVerified,
             }],
+            None,
             Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::BegodeGotway),
                 model: Some(VerifiedValue {
@@ -2514,6 +2544,7 @@ mod tests {
             Some(write_len(23)),
             &[],
             &[],
+            None,
             None,
             "0.1.0",
             [0x42; 32],
@@ -2708,6 +2739,7 @@ mod tests {
             write_limit: None,
             advertised_services: Vec::new(),
             gatt_fingerprints: Vec::new(),
+            selected_session_key: None,
             resolved_identity: None,
             library_version: "0.1.0".to_owned(),
             registry_hash: [0x00; 32],
@@ -2786,6 +2818,7 @@ mod tests {
                     .with_notify(),
                 verification: VerificationStatus::HardwareVerified,
             }],
+            None,
             Some(PevcapResolvedIdentity {
                 protocol_family: Some(ProtocolFamily::BegodeGotway),
                 model: Some(VerifiedValue {

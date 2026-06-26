@@ -766,6 +766,7 @@ fn session_capture_converts_to_pevcap_with_summary_metadata() {
                 platform_id: "darwin",
                 library_version: "0.1.0",
                 registry_hash: [0x42; 32],
+                selected_session_key: Some("NOSFET Aero"),
                 resolved_identity: Some(PevcapResolvedIdentity {
                     protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
                     model: Some(VerifiedValue {
@@ -892,6 +893,7 @@ fn session_capture_pevcap_conversion_preserves_write_response_mode() {
                 platform_id: "test",
                 library_version: "0.1.0",
                 registry_hash: [0; 32],
+                selected_session_key: None,
                 resolved_identity: None,
                 annotations: &[],
             },

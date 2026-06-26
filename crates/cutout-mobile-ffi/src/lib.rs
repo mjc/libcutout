@@ -791,6 +791,7 @@ impl MobilePevcapCaptureBuilder {
             self.write_limit,
             &advertised_services,
             &gatt_fingerprints,
+            None,
             resolved_identity,
             env!("CARGO_PKG_VERSION"),
             [0; 32],
