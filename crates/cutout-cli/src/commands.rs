@@ -13,9 +13,9 @@ use cutout_btle::{
     ConnectionTarget, DiagnosticEventCount, DisconnectCount, MonotonicMs, NotificationCount,
     NotificationPayloadTotal, NotificationWindow, PevcapSessionMetadata, ProtocolWriteCount,
     RawNotificationRecord, ReadOnlyResponseCount, ReconnectAttemptReport, ScanWindow,
-    SessionBridgeEvent, SessionBridgeReport, SessionCapture, SessionEndpoints, SessionPeripheral,
-    SubscribeCount, TelemetryEventCount, TransportWriteCount, WriteProvenance,
-    capture_raw_notifications, capture_reconnecting_session_with_commands,
+    SessionBridgeEvent, SessionBridgeReport, SessionCapture, SessionCaptureRecord,
+    SessionEndpoints, SessionPeripheral, SubscribeCount, TelemetryEventCount, TransportWriteCount,
+    WriteProvenance, capture_raw_notifications, capture_reconnecting_session_with_commands,
     capture_session_with_commands, connect_and_discover, drive_session,
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
@@ -33,13 +33,14 @@ use cutout_core::{
 use cutout_protocols::VETERAN_DATA_CHANNEL;
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BegodeBmsSummary,
-    BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFrame, BegodePackEvidenceConsistency,
-    BegodePackLayoutEvidence, BegodePackLayoutSelection, BegodeVoltageEvidence,
-    BegodeVoltageProfileSelection, MODEL_CATALOG, NOSFET_AERO_SESSION_KEY,
-    RegisteredReadOnlySession, begode_falcon_read_only_session_with_voltage_profile,
-    find_session_registration, select_begode_pack_capacity_from_annotations,
-    select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
-    select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
+    BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFrameParseResult,
+    BegodeFrameReassembler, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
+    BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
+    NOSFET_AERO_SESSION_KEY, RegisteredReadOnlySession,
+    begode_falcon_read_only_session_with_voltage_profile, find_session_registration,
+    select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
+    select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
+    validate_begode_pack_evidence,
 };
 use tracing::{debug, info};
 
@@ -319,15 +320,13 @@ fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySe
 }
 
 fn select_falcon_replay_voltage_profile(capture: &PevcapCapture) -> BegodeVoltageProfileSelection {
+    let bms_evidence = falcon_replay_bms_voltage_evidence(capture);
     match select_begode_pack_voltage_profile_from_annotations(capture.header.annotations.iter()) {
         BegodeVoltageProfileSelection::Conflicting => BegodeVoltageProfileSelection::Conflicting,
         BegodeVoltageProfileSelection::Selected(profile) => select_begode_pack_voltage_profile(
-            core::iter::once(profile_evidence(profile))
-                .chain(falcon_replay_bms_voltage_evidence(capture)),
+            core::iter::once(profile_evidence(profile)).chain(bms_evidence),
         ),
-        BegodeVoltageProfileSelection::Missing => {
-            select_begode_pack_voltage_profile(falcon_replay_bms_voltage_evidence(capture))
-        }
+        BegodeVoltageProfileSelection::Missing => select_begode_pack_voltage_profile(bms_evidence),
     }
 }
 
@@ -342,21 +341,57 @@ fn profile_evidence(profile: cutout_protocols::BegodePackVoltageProfile) -> Bego
     }
 }
 
-fn falcon_replay_bms_voltage_evidence(
-    capture: &PevcapCapture,
-) -> impl Iterator<Item = BegodeVoltageEvidence> + '_ {
-    capture.records.iter().filter_map(|record| {
-        if record.direction != PevcapDirection::Inbound
-            || record.characteristic != BEGODE_DATA_CHANNEL
+fn falcon_replay_bms_voltage_evidence(capture: &PevcapCapture) -> Vec<BegodeVoltageEvidence> {
+    falcon_bms_voltage_evidence_from_records(capture.records.iter().filter_map(|record| {
+        if record.direction == PevcapDirection::Inbound
+            && record.characteristic == BEGODE_DATA_CHANNEL
         {
-            return None;
+            Some((record.bytes.as_ref(), record.monotonic_ms))
+        } else {
+            None
         }
-        let frame = BegodeFrame::try_from_slice(record.bytes.as_ref()).ok()?;
-        let summary = BegodeBmsSummary::decode(&frame).ok()?;
-        Some(BegodeVoltageEvidence::ObservedPackVoltage(
-            summary.pack_voltage,
-        ))
-    })
+    }))
+}
+
+fn falcon_capture_bms_voltage_evidence(capture: &SessionCapture) -> Vec<BegodeVoltageEvidence> {
+    falcon_bms_voltage_evidence_from_records(capture.records.iter().filter_map(|record| {
+        let SessionCaptureRecord::Notification {
+            monotonic_ms,
+            characteristic,
+            bytes,
+            ..
+        } = record
+        else {
+            return None;
+        };
+        if GattChannel::from_uuid(*characteristic) == BEGODE_DATA_CHANNEL {
+            Some((bytes.as_raw_bytes(), monotonic_ms.into_core()))
+        } else {
+            None
+        }
+    }))
+}
+
+fn falcon_bms_voltage_evidence_from_records<'a>(
+    records: impl IntoIterator<Item = (&'a [u8], MonotonicTimestamp)>,
+) -> Vec<BegodeVoltageEvidence> {
+    let mut reassembler = BegodeFrameReassembler::default();
+    let mut evidence = Vec::new();
+    for (bytes, monotonic_ms) in records {
+        for byte in bytes {
+            let Ok(BegodeFrameParseResult::Complete(frame)) =
+                reassembler.feed_byte_result_at(*byte, monotonic_ms)
+            else {
+                continue;
+            };
+            if let Ok(summary) = BegodeBmsSummary::decode(&frame) {
+                evidence.push(BegodeVoltageEvidence::ObservedPackVoltage(
+                    summary.pack_voltage,
+                ));
+            }
+        }
+    }
+    evidence
 }
 
 fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapReplayReport
@@ -888,7 +923,7 @@ where
             });
             tokio::pin!(live_updates);
             tokio::select! {
-                _ = &mut live_updates => {
+                () = &mut live_updates => {
                     info!("dashboard live update task finished");
                 }
                 _ = shutdown_rx => {
@@ -1741,6 +1776,79 @@ fn write_or_print_capture(
     }
 }
 
+fn append_falcon_capture_resolver_context(
+    capture: &SessionCapture,
+    annotations: &[&str],
+    resolver_evidence: &mut Vec<String>,
+    resolver_warnings: &mut Vec<String>,
+) {
+    let capacity = select_begode_pack_capacity_from_annotations(annotations.iter().copied());
+    let layout = select_begode_pack_layout_from_annotations(annotations.iter().copied());
+    let bms_voltage_evidence = falcon_capture_bms_voltage_evidence(capture);
+    if let Some(voltage) = bms_voltage_evidence
+        .iter()
+        .find_map(|evidence| match evidence {
+            BegodeVoltageEvidence::ObservedPackVoltage(voltage) => Some(*voltage),
+            BegodeVoltageEvidence::VoltageClass84V | BegodeVoltageEvidence::VoltageClass100V => {
+                None
+            }
+        })
+    {
+        resolver_evidence.push(format!("bms_voltage={}", voltage.get()));
+    }
+    let voltage_profile =
+        match select_begode_pack_voltage_profile_from_annotations(annotations.iter().copied()) {
+            BegodeVoltageProfileSelection::Conflicting => {
+                BegodeVoltageProfileSelection::Conflicting
+            }
+            BegodeVoltageProfileSelection::Selected(profile) => select_begode_pack_voltage_profile(
+                core::iter::once(profile_evidence(profile)).chain(bms_voltage_evidence),
+            ),
+            BegodeVoltageProfileSelection::Missing => {
+                select_begode_pack_voltage_profile(bms_voltage_evidence)
+            }
+        };
+    match voltage_profile {
+        BegodeVoltageProfileSelection::Missing => {
+            resolver_warnings.push("missing_falcon_battery_voltage_evidence".to_owned());
+        }
+        BegodeVoltageProfileSelection::Conflicting => {
+            resolver_warnings.push("conflicting_falcon_battery_voltage_evidence".to_owned());
+        }
+        BegodeVoltageProfileSelection::Selected(_) => {}
+    }
+
+    match capacity {
+        BegodeCapacitySelection::Missing => {
+            resolver_warnings.push("missing_falcon_battery_capacity_evidence".to_owned());
+        }
+        BegodeCapacitySelection::Conflicting => {
+            resolver_warnings.push("conflicting_falcon_battery_capacity_evidence".to_owned());
+        }
+        BegodeCapacitySelection::Selected(_) => {}
+    }
+
+    match layout {
+        BegodePackLayoutSelection::Missing => {
+            resolver_warnings.push("missing_falcon_battery_layout_evidence".to_owned());
+        }
+        BegodePackLayoutSelection::Conflicting => {
+            resolver_warnings.push("conflicting_falcon_battery_layout_evidence".to_owned());
+        }
+        BegodePackLayoutSelection::Selected(_) => {}
+    }
+
+    match validate_begode_pack_evidence(voltage_profile, capacity, layout) {
+        BegodePackEvidenceConsistency::Inconsistent => {
+            resolver_warnings.push("falcon_battery_evidence_inconsistent".to_owned());
+        }
+        BegodePackEvidenceConsistency::Incomplete => {
+            resolver_warnings.push("falcon_battery_evidence_incomplete".to_owned());
+        }
+        BegodePackEvidenceConsistency::Consistent => {}
+    }
+}
+
 fn encode_session_capture_pevcap(
     capture: &SessionCapture,
     summary: &cutout_btle::ConnectionSummary,
@@ -1771,15 +1879,12 @@ fn encode_session_capture_pevcap(
     }
     let mut resolver_warnings = Vec::new();
     if profile.is_falcon() {
-        match select_begode_pack_voltage_profile_from_annotations(annotations.iter().copied()) {
-            BegodeVoltageProfileSelection::Missing => {
-                resolver_warnings.push("missing_falcon_battery_voltage_evidence".to_owned());
-            }
-            BegodeVoltageProfileSelection::Conflicting => {
-                resolver_warnings.push("conflicting_falcon_battery_voltage_evidence".to_owned());
-            }
-            BegodeVoltageProfileSelection::Selected(_) => {}
-        }
+        append_falcon_capture_resolver_context(
+            capture,
+            annotations,
+            &mut resolver_evidence,
+            &mut resolver_warnings,
+        );
     }
     let resolver_evidence_refs = resolver_evidence
         .iter()
@@ -2625,6 +2730,77 @@ mod tests {
         PevcapCapture::new(header, records)
     }
 
+    fn split_falcon_bms_summary_pevcap_records() -> Vec<PevcapRecord> {
+        const BMS_SUMMARY: [u8; 24] =
+            hex_literal::hex!("55aa2710000003b6ff9c0019001a0190000001035a5a5a5a");
+        vec![
+            PevcapRecord::inbound_notification(
+                ms(41),
+                BEGODE_DATA_CHANNEL,
+                BEGODE_DATA_CHANNEL,
+                BMS_SUMMARY[..20].to_vec(),
+            ),
+            PevcapRecord::inbound_notification(
+                ms(42),
+                BEGODE_DATA_CHANNEL,
+                BEGODE_DATA_CHANNEL,
+                BMS_SUMMARY[20..].to_vec(),
+            ),
+        ]
+    }
+
+    fn split_falcon_bms_summary_session_records() -> Vec<SessionCaptureRecord> {
+        const BMS_SUMMARY: [u8; 24] =
+            hex_literal::hex!("55aa2710000003b6ff9c0019001a0190000001035a5a5a5a");
+        let service = Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb);
+        let characteristic = Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb);
+        vec![
+            SessionCaptureRecord::Notification {
+                monotonic_ms: MonotonicMs::new(41),
+                characteristic,
+                service,
+                bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::copy_from_slice(
+                    &BMS_SUMMARY[..20],
+                )),
+            },
+            SessionCaptureRecord::Notification {
+                monotonic_ms: MonotonicMs::new(42),
+                characteristic,
+                service,
+                bytes: CapturedBtlePacket::from_raw_bytes(bytes::Bytes::copy_from_slice(
+                    &BMS_SUMMARY[20..],
+                )),
+            },
+        ]
+    }
+
+    fn falcon_connection_summary() -> ConnectionSummary {
+        ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "falcon-uuid".to_owned(),
+                address: None,
+                name: Some("GotWay_002441".to_owned()),
+                rssi: Some(rssi(-67)),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )]
+                .into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: vec![ServiceSummary {
+                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                primary: true,
+                characteristics: vec![cutout_btle::CharacteristicSummary {
+                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
+                }]
+                .into(),
+            }]
+            .into(),
+        }
+    }
+
     fn sample_aero_replay_capture() -> PevcapCapture {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
@@ -2826,30 +3002,7 @@ mod tests {
 
     #[test]
     fn capture_pevcap_records_falcon_resolver_warning_when_voltage_evidence_is_missing() {
-        let summary = ConnectionSummary {
-            observation: PeripheralObservation {
-                identifier: "cb-uuid".to_owned(),
-                address: None,
-                name: Some("GotWay_002441".to_owned()),
-                rssi: Some(rssi(-67)),
-                advertised_services: vec![Uuid::from_u128(
-                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
-                )]
-                .into(),
-                manufacturer_data: Vec::new().into(),
-            },
-            services: vec![ServiceSummary {
-                uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                primary: true,
-                characteristics: vec![cutout_btle::CharacteristicSummary {
-                    uuid: Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
-                    service_uuid: Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
-                    properties: CharPropFlags::WRITE_WITHOUT_RESPONSE | CharPropFlags::NOTIFY,
-                }]
-                .into(),
-            }]
-            .into(),
-        };
+        let summary = falcon_connection_summary();
         let capture = SessionCapture {
             records: vec![
                 SessionCaptureRecord::Link {
@@ -2901,7 +3054,106 @@ mod tests {
         );
         assert_eq!(
             decoded.header.resolver_warnings.as_slice(),
-            &["missing_falcon_battery_voltage_evidence".to_owned()]
+            &[
+                "missing_falcon_battery_voltage_evidence".to_owned(),
+                "missing_falcon_battery_capacity_evidence".to_owned(),
+                "missing_falcon_battery_layout_evidence".to_owned(),
+                "falcon_battery_evidence_incomplete".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_pevcap_records_falcon_resolver_warnings_include_capacity_and_layout_status() {
+        let summary = falcon_connection_summary();
+        let capture = SessionCapture {
+            records: vec![],
+            report: SessionBridgeReport::default(),
+        };
+
+        let bytes = encode_session_capture_pevcap(
+            &capture,
+            &summary,
+            PevcapFormat::Binary,
+            wc(42),
+            selected_falcon_session_profile(),
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::BegodeGotway),
+                model: Some(VerifiedValue {
+                    value: "Begode Falcon".to_owned(),
+                    verification: VerificationStatus::Inferred,
+                }),
+                firmware: None,
+            }),
+            &[
+                "battery=84v",
+                "nominal_capacity_mah=10000",
+                "reported_wh=900",
+            ],
+        )
+        .expect("falcon capture encodes");
+        let decoded =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
+
+        assert!(
+            decoded
+                .header
+                .resolver_warnings
+                .contains(&"missing_falcon_battery_layout_evidence".to_owned())
+        );
+        assert!(
+            decoded
+                .header
+                .resolver_warnings
+                .contains(&"falcon_battery_evidence_incomplete".to_owned())
+        );
+    }
+
+    #[test]
+    fn capture_pevcap_uses_chunked_falcon_bms_voltage_evidence() {
+        let summary = falcon_connection_summary();
+        let capture = SessionCapture {
+            records: split_falcon_bms_summary_session_records(),
+            report: SessionBridgeReport::default(),
+        };
+
+        let bytes = encode_session_capture_pevcap(
+            &capture,
+            &summary,
+            PevcapFormat::Binary,
+            wc(42),
+            selected_falcon_session_profile(),
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::BegodeGotway),
+                model: Some(VerifiedValue {
+                    value: "Begode Falcon".to_owned(),
+                    verification: VerificationStatus::Inferred,
+                }),
+                firmware: None,
+            }),
+            &["capture_label=charging"],
+        )
+        .expect("falcon capture encodes");
+        let decoded =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
+
+        assert!(
+            decoded
+                .header
+                .resolver_evidence
+                .contains(&"bms_voltage=95000".to_owned())
+        );
+        assert!(
+            !decoded
+                .header
+                .resolver_warnings
+                .contains(&"missing_falcon_battery_voltage_evidence".to_owned())
+        );
+        assert!(
+            decoded
+                .header
+                .resolver_warnings
+                .contains(&"missing_falcon_battery_capacity_evidence".to_owned())
         );
     }
 
@@ -3953,6 +4205,26 @@ mod tests {
                 .voltage
                 .map(|voltage| voltage.value.get()),
             Some(90_075)
+        );
+    }
+
+    #[test]
+    fn pevcap_replay_uses_chunked_falcon_bms_voltage_evidence() {
+        let capture = sample_falcon_replay_capture_with_records(
+            &[],
+            split_falcon_bms_summary_pevcap_records(),
+        );
+        let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
+            .expect("Falcon identity selects replay profile");
+        let report = replay_pevcap_capture(&capture, profile)
+            .expect("chunked BMS evidence selects Falcon voltage profile");
+
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .voltage
+                .map(|voltage| voltage.value.get()),
+            Some(95_000)
         );
     }
 

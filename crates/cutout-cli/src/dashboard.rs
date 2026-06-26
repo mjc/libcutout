@@ -936,6 +936,7 @@ impl DashboardState {
         state
     }
 
+    #[allow(clippy::too_many_lines)]
     fn apply_demo_seed(&mut self) {
         self.provenance = Some(DEMO_PROVENANCE.to_owned());
         self.apply_device_snapshot(
