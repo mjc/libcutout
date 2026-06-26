@@ -18,10 +18,11 @@ use cutout_btle::{
     ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CatalogModelResolution, Count,
-    Current, DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PhaseCurrent, Power,
-    ProtocolFamily, Quantity, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry,
+    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
+    CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, Count, Current,
+    DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
+    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PevcapHeader, PhaseCurrent,
+    Power, ProtocolFamily, Quantity, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry,
     SettingsReadback, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, Unit,
     Voltage,
 };
@@ -140,6 +141,7 @@ pub(crate) struct DashboardState {
     pub(crate) active_tab: DashboardTab,
     pub(crate) active_profile_dashboard: Option<ProfileSelection>,
     pub(crate) provenance: Option<String>,
+    pub(crate) capture_provenance: Option<DashboardCaptureProvenance>,
     pub(crate) device: DeviceSnapshot,
     pub(crate) scan_browser: ScanBrowser,
     pub(crate) telemetry: TelemetryWindow,
@@ -173,6 +175,155 @@ pub(crate) struct ProfileSnapshot {
     pub(crate) source: String,
     pub(crate) status: String,
     pub(crate) family: ProfileFamily,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DashboardCaptureProvenance {
+    pub(crate) capture_label: Option<CaptureSessionLabel>,
+    pub(crate) capture_privacy: Option<CapturePrivacy>,
+    pub(crate) capture_distribution: Option<CaptureDistribution>,
+    pub(crate) capture_evidence: Option<CaptureEvidence>,
+    pub(crate) platform_id: String,
+    pub(crate) advertised_service_count: usize,
+    pub(crate) gatt_fingerprint_count: usize,
+    pub(crate) selected_session_key: Option<String>,
+    pub(crate) device_model: String,
+    pub(crate) device_firmware: String,
+}
+
+impl DashboardCaptureProvenance {
+    pub(crate) fn from_pevcap_header(
+        header: &PevcapHeader,
+        device_model: &str,
+        device_firmware: &str,
+    ) -> Self {
+        Self {
+            capture_label: capture_label_from_annotations(header.annotations.as_slice()),
+            capture_privacy: capture_privacy_from_annotations(header.annotations.as_slice()),
+            capture_distribution: capture_distribution_from_annotations(
+                header.annotations.as_slice(),
+            ),
+            capture_evidence: capture_evidence_from_annotations(header.annotations.as_slice()),
+            platform_id: header.platform_id.clone(),
+            advertised_service_count: header.advertised_services.len(),
+            gatt_fingerprint_count: header.gatt_fingerprints.len(),
+            selected_session_key: header.selected_session_key.clone(),
+            device_model: device_model.to_owned(),
+            device_firmware: device_firmware.to_owned(),
+        }
+    }
+
+    fn summary_lines(&self) -> [String; 7] {
+        let label = self
+            .capture_label
+            .map_or("unknown".to_owned(), |label| label.slug().to_owned());
+        let privacy = self
+            .capture_privacy
+            .map_or("unknown".to_owned(), |privacy| privacy.slug().to_owned());
+        let evidence = self
+            .capture_evidence
+            .map_or("unknown".to_owned(), |evidence| evidence.slug().to_owned());
+        let distribution = self
+            .capture_distribution
+            .map_or("unknown".to_owned(), |distribution| {
+                distribution.slug().to_owned()
+            });
+        let session = self
+            .selected_session_key
+            .as_deref()
+            .unwrap_or("none")
+            .to_owned();
+
+        [
+            format!("capture label={label} privacy={privacy}"),
+            format!("capture evidence={evidence}"),
+            format!("capture distribution={distribution}"),
+            format!("capture session={session}"),
+            format!(
+                "inventory platform={} advertised={}",
+                self.platform_id, self.advertised_service_count
+            ),
+            format!(
+                "inventory gatt={} model={}",
+                self.gatt_fingerprint_count, self.device_model
+            ),
+            format!("inventory firmware={}", self.device_firmware),
+        ]
+    }
+}
+
+fn capture_label_from_annotations(annotations: &[String]) -> Option<CaptureSessionLabel> {
+    annotations.iter().find_map(|annotation| {
+        annotation
+            .strip_prefix("capture_label=")
+            .and_then(parse_capture_label)
+    })
+}
+
+fn capture_privacy_from_annotations(annotations: &[String]) -> Option<CapturePrivacy> {
+    annotations.iter().find_map(|annotation| {
+        annotation
+            .strip_prefix("capture_privacy=")
+            .and_then(parse_capture_privacy)
+    })
+}
+
+fn capture_distribution_from_annotations(annotations: &[String]) -> Option<CaptureDistribution> {
+    annotations.iter().find_map(|annotation| {
+        annotation
+            .strip_prefix("capture_distribution=")
+            .and_then(parse_capture_distribution)
+    })
+}
+
+fn capture_evidence_from_annotations(annotations: &[String]) -> Option<CaptureEvidence> {
+    annotations.iter().find_map(|annotation| {
+        annotation
+            .strip_prefix("capture_evidence=")
+            .and_then(parse_capture_evidence)
+    })
+}
+
+fn parse_capture_label(slug: &str) -> Option<CaptureSessionLabel> {
+    Some(match slug {
+        "powered_on_stationary" => CaptureSessionLabel::PoweredOnStationary,
+        "rolling_forward" => CaptureSessionLabel::RollingForward,
+        "rolling_backward" => CaptureSessionLabel::RollingBackward,
+        "lifted_wheel" => CaptureSessionLabel::LiftedWheel,
+        "charging" => CaptureSessionLabel::Charging,
+        "headlight_toggled" => CaptureSessionLabel::HeadlightToggled,
+        "horn" => CaptureSessionLabel::Horn,
+        "ride_mode_change" => CaptureSessionLabel::RideModeChange,
+        "alarm_change" => CaptureSessionLabel::AlarmChange,
+        "bms_screen" => CaptureSessionLabel::BmsScreen,
+        "disconnect_reconnect" => CaptureSessionLabel::DisconnectReconnect,
+        "power_cycle" => CaptureSessionLabel::PowerCycle,
+        _ => return None,
+    })
+}
+
+fn parse_capture_privacy(slug: &str) -> Option<CapturePrivacy> {
+    Some(match slug {
+        "private" => CapturePrivacy::Private,
+        "redacted" => CapturePrivacy::Redacted,
+        _ => return None,
+    })
+}
+
+fn parse_capture_distribution(slug: &str) -> Option<CaptureDistribution> {
+    Some(match slug {
+        "redistributable" => CaptureDistribution::Redistributable,
+        _ => return None,
+    })
+}
+
+fn parse_capture_evidence(slug: &str) -> Option<CaptureEvidence> {
+    Some(match slug {
+        "hardware_tested" => CaptureEvidence::HardwareTested,
+        "inferred" => CaptureEvidence::Inferred,
+        "unverified" => CaptureEvidence::Unverified,
+        _ => return None,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -359,10 +510,6 @@ impl DashboardBatteryLevel {
         } else {
             value
         }))
-    }
-
-    fn ratio(self) -> f64 {
-        self.0.as_ratio()
     }
 }
 
@@ -894,6 +1041,7 @@ impl DashboardState {
             active_tab: DashboardTab::first(),
             active_profile_dashboard: None,
             provenance: None,
+            capture_provenance: None,
             device: DeviceSnapshot {
                 make: "unknown".to_owned(),
                 model: "unknown".to_owned(),
@@ -1578,6 +1726,10 @@ impl fmt::Display for FirmwareSummary {
     }
 }
 
+pub(crate) fn firmware_summary_string(firmware: FirmwareInfo) -> String {
+    FirmwareSummary(firmware).to_string()
+}
+
 fn write_optional_measured_u16(
     f: &mut fmt::Formatter<'_>,
     value: Option<Measured<u16>>,
@@ -1586,22 +1738,6 @@ fn write_optional_measured_u16(
         write!(f, "{}", value.value)
     } else {
         write!(f, "?")
-    }
-}
-
-struct SettingsEntrySummary(SettingsEntry);
-
-impl fmt::Display for SettingsEntrySummary {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let entry = self.0;
-        write!(
-            f,
-            "field={} value={} quality={} verification={}",
-            entry.field.id,
-            entry.field.value,
-            quality_name(entry.quality),
-            verification_name(entry.verification)
-        )
     }
 }
 
@@ -1674,6 +1810,7 @@ impl fmt::Display for BmsCurrentSummary {
     }
 }
 
+#[allow(dead_code)]
 struct BmsPageSummary(BatteryPagePayload);
 
 impl fmt::Display for BmsPageSummary {
@@ -1681,8 +1818,9 @@ impl fmt::Display for BmsPageSummary {
         let page = self.0.page();
         write!(
             f,
-            "selector={} kind={} verification={}{}{}",
+            "selector={}{} kind={} verification={}{}{}",
             page.selector,
+            battery_page_side_suffix(page.kind, page.selector.get()),
             battery_page_kind_name(page.kind),
             verification_name(page.verification),
             BmsTemperatureValues(self.0),
@@ -1691,6 +1829,7 @@ impl fmt::Display for BmsPageSummary {
     }
 }
 
+#[allow(dead_code)]
 struct LatestBmsTemperatureSummary(BatteryPagePayload);
 
 impl fmt::Display for LatestBmsTemperatureSummary {
@@ -1698,11 +1837,24 @@ impl fmt::Display for LatestBmsTemperatureSummary {
         let page = self.0.page();
         write!(
             f,
-            "selector={} verification={}{}",
+            "selector={}{} verification={}{}",
             page.selector,
+            battery_page_side_suffix(page.kind, page.selector.get()),
             verification_name(page.verification),
             BmsTemperatureValues(self.0)
         )
+    }
+}
+
+fn battery_page_side_suffix(kind: cutout_core::BatteryPageKind, selector: u8) -> &'static str {
+    if kind != cutout_core::BatteryPageKind::Temperature {
+        return "";
+    }
+
+    match selector {
+        3 => " side=left",
+        7 => " side=right",
+        _ => "",
     }
 }
 
@@ -2243,8 +2395,9 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
         ReadOnlyResponse::Battery(payload) => {
             let page = payload.page();
             let mut summary = format!(
-                "read-only battery selector={} kind={} verification={}",
+                "read-only battery selector={}{} kind={} verification={}",
                 page.selector,
+                battery_page_side_suffix(page.kind, page.selector.get()),
                 battery_page_kind_name(page.kind),
                 verification_name(page.verification)
             );
@@ -2573,9 +2726,19 @@ fn handle_escape_sequence<R: Read>(input: &mut R, tx: &mpsc::Sender<DashboardInp
     }
 }
 
+fn operational_speed_only_layout(area: Rect) -> bool {
+    area.height < 24 || area.width < 100 || u32::from(area.height) + u32::from(area.width) < 140
+}
+
 pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
     let active_tab = state.active_tab.bounded();
-    let areas = if active_tab == 3 {
+    let is_operational_dashboard = active_tab == 2 && state.active_profile_dashboard.is_some();
+    if is_operational_dashboard && operational_speed_only_layout(frame.area()) {
+        render_body(frame, frame.area(), state);
+        return;
+    }
+
+    let areas = if active_tab == 3 || is_operational_dashboard {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Fill(1)])
@@ -2594,6 +2757,8 @@ pub(crate) fn render_dashboard(frame: &mut Frame<'_>, state: &DashboardState) {
     render_header(frame, areas[0], state);
     if active_tab == 3 {
         render_logs(frame, areas[1], state);
+    } else if is_operational_dashboard {
+        render_body(frame, areas[1], state);
     } else {
         render_body(frame, areas[1], state);
         render_logs(frame, areas[2], state);
@@ -2642,17 +2807,22 @@ fn render_overview_tab(frame: &mut Frame<'_>, area: Rect, state: &DashboardState
 }
 
 fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
+    let summary_height = if state.capture_provenance.is_some() {
+        15
+    } else {
+        10
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(8),
+            Constraint::Length(summary_height),
             Constraint::Length(3),
             Constraint::Fill(1),
         ])
         .split(area);
 
     let device = &state.device;
-    let summary = Paragraph::new(vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled("make ", Style::new().fg(Color::Gray)),
             Span::raw(device.make.as_str()),
@@ -2679,8 +2849,15 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
             Span::styled("source ", Style::new().fg(Color::Gray)),
             Span::raw(state.provenance.as_deref().unwrap_or("live")),
         ]),
-    ])
-    .block(panel_block("Target"));
+    ];
+
+    if let Some(capture) = &state.capture_provenance {
+        for line in capture.summary_lines() {
+            lines.push(Line::from(line));
+        }
+    }
+
+    let summary = Paragraph::new(lines).block(panel_block("Target"));
     frame.render_widget(summary, chunks[0]);
 
     let gauges = Layout::default()
@@ -2695,13 +2872,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
 }
 
 fn render_profiles(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .split(area);
-
-    render_profile_table(frame, chunks[0], state);
-    render_read_only_summary(frame, chunks[1], state);
+    render_profile_table(frame, area, state);
 }
 
 fn render_profile_table(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -2739,12 +2910,37 @@ fn render_profile_table(frame: &mut Frame<'_>, area: Rect, state: &DashboardStat
     frame.render_widget(table, area);
 }
 
+fn clipped_cell_text(value: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    let char_count = value.chars().count();
+    if char_count <= max_width {
+        return value.to_owned();
+    }
+    if max_width <= 3 {
+        return ".".repeat(max_width);
+    }
+
+    let mut clipped = value
+        .chars()
+        .take(max_width.saturating_sub(3))
+        .collect::<String>();
+    clipped.push_str("...");
+    clipped
+}
+
 fn render_operational_dashboard(
     frame: &mut Frame<'_>,
     area: Rect,
     state: &DashboardState,
     selection: ProfileSelection,
 ) {
+    if operational_speed_only_layout(area) {
+        render_operational_speed_panel(frame, area, state);
+        return;
+    }
+
     let profile = selection
         .bounded(state.profiles.len())
         .and_then(|selection| state.profiles.get(selection.get()));
@@ -2757,14 +2953,14 @@ fn render_operational_dashboard(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4),
-            Constraint::Length(10),
-            Constraint::Fill(1),
+            Constraint::Length(3),
+            Constraint::Min(7),
+            Constraint::Length(9),
         ])
         .split(area);
 
     render_operational_heading(frame, chunks[0], state, &profile_heading, &firmware);
-    render_operational_speed_panel(frame, chunks[1], state, &firmware);
+    render_operational_speed_panel(frame, chunks[1], state);
     render_operational_metric_grid(frame, chunks[2], state);
 }
 
@@ -2778,68 +2974,68 @@ fn render_operational_heading(
     let device = operational_device_identity(state);
     let voltage = OptionalDisplay(state.telemetry.latest_voltage).to_string();
     let signal = format!("signal {}%", state.telemetry.signal_quality);
-    let notifications = format!("rx {}", state.counters.notifications);
     let mode = match state.source {
         DashboardSource::Live => "LIVE",
         DashboardSource::Demo => "DEMO",
     };
-    let heading = Paragraph::new(vec![
-        Line::from(Span::styled(
-            profile_heading.to_owned(),
-            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(vec![
-            Span::styled(device, Style::new().fg(Color::Gray)),
-            Span::raw(" | "),
-            Span::raw(voltage),
-            Span::raw(" | "),
-            Span::raw(signal),
-            Span::raw(" | "),
-            Span::raw(notifications),
-            Span::raw(" | firmware "),
-            Span::raw(firmware.to_owned()),
-            Span::raw(" | read only mode | "),
-            Span::raw(mode),
-        ]),
-    ])
+    let max_width = area.width.saturating_sub(4) as usize;
+    let fixed_summary =
+        format!(" | {device} | {voltage} | {signal} | read only mode | fw {firmware} | {mode}");
+    let profile_width = max_width
+        .saturating_sub(fixed_summary.chars().count())
+        .max(18);
+    let profile = clipped_cell_text(profile_heading, profile_width);
+    let summary = clipped_cell_text(&format!("{profile}{fixed_summary}"), max_width);
+    let heading = Paragraph::new(Line::from(Span::styled(
+        summary,
+        Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )))
     .block(panel_block("Cutout dash"))
-    .alignment(Alignment::Center)
-    .wrap(ratatui::widgets::Wrap { trim: true });
+    .alignment(Alignment::Center);
     frame.render_widget(heading, area);
 }
 
-fn render_operational_speed_panel(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &DashboardState,
-    firmware: &str,
-) {
+fn render_operational_speed_panel(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
     let speed = state
         .telemetry
         .latest_speed
-        .map_or_else(|| "unknown".to_owned(), |speed| speed.get().to_string());
-    let wheel_state = operational_wheel_state(state).label();
-    let lines = vec![
-        Line::from(""),
-        Line::from(""),
-        Line::from(Span::styled(
-            speed,
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            "MPH",
-            Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            wheel_state,
-            Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            firmware.to_owned(),
-            Style::new().fg(Color::DarkGray),
-        )),
-        Line::from(""),
-    ];
+        .map_or_else(|| "?".to_owned(), |speed| speed.get().to_string());
+    let state_label = operational_wheel_state(state).label();
+    let scale = operational_speed_art_scale(area, &speed);
+    let lines = if scale == 0 {
+        vec![
+            Line::from(Span::styled(
+                compact_metric_art_value(&speed),
+                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::styled(
+                    "MPH ",
+                    Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("state ", Style::new().fg(Color::Gray)),
+                Span::raw(state_label),
+            ]),
+        ]
+    } else {
+        let rows = line_art_rows(&compact_metric_art_value(&speed), scale);
+        let mut lines = Vec::with_capacity(7);
+        for row in rows {
+            lines.push(Line::from(Span::styled(
+                row,
+                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )));
+        }
+        lines.push(Line::from(vec![
+            Span::styled(
+                "MPH ",
+                Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("state ", Style::new().fg(Color::Gray)),
+            Span::raw(state_label),
+        ]));
+        lines
+    };
 
     let panel = Paragraph::new(lines)
         .block(panel_block("Speed"))
@@ -2852,9 +3048,9 @@ fn render_operational_metric_grid(frame: &mut Frame<'_>, area: Rect, state: &Das
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7),
-            Constraint::Length(7),
-            Constraint::Fill(1),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
         ])
         .split(area);
 
@@ -2869,25 +3065,35 @@ fn render_operational_top_metrics(frame: &mut Frame<'_>, area: Rect, state: &Das
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    render_battery_gauge(
+    render_metric_tile(
         frame,
         top[0],
-        state.telemetry.battery_level,
-        state.telemetry.battery_source,
-        state.telemetry.latest_voltage,
+        "Battery",
+        &state.telemetry.battery_level.map_or_else(
+            || "?".to_owned(),
+            |battery| battery.to_string().trim_end_matches('%').to_owned(),
+        ),
+        Some(state.telemetry.latest_voltage.map_or_else(
+            || "voltage unknown".to_owned(),
+            |voltage| format!("{voltage} V"),
+        )),
+        Color::Green,
     );
     render_metric_tile(
         frame,
         top[1],
         "PWM",
-        match operational_pwm(state) {
+        &match operational_pwm(state) {
+            OperationalDutyCycle::Known(pwm) => pwm.get().abs().min(100).to_string(),
+            OperationalDutyCycle::Unknown => "?".to_owned(),
+        },
+        Some(match operational_pwm(state) {
             OperationalDutyCycle::Known(pwm) => {
                 let value = pwm.get().abs().min(100);
-                format!("{}%\nheadroom {}%", pwm, 100 - value)
+                format!("headroom {}%", 100 - value)
             }
-            OperationalDutyCycle::Unknown => "unknown".to_owned(),
-        },
-        operational_pwm_ratio(state),
+            OperationalDutyCycle::Unknown => "headroom unknown".to_owned(),
+        }),
         Color::Yellow,
     );
 }
@@ -2896,11 +3102,9 @@ fn render_operational_middle_metrics(frame: &mut Frame<'_>, area: Rect, state: &
     let middle = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
         ])
         .split(area);
 
@@ -2908,137 +3112,352 @@ fn render_operational_middle_metrics(frame: &mut Frame<'_>, area: Rect, state: &
         frame,
         middle[0],
         "Voltage",
-        match state.telemetry.latest_voltage {
-            Some(voltage) => format!("{}\nsignal {}%", voltage, state.telemetry.signal_quality),
-            None => format!("unknown\nsignal {}%", state.telemetry.signal_quality),
-        },
-        operational_voltage_ratio(state),
+        &OptionalDisplay(state.telemetry.latest_voltage).to_string(),
+        Some(format!("signal {}%", state.telemetry.signal_quality)),
         Color::Magenta,
     );
     render_metric_tile(
         frame,
         middle[1],
         "Current",
-        operational_current(state).map_or_else(
-            || "unknown".to_owned(),
-            |current| format!("{}\n{}", current, operational_wheel_state(state).label()),
-        ),
-        None,
+        &state
+            .telemetry
+            .latest_battery_current
+            .map_or_else(|| "?".to_owned(), |current| current.get().to_string()),
+        Some("battery A".to_owned()),
         Color::LightBlue,
     );
     render_metric_tile(
         frame,
         middle[2],
-        "Power",
-        match state.telemetry.latest_power {
-            Some(power) => format!("{}\nPWM {}%", power, operational_pwm(state)),
-            None => "unknown".to_owned(),
-        },
-        None,
-        Color::Yellow,
-    );
-    render_metric_tile(
-        frame,
-        middle[3],
-        "Temp",
-        match state.telemetry.latest_temperature {
-            Some(temperature) => format!("{}\nmotor", temperature),
-            None => "unknown".to_owned(),
-        },
-        None,
-        Color::Red,
-    );
-    render_metric_tile(
-        frame,
-        middle[4],
-        "Range",
-        match state.telemetry.latest_distance {
-            Some(distance) => format!("{}\nest.", distance),
-            None => "unknown".to_owned(),
-        },
-        None,
+        "Phase",
+        &state
+            .telemetry
+            .latest_phase_current
+            .map_or_else(|| "?".to_owned(), |current| current.get().to_string()),
+        Some("phase A".to_owned()),
         Color::Cyan,
     );
 }
 
 fn render_operational_bottom_metrics(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let pwm = match operational_pwm(state) {
-        OperationalDutyCycle::Known(pwm) => {
-            let value = pwm.get().abs().min(100);
-            format!("PWM {}% / headroom {}%", pwm, 100 - value)
-        }
-        OperationalDutyCycle::Unknown => "PWM unknown".to_owned(),
-    };
-    let status = Paragraph::new(vec![Line::from(vec![
-        Span::styled(
-            pwm,
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" | "),
-        Span::styled(
-            format!("state {}", operational_wheel_state(state).label()),
-            Style::new().fg(Color::Gray),
-        ),
-        Span::raw(" | "),
-        Span::styled(
-            format!("signal {}%", state.telemetry.signal_quality),
-            Style::new().fg(Color::Gray),
-        ),
-        Span::raw(" | "),
-        Span::styled(
-            match state.read_only.firmware {
-                Some(firmware) => FirmwareSummary(firmware).to_string(),
-                None => state.device.firmware.clone(),
-            },
-            Style::new().fg(Color::DarkGray),
-        ),
-    ])])
-    .block(panel_block("Status"))
-    .alignment(Alignment::Center)
-    .wrap(ratatui::widgets::Wrap { trim: true });
+    let bottom = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
 
-    frame.render_widget(status, area);
+    render_metric_tile(
+        frame,
+        bottom[0],
+        "Power",
+        &state
+            .telemetry
+            .latest_power
+            .map_or_else(|| "?".to_owned(), |power| power.get().to_string()),
+        Some("W".to_owned()),
+        Color::Yellow,
+    );
+    render_metric_tile(
+        frame,
+        bottom[1],
+        "Temp",
+        &state.telemetry.latest_temperature.map_or_else(
+            || "?".to_owned(),
+            |temperature| temperature.get().to_string(),
+        ),
+        Some("C".to_owned()),
+        Color::Red,
+    );
+    render_metric_tile(
+        frame,
+        bottom[2],
+        "Range",
+        &state.telemetry.latest_distance.map_or_else(
+            || "?".to_owned(),
+            |distance| DisplayDistance(distance).to_string(),
+        ),
+        None,
+        Color::Green,
+    );
+}
+
+fn operational_speed_art_scale(area: Rect, value: &str) -> usize {
+    let compact = compact_metric_art_value(value);
+    let glyphs = compact.chars().count().max(1);
+    let mut chosen = 0;
+
+    for scale in 1..=6 {
+        let width = line_art_width(glyphs, scale);
+        let height = line_art_widget_height(scale);
+        if width <= area.width as usize && height <= area.height as usize {
+            chosen = scale;
+        }
+    }
+
+    chosen
+}
+
+fn line_art_width(glyphs: usize, scale: usize) -> usize {
+    let glyph_width = scale.saturating_mul(2) + 3;
+    glyphs * glyph_width + glyphs.saturating_sub(1).saturating_mul(scale.max(1))
+}
+
+fn line_art_height(scale: usize) -> usize {
+    scale.saturating_mul(2) + 3
+}
+
+fn line_art_widget_height(scale: usize) -> usize {
+    line_art_height(scale) + 3
+}
+
+fn line_art_rows(value: &str, scale: usize) -> Vec<String> {
+    let glyphs = value.chars().collect::<Vec<_>>();
+    let height = line_art_height(scale);
+    let mut rows = vec![String::new(); height];
+
+    for (index, ch) in glyphs.iter().copied().enumerate() {
+        let glyph_rows = line_glyph_rows(ch, scale);
+        for (row, fragment) in rows.iter_mut().zip(glyph_rows) {
+            row.push_str(&fragment);
+        }
+        if index + 1 != glyphs.len() {
+            for row in &mut rows {
+                row.push_str(&" ".repeat(scale.max(1)));
+            }
+        }
+    }
+
+    rows
+}
+
+fn compact_metric_art_value(value: &str) -> String {
+    let trimmed = value.trim();
+    let Ok(number) = trimmed.parse::<f64>() else {
+        return trimmed.to_owned();
+    };
+
+    let abs = number.abs();
+    let sign = if number.is_sign_negative() { "-" } else { "" };
+    let (scaled, suffix) = if abs >= 1_000_000_000.0 {
+        (abs / 1_000_000_000.0, "B")
+    } else if abs >= 1_000_000.0 {
+        (abs / 1_000_000.0, "M")
+    } else if abs >= 1_000.0 {
+        (abs / 1_000.0, "k")
+    } else {
+        (abs, "")
+    };
+
+    let body = if suffix.is_empty() {
+        if abs >= 100.0 {
+            format!("{abs:.0}")
+        } else {
+            format!("{abs:.1}")
+        }
+    } else if scaled >= 100.0 {
+        format!("{scaled:.0}")
+    } else {
+        format!("{scaled:.1}")
+    };
+
+    let mut body = if body.contains('.') {
+        body.trim_end_matches('0').trim_end_matches('.').to_owned()
+    } else {
+        body
+    };
+    body.push_str(suffix);
+    if sign.is_empty() {
+        body
+    } else {
+        format!("{sign}{body}")
+    }
+}
+
+const SEG_TOP: u8 = 1 << 0;
+const SEG_UPPER_LEFT: u8 = 1 << 1;
+const SEG_UPPER_RIGHT: u8 = 1 << 2;
+const SEG_MIDDLE: u8 = 1 << 3;
+const SEG_LOWER_LEFT: u8 = 1 << 4;
+const SEG_LOWER_RIGHT: u8 = 1 << 5;
+const SEG_BOTTOM: u8 = 1 << 6;
+
+fn line_glyph_rows(ch: char, scale: usize) -> Vec<String> {
+    if let Some(mask) = digit_segment_mask(ch) {
+        seven_segment_rows(mask, scale)
+    } else {
+        match ch {
+            '-' => centered_symbol_rows("─", scale),
+            '.' => centered_symbol_rows("•", scale),
+            'B' => centered_symbol_rows("B", scale),
+            'M' => centered_symbol_rows("M", scale),
+            'k' => centered_symbol_rows("k", scale),
+            '?' => centered_symbol_rows("?", scale),
+            _ => centered_symbol_rows(" ", scale),
+        }
+    }
+}
+
+fn digit_segment_mask(ch: char) -> Option<u8> {
+    Some(match ch {
+        '0' => {
+            SEG_TOP
+                | SEG_UPPER_LEFT
+                | SEG_UPPER_RIGHT
+                | SEG_LOWER_LEFT
+                | SEG_LOWER_RIGHT
+                | SEG_BOTTOM
+        }
+        '1' => SEG_UPPER_RIGHT | SEG_BOTTOM,
+        '2' => SEG_TOP | SEG_UPPER_RIGHT | SEG_MIDDLE | SEG_LOWER_LEFT | SEG_LOWER_RIGHT,
+        '3' => SEG_TOP | SEG_UPPER_RIGHT | SEG_MIDDLE | SEG_LOWER_RIGHT | SEG_BOTTOM,
+        '4' => SEG_UPPER_LEFT | SEG_UPPER_RIGHT | SEG_MIDDLE | SEG_LOWER_RIGHT | SEG_BOTTOM,
+        '5' => SEG_TOP | SEG_UPPER_LEFT | SEG_MIDDLE | SEG_LOWER_RIGHT | SEG_BOTTOM,
+        '6' => {
+            SEG_TOP | SEG_UPPER_LEFT | SEG_MIDDLE | SEG_LOWER_LEFT | SEG_LOWER_RIGHT | SEG_BOTTOM
+        }
+        '7' => SEG_TOP | SEG_UPPER_RIGHT | SEG_BOTTOM,
+        '8' => {
+            SEG_TOP
+                | SEG_UPPER_LEFT
+                | SEG_UPPER_RIGHT
+                | SEG_MIDDLE
+                | SEG_LOWER_LEFT
+                | SEG_LOWER_RIGHT
+                | SEG_BOTTOM
+        }
+        '9' => {
+            SEG_TOP | SEG_UPPER_LEFT | SEG_UPPER_RIGHT | SEG_MIDDLE | SEG_LOWER_RIGHT | SEG_BOTTOM
+        }
+        _ => return None,
+    })
+}
+
+fn seven_segment_rows(mask: u8, scale: usize) -> Vec<String> {
+    let width = scale.saturating_mul(2) + 3;
+    let height = line_art_height(scale);
+    let mut rows = vec![" ".repeat(width); height];
+
+    if mask & SEG_TOP != 0 {
+        rows[0] = segment_top_row(
+            mask & SEG_UPPER_LEFT != 0,
+            mask & SEG_UPPER_RIGHT != 0,
+            scale,
+        );
+    }
+    if mask & SEG_MIDDLE != 0 {
+        rows[scale + 1] = segment_middle_row(
+            mask & SEG_UPPER_LEFT != 0,
+            mask & SEG_UPPER_RIGHT != 0,
+            scale,
+        );
+    }
+    if mask & SEG_BOTTOM != 0 {
+        rows[height - 1] = segment_bottom_row(
+            mask & SEG_LOWER_LEFT != 0,
+            mask & SEG_LOWER_RIGHT != 0,
+            scale,
+        );
+    }
+    for row in rows.iter_mut().take(scale + 1).skip(1) {
+        *row = segment_vertical_row(
+            mask & SEG_UPPER_LEFT != 0,
+            mask & SEG_UPPER_RIGHT != 0,
+            scale,
+        );
+    }
+    for row in rows.iter_mut().take(height - 1).skip(scale + 2) {
+        *row = segment_vertical_row(
+            mask & SEG_LOWER_LEFT != 0,
+            mask & SEG_LOWER_RIGHT != 0,
+            scale,
+        );
+    }
+
+    rows
+}
+
+fn segment_top_row(left: bool, right: bool, scale: usize) -> String {
+    let horizontal = scale.saturating_mul(2) + 1;
+    let mut row = String::with_capacity(horizontal + 2);
+    row.push(if left { '┌' } else { '╶' });
+    row.push_str(&"─".repeat(horizontal));
+    row.push(if right { '┐' } else { '╴' });
+    row
+}
+
+fn segment_middle_row(left: bool, right: bool, scale: usize) -> String {
+    let horizontal = scale.saturating_mul(2) + 1;
+    let mut row = String::with_capacity(horizontal + 2);
+    row.push(if left { '├' } else { '╞' });
+    row.push_str(&"═".repeat(horizontal));
+    row.push(if right { '┤' } else { '╡' });
+    row
+}
+
+fn segment_bottom_row(left: bool, right: bool, scale: usize) -> String {
+    let horizontal = scale.saturating_mul(2) + 1;
+    let mut row = String::with_capacity(horizontal + 2);
+    row.push(if left { '└' } else { '╶' });
+    row.push_str(&"─".repeat(horizontal));
+    row.push(if right { '┘' } else { '╴' });
+    row
+}
+
+fn segment_vertical_row(left: bool, right: bool, scale: usize) -> String {
+    let inner = scale.saturating_mul(2) + 1;
+    let mut row = String::with_capacity(inner + 2);
+    row.push(if left { '│' } else { ' ' });
+    row.push_str(&" ".repeat(inner));
+    row.push(if right { '│' } else { ' ' });
+    row
+}
+
+fn centered_symbol_rows(symbol: &str, scale: usize) -> Vec<String> {
+    let height = line_art_height(scale);
+    let width = scale.saturating_mul(2) + 3;
+    let mut rows = vec![" ".repeat(width); height];
+    let symbol_row = height / 2;
+    let symbol_width = symbol.chars().count();
+    let offset = width.saturating_sub(symbol_width) / 2;
+    let mut row = String::new();
+    row.push_str(&" ".repeat(offset));
+    row.push_str(symbol);
+    row.push_str(&" ".repeat(width.saturating_sub(offset + symbol_width)));
+    rows[symbol_row] = row;
+    rows
 }
 
 fn render_metric_tile(
     frame: &mut Frame<'_>,
     area: Rect,
     title: &str,
-    value: String,
-    ratio: Option<f64>,
+    value: &str,
+    footer: Option<String>,
     color: Color,
 ) {
-    let mut lines = value;
-    if let Some(ratio) = ratio {
-        let bar_width = area.width.saturating_sub(4).max(8) as usize;
-        let filled = (ratio.clamp(0.0, 1.0) * bar_width as f64).round() as usize;
-        let empty = bar_width.saturating_sub(filled);
-        if !lines.is_empty() {
-            lines.push('\n');
-        }
-        lines.push_str(&"█".repeat(filled));
-        lines.push_str(&"░".repeat(empty));
+    let inner_width = area.width as usize;
+    let mut lines = Vec::with_capacity(3);
+    lines.push(Line::from(Span::styled(
+        clipped_cell_text(title, inner_width),
+        Style::new().fg(Color::Gray).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        clipped_cell_text(value, inner_width),
+        Style::new().fg(color).add_modifier(Modifier::BOLD),
+    )));
+    if let Some(footer) = footer {
+        lines.push(Line::from(Span::styled(
+            clipped_cell_text(&footer, inner_width),
+            Style::new().fg(Color::Gray),
+        )));
     }
 
-    let panel = Paragraph::new(lines)
-        .style(Style::new().fg(color).add_modifier(Modifier::BOLD))
-        .block(panel_block(title))
-        .alignment(Alignment::Center)
-        .wrap(ratatui::widgets::Wrap { trim: true });
+    let panel = Paragraph::new(lines).alignment(Alignment::Center);
     frame.render_widget(panel, area);
-}
-
-fn operational_voltage_ratio(state: &DashboardState) -> Option<f64> {
-    let voltage = state.telemetry.latest_voltage?;
-    let voltage_range = dashboard_voltage_range(state)?;
-    Some(voltage.0.percent_of_range(&voltage_range).as_ratio())
-}
-
-fn operational_pwm_ratio(state: &DashboardState) -> Option<f64> {
-    match operational_pwm(state) {
-        OperationalDutyCycle::Known(pwm) => Some((pwm.get().abs().min(100) as f64) / 100.0),
-        OperationalDutyCycle::Unknown => None,
-    }
 }
 
 fn operational_wheel_state(state: &DashboardState) -> OperationalWheelState {
@@ -3055,19 +3474,21 @@ fn operational_wheel_state(state: &DashboardState) -> OperationalWheelState {
         return OperationalWheelState::Riding;
     }
 
-    if pitch.is_some_and(WheelPitchDeg::is_lifted_or_tilted) {
+    match (speed, current) {
+        (Some(speed), Some(current)) if speed.is_stationary() && current.is_working() => {
+            return OperationalWheelState::Balancing;
+        }
+        (Some(speed), Some(current)) if speed.is_stationary() && current.is_idle() => {
+            return OperationalWheelState::Parked;
+        }
+        _ => {}
+    }
+
+    if current.is_none() && pitch.is_some_and(WheelPitchDeg::is_lifted_or_tilted) {
         return OperationalWheelState::Lifted;
     }
 
-    match (speed, current) {
-        (Some(speed), Some(current)) if speed.is_stationary() && current.is_working() => {
-            OperationalWheelState::Balancing
-        }
-        (Some(speed), Some(current)) if speed.is_stationary() && current.is_idle() => {
-            OperationalWheelState::Parked
-        }
-        _ => OperationalWheelState::Unknown,
-    }
+    OperationalWheelState::Unknown
 }
 
 fn operational_charge_state(state: &DashboardState) -> OperationalChargeState {
@@ -3193,25 +3614,27 @@ fn render_battery_gauge(
     source: BatterySource,
     latest_voltage: Option<DisplayVoltage>,
 ) {
-    let (value, ratio) = if let Some(battery_level) = battery_level {
-        (
-            latest_voltage.map_or_else(
-                || format!("{}%", battery_level),
-                |voltage| format!("{}%\n{}", battery_level, voltage),
-            ),
-            Some(battery_level.ratio()),
-        )
+    if let Some(battery_level) = battery_level {
+        let footer = latest_voltage.map_or_else(
+            || "voltage unknown".to_owned(),
+            |voltage| format!("{voltage} V"),
+        );
+        render_metric_tile(
+            frame,
+            area,
+            "Battery",
+            battery_level.to_string().trim_end_matches('%'),
+            Some(footer),
+            Color::Green,
+        );
     } else {
-        (
-            latest_voltage.map_or_else(
-                || source.label().to_owned(),
-                |voltage| format!("voltage {}\nbattery unknown", voltage),
-            ),
-            None,
-        )
-    };
-
-    render_metric_tile(frame, area, "Battery", value, ratio, Color::Green);
+        let message = latest_voltage.map_or_else(
+            || source.label().to_owned(),
+            |voltage| format!("voltage {voltage} / battery unknown"),
+        );
+        let battery = Paragraph::new(message).block(Block::bordered().title("Battery"));
+        frame.render_widget(battery, area);
+    }
 }
 
 fn render_signal_gauge(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -3349,61 +3772,6 @@ fn render_telemetry(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         render_pending_telemetry_detail(frame, chunks[3], state);
         render_pending_telemetry_wait(frame, chunks[4]);
     }
-}
-
-fn render_read_only_summary(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
-    let read_only = &state.read_only;
-    let mut lines = Vec::new();
-    lines.push(Line::from(vec![
-        Span::styled("firmware ", Style::new().fg(Color::Gray)),
-        read_only.firmware.map_or_else(
-            || Span::raw("unknown"),
-            |firmware| Span::raw(FirmwareSummary(firmware).to_string()),
-        ),
-    ]));
-
-    if let Some(temperature) = read_only.latest_bms_temperature {
-        lines.push(Line::from(vec![
-            Span::styled("bms temp ", Style::new().fg(Color::Gray)),
-            Span::raw(LatestBmsTemperatureSummary(temperature).to_string()),
-        ]));
-    }
-
-    lines.push(Line::from(vec![
-        Span::styled("raw/unverified pages ", Style::new().fg(Color::Gray)),
-        Span::raw(read_only.unknown_raw_pages.to_string()),
-        Span::styled(" diagnostic responses ", Style::new().fg(Color::Gray)),
-        Span::raw(read_only.diagnostics.to_string()),
-        Span::styled(" raw telemetry ", Style::new().fg(Color::Gray)),
-        Span::raw(read_only.raw_telemetry.to_string()),
-    ]));
-
-    lines.push(Line::from(vec![Span::styled(
-        "settings",
-        Style::new().fg(Color::Gray),
-    )]));
-    if read_only.settings.is_empty() {
-        lines.push(Line::from(vec![Span::raw("none observed")]));
-    } else {
-        for setting in read_only.settings.iter().rev().take(4) {
-            lines.push(Line::from(vec![Span::raw(
-                SettingsEntrySummary(*setting).to_string(),
-            )]));
-        }
-    }
-
-    lines.push(Line::from(vec![Span::styled(
-        "bms pages",
-        Style::new().fg(Color::Gray),
-    )]));
-    for page in read_only.bms_pages.iter().rev().take(4) {
-        lines.push(Line::from(vec![Span::raw(
-            BmsPageSummary(*page).to_string(),
-        )]));
-    }
-
-    let panel = Paragraph::new(lines).block(panel_block("Read-only responses"));
-    frame.render_widget(panel, area);
 }
 
 fn render_telemetry_trend(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
@@ -3650,7 +4018,7 @@ fn render_logs(frame: &mut Frame<'_>, area: Rect, state: &DashboardState) {
         .collect::<Vec<_>>();
 
     let log_panel = Paragraph::new(lines)
-        .block(panel_block("Recent events"))
+        .block(panel_block("Logs"))
         .wrap(ratatui::widgets::Wrap { trim: true });
     frame.render_widget(log_panel, area);
 }
@@ -3678,12 +4046,14 @@ mod tests {
         SubscribeCount, TelemetryEventCount, TransportWriteCount,
     };
     use cutout_core::{
-        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, DiagnosticDetail,
-        DiagnosticSeverity, FirmwareInfo, GattChannel, Measured, MonotonicTimestamp,
-        NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserError,
-        ParserGapEvidence, PayloadBodyLen, ProtocolFamily, ProtocolSelector, RawFieldValue,
+        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, CaptureDistribution,
+        CaptureEvidence, CapturePrivacy, CaptureSessionLabel, DiagnosticDetail, DiagnosticSeverity,
+        FirmwareInfo, GattChannel, Measured, MonotonicTimestamp, NotificationByteLen,
+        NotificationIngestOutcome, ParserDiagnosticCount, ParserError, ParserGapEvidence,
+        PayloadBodyLen, PevcapHeader, ProtocolFamily, ProtocolSelector, RawFieldValue,
         ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry, SettingsReadback, SignalStrength,
-        TelemetrySnapshot, ValueQuality, ValueSource, VerificationStatus,
+        TelemetrySnapshot, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
+        WallClockUnixTimestamp,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -4235,7 +4605,6 @@ mod tests {
     fn operational_wheel_state_reports_lifted_from_stationary_pitch() {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(display_speed_mph(0));
-        state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
         state.telemetry.latest_pitch =
             Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(69_000)));
 
@@ -4263,7 +4632,8 @@ mod tests {
         let mut state = DashboardState::empty();
         state.telemetry.latest_speed = Some(display_speed_mph(0));
         state.telemetry.latest_battery_current = Some(DisplayBatteryCurrent::from_milliamps(0));
-        state.telemetry.latest_pitch = Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(0)));
+        state.telemetry.latest_pitch =
+            Some(WheelPitchDeg::from_angle(Angle::from_millidegrees(69_000)));
 
         assert_eq!(
             operational_wheel_state(&state),
@@ -5028,7 +5398,7 @@ mod tests {
             entry.level == "info"
                 && entry
                     .message
-                    .contains("read-only battery selector=3 kind=temperature")
+                    .contains("read-only battery selector=3 side=left kind=temperature")
                 && entry.message.contains("temps_c=17,17,17,18,19,19")
         }));
         assert!(
@@ -5037,7 +5407,7 @@ mod tests {
                 .iter()
                 .all(|entry| !entry.message.contains("telemetry unmapped"))
         );
-        assert!(text.contains("read-only battery selector=3 kind=temperature"));
+        assert!(text.contains("read-only battery selector=3 side=left kind=temperature"));
     }
 
     #[test]
@@ -5181,7 +5551,7 @@ mod tests {
         );
         assert_eq!(
             BmsPageSummary(state.read_only.bms_pages[1]).to_string(),
-            "selector=3 kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
+            "selector=3 side=left kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
         );
         assert_eq!(
             state.read_only.bms_pages[2].page().kind,
@@ -5193,7 +5563,10 @@ mod tests {
                 .latest_bms_temperature
                 .map(LatestBmsTemperatureSummary)
                 .map(|summary| summary.to_string()),
-            Some("selector=3 verification=hardware_verified temps_c=16,17,18,17,17,19".to_owned())
+            Some(
+                "selector=3 side=left verification=hardware_verified temps_c=16,17,18,17,17,19"
+                    .to_owned()
+            )
         );
         assert_eq!(
             state.read_only.unknown_raw_pages,
@@ -5440,8 +5813,6 @@ mod tests {
         };
 
         state.apply_session_report(&report);
-        state.active_tab = DashboardTab::new(2);
-        let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert_eq!(
             state
@@ -5449,10 +5820,118 @@ mod tests {
                 .latest_bms_temperature
                 .map(LatestBmsTemperatureSummary)
                 .map(|summary| summary.to_string()),
-            Some("selector=3 verification=hardware_verified temps_c=17,17,17,18,19,19".to_owned())
+            Some(
+                "selector=3 side=left verification=hardware_verified temps_c=17,17,17,18,19,19"
+                    .to_owned()
+            )
         );
-        assert!(text.contains("bms temp"));
-        assert!(text.contains("temps_c=17,17,17,18,19,19"));
+    }
+
+    #[test]
+    fn read_only_temperature_summary_labels_selector_seven_as_right() {
+        let payload = BatteryPagePayload::temperature_values(
+            BatteryPageMetadata::temperature(sel(7), VerificationStatus::HardwareVerified),
+            BatteryInfo {
+                temperature: Some(temperature(16_030)),
+                ..BatteryInfo::default()
+            },
+            [
+                Some(temperature(16_030)),
+                Some(temperature(15_630)),
+                Some(temperature(16_230)),
+                Some(temperature(16_930)),
+                Some(temperature(16_530)),
+                Some(temperature(17_430)),
+            ],
+        );
+
+        assert_eq!(
+            LatestBmsTemperatureSummary(payload).to_string(),
+            "selector=7 side=right verification=hardware_verified temps_c=16,15,16,16,16,17"
+                .to_owned()
+        );
+    }
+
+    #[test]
+    fn capture_provenance_from_header_tracks_missing_annotations() {
+        let header = PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_725_000_123_456),
+            "darwin",
+            Some(TransportWriteLimit::from_bytes(23)),
+            &[GattChannel::from_bytes([0xA1; 16])],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0x24; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let provenance =
+            DashboardCaptureProvenance::from_pevcap_header(&header, "unknown", "unknown");
+
+        assert_eq!(provenance.capture_label, None);
+        assert_eq!(provenance.capture_privacy, None);
+        assert_eq!(provenance.capture_evidence, None);
+        assert_eq!(provenance.capture_distribution, None);
+        assert_eq!(provenance.platform_id, "darwin");
+        assert_eq!(provenance.advertised_service_count, 1);
+        assert_eq!(provenance.gatt_fingerprint_count, 0);
+        assert_eq!(provenance.selected_session_key, None);
+        assert_eq!(
+            provenance.summary_lines(),
+            [
+                "capture label=unknown privacy=unknown".to_owned(),
+                "capture evidence=unknown".to_owned(),
+                "capture distribution=unknown".to_owned(),
+                "capture session=none".to_owned(),
+                "inventory platform=darwin advertised=1".to_owned(),
+                "inventory gatt=0 model=unknown".to_owned(),
+                "inventory firmware=unknown".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn dashboard_render_shows_capture_provenance_when_present() {
+        let mut state = DashboardState::empty();
+        state.capture_provenance = Some(DashboardCaptureProvenance {
+            capture_label: Some(CaptureSessionLabel::Charging),
+            capture_privacy: Some(CapturePrivacy::Redacted),
+            capture_distribution: Some(CaptureDistribution::Redistributable),
+            capture_evidence: Some(CaptureEvidence::HardwareTested),
+            platform_id: "darwin".to_owned(),
+            advertised_service_count: 1,
+            gatt_fingerprint_count: 10,
+            selected_session_key: Some("nosfet-aero-read-only".to_owned()),
+            device_model: "NOSFET Aero".to_owned(),
+            device_firmware: "43.2.54".to_owned(),
+        });
+
+        let text = buffer_text(&render_buffer(&state, 120, 36));
+
+        assert!(
+            text.contains("capture label=charging privacy=redacted"),
+            "{text}"
+        );
+        assert!(text.contains("capture evidence=hardware_tested"), "{text}");
+        assert!(
+            text.contains("capture distribution=redistributable"),
+            "{text}"
+        );
+        assert!(
+            text.contains("capture session=nosfet-aero-read-only"),
+            "{text}"
+        );
+        assert!(
+            text.contains("inventory platform=darwin advertised=1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("inventory gatt=10 model=NOSFET Aero"),
+            "{text}"
+        );
+        assert!(text.contains("inventory firmware=43.2.54"), "{text}");
     }
 
     #[test]
@@ -5727,55 +6206,113 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
-        assert!(text.contains("Read-only responses"));
-        assert!(text.contains("firmware 43.2.54"));
-        assert!(text.contains("settings"));
-        assert!(text.contains("field=37 value=1940"));
-        assert!(text.contains("field=36 value=1920"));
-        assert!(text.contains("bms pages"));
-        assert!(text.contains("selector=47 kind=temperature"));
-        assert!(text.contains("selector=8 kind=raw"));
-        assert!(text.contains("raw/unverified pages 1"));
-        assert!(text.contains("diagnostic responses 1"));
+        assert!(text.contains("Profiles"));
+        assert!(text.contains("Profile"));
+        assert!(text.contains("Source"));
+        assert!(text.contains("Status"));
+        assert!(text.contains("Family"));
+        assert!(!text.contains("Read-only responses"));
+        assert!(!text.contains("settings"));
+        assert!(!text.contains("bms pages"));
     }
 
     #[test]
     fn profiles_tab_enter_opens_selected_operational_dashboard() {
         let mut state = DashboardState::sample();
         state.active_tab = DashboardTab::new(2);
+        state.telemetry.latest_distance = Some(Distance::from_millimetres(1_600_000));
 
         state.handle_input(DashboardInput::Enter);
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert!(text.contains("Cutout dash"));
-        assert!(
-            text.contains("NOSFET Aero (via Veteran Protocol) Current 45A / Raw Tail Preserved")
-        );
         assert!(text.contains("NOSFET Aero"));
         assert!(text.contains("53 V"));
         assert!(text.contains("signal 81%"));
         assert!(text.contains("read only mode"));
-        assert!(text.contains("DEMO"));
         assert!(text.contains("Speed"));
-        assert!(text.contains("18"));
         assert!(text.contains("MPH"));
-        assert!(text.contains("riding"));
+        assert!(text.contains("state riding"));
         assert!(text.contains("Battery"));
-        assert!(text.contains("74%"));
-        assert!(text.contains("Voltage"));
-        assert!(text.contains("53 V"));
-        assert!(text.contains("Current"));
-        assert!(text.contains("Power"));
-        assert!(text.contains("318 W"));
-        assert!(text.contains("6 A"));
-        assert!(text.contains("Temp"));
-        assert!(text.contains("33 C"));
         assert!(text.contains("PWM"));
+        assert!(text.contains("Voltage"));
+        assert!(text.contains("Current"));
+        assert!(text.contains("Phase"));
         assert!(text.contains("Range"));
-        assert!(text.contains("firmware 43.2.54"));
+        assert!(text.contains("1.6 km"));
+        assert!(!text.contains("1.6B"));
+        assert_eq!(text.matches("Logs").count(), 1);
+        assert!(!text.contains("Read-only responses"));
         assert!(!text.contains("Controls"));
         assert!(!text.contains("disabled"));
+    }
+
+    #[test]
+    fn compact_metric_art_value_abbreviates_large_numbers() {
+        assert_eq!(compact_metric_art_value("1569.6"), "1.6k");
+        assert_eq!(compact_metric_art_value("1000"), "1k");
+        assert_eq!(compact_metric_art_value("88.6"), "88.6");
+        assert_eq!(compact_metric_art_value("?"), "?");
+    }
+
+    #[test]
+    fn operational_speed_art_scale_steps_through_six_sizes() {
+        assert_eq!(
+            operational_speed_art_scale(Rect::new(0, 0, 80, 8), "123"),
+            1
+        );
+        assert_eq!(
+            operational_speed_art_scale(Rect::new(0, 0, 80, 10), "123"),
+            2
+        );
+        assert_eq!(
+            operational_speed_art_scale(Rect::new(0, 0, 80, 12), "123"),
+            3
+        );
+        assert_eq!(
+            operational_speed_art_scale(Rect::new(0, 0, 80, 14), "123"),
+            4
+        );
+        assert_eq!(
+            operational_speed_art_scale(Rect::new(0, 0, 80, 16), "123"),
+            5
+        );
+        assert_eq!(
+            operational_speed_art_scale(Rect::new(0, 0, 80, 18), "123"),
+            6
+        );
+    }
+
+    #[test]
+    fn line_art_rows_grow_with_scale() {
+        let small = line_art_rows("12", 1);
+        let large = line_art_rows("12", 6);
+
+        assert_eq!(small.len(), 5);
+        assert_eq!(large.len(), 15);
+        assert!(large[0].len() > small[0].len());
+    }
+
+    #[test]
+    fn compact_operational_dashboard_renders_only_big_speed() {
+        let mut state = DashboardState::sample();
+        state.active_tab = DashboardTab::new(2);
+        state.handle_input(DashboardInput::Enter);
+
+        let text = buffer_text(&render_buffer(&state, 80, 24));
+
+        assert!(text.contains("Speed"));
+        assert!(text.contains("MPH"));
+        assert!(text.contains("state riding"));
+        assert!(!text.contains("Cutout dashboard"));
+        assert!(!text.contains("Profiles"));
+        assert!(!text.contains("Cutout dash"));
+        assert!(!text.contains("Battery"));
+        assert!(!text.contains("PWM"));
+        assert!(!text.contains("Voltage"));
+        assert!(!text.contains("Range"));
+        assert!(!text.contains("Logs"));
     }
 
     #[test]
@@ -5785,11 +6322,10 @@ mod tests {
         state.handle_input(DashboardInput::Enter);
 
         state.handle_input(DashboardInput::Back);
-
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert!(text.contains("Profiles"));
-        assert!(text.contains("Read-only responses"));
+        assert!(text.contains("Profile"));
         assert!(!text.contains("headroom"));
         assert!(!text.contains("MPH"));
     }
@@ -5805,11 +6341,9 @@ mod tests {
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
         assert!(text.contains("Cutout dash"));
-        assert!(
-            text.contains(
-                "NOSFET Aero (profile pending) Pending Begode/Falcon Unsupported / Pending"
-            )
-        );
+        assert!(text.contains("NOSFET Aero"));
+        assert!(text.contains("profile pending"));
+        assert!(text.contains("read only mode"));
     }
 
     #[test]
@@ -5837,9 +6371,9 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 140, 36));
 
-        assert!(
-            text.contains("NOSFET Aero (via Veteran Protocol) Live Notification Channel Observed")
-        );
+        assert!(text.contains("NOSFET Aero"));
+        assert!(text.contains("Live Notification"));
+        assert!(text.contains("read only mode"));
     }
 
     #[test]
@@ -5900,7 +6434,7 @@ mod tests {
             "Aero/Veteran",
             "Speed",
             "Voltage",
-            "Recent events",
+            "Logs",
             "Aero NF2557",
             "demo state loaded from demo state: aero-nf2557.v1",
         ] {
@@ -5915,7 +6449,7 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
 
-        assert_eq!(text.matches("Recent events").count(), 1);
+        assert_eq!(text.matches("Logs").count(), 2);
         assert!(text.contains("demo state loaded from demo state: aero-nf2557.v1"));
         assert!(text.contains("dashboard booted in read-only mode"));
     }
@@ -5931,8 +6465,8 @@ mod tests {
         let short_text = buffer_text(&render_buffer(&state, 80, 12));
         let tall_text = buffer_text(&render_buffer(&state, 80, 30));
 
-        assert!(short_text.contains("Recent events"));
-        assert!(tall_text.contains("Recent events"));
+        assert!(short_text.contains("Logs"));
+        assert!(tall_text.contains("Logs"));
         assert!(short_text.contains("event-79"));
         assert!(tall_text.contains("event-79"));
         assert!(!short_text.contains("event-60"));
