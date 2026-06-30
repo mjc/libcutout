@@ -6,8 +6,8 @@ struct MobileFfiSmoke {
         let aero = AeroReadOnlySession()
         let aeroLink = MobileSessionInputDto(
             kind: .linkUp,
-            monotonicMs: 1,
-            maxWriteLen: 185,
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: 1),
+            maxWriteLen: MobileTransportWriteLimitDto(bytes: 185),
             channel: Data(),
             bytes: Data(),
             command: nil
@@ -20,7 +20,7 @@ struct MobileFfiSmoke {
         precondition(aeroChannel != nil)
         let aeroNotification = MobileSessionInputDto(
             kind: .notification,
-            monotonicMs: 2,
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: 2),
             maxWriteLen: nil,
             channel: aeroChannel!,
             bytes: hexBytes("""
@@ -33,13 +33,13 @@ struct MobileFfiSmoke {
             command: nil
         )
         precondition(aero.ingestChecked(input: aeroNotification).error == nil)
-        precondition(aero.currentSnapshot().voltageMv == 108_760)
-        precondition(aero.diagnostics().malformedFrames == 0)
+        precondition(aero.currentSnapshot().voltage?.value == 108_760)
+        precondition(aero.diagnostics().malformedFrames.count == 0)
 
         let falcon = try FalconReadOnlySession()
         let horn = MobileSessionInputDto(
             kind: .command,
-            monotonicMs: 2,
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: 2),
             maxWriteLen: nil,
             channel: Data(),
             bytes: Data(),
@@ -58,9 +58,9 @@ struct MobileFfiSmoke {
         }
 
         let capture = MobilePevcapCaptureBuilder(
-            wallClockStartUnixMs: 1_700_000_000_000,
+            wallClockStartUnixMs: MobileWallClockUnixMillisDto(milliseconds: 1_700_000_000_000),
             platformId: "ios-corebluetooth",
-            writeLimit: 185
+            writeLimit: MobileTransportWriteLimitDto(bytes: 185)
         )
         capture.addAnnotation(annotation: "capture_label=powered_on_stationary")
         capture.addAnnotation(annotation: "capture_privacy=redacted")
@@ -80,9 +80,12 @@ struct MobileFfiSmoke {
             model: MobileVerifiedStringDto(value: "Begode Falcon", verification: .inferred),
             firmware: MobileVerifiedStringDto(value: "GW2015004", verification: .hardwareVerified)
         ))
-        capture.recordLinkUp(monotonicMs: 1, maxWriteLen: 185)
+        capture.recordLinkUp(
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: 1),
+            maxWriteLen: MobileTransportWriteLimitDto(bytes: 185)
+        )
         capture.recordNotification(
-            monotonicMs: 2,
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: 2),
             characteristic: Data(repeating: 0x11, count: 16),
             service: Data(repeating: 0x22, count: 16),
             bytes: Data([0xde, 0xad, 0xbe, 0xef])

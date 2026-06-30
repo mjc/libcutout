@@ -63,3 +63,22 @@ The smoke clients prove the same behavior in Swift and Kotlin:
 
 These checks should compile generated Swift and Kotlin code rather than scanning
 Rust source text.
+
+## Swift Package Smoke
+
+The repository also has a SwiftPM packaging smoke for the first ergonomic
+Aero/Falcon library surface:
+
+```console
+./scripts/smoke-swift-package.sh
+```
+
+The script builds `cutout-mobile-ffi`, generates Swift UniFFI bindings into a
+temporary package, assembles the generated `cutout_mobile_ffiFFI` C module in
+SwiftPM's expected layout, and runs a Swift executable that imports
+`CutoutMobile`.
+
+The checked-in package source under `swift/CutoutMobile` intentionally contains
+only hand-written facade code and package metadata. Generated UniFFI files stay
+under `target/` so app-facing Swift remains reviewable while the FFI bindings
+continue to come from the Rust crate.

@@ -4,6 +4,7 @@ import uniffi.cutout_mobile_ffi.MobileCommandDto
 import uniffi.cutout_mobile_ffi.MobileFalconProfileDto
 import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
 import uniffi.cutout_mobile_ffi.MobileGattRoleDto
+import uniffi.cutout_mobile_ffi.MobileMonotonicMillisDto
 import uniffi.cutout_mobile_ffi.MobilePevcapCaptureBuilder
 import uniffi.cutout_mobile_ffi.MobilePevcapEncodingDto
 import uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto
@@ -13,15 +14,17 @@ import uniffi.cutout_mobile_ffi.MobileSessionInputDto
 import uniffi.cutout_mobile_ffi.MobileSessionInputKindDto
 import uniffi.cutout_mobile_ffi.MobileSessionOutputKindDto
 import uniffi.cutout_mobile_ffi.MobileSessionStepErrorKindDto
+import uniffi.cutout_mobile_ffi.MobileTransportWriteLimitDto
 import uniffi.cutout_mobile_ffi.MobileVerificationStatusDto
 import uniffi.cutout_mobile_ffi.MobileVerifiedStringDto
+import uniffi.cutout_mobile_ffi.MobileWallClockUnixMillisDto
 
 fun main() {
     AeroReadOnlySession().use { aero ->
         val link = MobileSessionInputDto(
             kind = MobileSessionInputKindDto.LINK_UP,
-            monotonicMs = 1UL,
-            maxWriteLen = 185U,
+            monotonicMs = MobileMonotonicMillisDto(1UL),
+            maxWriteLen = MobileTransportWriteLimitDto(185U),
             channel = ByteArray(0),
             bytes = ByteArray(0),
             command = null,
@@ -34,7 +37,7 @@ fun main() {
         check(channel != null)
         val notification = MobileSessionInputDto(
             kind = MobileSessionInputKindDto.NOTIFICATION,
-            monotonicMs = 2UL,
+            monotonicMs = MobileMonotonicMillisDto(2UL),
             maxWriteLen = null,
             channel = channel,
             bytes = hexBytes(
@@ -49,14 +52,14 @@ fun main() {
             command = null,
         )
         check(aero.ingestChecked(notification).error == null)
-        check(aero.currentSnapshot().voltageMv == 108_760)
-        check(aero.diagnostics().malformedFrames == 0UL)
+        check(aero.currentSnapshot().voltage?.value == 108_760)
+        check(aero.diagnostics().malformedFrames.count == 0UL)
     }
 
     FalconReadOnlySession().use { falcon ->
         val horn = MobileSessionInputDto(
             kind = MobileSessionInputKindDto.COMMAND,
-            monotonicMs = 2UL,
+            monotonicMs = MobileMonotonicMillisDto(2UL),
             maxWriteLen = null,
             channel = ByteArray(0),
             bytes = ByteArray(0),
@@ -74,9 +77,9 @@ fun main() {
     }
 
     MobilePevcapCaptureBuilder(
-        wallClockStartUnixMs = 1_700_000_000_000UL,
+        wallClockStartUnixMs = MobileWallClockUnixMillisDto(1_700_000_000_000UL),
         platformId = "ios-corebluetooth",
-        writeLimit = 185U,
+        writeLimit = MobileTransportWriteLimitDto(185U),
     ).use { capture ->
         capture.addAnnotation("capture_label=powered_on_stationary")
         capture.addAnnotation("capture_privacy=redacted")
@@ -110,9 +113,12 @@ fun main() {
                 ),
             ),
         )
-        capture.recordLinkUp(monotonicMs = 1UL, maxWriteLen = 185U)
+        capture.recordLinkUp(
+            monotonicMs = MobileMonotonicMillisDto(1UL),
+            maxWriteLen = MobileTransportWriteLimitDto(185U),
+        )
         capture.recordNotification(
-            monotonicMs = 2UL,
+            monotonicMs = MobileMonotonicMillisDto(2UL),
             characteristic = ByteArray(16) { 0x11 },
             service = ByteArray(16) { 0x22 },
             bytes = byteArrayOf(0xde.toByte(), 0xad.toByte(), 0xbe.toByte(), 0xef.toByte()),

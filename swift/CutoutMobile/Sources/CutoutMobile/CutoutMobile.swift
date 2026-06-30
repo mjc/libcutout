@@ -158,11 +158,15 @@ public final class AeroSession: @unchecked Sendable {
         ParserDiagnostics(inner.diagnostics())
     }
 
+    public var currentSnapshot: TelemetrySnapshot {
+        TelemetrySnapshot(inner.currentSnapshot())
+    }
+
     public func linkUp(
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes
     ) throws -> [SessionAction] {
-        try step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
+        try inner.step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
     }
 
     public func ingestNotification(
@@ -170,30 +174,8 @@ public final class AeroSession: @unchecked Sendable {
         channel: Data,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> TelemetrySnapshot {
-        _ = try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
+        _ = try inner.step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
         return TelemetrySnapshot(inner.currentSnapshot())
-    }
-
-    private func step(
-        _ kind: MobileSessionInputKindDto,
-        at monotonicMilliseconds: MonotonicMilliseconds,
-        writeLimit: TransportWriteLimitBytes? = nil,
-        channel: Data = Data(),
-        bytes: Data = Data(),
-        command: DeviceCommand? = nil
-    ) throws -> [SessionAction] {
-        let result = inner.ingestChecked(input: MobileSessionInputDto(
-            kind: kind,
-            monotonicMs: monotonicMilliseconds.dto,
-            maxWriteLen: writeLimit?.dto,
-            channel: channel,
-            bytes: bytes,
-            command: command?.dto
-        ))
-        if let error = result.error {
-            throw CutoutSessionError(error)
-        }
-        return result.outputs.map(SessionAction.init)
     }
 }
 
@@ -208,11 +190,40 @@ public final class FalconSession: @unchecked Sendable {
         ParserDiagnostics(inner.diagnostics())
     }
 
-    public func soundHorn(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
-        try step(.command, at: monotonicMilliseconds, command: .soundHorn)
+    public var currentSnapshot: TelemetrySnapshot {
+        TelemetrySnapshot(inner.currentSnapshot())
     }
 
-    private func step(
+    public func linkUp(
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes
+    ) throws -> [SessionAction] {
+        try inner.step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
+    }
+
+    public func ingestNotification(
+        _ bytes: Data,
+        channel: Data,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> TelemetrySnapshot {
+        _ = try inner.step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
+        return TelemetrySnapshot(inner.currentSnapshot())
+    }
+
+    public func soundHorn(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
+        try inner.step(.command, at: monotonicMilliseconds, command: .soundHorn)
+    }
+}
+
+private protocol MobileReadOnlySession {
+    func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResultDto
+}
+
+extension AeroReadOnlySession: MobileReadOnlySession {}
+extension FalconReadOnlySession: MobileReadOnlySession {}
+
+private extension MobileReadOnlySession {
+    func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes? = nil,
@@ -220,7 +231,7 @@ public final class FalconSession: @unchecked Sendable {
         bytes: Data = Data(),
         command: DeviceCommand? = nil
     ) throws -> [SessionAction] {
-        let result = inner.ingestChecked(input: MobileSessionInputDto(
+        let result = ingestChecked(input: MobileSessionInputDto(
             kind: kind,
             monotonicMs: monotonicMilliseconds.dto,
             maxWriteLen: writeLimit?.dto,
