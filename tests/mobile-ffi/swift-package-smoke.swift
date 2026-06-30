@@ -47,6 +47,27 @@ struct CutoutMobilePackageSmoke {
         } catch CutoutSessionError.commandRefused(let command, _) {
             precondition(command == .soundHorn)
         }
+
+        let advertisement = CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("falcon-001"),
+            localName: "Begode Falcon",
+            advertisedServiceUuids: [BluetoothUuid.bluetooth16(0xffe0)]
+        )
+        precondition(advertisement.modelHint == .falcon)
+
+        let writeAction = SessionAction(
+            kind: .write,
+            channel: BluetoothUuid.bluetooth16(0xffe1).bytes,
+            bytes: Data([0x01, 0x02, 0x03, 0x04, 0x05])
+        )
+        let writes = CoreBluetoothTransportPlanner(
+            writeLimit: TransportWriteLimitBytes(2)
+        ).plan(action: writeAction)
+        precondition(writes == [
+            .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x01, 0x02])),
+            .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x03, 0x04])),
+            .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x05])),
+        ])
     }
 }
 

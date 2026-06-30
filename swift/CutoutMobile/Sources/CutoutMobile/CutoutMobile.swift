@@ -52,6 +52,12 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let channel: Data
     public let bytes: Data
 
+    public init(kind: SessionActionKind, channel: Data, bytes: Data) {
+        self.kind = kind
+        self.channel = channel
+        self.bytes = bytes
+    }
+
     fileprivate init(_ dto: MobileSessionOutputDto) {
         self.kind = SessionActionKind(dto.kind)
         self.channel = dto.channel
@@ -243,5 +249,111 @@ private extension MobileReadOnlySession {
             throw CutoutSessionError(error)
         }
         return result.outputs.map(SessionAction.init)
+    }
+}
+
+public struct BluetoothUuid: Equatable, Hashable, Sendable {
+    public let bytes: Data
+
+    public init?(_ bytes: Data) {
+        guard bytes.count == 16 else {
+            return nil
+        }
+        self.bytes = bytes
+    }
+
+    public static func bluetooth16(_ value: UInt16) -> BluetoothUuid {
+        let high = UInt8((value >> 8) & 0xff)
+        let low = UInt8(value & 0xff)
+        return BluetoothUuid(Data([
+            0x00, 0x00, high, low,
+            0x00, 0x00,
+            0x10, 0x00,
+            0x80, 0x00,
+            0x00, 0x80,
+            0x5f, 0x9b, 0x34, 0xfb,
+        ]))!
+    }
+}
+
+public struct CoreBluetoothPeripheralIdentifier: Equatable, Hashable, Sendable {
+    public let rawValue: String
+
+    public init(_ rawValue: String) {
+        self.rawValue = rawValue
+    }
+}
+
+public enum CutoutModelHint: Equatable, Hashable, Sendable {
+    case aero
+    case falcon
+    case unknown
+}
+
+public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
+    public let peripheralIdentifier: CoreBluetoothPeripheralIdentifier
+    public let localName: String?
+    public let advertisedServiceUuids: [BluetoothUuid]
+
+    public init(
+        peripheralIdentifier: CoreBluetoothPeripheralIdentifier,
+        localName: String?,
+        advertisedServiceUuids: [BluetoothUuid]
+    ) {
+        self.peripheralIdentifier = peripheralIdentifier
+        self.localName = localName
+        self.advertisedServiceUuids = advertisedServiceUuids
+    }
+
+    public var modelHint: CutoutModelHint {
+        let normalizedName = localName?.lowercased() ?? ""
+        if normalizedName.contains("falcon") {
+            return .falcon
+        }
+        if normalizedName.contains("aero") || normalizedName.contains("nosfet") {
+            return .aero
+        }
+        return .unknown
+    }
+}
+
+public enum CoreBluetoothPlannedOperation: Equatable, Hashable, Sendable {
+    case subscribe(channel: BluetoothUuid)
+    case writeWithoutResponse(channel: BluetoothUuid, bytes: Data)
+    case disconnect
+}
+
+public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
+    public let writeLimit: TransportWriteLimitBytes
+
+    public init(writeLimit: TransportWriteLimitBytes) {
+        self.writeLimit = writeLimit
+    }
+
+    public func plan(action: SessionAction) -> [CoreBluetoothPlannedOperation] {
+        guard let channel = BluetoothUuid(action.channel) else {
+            return []
+        }
+        switch action.kind {
+        case .subscribe:
+            return [.subscribe(channel: channel)]
+        case .write:
+            return chunked(action.bytes, by: Int(writeLimit.rawValue)).map {
+                .writeWithoutResponse(channel: channel, bytes: $0)
+            }
+        case .disconnect:
+            return [.disconnect]
+        case .event, .notificationIngest:
+            return []
+        }
+    }
+
+    private func chunked(_ bytes: Data, by chunkSize: Int) -> [Data] {
+        guard chunkSize > 0 else {
+            return []
+        }
+        return stride(from: 0, to: bytes.count, by: chunkSize).map { offset in
+            bytes[offset..<Swift.min(offset + chunkSize, bytes.count)]
+        }.map(Data.init)
     }
 }
