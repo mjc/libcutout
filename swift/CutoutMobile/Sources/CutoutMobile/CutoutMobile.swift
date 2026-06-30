@@ -357,3 +357,26 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
         }.map(Data.init)
     }
 }
+
+public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
+    public let serviceUuids: [BluetoothUuid]
+
+    public init(serviceUuids: [BluetoothUuid]) {
+        self.serviceUuids = serviceUuids
+    }
+
+    public static let aeroFalcon = CoreBluetoothScanPolicy(serviceUuids: [
+        .bluetooth16(0xffe0),
+        .bluetooth16(0xfff0),
+    ])
+}
+
+#if canImport(CoreBluetooth)
+import CoreBluetooth
+
+public extension CoreBluetoothScanPolicy {
+    var coreBluetoothServiceUuids: [CBUUID] {
+        serviceUuids.map { CBUUID(data: $0.bytes) }
+    }
+}
+#endif

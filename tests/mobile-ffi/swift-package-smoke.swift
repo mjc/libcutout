@@ -68,6 +68,12 @@ struct CutoutMobilePackageSmoke {
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x03, 0x04])),
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x05])),
         ])
+
+        #if canImport(CoreBluetooth)
+        precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.count == 2)
+        precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.contains(.bluetooth16(0xffe0)))
+        precondition(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids.count == 2)
+        #endif
     }
 }
 
