@@ -26,6 +26,21 @@ struct CutoutMobilePackageSmoke {
         precondition(aero.diagnostics.malformedFrames == 0)
 
         let falcon = try FalconSession()
+        let falconLinkActions = try falcon.linkUp(
+            at: MonotonicMilliseconds(10),
+            writeLimit: TransportWriteLimitBytes(23)
+        )
+        precondition(falconLinkActions.contains { $0.kind == .subscribe })
+        let falconChannel = falconLinkActions.firstSubscribeChannel!
+        for (offset, chunk) in falconRidingChunks.enumerated() {
+            _ = try falcon.ingestNotification(
+                Data(chunk),
+                channel: falconChannel,
+                at: MonotonicMilliseconds(UInt64(11 + offset))
+            )
+        }
+        precondition(falcon.currentSnapshot.voltageMillivolts != nil)
+
         do {
             _ = try falcon.soundHorn(at: MonotonicMilliseconds(3))
             preconditionFailure("Falcon read-only facade must refuse soundHorn")
@@ -34,6 +49,16 @@ struct CutoutMobilePackageSmoke {
         }
     }
 }
+
+private let falconRidingChunks: [[UInt8]] = [
+    [0, 0, 0, 0, 0, 0, 3, 2, 90, 90, 90, 90, 85, 170, 0, 17, 118, 110, 73, 1],
+    [28, 21, 0, 45, 0, 1, 0, 0, 0, 18, 4, 24, 90, 90, 90, 90, 85, 170, 0, 28],
+    [0, 147, 0, 22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 24, 90, 90, 90, 90],
+    [71, 87, 49, 54, 50, 49, 48, 48, 51],
+    [85, 170, 25, 153, 0, 0, 0, 63, 0, 1, 255, 136, 244, 151, 0, 136, 0, 1, 0, 24],
+    [90, 90, 90, 90, 85, 170, 0, 75, 255, 253, 3, 215, 0, 0, 0, 0, 19, 136, 0, 0],
+    [0, 0, 1, 3, 90, 90, 90, 90, 85, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+]
 
 private extension Array where Element == SessionAction {
     var firstSubscribeChannel: Data? {
