@@ -23,3 +23,15 @@ is used.
 `capture` prints raw protocol evidence for fixture work. Review capture
 logs before sharing them, because they may contain device identifiers and raw
 notification payloads.
+
+## Library Onboarding
+
+The typed library path lives in `cutout-core` and `cutout-protocols`. The
+examples in `crates/cutout-protocols/examples/` show the intended flow for:
+
+- authoring a model with typed static data
+- listing structured registered models in `crates/cutout-protocols/registry/models.json`
+- driving a read-only protocol session from typed host inputs
+
+See [`docs/model-onboarding.md`](docs/model-onboarding.md) for the boundary
+contract and the crate split.
