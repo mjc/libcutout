@@ -937,8 +937,8 @@ impl ProtocolModelSpec for NosfetAeroModel {
 
 impl RegisteredModelSpec for NosfetAeroModel {
     const REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
-        manufacturer: "NOSFET",
-        model: Self::MODEL,
+        manufacturer: cutout_core::ManufacturerKey::new("NOSFET"),
+        model: cutout_core::ModelKey::new(Self::MODEL),
         protocol_family: Self::PROTOCOL,
         advertised_name_hints: &["NF2557", "Aero", "NOSFET"],
         wire_model_id: Some(VerifiedValue {
@@ -998,8 +998,8 @@ impl ProtocolModelSpec for BegodeFalconModel {
 
 impl RegisteredModelSpec for BegodeFalconModel {
     const REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
-        manufacturer: "Begode",
-        model: Self::MODEL,
+        manufacturer: cutout_core::ManufacturerKey::new("Begode"),
+        model: cutout_core::ModelKey::new(Self::MODEL),
         protocol_family: Self::PROTOCOL,
         advertised_name_hints: &["Falcon", "Begode", "Gotway"],
         wire_model_id: None,

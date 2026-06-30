@@ -62,8 +62,8 @@ mod parser;
 mod registry;
 pub use registry::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BEGODE_PARSER_KEY, MODEL_CATALOG,
-    MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, RegisteredReadOnlySession,
-    SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
+    MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, RegisteredModelDefinition,
+    RegisteredReadOnlySession, SESSION_REGISTRATIONS, SessionRegistration, VETERAN_PARSER_KEY,
     begode_falcon_read_only_session_with_voltage_profile, find_session_registration,
 };
 mod request_encoder;
@@ -112,8 +112,9 @@ pub use veteran_telemetry::{
     NOSFET_AERO_MAX_VOLTAGE, NOSFET_AERO_MIN_VOLTAGE,
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
     VETERAN_FIELD_FIRMWARE_VERSION, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VeteranFirmwareVersion, VeteranModelProfile,
-    VeteranPedalsMode, VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_level,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VeteranFirmwareVersion, VeteranFirmwareVersionWord,
+    VeteranModelCapabilities, VeteranModelId, VeteranModelProfile, VeteranPedalsMode,
+    VeteranTelemetry, VeteranTelemetryError, estimate_nosfet_aero_battery_level,
     estimate_veteran_battery_level,
 };
 

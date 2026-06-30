@@ -132,11 +132,122 @@ impl VeteranPedalsMode {
     }
 }
 
+/// Veteran model identifier extracted from the firmware version word.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct VeteranModelId(u16);
+
+impl VeteranModelId {
+    /// Creates a model identifier from the wire value.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw model identifier value.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl From<u16> for VeteranModelId {
+    fn from(value: u16) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<VeteranModelId> for u16 {
+    fn from(value: VeteranModelId) -> Self {
+        value.get()
+    }
+}
+
+/// Veteran firmware version word extracted from the telemetry frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct VeteranFirmwareVersionWord(u16);
+
+impl VeteranFirmwareVersionWord {
+    /// Creates a firmware version word from the wire value.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw firmware version word.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl From<u16> for VeteranFirmwareVersionWord {
+    fn from(value: u16) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<VeteranFirmwareVersionWord> for u16 {
+    fn from(value: VeteranFirmwareVersionWord) -> Self {
+        value.get()
+    }
+}
+
+/// Capabilities inferred from a Veteran model profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct VeteranModelCapabilities(u8);
+
+impl VeteranModelCapabilities {
+    const PWM_READBACK: u8 = 1 << 0;
+    const SMART_BMS: u8 = 1 << 1;
+    const BINARY_HORN: u8 = 1 << 2;
+
+    /// Creates a capability set from explicit domain flags.
+    #[must_use]
+    pub const fn new(
+        has_pwm_readback: bool,
+        has_smart_bms: bool,
+        requires_binary_horn: bool,
+    ) -> Self {
+        let mut bits = 0_u8;
+        if has_pwm_readback {
+            bits |= Self::PWM_READBACK;
+        }
+        if has_smart_bms {
+            bits |= Self::SMART_BMS;
+        }
+        if requires_binary_horn {
+            bits |= Self::BINARY_HORN;
+        }
+        Self(bits)
+    }
+
+    /// Returns true when the profile exposes hardware PWM readback.
+    #[must_use]
+    pub const fn has_pwm_readback(self) -> bool {
+        self.0 & Self::PWM_READBACK != 0
+    }
+
+    /// Returns true when the profile emits smart-BMS pages.
+    #[must_use]
+    pub const fn has_smart_bms(self) -> bool {
+        self.0 & Self::SMART_BMS != 0
+    }
+
+    /// Returns true when the profile requires the newer binary horn command frame.
+    #[must_use]
+    pub const fn requires_binary_horn(self) -> bool {
+        self.0 & Self::BINARY_HORN != 0
+    }
+}
+
 /// Static Veteran/LeaperKim/NOSFET model mapping derived from firmware model id.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VeteranModelProfile {
     /// Firmware model id from the version word.
-    pub model_id: u16,
+    pub model_id: VeteranModelId,
 
     /// User-facing model family name.
     pub name: &'static str,
@@ -156,11 +267,8 @@ pub struct VeteranModelProfile {
     /// Pack-voltage range used for estimated battery percent.
     pub voltage_range: RangeInclusive<Voltage>,
 
-    /// Whether the fixed telemetry hardware-PWM field is valid.
-    pub has_pwm_readback: bool,
-
-    /// Whether the model family emits smart-BMS pages.
-    pub has_smart_bms: bool,
+    /// Capabilities inferred from the model profile.
+    pub capabilities: VeteranModelCapabilities,
 
     /// Static smart-BMS layout for model-specific page interpretation.
     pub bms_layout: Option<&'static BmsLayoutSpec>,
@@ -171,16 +279,14 @@ pub struct VeteranModelProfile {
     /// odometer fields unchanged until same-instant raw/app/LCD captures prove
     /// where the offset is applied.
     pub observed_app_odometer_offset: Option<DistanceOffset>,
-
-    /// Whether horn requires the newer binary `LeaperKim` command frame.
-    pub requires_binary_horn: bool,
 }
 
 impl VeteranModelProfile {
     /// Returns the known profile for a Veteran firmware model id.
     #[must_use]
-    pub fn from_model_id(model_id: u16) -> Option<Self> {
-        let profile = match model_id {
+    pub fn from_model_id(model_id: VeteranModelId) -> Option<Self> {
+        let raw_model_id = model_id.get();
+        let profile = match raw_model_id {
             0 | 1 => Self::new_linear(
                 model_id,
                 "Veteran Sherman",
@@ -266,11 +372,12 @@ impl VeteranModelProfile {
     }
 
     const fn new_linear(
-        model_id: u16,
+        model_id: VeteranModelId,
         name: &'static str,
         series_cells: u8,
         voltage_range: RangeInclusive<Voltage>,
     ) -> Self {
+        let raw_model_id = model_id.get();
         Self {
             model_id,
             name,
@@ -279,21 +386,24 @@ impl VeteranModelProfile {
             nominal_capacity: None,
             battery_profile: None,
             voltage_range,
-            has_pwm_readback: model_id >= 2,
-            has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
+            capabilities: VeteranModelCapabilities::new(
+                raw_model_id >= 2,
+                raw_model_id >= 5 || matches!(raw_model_id, 4 | 7 | 42..=44),
+                raw_model_id >= 3,
+            ),
             bms_layout: None,
             observed_app_odometer_offset: None,
-            requires_binary_horn: model_id >= 3,
         }
     }
 
     fn new_with_battery_profile(
-        model_id: u16,
+        model_id: VeteranModelId,
         name: &'static str,
         series_cells: u8,
         parallel_packs: u8,
         battery_profile: &'static BatteryVoltageProfile,
     ) -> Self {
+        let raw_model_id = model_id.get();
         let series_cells = SeriesCount::new(series_cells);
         let parallel_packs = ParallelCount::new(parallel_packs);
         Self {
@@ -309,11 +419,13 @@ impl VeteranModelProfile {
             )),
             battery_profile: Some(battery_profile),
             voltage_range: battery_profile_pack_range(battery_profile, series_cells),
-            has_pwm_readback: model_id >= 2,
-            has_smart_bms: model_id >= 5 || matches!(model_id, 4 | 7 | 42..=44),
+            capabilities: VeteranModelCapabilities::new(
+                raw_model_id >= 2,
+                raw_model_id >= 5 || matches!(raw_model_id, 4 | 7 | 42..=44),
+                raw_model_id >= 3,
+            ),
             bms_layout: bms_layout_for_geometry(series_cells, parallel_packs),
             observed_app_odometer_offset: None,
-            requires_binary_horn: model_id >= 3,
         }
     }
 
@@ -510,12 +622,12 @@ impl VeteranTelemetry {
     pub fn to_firmware_response(self) -> ReadOnlyResponse {
         ReadOnlyResponse::Firmware(FirmwareInfo {
             protocol_version: None,
-            firmware_major: Some(Measured::reported(self.firmware.model_id)),
+            firmware_major: Some(Measured::reported(self.firmware.model_id.get())),
             firmware_minor: Some(Measured::reported(self.firmware.minor)),
             firmware_patch: Some(Measured::reported(self.firmware.revision)),
             build_id: Some(RawFieldValue::new(
                 VETERAN_FIELD_FIRMWARE_VERSION,
-                i64::from(self.firmware.raw_version),
+                i64::from(self.firmware.raw_version.get()),
             )),
         })
     }
@@ -599,10 +711,10 @@ pub enum VeteranTelemetryError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VeteranFirmwareVersion {
     /// Raw firmware version word.
-    pub raw_version: u16,
+    pub raw_version: VeteranFirmwareVersionWord,
 
     /// Veteran model id extracted from the version word.
-    pub model_id: u16,
+    pub model_id: VeteranModelId,
 
     /// Minor version digit extracted from the version word.
     pub minor: u16,
@@ -615,8 +727,8 @@ impl VeteranFirmwareVersion {
     #[must_use]
     const fn from_raw(raw_version: u16) -> Self {
         Self {
-            raw_version,
-            model_id: raw_version / 1_000,
+            raw_version: VeteranFirmwareVersionWord::new(raw_version),
+            model_id: VeteranModelId::new(raw_version / 1_000),
             minor: (raw_version % 1_000) / 100,
             revision: raw_version % 100,
         }
@@ -626,12 +738,12 @@ impl VeteranFirmwareVersion {
 /// Estimates Aero battery percent from its model's Samsung 50S battery profile.
 #[must_use]
 pub fn estimate_nosfet_aero_battery_level(voltage: Voltage) -> BatteryLevel {
-    estimate_veteran_battery_level(43, voltage)
+    estimate_veteran_battery_level(VeteranModelId::new(43), voltage)
 }
 
 /// Estimates Veteran battery percent using the known model profile when possible.
 #[must_use]
-pub fn estimate_veteran_battery_level(model_id: u16, voltage: Voltage) -> BatteryLevel {
+pub fn estimate_veteran_battery_level(model_id: VeteranModelId, voltage: Voltage) -> BatteryLevel {
     VeteranModelProfile::from_model_id(model_id).map_or(BatteryLevel::from_percent(0), |profile| {
         profile.estimate_battery_level(voltage)
     })
@@ -647,6 +759,10 @@ mod tests {
 
     const fn pct(value: u8) -> BatteryLevel {
         BatteryLevel::from_percent(value)
+    }
+
+    const fn mid(value: u16) -> VeteranModelId {
+        VeteranModelId::new(value)
     }
 
     fn test_voltage_range(start: i32, end: i32) -> RangeInclusive<Voltage> {
@@ -704,8 +820,8 @@ mod tests {
             telemetry,
             VeteranTelemetry {
                 firmware: VeteranFirmwareVersion {
-                    raw_version: 43_254,
-                    model_id: 43,
+                    raw_version: VeteranFirmwareVersionWord::new(43_254),
+                    model_id: mid(43),
                     minor: 2,
                     revision: 54,
                 },
@@ -763,7 +879,7 @@ mod tests {
             telemetry.auto_shutdown_time_remaining,
             Duration::from_seconds(1_117)
         );
-        assert_eq!(telemetry.firmware.model_id, 43);
+        assert_eq!(telemetry.firmware.model_id, mid(43));
         assert_eq!(telemetry.firmware.minor, 2);
         assert_eq!(telemetry.firmware.revision, 54);
     }
@@ -786,9 +902,9 @@ mod tests {
 
     #[test]
     fn veteran_model_profile_maps_known_model_ids() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
-        let oryx = VeteranModelProfile::from_model_id(8).expect("Oryx profile is known");
-        let sherman = VeteranModelProfile::from_model_id(0).expect("Sherman profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
+        let oryx = VeteranModelProfile::from_model_id(mid(8)).expect("Oryx profile is known");
+        let sherman = VeteranModelProfile::from_model_id(mid(0)).expect("Sherman profile is known");
 
         assert_eq!(aero.name, "NOSFET Aero");
         assert_eq!(aero.series_cells, SeriesCount::new(30));
@@ -802,8 +918,8 @@ mod tests {
             Some("Samsung 50S")
         );
         assert_eq!(aero.voltage_range, test_voltage_range(91_000, 126_000));
-        assert!(aero.has_pwm_readback);
-        assert!(aero.requires_binary_horn);
+        assert!(aero.capabilities.has_pwm_readback());
+        assert!(aero.capabilities.requires_binary_horn());
         assert_eq!(
             aero.observed_app_odometer_offset,
             Some(DistanceOffset::from_metres(805))
@@ -821,21 +937,21 @@ mod tests {
             Some("Samsung 50S")
         );
         assert_eq!(oryx.voltage_range, test_voltage_range(127_400, 176_400));
-        assert!(oryx.has_smart_bms);
+        assert!(oryx.capabilities.has_smart_bms());
 
         assert_eq!(sherman.series_cells, SeriesCount::new(24));
         assert_eq!(sherman.parallel_packs, ParallelCount::new(1));
         assert_eq!(sherman.nominal_capacity, None);
         assert_eq!(sherman.battery_profile, None);
         assert_eq!(sherman.voltage_range, test_voltage_range(79_350, 98_700));
-        assert!(!sherman.has_pwm_readback);
-        assert!(!sherman.requires_binary_horn);
+        assert!(!sherman.capabilities.has_pwm_readback());
+        assert!(!sherman.capabilities.requires_binary_horn());
         assert_eq!(sherman.observed_app_odometer_offset, None);
     }
 
     #[test]
     fn aero_model_profile_records_observed_app_odometer_offset_without_parser_correction() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
         let telemetry =
             VeteranTelemetry::decode(&live_aero_2026_06_22_frame()).expect("telemetry decodes");
         let delta = telemetry.to_delta(ms(42));
@@ -852,7 +968,7 @@ mod tests {
 
     #[test]
     fn aero_model_profile_derives_pack_range_from_samsung_50s_cell_curve() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
         let profile = aero
             .battery_profile
             .expect("Aero has a cell battery profile");
@@ -872,7 +988,7 @@ mod tests {
 
     #[test]
     fn aero_model_profile_points_at_samsung_50s_profile() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
         let profile = aero
             .battery_profile
             .expect("Aero has a cell battery profile");
@@ -882,7 +998,7 @@ mod tests {
 
     #[test]
     fn aero_model_profile_keeps_pack_geometry_separate_from_cell_profile() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
         let profile = aero
             .battery_profile
             .expect("Aero has a cell battery profile");
@@ -912,7 +1028,7 @@ mod tests {
 
     #[test]
     fn aero_model_profile_estimates_sticker_points_by_scaling_single_cells() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
         let sticker_points = [
             (91_000, 0),
             (96_000, 7),
@@ -934,7 +1050,7 @@ mod tests {
 
     #[test]
     fn aero_parallel_count_does_not_change_voltage_level_estimation() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
         let profile = aero
             .battery_profile
             .expect("Aero has a cell battery profile");
@@ -950,7 +1066,7 @@ mod tests {
 
     #[test]
     fn aero_model_profile_uses_samsung_50s_curve_for_battery_level() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
 
         assert_eq!(
             aero.estimate_battery_level(Voltage::from_millivolts(91_000)),
@@ -1051,7 +1167,7 @@ mod tests {
             models
         {
             let profile =
-                VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
+                VeteranModelProfile::from_model_id(mid(model_id)).expect("known profile exists");
 
             assert_eq!(profile.name, name);
             assert_eq!(profile.series_cells, SeriesCount::new(series_cells));
@@ -1081,7 +1197,7 @@ mod tests {
 
         for (model_id, name, series_cells, parallel_packs) in models {
             let profile =
-                VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
+                VeteranModelProfile::from_model_id(mid(model_id)).expect("known profile exists");
             let layout = profile.bms_layout.expect("smart-BMS layout is known");
 
             assert_eq!(profile.name, name);
@@ -1098,7 +1214,7 @@ mod tests {
 
     #[test]
     fn aero_bms_layout_preserves_documented_selector_map() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
         let layout = aero.bms_layout.expect("Aero smart-BMS layout is known");
 
         assert_eq!(layout.selectors, &VETERAN_BMS_SELECTORS);
@@ -1123,9 +1239,9 @@ mod tests {
 
     #[test]
     fn samsung_50s_veteran_models_estimate_equivalent_pack_voltages_equally() {
-        let aero = VeteranModelProfile::from_model_id(43).expect("Aero profile is known");
-        let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
-        let oryx = VeteranModelProfile::from_model_id(8).expect("Oryx profile is known");
+        let aero = VeteranModelProfile::from_model_id(mid(43)).expect("Aero profile is known");
+        let lynx = VeteranModelProfile::from_model_id(mid(5)).expect("Lynx profile is known");
+        let oryx = VeteranModelProfile::from_model_id(mid(8)).expect("Oryx profile is known");
 
         assert_eq!(
             aero.estimate_battery_level(Voltage::from_millivolts(107_950)),
@@ -1145,7 +1261,7 @@ mod tests {
     fn models_without_cell_profile_evidence_keep_linear_pack_estimation() {
         for model_id in [0, 1, 2, 3] {
             let profile =
-                VeteranModelProfile::from_model_id(model_id).expect("known profile exists");
+                VeteranModelProfile::from_model_id(mid(model_id)).expect("known profile exists");
 
             assert_eq!(profile.battery_profile, None);
             assert_eq!(profile.parallel_packs, ParallelCount::new(1));
@@ -1155,12 +1271,12 @@ mod tests {
 
     #[test]
     fn veteran_model_profile_returns_none_for_unknown_model_ids() {
-        assert_eq!(VeteranModelProfile::from_model_id(99), None);
+        assert_eq!(VeteranModelProfile::from_model_id(mid(99)), None);
     }
 
     #[test]
     fn veteran_model_profile_estimates_battery_level_from_profile_range() {
-        let lynx = VeteranModelProfile::from_model_id(5).expect("Lynx profile is known");
+        let lynx = VeteranModelProfile::from_model_id(mid(5)).expect("Lynx profile is known");
 
         assert_eq!(
             lynx.estimate_battery_level(Voltage::from_millivolts(109_200)),
@@ -1179,15 +1295,15 @@ mod tests {
     #[test]
     fn veteran_battery_estimation_uses_model_specific_strategy() {
         assert_eq!(
-            estimate_veteran_battery_level(43, Voltage::from_millivolts(107_950)),
+            estimate_veteran_battery_level(mid(43), Voltage::from_millivolts(107_950)),
             pct(44)
         );
         assert_eq!(
-            estimate_veteran_battery_level(5, Voltage::from_millivolts(129_540)),
+            estimate_veteran_battery_level(mid(5), Voltage::from_millivolts(129_540)),
             pct(44)
         );
         assert_eq!(
-            estimate_veteran_battery_level(99, Voltage::from_millivolts(133_535)),
+            estimate_veteran_battery_level(mid(99), Voltage::from_millivolts(133_535)),
             pct(0)
         );
     }
@@ -1196,7 +1312,7 @@ mod tests {
     fn aero_battery_estimation_delegates_to_model_profile() {
         assert_eq!(
             estimate_nosfet_aero_battery_level(Voltage::from_millivolts(107_950)),
-            estimate_veteran_battery_level(43, Voltage::from_millivolts(107_950))
+            estimate_veteran_battery_level(mid(43), Voltage::from_millivolts(107_950))
         );
     }
 
@@ -1205,7 +1321,7 @@ mod tests {
         let telemetry = VeteranTelemetry::decode(&synthetic_short_frame(5, 129_540))
             .expect("synthetic Lynx frame decodes");
 
-        assert_eq!(telemetry.firmware.model_id, 5);
+        assert_eq!(telemetry.firmware.model_id, mid(5));
         assert_eq!(
             telemetry.battery_level_estimated,
             BatteryLevel::from_percent(44)

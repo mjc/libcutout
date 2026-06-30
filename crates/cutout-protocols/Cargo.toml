@@ -9,6 +9,7 @@ description = "Protocol scaffolding for NOSFET Aero and Begode Falcon devices"
 readme = "../../README.md"
 keywords = ["ble", "pev", "aero", "falcon"]
 categories = ["hardware-support", "embedded"]
+build = "build.rs"
 
 [lints]
 workspace = true
@@ -25,6 +26,10 @@ vesc.workspace = true
 [dev-dependencies]
 hex-literal.workspace = true
 proptest.workspace = true
+
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true
 
 [features]
 default = []

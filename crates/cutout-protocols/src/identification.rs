@@ -379,7 +379,7 @@ const fn protocol_family_from_classification(
 }
 
 fn model_name_matches(name: &str, entry: &ModelRegistryEntry) -> bool {
-    contains_ascii_ignore_case(name, entry.model)
+    contains_ascii_ignore_case(name, entry.model.as_str())
         || entry
             .advertised_name_hints
             .iter()
@@ -632,8 +632,8 @@ mod tests {
     #[test]
     fn duplicate_matching_models_report_ambiguity() {
         static OTHER_FALCON: ModelRegistryEntry = ModelRegistryEntry {
-            manufacturer: "Other",
-            model: "Falcon",
+            manufacturer: cutout_core::ManufacturerKey::new("Other"),
+            model: cutout_core::ModelKey::new("Falcon"),
             protocol_family: ProtocolFamily::BegodeGotway,
             advertised_name_hints: &["Falcon"],
             wire_model_id: None,
@@ -662,8 +662,8 @@ mod tests {
     #[test]
     fn overlapping_gatt_and_family_without_model_evidence_is_ambiguous() {
         static OTHER_BEGODE: ModelRegistryEntry = ModelRegistryEntry {
-            manufacturer: "Other",
-            model: "Shared Pipe",
+            manufacturer: cutout_core::ManufacturerKey::new("Other"),
+            model: cutout_core::ModelKey::new("Shared Pipe"),
             protocol_family: ProtocolFamily::BegodeGotway,
             advertised_name_hints: &["Shared"],
             wire_model_id: None,

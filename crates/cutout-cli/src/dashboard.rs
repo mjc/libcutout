@@ -21,13 +21,14 @@ use cutout_core::{
     Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
     CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, Count, Current,
     DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PevcapHeader, PhaseCurrent,
-    Power, ProtocolFamily, Quantity, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry,
-    SettingsReadback, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot, Temperature, Unit,
-    Voltage,
+    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PercentQuantity,
+    PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity, QuantityDisplayValue,
+    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, SignalStrength, Speed,
+    TelemetryDelta, TelemetrySnapshot, Temperature, Unit, Voltage,
 };
 use cutout_protocols::{
-    MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelProfile,
+    MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelId,
+    VeteranModelProfile,
 };
 use ratatui::termina::{
     PlatformTerminal, Terminal as _,
@@ -491,6 +492,10 @@ fn clamp_percent(value: u8) -> u8 {
     value.min(100)
 }
 
+fn from_clamped_percent<T: PercentQuantity>(value: u8) -> T {
+    T::from_percent(clamp_percent(value))
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct DashboardBatteryLevel(BatteryLevel);
 
@@ -500,7 +505,7 @@ impl DashboardBatteryLevel {
     }
 
     fn from_percent(value: u8) -> Self {
-        Self::from_battery_level(BatteryLevel::from_percent(clamp_percent(value)))
+        Self::from_battery_level(from_clamped_percent(value))
     }
 
     const fn decrement_for_demo(self) -> Self {
@@ -515,7 +520,7 @@ impl DashboardBatteryLevel {
 
 impl fmt::Display for DashboardBatteryLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.as_percent().fmt(f)
+        self.0.display_value().fmt(f)
     }
 }
 
@@ -524,11 +529,11 @@ pub(crate) struct SignalQuality(BatteryLevel);
 
 impl SignalQuality {
     fn from_percent(value: u8) -> Self {
-        Self(BatteryLevel::from_percent(clamp_percent(value)))
+        Self(from_clamped_percent(value))
     }
 
     fn from_signal_strength(signal: SignalStrength) -> Self {
-        Self::from_percent(signal.as_quality_percent())
+        Self::from_percent(signal.display_value())
     }
 
     const fn increment(self) -> Self {
@@ -547,7 +552,7 @@ impl SignalQuality {
 
 impl fmt::Display for SignalQuality {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.as_percent().fmt(f)
+        self.0.display_value().fmt(f)
     }
 }
 
@@ -560,7 +565,7 @@ impl DisplaySpeed {
     }
 
     pub(crate) fn get(self) -> u64 {
-        self.0.as_mph()
+        self.0.display_value()
     }
 
     const fn is_stationary(self) -> bool {
@@ -587,7 +592,7 @@ impl DisplayVoltage {
     }
 
     pub(crate) fn get(self) -> u64 {
-        self.0.as_whole_volts()
+        self.0.display_value()
     }
 }
 
@@ -606,7 +611,7 @@ impl WheelPitchDeg {
     }
 
     fn get(self) -> i64 {
-        self.0.as_whole_degrees()
+        self.0.display_value()
     }
 
     const fn is_lifted_or_tilted(self) -> bool {
@@ -630,7 +635,7 @@ impl DisplayDutyCycle {
     }
 
     fn get(self) -> i64 {
-        self.0.as_whole_percent()
+        self.0.display_value()
     }
 }
 
@@ -649,7 +654,7 @@ impl DisplayTemperature {
     }
 
     fn get(self) -> i64 {
-        self.0.as_whole_celsius()
+        self.0.display_value()
     }
 }
 
@@ -668,7 +673,7 @@ impl DisplayPhaseCurrent {
     }
 
     fn get(self) -> i64 {
-        self.0.as_whole_amps()
+        self.0.display_value()
     }
 
     const fn is_idle(self) -> bool {
@@ -701,7 +706,7 @@ impl DisplayBatteryCurrent {
     }
 
     fn get(self) -> i64 {
-        self.0.as_whole_amps()
+        self.0.display_value()
     }
 
     const fn is_idle(self) -> bool {
@@ -773,8 +778,8 @@ impl DisplayPower {
         Self::from_power(Power::from_voltage_current(voltage, current))
     }
 
-    const fn get(self) -> i64 {
-        self.0.as_whole_watts()
+    fn get(self) -> i64 {
+        self.0.display_value()
     }
 }
 
@@ -1912,7 +1917,7 @@ impl DisplayDistance {
 
 impl fmt::Display for DisplayDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let meters = self.0.as_whole_metres();
+        let meters = self.0.display_value();
         if meters < 1_000 {
             write!(f, "{meters} m")
         } else {
@@ -1937,8 +1942,8 @@ struct DeviceIdentity {
 fn classify_device_identity(name: &str) -> DeviceIdentity {
     match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
         CatalogModelResolution::Matched(entry) => DeviceIdentity {
-            make: entry.registry.manufacturer.to_owned(),
-            model: entry.registry.model.to_owned(),
+            make: entry.registry.manufacturer.as_str().to_owned(),
+            model: entry.registry.model.as_str().to_owned(),
         },
         CatalogModelResolution::NoMatch | CatalogModelResolution::Ambiguous => DeviceIdentity {
             make: "unknown".to_owned(),
@@ -2191,7 +2196,7 @@ impl DisplayTelemetryDistance {
 
 impl fmt::Display for DisplayTelemetryDistance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let meters = self.0.as_whole_metres();
+        let meters = self.0.display_value();
         if meters < 1_000 {
             return write!(f, "{meters} m");
         }
@@ -3677,7 +3682,7 @@ fn voltage_sparkline_title(state: &DashboardState) -> String {
 
 fn voltage_sparkline_max(state: &DashboardState) -> u64 {
     dashboard_voltage_range(state)
-        .map_or(100, |range| range.end().as_whole_volts())
+        .map_or(100, |range| range.end().display_value())
         .max(
             state
                 .telemetry
@@ -3696,14 +3701,14 @@ fn voltage_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usiz
             *slot = u64::from(
                 voltage_samples
                     .percent_of_range(&voltage_range)
-                    .as_percent(),
+                    .display_value(),
             );
         }
         return (data, len, 100);
     }
 
     for (slot, voltage_samples) in data.iter_mut().zip(state.telemetry.voltage_samples.iter()) {
-        *slot = voltage_samples.as_whole_volts();
+        *slot = voltage_samples.display_value();
     }
     (data, len, voltage_sparkline_max(state))
 }
@@ -3713,7 +3718,7 @@ fn speed_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize)
     let len = state.telemetry.speed_samples.len().min(HISTORY_LIMIT);
 
     for (slot, speed_sample) in data.iter_mut().zip(state.telemetry.speed_samples.iter()) {
-        *slot = speed_sample.as_mph();
+        *slot = speed_sample.display_value();
     }
 
     (data, len)
@@ -3723,7 +3728,7 @@ fn dashboard_voltage_range(state: &DashboardState) -> Option<RangeInclusive<Volt
     if ModelCatalog::new(&MODEL_CATALOG)
         .find_model_names(&state.device.make, &state.device.model)
         .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY))
-        && let Some(profile) = VeteranModelProfile::from_model_id(43)
+        && let Some(profile) = VeteranModelProfile::from_model_id(VeteranModelId::new(43))
     {
         return Some(profile.voltage_range);
     }

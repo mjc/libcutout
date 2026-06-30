@@ -1,12 +1,17 @@
+#![allow(unreachable_pub)]
+
 use cutout_core::{
     GattChannel, ModelCatalogEntry, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
     ProtocolSession, SessionInput, SessionKey, SessionOutput,
 };
 
 use crate::{
-    BEGODE_DATA_CHANNEL, BegodeFalconModel, BegodeNotificationDecoder, BegodePackVoltageProfile,
-    NosfetAeroModel, ReadOnlySession, RegisteredModelSpec, VETERAN_DATA_CHANNEL,
+    BegodeFalconModel, BegodeNotificationDecoder, BegodePackVoltageProfile, NosfetAeroModel,
+    ReadOnlySession,
 };
+
+mod begode_falcon;
+mod nosfet_aero;
 
 /// Parser registration key for Veteran/LeaperKim/NOSFET notifications.
 pub const VETERAN_PARSER_KEY: ParserKey = ParserKey::new("veteran");
@@ -20,29 +25,68 @@ pub const NOSFET_AERO_SESSION_KEY: SessionKey = SessionKey::new("nosfet-aero-rea
 /// Session registration key for the Begode Falcon read-only session.
 pub const BEGODE_FALCON_SESSION_KEY: SessionKey = SessionKey::new("begode-falcon-read-only");
 
-/// Hardware-backed registry entry for the NOSFET Aero.
-pub const NOSFET_AERO_REGISTRY_ENTRY: ModelRegistryEntry =
-    <NosfetAeroModel as RegisteredModelSpec>::REGISTRY_ENTRY;
+#[allow(unused_imports)]
+pub use begode_falcon::BEGODE_FALCON_REGISTRY_ENTRY;
+#[allow(unused_imports)]
+pub use nosfet_aero::NOSFET_AERO_REGISTRY_ENTRY;
 
-/// Source-backed initial registry entry for the Begode Falcon.
-pub const BEGODE_FALCON_REGISTRY_ENTRY: ModelRegistryEntry =
-    <BegodeFalconModel as RegisteredModelSpec>::REGISTRY_ENTRY;
+/// Structured source data for a statically registered model.
+#[derive(Clone, Copy, Debug)]
+pub struct RegisteredModelDefinition {
+    /// Registry metadata shared by catalog and runtime registrations.
+    pub registry: &'static ModelRegistryEntry,
 
-/// Compile-time model registry entries known to this crate.
-pub const MODEL_REGISTRY: [&ModelRegistryEntry; 2] =
-    [&NOSFET_AERO_REGISTRY_ENTRY, &BEGODE_FALCON_REGISTRY_ENTRY];
+    /// Parser registration key for the model.
+    pub parser_key: ParserKey,
 
-/// Compile-time model catalog entries known to this crate.
-pub const MODEL_CATALOG: [ModelCatalogEntry; 2] = [
-    ModelCatalogEntry::new(
-        &NOSFET_AERO_REGISTRY_ENTRY,
-        ModelRuntimeRegistration::active(VETERAN_PARSER_KEY, NOSFET_AERO_SESSION_KEY),
-    ),
-    ModelCatalogEntry::new(
-        &BEGODE_FALCON_REGISTRY_ENTRY,
-        ModelRuntimeRegistration::active(BEGODE_PARSER_KEY, BEGODE_FALCON_SESSION_KEY),
-    ),
-];
+    /// Session registration key for the model.
+    pub session_key: SessionKey,
+
+    /// Notification data channel expected by the constructed session.
+    pub data_channel: GattChannel,
+
+    pub(crate) construct: fn() -> RegisteredReadOnlySession,
+}
+
+impl RegisteredModelDefinition {
+    /// Builds a structured model definition.
+    #[must_use]
+    pub const fn new(
+        registry: &'static ModelRegistryEntry,
+        parser_key: ParserKey,
+        session_key: SessionKey,
+        data_channel: GattChannel,
+        construct: fn() -> RegisteredReadOnlySession,
+    ) -> Self {
+        Self {
+            registry,
+            parser_key,
+            session_key,
+            data_channel,
+            construct,
+        }
+    }
+
+    /// Builds the catalog entry for this model definition.
+    #[must_use]
+    pub const fn catalog_entry(self) -> ModelCatalogEntry {
+        ModelCatalogEntry::new(
+            self.registry,
+            ModelRuntimeRegistration::active(self.parser_key, self.session_key),
+        )
+    }
+
+    /// Builds the session registration for this model definition.
+    #[must_use]
+    pub const fn session_registration(self) -> SessionRegistration {
+        SessionRegistration {
+            key: self.session_key,
+            model: self.registry,
+            data_channel: self.data_channel,
+            construct: self.construct,
+        }
+    }
+}
 
 /// Session constructor registered for a model catalog entry.
 #[derive(Clone, Copy, Debug)]
@@ -67,6 +111,8 @@ impl SessionRegistration {
     }
 }
 
+include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
+
 /// Allocation-free read-only session sum type for statically registered models.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
@@ -87,11 +133,11 @@ impl ProtocolSession for RegisteredReadOnlySession {
     }
 }
 
-fn nosfet_aero_read_only_session() -> RegisteredReadOnlySession {
+pub(super) fn nosfet_aero_read_only_session() -> RegisteredReadOnlySession {
     RegisteredReadOnlySession::NosfetAero(ReadOnlySession::<NosfetAeroModel, false>::default())
 }
 
-fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
+pub(super) fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
     RegisteredReadOnlySession::BegodeFalcon(ReadOnlySession::<BegodeFalconModel, true>::default())
 }
 
@@ -106,22 +152,6 @@ pub fn begode_falcon_read_only_session_with_voltage_profile(
         ),
     )
 }
-
-/// Read-only session registrations available from this protocol crate.
-pub const SESSION_REGISTRATIONS: [SessionRegistration; 2] = [
-    SessionRegistration {
-        key: NOSFET_AERO_SESSION_KEY,
-        model: &NOSFET_AERO_REGISTRY_ENTRY,
-        data_channel: VETERAN_DATA_CHANNEL,
-        construct: nosfet_aero_read_only_session,
-    },
-    SessionRegistration {
-        key: BEGODE_FALCON_SESSION_KEY,
-        model: &BEGODE_FALCON_REGISTRY_ENTRY,
-        data_channel: BEGODE_DATA_CHANNEL,
-        construct: begode_falcon_read_only_session,
-    },
-];
 
 /// Finds a session registration by typed key without allocating.
 #[must_use]
@@ -206,8 +236,8 @@ mod tests {
             verification: VerificationStatus::Inferred,
         }];
         static FAKE_MODEL: ModelRegistryEntry = ModelRegistryEntry {
-            manufacturer: "FakeCo",
-            model: "Fixture Wheel",
+            manufacturer: ManufacturerKey::new("FakeCo"),
+            model: ModelKey::new("Fixture Wheel"),
             protocol_family: ProtocolFamily::BegodeGotway,
             advertised_name_hints: &["FixtureWheel"],
             wire_model_id: None,
@@ -250,7 +280,7 @@ mod tests {
             catalog
                 .find_parser(FAKE_PARSER_KEY)
                 .map(|entry| entry.registry.model),
-            Some("Fixture Wheel")
+            Some(ModelKey::new("Fixture Wheel"))
         );
         assert!(matches!(
             catalog.resolve_advertised_name("FixtureWheel BLE"),
@@ -298,7 +328,7 @@ mod tests {
             ModelCatalog::new(&catalog)
                 .find_session(FAKE_SESSION_KEY)
                 .map(|entry| entry.registry.model),
-            Some("Typed Fixture Wheel")
+            Some(ModelKey::new("Typed Fixture Wheel"))
         );
     }
 

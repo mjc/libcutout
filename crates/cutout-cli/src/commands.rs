@@ -820,10 +820,10 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
     match read_battery_level(&connection.peripheral, &connection.summary).await? {
         Some(percent) => {
             info!(
-                percent = percent.as_percent(),
+                percent = cutout_core::PercentQuantity::as_percent(percent),
                 "read dashboard battery level"
             );
-            state.apply_battery_level(percent.as_percent());
+            state.apply_battery_level(cutout_core::PercentQuantity::as_percent(percent));
         }
         None => {
             info!("dashboard battery level unavailable from standard BLE characteristic");
@@ -1134,11 +1134,13 @@ async fn refresh_dashboard_battery(
         Ok(Some(percent)) => {
             info!(
                 iteration,
-                percent = percent.as_percent(),
+                percent = cutout_core::PercentQuantity::as_percent(percent),
                 "dashboard battery refresh succeeded"
             );
-            tx.send(DashboardUpdate::BatteryLevel(percent.as_percent()))
-                .is_ok()
+            tx.send(DashboardUpdate::BatteryLevel(
+                cutout_core::PercentQuantity::as_percent(percent),
+            ))
+            .is_ok()
         }
         Ok(None) => {
             info!(iteration, "dashboard battery refresh unavailable");
@@ -1754,7 +1756,7 @@ fn pevcap_identity_for_catalog_entry(
     PevcapResolvedIdentity {
         protocol_family: Some(entry.registry.protocol_family),
         model: Some(VerifiedValue {
-            value: entry.registry.model.to_owned(),
+            value: entry.registry.model.as_str().to_owned(),
             verification: VerificationStatus::Inferred,
         }),
         firmware: None,
@@ -2238,10 +2240,10 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
             cutout_core::BmsPackCurrents::current_1,
         ),
         "level_reported": measured_u8_json(battery.level_reported.map(|measured| {
-            measured.map_value(cutout_core::BatteryLevel::as_percent)
+            measured.map_value(cutout_core::PercentQuantity::as_percent)
         })),
         "level_estimated": measured_u8_json(battery.level_estimated.map(|measured| {
-            measured.map_value(cutout_core::BatteryLevel::as_percent)
+            measured.map_value(cutout_core::PercentQuantity::as_percent)
         })),
         "temperature": measured_i32_json(battery.temperature.map(|measured| {
             measured.map_value(cutout_core::Temperature::as_millicelsius)

@@ -1,0 +1,10 @@
+[
+  {
+    "module": "nosfet_aero",
+    "definition_const": "NOSFET_AERO_MODEL_DEFINITION"
+  },
+  {
+    "module": "begode_falcon",
+    "definition_const": "BEGODE_FALCON_MODEL_DEFINITION"
+  }
+]

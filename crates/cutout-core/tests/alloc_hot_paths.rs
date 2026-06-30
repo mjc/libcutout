@@ -34,8 +34,8 @@ const CATALOG_GATT: [cutout_core::GattFingerprint; 1] = [cutout_core::GattFinger
 }];
 
 static CATALOG_REGISTRY_ENTRY: ModelRegistryEntry = ModelRegistryEntry {
-    manufacturer: "NOSFET",
-    model: "Aero",
+    manufacturer: ManufacturerKey::new("NOSFET"),
+    model: ModelKey::new("Aero"),
     protocol_family: ProtocolFamily::VeteranLeaperkimNosfet,
     advertised_name_hints: &["NF"],
     wire_model_id: None,
@@ -285,8 +285,8 @@ fn synthetic_catalog_entry(index: usize) -> ModelCatalogEntry {
     let model = leak_static_str(format!("Model{index:04}"));
     let hints = Box::leak(Box::new([hint]));
     let registry = Box::leak(Box::new(ModelRegistryEntry {
-        manufacturer: "Synthetic",
-        model,
+        manufacturer: ManufacturerKey::new("Synthetic"),
+        model: ModelKey::new(model),
         protocol_family: ProtocolFamily::VeteranLeaperkimNosfet,
         advertised_name_hints: hints,
         wire_model_id: None,

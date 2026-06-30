@@ -1,6 +1,6 @@
 use std::{fmt, num::NonZeroUsize, time::Duration};
 
-use cutout_core::{Count, Information, Quantity, Unit};
+use cutout_core::{Count, Information, PercentQuantity, Quantity, Unit};
 
 /// Bounded scan duration parsed at the caller boundary.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -323,6 +323,16 @@ impl BtleBatteryLevel {
     /// Returns the battery level as a percentage value for display or serialization.
     #[must_use]
     pub const fn as_percent(self) -> u8 {
+        self.0
+    }
+}
+
+impl PercentQuantity for BtleBatteryLevel {
+    fn from_percent(value: u8) -> Self {
+        Self(value.min(100))
+    }
+
+    fn as_percent(self) -> u8 {
         self.0
     }
 }

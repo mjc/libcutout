@@ -732,10 +732,10 @@ pub struct InstalledDeviceIdentity<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelRegistryEntry {
     /// Manufacturer or brand.
-    pub manufacturer: &'static str,
+    pub manufacturer: ManufacturerKey,
 
     /// Model name.
-    pub model: &'static str,
+    pub model: ModelKey,
 
     /// Protocol family.
     pub protocol_family: ProtocolFamily,
@@ -781,6 +781,32 @@ impl ManufacturerKey {
     }
 }
 
+impl core::ops::Deref for ManufacturerKey {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl PartialEq<&str> for ManufacturerKey {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<ManufacturerKey> for &str {
+    fn eq(&self, other: &ManufacturerKey) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl core::fmt::Display for ManufacturerKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Stable model key used by catalog lookup and validation.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -797,6 +823,32 @@ impl ModelKey {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+}
+
+impl core::ops::Deref for ModelKey {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl PartialEq<&str> for ModelKey {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<ModelKey> for &str {
+    fn eq(&self, other: &ModelKey) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl core::fmt::Display for ModelKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -1147,8 +1199,8 @@ impl CompleteModelAuthoring {
     #[must_use]
     pub const fn registry_entry(self) -> ModelRegistryEntry {
         ModelRegistryEntry {
-            manufacturer: self.manufacturer.as_str(),
-            model: self.model.as_str(),
+            manufacturer: self.manufacturer,
+            model: self.model,
             protocol_family: self.family.protocol_family(),
             advertised_name_hints: self.advertised_name_hints,
             wire_model_id: self.wire_model_id,
@@ -1193,13 +1245,13 @@ impl ModelCatalogEntry {
     /// Manufacturer key for this catalog entry.
     #[must_use]
     pub const fn manufacturer_key(self) -> ManufacturerKey {
-        ManufacturerKey::new(self.registry.manufacturer)
+        self.registry.manufacturer
     }
 
     /// Model key for this catalog entry.
     #[must_use]
     pub const fn model_key(self) -> ModelKey {
-        ModelKey::new(self.registry.model)
+        self.registry.model
     }
 
     /// Family key for this catalog entry.
@@ -1330,16 +1382,16 @@ pub enum CatalogModelResolution<'a> {
 }
 
 fn registry_entry_matches_display_model(entry: &ModelRegistryEntry, display_model: &str) -> bool {
-    display_model == entry.model
+    entry.model == display_model
         || display_model
-            .strip_prefix(entry.manufacturer)
+            .strip_prefix(entry.manufacturer.as_str())
             .and_then(|suffix| suffix.strip_prefix(' '))
-            == Some(entry.model)
+            == Some(entry.model.as_str())
 }
 
 fn registry_entry_matches_advertised_name(entry: &ModelRegistryEntry, name: &str) -> bool {
-    contains_ascii_ignore_case(name, entry.manufacturer)
-        || contains_ascii_ignore_case(name, entry.model)
+    contains_ascii_ignore_case(name, entry.manufacturer.as_str())
+        || contains_ascii_ignore_case(name, entry.model.as_str())
         || entry
             .advertised_name_hints
             .iter()
@@ -1516,10 +1568,10 @@ fn validate_registry_entry(
     index: usize,
     entry: &ModelRegistryEntry,
 ) -> Result<(), RegistryValidationError> {
-    if entry.manufacturer.is_empty() {
+    if entry.manufacturer.as_str().is_empty() {
         return Err(RegistryValidationError::EmptyManufacturer { index });
     }
-    if entry.model.is_empty() {
+    if entry.model.as_str().is_empty() {
         return Err(RegistryValidationError::EmptyModel { index });
     }
     if entry.gatt.is_empty() {
@@ -1624,8 +1676,8 @@ impl RegistryHashBuilder {
     }
 
     fn write_registry_entry(&mut self, entry: &ModelRegistryEntry) {
-        self.write_str(entry.manufacturer);
-        self.write_str(entry.model);
+        self.write_str(entry.manufacturer.as_str());
+        self.write_str(entry.model.as_str());
         self.write_u8(protocol_family_code(entry.protocol_family));
         self.write_strs(entry.advertised_name_hints);
         self.write_verified_u16(entry.wire_model_id);
@@ -4026,6 +4078,16 @@ where
     }
 }
 
+/// Shared conversion surface for quantity-backed values with a canonical
+/// presentation scalar.
+pub trait QuantityDisplayValue {
+    /// Canonical scalar used by the display conversion.
+    type DisplayValue: Copy + fmt::Display;
+
+    /// Returns the canonical presentation scalar for this quantity.
+    fn display_value(self) -> Self::DisplayValue;
+}
+
 /// Electrical voltage stored in millivolts.
 pub type Voltage = Quantity<ElectricPotential, MilliVolt, i32>;
 
@@ -4217,6 +4279,14 @@ impl Voltage {
         let numerator = i64::from(cell_voltage.as_microvolts()) * i64::from(series_cells);
         let rounded = (numerator + 500) / 1_000;
         Self::from_millivolts(saturating_i64_to_i32(rounded))
+    }
+}
+
+impl QuantityDisplayValue for Voltage {
+    type DisplayValue = u64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_whole_volts()
     }
 }
 
@@ -4502,6 +4572,14 @@ impl Current {
     }
 }
 
+impl QuantityDisplayValue for Current {
+    type DisplayValue = i64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_whole_amps()
+    }
+}
+
 /// Peak current stored in milliamps.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(transparent)]
@@ -4675,6 +4753,14 @@ impl Power {
     #[must_use]
     pub fn from_watts_f32(value: f32) -> Self {
         Self::from_milliwatts(round_f32_to_i64(value * 1_000.0))
+    }
+}
+
+impl QuantityDisplayValue for Power {
+    type DisplayValue = i64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_whole_watts()
     }
 }
 
@@ -4871,6 +4957,14 @@ impl Speed {
     }
 }
 
+impl QuantityDisplayValue for Speed {
+    type DisplayValue = u64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_mph()
+    }
+}
+
 /// Linear distance stored in millimetres.
 pub type Distance = Quantity<Length, Millimetre, u64>;
 
@@ -4924,6 +5018,14 @@ impl Distance {
             .saturating_mul(10)
             .saturating_add(500)
             / 1_000
+    }
+}
+
+impl QuantityDisplayValue for Distance {
+    type DisplayValue = u64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_whole_metres()
     }
 }
 
@@ -5063,6 +5165,14 @@ impl Temperature {
     }
 }
 
+impl QuantityDisplayValue for Temperature {
+    type DisplayValue = i64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_whole_celsius()
+    }
+}
+
 /// Plane angle stored in millidegrees.
 pub type Angle = Quantity<PlaneAngle, MilliDegree, i32>;
 
@@ -5102,6 +5212,14 @@ impl Angle {
     #[must_use]
     pub const fn from_degrees(value: i64) -> Self {
         Self::from_millidegrees(saturating_i64_to_i32(value.saturating_mul(1_000)))
+    }
+}
+
+impl QuantityDisplayValue for Angle {
+    type DisplayValue = i64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_whole_degrees()
     }
 }
 
@@ -5161,8 +5279,26 @@ impl DutyCycle {
     }
 }
 
+impl QuantityDisplayValue for DutyCycle {
+    type DisplayValue = i64;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_whole_percent()
+    }
+}
+
 /// Battery state-of-charge stored as a percentage.
 pub type BatteryLevel = Quantity<Ratio, PercentUnit, u8>;
+
+/// Shared conversion surface for battery state-of-charge quantities.
+#[allow(clippy::wrong_self_convention)]
+pub trait PercentQuantity {
+    /// Creates a battery level from a percent value.
+    fn from_percent(value: u8) -> Self;
+
+    /// Returns this battery level as a percent value.
+    fn as_percent(self) -> u8;
+}
 
 impl BatteryLevel {
     /// Creates a battery level from a percent value.
@@ -5248,6 +5384,24 @@ impl BatteryLevel {
     }
 }
 
+impl PercentQuantity for BatteryLevel {
+    fn from_percent(value: u8) -> Self {
+        Self::from_unit_value(value)
+    }
+
+    fn as_percent(self) -> u8 {
+        self.unit_value()
+    }
+}
+
+impl QuantityDisplayValue for BatteryLevel {
+    type DisplayValue = u8;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_percent()
+    }
+}
+
 /// Radio signal strength stored in dBm.
 pub type SignalStrength = Quantity<SignalPower, DecibelMilliwatt, i16>;
 
@@ -5271,6 +5425,14 @@ impl SignalStrength {
         let offset = i32::from(dbm) + 100;
         let percent = (offset * 100) / 50;
         u8::try_from(percent).unwrap_or(100)
+    }
+}
+
+impl QuantityDisplayValue for SignalStrength {
+    type DisplayValue = u8;
+
+    fn display_value(self) -> Self::DisplayValue {
+        self.as_quality_percent()
     }
 }
 
@@ -6974,6 +7136,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn quantity_conversions_keep_unit_math_in_core() {
         assert_eq!(Speed::from_mph(10).as_millimetres_per_second(), 4_474);
         assert_eq!(Speed::from_millimetres_per_second(4_470).as_mph(), 10);
@@ -6999,6 +7162,12 @@ mod tests {
 
         assert_eq!(Voltage::from_volts(126).as_millivolts(), 126_000);
         assert_eq!(Voltage::from_millivolts(84_400).as_whole_volts(), 84);
+        assert_eq!(
+            <Voltage as crate::QuantityDisplayValue>::display_value(Voltage::from_millivolts(
+                84_400,
+            )),
+            84
+        );
         assert_eq!(Voltage::from_deci_volts(915).as_millivolts(), 91_500);
         assert_eq!(
             Current::from_milliamps(-1_700).abs(),
@@ -7041,6 +7210,16 @@ mod tests {
         assert_eq!(Current::from_milliamps(-12_400).as_abs_whole_amps(), 12);
         assert_eq!(BatteryLevel::from_percent_i32(-1).as_percent(), 0);
         assert_eq!(BatteryLevel::from_percent_i32(120).as_percent(), 100);
+        assert_eq!(
+            <BatteryLevel as crate::PercentQuantity>::as_percent(BatteryLevel::from_percent(75)),
+            75
+        );
+        assert_eq!(
+            <BatteryLevel as crate::QuantityDisplayValue>::display_value(
+                BatteryLevel::from_percent(42)
+            ),
+            42
+        );
         assert!((BatteryLevel::from_percent(75).as_ratio() - 0.75).abs() < f64::EPSILON);
         assert_eq!(
             BatteryLevel::interpolate(
@@ -7201,6 +7380,10 @@ mod tests {
         let signal = crate::SignalStrength::from_dbm(-61);
         assert_eq!(signal.as_dbm(), -61);
         assert_eq!(signal.as_quality_percent(), 78);
+        assert_eq!(
+            <crate::SignalStrength as crate::QuantityDisplayValue>::display_value(signal),
+            78
+        );
         assert_eq!(
             crate::SignalStrength::from_dbm(-120).as_quality_percent(),
             0
@@ -7471,8 +7654,8 @@ mod tests {
             },
         ];
         let entry = crate::ModelRegistryEntry {
-            manufacturer: "NOSFET",
-            model: "Aero",
+            manufacturer: crate::ManufacturerKey::new("NOSFET"),
+            model: crate::ModelKey::new("Aero"),
             protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
             advertised_name_hints: &["NF2557"],
             wire_model_id: Some(crate::VerifiedValue {
@@ -7744,7 +7927,7 @@ mod tests {
                     crate::ModelKey::new("Aero")
                 )
                 .map(|entry| entry.registry.model),
-            Some("Aero")
+            Some(crate::ModelKey::new("Aero"))
         );
         assert_eq!(
             catalog
@@ -7852,8 +8035,8 @@ mod tests {
     #[test]
     fn catalog_display_model_resolution_reports_ambiguity() {
         static OTHER_AERO_REGISTRY_ENTRY: crate::ModelRegistryEntry = crate::ModelRegistryEntry {
-            manufacturer: "Other",
-            model: "Aero",
+            manufacturer: crate::ManufacturerKey::new("Other"),
+            model: crate::ModelKey::new("Aero"),
             protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
             advertised_name_hints: &[],
             wire_model_id: None,
@@ -7890,8 +8073,8 @@ mod tests {
     #[test]
     fn catalog_advertised_name_resolution_reports_ambiguity() {
         static OTHER_AERO_REGISTRY_ENTRY: crate::ModelRegistryEntry = crate::ModelRegistryEntry {
-            manufacturer: "Other",
-            model: "Shared",
+            manufacturer: crate::ManufacturerKey::new("Other"),
+            model: crate::ModelKey::new("Shared"),
             protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
             advertised_name_hints: &["NF2557"],
             wire_model_id: None,
@@ -8147,8 +8330,8 @@ mod tests {
         }];
 
         crate::ModelRegistryEntry {
-            manufacturer,
-            model,
+            manufacturer: crate::ManufacturerKey::new(manufacturer),
+            model: crate::ModelKey::new(model),
             protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
             advertised_name_hints: &["NF"],
             wire_model_id: None,
@@ -8198,8 +8381,8 @@ mod tests {
         let model = leak_static_str(format!("Model{index:04}"));
         let hints = Box::leak(Box::new([hint]));
         let registry = Box::leak(Box::new(crate::ModelRegistryEntry {
-            manufacturer: "Synthetic",
-            model,
+            manufacturer: crate::ManufacturerKey::new("Synthetic"),
+            model: crate::ModelKey::new(model),
             protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
             advertised_name_hints: hints,
             wire_model_id: None,
@@ -8240,8 +8423,8 @@ mod tests {
     }];
 
     static STATIC_AERO_REGISTRY_ENTRY: crate::ModelRegistryEntry = crate::ModelRegistryEntry {
-        manufacturer: "NOSFET",
-        model: "Aero",
+        manufacturer: crate::ManufacturerKey::new("NOSFET"),
+        model: crate::ModelKey::new("Aero"),
         protocol_family: crate::ProtocolFamily::VeteranLeaperkimNosfet,
         advertised_name_hints: &["NF"],
         wire_model_id: None,
