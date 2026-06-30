@@ -69,6 +69,25 @@ struct CutoutMobilePackageSmoke {
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x05])),
         ])
 
+        let runner = CoreBluetoothSessionRunner(
+            session: .aero(AeroSession()),
+            writeLimit: TransportWriteLimitBytes(185)
+        )
+        let runnerSubscribe = try runner.handle(.linkUp(at: MonotonicMilliseconds(20)))
+        precondition(runnerSubscribe.operations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
+        let runnerTelemetry = try runner.handle(.notification(
+            bytes: Data(hex: """
+                dc5a5c532a7c000000000000ab41001700000cff
+                000000000226021ca8f607801afa000080c80000
+                808080808080022880803080800e310e310e2f0e
+                2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e
+                310e2e9e05e3ad
+            """),
+            channel: BluetoothUuid.bluetooth16(0xffe1),
+            at: MonotonicMilliseconds(21)
+        ))
+        precondition(runnerTelemetry.snapshot?.voltageMillivolts == 108_760)
+
         #if canImport(CoreBluetooth)
         precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.count == 2)
         precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.contains(.bluetooth16(0xffe0)))

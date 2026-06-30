@@ -358,6 +358,99 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
     }
 }
 
+public enum CoreBluetoothSession: Sendable {
+    case aero(AeroSession)
+    case falcon(FalconSession)
+
+    fileprivate var currentSnapshot: TelemetrySnapshot {
+        switch self {
+        case .aero(let session):
+            session.currentSnapshot
+        case .falcon(let session):
+            session.currentSnapshot
+        }
+    }
+
+    fileprivate func linkUp(
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes
+    ) throws -> [SessionAction] {
+        switch self {
+        case .aero(let session):
+            try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
+        case .falcon(let session):
+            try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
+        }
+    }
+
+    fileprivate func ingestNotification(
+        _ bytes: Data,
+        channel: BluetoothUuid,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> TelemetrySnapshot {
+        switch self {
+        case .aero(let session):
+            try session.ingestNotification(bytes, channel: channel.bytes, at: monotonicMilliseconds)
+        case .falcon(let session):
+            try session.ingestNotification(bytes, channel: channel.bytes, at: monotonicMilliseconds)
+        }
+    }
+}
+
+public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
+    case linkUp(at: MonotonicMilliseconds)
+    case notification(bytes: Data, channel: BluetoothUuid, at: MonotonicMilliseconds)
+    case linkDown(at: MonotonicMilliseconds)
+}
+
+public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
+    public let operations: [CoreBluetoothPlannedOperation]
+    public let snapshot: TelemetrySnapshot?
+
+    public init(operations: [CoreBluetoothPlannedOperation], snapshot: TelemetrySnapshot?) {
+        self.operations = operations
+        self.snapshot = snapshot
+    }
+}
+
+public final class CoreBluetoothSessionRunner: @unchecked Sendable {
+    private let session: CoreBluetoothSession
+    private let planner: CoreBluetoothTransportPlanner
+
+    public init(session: CoreBluetoothSession, writeLimit: TransportWriteLimitBytes) {
+        self.session = session
+        self.planner = CoreBluetoothTransportPlanner(writeLimit: writeLimit)
+    }
+
+    public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
+        switch event {
+        case .linkUp(let monotonicMilliseconds):
+            let actions = try session.linkUp(
+                at: monotonicMilliseconds,
+                writeLimit: planner.writeLimit
+            )
+            return CoreBluetoothSessionStep(
+                operations: actions.flatMap(planner.plan(action:)),
+                snapshot: session.currentSnapshot
+            )
+
+        case .notification(let bytes, let channel, let monotonicMilliseconds):
+            let snapshot = try session.ingestNotification(
+                bytes,
+                channel: channel,
+                at: monotonicMilliseconds
+            )
+            return CoreBluetoothSessionStep(operations: [], snapshot: snapshot)
+
+        case .linkDown:
+            return CoreBluetoothSessionStep(
+                operations: [.disconnect],
+                snapshot: session.currentSnapshot
+            )
+        }
+    }
+}
+
 public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
     public let serviceUuids: [BluetoothUuid]
 
