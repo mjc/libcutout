@@ -16,3 +16,4 @@ xcuserdata/
 entities.json
 # Keep raw capture payloads out of MemPalace; file durable facts instead.
 *.pevcap.jsonl
+swift/CutoutMobile/.build/
