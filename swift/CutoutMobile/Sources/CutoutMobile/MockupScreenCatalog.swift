@@ -545,9 +545,9 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         MockupScreen(
             id: .vescOnewheelRide,
             title: "Fungineers X7",
-            subtitle: "VESC OW - armed",
-            primaryValue: "19 mph",
-            secondaryValue: "Duty headroom 18%",
+            subtitle: "VESC OW · armed",
+            primaryValue: "19",
+            secondaryValue: "board speed",
             warning: "Pushback soon - duty and pack sag are both climbing.",
             metrics: [
                 MockupMetric(label: "battery current", value: "38 A"),
@@ -555,6 +555,25 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "board angle", value: "-1.8 deg"),
                 MockupMetric(label: "controller", value: "54 C"),
                 MockupMetric(label: "motor", value: "49 C"),
+            ],
+            safetyBars: [
+                MockupSafetyBar(label: "Duty headroom", value: "18%", progress: 0.82, accent: .orange),
+            ],
+            warningCard: MockupWarningCard(
+                title: "Pushback soon",
+                detail: "Duty and pack sag are both climbing."
+            ),
+            dashboardTiles: [
+                MockupDashboardTile(label: "battery current", value: "38", unit: "A", detail: "limit 45 A", accent: .yellow),
+                MockupDashboardTile(label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
+                MockupDashboardTile(label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
+                MockupDashboardTile(label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
+            ],
+            tabs: [
+                MockupScreenTab(title: "Ride", isSelected: true),
+                MockupScreenTab(title: "VESC", isSelected: false),
+                MockupScreenTab(title: "Map", isSelected: false),
+                MockupScreenTab(title: "Logs", isSelected: false),
             ]
         ),
         MockupScreen(

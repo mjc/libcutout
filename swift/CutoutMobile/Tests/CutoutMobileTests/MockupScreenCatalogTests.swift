@@ -33,9 +33,9 @@ final class MockupScreenCatalogTests: XCTestCase {
         XCTAssertEqual(screens[.eucGarage]?.secondaryValue, "pack 115.8 V")
 
         XCTAssertEqual(screens[.vescOnewheelRide]?.title, "Fungineers X7")
-        XCTAssertEqual(screens[.vescOnewheelRide]?.subtitle, "VESC OW - armed")
-        XCTAssertEqual(screens[.vescOnewheelRide]?.primaryValue, "19 mph")
-        XCTAssertEqual(screens[.vescOnewheelRide]?.secondaryValue, "Duty headroom 18%")
+        XCTAssertEqual(screens[.vescOnewheelRide]?.subtitle, "VESC OW · armed")
+        XCTAssertEqual(screens[.vescOnewheelRide]?.primaryValue, "19")
+        XCTAssertEqual(screens[.vescOnewheelRide]?.secondaryValue, "board speed")
 
         XCTAssertEqual(screens[.vescDebug]?.title, "VESC state")
         XCTAssertEqual(screens[.vescDebug]?.primaryValue, "duty cycle 82%")
@@ -233,5 +233,32 @@ extension MockupScreenCatalogTests {
             MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
         ])
         XCTAssertEqual(garage.faultCard, MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green))
+    }
+
+    func testVescOnewheelRideFixtureCarriesRideCriticalStructureFromMockup() throws {
+        let ride = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .vescOnewheelRide))
+
+        XCTAssertEqual(ride.subtitle, "VESC OW · armed")
+        XCTAssertEqual(ride.primaryValue, "19")
+        XCTAssertEqual(ride.secondaryValue, "board speed")
+        XCTAssertEqual(ride.safetyBars, [
+            MockupSafetyBar(label: "Duty headroom", value: "18%", progress: 0.82, accent: .orange),
+        ])
+        XCTAssertEqual(
+            ride.warningCard,
+            MockupWarningCard(title: "Pushback soon", detail: "Duty and pack sag are both climbing.")
+        )
+        XCTAssertEqual(ride.dashboardTiles, [
+            MockupDashboardTile(label: "battery current", value: "38", unit: "A", detail: "limit 45 A", accent: .yellow),
+            MockupDashboardTile(label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
+            MockupDashboardTile(label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
+            MockupDashboardTile(label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
+        ])
+        XCTAssertEqual(ride.tabs, [
+            MockupScreenTab(title: "Ride", isSelected: true),
+            MockupScreenTab(title: "VESC", isSelected: false),
+            MockupScreenTab(title: "Map", isSelected: false),
+            MockupScreenTab(title: "Logs", isSelected: false),
+        ])
     }
 }
