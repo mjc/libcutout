@@ -37,9 +37,6 @@ public final class LiveSpeedSessionCore: NSObject {
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
-        guard step.snapshot != nil else {
-            return
-        }
         displayState = displayState.reducing(step, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speedMillimetersPerSecond != nil
         onDisplayStateChange?(displayState)

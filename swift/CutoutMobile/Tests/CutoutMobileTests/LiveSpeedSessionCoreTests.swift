@@ -49,6 +49,30 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(43))
     }
 
+    func testNotificationWithoutSnapshotAdvancesLastUpdate() {
+        let core = LiveSpeedSessionCore()
+        let speedSnapshot = TelemetrySnapshot(
+            speedMillimetersPerSecond: 1_234,
+            voltageMillivolts: 117_000,
+            batteryLevelEstimated: 77
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: speedSnapshot),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil),
+            receivedAt: MonotonicMilliseconds(99)
+        )
+
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertTrue(core.hasObservedSpeedSnapshot)
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(core.displayState.notificationCount, 2)
+        XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(99))
+    }
+
     func testDisplayStateProvidesDebugRowsForLiveValidation() {
         let displayState = LiveSpeedDisplayState(
             speed: SpeedReadout(millimetersPerSecond: 1_234),
