@@ -65,6 +65,18 @@ extension MockupScreenCatalogTests {
         ])
     }
 
+    func testDevicePickerFixtureRowsComeFromDiscoveryCandidates() throws {
+        let picker = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .devicePicker))
+
+        XCTAssertEqual(picker.discoveryCandidates.map(\.displayName), [
+            "Aero-126V",
+            "Little FOCer BT",
+            "NINEBOT-7A31",
+            "HX Hoverboard",
+        ])
+        XCTAssertEqual(Array(picker.pickerRows.prefix(4)), picker.discoveryCandidates.map(\.pickerRow))
+    }
+
     func testDevicePickerSectionsHideEmptyGroups() {
         let supported = MockupPickerRow(
             title: "Aero-126V",

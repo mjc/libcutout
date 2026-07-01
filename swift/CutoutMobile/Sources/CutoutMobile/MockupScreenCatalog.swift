@@ -186,6 +186,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let warning: String?
     public let metrics: [MockupMetric]
     public let pickerRows: [MockupPickerRow]
+    public let discoveryCandidates: [DevicePickerDiscoveryCandidate]
     public let isFixtureOnly: Bool
 
     public init(
@@ -197,6 +198,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         warning: String?,
         metrics: [MockupMetric],
         pickerRows: [MockupPickerRow] = [],
+        discoveryCandidates: [DevicePickerDiscoveryCandidate] = [],
         isFixtureOnly: Bool = true
     ) {
         self.id = id
@@ -207,6 +209,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.warning = warning
         self.metrics = metrics
         self.pickerRows = pickerRows
+        self.discoveryCandidates = discoveryCandidates
         self.isFixtureOnly = isFixtureOnly
     }
 }
@@ -221,6 +224,41 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
     public func screen(id: MockupScreenID) -> MockupScreen? {
         screens.first { $0.id == id }
     }
+
+    private static let devicePickerDiscoveryCandidates = [
+        DevicePickerDiscoveryCandidate(
+            displayName: "Aero-126V",
+            productCategory: "Electric unicycle",
+            evidence: "telemetry profile found",
+            detail: "126.0 V - strong signal",
+            support: .supported,
+            symbolName: "circle.hexagongrid.circle"
+        ),
+        DevicePickerDiscoveryCandidate(
+            displayName: "Little FOCer BT",
+            productCategory: "VESC Onewheel",
+            evidence: "UART bridge detected",
+            detail: "75.4 V - moderate signal",
+            support: .supported,
+            symbolName: "oval.portrait"
+        ),
+        DevicePickerDiscoveryCandidate(
+            displayName: "NINEBOT-7A31",
+            productCategory: "Electric scooter",
+            evidence: "known BLE advertisement",
+            detail: "We can learn this later",
+            support: .unsupported,
+            symbolName: "scooter"
+        ),
+        DevicePickerDiscoveryCandidate(
+            displayName: "HX Hoverboard",
+            productCategory: "Hoverboard / self-balancing board",
+            evidence: "candidate",
+            detail: "Capture wizard later",
+            support: .unsupported,
+            symbolName: "capsule"
+        ),
+    ]
 
     public static let v2 = MockupScreenCatalog(screens: [
         MockupScreen(
@@ -237,35 +275,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "Unsupported", value: "HX Hoverboard"),
                 MockupMetric(label: "Manual add", value: "disabled"),
             ],
-            pickerRows: [
-                MockupPickerRow(
-                    title: "Aero-126V",
-                    subtitle: "Electric unicycle - telemetry profile found",
-                    detail: "126.0 V - strong signal",
-                    state: .supported(action: "Pair"),
-                    symbolName: "circle.hexagongrid.circle"
-                ),
-                MockupPickerRow(
-                    title: "Little FOCer BT",
-                    subtitle: "VESC Onewheel - UART bridge detected",
-                    detail: "75.4 V - moderate signal",
-                    state: .supported(action: "Pair"),
-                    symbolName: "oval.portrait"
-                ),
-                MockupPickerRow(
-                    title: "NINEBOT-7A31",
-                    subtitle: "Electric scooter - known BLE advertisement",
-                    detail: "We can learn this later",
-                    state: .unsupported(action: "Not yet"),
-                    symbolName: "scooter"
-                ),
-                MockupPickerRow(
-                    title: "HX Hoverboard",
-                    subtitle: "Hoverboard / self-balancing board candidate",
-                    detail: "Capture wizard later",
-                    state: .unsupported(action: "Not yet"),
-                    symbolName: "capsule"
-                ),
+            pickerRows: devicePickerDiscoveryCandidates.map(\.pickerRow) + [
                 MockupPickerRow(
                     title: "Manual add / record unknown device",
                     subtitle: "",
@@ -273,7 +283,8 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                     state: .manual(action: "later"),
                     symbolName: "plus"
                 ),
-            ]
+            ],
+            discoveryCandidates: devicePickerDiscoveryCandidates
         ),
         MockupScreen(
             id: .eucRide,
