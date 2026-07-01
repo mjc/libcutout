@@ -12,6 +12,7 @@ final class LiveSpeedModel: NSObject, ObservableObject {
     private var advertisement: CoreBluetoothAdvertisement?
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
+    private var pendingServiceDiscoveries = Set<CBUUID>()
 
     func start() {
         guard central == nil else {
@@ -97,7 +98,9 @@ extension LiveSpeedModel: CBPeripheralDelegate {
             setStatus("Service discovery failed: \(error)")
             return
         }
-        (peripheral.services ?? []).forEach {
+        let services = peripheral.services ?? []
+        pendingServiceDiscoveries = Set(services.map(\.uuid))
+        services.forEach {
             peripheral.discoverCharacteristics(nil, for: $0)
         }
     }
@@ -116,7 +119,10 @@ extension LiveSpeedModel: CBPeripheralDelegate {
                 subscribedCharacteristics[channel] = characteristic
             }
         }
-        buildOwner(for: peripheral)
+        pendingServiceDiscoveries.remove(service.uuid)
+        if pendingServiceDiscoveries.isEmpty {
+            buildOwner(for: peripheral)
+        }
     }
 
     func peripheral(
