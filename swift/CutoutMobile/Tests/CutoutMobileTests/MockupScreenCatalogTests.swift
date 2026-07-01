@@ -64,7 +64,6 @@ extension MockupScreenCatalogTests {
             .manual(action: "later"),
         ])
     }
-
     func testDevicePickerFixtureRowsComeFromDiscoveryCandidates() throws {
         let picker = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .devicePicker))
 
@@ -120,7 +119,7 @@ extension MockupScreenCatalogTests {
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
             detail: "126.0 V - strong signal",
-            support: .supported,
+            support: .supported(connectionRoute: "electric_unicycle"),
             symbolName: "circle"
         )
         let unsupported = DevicePickerDiscoveryCandidate(
@@ -129,7 +128,7 @@ extension MockupScreenCatalogTests {
             productCategory: "Electric scooter",
             evidence: "known BLE advertisement",
             detail: "We can learn this later",
-            support: .unsupported,
+            support: .unsupported(disabledReason: "Not yet"),
             symbolName: "scooter"
         )
 
@@ -149,7 +148,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.platformIdentifier, "ios-local-aero")
         XCTAssertEqual(candidate.displayName, "NOSFET Aero")
         XCTAssertEqual(candidate.productCategory, "Electric unicycle")
-        XCTAssertEqual(candidate.support, .supported)
+        XCTAssertEqual(candidate.support, .supported(connectionRoute: "electric_unicycle"))
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
     }
 
@@ -174,6 +173,32 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "Rideable-ish"])
         XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero"])
         XCTAssertEqual(state.sections.unsupported.map(\.title), ["Rideable-ish"])
+        XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Not yet supported"))
         XCTAssertNil(state.sections.manual)
+    }
+
+    func testEucRideFixtureCarriesDashboardStructureFromMockup() throws {
+        let ride = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucRide))
+
+        XCTAssertEqual(ride.safetyBars, [
+            MockupSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
+            MockupSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
+        ])
+        XCTAssertEqual(
+            ride.warningCard,
+            MockupWarningCard(title: "Reduce acceleration", detail: "Voltage sag under load: 9.4 V")
+        )
+        XCTAssertEqual(ride.dashboardTiles, [
+            MockupDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
+            MockupDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
+            MockupDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
+            MockupDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
+        ])
+        XCTAssertEqual(ride.tabs, [
+            MockupScreenTab(title: "Ride", isSelected: true),
+            MockupScreenTab(title: "Pack", isSelected: false),
+            MockupScreenTab(title: "Map", isSelected: false),
+            MockupScreenTab(title: "Tune", isSelected: false),
+        ])
     }
 }

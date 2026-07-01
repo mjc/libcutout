@@ -18,6 +18,67 @@ public struct MockupMetric: Equatable, Hashable, Sendable {
     }
 }
 
+public enum MockupAccent: String, Equatable, Hashable, Sendable {
+    case cyan
+    case green
+    case orange
+    case yellow
+}
+
+public struct MockupSafetyBar: Equatable, Hashable, Sendable {
+    public let label: String
+    public let value: String
+    public let progress: Double
+    public let accent: MockupAccent
+
+    public init(label: String, value: String, progress: Double, accent: MockupAccent) {
+        self.label = label
+        self.value = value
+        self.progress = progress
+        self.accent = accent
+    }
+}
+
+public struct MockupWarningCard: Equatable, Hashable, Sendable {
+    public let title: String
+    public let detail: String
+
+    public init(title: String, detail: String) {
+        self.title = title
+        self.detail = detail
+    }
+}
+
+public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
+    public var id: String { label }
+
+    public let label: String
+    public let value: String
+    public let unit: String
+    public let detail: String
+    public let accent: MockupAccent
+
+    public init(label: String, value: String, unit: String, detail: String, accent: MockupAccent) {
+        self.label = label
+        self.value = value
+        self.unit = unit
+        self.detail = detail
+        self.accent = accent
+    }
+}
+
+public struct MockupScreenTab: Equatable, Hashable, Sendable, Identifiable {
+    public var id: String { title }
+
+    public let title: String
+    public let isSelected: Bool
+
+    public init(title: String, isSelected: Bool) {
+        self.title = title
+        self.isSelected = isSelected
+    }
+}
+
 public enum MockupPickerRowState: Equatable, Hashable, Sendable {
     case supported(action: String)
     case unsupported(action: String)
@@ -88,17 +149,16 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
 }
 
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
-    case supported
-    case unsupported
+    case supported(connectionRoute: String)
+    case unsupported(disabledReason: String)
 }
 
 public extension DevicePickerCandidateSupport {
-    init(_ dto: MobileDiscoveryCandidateSupportDto) {
-        switch dto {
-        case .supported:
-            self = .supported
-        case .unsupported:
-            self = .unsupported
+    init(_ dto: MobileDiscoveryCandidateDto) {
+        if let connectionRoute = dto.connectionRoute {
+            self = .supported(connectionRoute: connectionRoute)
+        } else {
+            self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
         }
     }
 }
@@ -142,7 +202,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             productCategory: candidate.productCategory,
             evidence: candidate.evidence,
             detail: candidate.detail,
-            support: DevicePickerCandidateSupport(candidate.support),
+            support: DevicePickerCandidateSupport(candidate),
             symbolName: candidate.support == .supported ? "circle.hexagongrid.circle" : "questionmark.circle"
         )
     }
@@ -163,8 +223,8 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported:
             .supported(action: "Pair")
-        case .unsupported:
-            .unsupported(action: "Not yet")
+        case .unsupported(let disabledReason):
+            .unsupported(action: disabledReason)
         }
     }
 }
@@ -225,6 +285,10 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let metrics: [MockupMetric]
     public let pickerRows: [MockupPickerRow]
     public let discoveryCandidates: [DevicePickerDiscoveryCandidate]
+    public let safetyBars: [MockupSafetyBar]
+    public let warningCard: MockupWarningCard?
+    public let dashboardTiles: [MockupDashboardTile]
+    public let tabs: [MockupScreenTab]
     public let isFixtureOnly: Bool
 
     public init(
@@ -237,6 +301,10 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         metrics: [MockupMetric],
         pickerRows: [MockupPickerRow] = [],
         discoveryCandidates: [DevicePickerDiscoveryCandidate] = [],
+        safetyBars: [MockupSafetyBar] = [],
+        warningCard: MockupWarningCard? = nil,
+        dashboardTiles: [MockupDashboardTile] = [],
+        tabs: [MockupScreenTab] = [],
         isFixtureOnly: Bool = true
     ) {
         self.id = id
@@ -248,6 +316,10 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.metrics = metrics
         self.pickerRows = pickerRows
         self.discoveryCandidates = discoveryCandidates
+        self.safetyBars = safetyBars
+        self.warningCard = warningCard
+        self.dashboardTiles = dashboardTiles
+        self.tabs = tabs
         self.isFixtureOnly = isFixtureOnly
     }
 }
@@ -270,7 +342,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
             detail: "126.0 V - strong signal",
-            support: .supported,
+            support: .supported(connectionRoute: "electric_unicycle"),
             symbolName: "circle.hexagongrid.circle"
         ),
         DevicePickerDiscoveryCandidate(
@@ -279,7 +351,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "VESC Onewheel",
             evidence: "UART bridge detected",
             detail: "75.4 V - moderate signal",
-            support: .supported,
+            support: .supported(connectionRoute: "vesc_onewheel"),
             symbolName: "oval.portrait"
         ),
         DevicePickerDiscoveryCandidate(
@@ -288,7 +360,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "Electric scooter",
             evidence: "known BLE advertisement",
             detail: "We can learn this later",
-            support: .unsupported,
+            support: .unsupported(disabledReason: "Not yet"),
             symbolName: "scooter"
         ),
         DevicePickerDiscoveryCandidate(
@@ -297,7 +369,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "Hoverboard / self-balancing board",
             evidence: "candidate",
             detail: "Capture wizard later",
-            support: .unsupported,
+            support: .unsupported(disabledReason: "Not yet"),
             symbolName: "capsule"
         ),
     ]
@@ -341,6 +413,26 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "power", value: "4.2 kW"),
                 MockupMetric(label: "thermal", value: "61 C"),
                 MockupMetric(label: "limp-home", value: "14.2 mi"),
+            ],
+            safetyBars: [
+                MockupSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
+                MockupSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
+            ],
+            warningCard: MockupWarningCard(
+                title: "Reduce acceleration",
+                detail: "Voltage sag under load: 9.4 V"
+            ),
+            dashboardTiles: [
+                MockupDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
+                MockupDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
+                MockupDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
+                MockupDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
+            ],
+            tabs: [
+                MockupScreenTab(title: "Ride", isSelected: true),
+                MockupScreenTab(title: "Pack", isSelected: false),
+                MockupScreenTab(title: "Map", isSelected: false),
+                MockupScreenTab(title: "Tune", isSelected: false),
             ]
         ),
         MockupScreen(
