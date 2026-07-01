@@ -24,6 +24,10 @@ cutout_swift_runtime_command() {
   esac
 }
 
+cutout_macosx_sdk_path() {
+  xcrun --sdk macosx --show-sdk-path
+}
+
 cutout_prepare_swift_package_workspace() {
   local root package_dir
   root="$(cutout_repo_root)"
@@ -31,12 +35,20 @@ cutout_prepare_swift_package_workspace() {
   CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR="$package_dir" "$root/scripts/prepare-swift-sourcekit-workspace.sh" >/dev/null
 }
 
+cutout_iphoneos_sdk_path() {
+  xcrun --sdk iphoneos --show-sdk-path
+}
+
+cutout_iphoneos_clang_path() {
+  xcrun --sdk iphoneos --find clang
+}
+
 cutout_connected_ios_device_udid() {
   local device_json
   device_json="$(mktemp "${TMPDIR:-/tmp}/cutout-devicectl.XXXXXX.json")"
   trap 'rm -f "$device_json"' RETURN
 
-  xcrun devicectl list devices --json-output "$device_json" >/dev/null
+  xcrun devicectl --quiet list devices --json-output "$device_json" >/dev/null
 
   python3 - "$device_json" <<'PY'
 import json
@@ -78,9 +90,10 @@ cutout_build_ios_speed_app_bundle() {
 
   cutout_prepare_swift_package_workspace "$package_dir"
 
-  env -u SDKROOT \
-    CC_aarch64_apple_ios="$(xcrun --sdk iphoneos --find clang)" \
-    CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(xcrun --sdk iphoneos --find clang)" \
+  env \
+    SDKROOT="$(cutout_iphoneos_sdk_path)" \
+    CC_aarch64_apple_ios="$(cutout_iphoneos_clang_path)" \
+    CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(cutout_iphoneos_clang_path)" \
     cargo build -p cutout-mobile-ffi --target aarch64-apple-ios
 
   rm -rf "$product"
@@ -126,9 +139,10 @@ cutout_build_ios_device_speed_app_bundle() {
 
   cutout_prepare_swift_package_workspace "$package_dir"
 
-  env -u SDKROOT \
-    CC_aarch64_apple_ios="$(xcrun --sdk iphoneos --find clang)" \
-    CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(xcrun --sdk iphoneos --find clang)" \
+  env \
+    SDKROOT="$(cutout_iphoneos_sdk_path)" \
+    CC_aarch64_apple_ios="$(cutout_iphoneos_clang_path)" \
+    CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(cutout_iphoneos_clang_path)" \
     cargo build -p cutout-mobile-ffi --target aarch64-apple-ios
 
   rm -rf "$product"

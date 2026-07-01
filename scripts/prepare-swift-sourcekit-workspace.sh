@@ -22,7 +22,7 @@ generated_dir="$package_dir/Sources/CutoutMobile/Generated"
 system_target_dir="$package_dir/Sources/cutout_mobile_ffiFFI"
 smoke_dir="$package_dir/Tests/CutoutMobileSmoke"
 
-cargo build -p cutout-mobile-ffi
+SDKROOT="$(cutout_macosx_sdk_path)" cargo build -p cutout-mobile-ffi
 
 rm -rf "$package_dir"
 mkdir -p "$package_dir"
@@ -32,7 +32,7 @@ cp -R swift/CutoutMobile/Sources "$package_dir/Sources"
 cp -R swift/CutoutMobile/Tests "$package_dir/Tests"
 mkdir -p "$generated_dir" "$system_target_dir" "$smoke_dir"
 
-cargo run -p cutout-uniffi-bindgen -- generate \
+SDKROOT="$(cutout_macosx_sdk_path)" cargo run -p cutout-uniffi-bindgen -- generate \
   --library "target/debug/$lib_name" \
   --language swift \
   --no-format \
