@@ -4,6 +4,13 @@ import SwiftUI
 struct CutoutMobileSpeedApp: App {
     @StateObject private var model = LiveSpeedModel()
 
+    init() {
+        if CommandLine.arguments.contains("--smoke") {
+            print("speed_app=ok")
+            Foundation.exit(EXIT_SUCCESS)
+        }
+    }
+
     var body: some Scene {
         WindowGroup("Cutout Speed") {
             ContentView(model: model)

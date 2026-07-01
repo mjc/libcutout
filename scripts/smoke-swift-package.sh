@@ -53,6 +53,12 @@ if [[ "$(uname -s)" == Darwin ]]; then
     -Xlinker -L -Xlinker "$root/target/debug" \
     -Xlinker -lcutout_mobile_ffi \
     --target CutoutMobileSpeedApp
+  "${swift_cmd[@]}" run \
+    --package-path "$package_dir" \
+    -Xlinker -L -Xlinker "$root/target/debug" \
+    -Xlinker -lcutout_mobile_ffi \
+    CutoutMobileSpeedApp \
+    --smoke
   "${swift_cmd[@]}" build \
     --package-path "$package_dir" \
     -Xlinker -L -Xlinker "$root/target/debug" \
