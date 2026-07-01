@@ -152,4 +152,28 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.support, .supported)
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
     }
+
+    func testCoreBluetoothAdvertisementsMapToScanningPickerState() {
+        let state = DevicePickerScanState(
+            status: .scanning,
+            advertisements: [
+                CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
+                    localName: "NOSFET Aero",
+                    advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+                ),
+                CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
+                    localName: "Rideable-ish",
+                    advertisedServiceUuids: []
+                ),
+            ]
+        )
+
+        XCTAssertEqual(state.statusText, "Scanning Bluetooth")
+        XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "Rideable-ish"])
+        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero"])
+        XCTAssertEqual(state.sections.unsupported.map(\.title), ["Rideable-ish"])
+        XCTAssertNil(state.sections.manual)
+    }
 }

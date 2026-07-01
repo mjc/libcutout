@@ -182,6 +182,13 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
         self.rows = rows
     }
 
+    public init(status: DevicePickerScanStatus, advertisements: [CoreBluetoothAdvertisement]) {
+        self.init(
+            status: status,
+            rows: advertisements.map { DevicePickerDiscoveryCandidate(advertisement: $0).pickerRow }
+        )
+    }
+
     public var sections: MockupPickerSections {
         MockupPickerSections(rows: rows)
     }
