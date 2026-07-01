@@ -14,7 +14,11 @@ struct ContentView: View {
 
             TabView(selection: $selectedScreenID) {
                 ForEach(catalog.screens) { screen in
-                    MockupScreenContainer(screen: screen, liveSpeed: model.speed.displayValue)
+                    MockupScreenContainer(
+                        screen: screen,
+                        liveSpeed: model.speed.displayValue,
+                        devicePickerScanState: model.devicePickerScanState
+                    )
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .tag(screen.id)
                 }
@@ -30,11 +34,12 @@ struct ContentView: View {
 private struct MockupScreenContainer: View {
     let screen: MockupScreen
     let liveSpeed: String
+    let devicePickerScanState: DevicePickerScanState?
 
     var body: some View {
         switch screen.id {
         case .devicePicker:
-            DevicePickerMockupView(screen: screen)
+            DevicePickerMockupView(screen: screen, scanState: devicePickerScanState)
         default:
             GenericMockupView(screen: screen, liveSpeed: liveSpeed)
         }
@@ -43,13 +48,17 @@ private struct MockupScreenContainer: View {
 
 private struct DevicePickerMockupView: View {
     let screen: MockupScreen
+    let scanState: DevicePickerScanState?
 
-    private var scanState: DevicePickerScanState {
-        DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
+    private var renderedScanState: DevicePickerScanState {
+        if let scanState {
+            return scanState
+        }
+        return DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
     }
 
     private var sections: MockupPickerSections {
-        scanState.sections
+        renderedScanState.sections
     }
 
     var body: some View {
@@ -80,7 +89,7 @@ private struct DevicePickerMockupView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    ScanStatusPill(text: scanState.statusText, scale: scale)
+                    ScanStatusPill(text: renderedScanState.statusText, scale: scale)
                         .padding(.top, 4 * scale)
 
                     if !sections.supported.isEmpty {

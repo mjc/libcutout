@@ -6,15 +6,18 @@ public final class LiveSpeedSessionCore: NSObject {
     public private(set) var phase = LiveSpeedConnectionPhase.starting
     public private(set) var records: [String] = []
     public private(set) var hasObservedSpeedSnapshot = false
+    public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
 
     public var onDisplayStateChange: ((LiveSpeedDisplayState) -> Void)?
     public var onPhaseChange: ((LiveSpeedConnectionPhase) -> Void)?
     public var onRecord: ((String) -> Void)?
+    public var onScanStateChange: ((DevicePickerScanState) -> Void)?
 
     private let clock = MonotonicClock()
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var advertisement: CoreBluetoothAdvertisement?
+    private var discoveredAdvertisements: [CoreBluetoothAdvertisement] = []
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
@@ -26,6 +29,12 @@ public final class LiveSpeedSessionCore: NSObject {
             return
         }
         central = CBCentralManager(delegate: self, queue: nil)
+    }
+
+    func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
+        discoveredAdvertisements.append(advertisement)
+        scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
+        onScanStateChange?(scanState)
     }
 
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
@@ -109,6 +118,7 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
             peripheral: peripheral,
             advertisementData: advertisementData
         )
+        observeAdvertisement(advertisement)
         let advertisedServices = advertisement.advertisedServiceUuids.map(String.init(describing:)).joined(separator: ",")
         let candidate = [
             "candidate=\(advertisement.peripheralIdentifier.rawValue)",

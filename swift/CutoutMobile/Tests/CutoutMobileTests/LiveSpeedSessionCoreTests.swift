@@ -2,6 +2,33 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveSpeedSessionCoreTests: XCTestCase {
+    func testObservedAdvertisementsUpdatePickerScanState() {
+        let core = LiveSpeedSessionCore()
+        var observedStates: [DevicePickerScanState] = []
+        core.onScanStateChange = { observedStates.append($0) }
+
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
+                localName: "NOSFET Aero",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
+                localName: "Rideable-ish",
+                advertisedServiceUuids: []
+            )
+        )
+
+        XCTAssertEqual(core.scanState.status, .scanning)
+        XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Rideable-ish"])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero"])
+        XCTAssertEqual(core.scanState.sections.unsupported.map(\.title), ["Rideable-ish"])
+        XCTAssertEqual(observedStates.count, 2)
+    }
+
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
         let core = LiveSpeedSessionCore()
         let snapshot = TelemetrySnapshot(
