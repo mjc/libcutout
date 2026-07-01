@@ -169,17 +169,17 @@ private struct PickerDeviceRow: View {
             VStack(alignment: .leading, spacing: 4 * scale) {
                 Text(row.title)
                     .font(.system(size: 20 * scale, weight: .bold))
-                    .foregroundStyle(row.isSupported ? .white : MockupColors.disabledText)
+                    .foregroundStyle(row.titleColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
                 Text(row.subtitle)
                     .font(.system(size: 11.5 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(row.secondaryTextColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
                 Text(row.detail)
                     .font(.system(size: 12.5 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(row.secondaryTextColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }
@@ -193,7 +193,6 @@ private struct PickerDeviceRow: View {
         .frame(height: 92 * scale)
         .frame(maxWidth: .infinity)
         .background(CardBackground(cornerRadius: 26 * scale))
-        .opacity(row.isSupported ? 1.0 : 0.58)
     }
 }
 
@@ -244,14 +243,138 @@ private struct DeviceGlyph: View {
     let row: MockupPickerRow
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(row.glyphBackground)
-            Circle()
-                .stroke(row.glyphColor, lineWidth: 4)
-            Image(systemName: row.symbolName)
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(row.glyphColor)
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            let line = max(2, side * 0.08)
+
+            ZStack {
+                switch row.title {
+                case "Aero-126V":
+                    EucGlyph(color: row.glyphColor, lineWidth: line)
+                case "Little FOCer BT":
+                    OnewheelGlyph(color: row.glyphColor, accent: MockupColors.purple, lineWidth: line)
+                case "NINEBOT-7A31":
+                    ScooterGlyph(color: row.glyphColor, lineWidth: line)
+                case "HX Hoverboard":
+                    HoverboardGlyph(color: row.glyphColor, lineWidth: line)
+                default:
+                    Circle()
+                        .fill(row.glyphBackground)
+                    Image(systemName: row.symbolName)
+                        .font(.system(size: side * 0.42, weight: .bold))
+                        .foregroundStyle(row.glyphColor)
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+    }
+}
+
+private struct EucGlyph: View {
+    let color: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            ZStack {
+                Circle()
+                    .fill(MockupColors.iconFill)
+                Circle()
+                    .stroke(color, lineWidth: lineWidth)
+                Circle()
+                    .fill(MockupColors.cardFill)
+                    .frame(width: side * 0.42, height: side * 0.42)
+                ForEach(0..<8, id: \.self) { index in
+                    Circle()
+                        .fill(color)
+                        .frame(width: side * 0.085, height: side * 0.085)
+                        .offset(y: -side * 0.16)
+                        .rotationEffect(.degrees(Double(index) * 45))
+                }
+                Circle()
+                    .fill(color)
+                    .frame(width: side * 0.10, height: side * 0.10)
+            }
+        }
+    }
+}
+
+private struct OnewheelGlyph: View {
+    let color: Color
+    let accent: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            ZStack {
+                Capsule()
+                    .stroke(accent, lineWidth: lineWidth * 0.8)
+                    .frame(width: side * 0.92, height: side * 0.34)
+                Circle()
+                    .fill(MockupColors.iconFill)
+                    .frame(width: side * 0.46, height: side * 0.46)
+                Circle()
+                    .stroke(color, lineWidth: lineWidth)
+                    .frame(width: side * 0.46, height: side * 0.46)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+    }
+}
+
+private struct ScooterGlyph: View {
+    let color: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            ZStack {
+                Circle()
+                    .stroke(color, lineWidth: lineWidth * 0.85)
+                    .frame(width: side * 0.23, height: side * 0.23)
+                    .offset(x: -side * 0.30, y: side * 0.22)
+                Circle()
+                    .stroke(color, lineWidth: lineWidth * 0.85)
+                    .frame(width: side * 0.23, height: side * 0.23)
+                    .offset(x: side * 0.32, y: side * 0.22)
+                Path { path in
+                    path.move(to: CGPoint(x: side * 0.20, y: side * 0.29))
+                    path.addLine(to: CGPoint(x: side * 0.48, y: side * 0.74))
+                    path.addLine(to: CGPoint(x: side * 0.75, y: side * 0.74))
+                    path.move(to: CGPoint(x: side * 0.48, y: side * 0.74))
+                    path.addLine(to: CGPoint(x: side * 0.26, y: side * 0.74))
+                    path.move(to: CGPoint(x: side * 0.20, y: side * 0.29))
+                    path.addLine(to: CGPoint(x: side * 0.34, y: side * 0.29))
+                }
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+                .frame(width: side, height: side)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+    }
+}
+
+private struct HoverboardGlyph: View {
+    let color: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            ZStack {
+                Capsule()
+                    .stroke(color, lineWidth: lineWidth)
+                    .frame(width: side * 0.56, height: side * 0.26)
+                    .offset(x: -side * 0.18)
+                Capsule()
+                    .stroke(color, lineWidth: lineWidth)
+                    .frame(width: side * 0.56, height: side * 0.26)
+                    .offset(x: side * 0.18)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 }
@@ -348,18 +471,30 @@ private extension MockupPickerRow {
     var glyphBackground: Color {
         glyphColor.opacity(isSupported ? 0.12 : 0.16)
     }
+
+    var titleColor: Color {
+        isSupported ? MockupColors.primaryText : MockupColors.disabledText
+    }
+
+    var secondaryTextColor: Color {
+        isSupported ? MockupColors.muted : MockupColors.disabledSecondaryText
+    }
 }
 
 private enum MockupColors {
-    static let pageBackground = Color(red: 0.018, green: 0.020, blue: 0.026)
-    static let cardFill = Color(red: 0.045, green: 0.051, blue: 0.073)
-    static let cardStroke = Color(red: 0.20, green: 0.23, blue: 0.34)
-    static let disabledFill = Color(red: 0.08, green: 0.09, blue: 0.12)
-    static let disabledText = Color(red: 0.58, green: 0.59, blue: 0.64)
-    static let muted = Color(red: 0.56, green: 0.56, blue: 0.62)
-    static let yellow = Color(red: 1.0, green: 0.83, blue: 0.02)
-    static let teal = Color(red: 0.19, green: 0.82, blue: 0.86)
-    static let brown = Color(red: 0.56, green: 0.36, blue: 0.18)
+    static let pageBackground = Color(red: 0.027, green: 0.031, blue: 0.043)
+    static let cardFill = Color(red: 0.067, green: 0.078, blue: 0.106)
+    static let cardStroke = Color(red: 0.165, green: 0.188, blue: 0.239)
+    static let disabledFill = Color(red: 0.067, green: 0.078, blue: 0.106)
+    static let primaryText = Color(red: 0.969, green: 0.953, blue: 0.918)
+    static let disabledText = Color(red: 0.455, green: 0.475, blue: 0.514)
+    static let disabledSecondaryText = Color(red: 0.36, green: 0.38, blue: 0.42)
+    static let muted = Color(red: 0.561, green: 0.596, blue: 0.659)
+    static let yellow = Color(red: 1.0, green: 0.827, blue: 0.302)
+    static let teal = Color(red: 0.180, green: 0.384, blue: 0.459)
+    static let brown = Color(red: 0.443, green: 0.259, blue: 0.141)
+    static let purple = Color(red: 0.635, green: 0.459, blue: 0.918)
+    static let iconFill = Color(red: 0.043, green: 0.051, blue: 0.071)
 }
 
 private extension MockupPickerRowState {
