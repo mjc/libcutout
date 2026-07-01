@@ -87,6 +87,45 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
     }
 }
 
+public enum DevicePickerScanStatus: Equatable, Hashable, Sendable {
+    case scanning
+    case idle
+    case bluetoothUnavailable
+    case permissionDenied
+}
+
+public struct DevicePickerScanState: Equatable, Hashable, Sendable {
+    public let status: DevicePickerScanStatus
+    public let rows: [MockupPickerRow]
+
+    public init(status: DevicePickerScanStatus, rows: [MockupPickerRow]) {
+        self.status = status
+        self.rows = rows
+    }
+
+    public var sections: MockupPickerSections {
+        MockupPickerSections(rows: rows)
+    }
+
+    public var statusText: String {
+        switch status {
+        case .scanning:
+            "Scanning Bluetooth"
+        case .idle where rows.isEmpty:
+            "No rideable devices found"
+        case .idle:
+            "Bluetooth scan complete"
+        case .bluetoothUnavailable:
+            "Bluetooth unavailable"
+        case .permissionDenied:
+            "Bluetooth permission denied"
+        }
+    }
+
+    public static let bluetoothUnavailable = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+    public static let permissionDenied = DevicePickerScanState(status: .permissionDenied, rows: [])
+}
+
 public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let id: MockupScreenID
     public let title: String

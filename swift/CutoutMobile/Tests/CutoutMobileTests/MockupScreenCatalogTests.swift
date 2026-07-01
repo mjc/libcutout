@@ -89,4 +89,15 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(MockupPickerSections(rows: [unsupported]).unsupported, [unsupported])
         XCTAssertNil(MockupPickerSections(rows: [unsupported]).manual)
     }
+
+    func testDevicePickerScanStateCoversUnavailableAndEmptyStates() {
+        XCTAssertEqual(DevicePickerScanState.bluetoothUnavailable.statusText, "Bluetooth unavailable")
+        XCTAssertEqual(DevicePickerScanState.permissionDenied.statusText, "Bluetooth permission denied")
+
+        let empty = DevicePickerScanState(status: .idle, rows: [])
+        XCTAssertEqual(empty.statusText, "No rideable devices found")
+        XCTAssertTrue(empty.sections.supported.isEmpty)
+        XCTAssertTrue(empty.sections.unsupported.isEmpty)
+        XCTAssertNil(empty.sections.manual)
+    }
 }

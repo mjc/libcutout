@@ -44,8 +44,12 @@ private struct MockupScreenContainer: View {
 private struct DevicePickerMockupView: View {
     let screen: MockupScreen
 
+    private var scanState: DevicePickerScanState {
+        DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
+    }
+
     private var sections: MockupPickerSections {
-        MockupPickerSections(rows: screen.pickerRows)
+        scanState.sections
     }
 
     var body: some View {
@@ -76,7 +80,7 @@ private struct DevicePickerMockupView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    ScanStatusPill(scale: scale)
+                    ScanStatusPill(text: scanState.statusText, scale: scale)
                         .padding(.top, 4 * scale)
 
                     if !sections.supported.isEmpty {
@@ -116,11 +120,12 @@ private struct DevicePickerMockupView: View {
 }
 
 private struct ScanStatusPill: View {
+    let text: String
     let scale: CGFloat
 
     var body: some View {
         HStack {
-            Text("Scanning Bluetooth")
+            Text(text)
                 .font(.system(size: 18 * scale, weight: .bold))
             Spacer()
             HStack(spacing: 9 * scale) {
