@@ -626,6 +626,223 @@ public extension CoreBluetoothScanPolicy {
     }
 }
 
+public extension CoreBluetoothCentralAction {
+    var coreBluetoothServiceUuids: [CBUUID] {
+        switch self {
+        case .scan(let serviceUuids), .discoverServices(let serviceUuids):
+            serviceUuids.map { CBUUID(data: $0.bytes) }
+        case .discoverCharacteristics(_, let characteristics):
+            characteristics.map { CBUUID(data: $0.bytes) }
+        case .connect:
+            []
+        }
+    }
+}
+
+public extension BluetoothUuid {
+    init?(coreBluetoothUuid: CBUUID) {
+        switch coreBluetoothUuid.data.count {
+        case 2:
+            let value = coreBluetoothUuid.data.reduce(UInt16(0)) { ($0 << 8) | UInt16($1) }
+            self = .bluetooth16(value)
+        case 16:
+            self.init(coreBluetoothUuid.data)
+        default:
+            return nil
+        }
+    }
+}
+
+public extension CoreBluetoothAdvertisement {
+    init(peripheral: CBPeripheral, advertisementData: [String: Any]) {
+        let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let serviceUuids = (
+            advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+        ).compactMap(BluetoothUuid.init(coreBluetoothUuid:))
+        self.init(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString),
+            localName: localName ?? peripheral.name,
+            advertisedServiceUuids: serviceUuids
+        )
+    }
+}
+
+public extension CoreBluetoothCharacteristicProperty {
+    init?(coreBluetoothProperty: CBCharacteristicProperties) {
+        switch coreBluetoothProperty {
+        case .read:
+            self = .read
+        case .write:
+            self = .write
+        case .writeWithoutResponse:
+            self = .writeWithoutResponse
+        case .notify:
+            self = .notify
+        case .indicate:
+            self = .indicate
+        default:
+            return nil
+        }
+    }
+}
+
+public extension CoreBluetoothGattCharacteristic {
+    init?(characteristic: CBCharacteristic) {
+        guard let uuid = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
+            return nil
+        }
+        let candidateProperties: [CoreBluetoothCharacteristicProperty] = [
+            .read,
+            .write,
+            .writeWithoutResponse,
+            .notify,
+            .indicate,
+        ]
+        let properties = Set(candidateProperties.filter {
+            characteristic.properties.contains($0.coreBluetoothProperty)
+        })
+        self.init(uuid: uuid, properties: properties)
+    }
+}
+
+public extension CoreBluetoothGattService {
+    init?(service: CBService) {
+        guard let uuid = BluetoothUuid(coreBluetoothUuid: service.uuid) else {
+            return nil
+        }
+        self.init(
+            uuid: uuid,
+            characteristics: (service.characteristics ?? []).compactMap(CoreBluetoothGattCharacteristic.init)
+        )
+    }
+}
+
+public extension CoreBluetoothGattInventory {
+    init(services: [CBService]) {
+        self.init(services: services.compactMap(CoreBluetoothGattService.init))
+    }
+}
+
+public final class CoreBluetoothCentralLifecycle: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+    public typealias ActionHandler = (CoreBluetoothCentralAction) -> Void
+    public typealias NotificationHandler = (BluetoothUuid, Data) -> Void
+
+    private let coordinator: CoreBluetoothCentralCoordinator
+    private let onAction: ActionHandler
+    private let onNotification: NotificationHandler
+    private lazy var centralManager = CBCentralManager(delegate: self, queue: nil)
+
+    public init(
+        coordinator: CoreBluetoothCentralCoordinator,
+        onAction: @escaping ActionHandler,
+        onNotification: @escaping NotificationHandler
+    ) {
+        self.coordinator = coordinator
+        self.onAction = onAction
+        self.onNotification = onNotification
+        super.init()
+    }
+
+    public func start() {
+        _ = centralManager
+        if centralManager.state == .poweredOn {
+            scan()
+        }
+    }
+
+    public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard central.state == .poweredOn else {
+            return
+        }
+        scan()
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi _: NSNumber
+    ) {
+        let advertisement = CoreBluetoothAdvertisement(
+            peripheral: peripheral,
+            advertisementData: advertisementData
+        )
+        guard case .connect = coordinator.handleDiscovered(advertisement) else {
+            return
+        }
+        onAction(.connect(peripheralIdentifier: advertisement.peripheralIdentifier))
+        peripheral.delegate = self
+        central.connect(peripheral)
+    }
+
+    public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        central.stopScan()
+        peripheral.delegate = self
+        let action = coordinator.discoverServices()
+        onAction(action)
+        peripheral.discoverServices(action.coreBluetoothServiceUuids)
+    }
+
+    public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard error == nil else {
+            return
+        }
+        (peripheral.services ?? []).forEach { service in
+            peripheral.discoverCharacteristics(nil, for: service)
+        }
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverCharacteristicsFor service: CBService,
+        error: Error?
+    ) {
+        guard error == nil else {
+            return
+        }
+        let inventory = CoreBluetoothGattInventory(services: [service])
+        coordinator.discoverCharacteristics(in: inventory).forEach(onAction)
+    }
+
+    public func peripheral(
+        _: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        guard
+            error == nil,
+            let value = characteristic.value,
+            let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid)
+        else {
+            return
+        }
+        onNotification(channel, value)
+    }
+
+    private func scan() {
+        let action = coordinator.startScanning()
+        onAction(action)
+        centralManager.scanForPeripherals(withServices: action.coreBluetoothServiceUuids)
+    }
+}
+
+private extension CoreBluetoothCharacteristicProperty {
+    var coreBluetoothProperty: CBCharacteristicProperties {
+        switch self {
+        case .read:
+            .read
+        case .write:
+            .write
+        case .writeWithoutResponse:
+            .writeWithoutResponse
+        case .notify:
+            .notify
+        case .indicate:
+            .indicate
+        }
+    }
+}
+
 public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationSink {
     private let peripheral: CBPeripheral
 
