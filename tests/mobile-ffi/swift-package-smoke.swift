@@ -137,6 +137,45 @@ struct CutoutMobilePackageSmoke {
         ))
         precondition(runnerTelemetry.snapshot?.voltageMillivolts == 108_760)
 
+        let liveSink = RecordingCoreBluetoothOperationSink()
+        let liveOwner = CoreBluetoothLiveSessionOwner(
+            session: .aero(AeroSession()),
+            advertisement: advertisement,
+            writeLimit: TransportWriteLimitBytes(185),
+            operationSink: liveSink
+        )
+        let linkStep = try liveOwner.handleLinkUp(at: MonotonicMilliseconds(30))
+        precondition(linkStep.operations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
+        precondition(liveSink.recordedOperations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
+        precondition(liveOwner.records.contains(.linkUp(
+            platformIdentifier: advertisement.peripheralIdentifier,
+            writeLimit: TransportWriteLimitBytes(185)
+        )))
+        liveOwner.recordInventory(inventory)
+        precondition(liveOwner.records.contains(.gattInventory(
+            platformIdentifier: advertisement.peripheralIdentifier,
+            inventory: inventory
+        )))
+        let liveTelemetry = try liveOwner.handleNotification(
+            bytes: Data(hex: """
+                dc5a5c532a7c000000000000ab41001700000cff
+                000000000226021ca8f607801afa000080c80000
+                808080808080022880803080800e310e310e2f0e
+                2f0e300e2a0e320e2e0e300e310e300e2d0e2f0e
+                310e2e9e05e3ad
+            """),
+            channel: BluetoothUuid.bluetooth16(0xffe1),
+            at: MonotonicMilliseconds(31)
+        )
+        precondition(liveTelemetry.snapshot?.voltageMillivolts == 108_760)
+        precondition(liveOwner.records.contains {
+            if case .notification(let channel, let byteCount, _) = $0 {
+                channel == BluetoothUuid.bluetooth16(0xffe1) && byteCount.rawValue > 0
+            } else {
+                false
+            }
+        })
+
         #if canImport(CoreBluetooth)
         precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.count == 2)
         precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.contains(.bluetooth16(0xffe0)))

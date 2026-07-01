@@ -498,6 +498,127 @@ public struct CoreBluetoothOperationExecutor {
     }
 }
 
+public struct CoreBluetoothPayloadByteCount: Equatable, Hashable, Sendable {
+    public let rawValue: Int
+
+    public init(_ rawValue: Int) {
+        self.rawValue = Swift.max(0, rawValue)
+    }
+}
+
+public enum CoreBluetoothLiveRecord: Equatable, Hashable, Sendable {
+    case linkUp(
+        platformIdentifier: CoreBluetoothPeripheralIdentifier,
+        writeLimit: TransportWriteLimitBytes
+    )
+    case gattInventory(
+        platformIdentifier: CoreBluetoothPeripheralIdentifier,
+        inventory: CoreBluetoothGattInventory
+    )
+    case operation(
+        platformIdentifier: CoreBluetoothPeripheralIdentifier,
+        operation: CoreBluetoothPlannedOperation
+    )
+    case notification(
+        channel: BluetoothUuid,
+        byteCount: CoreBluetoothPayloadByteCount,
+        at: MonotonicMilliseconds
+    )
+    case linkDown(
+        platformIdentifier: CoreBluetoothPeripheralIdentifier,
+        at: MonotonicMilliseconds
+    )
+}
+
+public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
+    private let platformIdentifier: CoreBluetoothPeripheralIdentifier
+    private let runner: CoreBluetoothSessionRunner
+    private let executor: CoreBluetoothOperationExecutor
+    private var recorded: [CoreBluetoothLiveRecord] = []
+
+    public init(
+        session: CoreBluetoothSession,
+        advertisement: CoreBluetoothAdvertisement,
+        writeLimit: TransportWriteLimitBytes,
+        operationSink: CoreBluetoothOperationSink
+    ) {
+        self.platformIdentifier = advertisement.peripheralIdentifier
+        self.runner = CoreBluetoothSessionRunner(
+            session: session,
+            writeLimit: writeLimit,
+            captureContext: CoreBluetoothCaptureContext(
+                platformIdentifier: advertisement.peripheralIdentifier,
+                advertisement: advertisement,
+                writeLimit: writeLimit
+            )
+        )
+        self.executor = CoreBluetoothOperationExecutor(sink: operationSink)
+    }
+
+    public var records: [CoreBluetoothLiveRecord] {
+        recorded
+    }
+
+    @discardableResult
+    public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+        let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
+        recorded.append(.linkUp(
+            platformIdentifier: platformIdentifier,
+            writeLimit: step.captureContext?.writeLimit ?? TransportWriteLimitBytes(0)
+        ))
+        executeAndRecord(step.operations)
+        return step
+    }
+
+    public func recordInventory(_ inventory: CoreBluetoothGattInventory) {
+        recorded.append(.gattInventory(
+            platformIdentifier: platformIdentifier,
+            inventory: inventory
+        ))
+    }
+
+    @discardableResult
+    public func handleNotification(
+        bytes: Data,
+        channel: BluetoothUuid,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> CoreBluetoothSessionStep {
+        recorded.append(.notification(
+            channel: channel,
+            byteCount: CoreBluetoothPayloadByteCount(bytes.count),
+            at: monotonicMilliseconds
+        ))
+        let step = try runner.handle(.notification(
+            bytes: bytes,
+            channel: channel,
+            at: monotonicMilliseconds
+        ))
+        executeAndRecord(step.operations)
+        return step
+    }
+
+    @discardableResult
+    public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+        let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
+        recorded.append(.linkDown(
+            platformIdentifier: platformIdentifier,
+            at: monotonicMilliseconds
+        ))
+        executeAndRecord(step.operations)
+        return step
+    }
+
+    private func executeAndRecord(_ operations: [CoreBluetoothPlannedOperation]) {
+        operations.forEach { operation in
+            executor.execute(operation)
+            recorded.append(.operation(
+                platformIdentifier: platformIdentifier,
+                operation: operation
+            ))
+        }
+    }
+}
+
 public struct CoreBluetoothCaptureContext: Equatable, Hashable, Sendable {
     public let platformIdentifier: CoreBluetoothPeripheralIdentifier
     public let advertisedServiceUuids: [BluetoothUuid]
