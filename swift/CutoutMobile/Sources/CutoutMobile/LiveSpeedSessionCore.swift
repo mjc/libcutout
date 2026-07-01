@@ -41,7 +41,7 @@ public final class LiveSpeedSessionCore: NSObject {
             return
         }
         displayState = displayState.reducing(step, receivedAt: receivedAt)
-        hasObservedSpeedSnapshot = step.snapshot?.speedMillimetersPerSecond != nil
+        hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speedMillimetersPerSecond != nil
         onDisplayStateChange?(displayState)
         setPhase(.live)
     }

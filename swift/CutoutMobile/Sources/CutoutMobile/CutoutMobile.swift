@@ -175,7 +175,7 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
         _ step: CoreBluetoothSessionStep,
         receivedAt: MonotonicMilliseconds
     ) -> LiveSpeedDisplayState {
-        let nextSpeed = step.snapshot.map { SpeedReadout(snapshot: $0) } ?? speed
+        let nextSpeed = step.snapshot?.speedMillimetersPerSecond.map(SpeedReadout.init) ?? speed
         return LiveSpeedDisplayState(
             speed: nextSpeed,
             notificationCount: notificationCount + 1,
