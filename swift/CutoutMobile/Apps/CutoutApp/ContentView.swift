@@ -139,17 +139,20 @@ private struct MockupScreenScaffold<Content: View>: View {
     let sectionTitle: String
     let bottomPadding: CGFloat
     let allowsVerticalScroll: Bool
+    let columnSpacing: CGFloat
     private let content: (CGFloat, [GridItem]) -> Content
 
     init(
         sectionTitle: String,
         bottomPadding: CGFloat,
         allowsVerticalScroll: Bool = true,
+        columnSpacing: CGFloat = 26,
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
         self.bottomPadding = bottomPadding
         self.allowsVerticalScroll = allowsVerticalScroll
+        self.columnSpacing = columnSpacing
         self.content = content
     }
 
@@ -157,8 +160,8 @@ private struct MockupScreenScaffold<Content: View>: View {
         GeometryReader { proxy in
             let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
             let columns = [
-                GridItem(.flexible(), spacing: 26 * scale),
-                GridItem(.flexible(), spacing: 26 * scale),
+                GridItem(.flexible(), spacing: columnSpacing * scale),
+                GridItem(.flexible(), spacing: columnSpacing * scale),
             ]
 
             Group {
@@ -482,82 +485,61 @@ private struct EucRideMockupView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
-            let columns = [
-                GridItem(.flexible(), spacing: 12 * scale),
-                GridItem(.flexible(), spacing: 12 * scale),
-            ]
-
-            VStack(alignment: .leading, spacing: 14 * scale) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("CutOut")
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.yellow)
-                    Spacer()
-                    Text("EUC ride")
-                        .font(.system(size: 15 * scale, weight: .semibold))
-                        .foregroundStyle(MockupColors.muted)
-                }
-                .padding(.top, 10 * scale)
-
-                HStack(alignment: .center, spacing: 12 * scale) {
-                    Text(screen.title)
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.primaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                    Spacer(minLength: 8 * scale)
-                    EucStatusBadge(title: screen.displaySubtitle, scale: scale)
-                }
-                .padding(.top, 8 * scale)
-
-                VStack(alignment: .center, spacing: 2 * scale) {
-                    HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
-                        Text(speedParts.value)
-                            .font(.system(size: 104 * scale, weight: .black))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                        Text(speedParts.unit)
-                            .font(.system(size: 27 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.muted)
-                    }
-                    Text("speed")
-                        .font(.system(size: 13 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
-                }
-                .frame(maxWidth: .infinity)
-                .foregroundStyle(MockupColors.primaryText)
-                .padding(.top, 0)
-
-                VStack(spacing: 10 * scale) {
-                    ForEach(screen.safetyBars, id: \.label) { bar in
-                        EucSafetyBar(bar: bar, scale: scale)
-                    }
-                }
-                .padding(.top, 0)
-
-                if let warningCard = screen.warningCard {
-                    EucWarningCard(card: warningCard, scale: scale)
-                        .padding(.top, 14 * scale)
-                }
-
-                LazyVGrid(columns: columns, spacing: 12 * scale) {
-                    ForEach(screen.dashboardTiles) { tile in
-                        EucDashboardTile(tile: tile, scale: scale)
-                    }
-                }
-                .padding(.top, 12 * scale)
-
-                EucRideTabs(tabs: screen.tabs, scale: scale)
-                    .padding(.top, 48 * scale)
+        MockupScreenScaffold(
+            sectionTitle: "EUC ride",
+            bottomPadding: 20,
+            allowsVerticalScroll: false,
+            columnSpacing: 12
+        ) { scale, columns in
+            HStack(alignment: .center, spacing: 12 * scale) {
+                Text(screen.title)
+                    .font(.system(size: 18 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 8 * scale)
+                EucStatusBadge(title: screen.displaySubtitle, scale: scale)
             }
-            .padding(.horizontal, 24 * scale)
-            .padding(.bottom, 20 * scale)
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-            .background(MockupColors.pageBackground)
+            .padding(.top, 8 * scale)
+
+            VStack(alignment: .center, spacing: 2 * scale) {
+                HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
+                    Text(speedParts.value)
+                        .font(.system(size: 104 * scale, weight: .black))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(speedParts.unit)
+                        .font(.system(size: 27 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                }
+                Text("speed")
+                    .font(.system(size: 13 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+            }
+            .frame(maxWidth: .infinity)
             .foregroundStyle(MockupColors.primaryText)
+
+            VStack(spacing: 10 * scale) {
+                ForEach(screen.safetyBars, id: \.label) { bar in
+                    EucSafetyBar(bar: bar, scale: scale)
+                }
+            }
+
+            if let warningCard = screen.warningCard {
+                EucWarningCard(card: warningCard, scale: scale)
+                    .padding(.top, 14 * scale)
+            }
+
+            LazyVGrid(columns: columns, spacing: 12 * scale) {
+                ForEach(screen.dashboardTiles) { tile in
+                    EucDashboardTile(tile: tile, scale: scale)
+                }
+            }
+            .padding(.top, 12 * scale)
+
+            EucRideTabs(tabs: screen.tabs, scale: scale)
+                .padding(.top, 48 * scale)
         }
     }
 }
@@ -819,36 +801,36 @@ private struct DevicePickerMockupView: View {
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 18 * scale) {
-                    if !sections.supported.isEmpty {
-                        SectionLabel("Supported now", scale: scale)
-                            .padding(.top, 8 * scale)
-                        VStack(spacing: 12 * scale) {
-                            ForEach(Array(sections.supported.enumerated()), id: \.offset) { _, row in
-                                Button {
-                                    pair(row.id)
-                                } label: {
+                        if !sections.supported.isEmpty {
+                            SectionLabel("Supported now", scale: scale)
+                                .padding(.top, 8 * scale)
+                            VStack(spacing: 12 * scale) {
+                                ForEach(sections.supported) { row in
+                                    Button {
+                                        pair(row.id)
+                                    } label: {
+                                        PickerDeviceRow(row: row, scale: scale)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contentShape(Rectangle())
+                                }
+                            }
+                        }
+
+                        if !sections.unsupported.isEmpty {
+                            SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
+                                .padding(.top, 8 * scale)
+                            VStack(spacing: 12 * scale) {
+                                ForEach(sections.unsupported) { row in
                                     PickerDeviceRow(row: row, scale: scale)
                                 }
-                                .buttonStyle(.plain)
-                                .contentShape(Rectangle())
                             }
                         }
-                    }
 
-                    if !sections.unsupported.isEmpty {
-                        SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
-                            .padding(.top, 8 * scale)
-                        VStack(spacing: 12 * scale) {
-                            ForEach(Array(sections.unsupported.enumerated()), id: \.offset) { _, row in
-                                PickerDeviceRow(row: row, scale: scale)
-                            }
+                        if let manualRow = sections.manual {
+                            ManualPickerRow(row: manualRow, scale: scale)
+                                .padding(.top, 32 * scale)
                         }
-                    }
-
-                    if let manualRow = sections.manual {
-                        ManualPickerRow(row: manualRow, scale: scale)
-                            .padding(.top, 32 * scale)
-                    }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
