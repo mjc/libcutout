@@ -18,7 +18,7 @@ struct ContentView: View {
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            Text(model.status)
+            Text(model.phase.displayText)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

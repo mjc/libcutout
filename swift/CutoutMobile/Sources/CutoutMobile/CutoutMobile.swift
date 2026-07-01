@@ -184,6 +184,70 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
     }
 }
 
+public enum LiveSpeedConnectionFailure: Equatable, Hashable, Sendable {
+    case missingNotifyChannel
+    case sessionFailed(String)
+    case connectFailed(String)
+    case serviceDiscoveryFailed(String)
+    case characteristicDiscoveryFailed(String)
+    case notificationFailed(String)
+    case notificationIngestFailed(String)
+    case skippedReadOnlyWrite
+
+    public var displayText: String {
+        switch self {
+        case .missingNotifyChannel:
+            "Missing notify channel"
+        case .sessionFailed(let message):
+            "Session failed: \(message)"
+        case .connectFailed(let message):
+            "Connect failed: \(message)"
+        case .serviceDiscoveryFailed(let message):
+            "Service discovery failed: \(message)"
+        case .characteristicDiscoveryFailed(let message):
+            "Characteristic discovery failed: \(message)"
+        case .notificationFailed(let message):
+            "Notification failed: \(message)"
+        case .notificationIngestFailed(let message):
+            "Notification ingest failed: \(message)"
+        case .skippedReadOnlyWrite:
+            "Read-only MVP skipped a write operation"
+        }
+    }
+}
+
+public enum LiveSpeedConnectionPhase: Equatable, Hashable, Sendable {
+    case starting
+    case bluetoothUnavailable(rawState: Int)
+    case scanning(model: ElectricUnicycleModel)
+    case connecting(model: ElectricUnicycleModel)
+    case discoveringServices
+    case subscribing
+    case live
+    case failed(LiveSpeedConnectionFailure)
+
+    public var displayText: String {
+        switch self {
+        case .starting:
+            "Starting Bluetooth..."
+        case .bluetoothUnavailable(let rawState):
+            "Bluetooth unavailable: state \(rawState)"
+        case .scanning(let model):
+            "Scanning for \(model.displayName)..."
+        case .connecting(let model):
+            "Connecting to \(model.displayName)..."
+        case .discoveringServices:
+            "Discovering services..."
+        case .subscribing:
+            "Subscribing..."
+        case .live:
+            "Live"
+        case .failed(let failure):
+            failure.displayText
+        }
+    }
+}
+
 public struct ParserDiagnostics: Equatable, Hashable, Sendable {
     public let droppedBytes: UInt64
     public let resyncs: UInt64
@@ -222,6 +286,17 @@ public enum CutoutSessionError: Error, Equatable, Sendable {
 public enum ElectricUnicycleModel: Equatable, Hashable, Sendable {
     case aero
     case falcon
+}
+
+public extension ElectricUnicycleModel {
+    var displayName: String {
+        switch self {
+        case .aero:
+            "Aero"
+        case .falcon:
+            "Falcon"
+        }
+    }
 }
 
 public final class ElectricUnicycleSession: @unchecked Sendable {

@@ -4,7 +4,7 @@ import Foundation
 
 final class LiveSpeedModel: NSObject, ObservableObject {
     @Published private(set) var displayState = LiveSpeedDisplayState()
-    @Published private(set) var status = "Starting Bluetooth..."
+    @Published private(set) var phase = LiveSpeedConnectionPhase.starting
 
     var speed: SpeedReadout {
         displayState.speed
@@ -25,15 +25,15 @@ final class LiveSpeedModel: NSObject, ObservableObject {
         central = CBCentralManager(delegate: self, queue: nil)
     }
 
-    private func setStatus(_ status: String) {
-        self.status = status
+    private func setPhase(_ phase: LiveSpeedConnectionPhase) {
+        self.phase = phase
     }
 
     private func connect(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement) {
         self.peripheral = peripheral
         self.advertisement = advertisement
         peripheral.delegate = self
-        setStatus("Connecting to Aero...")
+        setPhase(.connecting(model: .aero))
         central?.stopScan()
         central?.connect(peripheral)
     }
@@ -49,12 +49,12 @@ final class LiveSpeedModel: NSObject, ObservableObject {
                 writeLimit: TransportWriteLimitBytes(23),
                 operationSink: self
             )
-            setStatus("Subscribing...")
+            setPhase(.subscribing)
             let inventory = CoreBluetoothGattInventory(services: peripheral.services ?? [])
             liveOwner?.recordInventory(inventory)
             _ = try liveOwner?.handleLinkUp(at: clock.now())
         } catch {
-            setStatus("Session failed: \(error)")
+            setPhase(.failed(.sessionFailed(String(describing: error))))
         }
     }
 }
@@ -62,10 +62,10 @@ final class LiveSpeedModel: NSObject, ObservableObject {
 extension LiveSpeedModel: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard central.state == .poweredOn else {
-            setStatus("Bluetooth unavailable: state \(central.state.rawValue)")
+            setPhase(.bluetoothUnavailable(rawState: central.state.rawValue))
             return
         }
-        setStatus("Scanning for Aero...")
+        setPhase(.scanning(model: .aero))
         central.scanForPeripherals(withServices: CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
     }
 
@@ -86,20 +86,20 @@ extension LiveSpeedModel: CBCentralManagerDelegate {
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        setStatus("Discovering services...")
+        setPhase(.discoveringServices)
         peripheral.delegate = self
         peripheral.discoverServices(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
     }
 
     func centralManager(_: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?) {
-        setStatus("Connect failed: \(error.map(String.init(describing:)) ?? "unknown error")")
+        setPhase(.failed(.connectFailed(error.map(String.init(describing:)) ?? "unknown error")))
     }
 }
 
 extension LiveSpeedModel: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error {
-            setStatus("Service discovery failed: \(error)")
+            setPhase(.failed(.serviceDiscoveryFailed(String(describing: error))))
             return
         }
         let services = peripheral.services ?? []
@@ -115,7 +115,7 @@ extension LiveSpeedModel: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setStatus("Characteristic discovery failed: \(error)")
+            setPhase(.failed(.characteristicDiscoveryFailed(String(describing: error))))
             return
         }
         service.characteristics?.forEach { characteristic in
@@ -135,7 +135,7 @@ extension LiveSpeedModel: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setStatus("Notification failed: \(error)")
+            setPhase(.failed(.notificationFailed(String(describing: error))))
             return
         }
         guard
@@ -154,10 +154,10 @@ extension LiveSpeedModel: CBPeripheralDelegate {
             )
             if step.snapshot != nil {
                 displayState = displayState.reducing(step, receivedAt: receivedAt)
-                setStatus("Live")
+                setPhase(.live)
             }
         } catch {
-            setStatus("Notification ingest failed: \(error)")
+            setPhase(.failed(.notificationIngestFailed(String(describing: error))))
         }
     }
 }
@@ -165,14 +165,14 @@ extension LiveSpeedModel: CBPeripheralDelegate {
 extension LiveSpeedModel: CoreBluetoothOperationSink {
     func subscribe(channel: BluetoothUuid) {
         guard let characteristic = subscribedCharacteristics[channel] else {
-            setStatus("Missing notify channel")
+            setPhase(.failed(.missingNotifyChannel))
             return
         }
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
     func writeWithoutResponse(channel _: BluetoothUuid, bytes _: Data) {
-        setStatus("Read-only MVP skipped a write operation")
+        setPhase(.failed(.skippedReadOnlyWrite))
     }
 
     func disconnect() {
