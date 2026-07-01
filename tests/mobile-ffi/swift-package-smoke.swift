@@ -102,6 +102,7 @@ struct CutoutMobilePackageSmoke {
         precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.count == 2)
         precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.contains(.bluetooth16(0xffe0)))
         precondition(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids.count == 2)
+        _ = CoreBluetoothPeripheralOperationSink.self
         #endif
     }
 }

@@ -537,4 +537,41 @@ public extension CoreBluetoothScanPolicy {
         serviceUuids.map { CBUUID(data: $0.bytes) }
     }
 }
+
+public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationSink {
+    private let peripheral: CBPeripheral
+
+    public init(peripheral: CBPeripheral) {
+        self.peripheral = peripheral
+    }
+
+    public func subscribe(channel: BluetoothUuid) {
+        guard let characteristic = peripheral.characteristic(for: channel) else {
+            return
+        }
+        peripheral.setNotifyValue(true, for: characteristic)
+    }
+
+    public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        guard let characteristic = peripheral.characteristic(for: channel) else {
+            return
+        }
+        peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+    }
+
+    public func disconnect() {
+        // Disconnect is owned by CBCentralManager; this sink only owns peripheral operations.
+    }
+}
+
+private extension CBPeripheral {
+    func characteristic(for channel: BluetoothUuid) -> CBCharacteristic? {
+        let uuid = CBUUID(data: channel.bytes)
+        return services?
+            .lazy
+            .compactMap { $0.characteristics }
+            .joined()
+            .first { $0.uuid == uuid }
+    }
+}
 #endif
