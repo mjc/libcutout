@@ -83,7 +83,9 @@ cutout_build_ios_speed_app_bundle() {
     CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(xcrun --sdk iphoneos --find clang)" \
     cargo build -p cutout-mobile-ffi --target aarch64-apple-ios
 
-  (
+  rm -rf "$product"
+
+  if ! (
     cd "$package_dir"
     env -u SDKROOT -u LD -u CC -u CXX -u AR -u RANLIB \
       PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -94,7 +96,10 @@ cutout_build_ios_speed_app_bundle() {
       -derivedDataPath "$derived_data" \
       OTHER_LDFLAGS="$rust_lib -liconv" \
       build
-  ) >&2
+  ) >&2; then
+    rm -rf "$product"
+    return 1
+  fi
 
   if [[ ! -d "$product" ]]; then
     echo "expected installed product not found: $product" >&2
@@ -126,7 +131,9 @@ cutout_build_ios_device_speed_app_bundle() {
     CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(xcrun --sdk iphoneos --find clang)" \
     cargo build -p cutout-mobile-ffi --target aarch64-apple-ios
 
-  (
+  rm -rf "$product"
+
+  if ! (
     cd "$package_dir"
     env -u SDKROOT -u LD -u CC -u CXX -u AR -u RANLIB \
       PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -144,7 +151,10 @@ cutout_build_ios_device_speed_app_bundle() {
       ${bundle_id:+PRODUCT_BUNDLE_IDENTIFIER="$bundle_id"} \
       OTHER_LDFLAGS="$rust_lib -liconv" \
       build
-  ) >&2
+  ) >&2; then
+    rm -rf "$product"
+    return 1
+  fi
 
   if [[ ! -d "$product" ]]; then
     echo "expected installed product not found: $product" >&2
