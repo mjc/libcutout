@@ -52,6 +52,12 @@ pub struct MobileDiscoveryCandidateDto {
 
     /// Support state.
     pub support: MobileDiscoveryCandidateSupportDto,
+
+    /// Supported connection route key, when connecting is allowed.
+    pub connection_route: Option<String>,
+
+    /// Disabled reason, when connecting is not allowed.
+    pub disabled_reason: Option<String>,
 }
 
 /// Build a mobile discovery candidate from advertisement evidence.
@@ -70,6 +76,8 @@ pub fn mobile_discovery_candidate_from_advertisement(
             evidence: "advertisement hint".to_owned(),
             detail: "Bluetooth candidate".to_owned(),
             support: MobileDiscoveryCandidateSupportDto::Supported,
+            connection_route: Some("electric_unicycle".to_owned()),
+            disabled_reason: None,
         };
     }
 
@@ -80,6 +88,8 @@ pub fn mobile_discovery_candidate_from_advertisement(
         evidence: "advertisement observed".to_owned(),
         detail: "Not yet supported".to_owned(),
         support: MobileDiscoveryCandidateSupportDto::Unsupported,
+        connection_route: None,
+        disabled_reason: Some("Not yet supported".to_owned()),
     }
 }
 
@@ -1506,6 +1516,30 @@ mod tests {
         assert_eq!(
             candidate.support,
             MobileDiscoveryCandidateSupportDto::Supported
+        );
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_exposes_disabled_reason_for_unsupported() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-unknown".to_owned(),
+            Some("Rideable-ish".to_owned()),
+            vec![],
+        );
+
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Unsupported
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Not yet supported".to_owned())
         );
     }
 
