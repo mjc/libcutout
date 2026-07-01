@@ -19,7 +19,7 @@ product="${CUTOUT_IOS_DEVICE_PRODUCT:-$(CUTOUT_IOS_DEVICE_UDID="$device_udid" cu
 bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-$(cutout_ios_app_bundle_identifier "$product")}"
 
 xcrun devicectl --quiet device install app --device "$device_udid" "$product"
-xcrun devicectl --quiet device process launch --device "$device_udid" --terminate-existing --activate "$bundle_id"
+xcrun devicectl --quiet device process launch --device "$device_udid" --terminate-existing --activate "$bundle_id" "$@"
 
 echo "ios_device_udid=$device_udid"
 echo "ios_app_bundle_id=$bundle_id"
