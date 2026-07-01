@@ -406,20 +406,32 @@ public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
 public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
+    public let captureContext: CoreBluetoothCaptureContext?
 
-    public init(operations: [CoreBluetoothPlannedOperation], snapshot: TelemetrySnapshot?) {
+    public init(
+        operations: [CoreBluetoothPlannedOperation],
+        snapshot: TelemetrySnapshot?,
+        captureContext: CoreBluetoothCaptureContext? = nil
+    ) {
         self.operations = operations
         self.snapshot = snapshot
+        self.captureContext = captureContext
     }
 }
 
 public final class CoreBluetoothSessionRunner: @unchecked Sendable {
     private let session: CoreBluetoothSession
     private let planner: CoreBluetoothTransportPlanner
+    private let captureContext: CoreBluetoothCaptureContext?
 
-    public init(session: CoreBluetoothSession, writeLimit: TransportWriteLimitBytes) {
+    public init(
+        session: CoreBluetoothSession,
+        writeLimit: TransportWriteLimitBytes,
+        captureContext: CoreBluetoothCaptureContext? = nil
+    ) {
         self.session = session
         self.planner = CoreBluetoothTransportPlanner(writeLimit: writeLimit)
+        self.captureContext = captureContext
     }
 
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
@@ -431,7 +443,8 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
             )
             return CoreBluetoothSessionStep(
                 operations: actions.flatMap(planner.plan(action:)),
-                snapshot: session.currentSnapshot
+                snapshot: session.currentSnapshot,
+                captureContext: captureContext
             )
 
         case .notification(let bytes, let channel, let monotonicMilliseconds):
@@ -440,14 +453,37 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
                 channel: channel,
                 at: monotonicMilliseconds
             )
-            return CoreBluetoothSessionStep(operations: [], snapshot: snapshot)
+            return CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: snapshot,
+                captureContext: captureContext
+            )
 
         case .linkDown:
             return CoreBluetoothSessionStep(
                 operations: [.disconnect],
-                snapshot: session.currentSnapshot
+                snapshot: session.currentSnapshot,
+                captureContext: captureContext
             )
         }
+    }
+}
+
+public struct CoreBluetoothCaptureContext: Equatable, Hashable, Sendable {
+    public let platformIdentifier: CoreBluetoothPeripheralIdentifier
+    public let advertisedServiceUuids: [BluetoothUuid]
+    public let writeLimit: TransportWriteLimitBytes
+    public let resolvedModelHint: CutoutModelHint
+
+    public init(
+        platformIdentifier: CoreBluetoothPeripheralIdentifier,
+        advertisement: CoreBluetoothAdvertisement,
+        writeLimit: TransportWriteLimitBytes
+    ) {
+        self.platformIdentifier = platformIdentifier
+        self.advertisedServiceUuids = advertisement.advertisedServiceUuids
+        self.writeLimit = writeLimit
+        self.resolvedModelHint = advertisement.modelHint
     }
 }
 
