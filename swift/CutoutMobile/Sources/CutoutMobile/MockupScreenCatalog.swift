@@ -86,7 +86,7 @@ public enum MockupPickerRowState: Equatable, Hashable, Sendable {
 }
 
 public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
-    public var id: String { title }
+    public let id: String
 
     public let title: String
     public let subtitle: String
@@ -95,12 +95,14 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let symbolName: String
 
     public init(
+        id: String? = nil,
         title: String,
         subtitle: String,
         detail: String,
         state: MockupPickerRowState,
         symbolName: String
     ) {
+        self.id = id ?? title
         self.title = title
         self.subtitle = subtitle
         self.detail = detail
@@ -209,6 +211,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
 
     public var pickerRow: MockupPickerRow {
         MockupPickerRow(
+            id: platformIdentifier,
             title: displayName,
             subtitle: "\(productCategory) - \(evidence)",
             detail: detail,
@@ -219,6 +222,10 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
 }
 
 public extension DevicePickerCandidateSupport {
+    var isSupported: Bool {
+        if case .supported = self { true } else { false }
+    }
+
     var pickerRowState: MockupPickerRowState {
         switch self {
         case .supported:

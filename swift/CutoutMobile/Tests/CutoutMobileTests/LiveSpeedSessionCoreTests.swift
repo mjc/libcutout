@@ -29,6 +29,12 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedStates.count, 2)
     }
 
+    func testPairUnknownCandidateReturnsFalse() {
+        let core = LiveSpeedSessionCore()
+
+        XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
+    }
+
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
         let core = LiveSpeedSessionCore()
         let snapshot = TelemetrySnapshot(

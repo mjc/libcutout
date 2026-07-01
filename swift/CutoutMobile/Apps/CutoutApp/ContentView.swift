@@ -22,7 +22,8 @@ struct ContentView: View {
                     MockupScreenContainer(
                         screen: screen,
                         liveSpeed: model.speed.displayValue,
-                        devicePickerScanState: model.devicePickerScanState
+                        devicePickerScanState: model.devicePickerScanState,
+                        pair: model.pair(platformIdentifier:)
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .tag(screen.id)
@@ -56,11 +57,12 @@ private struct MockupScreenContainer: View {
     let screen: MockupScreen
     let liveSpeed: String
     let devicePickerScanState: DevicePickerScanState?
+    let pair: (String) -> Void
 
     var body: some View {
         switch screen.id {
         case .devicePicker:
-            DevicePickerMockupView(screen: screen, scanState: devicePickerScanState)
+            DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
             EucRideMockupView(screen: screen)
         default:
@@ -306,6 +308,7 @@ private struct EucRideTabs: View {
 private struct DevicePickerMockupView: View {
     let screen: MockupScreen
     let scanState: DevicePickerScanState?
+    let pair: (String) -> Void
 
     private var renderedScanState: DevicePickerScanState {
         if let scanState {
@@ -345,7 +348,11 @@ private struct DevicePickerMockupView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                ScanStatusPill(text: renderedScanState.statusText, scale: scale)
+                ScanStatusPill(
+                    text: renderedScanState.statusText,
+                    isScanning: renderedScanState.status == .scanning,
+                    scale: scale
+                )
                     .padding(.top, 4 * scale)
 
                 ScrollView(.vertical, showsIndicators: false) {
@@ -355,7 +362,12 @@ private struct DevicePickerMockupView: View {
                             .padding(.top, 8 * scale)
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.supported) { row in
-                                PickerDeviceRow(row: row, scale: scale)
+                                Button {
+                                    pair(row.id)
+                                } label: {
+                                    PickerDeviceRow(row: row, scale: scale)
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -390,7 +402,9 @@ private struct DevicePickerMockupView: View {
 
 private struct ScanStatusPill: View {
     let text: String
+    let isScanning: Bool
     let scale: CGFloat
+    @State private var phase = 0
 
     var body: some View {
         HStack {
@@ -398,9 +412,11 @@ private struct ScanStatusPill: View {
                 .font(.system(size: 18 * scale, weight: .bold))
             Spacer()
             HStack(spacing: 9 * scale) {
-                Circle().frame(width: 13 * scale, height: 13 * scale)
-                Circle().frame(width: 13 * scale, height: 13 * scale)
-                Circle().frame(width: 13 * scale, height: 13 * scale)
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .frame(width: 13 * scale, height: 13 * scale)
+                        .opacity(!isScanning || index == phase ? 1 : 0.32)
+                }
             }
             .foregroundStyle(MockupColors.yellow)
         }
@@ -408,6 +424,13 @@ private struct ScanStatusPill: View {
         .frame(height: 64 * scale)
         .frame(maxWidth: .infinity)
         .background(CardBackground(cornerRadius: 28 * scale))
+        .task(id: isScanning) {
+            guard isScanning else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(260))
+                phase = (phase + 1) % 3
+            }
+        }
     }
 }
 

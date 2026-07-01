@@ -149,6 +149,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.displayName, "NOSFET Aero")
         XCTAssertEqual(candidate.productCategory, "Electric unicycle")
         XCTAssertEqual(candidate.support, .supported(connectionRoute: "electric_unicycle"))
+        XCTAssertEqual(candidate.pickerRow.id, "ios-local-aero")
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
     }
 

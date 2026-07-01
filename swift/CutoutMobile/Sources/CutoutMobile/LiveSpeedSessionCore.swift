@@ -18,6 +18,7 @@ public final class LiveSpeedSessionCore: NSObject {
     private var peripheral: CBPeripheral?
     private var advertisement: CoreBluetoothAdvertisement?
     private var discoveredAdvertisements: [CoreBluetoothAdvertisement] = []
+    private var discoveredPeripherals: [CoreBluetoothPeripheralIdentifier: CBPeripheral] = [:]
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
@@ -35,6 +36,20 @@ public final class LiveSpeedSessionCore: NSObject {
         discoveredAdvertisements.append(advertisement)
         scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
         onScanStateChange?(scanState)
+    }
+
+    @discardableResult
+    public func pair(platformIdentifier: String) -> Bool {
+        let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
+        guard
+            let peripheral = discoveredPeripherals[identifier],
+            let advertisement = discoveredAdvertisements.last(where: { $0.peripheralIdentifier == identifier }),
+            DevicePickerDiscoveryCandidate(advertisement: advertisement).support.isSupported
+        else {
+            return false
+        }
+        connect(to: peripheral, using: advertisement)
+        return true
     }
 
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
@@ -119,6 +134,7 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
             advertisementData: advertisementData
         )
         observeAdvertisement(advertisement)
+        discoveredPeripherals[advertisement.peripheralIdentifier] = peripheral
         let advertisedServices = advertisement.advertisedServiceUuids.map(String.init(describing:)).joined(separator: ",")
         let candidate = [
             "candidate=\(advertisement.peripheralIdentifier.rawValue)",
@@ -128,14 +144,6 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
             "rssi=\(rssi)",
         ].joined(separator: " ")
         record(candidate)
-        guard advertisement.modelHint == .aero || advertisement.advertisedServiceUuids.contains(.bluetooth16(0xffe0)) else {
-            return
-        }
-        record("discovered=\(advertisement.peripheralIdentifier.rawValue)")
-        record("local_name=\(advertisement.localName ?? "")")
-        record("rssi=\(rssi)")
-        record("advertised_services=\(advertisedServices)")
-        connect(to: peripheral, using: advertisement)
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
