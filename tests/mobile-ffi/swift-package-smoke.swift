@@ -175,6 +175,11 @@ struct CutoutMobilePackageSmoke {
                 false
             }
         })
+        let notificationHandler = liveOwner.notificationHandler(
+            clock: { MonotonicMilliseconds(32) },
+            onError: { _ in preconditionFailure("smoke notification should ingest") }
+        )
+        notificationHandler(BluetoothUuid.bluetooth16(0xffe1), Data())
 
         #if canImport(CoreBluetooth)
         precondition(CoreBluetoothScanPolicy.aeroFalcon.serviceUuids.count == 2)
@@ -182,6 +187,7 @@ struct CutoutMobilePackageSmoke {
         precondition(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids.count == 2)
         precondition(coordinator.startScanning().coreBluetoothServiceUuids.count == 2)
         _ = CoreBluetoothPeripheralOperationSink.self
+        _ = CoreBluetoothLiveSessionOwner.self
         _ = CoreBluetoothCentralLifecycle.self
         #endif
     }

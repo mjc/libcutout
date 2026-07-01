@@ -530,9 +530,14 @@ public enum CoreBluetoothLiveRecord: Equatable, Hashable, Sendable {
     )
 }
 
+public typealias CoreBluetoothCentralLifecycleNotificationHandler = (BluetoothUuid, Data) -> Void
+public typealias CoreBluetoothMonotonicClock = @Sendable () -> MonotonicMilliseconds
+public typealias CoreBluetoothLiveSessionErrorHandler = @Sendable (Error) -> Void
+
 public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let platformIdentifier: CoreBluetoothPeripheralIdentifier
     private let runner: CoreBluetoothSessionRunner
+    private let retainedSink: CoreBluetoothOperationSink
     private let executor: CoreBluetoothOperationExecutor
     private var recorded: [CoreBluetoothLiveRecord] = []
 
@@ -552,6 +557,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
                 writeLimit: writeLimit
             )
         )
+        self.retainedSink = operationSink
         self.executor = CoreBluetoothOperationExecutor(sink: operationSink)
     }
 
@@ -606,6 +612,23 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         ))
         executeAndRecord(step.operations)
         return step
+    }
+
+    public func notificationHandler(
+        clock: @escaping CoreBluetoothMonotonicClock,
+        onError: @escaping CoreBluetoothLiveSessionErrorHandler
+    ) -> CoreBluetoothCentralLifecycleNotificationHandler {
+        { [weak self] channel, bytes in
+            do {
+                try self?.handleNotification(
+                    bytes: bytes,
+                    channel: channel,
+                    at: clock()
+                )
+            } catch {
+                onError(error)
+            }
+        }
     }
 
     private func executeAndRecord(_ operations: [CoreBluetoothPlannedOperation]) {
@@ -846,7 +869,7 @@ public extension CoreBluetoothGattInventory {
 
 public final class CoreBluetoothCentralLifecycle: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     public typealias ActionHandler = (CoreBluetoothCentralAction) -> Void
-    public typealias NotificationHandler = (BluetoothUuid, Data) -> Void
+    public typealias NotificationHandler = CoreBluetoothCentralLifecycleNotificationHandler
 
     private let coordinator: CoreBluetoothCentralCoordinator
     private let onAction: ActionHandler
@@ -944,6 +967,27 @@ public final class CoreBluetoothCentralLifecycle: NSObject, CBCentralManagerDele
         let action = coordinator.startScanning()
         onAction(action)
         centralManager.scanForPeripherals(withServices: action.coreBluetoothServiceUuids)
+    }
+}
+
+public extension CoreBluetoothLiveSessionOwner {
+    convenience init(
+        session: CoreBluetoothSession,
+        advertisement: CoreBluetoothAdvertisement,
+        peripheral: CBPeripheral
+    ) {
+        self.init(
+            session: session,
+            advertisement: advertisement,
+            writeLimit: TransportWriteLimitBytes(peripheral.withoutResponseWriteLimit),
+            operationSink: CoreBluetoothPeripheralOperationSink(peripheral: peripheral)
+        )
+    }
+}
+
+private extension CBPeripheral {
+    var withoutResponseWriteLimit: UInt16 {
+        UInt16(clamping: maximumWriteValueLength(for: .withoutResponse))
     }
 }
 
