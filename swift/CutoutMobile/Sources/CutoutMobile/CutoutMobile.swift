@@ -469,6 +469,35 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
     }
 }
 
+public protocol CoreBluetoothOperationSink: AnyObject {
+    func subscribe(channel: BluetoothUuid)
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data)
+    func disconnect()
+}
+
+public struct CoreBluetoothOperationExecutor {
+    private weak var sink: CoreBluetoothOperationSink?
+
+    public init(sink: CoreBluetoothOperationSink) {
+        self.sink = sink
+    }
+
+    public func execute(_ operations: [CoreBluetoothPlannedOperation]) {
+        operations.forEach(execute)
+    }
+
+    public func execute(_ operation: CoreBluetoothPlannedOperation) {
+        switch operation {
+        case .subscribe(let channel):
+            sink?.subscribe(channel: channel)
+        case .writeWithoutResponse(let channel, let bytes):
+            sink?.writeWithoutResponse(channel: channel, bytes: bytes)
+        case .disconnect:
+            sink?.disconnect()
+        }
+    }
+}
+
 public struct CoreBluetoothCaptureContext: Equatable, Hashable, Sendable {
     public let platformIdentifier: CoreBluetoothPeripheralIdentifier
     public let advertisedServiceUuids: [BluetoothUuid]

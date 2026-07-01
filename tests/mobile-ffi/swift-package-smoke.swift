@@ -68,6 +68,9 @@ struct CutoutMobilePackageSmoke {
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x03, 0x04])),
             .writeWithoutResponse(channel: BluetoothUuid.bluetooth16(0xffe1), bytes: Data([0x05])),
         ])
+        let executorSink = RecordingCoreBluetoothOperationSink()
+        CoreBluetoothOperationExecutor(sink: executorSink).execute(writes)
+        precondition(executorSink.recordedOperations == writes)
 
         let runner = CoreBluetoothSessionRunner(
             session: .aero(AeroSession()),
@@ -112,6 +115,22 @@ private let falconRidingChunks: [[UInt8]] = [
     [90, 90, 90, 90, 85, 170, 0, 75, 255, 253, 3, 215, 0, 0, 0, 0, 19, 136, 0, 0],
     [0, 0, 1, 3, 90, 90, 90, 90, 85, 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ]
+
+final class RecordingCoreBluetoothOperationSink: CoreBluetoothOperationSink {
+    private(set) var recordedOperations: [CoreBluetoothPlannedOperation] = []
+
+    func subscribe(channel: BluetoothUuid) {
+        recordedOperations.append(.subscribe(channel: channel))
+    }
+
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        recordedOperations.append(.writeWithoutResponse(channel: channel, bytes: bytes))
+    }
+
+    func disconnect() {
+        recordedOperations.append(.disconnect)
+    }
+}
 
 private extension Array where Element == SessionAction {
     var firstSubscribeChannel: Data? {
