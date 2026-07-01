@@ -32,7 +32,12 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
-          stableRust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          stableRust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
+            targets = [
+              "aarch64-apple-ios"
+              "aarch64-apple-ios-sim"
+            ];
+          };
           craneLib = (crane.mkLib pkgs).overrideToolchain stableRust;
           src = craneLib.cleanCargoSource ./.;
           commonArgs = {
@@ -78,7 +83,12 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
-          stableRust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          stableRust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
+            targets = [
+              "aarch64-apple-ios"
+              "aarch64-apple-ios-sim"
+            ];
+          };
           craneLib = (crane.mkLib pkgs).overrideToolchain stableRust;
           src = craneLib.cleanCargoSource ./.;
           commonArgs = {
@@ -124,7 +134,12 @@
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
           };
-          stableRust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          stableRust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
+            targets = [
+              "aarch64-apple-ios"
+              "aarch64-apple-ios-sim"
+            ];
+          };
           nightlyRust = pkgs.rust-bin.nightly.latest.default;
           cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
             export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"

@@ -1,7 +1,13 @@
+#if os(macOS)
+import AppKit
+#endif
 import SwiftUI
 
 @main
 struct CutoutMobileSpeedApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(SpeedAppDelegate.self) private var appDelegate
+    #endif
     @StateObject private var model = LiveSpeedModel()
 
     init() {
@@ -21,3 +27,12 @@ struct CutoutMobileSpeedApp: App {
         }
     }
 }
+
+#if os(macOS)
+final class SpeedAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+#endif
