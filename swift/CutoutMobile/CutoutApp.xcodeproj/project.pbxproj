@@ -1,0 +1,271 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		111111111111111111111111 /* Apps/CutoutApp/SpeedApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111121 /* Apps/CutoutApp/SpeedApp.swift */; };
+		111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */; };
+		111111111111111111111113 /* Apps/CutoutApp/LiveSpeedModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111123 /* Apps/CutoutApp/LiveSpeedModel.swift */; };
+		25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 111111111111111111111181 /* CutoutMobile */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		111111111111111111111121 /* Apps/CutoutApp/SpeedApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/SpeedApp.swift; sourceTree = SOURCE_ROOT; };
+		111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ContentView.swift; sourceTree = SOURCE_ROOT; };
+		111111111111111111111123 /* Apps/CutoutApp/LiveSpeedModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LiveSpeedModel.swift; sourceTree = SOURCE_ROOT; };
+		111111111111111111111124 /* CutoutApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CutoutApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		111111111111111111111131 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		111111111111111111111141 = {
+			isa = PBXGroup;
+			children = (
+				111111111111111111111151 /* Sources */,
+				111111111111111111111152 /* Frameworks */,
+				111111111111111111111153 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		111111111111111111111151 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				111111111111111111111121 /* Apps/CutoutApp/SpeedApp.swift */,
+				111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */,
+				111111111111111111111123 /* Apps/CutoutApp/LiveSpeedModel.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		111111111111111111111152 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Frameworks;
+			sourceTree = "<group>";
+		};
+		111111111111111111111153 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				111111111111111111111124 /* CutoutApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		111111111111111111111161 /* CutoutApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 111111111111111111111171 /* Build configuration list for PBXNativeTarget "CutoutApp" */;
+			buildPhases = (
+				111111111111111111111131 /* Frameworks */,
+				111111111111111111111132 /* Sources */,
+				111111111111111111111133 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CutoutApp;
+			packageProductDependencies = (
+				111111111111111111111181 /* CutoutMobile */,
+			);
+			productName = CutoutApp;
+			productReference = 111111111111111111111124 /* CutoutApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		111111111111111111111191 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					111111111111111111111161 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = 111111111111111111111172 /* Build configuration list for PBXProject "CutoutApp" */;
+			compatibilityVersion = "Xcode 13.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 111111111111111111111141;
+			packageReferences = (
+				111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */,
+			);
+			productRefGroup = 111111111111111111111153 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				111111111111111111111161 /* CutoutApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		111111111111111111111133 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		111111111111111111111132 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				111111111111111111111111 /* Apps/CutoutApp/SpeedApp.swift in Sources */,
+				111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */,
+				111111111111111111111113 /* Apps/CutoutApp/LiveSpeedModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		111111111111111111111201 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOLS = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = CutoutApp;
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "CutoutApp uses Bluetooth to read live vehicle telemetry.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				"INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad" = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		111111111111111111111202 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOLS = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = CutoutApp;
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "CutoutApp uses Bluetooth to read live vehicle telemetry.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				"INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad" = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		111111111111111111111211 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		111111111111111111111212 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		111111111111111111111171 /* Build configuration list for PBXNativeTarget "CutoutApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				111111111111111111111201 /* Debug */,
+				111111111111111111111202 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		111111111111111111111172 /* Build configuration list for PBXProject "CutoutApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				111111111111111111111211 /* Debug */,
+				111111111111111111111212 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../../target/swift-sourcekit/CutoutMobile";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		111111111111111111111181 /* CutoutMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */;
+			productName = CutoutMobile;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 111111111111111111111191 /* Project object */;
+}

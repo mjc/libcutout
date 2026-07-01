@@ -7,6 +7,8 @@ debug.log
 .direnv/
 .tmp/
 .DS_Store
+xcuserdata/
+*.xcuserstate
 # br doctor per-run artifacts
 .doctor/
 
