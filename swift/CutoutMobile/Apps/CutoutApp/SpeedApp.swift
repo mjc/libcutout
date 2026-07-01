@@ -19,12 +19,21 @@ struct CutoutApp: App {
 
     var body: some Scene {
         WindowGroup("CutoutApp") {
-            ContentView(model: model)
-                .frame(minWidth: 360, minHeight: 280)
+            rootView
                 .task {
                     model.start()
                 }
         }
+    }
+
+    @ViewBuilder
+    private var rootView: some View {
+        #if os(macOS)
+        ContentView(model: model)
+            .frame(minWidth: 360, minHeight: 280)
+        #else
+        ContentView(model: model)
+        #endif
     }
 }
 

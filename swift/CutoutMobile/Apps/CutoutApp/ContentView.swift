@@ -16,8 +16,8 @@ struct ContentView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .background(MockupColors.pageBackground)
-        .ignoresSafeArea(edges: .bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MockupColors.pageBackground.ignoresSafeArea())
     }
 }
 
@@ -54,7 +54,7 @@ private struct DevicePickerMockupView: View {
         GeometryReader { proxy in
             let scale = min(1.0, proxy.size.width / 430.0)
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14 * scale) {
+                VStack(alignment: .leading, spacing: 18 * scale) {
                     HStack(alignment: .firstTextBaseline) {
                         Text("CutOut")
                             .font(.system(size: 18 * scale, weight: .bold))
@@ -82,16 +82,16 @@ private struct DevicePickerMockupView: View {
                         .padding(.top, 4 * scale)
 
                     SectionLabel("Supported now", scale: scale)
-                        .padding(.top, 4 * scale)
-                    VStack(spacing: 10 * scale) {
+                        .padding(.top, 8 * scale)
+                    VStack(spacing: 12 * scale) {
                         ForEach(supportedRows) { row in
                             PickerDeviceRow(row: row, scale: scale)
                         }
                     }
 
                     SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
-                        .padding(.top, 2 * scale)
-                    VStack(spacing: 10 * scale) {
+                        .padding(.top, 8 * scale)
+                    VStack(spacing: 12 * scale) {
                         ForEach(unsupportedRows) { row in
                             PickerDeviceRow(row: row, scale: scale)
                         }
@@ -103,8 +103,9 @@ private struct DevicePickerMockupView: View {
                 }
                 .padding(.horizontal, 18 * scale)
                 .padding(.bottom, 24 * scale)
-                .frame(width: proxy.size.width - (36 * scale), alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             .background(MockupColors.pageBackground)
             .foregroundStyle(.white)
         }
@@ -127,7 +128,8 @@ private struct ScanStatusPill: View {
             .foregroundStyle(MockupColors.yellow)
         }
         .padding(.horizontal, 22 * scale)
-        .frame(height: 58 * scale)
+        .frame(height: 64 * scale)
+        .frame(maxWidth: .infinity)
         .background(CardBackground(cornerRadius: 28 * scale))
     }
 }
@@ -181,7 +183,8 @@ private struct PickerDeviceRow: View {
             ActionBadge(state: row.state, scale: scale)
         }
         .padding(.horizontal, 18 * scale)
-        .frame(height: 84 * scale)
+        .frame(height: 92 * scale)
+        .frame(maxWidth: .infinity)
         .background(CardBackground(cornerRadius: 26 * scale))
         .opacity(row.isSupported ? 1.0 : 0.58)
     }
@@ -202,7 +205,8 @@ private struct ManualPickerRow: View {
             ActionBadge(state: row.state, scale: scale)
         }
         .padding(.horizontal, 22 * scale)
-        .frame(height: 56 * scale)
+        .frame(height: 64 * scale)
+        .frame(maxWidth: .infinity)
         .background(CardBackground(cornerRadius: 24 * scale))
         .padding(.top, 2 * scale)
     }
