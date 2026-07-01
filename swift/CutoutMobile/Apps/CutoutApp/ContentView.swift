@@ -311,7 +311,7 @@ private struct DevicePickerMockupView: View {
         if let scanState {
             return scanState
         }
-        return DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
+        return DevicePickerScanState(status: .scanning, rows: [])
     }
 
     private var sections: MockupPickerSections {
@@ -321,34 +321,35 @@ private struct DevicePickerMockupView: View {
     var body: some View {
         GeometryReader { proxy in
             let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18 * scale) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("CutOut")
-                            .font(.system(size: 18 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.yellow)
-                        Spacer()
-                        Text("setup")
-                            .font(.system(size: 15 * scale, weight: .semibold))
-                            .foregroundStyle(MockupColors.muted)
-                    }
-                    .padding(.top, 10 * scale)
+            VStack(alignment: .leading, spacing: 18 * scale) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("CutOut")
+                        .font(.system(size: 18 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.yellow)
+                    Spacer()
+                    Text("setup")
+                        .font(.system(size: 15 * scale, weight: .semibold))
+                        .foregroundStyle(MockupColors.muted)
+                }
+                .padding(.top, 10 * scale)
 
-                    VStack(alignment: .leading, spacing: 7 * scale) {
-                        Text("Pick your device(s)")
-                            .font(.system(size: 34 * scale, weight: .bold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.78)
-                        Text("Nearby devices that look rideable. Pair supported ones.")
-                            .font(.system(size: 15 * scale, weight: .semibold))
-                            .foregroundStyle(MockupColors.muted)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                VStack(alignment: .leading, spacing: 7 * scale) {
+                    Text("Pick your device(s)")
+                        .font(.system(size: 34 * scale, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                    Text("Nearby devices that look rideable. Pair supported ones.")
+                        .font(.system(size: 15 * scale, weight: .semibold))
+                        .foregroundStyle(MockupColors.muted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-                    ScanStatusPill(text: renderedScanState.statusText, scale: scale)
-                        .padding(.top, 4 * scale)
+                ScanStatusPill(text: renderedScanState.statusText, scale: scale)
+                    .padding(.top, 4 * scale)
 
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 18 * scale) {
                     if !sections.supported.isEmpty {
                         SectionLabel("Supported now", scale: scale)
                             .padding(.top, 8 * scale)
@@ -373,11 +374,13 @@ private struct DevicePickerMockupView: View {
                         ManualPickerRow(row: manualRow, scale: scale)
                             .padding(.top, 32 * scale)
                     }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 18 * scale)
-                .padding(.bottom, 24 * scale)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+            .padding(.horizontal, 18 * scale)
+            .padding(.bottom, 24 * scale)
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             .background(MockupColors.pageBackground)
             .foregroundStyle(.white)
