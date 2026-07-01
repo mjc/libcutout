@@ -28,7 +28,7 @@ final class LiveSpeedModel: ObservableObject {
         core.start()
     }
 
-    func pair(platformIdentifier: String) {
-        _ = core.pair(platformIdentifier: platformIdentifier)
+    func pair(platformIdentifier: String) -> Bool {
+        core.pair(platformIdentifier: platformIdentifier)
     }
 }

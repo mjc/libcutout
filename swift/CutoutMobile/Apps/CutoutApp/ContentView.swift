@@ -23,7 +23,11 @@ struct ContentView: View {
                         screen: screen,
                         liveSpeed: model.speed.displayValue,
                         devicePickerScanState: model.devicePickerScanState,
-                        pair: model.pair(platformIdentifier:)
+                        pair: { platformIdentifier in
+                            if model.pair(platformIdentifier: platformIdentifier) {
+                                selectedScreenID = .eucRide
+                            }
+                        }
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .tag(screen.id)
@@ -34,6 +38,11 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MockupColors.pageBackground.ignoresSafeArea())
+        .onChange(of: model.phase) { _, phase in
+            if phase.opensRideScreen {
+                selectedScreenID = .eucRide
+            }
+        }
     }
 
     private static func initialScreenID() -> MockupScreenID {
@@ -368,6 +377,7 @@ private struct DevicePickerMockupView: View {
                                     PickerDeviceRow(row: row, scale: scale)
                                 }
                                 .buttonStyle(.plain)
+                                .contentShape(Rectangle())
                             }
                         }
                     }
@@ -830,6 +840,17 @@ private extension MockupScreen {
             "OW"
         case .vescDebug:
             "VESC"
+        }
+    }
+}
+
+private extension LiveSpeedConnectionPhase {
+    var opensRideScreen: Bool {
+        switch self {
+        case .connecting, .discoveringServices, .subscribing, .live:
+            true
+        case .starting, .bluetoothUnavailable, .scanning, .failed:
+            false
         }
     }
 }
