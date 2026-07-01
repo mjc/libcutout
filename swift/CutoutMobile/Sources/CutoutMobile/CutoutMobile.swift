@@ -766,7 +766,7 @@ import CoreBluetooth
 
 public extension CoreBluetoothScanPolicy {
     var coreBluetoothServiceUuids: [CBUUID] {
-        serviceUuids.map { CBUUID(data: $0.bytes) }
+        serviceUuids.map(\.coreBluetoothUuid)
     }
 }
 
@@ -774,9 +774,9 @@ public extension CoreBluetoothCentralAction {
     var coreBluetoothServiceUuids: [CBUUID] {
         switch self {
         case .scan(let serviceUuids), .discoverServices(let serviceUuids):
-            serviceUuids.map { CBUUID(data: $0.bytes) }
+            serviceUuids.map(\.coreBluetoothUuid)
         case .discoverCharacteristics(_, let characteristics):
-            characteristics.map { CBUUID(data: $0.bytes) }
+            characteristics.map(\.coreBluetoothUuid)
         case .connect:
             []
         }
@@ -784,6 +784,13 @@ public extension CoreBluetoothCentralAction {
 }
 
 public extension BluetoothUuid {
+    var coreBluetoothUuid: CBUUID {
+        if let shortUuid = bluetooth16Value {
+            return CBUUID(string: String(format: "%04X", shortUuid))
+        }
+        return CBUUID(data: bytes)
+    }
+
     init?(coreBluetoothUuid: CBUUID) {
         switch coreBluetoothUuid.data.count {
         case 2:
@@ -794,6 +801,20 @@ public extension BluetoothUuid {
         default:
             return nil
         }
+    }
+
+    private var bluetooth16Value: UInt16? {
+        let baseSuffix = Data([
+            0x00, 0x00,
+            0x10, 0x00,
+            0x80, 0x00,
+            0x00, 0x80,
+            0x5f, 0x9b, 0x34, 0xfb,
+        ])
+        guard bytes.count == 16, bytes.prefix(2) == Data([0x00, 0x00]), bytes.suffix(12) == baseSuffix else {
+            return nil
+        }
+        return (UInt16(bytes[2]) << 8) | UInt16(bytes[3])
     }
 }
 
@@ -1036,7 +1057,7 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
 
 private extension CBPeripheral {
     func characteristic(for channel: BluetoothUuid) -> CBCharacteristic? {
-        let uuid = CBUUID(data: channel.bytes)
+        let uuid = channel.coreBluetoothUuid
         return services?
             .lazy
             .compactMap { $0.characteristics }
