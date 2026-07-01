@@ -153,58 +153,53 @@ public enum CutoutSessionError: Error, Equatable, Sendable {
     }
 }
 
-public final class AeroSession: @unchecked Sendable {
-    private let inner: AeroReadOnlySession
-
-    public init() {
-        self.inner = AeroReadOnlySession()
-    }
-
-    public var diagnostics: ParserDiagnostics {
-        ParserDiagnostics(inner.diagnostics())
-    }
-
-    public var currentSnapshot: TelemetrySnapshot {
-        TelemetrySnapshot(inner.currentSnapshot())
-    }
-
-    public func linkUp(
-        at monotonicMilliseconds: MonotonicMilliseconds,
-        writeLimit: TransportWriteLimitBytes
-    ) throws -> [SessionAction] {
-        try inner.step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
-    }
-
-    public func ingestNotification(
-        _ bytes: Data,
-        channel: Data,
-        at monotonicMilliseconds: MonotonicMilliseconds
-    ) throws -> TelemetrySnapshot {
-        _ = try inner.step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
-        return TelemetrySnapshot(inner.currentSnapshot())
-    }
+public enum ElectricUnicycleModel: Equatable, Hashable, Sendable {
+    case aero
+    case falcon
 }
 
-public final class FalconSession: @unchecked Sendable {
-    private let inner: FalconReadOnlySession
+public final class ElectricUnicycleSession: @unchecked Sendable {
+    private enum Inner {
+        case aero(AeroReadOnlySession)
+        case falcon(FalconReadOnlySession)
+    }
 
-    public init() throws {
-        self.inner = try FalconReadOnlySession()
+    public let model: ElectricUnicycleModel
+    private let inner: Inner
+
+    public init(model: ElectricUnicycleModel) throws {
+        self.model = model
+        self.inner = switch model {
+        case .aero:
+            .aero(AeroReadOnlySession())
+        case .falcon:
+            .falcon(try FalconReadOnlySession())
+        }
     }
 
     public var diagnostics: ParserDiagnostics {
-        ParserDiagnostics(inner.diagnostics())
+        switch inner {
+        case .aero(let session):
+            ParserDiagnostics(session.diagnostics())
+        case .falcon(let session):
+            ParserDiagnostics(session.diagnostics())
+        }
     }
 
     public var currentSnapshot: TelemetrySnapshot {
-        TelemetrySnapshot(inner.currentSnapshot())
+        switch inner {
+        case .aero(let session):
+            TelemetrySnapshot(session.currentSnapshot())
+        case .falcon(let session):
+            TelemetrySnapshot(session.currentSnapshot())
+        }
     }
 
     public func linkUp(
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes
     ) throws -> [SessionAction] {
-        try inner.step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
+        try step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
     }
 
     public func ingestNotification(
@@ -212,12 +207,45 @@ public final class FalconSession: @unchecked Sendable {
         channel: Data,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> TelemetrySnapshot {
-        _ = try inner.step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
-        return TelemetrySnapshot(inner.currentSnapshot())
+        _ = try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
+        return currentSnapshot
     }
 
-    public func soundHorn(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
-        try inner.step(.command, at: monotonicMilliseconds, command: .soundHorn)
+    public func perform(
+        _ command: DeviceCommand,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        try step(.command, at: monotonicMilliseconds, command: command)
+    }
+
+    private func step(
+        _ kind: MobileSessionInputKindDto,
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes? = nil,
+        channel: Data = Data(),
+        bytes: Data = Data(),
+        command: DeviceCommand? = nil
+    ) throws -> [SessionAction] {
+        switch inner {
+        case .aero(let session):
+            try session.step(
+                kind,
+                at: monotonicMilliseconds,
+                writeLimit: writeLimit,
+                channel: channel,
+                bytes: bytes,
+                command: command
+            )
+        case .falcon(let session):
+            try session.step(
+                kind,
+                at: monotonicMilliseconds,
+                writeLimit: writeLimit,
+                channel: channel,
+                bytes: bytes,
+                command: command
+            )
+        }
     }
 }
 
@@ -359,14 +387,15 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
 }
 
 public enum CoreBluetoothSession: Sendable {
-    case aero(AeroSession)
-    case falcon(FalconSession)
+    case electricUnicycle(ElectricUnicycleSession)
+
+    public static func electricUnicycle(model: ElectricUnicycleModel) throws -> CoreBluetoothSession {
+        try .electricUnicycle(ElectricUnicycleSession(model: model))
+    }
 
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
-        case .aero(let session):
-            session.currentSnapshot
-        case .falcon(let session):
+        case .electricUnicycle(let session):
             session.currentSnapshot
         }
     }
@@ -376,9 +405,7 @@ public enum CoreBluetoothSession: Sendable {
         writeLimit: TransportWriteLimitBytes
     ) throws -> [SessionAction] {
         switch self {
-        case .aero(let session):
-            try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
-        case .falcon(let session):
+        case .electricUnicycle(let session):
             try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
         }
     }
@@ -389,9 +416,7 @@ public enum CoreBluetoothSession: Sendable {
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> TelemetrySnapshot {
         switch self {
-        case .aero(let session):
-            try session.ingestNotification(bytes, channel: channel.bytes, at: monotonicMilliseconds)
-        case .falcon(let session):
+        case .electricUnicycle(let session):
             try session.ingestNotification(bytes, channel: channel.bytes, at: monotonicMilliseconds)
         }
     }

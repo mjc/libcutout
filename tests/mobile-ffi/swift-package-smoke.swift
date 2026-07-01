@@ -4,7 +4,7 @@ import Foundation
 @main
 struct CutoutMobilePackageSmoke {
     static func main() throws {
-        let aero = AeroSession()
+        let aero = try ElectricUnicycleSession(model: .aero)
         let linkActions = try aero.linkUp(
             at: MonotonicMilliseconds(1),
             writeLimit: TransportWriteLimitBytes(185)
@@ -25,7 +25,7 @@ struct CutoutMobilePackageSmoke {
         precondition(telemetry.voltageMillivolts == 108_760)
         precondition(aero.diagnostics.malformedFrames == 0)
 
-        let falcon = try FalconSession()
+        let falcon = try ElectricUnicycleSession(model: .falcon)
         let falconLinkActions = try falcon.linkUp(
             at: MonotonicMilliseconds(10),
             writeLimit: TransportWriteLimitBytes(23)
@@ -42,7 +42,7 @@ struct CutoutMobilePackageSmoke {
         precondition(falcon.currentSnapshot.voltageMillivolts != nil)
 
         do {
-            _ = try falcon.soundHorn(at: MonotonicMilliseconds(3))
+            _ = try falcon.perform(.soundHorn, at: MonotonicMilliseconds(3))
             preconditionFailure("Falcon read-only facade must refuse soundHorn")
         } catch CutoutSessionError.commandRefused(let command, _) {
             precondition(command == .soundHorn)
@@ -112,7 +112,7 @@ struct CutoutMobilePackageSmoke {
         precondition(executorSink.recordedOperations == writes)
 
         let runner = CoreBluetoothSessionRunner(
-            session: .aero(AeroSession()),
+            session: try .electricUnicycle(model: .aero),
             writeLimit: TransportWriteLimitBytes(185),
             captureContext: CoreBluetoothCaptureContext(
                 platformIdentifier: advertisement.peripheralIdentifier,
@@ -139,7 +139,7 @@ struct CutoutMobilePackageSmoke {
 
         let liveSink = RecordingCoreBluetoothOperationSink()
         let liveOwner = CoreBluetoothLiveSessionOwner(
-            session: .aero(AeroSession()),
+            session: try .electricUnicycle(model: .aero),
             advertisement: advertisement,
             writeLimit: TransportWriteLimitBytes(185),
             operationSink: liveSink

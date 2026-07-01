@@ -122,11 +122,17 @@ private final class AeroLiveValidator: NSObject, CBCentralManagerDelegate, CBPer
             liveOwner?.recordInventory(inventory)
             return
         }
-        let owner = CoreBluetoothLiveSessionOwner(
-            session: .aero(AeroSession()),
-            advertisement: advertisement,
-            peripheral: peripheral
-        )
+        let owner: CoreBluetoothLiveSessionOwner
+        do {
+            owner = CoreBluetoothLiveSessionOwner(
+                session: try .electricUnicycle(model: .aero),
+                advertisement: advertisement,
+                peripheral: peripheral
+            )
+        } catch {
+            records.append("session_error=\(error)")
+            return
+        }
         liveOwner = owner
         owner.recordInventory(inventory)
         do {
