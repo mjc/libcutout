@@ -22,6 +22,10 @@
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>CutoutApp uses Bluetooth to read live vehicle telemetry.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
 	<key>UIRequiresFullScreen</key>
 	<true/>
 	<key>UILaunchScreen</key>
