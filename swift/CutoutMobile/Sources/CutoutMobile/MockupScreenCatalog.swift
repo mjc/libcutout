@@ -87,6 +87,57 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
     }
 }
 
+public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
+    case supported
+    case unsupported
+}
+
+public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
+    public let displayName: String
+    public let productCategory: String
+    public let evidence: String
+    public let detail: String
+    public let support: DevicePickerCandidateSupport
+    public let symbolName: String
+
+    public init(
+        displayName: String,
+        productCategory: String,
+        evidence: String,
+        detail: String,
+        support: DevicePickerCandidateSupport,
+        symbolName: String
+    ) {
+        self.displayName = displayName
+        self.productCategory = productCategory
+        self.evidence = evidence
+        self.detail = detail
+        self.support = support
+        self.symbolName = symbolName
+    }
+
+    public var pickerRow: MockupPickerRow {
+        MockupPickerRow(
+            title: displayName,
+            subtitle: "\(productCategory) - \(evidence)",
+            detail: detail,
+            state: support.pickerRowState,
+            symbolName: symbolName
+        )
+    }
+}
+
+public extension DevicePickerCandidateSupport {
+    var pickerRowState: MockupPickerRowState {
+        switch self {
+        case .supported:
+            .supported(action: "Pair")
+        case .unsupported:
+            .unsupported(action: "Not yet")
+        }
+    }
+}
+
 public enum DevicePickerScanStatus: Equatable, Hashable, Sendable {
     case scanning
     case idle

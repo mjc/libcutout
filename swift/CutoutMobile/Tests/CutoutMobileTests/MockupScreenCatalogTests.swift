@@ -100,4 +100,27 @@ extension MockupScreenCatalogTests {
         XCTAssertTrue(empty.sections.unsupported.isEmpty)
         XCTAssertNil(empty.sections.manual)
     }
+
+    func testDiscoveryCandidatesMapToPickerRows() {
+        let supported = DevicePickerDiscoveryCandidate(
+            displayName: "Aero-126V",
+            productCategory: "Electric unicycle",
+            evidence: "telemetry profile found",
+            detail: "126.0 V - strong signal",
+            support: .supported,
+            symbolName: "circle"
+        )
+        let unsupported = DevicePickerDiscoveryCandidate(
+            displayName: "NINEBOT-7A31",
+            productCategory: "Electric scooter",
+            evidence: "known BLE advertisement",
+            detail: "We can learn this later",
+            support: .unsupported,
+            symbolName: "scooter"
+        )
+
+        XCTAssertEqual(supported.pickerRow.state, .supported(action: "Pair"))
+        XCTAssertEqual(supported.pickerRow.subtitle, "Electric unicycle - telemetry profile found")
+        XCTAssertEqual(unsupported.pickerRow.state, .unsupported(action: "Not yet"))
+    }
 }
