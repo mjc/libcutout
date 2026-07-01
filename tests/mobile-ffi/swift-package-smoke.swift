@@ -24,6 +24,8 @@ struct CutoutMobilePackageSmoke {
         )
         precondition(telemetry.voltageMillivolts == 108_760)
         precondition(telemetry.speedMillimetersPerSecond == 0)
+        precondition(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
+        precondition(SpeedReadout(millimetersPerSecond: nil).displayValue == "--")
         precondition(aero.diagnostics.malformedFrames == 0)
 
         let falcon = try ElectricUnicycleSession(model: .falcon)

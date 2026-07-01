@@ -120,6 +120,32 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 }
 
+public struct SpeedReadout: Equatable, Hashable, Sendable {
+    private static let milesPerHourPerMillimeterPerSecond = 0.002_236_936_292_054_4
+
+    public let millimetersPerSecond: Int32?
+
+    public init(snapshot: TelemetrySnapshot?) {
+        self.init(millimetersPerSecond: snapshot?.speedMillimetersPerSecond)
+    }
+
+    public init(millimetersPerSecond: Int32?) {
+        self.millimetersPerSecond = millimetersPerSecond
+    }
+
+    public var displayValue: String {
+        guard let millimetersPerSecond else {
+            return "--"
+        }
+        let milesPerHour = Double(millimetersPerSecond) * Self.milesPerHourPerMillimeterPerSecond
+        return String(format: "%.1f", milesPerHour)
+    }
+
+    public var displayUnit: String {
+        "mph"
+    }
+}
+
 public struct ParserDiagnostics: Equatable, Hashable, Sendable {
     public let droppedBytes: UInt64
     public let resyncs: UInt64
