@@ -137,6 +137,12 @@ cutout_build_ios_device_speed_app_bundle() {
   development_team="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
+  if [[ -z "$development_team" ]]; then
+    echo "CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone signing" >&2
+    echo "Set CUTOUT_IOS_DEVELOPMENT_TEAM and optionally CUTOUT_IOS_APP_BUNDLE_ID, then rerun scripts/run-ios-speed-app-on-phone.sh" >&2
+    return 1
+  fi
+
   cutout_prepare_swift_package_workspace "$package_dir"
 
   env \
