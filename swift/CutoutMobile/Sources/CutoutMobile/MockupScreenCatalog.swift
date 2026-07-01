@@ -193,11 +193,14 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     }
 
     public init(advertisement: CoreBluetoothAdvertisement) {
-        let candidate = mobileDiscoveryCandidateFromAdvertisement(
+        self.init(candidate: mobileDiscoveryCandidateFromAdvertisement(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             localName: advertisement.localName,
             advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value)
-        )
+        ))
+    }
+
+    public init(candidate: MobileDiscoveryCandidateDto) {
         self.init(
             platformIdentifier: candidate.platformIdentifier,
             displayName: candidate.displayName,
@@ -207,6 +210,16 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             support: DevicePickerCandidateSupport(candidate),
             symbolName: candidate.support == .supported ? "circle.hexagongrid.circle" : "questionmark.circle"
         )
+    }
+
+    public static func pickerRow(advertisement: CoreBluetoothAdvertisement) -> MockupPickerRow? {
+        let candidate = mobileDiscoveryCandidateFromAdvertisement(
+            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+            localName: advertisement.localName,
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value)
+        )
+        guard candidate.isPickerCandidate else { return nil }
+        return DevicePickerDiscoveryCandidate(candidate: candidate).pickerRow
     }
 
     public var pickerRow: MockupPickerRow {
@@ -255,7 +268,7 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     public init(status: DevicePickerScanStatus, advertisements: [CoreBluetoothAdvertisement]) {
         self.init(
             status: status,
-            rows: advertisements.map { DevicePickerDiscoveryCandidate(advertisement: $0).pickerRow }
+            rows: advertisements.compactMap(DevicePickerDiscoveryCandidate.pickerRow(advertisement:))
         )
     }
 

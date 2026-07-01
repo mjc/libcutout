@@ -50,6 +50,9 @@ pub struct MobileDiscoveryCandidateDto {
     /// Row detail or disabled reason.
     pub detail: String,
 
+    /// Whether this advertisement is relevant to the mobile picker.
+    pub is_picker_candidate: bool,
+
     /// Support state.
     pub support: MobileDiscoveryCandidateSupportDto,
 
@@ -68,6 +71,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
     advertised_service_uuids: Vec<u16>,
 ) -> MobileDiscoveryCandidateDto {
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
+    let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
         return MobileDiscoveryCandidateDto {
             platform_identifier,
@@ -75,9 +79,29 @@ pub fn mobile_discovery_candidate_from_advertisement(
             product_category: "Electric unicycle".to_owned(),
             evidence: "advertisement hint".to_owned(),
             detail: "Bluetooth candidate".to_owned(),
+            is_picker_candidate: true,
             support: MobileDiscoveryCandidateSupportDto::Supported,
             connection_route: Some("electric_unicycle".to_owned()),
             disabled_reason: None,
+        };
+    }
+
+    if advertised_service_uuids.contains(&0xfff0)
+        || lower_name.contains("vesc")
+        || lower_name.contains("focer")
+        || lower_name.contains("onewheel")
+        || lower_name.contains("floatwheel")
+    {
+        return MobileDiscoveryCandidateDto {
+            platform_identifier,
+            display_name,
+            product_category: "VESC Onewheel".to_owned(),
+            evidence: "VESC advertisement hint".to_owned(),
+            detail: "Not yet supported".to_owned(),
+            is_picker_candidate: true,
+            support: MobileDiscoveryCandidateSupportDto::Unsupported,
+            connection_route: None,
+            disabled_reason: Some("Not yet supported".to_owned()),
         };
     }
 
@@ -87,6 +111,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
         product_category: "Unknown rideable".to_owned(),
         evidence: "advertisement observed".to_owned(),
         detail: "Not yet supported".to_owned(),
+        is_picker_candidate: false,
         support: MobileDiscoveryCandidateSupportDto::Unsupported,
         connection_route: None,
         disabled_reason: Some("Not yet supported".to_owned()),
@@ -1513,6 +1538,7 @@ mod tests {
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "advertisement hint");
         assert_eq!(candidate.detail, "Bluetooth candidate");
+        assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
             MobileDiscoveryCandidateSupportDto::Supported
@@ -1528,10 +1554,12 @@ mod tests {
     fn mobile_discovery_candidate_exposes_disabled_reason_for_unsupported() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
-            Some("Rideable-ish".to_owned()),
-            vec![],
+            Some("Little FOCer".to_owned()),
+            vec![0xfff0],
         );
 
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(candidate.product_category, "VESC Onewheel");
         assert_eq!(
             candidate.support,
             MobileDiscoveryCandidateSupportDto::Unsupported
@@ -1541,6 +1569,17 @@ mod tests {
             candidate.disabled_reason,
             Some("Not yet supported".to_owned())
         );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_hides_unrelated_bluetooth() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-keyboard".to_owned(),
+            Some("Keyboard".to_owned()),
+            vec![],
+        );
+
+        assert!(!candidate.is_picker_candidate);
     }
 
     const fn ms(value: u64) -> MobileMonotonicMillisDto {

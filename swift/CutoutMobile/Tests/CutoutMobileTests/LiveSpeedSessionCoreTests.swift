@@ -17,16 +17,30 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
-                localName: "Rideable-ish",
-                advertisedServiceUuids: []
+                localName: "Little FOCer",
+                advertisedServiceUuids: [.bluetooth16(0xFFF0)]
             )
         )
 
         XCTAssertEqual(core.scanState.status, .scanning)
-        XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Rideable-ish"])
+        XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
         XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero"])
-        XCTAssertEqual(core.scanState.sections.unsupported.map(\.title), ["Rideable-ish"])
+        XCTAssertEqual(core.scanState.sections.unsupported.map(\.title), ["Little FOCer"])
         XCTAssertEqual(observedStates.count, 2)
+    }
+
+    func testObservedAdvertisementsHideNonPevRows() {
+        let core = LiveSpeedSessionCore()
+
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-keyboard"),
+                localName: "Keyboard",
+                advertisedServiceUuids: []
+            )
+        )
+
+        XCTAssertTrue(core.scanState.rows.isEmpty)
     }
 
     func testPairUnknownCandidateReturnsFalse() {

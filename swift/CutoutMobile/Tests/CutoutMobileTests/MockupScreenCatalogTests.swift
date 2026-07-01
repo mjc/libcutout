@@ -164,16 +164,21 @@ extension MockupScreenCatalogTests {
                 ),
                 CoreBluetoothAdvertisement(
                     peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
-                    localName: "Rideable-ish",
+                    localName: "Little FOCer",
+                    advertisedServiceUuids: [.bluetooth16(0xFFF0)]
+                ),
+                CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-keyboard"),
+                    localName: "Keyboard",
                     advertisedServiceUuids: []
                 ),
             ]
         )
 
         XCTAssertEqual(state.statusText, "Scanning Bluetooth")
-        XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "Rideable-ish"])
+        XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
         XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero"])
-        XCTAssertEqual(state.sections.unsupported.map(\.title), ["Rideable-ish"])
+        XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
         XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Not yet supported"))
         XCTAssertNil(state.sections.manual)
     }
