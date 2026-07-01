@@ -24,6 +24,7 @@ private final class AeroLiveValidator: NSObject, CBCentralManagerDelegate, CBPer
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var records: [String] = []
     private var observedCandidateIds = Set<String>()
+    private var notificationCount = 0
     private(set) var didValidate = false
 
     init(timeout: TimeInterval) {
@@ -160,13 +161,15 @@ private final class AeroLiveValidator: NSObject, CBCentralManagerDelegate, CBPer
             return
         }
         do {
+            notificationCount += 1
             let step = try owner.handleNotification(bytes: value, channel: channel, at: clock.now())
-            records.append("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
-            records.append("voltage_mv=\(step.snapshot?.voltageMillivolts.map(String.init) ?? "nil")")
-            records.append("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map(String.init) ?? "nil")")
-            records.append("live_records=\(owner.records.count)")
             didValidate = step.snapshot?.voltageMillivolts != nil
             if didValidate {
+                records.append("notifications_seen=\(notificationCount)")
+                records.append("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
+                records.append("voltage_mv=\(step.snapshot?.voltageMillivolts.map(String.init) ?? "nil")")
+                records.append("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map(String.init) ?? "nil")")
+                records.append("live_records=\(owner.records.count)")
                 central.cancelPeripheralConnection(peripheral)
                 print("validation=ok")
                 printRecords()
