@@ -92,6 +92,17 @@ public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case unsupported
 }
 
+public extension DevicePickerCandidateSupport {
+    init(_ dto: MobileDiscoveryCandidateSupportDto) {
+        switch dto {
+        case .supported:
+            self = .supported
+        case .unsupported:
+            self = .unsupported
+        }
+    }
+}
+
 public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     public let platformIdentifier: String
     public let displayName: String
@@ -120,28 +131,20 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     }
 
     public init(advertisement: CoreBluetoothAdvertisement) {
-        switch advertisement.modelHint {
-        case .aero, .falcon:
-            self.init(
-                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-                displayName: advertisement.localName ?? "Unknown Bluetooth device",
-                productCategory: "Electric unicycle",
-                evidence: "advertisement hint",
-                detail: "Bluetooth candidate",
-                support: .supported,
-                symbolName: "circle.hexagongrid.circle"
-            )
-        case .unknown:
-            self.init(
-                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-                displayName: advertisement.localName ?? "Unknown Bluetooth device",
-                productCategory: "Unknown rideable",
-                evidence: "advertisement observed",
-                detail: "Not yet supported",
-                support: .unsupported,
-                symbolName: "questionmark.circle"
-            )
-        }
+        let candidate = mobileDiscoveryCandidateFromAdvertisement(
+            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+            localName: advertisement.localName,
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value)
+        )
+        self.init(
+            platformIdentifier: candidate.platformIdentifier,
+            displayName: candidate.displayName,
+            productCategory: candidate.productCategory,
+            evidence: candidate.evidence,
+            detail: candidate.detail,
+            support: DevicePickerCandidateSupport(candidate.support),
+            symbolName: candidate.support == .supported ? "circle.hexagongrid.circle" : "questionmark.circle"
+        )
     }
 
     public var pickerRow: MockupPickerRow {

@@ -22,6 +22,67 @@ use cutout_protocols::{
 
 uniffi::setup_scaffolding!();
 
+/// Mobile discovery candidate support state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileDiscoveryCandidateSupportDto {
+    /// Candidate has a supported read-only route.
+    Supported,
+
+    /// Candidate looks relevant but is not supported for launch.
+    Unsupported,
+}
+
+/// Mobile discovery candidate for picker UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileDiscoveryCandidateDto {
+    /// Platform-local peripheral identifier; not a Bluetooth MAC address.
+    pub platform_identifier: String,
+
+    /// Observed display name for UI use.
+    pub display_name: String,
+
+    /// Product category for grouping and copy.
+    pub product_category: String,
+
+    /// Human-readable evidence summary.
+    pub evidence: String,
+
+    /// Row detail or disabled reason.
+    pub detail: String,
+
+    /// Support state.
+    pub support: MobileDiscoveryCandidateSupportDto,
+}
+
+/// Build a mobile discovery candidate from advertisement evidence.
+#[uniffi::export]
+pub fn mobile_discovery_candidate_from_advertisement(
+    platform_identifier: String,
+    local_name: Option<String>,
+    advertised_service_uuids: Vec<u16>,
+) -> MobileDiscoveryCandidateDto {
+    let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
+    if advertised_service_uuids.contains(&0xffe0) {
+        return MobileDiscoveryCandidateDto {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "advertisement hint".to_owned(),
+            detail: "Bluetooth candidate".to_owned(),
+            support: MobileDiscoveryCandidateSupportDto::Supported,
+        };
+    }
+
+    MobileDiscoveryCandidateDto {
+        platform_identifier,
+        display_name,
+        product_category: "Unknown rideable".to_owned(),
+        evidence: "advertisement observed".to_owned(),
+        detail: "Not yet supported".to_owned(),
+        support: MobileDiscoveryCandidateSupportDto::Unsupported,
+    }
+}
+
 /// Mobile DTO command kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileCommandDto {
@@ -1428,6 +1489,25 @@ impl FalconReadOnlySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_discovery_candidate_preserves_ios_local_id_without_mac() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-aero".to_owned(),
+            Some("NOSFET Aero".to_owned()),
+            vec![0xffe0],
+        );
+
+        assert_eq!(candidate.platform_identifier, "ios-local-aero");
+        assert_eq!(candidate.display_name, "NOSFET Aero");
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(candidate.evidence, "advertisement hint");
+        assert_eq!(candidate.detail, "Bluetooth candidate");
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Supported
+        );
+    }
 
     const fn ms(value: u64) -> MobileMonotonicMillisDto {
         MobileMonotonicMillisDto {
