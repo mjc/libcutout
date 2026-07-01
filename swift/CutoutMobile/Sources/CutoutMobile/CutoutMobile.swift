@@ -109,10 +109,12 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
 }
 
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
+    public let speedMillimetersPerSecond: Int32?
     public let voltageMillivolts: Int32?
     public let batteryLevelEstimated: UInt8?
 
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
+        self.speedMillimetersPerSecond = dto.speed?.value
         self.voltageMillivolts = dto.voltage?.value
         self.batteryLevelEstimated = dto.batteryLevelEstimated?.value
     }

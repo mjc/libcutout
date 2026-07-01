@@ -421,6 +421,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Snapshot timestamp.
     pub at_ms: Option<MobileMonotonicMillisDto>,
 
+    /// Reported or calculated speed in millimeters per second.
+    pub speed: Option<MobileMeasuredI32Dto>,
+
     /// Reported voltage in millivolts.
     pub voltage: Option<MobileMeasuredI32Dto>,
 
@@ -1304,6 +1307,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             at_ms: snapshot
                 .at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
+            speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
         }

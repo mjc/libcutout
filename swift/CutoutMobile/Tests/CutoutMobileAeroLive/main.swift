@@ -163,10 +163,11 @@ private final class AeroLiveValidator: NSObject, CBCentralManagerDelegate, CBPer
         do {
             notificationCount += 1
             let step = try owner.handleNotification(bytes: value, channel: channel, at: clock.now())
-            didValidate = step.snapshot?.voltageMillivolts != nil
+            didValidate = step.snapshot?.speedMillimetersPerSecond != nil
             if didValidate {
                 records.append("notifications_seen=\(notificationCount)")
                 records.append("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
+                records.append("speed_mm_s=\(step.snapshot?.speedMillimetersPerSecond.map(String.init) ?? "nil")")
                 records.append("voltage_mv=\(step.snapshot?.voltageMillivolts.map(String.init) ?? "nil")")
                 records.append("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map(String.init) ?? "nil")")
                 records.append("live_records=\(owner.records.count)")

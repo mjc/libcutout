@@ -23,6 +23,7 @@ struct CutoutMobilePackageSmoke {
             at: MonotonicMilliseconds(2)
         )
         precondition(telemetry.voltageMillivolts == 108_760)
+        precondition(telemetry.speedMillimetersPerSecond == 0)
         precondition(aero.diagnostics.malformedFrames == 0)
 
         let falcon = try ElectricUnicycleSession(model: .falcon)
@@ -136,6 +137,7 @@ struct CutoutMobilePackageSmoke {
             at: MonotonicMilliseconds(21)
         ))
         precondition(runnerTelemetry.snapshot?.voltageMillivolts == 108_760)
+        precondition(runnerTelemetry.snapshot?.speedMillimetersPerSecond == 0)
 
         let liveSink = RecordingCoreBluetoothOperationSink()
         let liveOwner = CoreBluetoothLiveSessionOwner(
@@ -168,6 +170,7 @@ struct CutoutMobilePackageSmoke {
             at: MonotonicMilliseconds(31)
         )
         precondition(liveTelemetry.snapshot?.voltageMillivolts == 108_760)
+        precondition(liveTelemetry.snapshot?.speedMillimetersPerSecond == 0)
         precondition(liveOwner.records.contains {
             if case .notification(let channel, let byteCount, _) = $0 {
                 channel == BluetoothUuid.bluetooth16(0xffe1) && byteCount.rawValue > 0
