@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "CutoutMobile",
     platforms: [
-        .iOS(.v15),
+        .iOS("27.0"),
         .macOS(.v13),
     ],
     products: [
