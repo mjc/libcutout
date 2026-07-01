@@ -115,6 +115,7 @@ extension MockupScreenCatalogTests {
 
     func testDiscoveryCandidatesMapToPickerRows() {
         let supported = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "ios-local-1",
             displayName: "Aero-126V",
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
@@ -123,6 +124,7 @@ extension MockupScreenCatalogTests {
             symbolName: "circle"
         )
         let unsupported = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "ios-local-2",
             displayName: "NINEBOT-7A31",
             productCategory: "Electric scooter",
             evidence: "known BLE advertisement",
@@ -134,5 +136,20 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(supported.pickerRow.state, .supported(action: "Pair"))
         XCTAssertEqual(supported.pickerRow.subtitle, "Electric unicycle - telemetry profile found")
         XCTAssertEqual(unsupported.pickerRow.state, .unsupported(action: "Not yet"))
+    }
+
+    func testCoreBluetoothAdvertisementMapsToPickerCandidateWithoutMacAddress() {
+        let advertisement = CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
+            localName: "NOSFET Aero",
+            advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+        )
+        let candidate = DevicePickerDiscoveryCandidate(advertisement: advertisement)
+
+        XCTAssertEqual(candidate.platformIdentifier, "ios-local-aero")
+        XCTAssertEqual(candidate.displayName, "NOSFET Aero")
+        XCTAssertEqual(candidate.productCategory, "Electric unicycle")
+        XCTAssertEqual(candidate.support, .supported)
+        XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
     }
 }

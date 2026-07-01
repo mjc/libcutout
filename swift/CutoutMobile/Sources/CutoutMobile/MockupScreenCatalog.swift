@@ -93,6 +93,7 @@ public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
 }
 
 public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
+    public let platformIdentifier: String
     public let displayName: String
     public let productCategory: String
     public let evidence: String
@@ -101,6 +102,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     public let symbolName: String
 
     public init(
+        platformIdentifier: String,
         displayName: String,
         productCategory: String,
         evidence: String,
@@ -108,12 +110,38 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         support: DevicePickerCandidateSupport,
         symbolName: String
     ) {
+        self.platformIdentifier = platformIdentifier
         self.displayName = displayName
         self.productCategory = productCategory
         self.evidence = evidence
         self.detail = detail
         self.support = support
         self.symbolName = symbolName
+    }
+
+    public init(advertisement: CoreBluetoothAdvertisement) {
+        switch advertisement.modelHint {
+        case .aero, .falcon:
+            self.init(
+                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+                displayName: advertisement.localName ?? "Unknown Bluetooth device",
+                productCategory: "Electric unicycle",
+                evidence: "advertisement hint",
+                detail: "Bluetooth candidate",
+                support: .supported,
+                symbolName: "circle.hexagongrid.circle"
+            )
+        case .unknown:
+            self.init(
+                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+                displayName: advertisement.localName ?? "Unknown Bluetooth device",
+                productCategory: "Unknown rideable",
+                evidence: "advertisement observed",
+                detail: "Not yet supported",
+                support: .unsupported,
+                symbolName: "questionmark.circle"
+            )
+        }
     }
 
     public var pickerRow: MockupPickerRow {
@@ -227,6 +255,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
 
     private static let devicePickerDiscoveryCandidates = [
         DevicePickerDiscoveryCandidate(
+            platformIdentifier: "fixture:aero",
             displayName: "Aero-126V",
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
@@ -235,6 +264,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             symbolName: "circle.hexagongrid.circle"
         ),
         DevicePickerDiscoveryCandidate(
+            platformIdentifier: "fixture:little-focer",
             displayName: "Little FOCer BT",
             productCategory: "VESC Onewheel",
             evidence: "UART bridge detected",
@@ -243,6 +273,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             symbolName: "oval.portrait"
         ),
         DevicePickerDiscoveryCandidate(
+            platformIdentifier: "fixture:ninebot",
             displayName: "NINEBOT-7A31",
             productCategory: "Electric scooter",
             evidence: "known BLE advertisement",
@@ -251,6 +282,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             symbolName: "scooter"
         ),
         DevicePickerDiscoveryCandidate(
+            platformIdentifier: "fixture:hx-hoverboard",
             displayName: "HX Hoverboard",
             productCategory: "Hoverboard / self-balancing board",
             evidence: "candidate",
