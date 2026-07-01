@@ -18,4 +18,5 @@ exec "${swift_cmd[@]}" run \
   --package-path "$package_dir" \
   -Xlinker -L -Xlinker "$root/target/debug" \
   -Xlinker -lcutout_mobile_ffi \
-  CutoutMobileSpeedApp
+  CutoutMobileSpeedApp \
+  "$@"
