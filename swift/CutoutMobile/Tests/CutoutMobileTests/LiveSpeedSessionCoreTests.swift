@@ -35,6 +35,28 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
     }
 
+    func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
+        let core = LiveSpeedSessionCore()
+
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
+                localName: "Begode Falcon",
+                advertisedServiceUuids: []
+            )
+        )
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
+                localName: "Begode Falcon",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        XCTAssertEqual(core.scanState.rows.map(\.id), ["ios-local-falcon"])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["Begode Falcon"])
+    }
+
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
         let core = LiveSpeedSessionCore()
         let snapshot = TelemetrySnapshot(

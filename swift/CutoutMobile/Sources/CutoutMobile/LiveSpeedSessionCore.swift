@@ -33,6 +33,7 @@ public final class LiveSpeedSessionCore: NSObject {
     }
 
     func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
+        discoveredAdvertisements.removeAll { $0.peripheralIdentifier == advertisement.peripheralIdentifier }
         discoveredAdvertisements.append(advertisement)
         scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
         onScanStateChange?(scanState)
@@ -119,8 +120,8 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
         }
         setPhase(.scanning(model: .aero))
         let services = CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
-        record("scan_services=\(services.map(\.uuidString).joined(separator: ","))")
-        central.scanForPeripherals(withServices: services)
+        record("scan_supported_services=\(services.map(\.uuidString).joined(separator: ","))")
+        central.scanForPeripherals(withServices: nil)
     }
 
     public func centralManager(
