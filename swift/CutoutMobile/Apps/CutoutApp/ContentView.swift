@@ -8,14 +8,20 @@ struct ContentView: View {
     private let catalog = MockupScreenCatalog.v2
 
     var body: some View {
-        TabView(selection: $selectedScreenID) {
-            ForEach(catalog.screens) { screen in
-                MockupScreenContainer(screen: screen, liveSpeed: model.speed.displayValue)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .tag(screen.id)
+        ZStack {
+            MockupColors.pageBackground
+                .ignoresSafeArea()
+
+            TabView(selection: $selectedScreenID) {
+                ForEach(catalog.screens) { screen in
+                    MockupScreenContainer(screen: screen, liveSpeed: model.speed.displayValue)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .tag(screen.id)
+                }
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MockupColors.pageBackground.ignoresSafeArea())
     }
@@ -52,7 +58,7 @@ private struct DevicePickerMockupView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let scale = min(1.0, proxy.size.width / 430.0)
+            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18 * scale) {
                     HStack(alignment: .firstTextBaseline) {
@@ -99,6 +105,7 @@ private struct DevicePickerMockupView: View {
 
                     if let manualRow {
                         ManualPickerRow(row: manualRow, scale: scale)
+                            .padding(.top, 32 * scale)
                     }
                 }
                 .padding(.horizontal, 18 * scale)
