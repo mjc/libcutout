@@ -4,7 +4,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct CutoutMobileSpeedApp: App {
+struct CutoutApp: App {
     #if os(macOS)
     @NSApplicationDelegateAdaptor(SpeedAppDelegate.self) private var appDelegate
     #endif
@@ -18,7 +18,7 @@ struct CutoutMobileSpeedApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Cutout Speed") {
+        WindowGroup("CutoutApp") {
             ContentView(model: model)
                 .frame(minWidth: 360, minHeight: 280)
                 .task {

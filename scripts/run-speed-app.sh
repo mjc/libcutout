@@ -5,7 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 if [[ "$(uname -s)" != Darwin ]]; then
-  echo "CutoutMobileSpeedApp requires macOS/CoreBluetooth" >&2
+  echo "CutoutApp requires macOS/CoreBluetooth" >&2
   exit 1
 fi
 
@@ -18,5 +18,5 @@ exec "${swift_cmd[@]}" run \
   --package-path "$package_dir" \
   -Xlinker -L -Xlinker "$root/target/debug" \
   -Xlinker -lcutout_mobile_ffi \
-  CutoutMobileSpeedApp \
+  CutoutApp \
   "$@"

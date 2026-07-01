@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
+
+root="$(cutout_repo_root)"
 cd "$root"
 
-case "$(uname -s)" in
-  Darwin)
-    lib_name="libcutout_mobile_ffi.dylib"
-    swift_cmd=(env -u SDKROOT -u DEVELOPER_DIR swift)
-    ;;
-  Linux)
-    lib_name="libcutout_mobile_ffi.so"
-    swift_cmd=(swift)
-    ;;
+case "$(cutout_host_os)" in
+  Darwin) lib_name="libcutout_mobile_ffi.dylib" ;;
+  Linux) lib_name="libcutout_mobile_ffi.so" ;;
   *)
-    echo "unsupported host OS for Swift SourceKit workspace: $(uname -s)" >&2
+    echo "unsupported host OS for Swift SourceKit workspace: $(cutout_host_os)" >&2
     exit 1
     ;;
 esac
+
+swift_cmd=($(cutout_swift_runtime_command))
 
 package_dir="${CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
 generated_dir="$package_dir/Sources/CutoutMobile/Generated"

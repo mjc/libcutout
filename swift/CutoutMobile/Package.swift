@@ -20,6 +20,11 @@ let package = Package(
             name: "CutoutMobile",
             dependencies: ["cutout_mobile_ffiFFI"]
         ),
+        .testTarget(
+            name: "CutoutMobileTests",
+            dependencies: ["CutoutMobile"],
+            path: "Tests/CutoutMobileTests"
+        ),
         .executableTarget(
             name: "CutoutMobileSmoke",
             dependencies: ["CutoutMobile"],
@@ -31,9 +36,9 @@ let package = Package(
             path: "Tests/CutoutMobileLiveValidator"
         ),
         .executableTarget(
-            name: "CutoutMobileSpeedApp",
+            name: "CutoutApp",
             dependencies: ["CutoutMobile"],
-            path: "Apps/CutoutMobileSpeedApp"
+            path: "Apps/CutoutApp"
         ),
     ]
 )
