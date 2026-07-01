@@ -589,7 +589,31 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "last fault", value: "FAULT_CODE_NONE"),
                 MockupMetric(label: "input app", value: "ADC + balance"),
                 MockupMetric(label: "logging", value: "local CSV armed"),
-            ]
+            ],
+            deviceCard: MockupDeviceCard(
+                title: "Profile: Street stable",
+                detail: "VESC Express · FW 6.x · UART bridge",
+                status: "",
+                accent: .cyan
+            ),
+            dashboardTiles: [
+                MockupDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
+                MockupDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
+                MockupDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
+                MockupDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
+            ],
+            summaryTitle: "Fault / app channels",
+            summaryRows: [
+                MockupSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
+                MockupSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
+                MockupSummaryRow(label: "CAN status", value: "single controller", accent: nil),
+                MockupSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
+            ],
+            faultCard: MockupFaultCard(
+                title: "Guardrails",
+                detail: "Hide dangerous writes until parked + confirmed.",
+                accent: .orange
+            )
         ),
     ])
 }

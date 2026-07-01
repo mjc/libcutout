@@ -261,4 +261,39 @@ extension MockupScreenCatalogTests {
             MockupScreenTab(title: "Logs", isSelected: false),
         ])
     }
+
+    func testVescDebugFixtureCarriesGuardedReadOnlyStateFromMockup() throws {
+        let debug = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .vescDebug))
+
+        XCTAssertEqual(
+            debug.deviceCard,
+            MockupDeviceCard(
+                title: "Profile: Street stable",
+                detail: "VESC Express · FW 6.x · UART bridge",
+                status: "",
+                accent: .cyan
+            )
+        )
+        XCTAssertEqual(debug.dashboardTiles, [
+            MockupDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
+            MockupDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
+            MockupDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
+            MockupDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
+        ])
+        XCTAssertEqual(debug.summaryTitle, "Fault / app channels")
+        XCTAssertEqual(debug.summaryRows, [
+            MockupSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
+            MockupSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
+            MockupSummaryRow(label: "CAN status", value: "single controller", accent: nil),
+            MockupSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
+        ])
+        XCTAssertEqual(
+            debug.faultCard,
+            MockupFaultCard(
+                title: "Guardrails",
+                detail: "Hide dangerous writes until parked + confirmed.",
+                accent: .orange
+            )
+        )
+    }
 }
