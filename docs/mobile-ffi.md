@@ -82,3 +82,28 @@ The checked-in package source under `swift/CutoutMobile` intentionally contains
 only hand-written facade code and package metadata. Generated UniFFI files stay
 under `target/` so app-facing Swift remains reviewable while the FFI bindings
 continue to come from the Rust crate.
+
+## Swift SourceKit Workspace
+
+The checked-in Swift package depends on generated UniFFI bindings, so tools that
+expect a complete SwiftPM workspace should use a generated workspace under
+`target/`:
+
+```console
+./scripts/prepare-swift-sourcekit-workspace.sh
+```
+
+The script builds `cutout-mobile-ffi`, generates Swift UniFFI bindings, lays out
+the `cutout_mobile_ffiFFI` system-library target, and verifies the staged package
+with `swift package describe`. On Darwin it clears `SDKROOT` and `DEVELOPER_DIR`
+for the Swift command so Xcode's Swift toolchain does not accidentally pair with
+a Nix Apple SDK.
+
+By default the workspace is written to:
+
+```text
+target/swift-sourcekit/CutoutMobile
+```
+
+Set `CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR` to choose a different generated
+workspace path. Do not check in the generated bindings, header, or module map.
