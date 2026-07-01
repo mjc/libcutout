@@ -3,8 +3,12 @@ import CutoutMobile
 import Foundation
 
 final class LiveSpeedModel: NSObject, ObservableObject {
-    @Published private(set) var speed = SpeedReadout(millimetersPerSecond: nil)
+    @Published private(set) var displayState = LiveSpeedDisplayState()
     @Published private(set) var status = "Starting Bluetooth..."
+
+    var speed: SpeedReadout {
+        displayState.speed
+    }
 
     private let clock = MonotonicClock()
     private var central: CBCentralManager?
@@ -142,13 +146,14 @@ extension LiveSpeedModel: CBPeripheralDelegate {
             return
         }
         do {
+            let receivedAt = clock.now()
             let step = try liveOwner.handleNotification(
                 bytes: value,
                 channel: channel,
-                at: clock.now()
+                at: receivedAt
             )
-            if let snapshot = step.snapshot {
-                speed = SpeedReadout(snapshot: snapshot)
+            if step.snapshot != nil {
+                displayState = displayState.reducing(step, receivedAt: receivedAt)
                 setStatus("Live")
             }
         } catch {

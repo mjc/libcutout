@@ -173,6 +173,32 @@ struct CutoutMobilePackageSmoke {
         )
         precondition(liveTelemetry.snapshot?.voltageMillivolts == 108_760)
         precondition(liveTelemetry.snapshot?.speedMillimetersPerSecond == 0)
+        let initialSpeedState = LiveSpeedDisplayState()
+        precondition(initialSpeedState.speed.displayValue == "--")
+        precondition(initialSpeedState.notificationCount == 0)
+        let zeroSpeedState = initialSpeedState.reducing(
+            liveTelemetry,
+            receivedAt: MonotonicMilliseconds(31)
+        )
+        precondition(zeroSpeedState.speed.millimetersPerSecond == 0)
+        precondition(zeroSpeedState.speed.displayValue == "0.0")
+        precondition(zeroSpeedState.notificationCount == 1)
+        precondition(zeroSpeedState.lastUpdate == MonotonicMilliseconds(31))
+        let nonzeroSpeedStep = CoreBluetoothSessionStep(
+            operations: [],
+            snapshot: TelemetrySnapshot(
+                speedMillimetersPerSecond: 1_000,
+                voltageMillivolts: nil,
+                batteryLevelEstimated: nil
+            )
+        )
+        let nonzeroSpeedState = zeroSpeedState.reducing(
+            nonzeroSpeedStep,
+            receivedAt: MonotonicMilliseconds(32)
+        )
+        precondition(nonzeroSpeedState.speed.millimetersPerSecond == 1_000)
+        precondition(nonzeroSpeedState.notificationCount == 2)
+        precondition(nonzeroSpeedState.lastUpdate == MonotonicMilliseconds(32))
         precondition(liveOwner.records.contains {
             if case .notification(let channel, let byteCount, _) = $0 {
                 channel == BluetoothUuid.bluetooth16(0xffe1) && byteCount.rawValue > 0

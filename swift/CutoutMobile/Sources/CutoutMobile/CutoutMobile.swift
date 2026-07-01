@@ -113,6 +113,16 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let voltageMillivolts: Int32?
     public let batteryLevelEstimated: UInt8?
 
+    public init(
+        speedMillimetersPerSecond: Int32?,
+        voltageMillivolts: Int32?,
+        batteryLevelEstimated: UInt8?
+    ) {
+        self.speedMillimetersPerSecond = speedMillimetersPerSecond
+        self.voltageMillivolts = voltageMillivolts
+        self.batteryLevelEstimated = batteryLevelEstimated
+    }
+
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
         self.speedMillimetersPerSecond = dto.speed?.value
         self.voltageMillivolts = dto.voltage?.value
@@ -143,6 +153,33 @@ public struct SpeedReadout: Equatable, Hashable, Sendable {
 
     public var displayUnit: String {
         "mph"
+    }
+}
+
+public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
+    public let speed: SpeedReadout
+    public let notificationCount: UInt64
+    public let lastUpdate: MonotonicMilliseconds?
+
+    public init(
+        speed: SpeedReadout = SpeedReadout(millimetersPerSecond: nil),
+        notificationCount: UInt64 = 0,
+        lastUpdate: MonotonicMilliseconds? = nil
+    ) {
+        self.speed = speed
+        self.notificationCount = notificationCount
+        self.lastUpdate = lastUpdate
+    }
+
+    public func reducing(
+        _ step: CoreBluetoothSessionStep,
+        receivedAt: MonotonicMilliseconds
+    ) -> LiveSpeedDisplayState {
+        LiveSpeedDisplayState(
+            speed: step.snapshot.map(SpeedReadout.init(snapshot:)) ?? speed,
+            notificationCount: notificationCount + 1,
+            lastUpdate: receivedAt
+        )
     }
 }
 
