@@ -74,9 +74,123 @@ private struct MockupScreenContainer: View {
             DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
             EucRideMockupView(screen: screen)
+        case .eucGarage:
+            EucGarageMockupView(screen: screen)
         default:
             GenericMockupView(screen: screen, liveSpeed: liveSpeed)
         }
+    }
+}
+
+private struct EucGarageMockupView: View {
+    let screen: MockupScreen
+
+    var body: some View {
+        GeometryReader { proxy in
+            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
+            let columns = [
+                GridItem(.flexible(), spacing: 26 * scale),
+                GridItem(.flexible(), spacing: 26 * scale),
+            ]
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16 * scale) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("CutOut")
+                            .font(.system(size: 18 * scale, weight: .bold))
+                            .foregroundStyle(MockupColors.yellow)
+                        Spacer()
+                        Text("EUC pack")
+                            .font(.system(size: 15 * scale, weight: .semibold))
+                            .foregroundStyle(MockupColors.muted)
+                    }
+                    .padding(.top, 10 * scale)
+
+                    VStack(alignment: .leading, spacing: 8 * scale) {
+                        Text(screen.title)
+                            .font(.system(size: 31 * scale, weight: .black))
+                            .foregroundStyle(MockupColors.primaryText)
+                        Text(screen.subtitle)
+                            .font(.system(size: 14 * scale, weight: .bold))
+                            .foregroundStyle(MockupColors.muted)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let deviceCard = screen.deviceCard {
+                        EucDeviceStatusCard(card: deviceCard, scale: scale)
+                            .padding(.top, 10 * scale)
+                    }
+
+                    LazyVGrid(columns: columns, spacing: 16 * scale) {
+                        ForEach(screen.dashboardTiles) { tile in
+                            EucDashboardTile(tile: tile, scale: scale)
+                        }
+                    }
+                    .padding(.top, 6 * scale)
+
+                    if let summaryTitle = screen.summaryTitle {
+                        Text(summaryTitle)
+                            .font(.system(size: 18 * scale, weight: .black))
+                            .foregroundStyle(MockupColors.primaryText)
+                            .padding(.top, 2 * scale)
+                    }
+
+                    if !screen.summaryRows.isEmpty {
+                        EucSummaryRows(rows: screen.summaryRows, scale: scale)
+                    }
+
+                    if let faultCard = screen.faultCard {
+                        Text(faultCard.title)
+                            .font(.system(size: 16 * scale, weight: .black))
+                            .foregroundStyle(MockupColors.primaryText)
+                            .padding(.top, 12 * scale)
+
+                        EucFaultStatusCard(card: faultCard, scale: scale)
+                    }
+                }
+                .padding(.horizontal, 24 * scale)
+                .padding(.bottom, 24 * scale)
+                .frame(width: proxy.size.width, alignment: .topLeading)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .background(MockupColors.pageBackground)
+            .foregroundStyle(MockupColors.primaryText)
+        }
+    }
+}
+
+private struct EucDeviceStatusCard: View {
+    let card: MockupDeviceCard
+    let scale: CGFloat
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12 * scale) {
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                Text(card.title)
+                    .font(.system(size: 22 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                Text(card.detail)
+                    .font(.system(size: 13 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+            }
+            .layoutPriority(1)
+
+            Text(card.status)
+                .font(.system(size: 14 * scale, weight: .black))
+                .foregroundStyle(.black)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 18 * scale)
+                .frame(minWidth: 58 * scale, minHeight: 32 * scale)
+                .background(Capsule().fill(card.accent.color))
+        }
+        .padding(.horizontal, 22 * scale)
+        .frame(height: 104 * scale)
+        .frame(maxWidth: .infinity)
+        .background(CardBackground(cornerRadius: 26 * scale))
     }
 }
 
@@ -279,6 +393,53 @@ private struct EucDashboardTile: View {
         .padding(.vertical, 14 * scale)
         .frame(maxWidth: .infinity, minHeight: 104 * scale, alignment: .topLeading)
         .background(CardBackground(cornerRadius: 16 * scale))
+    }
+}
+
+private struct EucSummaryRows: View {
+    let rows: [MockupSummaryRow]
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                HStack {
+                    Text(row.label)
+                        .font(.system(size: 14 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                    Spacer()
+                    Text(row.value)
+                        .font(.system(size: 15 * scale, weight: .black))
+                        .monospacedDigit()
+                        .foregroundStyle(row.accent?.color ?? MockupColors.primaryText)
+                }
+                .frame(height: 31 * scale)
+
+                if index < rows.count - 1 {
+                    Rectangle()
+                        .fill(MockupColors.cardStroke)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 12 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
+private struct EucFaultStatusCard: View {
+    let card: MockupFaultCard
+    let scale: CGFloat
+
+    var body: some View {
+        Text(card.detail)
+            .font(.system(size: 15 * scale, weight: .black))
+            .foregroundStyle(card.accent.color)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 22 * scale)
+            .frame(height: 54 * scale)
+            .background(CardBackground(cornerRadius: 19 * scale))
     }
 }
 
@@ -803,6 +964,8 @@ private extension MockupAccent {
             MockupColors.green
         case .orange:
             MockupColors.orange
+        case .purple:
+            MockupColors.purple
         case .yellow:
             MockupColors.yellow
         }
