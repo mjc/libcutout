@@ -156,6 +156,16 @@ public struct SpeedReadout: Equatable, Hashable, Sendable {
     }
 }
 
+public struct LiveSpeedDebugRow: Equatable, Hashable, Sendable {
+    public let label: String
+    public let value: String
+
+    public init(label: String, value: String) {
+        self.label = label
+        self.value = value
+    }
+}
+
 public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
     public let speed: SpeedReadout
     public let notificationCount: UInt64
@@ -171,6 +181,13 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
         self.lastUpdate = lastUpdate
     }
 
+    public var debugRows: [LiveSpeedDebugRow] {
+        [
+            LiveSpeedDebugRow(label: "Notifications", value: "\(notificationCount)"),
+            LiveSpeedDebugRow(label: "Last update", value: lastUpdateText),
+        ]
+    }
+
     public func reducing(
         _ step: CoreBluetoothSessionStep,
         receivedAt: MonotonicMilliseconds
@@ -181,6 +198,10 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
             notificationCount: notificationCount + 1,
             lastUpdate: receivedAt
         )
+    }
+
+    private var lastUpdateText: String {
+        lastUpdate.map { "\($0.rawValue) ms" } ?? "never"
     }
 }
 

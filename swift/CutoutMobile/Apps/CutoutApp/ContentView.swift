@@ -23,6 +23,20 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
+
+            VStack(spacing: 6) {
+                ForEach(model.displayState.debugRows, id: \.label) { row in
+                    HStack {
+                        Text(row.label)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(row.value)
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .font(.body)
+            .frame(maxWidth: 300)
         }
         .padding(32)
     }

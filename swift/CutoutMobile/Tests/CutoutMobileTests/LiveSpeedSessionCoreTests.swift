@@ -48,4 +48,20 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.notificationCount, 2)
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(43))
     }
+
+    func testDisplayStateProvidesDebugRowsForLiveValidation() {
+        let displayState = LiveSpeedDisplayState(
+            speed: SpeedReadout(millimetersPerSecond: 1_234),
+            notificationCount: 7,
+            lastUpdate: MonotonicMilliseconds(9_876)
+        )
+
+        XCTAssertEqual(
+            displayState.debugRows,
+            [
+                LiveSpeedDebugRow(label: "Notifications", value: "7"),
+                LiveSpeedDebugRow(label: "Last update", value: "9876 ms"),
+            ]
+        )
+    }
 }
