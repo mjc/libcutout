@@ -48,6 +48,45 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
+public extension MockupPickerRow {
+    var isSupported: Bool {
+        if case .supported = state { true } else { false }
+    }
+
+    var isUnsupported: Bool {
+        if case .unsupported = state { true } else { false }
+    }
+
+    var isManual: Bool {
+        if case .manual = state { true } else { false }
+    }
+}
+
+public extension MockupPickerRowState {
+    var actionTitle: String {
+        switch self {
+        case .supported(let action), .unsupported(let action), .manual(let action):
+            action
+        }
+    }
+
+    var isSupported: Bool {
+        if case .supported = self { true } else { false }
+    }
+}
+
+public struct MockupPickerSections: Equatable, Hashable, Sendable {
+    public let supported: [MockupPickerRow]
+    public let unsupported: [MockupPickerRow]
+    public let manual: MockupPickerRow?
+
+    public init(rows: [MockupPickerRow]) {
+        supported = rows.filter { $0.isSupported }
+        unsupported = rows.filter { $0.isUnsupported }
+        manual = rows.first { $0.isManual }
+    }
+}
+
 public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let id: MockupScreenID
     public let title: String

@@ -64,4 +64,29 @@ extension MockupScreenCatalogTests {
             .manual(action: "later"),
         ])
     }
+
+    func testDevicePickerSectionsHideEmptyGroups() {
+        let supported = MockupPickerRow(
+            title: "Aero-126V",
+            subtitle: "Electric unicycle",
+            detail: "strong signal",
+            state: .supported(action: "Pair"),
+            symbolName: "circle"
+        )
+        let unsupported = MockupPickerRow(
+            title: "NINEBOT-7A31",
+            subtitle: "Electric scooter",
+            detail: "unsupported",
+            state: .unsupported(action: "Not yet"),
+            symbolName: "scooter"
+        )
+
+        XCTAssertEqual(MockupPickerSections(rows: [supported]).supported, [supported])
+        XCTAssertTrue(MockupPickerSections(rows: [supported]).unsupported.isEmpty)
+        XCTAssertNil(MockupPickerSections(rows: [supported]).manual)
+
+        XCTAssertTrue(MockupPickerSections(rows: [unsupported]).supported.isEmpty)
+        XCTAssertEqual(MockupPickerSections(rows: [unsupported]).unsupported, [unsupported])
+        XCTAssertNil(MockupPickerSections(rows: [unsupported]).manual)
+    }
 }

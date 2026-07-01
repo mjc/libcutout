@@ -44,16 +44,8 @@ private struct MockupScreenContainer: View {
 private struct DevicePickerMockupView: View {
     let screen: MockupScreen
 
-    private var supportedRows: [MockupPickerRow] {
-        screen.pickerRows.filter { $0.isSupported }
-    }
-
-    private var unsupportedRows: [MockupPickerRow] {
-        screen.pickerRows.filter { $0.isUnsupported }
-    }
-
-    private var manualRow: MockupPickerRow? {
-        screen.pickerRows.first { $0.isManual }
+    private var sections: MockupPickerSections {
+        MockupPickerSections(rows: screen.pickerRows)
     }
 
     var body: some View {
@@ -87,23 +79,27 @@ private struct DevicePickerMockupView: View {
                     ScanStatusPill(scale: scale)
                         .padding(.top, 4 * scale)
 
-                    SectionLabel("Supported now", scale: scale)
-                        .padding(.top, 8 * scale)
-                    VStack(spacing: 12 * scale) {
-                        ForEach(supportedRows) { row in
-                            PickerDeviceRow(row: row, scale: scale)
+                    if !sections.supported.isEmpty {
+                        SectionLabel("Supported now", scale: scale)
+                            .padding(.top, 8 * scale)
+                        VStack(spacing: 12 * scale) {
+                            ForEach(sections.supported) { row in
+                                PickerDeviceRow(row: row, scale: scale)
+                            }
                         }
                     }
 
-                    SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
-                        .padding(.top, 8 * scale)
-                    VStack(spacing: 12 * scale) {
-                        ForEach(unsupportedRows) { row in
-                            PickerDeviceRow(row: row, scale: scale)
+                    if !sections.unsupported.isEmpty {
+                        SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
+                            .padding(.top, 8 * scale)
+                        VStack(spacing: 12 * scale) {
+                            ForEach(sections.unsupported) { row in
+                                PickerDeviceRow(row: row, scale: scale)
+                            }
                         }
                     }
 
-                    if let manualRow {
+                    if let manualRow = sections.manual {
                         ManualPickerRow(row: manualRow, scale: scale)
                             .padding(.top, 32 * scale)
                     }
@@ -445,18 +441,6 @@ private struct GenericMockupView: View {
 }
 
 private extension MockupPickerRow {
-    var isSupported: Bool {
-        if case .supported = state { true } else { false }
-    }
-
-    var isUnsupported: Bool {
-        if case .unsupported = state { true } else { false }
-    }
-
-    var isManual: Bool {
-        if case .manual = state { true } else { false }
-    }
-
     var glyphColor: Color {
         switch title {
         case "NINEBOT-7A31":
@@ -496,20 +480,6 @@ private enum MockupColors {
     static let purple = Color(red: 0.635, green: 0.459, blue: 0.918)
     static let iconFill = Color(red: 0.043, green: 0.051, blue: 0.071)
 }
-
-private extension MockupPickerRowState {
-    var actionTitle: String {
-        switch self {
-        case .supported(let action), .unsupported(let action), .manual(let action):
-            action
-        }
-    }
-
-    var isSupported: Bool {
-        if case .supported = self { true } else { false }
-    }
-}
-
 
 private extension MockupScreen {
     var tabTitle: String {
