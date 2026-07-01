@@ -55,6 +55,45 @@ struct CutoutMobilePackageSmoke {
         )
         precondition(advertisement.modelHint == .falcon)
 
+        let coordinator = CoreBluetoothCentralCoordinator(
+            scanPolicy: .aeroFalcon,
+            writeLimit: TransportWriteLimitBytes(185)
+        )
+        precondition(coordinator.startScanning() == .scan(serviceUuids: [
+            BluetoothUuid.bluetooth16(0xffe0),
+            BluetoothUuid.bluetooth16(0xfff0),
+        ]))
+        precondition(coordinator.handleDiscovered(advertisement) == .connect(
+            peripheralIdentifier: advertisement.peripheralIdentifier
+        ))
+        let unknownAdvertisement = CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("unknown-001"),
+            localName: "Mystery Wheel",
+            advertisedServiceUuids: []
+        )
+        precondition(coordinator.handleDiscovered(unknownAdvertisement) == nil)
+        let inventory = CoreBluetoothGattInventory(services: [
+            CoreBluetoothGattService(
+                uuid: BluetoothUuid.bluetooth16(0xffe0),
+                characteristics: [
+                    CoreBluetoothGattCharacteristic(
+                        uuid: BluetoothUuid.bluetooth16(0xffe1),
+                        properties: [.notify, .writeWithoutResponse]
+                    ),
+                ]
+            ),
+        ])
+        precondition(coordinator.discoverServices() == .discoverServices([
+            BluetoothUuid.bluetooth16(0xffe0),
+            BluetoothUuid.bluetooth16(0xfff0),
+        ]))
+        precondition(coordinator.discoverCharacteristics(in: inventory) == [
+            .discoverCharacteristics(
+                service: BluetoothUuid.bluetooth16(0xffe0),
+                characteristics: [BluetoothUuid.bluetooth16(0xffe1)]
+            ),
+        ])
+
         let writeAction = SessionAction(
             kind: .write,
             channel: BluetoothUuid.bluetooth16(0xffe1).bytes,

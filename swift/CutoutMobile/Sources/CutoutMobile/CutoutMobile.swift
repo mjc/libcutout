@@ -529,6 +529,94 @@ public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
     ])
 }
 
+public enum CoreBluetoothCharacteristicProperty: Equatable, Hashable, Sendable {
+    case read
+    case write
+    case writeWithoutResponse
+    case notify
+    case indicate
+}
+
+public struct CoreBluetoothGattCharacteristic: Equatable, Hashable, Sendable {
+    public let uuid: BluetoothUuid
+    public let properties: Set<CoreBluetoothCharacteristicProperty>
+
+    public init(uuid: BluetoothUuid, properties: Set<CoreBluetoothCharacteristicProperty>) {
+        self.uuid = uuid
+        self.properties = properties
+    }
+}
+
+public struct CoreBluetoothGattService: Equatable, Hashable, Sendable {
+    public let uuid: BluetoothUuid
+    public let characteristics: [CoreBluetoothGattCharacteristic]
+
+    public init(uuid: BluetoothUuid, characteristics: [CoreBluetoothGattCharacteristic]) {
+        self.uuid = uuid
+        self.characteristics = characteristics
+    }
+}
+
+public struct CoreBluetoothGattInventory: Equatable, Hashable, Sendable {
+    public let services: [CoreBluetoothGattService]
+
+    public init(services: [CoreBluetoothGattService]) {
+        self.services = services
+    }
+}
+
+public enum CoreBluetoothCentralAction: Equatable, Hashable, Sendable {
+    case scan(serviceUuids: [BluetoothUuid])
+    case connect(peripheralIdentifier: CoreBluetoothPeripheralIdentifier)
+    case discoverServices([BluetoothUuid])
+    case discoverCharacteristics(service: BluetoothUuid, characteristics: [BluetoothUuid])
+}
+
+public struct CoreBluetoothCentralCoordinator: Equatable, Hashable, Sendable {
+    public let scanPolicy: CoreBluetoothScanPolicy
+    public let writeLimit: TransportWriteLimitBytes
+
+    public init(
+        scanPolicy: CoreBluetoothScanPolicy = .aeroFalcon,
+        writeLimit: TransportWriteLimitBytes
+    ) {
+        self.scanPolicy = scanPolicy
+        self.writeLimit = writeLimit
+    }
+
+    public func startScanning() -> CoreBluetoothCentralAction {
+        .scan(serviceUuids: scanPolicy.serviceUuids)
+    }
+
+    public func handleDiscovered(_ advertisement: CoreBluetoothAdvertisement) -> CoreBluetoothCentralAction? {
+        guard scanPolicy.matches(advertisement), advertisement.modelHint != .unknown else {
+            return nil
+        }
+        return .connect(peripheralIdentifier: advertisement.peripheralIdentifier)
+    }
+
+    public func discoverServices() -> CoreBluetoothCentralAction {
+        .discoverServices(scanPolicy.serviceUuids)
+    }
+
+    public func discoverCharacteristics(in inventory: CoreBluetoothGattInventory) -> [CoreBluetoothCentralAction] {
+        inventory.services
+            .filter { scanPolicy.serviceUuids.contains($0.uuid) }
+            .map { service in
+                .discoverCharacteristics(
+                    service: service.uuid,
+                    characteristics: service.characteristics.map(\.uuid)
+                )
+            }
+    }
+}
+
+private extension CoreBluetoothScanPolicy {
+    func matches(_ advertisement: CoreBluetoothAdvertisement) -> Bool {
+        !Set(serviceUuids).isDisjoint(with: advertisement.advertisedServiceUuids)
+    }
+}
+
 #if canImport(CoreBluetooth)
 import CoreBluetooth
 
