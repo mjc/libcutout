@@ -207,4 +207,31 @@ extension MockupScreenCatalogTests {
             MockupScreenTab(title: "Tune", isSelected: false),
         ])
     }
+
+    func testEucGarageFixtureCarriesPackHealthStructureFromMockup() throws {
+        let garage = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+
+        XCTAssertEqual(
+            garage.deviceCard,
+            MockupDeviceCard(
+                title: "Aero-126V",
+                detail: "126 V nominal · 20s? mapped profile · BLE",
+                status: "Safe",
+                accent: .green
+            )
+        )
+        XCTAssertEqual(garage.dashboardTiles, [
+            MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
+            MockupDashboardTile(label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+            MockupDashboardTile(label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+            MockupDashboardTile(label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+        ])
+        XCTAssertEqual(garage.summaryTitle, "Cell / BMS summary")
+        XCTAssertEqual(garage.summaryRows, [
+            MockupSummaryRow(label: "high group", value: "4.18 V", accent: nil),
+            MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
+            MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
+        ])
+        XCTAssertEqual(garage.faultCard, MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green))
+    }
 }

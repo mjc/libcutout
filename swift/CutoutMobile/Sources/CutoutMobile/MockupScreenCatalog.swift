@@ -22,7 +22,22 @@ public enum MockupAccent: String, Equatable, Hashable, Sendable {
     case cyan
     case green
     case orange
+    case purple
     case yellow
+}
+
+public struct MockupDeviceCard: Equatable, Hashable, Sendable {
+    public let title: String
+    public let detail: String
+    public let status: String
+    public let accent: MockupAccent
+
+    public init(title: String, detail: String, status: String, accent: MockupAccent) {
+        self.title = title
+        self.detail = detail
+        self.status = status
+        self.accent = accent
+    }
 }
 
 public struct MockupSafetyBar: Equatable, Hashable, Sendable {
@@ -76,6 +91,32 @@ public struct MockupScreenTab: Equatable, Hashable, Sendable, Identifiable {
     public init(title: String, isSelected: Bool) {
         self.title = title
         self.isSelected = isSelected
+    }
+}
+
+public struct MockupSummaryRow: Equatable, Hashable, Sendable, Identifiable {
+    public var id: String { label }
+
+    public let label: String
+    public let value: String
+    public let accent: MockupAccent?
+
+    public init(label: String, value: String, accent: MockupAccent?) {
+        self.label = label
+        self.value = value
+        self.accent = accent
+    }
+}
+
+public struct MockupFaultCard: Equatable, Hashable, Sendable {
+    public let title: String
+    public let detail: String
+    public let accent: MockupAccent
+
+    public init(title: String, detail: String, accent: MockupAccent) {
+        self.title = title
+        self.detail = detail
+        self.accent = accent
     }
 }
 
@@ -305,9 +346,13 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let metrics: [MockupMetric]
     public let pickerRows: [MockupPickerRow]
     public let discoveryCandidates: [DevicePickerDiscoveryCandidate]
+    public let deviceCard: MockupDeviceCard?
     public let safetyBars: [MockupSafetyBar]
     public let warningCard: MockupWarningCard?
     public let dashboardTiles: [MockupDashboardTile]
+    public let summaryTitle: String?
+    public let summaryRows: [MockupSummaryRow]
+    public let faultCard: MockupFaultCard?
     public let tabs: [MockupScreenTab]
     public let isFixtureOnly: Bool
 
@@ -321,9 +366,13 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         metrics: [MockupMetric],
         pickerRows: [MockupPickerRow] = [],
         discoveryCandidates: [DevicePickerDiscoveryCandidate] = [],
+        deviceCard: MockupDeviceCard? = nil,
         safetyBars: [MockupSafetyBar] = [],
         warningCard: MockupWarningCard? = nil,
         dashboardTiles: [MockupDashboardTile] = [],
+        summaryTitle: String? = nil,
+        summaryRows: [MockupSummaryRow] = [],
+        faultCard: MockupFaultCard? = nil,
         tabs: [MockupScreenTab] = [],
         isFixtureOnly: Bool = true
     ) {
@@ -336,9 +385,13 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.metrics = metrics
         self.pickerRows = pickerRows
         self.discoveryCandidates = discoveryCandidates
+        self.deviceCard = deviceCard
         self.safetyBars = safetyBars
         self.warningCard = warningCard
         self.dashboardTiles = dashboardTiles
+        self.summaryTitle = summaryTitle
+        self.summaryRows = summaryRows
+        self.faultCard = faultCard
         self.tabs = tabs
         self.isFixtureOnly = isFixtureOnly
     }
@@ -468,7 +521,26 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "pedal mode", value: "72%"),
                 MockupMetric(label: "cell delta", value: "0.018 V"),
                 MockupMetric(label: "last fault", value: "none"),
-            ]
+            ],
+            deviceCard: MockupDeviceCard(
+                title: "Aero-126V",
+                detail: "126 V nominal · 20s? mapped profile · BLE",
+                status: "Safe",
+                accent: .green
+            ),
+            dashboardTiles: [
+                MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
+                MockupDashboardTile(label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+                MockupDashboardTile(label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+                MockupDashboardTile(label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+            ],
+            summaryTitle: "Cell / BMS summary",
+            summaryRows: [
+                MockupSummaryRow(label: "high group", value: "4.18 V", accent: nil),
+                MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
+                MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
+            ],
+            faultCard: MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green)
         ),
         MockupScreen(
             id: .vescOnewheelRide,
