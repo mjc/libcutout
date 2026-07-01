@@ -54,7 +54,7 @@ final class LiveSpeedModel: NSObject, ObservableObject {
             liveOwner?.recordInventory(inventory)
             _ = try liveOwner?.handleLinkUp(at: clock.now())
         } catch {
-            setPhase(.failed(.sessionFailed(String(describing: error))))
+            setPhase(.failed(.sessionFailed(error.liveSpeedMessage)))
         }
     }
 }
@@ -92,14 +92,14 @@ extension LiveSpeedModel: CBCentralManagerDelegate {
     }
 
     func centralManager(_: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?) {
-        setPhase(.failed(.connectFailed(error.map(String.init(describing:)) ?? "unknown error")))
+        setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
     }
 }
 
 extension LiveSpeedModel: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error {
-            setPhase(.failed(.serviceDiscoveryFailed(String(describing: error))))
+            setPhase(.failed(.serviceDiscoveryFailed(error.liveSpeedMessage)))
             return
         }
         let services = peripheral.services ?? []
@@ -115,7 +115,7 @@ extension LiveSpeedModel: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.characteristicDiscoveryFailed(String(describing: error))))
+            setPhase(.failed(.characteristicDiscoveryFailed(error.liveSpeedMessage)))
             return
         }
         service.characteristics?.forEach { characteristic in
@@ -135,7 +135,7 @@ extension LiveSpeedModel: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.notificationFailed(String(describing: error))))
+            setPhase(.failed(.notificationFailed(error.liveSpeedMessage)))
             return
         }
         guard
@@ -157,7 +157,7 @@ extension LiveSpeedModel: CBPeripheralDelegate {
                 setPhase(.live)
             }
         } catch {
-            setPhase(.failed(.notificationIngestFailed(String(describing: error))))
+            setPhase(.failed(.notificationIngestFailed(error.liveSpeedMessage)))
         }
     }
 }
@@ -188,5 +188,17 @@ private struct MonotonicClock {
 
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(UInt64(Date().timeIntervalSince(base) * 1_000))
+    }
+}
+
+private extension Optional where Wrapped == Error {
+    var liveSpeedMessage: String {
+        map(String.init(describing:)) ?? "unknown error"
+    }
+}
+
+private extension Error {
+    var liveSpeedMessage: String {
+        String(describing: self)
     }
 }
