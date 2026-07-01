@@ -157,6 +157,7 @@
               pkgs.cargo-nextest
               pkgs.jna
               pkgs.kotlin
+              pkgs.python3Packages.pillow
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               pkgs.mold
