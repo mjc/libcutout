@@ -24,6 +24,8 @@
 	<string>CutoutApp uses Bluetooth to read live vehicle telemetry.</string>
 	<key>UIRequiresFullScreen</key>
 	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

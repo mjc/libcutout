@@ -18,6 +18,36 @@ public struct MockupMetric: Equatable, Hashable, Sendable {
     }
 }
 
+public enum MockupPickerRowState: Equatable, Hashable, Sendable {
+    case supported(action: String)
+    case unsupported(action: String)
+    case manual(action: String)
+}
+
+public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
+    public var id: String { title }
+
+    public let title: String
+    public let subtitle: String
+    public let detail: String
+    public let state: MockupPickerRowState
+    public let symbolName: String
+
+    public init(
+        title: String,
+        subtitle: String,
+        detail: String,
+        state: MockupPickerRowState,
+        symbolName: String
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.detail = detail
+        self.state = state
+        self.symbolName = symbolName
+    }
+}
+
 public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let id: MockupScreenID
     public let title: String
@@ -26,6 +56,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let secondaryValue: String
     public let warning: String?
     public let metrics: [MockupMetric]
+    public let pickerRows: [MockupPickerRow]
     public let isFixtureOnly: Bool
 
     public init(
@@ -36,6 +67,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         secondaryValue: String,
         warning: String?,
         metrics: [MockupMetric],
+        pickerRows: [MockupPickerRow] = [],
         isFixtureOnly: Bool = true
     ) {
         self.id = id
@@ -45,6 +77,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.secondaryValue = secondaryValue
         self.warning = warning
         self.metrics = metrics
+        self.pickerRows = pickerRows
         self.isFixtureOnly = isFixtureOnly
     }
 }
@@ -54,6 +87,10 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
 
     public init(screens: [MockupScreen]) {
         self.screens = screens
+    }
+
+    public func screen(id: MockupScreenID) -> MockupScreen? {
+        screens.first { $0.id == id }
     }
 
     public static let v2 = MockupScreenCatalog(screens: [
@@ -68,7 +105,45 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "Supported EUC", value: "Aero-126V"),
                 MockupMetric(label: "Supported VESC OW", value: "Little FOCer BT"),
                 MockupMetric(label: "Unsupported", value: "NINEBOT-7A31"),
+                MockupMetric(label: "Unsupported", value: "HX Hoverboard"),
                 MockupMetric(label: "Manual add", value: "disabled"),
+            ],
+            pickerRows: [
+                MockupPickerRow(
+                    title: "Aero-126V",
+                    subtitle: "Electric unicycle - telemetry profile found",
+                    detail: "126.0 V - strong signal",
+                    state: .supported(action: "Pair"),
+                    symbolName: "circle.hexagongrid.circle"
+                ),
+                MockupPickerRow(
+                    title: "Little FOCer BT",
+                    subtitle: "VESC Onewheel - UART bridge detected",
+                    detail: "75.4 V - moderate signal",
+                    state: .supported(action: "Pair"),
+                    symbolName: "oval.portrait"
+                ),
+                MockupPickerRow(
+                    title: "NINEBOT-7A31",
+                    subtitle: "Electric scooter - known BLE advertisement",
+                    detail: "We can learn this later",
+                    state: .unsupported(action: "Not yet"),
+                    symbolName: "scooter"
+                ),
+                MockupPickerRow(
+                    title: "HX Hoverboard",
+                    subtitle: "Hoverboard / self-balancing board candidate",
+                    detail: "Capture wizard later",
+                    state: .unsupported(action: "Not yet"),
+                    symbolName: "capsule"
+                ),
+                MockupPickerRow(
+                    title: "Manual add / record unknown device",
+                    subtitle: "",
+                    detail: "",
+                    state: .manual(action: "later"),
+                    symbolName: "plus"
+                ),
             ]
         ),
         MockupScreen(

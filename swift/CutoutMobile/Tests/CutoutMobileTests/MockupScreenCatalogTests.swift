@@ -44,3 +44,24 @@ final class MockupScreenCatalogTests: XCTestCase {
         XCTAssertTrue(MockupScreenCatalog.v2.screens.allSatisfy(\.isFixtureOnly))
     }
 }
+
+extension MockupScreenCatalogTests {
+    func testDevicePickerFixtureCarriesRowsAndActionsFromMockup() throws {
+        let picker = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .devicePicker))
+
+        XCTAssertEqual(picker.pickerRows.map(\.title), [
+            "Aero-126V",
+            "Little FOCer BT",
+            "NINEBOT-7A31",
+            "HX Hoverboard",
+            "Manual add / record unknown device",
+        ])
+        XCTAssertEqual(picker.pickerRows.map(\.state), [
+            .supported(action: "Pair"),
+            .supported(action: "Pair"),
+            .unsupported(action: "Not yet"),
+            .unsupported(action: "Not yet"),
+            .manual(action: "later"),
+        ])
+    }
+}

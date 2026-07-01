@@ -83,10 +83,13 @@ cutout_build_ios_speed_app_bundle() {
   package_dir="${CUTOUT_IOS_SPEED_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
   project="${CUTOUT_IOS_SPEED_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_SPEED_SCHEME:-CutoutApp}"
-  destination="${CUTOUT_IOS_SPEED_BUILD_DESTINATION:-platform=macOS,arch=arm64,variant=Designed for iPad,name=My Mac}"
-  derived_data="${CUTOUT_IOS_SPEED_DERIVED_DATA:-$root/target/xcode-designed-for-ipad}"
+  destination="${CUTOUT_IOS_SPEED_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
+  derived_data="${CUTOUT_IOS_SPEED_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}"
   rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
+
+  export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+  unset SDKROOT
 
   cutout_prepare_swift_package_workspace "$package_dir"
 

@@ -19,7 +19,7 @@ fi
 export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
 unset SDKROOT
 
-destination="${CUTOUT_IOS_ON_MAC_DESTINATION:-platform=macOS,arch=arm64,variant=Designed for iPad,name=My Mac}"
+destination="${CUTOUT_IOS_ON_MAC_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
 product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(cutout_build_ios_speed_app_bundle)}"
 
 echo "ios_speed_app_product=$product"

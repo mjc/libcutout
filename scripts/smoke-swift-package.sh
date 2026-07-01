@@ -31,17 +31,7 @@ cutout_prepare_swift_package_workspace "$package_dir"
   CutoutMobileSmoke
 
 if [[ "$(uname -s)" == Darwin ]]; then
-  "${swift_cmd[@]}" build \
-    --package-path "$package_dir" \
-    -Xlinker -L -Xlinker "$root/target/debug" \
-    -Xlinker -lcutout_mobile_ffi \
-    --target CutoutApp
-  "${swift_cmd[@]}" run \
-    --package-path "$package_dir" \
-    -Xlinker -L -Xlinker "$root/target/debug" \
-    -Xlinker -lcutout_mobile_ffi \
-    CutoutApp \
-    --smoke
+  cutout_build_ios_speed_app_bundle >/dev/null
   "${swift_cmd[@]}" build \
     --package-path "$package_dir" \
     -Xlinker -L -Xlinker "$root/target/debug" \

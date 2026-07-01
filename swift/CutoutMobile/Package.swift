@@ -6,7 +6,7 @@ let package = Package(
     name: "CutoutMobile",
     platforms: [
         .iOS("27.0"),
-        .macOS(.v13),
+        .macOS("27.0"),
     ],
     products: [
         .library(name: "CutoutMobile", targets: ["CutoutMobile"]),
@@ -34,14 +34,6 @@ let package = Package(
             name: "CutoutMobileLiveValidator",
             dependencies: ["CutoutMobile"],
             path: "Tests/CutoutMobileLiveValidator"
-        ),
-        .executableTarget(
-            name: "CutoutApp",
-            dependencies: ["CutoutMobile"],
-            path: "Apps/CutoutApp",
-            resources: [
-                .process("Assets.xcassets")
-            ]
         ),
     ]
 )
