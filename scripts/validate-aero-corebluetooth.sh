@@ -42,5 +42,5 @@ mv "$generated_dir/cutout_mobile_ffiFFI.modulemap" "$system_target_dir/module.mo
   --package-path "$package_dir" \
   -Xlinker -L -Xlinker "$root/target/debug" \
   -Xlinker -lcutout_mobile_ffi \
-  CutoutMobileAeroLive \
+  CutoutMobileLiveValidator \
   "$timeout_seconds"

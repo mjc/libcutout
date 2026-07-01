@@ -3,7 +3,7 @@ import CutoutMobile
 import Foundation
 
 @main
-struct CutoutMobileAeroLive {
+struct CutoutMobileLiveValidator {
     static func main() {
         let timeoutSeconds = TimeInterval(
             CommandLine.arguments.dropFirst().first.flatMap(Double.init) ?? 45

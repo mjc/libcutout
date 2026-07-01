@@ -46,3 +46,16 @@ cp tests/mobile-ffi/swift-package-smoke.swift "$smoke_dir/main.swift"
   -Xlinker -L -Xlinker "$root/target/debug" \
   -Xlinker -lcutout_mobile_ffi \
   CutoutMobileSmoke
+
+if [[ "$(uname -s)" == Darwin ]]; then
+  "${swift_cmd[@]}" build \
+    --package-path "$package_dir" \
+    -Xlinker -L -Xlinker "$root/target/debug" \
+    -Xlinker -lcutout_mobile_ffi \
+    --target CutoutMobileSpeedApp
+  "${swift_cmd[@]}" build \
+    --package-path "$package_dir" \
+    -Xlinker -L -Xlinker "$root/target/debug" \
+    -Xlinker -lcutout_mobile_ffi \
+    --target CutoutMobileLiveValidator
+fi
