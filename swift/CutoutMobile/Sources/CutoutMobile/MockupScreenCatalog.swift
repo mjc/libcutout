@@ -148,14 +148,11 @@ public enum MockupBmsScreenKind: Equatable, Hashable, Sendable {
     case noData
 }
 
-public struct MockupBmsChip: Equatable, Hashable, Sendable, Identifiable {
-    public let id: UUID
-
+public struct MockupBmsChip: Equatable, Hashable, Sendable {
     public let title: String
     public let accent: MockupAccent
 
-    public init(id: UUID = UUID(), title: String, accent: MockupAccent) {
-        self.id = id
+    public init(title: String, accent: MockupAccent) {
         self.title = title
         self.accent = accent
     }
@@ -531,13 +528,6 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         ),
     ]
 
-    private static func makeBmsGroups(
-        count: Int,
-        _ build: (Int) -> BmsGroupSnapshot
-    ) -> [BmsGroupSnapshot] {
-        (1...count).map(build)
-    }
-
     private static let bmsOverviewSnapshot = BmsSnapshot(
         topology: BmsTopology(
             layoutLabel: "20S4P split pack",
@@ -557,7 +547,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         balancingDetail: "3 groups bleeding: 03, 11, 19",
         faultSummary: "no active faults",
         faultDetail: "last: under-voltage warning · 3 days ago",
-        groups: makeBmsGroups(count: 20) { index in
+        groups: (1...20).map { index in
             BmsGroupSnapshot(
                 index: index,
                 voltage: .fixture(value: 4_089 - Int32(index % 5) * 4),
@@ -598,7 +588,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         cellDeltaMillivolts: .fixture(value: 18),
         highestTemperature: .fixture(value: 31_000),
         highestTemperatureLabel: "group 31",
-        groups: makeBmsGroups(count: 40) { index in
+        groups: (1...40).map { index in
             let alertLevel: BmsAlertLevel = [17, 18, 19].contains(index) ? .warning : index == 31 ? .critical : .nominal
             let base = 4_080 + Int32(index % 3) * 6
             let value = [17, 18, 19].contains(index) ? 4_080 : (index == 31 ? 4_072 : base)
@@ -619,7 +609,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             confidence: .verified
         ),
         cellDeltaMillivolts: .fixture(value: 18),
-        groups: makeBmsGroups(count: 20) { index in
+        groups: (1...20).map { index in
             BmsGroupSnapshot(
                 index: index,
                 voltage: .fixture(value: index == 17 ? 4_071 : 4_086),

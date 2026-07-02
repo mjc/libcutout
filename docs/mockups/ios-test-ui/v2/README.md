@@ -19,7 +19,7 @@ and tracker work can reference stable repo paths.
 
 ## Screens
 
-| Screen | PNG size | Tracker epic |
+| Screen | Asset size | Tracker epic |
 | --- | ---: | --- |
 | `cutout-00-device-picker-v2.png` | 780x1688 | `LIBCU-418` |
 | `cutout-01-euc-ride.png` | 390x844 | `LIBCU-419` |
@@ -30,7 +30,7 @@ and tracker work can reference stable repo paths.
 
 ## BMS Screens
 
-| Screen | PNG size | Tracker epic |
+| Screen | Asset size | Tracker epic |
 | --- | ---: | --- |
 | `cutout-05-bms-overview.png` | 390x844 | `LIBCU-440` |
 | `cutout-06-bms-cell-map-6s.png` | 390x844 | `LIBCU-441` |
