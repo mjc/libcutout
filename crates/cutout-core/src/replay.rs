@@ -133,16 +133,18 @@ impl CaptureRecord {
 }
 
 /// Replays captured host inputs through a host session and returns outputs.
-#[must_use]
-pub fn replay_capture<S>(host: &mut HostSession<S>, records: &[CaptureRecord]) -> Vec<SessionOutput>
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+pub fn replay_capture<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+) -> Result<Vec<SessionOutput>, SessionOutputError>
 where
     S: ProtocolSession,
 {
-    let mut outputs = Vec::new();
-    if replay_capture_into(host, records, &mut outputs).is_err() {
-        return outputs;
-    }
-    outputs
+    try_replay_capture(host, records)
 }
 
 /// Replays captured host inputs through a host session and returns outputs.
@@ -246,51 +248,57 @@ pub struct NotificationImpairmentReplayCase {
 /// Typed ingest outcomes are intentionally excluded because notification
 /// boundaries differ between chunking modes even when decoded protocol behavior
 /// is equivalent.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::Full`] when the host output buffer fills.
 pub fn replay_capture_semantic_events<S>(
     host: &mut HostSession<S>,
     records: &[CaptureRecord],
-) -> Vec<DeviceEvent>
+) -> Result<Vec<DeviceEvent>, SessionOutputError>
 where
     S: ProtocolSession,
 {
-    replay_capture(host, records)
+    Ok(replay_capture(host, records)?
         .into_iter()
         .filter_map(|output| match output {
             SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
             SessionOutput::Event(event) => Some(event),
         })
-        .collect()
+        .collect())
 }
 
 /// Compares whole-notification replay against one-byte and arbitrary
 /// notification chunk replay.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::Full`] when the host output buffer fills.
 pub fn compare_replay_capture_chunks<S, F>(
     mut make_session: F,
     records: &[CaptureRecord],
     arbitrary_lengths: &[NotificationChunkLen],
-) -> ReplayChunkComparison
+) -> Result<ReplayChunkComparison, SessionOutputError>
 where
     S: ProtocolSession,
     F: FnMut() -> S,
 {
-    let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
+    let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records)?;
     let one_byte_records =
         split_capture_notifications_by_len(records, NotificationChunkLen::from_bytes(1));
     let one_byte =
-        replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records)?;
     let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
     let arbitrary =
-        replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records)?;
 
-    ReplayChunkComparison {
+    Ok(ReplayChunkComparison {
         whole_semantic_events: SemanticEventCount::from_events(whole.len()),
         one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
         arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
         one_byte_matches: one_byte == whole,
         arbitrary_matches: arbitrary == whole,
-    }
+    })
 }
 
 /// Builds a deterministic arbitrary notification chunk plan from replay

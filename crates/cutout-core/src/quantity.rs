@@ -592,13 +592,22 @@ fn round_div_i64_to_i32(numerator: i64, denominator: i64) -> i32 {
         return 0;
     }
 
-    let sign = if (numerator < 0) ^ (denominator < 0) {
-        -1
-    } else {
-        1
-    };
+    let numerator = i128::from(numerator);
+    let denominator = i128::from(denominator);
+    let negative = (numerator < 0) ^ (denominator < 0);
     let rounded = (numerator.abs() + denominator.abs() / 2) / denominator.abs();
-    saturating_i64_to_i32(rounded.saturating_mul(sign))
+    let signed = if negative { -rounded } else { rounded };
+
+    if signed > i128::from(i32::MAX) {
+        i32::MAX
+    } else if signed < i128::from(i32::MIN) {
+        i32::MIN
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            signed as i32
+        }
+    }
 }
 
 #[allow(
@@ -782,7 +791,8 @@ impl WireVoltage {
         }
 
         let numerator = i64::from(voltage.as_millivolts()) * 100;
-        let centivolts = (numerator + i64::from(scaler_milli / 2)) / i64::from(scaler_milli);
+        let centivolts = ((numerator + i64::from(scaler_milli / 2)) / i64::from(scaler_milli))
+            .clamp(0, i64::from(u16::MAX));
         Self::from_centivolts(u16::try_from(centivolts).unwrap_or(u16::MAX))
     }
 }
@@ -1754,7 +1764,7 @@ impl BatteryLevel {
     /// Creates a battery level from a percent value.
     #[must_use]
     pub const fn from_percent(value: u8) -> Self {
-        Self::from_unit_value(value)
+        Self::from_unit_value(if value > 100 { 100 } else { value })
     }
 
     /// Creates a battery level from a signed percent value, clamping to the stored range.
@@ -1778,31 +1788,18 @@ impl BatteryLevel {
     /// Linearly interpolates a battery level between two reference points.
     #[must_use]
     pub fn interpolate(low: Self, high: Self, value: i64, low_value: i64, high_value: i64) -> Self {
-        let value_span = high_value - low_value;
+        let Some(value_span) = high_value.checked_sub(low_value) else {
+            return low;
+        };
         if value_span <= 0 {
             return low;
         }
 
         let level_span = i32::from(high.as_percent()) - i32::from(low.as_percent());
-        let value_offset = value - low_value;
+        let value_offset = value.saturating_sub(low_value);
         let numerator = value_offset.saturating_mul(i64::from(level_span));
-        let level = i32::from(low.as_percent())
-            + round_div_i32(
-                i32::try_from(numerator).unwrap_or_else(|_| {
-                    if numerator.is_negative() {
-                        i32::MIN
-                    } else {
-                        i32::MAX
-                    }
-                }),
-                i32::try_from(value_span).unwrap_or_else(|_| {
-                    if value_span.is_negative() {
-                        i32::MIN
-                    } else {
-                        i32::MAX
-                    }
-                }),
-            );
+        let level =
+            i32::from(low.as_percent()).saturating_add(round_div_i64_to_i32(numerator, value_span));
         Self::from_percent_i32(level)
     }
 
@@ -1836,7 +1833,7 @@ impl BatteryLevel {
 
 impl PercentQuantity for BatteryLevel {
     fn from_percent(value: u8) -> Self {
-        Self::from_unit_value(value)
+        Self::from_percent(value)
     }
 
     fn as_percent(self) -> u8 {

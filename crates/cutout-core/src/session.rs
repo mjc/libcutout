@@ -361,23 +361,7 @@ where
         Self {
             session,
             output: Box::new(BoundedSessionOutput::new()),
-            snapshot: TelemetrySnapshot {
-                at_ms: None,
-                speed: None,
-                voltage: None,
-                battery_current: None,
-                motor_current: None,
-                power: None,
-                controller_temperature: None,
-                motor_temperature: None,
-                battery_temperature: None,
-                pwm: None,
-                distance: None,
-                pitch: None,
-                roll: None,
-                battery_level_reported: None,
-                battery_level_estimated: None,
-            },
+            snapshot: TelemetrySnapshot::default(),
             diagnostics: ParserDiagnostics::default(),
         }
     }
@@ -393,23 +377,7 @@ where
         Self {
             session,
             output: Box::new(BoundedSessionOutput::new()),
-            snapshot: TelemetrySnapshot {
-                at_ms: None,
-                speed: None,
-                voltage: None,
-                battery_current: None,
-                motor_current: None,
-                power: None,
-                controller_temperature: None,
-                motor_temperature: None,
-                battery_temperature: None,
-                pwm: None,
-                distance: None,
-                pitch: None,
-                roll: None,
-                battery_level_reported: None,
-                battery_level_estimated: None,
-            },
+            snapshot: TelemetrySnapshot::default(),
             diagnostics: ParserDiagnostics::default(),
         }
     }
@@ -503,9 +471,9 @@ where
 
     fn handle(&mut self, input: SessionInput<'_>) -> Result<(), SessionOutputError> {
         let start = self.output.len();
-        self.session.handle(input, &mut *self.output)?;
+        let result = self.session.handle(input, &mut *self.output);
         self.apply_state_from_outputs(start);
-        Ok(())
+        result
     }
 
     fn apply_state_from_outputs(&mut self, start: usize) {

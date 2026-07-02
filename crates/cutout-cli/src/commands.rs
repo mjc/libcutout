@@ -673,8 +673,8 @@ fn render_diagnostic_error_jsonl(
         "kind": diagnostic_error_kind_name(error.kind),
         "claimed_len": error.claimed_len.map(cutout_core::ParserFrameLen::get),
         "max_len": error.max_len.map(cutout_core::ParserFrameLen::get),
-        "elapsed_ms": error.elapsed_ms.map(MonotonicTimestamp::get),
-        "timeout_ms": error.timeout_ms.map(MonotonicTimestamp::get),
+        "elapsed": error.elapsed.map(cutout_core::Duration::as_milliseconds),
+        "timeout": error.timeout.map(cutout_core::Duration::as_milliseconds),
     }))
 }
 
@@ -3679,6 +3679,22 @@ mod tests {
 
     #[test]
     fn pevcap_replay_chunk_modes_preserve_final_typed_ingest_outcomes() {
+        fn assert_reserved_selector(
+            outcome: Option<&cutout_core::NotificationIngestOutcome>,
+            notification_len: usize,
+        ) {
+            assert!(
+                matches!(
+                outcome,
+                Some(cutout_core::NotificationIngestOutcome::KnownReserved { notification, payload })
+                    if notification.len.as_bytes() == notification_len
+                        && payload.body_len.as_bytes() == 24
+                        && payload.classifier.selector_value() == Some(ProtocolSelector::new(8))
+                ),
+                "expected reserved selector with notification len {notification_len}, got {outcome:?}"
+            );
+        }
+
         let capture = sample_aero_reserved_replay_capture();
         let arbitrary_lengths = capture.arbitrary_notification_chunk_lengths();
 
@@ -3702,13 +3718,10 @@ mod tests {
             }),
             "arbitrary replay may differ only by explicit buffered progress: {arbitrary:?}"
         );
-        assert_eq!(whole.last(), one_byte.last());
-        assert_eq!(whole.last(), arbitrary.last());
-        assert!(matches!(
-            whole.as_slice(),
-            [cutout_core::NotificationIngestOutcome::KnownReserved { payload, .. }]
-                if payload.classifier.selector_value() == Some(ProtocolSelector::new(8))
-        ));
+
+        assert_reserved_selector(whole.last(), 75);
+        assert_reserved_selector(one_byte.last(), 1);
+        assert_reserved_selector(arbitrary.last(), 3);
     }
 
     #[derive(Clone, Copy)]
@@ -3849,8 +3862,8 @@ mod tests {
     #[test]
     fn diagnostic_error_jsonl_preserves_kind_and_fixed_unit_details() {
         let error = DiagnosticError::from_parser_error(cutout_core::ParserError::Timeout {
-            elapsed_ms: ms(1_234),
-            timeout_ms: ms(5_000),
+            elapsed: cutout_core::Duration::from_milliseconds(1_234),
+            timeout: cutout_core::Duration::from_milliseconds(5_000),
         });
 
         let line = render_diagnostic_error_jsonl(JsonSequence::new(3), error)
@@ -3863,8 +3876,8 @@ mod tests {
         assert_eq!(value["kind"], "timeout");
         assert_eq!(value["claimed_len"], serde_json::Value::Null);
         assert_eq!(value["max_len"], serde_json::Value::Null);
-        assert_eq!(value["elapsed_ms"], 1_234);
-        assert_eq!(value["timeout_ms"], 5_000);
+        assert_eq!(value["elapsed"], 1_234);
+        assert_eq!(value["timeout"], 5_000);
     }
 
     #[test]

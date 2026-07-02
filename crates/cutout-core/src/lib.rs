@@ -194,6 +194,10 @@ mod tests {
         MonotonicTimestamp::new(value)
     }
 
+    const fn duration_ms(value: u64) -> Duration {
+        Duration::from_milliseconds(value)
+    }
+
     const fn dropped_bytes(value: u64) -> crate::ParserDroppedBytes {
         crate::ParserDroppedBytes::from_bytes(value)
     }
@@ -2481,8 +2485,8 @@ mod tests {
         });
         diagnostics.record_error(crate::ParserError::MalformedFrame);
         diagnostics.record_error(crate::ParserError::Timeout {
-            elapsed_ms: ms(1_500),
-            timeout_ms: ms(1_000),
+            elapsed: duration_ms(1_500),
+            timeout: duration_ms(1_000),
         });
         diagnostics.record_error(crate::ParserError::UnmatchedReply);
 
@@ -2513,8 +2517,8 @@ mod tests {
     #[test]
     fn diagnostic_error_can_be_emitted_as_device_event() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
-            elapsed_ms: ms(1_500),
-            timeout_ms: ms(1_000),
+            elapsed: duration_ms(1_500),
+            timeout: duration_ms(1_000),
         });
 
         assert_eq!(
@@ -2523,8 +2527,8 @@ mod tests {
                 kind: crate::DiagnosticErrorKind::Timeout,
                 claimed_len: None,
                 max_len: None,
-                elapsed_ms: Some(ms(1_500)),
-                timeout_ms: Some(ms(1_000)),
+                elapsed: Some(duration_ms(1_500)),
+                timeout: Some(duration_ms(1_000)),
             })
         );
     }
@@ -2568,8 +2572,8 @@ mod tests {
                 kind: crate::DiagnosticErrorKind::OversizedFrame,
                 claimed_len: Some(frame_len(4_097)),
                 max_len: Some(frame_len(4_096)),
-                elapsed_ms: None,
-                timeout_ms: None,
+                elapsed: None,
+                timeout: None,
             }
         );
     }
@@ -2577,8 +2581,8 @@ mod tests {
     #[test]
     fn diagnostic_error_preserves_timeout_details() {
         let error = crate::DiagnosticError::from_parser_error(crate::ParserError::Timeout {
-            elapsed_ms: ms(1_500),
-            timeout_ms: ms(1_000),
+            elapsed: duration_ms(1_500),
+            timeout: duration_ms(1_000),
         });
 
         assert_eq!(
@@ -2587,8 +2591,8 @@ mod tests {
                 kind: crate::DiagnosticErrorKind::Timeout,
                 claimed_len: None,
                 max_len: None,
-                elapsed_ms: Some(ms(1_500)),
-                timeout_ms: Some(ms(1_000)),
+                elapsed: Some(duration_ms(1_500)),
+                timeout: Some(duration_ms(1_000)),
             }
         );
     }
@@ -3679,6 +3683,7 @@ mod tests {
     fn replay_events(records: &[crate::CaptureRecord]) -> Vec<DeviceEvent> {
         let mut host = crate::HostSession::new(FramedCaptureSession::default());
         crate::replay_capture(&mut host, records)
+            .expect("test replay output fits")
             .into_iter()
             .filter_map(|output| match output {
                 SessionOutput::Event(event) => Some(event),
@@ -3834,13 +3839,13 @@ mod tests {
 
         assert_eq!(
             comparison,
-            crate::ReplayChunkComparison {
+            Ok(crate::ReplayChunkComparison {
                 whole_semantic_events: crate::SemanticEventCount::from_events(1),
                 one_byte_semantic_events: crate::SemanticEventCount::from_events(1),
                 arbitrary_semantic_events: crate::SemanticEventCount::from_events(1),
                 one_byte_matches: true,
                 arbitrary_matches: true,
-            }
+            })
         );
     }
 
@@ -3863,12 +3868,14 @@ mod tests {
                 else {
                     return Ok(());
                 };
+                let len =
+                    i32::try_from(bytes.len()).map_err(|_| crate::SessionOutputError::Full {
+                        capacity: crate::SessionOutputCapacity::new(usize::MAX),
+                    })?;
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
                         at_ms: monotonic_ms,
-                        speed: Some(Measured::reported(Speed::from_millimetres_per_second(
-                            i32::try_from(bytes.len()).unwrap_or(0),
-                        ))),
+                        speed: Some(Measured::reported(Speed::from_millimetres_per_second(len))),
                         ..TelemetryDelta::empty(monotonic_ms)
                     },
                 )))
@@ -3891,6 +3898,7 @@ mod tests {
             ],
         );
 
+        let comparison = comparison.expect("test replay output fits");
         assert!(!comparison.one_byte_matches);
         assert!(!comparison.arbitrary_matches);
     }
@@ -4020,7 +4028,9 @@ mod tests {
         let mut host = crate::HostSession::new(FramedCaptureSession::default());
 
         assert_eq!(
-            crate::replay_capture(&mut host, &records).as_slice(),
+            crate::replay_capture(&mut host, &records)
+                .expect("test replay output fits")
+                .as_slice(),
             &[
                 SessionOutput::Event(DeviceEvent::Tick {
                     monotonic_ms: ms(1)

@@ -3,10 +3,10 @@
 use std::{fmt, marker::PhantomData};
 
 use crate::{
-    Count, DeviceEvent, GattChannel, Information, MonotonicTimestamp, NotificationChunkByte,
-    NotificationPayloadByte, ParserBufferByte, ParserDiagnosticEvent, ParserDroppedByte,
-    ParserFrameByte, ParserQueuedOutput, PayloadBodyByte, ProtocolFamily, Quantity, SemanticEvent,
-    VerificationStatus,
+    Count, DeviceEvent, Duration, GattChannel, Information, MonotonicTimestamp,
+    NotificationChunkByte, NotificationPayloadByte, ParserBufferByte, ParserDiagnosticEvent,
+    ParserDroppedByte, ParserFrameByte, ParserQueuedOutput, PayloadBodyByte, ProtocolFamily,
+    Quantity, SemanticEvent, VerificationStatus,
 };
 
 /// Transport-independent parser resource limits.
@@ -21,8 +21,8 @@ pub struct ParserLimits {
     /// Maximum queued outputs a parser should retain before yielding to host code.
     pub max_queued_outputs: ParserQueuedOutputCount,
 
-    /// Parser timeout threshold in host monotonic milliseconds.
-    pub timeout_ms: MonotonicTimestamp,
+    /// Parser timeout threshold.
+    pub timeout: Duration,
 }
 
 impl Default for ParserLimits {
@@ -31,7 +31,7 @@ impl Default for ParserLimits {
             max_frame_len: ParserFrameLen::from_bytes(4_096),
             max_buffered_len: ParserBufferedLen::from_bytes(8_192),
             max_queued_outputs: ParserQueuedOutputCount::from_outputs(128),
-            timeout_ms: MonotonicTimestamp::new(1_000),
+            timeout: Duration::from_seconds(1),
         }
     }
 }
@@ -207,11 +207,11 @@ pub enum ParserError {
 
     /// A parser deadline elapsed before the expected data arrived.
     Timeout {
-        /// Elapsed monotonic milliseconds.
-        elapsed_ms: MonotonicTimestamp,
+        /// Elapsed time.
+        elapsed: Duration,
 
-        /// Timeout threshold in monotonic milliseconds.
-        timeout_ms: MonotonicTimestamp,
+        /// Timeout threshold.
+        timeout: Duration,
     },
 
     /// A reply could not be matched to an in-flight request.
@@ -378,11 +378,11 @@ pub struct DiagnosticError {
     /// Configured maximum frame length for oversized-frame errors.
     pub max_len: Option<ParserFrameLen>,
 
-    /// Elapsed monotonic milliseconds for timeout errors.
-    pub elapsed_ms: Option<MonotonicTimestamp>,
+    /// Elapsed time for timeout errors.
+    pub elapsed: Option<Duration>,
 
-    /// Timeout threshold in monotonic milliseconds for timeout errors.
-    pub timeout_ms: Option<MonotonicTimestamp>,
+    /// Timeout threshold for timeout errors.
+    pub timeout: Option<Duration>,
 }
 
 impl DiagnosticError {
@@ -394,22 +394,19 @@ impl DiagnosticError {
                 kind: DiagnosticErrorKind::OversizedFrame,
                 claimed_len: Some(claimed),
                 max_len: Some(max),
-                elapsed_ms: None,
-                timeout_ms: None,
+                elapsed: None,
+                timeout: None,
             },
             ParserError::BadChecksum => Self::without_details(DiagnosticErrorKind::BadChecksum),
             ParserError::MalformedFrame => {
                 Self::without_details(DiagnosticErrorKind::MalformedFrame)
             }
-            ParserError::Timeout {
-                elapsed_ms,
-                timeout_ms,
-            } => Self {
+            ParserError::Timeout { elapsed, timeout } => Self {
                 kind: DiagnosticErrorKind::Timeout,
                 claimed_len: None,
                 max_len: None,
-                elapsed_ms: Some(elapsed_ms),
-                timeout_ms: Some(timeout_ms),
+                elapsed: Some(elapsed),
+                timeout: Some(timeout),
             },
             ParserError::UnmatchedReply => {
                 Self::without_details(DiagnosticErrorKind::UnmatchedReply)
@@ -422,8 +419,8 @@ impl DiagnosticError {
             kind,
             claimed_len: None,
             max_len: None,
-            elapsed_ms: None,
-            timeout_ms: None,
+            elapsed: None,
+            timeout: None,
         }
     }
 }

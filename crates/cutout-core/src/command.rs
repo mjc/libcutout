@@ -224,7 +224,8 @@ impl DangerousActuationPolicy {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
         if let DeviceCommand::SetRawMotorCurrent { current } = command
-            && current.as_milliamps().saturating_abs() > self.max_current.as_milliamps()
+            && current.as_milliamps().saturating_abs()
+                > self.max_current.as_milliamps().saturating_abs()
         {
             return Err(DangerousActuationRefusal::CurrentLimitExceeded);
         }

@@ -1696,6 +1696,7 @@ impl CommandSet {
 
 impl CommandKind {
     const fn bit(self) -> u16 {
+        assert!((self as u32) < u16::BITS);
         1 << (self as u16)
     }
 }
