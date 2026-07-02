@@ -2,6 +2,25 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveSpeedSessionCoreTests: XCTestCase {
+    func testSessionErrorWrapsNewRustInputAndBufferFailures() {
+        XCTAssertEqual(
+            CutoutSessionError(
+                MobileSessionStepErrorDto(kind: .invalidInput, command: nil, reason: "bad uuid")
+            ),
+            .unexpectedStepError("bad uuid")
+        )
+        XCTAssertEqual(
+            CutoutSessionError(
+                MobileSessionStepErrorDto(
+                    kind: .outputBufferFull,
+                    command: nil,
+                    reason: "session output capacity exceeded"
+                )
+            ),
+            .unexpectedStepError("session output capacity exceeded")
+        )
+    }
+
     func testObservedAdvertisementsUpdatePickerScanState() {
         let core = LiveSpeedSessionCore()
         var observedStates: [DevicePickerScanState] = []
@@ -69,6 +88,29 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(core.scanState.rows.map(\.id), ["ios-local-falcon"])
         XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["Begode Falcon"])
+    }
+
+    func testSyntheticLifecycleStepsCoverConnectDiscoverSubscribeRecords() {
+        let core = LiveSpeedSessionCore()
+        var phases: [LiveSpeedConnectionPhase] = []
+        core.onPhaseChange = { phases.append($0) }
+
+        core.applyLifecycleStep(
+            .connecting(model: .falcon, platformIdentifier: "ios-local-falcon")
+        )
+        core.applyLifecycleStep(.discoveringServices(["FFE0", "FFF0"]))
+        core.applyLifecycleStep(.subscribing(["FFE1"]))
+
+        XCTAssertEqual(phases, [.connecting(model: .falcon), .discoveringServices, .subscribing])
+        XCTAssertEqual(core.phase, .subscribing)
+        XCTAssertEqual(
+            core.records,
+            [
+                "connect_model=Falcon platform_identifier=ios-local-falcon",
+                "services=FFE0,FFF0",
+                "subscribe_channels=FFE1",
+            ]
+        )
     }
 
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {

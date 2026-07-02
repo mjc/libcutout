@@ -1,6 +1,12 @@
 import CoreBluetooth
 import Foundation
 
+public enum LiveSpeedSessionLifecycleStep: Equatable, Sendable {
+    case connecting(model: ElectricUnicycleModel, platformIdentifier: String)
+    case discoveringServices([String])
+    case subscribing([String])
+}
+
 public final class LiveSpeedSessionCore: NSObject {
     public private(set) var displayState = LiveSpeedDisplayState()
     public private(set) var phase = LiveSpeedConnectionPhase.starting
@@ -53,6 +59,21 @@ public final class LiveSpeedSessionCore: NSObject {
         }
         connect(to: peripheral, using: advertisement, model: model)
         return true
+    }
+
+    public func applyLifecycleStep(_ step: LiveSpeedSessionLifecycleStep) {
+        switch step {
+        case let .connecting(model, platformIdentifier):
+            selectedModel = model
+            setPhase(.connecting(model: model))
+            record("connect_model=\(model.displayName) platform_identifier=\(platformIdentifier)")
+        case let .discoveringServices(services):
+            setPhase(.discoveringServices)
+            record("services=\(services.joined(separator: ","))")
+        case let .subscribing(channels):
+            setPhase(.subscribing)
+            record("subscribe_channels=\(channels.joined(separator: ","))")
+        }
     }
 
     public func disconnectAndScan() {

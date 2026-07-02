@@ -757,8 +757,10 @@ public enum CutoutSessionError: Error, Equatable, Sendable {
     case unsupportedFalconProfile
     case unexpectedStepError(String?)
 
-    fileprivate init(_ dto: MobileSessionStepErrorDto) {
+    init(_ dto: MobileSessionStepErrorDto) {
         switch dto.kind {
+        case .invalidInput, .outputBufferFull:
+            self = .unexpectedStepError(dto.reason)
         case .commandRefused:
             self = .commandRefused(dto.command.map(DeviceCommand.init), dto.reason)
         case .unsupportedFalconProfile:
