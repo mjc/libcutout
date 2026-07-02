@@ -24,6 +24,8 @@ pub use begode_banner::{
     BegodeBanner, BegodeBannerParse, BegodeFirmwarePrefix, BegodeImuKind,
     classify_begode_ascii_banner, parse_begode_ascii_banner,
 };
+mod begode_session;
+pub use begode_session::{BegodeFalconModel, BegodeNotificationDecoder};
 mod begode_telemetry;
 pub use begode_telemetry::{
     BEGODE_FALCON_TARGET_VOLTAGE_PROFILE, BEGODE_FIELD_ALERT_FLAGS,
@@ -80,12 +82,11 @@ pub use request_encoder::{
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;
 pub use session::{
-    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
-    DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
-    ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
-    ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
-    SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
-    SupportsSettingsWrites, VeteranNotificationDecoder,
+    BenignControlOperation, DangerousActuationOperation, Manufacturer, NoopNotificationDecoder,
+    NosfetAeroModel, ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec,
+    ReadOnlyNotificationDecoder, ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec,
+    SettingsWriteOperation, SupportsBenignControls, SupportsDangerousActuation,
+    SupportsReadRequests, SupportsSettingsWrites, VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
     GearRatioDenominator, MotorPolePairs, VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN,
