@@ -392,7 +392,7 @@ extension PreviewScreenCatalogTests {
         XCTAssertEqual(snapshot.topology.bmsCount, 2)
         XCTAssertEqual(snapshot.energyPercent?.value, 72)
         XCTAssertEqual(snapshot.voltage?.value, 81_600)
-        XCTAssertEqual(snapshot.cellDeltaMillivolts?.value, 18)
+        XCTAssertEqual(snapshot.cellDelta?.value, 18)
         XCTAssertEqual(snapshot.lowestGroupIndex, 17)
         XCTAssertEqual(snapshot.balancingSummary, "idle • top groups only")
         XCTAssertEqual(snapshot.faultSummary, "no active faults")

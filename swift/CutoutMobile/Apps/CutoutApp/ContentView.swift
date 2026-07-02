@@ -1657,7 +1657,7 @@ private struct BmsOverviewLayout: View {
                 )
                 BmsMetricCard(
                     title: "cell delta",
-                    value: millivoltsText(snapshot.cellDeltaMillivolts),
+                    value: millivoltsText(snapshot.cellDelta),
                     unit: "mV",
                     detail: "balanced enough",
                     accent: .green,

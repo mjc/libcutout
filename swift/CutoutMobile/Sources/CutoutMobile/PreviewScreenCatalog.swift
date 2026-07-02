@@ -542,7 +542,7 @@ public struct PreviewScreenCatalog: Equatable, Hashable, Sendable {
         ),
         energyPercent: .fixture(value: 72),
         voltage: .fixture(value: 81_600),
-        cellDeltaMillivolts: .fixture(value: 18),
+        cellDelta: .fixture(value: 18),
         lowestGroupIndex: 17,
         highestTemperature: .fixture(value: 37_800),
         highestTemperatureLabel: "right pack",
@@ -568,7 +568,7 @@ public struct PreviewScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 12),
+        cellDelta: .fixture(value: 12),
         groups: [
             BmsGroupSnapshot(index: 1, voltage: .fixture(value: 4_104), alertLevel: .nominal),
             BmsGroupSnapshot(index: 2, voltage: .fixture(value: 4_101), alertLevel: .nominal),
@@ -588,7 +588,7 @@ public struct PreviewScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 18),
+        cellDelta: .fixture(value: 18),
         highestTemperature: .fixture(value: 31_000),
         highestTemperatureLabel: "group 31",
         groups: (1...40).map { index in
@@ -611,7 +611,7 @@ public struct PreviewScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 2,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 18),
+        cellDelta: .fixture(value: 18),
         groups: (1...20).map { index in
             BmsGroupSnapshot(
                 index: index,

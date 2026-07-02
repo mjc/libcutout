@@ -15,7 +15,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             energyPercent: TelemetryReading.fixture(value: 72),
             voltage: TelemetryReading.fixture(value: 81_600),
             current: TelemetryReading.fixture(value: -12_400),
-            cellDeltaMillivolts: TelemetryReading.fixture(value: 18),
+            cellDelta: TelemetryReading.fixture(value: 18),
             lowestGroupIndex: 17,
             highestTemperature: TelemetryReading.fixture(value: 37_800),
             highestTemperatureLabel: "right pack",

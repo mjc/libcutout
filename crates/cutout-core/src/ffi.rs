@@ -50,6 +50,21 @@ impl MonotonicMillisDto {
     }
 }
 
+/// UniFFI-ready duration in milliseconds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurationMillisDto {
+    /// Milliseconds.
+    pub milliseconds: u64,
+}
+
+impl DurationMillisDto {
+    fn from_core(value: crate::Duration) -> Self {
+        Self {
+            milliseconds: value.as_milliseconds(),
+        }
+    }
+}
+
 /// UniFFI-ready notification payload length.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NotificationByteLenDto {
@@ -506,41 +521,112 @@ impl From<ChargeMode> for ChargeModeDto {
     }
 }
 
-/// UniFFI-ready measured i32 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MeasuredI32Dto {
-    /// Fixed-unit value.
-    pub value: i32,
-
-    /// Value source.
-    pub source: ValueSourceDto,
-
-    /// Value quality.
-    pub quality: ValueQualityDto,
-
-    /// Value verification status.
-    pub verification: VerificationStatusDto,
-}
-
-impl From<Measured<i32>> for MeasuredI32Dto {
-    fn from(measured: Measured<i32>) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
+macro_rules! ffi_quantity_value {
+    ($name:ident, $inner:ty, $field:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub struct $name {
+            /// Stored value.
+            pub $field: $inner,
         }
-    }
+    };
 }
 
-impl MeasuredI32Dto {
+macro_rules! ffi_measured_quantity {
+    ($name:ident, $value:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub struct $name {
+            /// Measured value.
+            pub value: $value,
+
+            /// Value source.
+            pub source: ValueSourceDto,
+
+            /// Value quality.
+            pub quality: ValueQualityDto,
+
+            /// Value verification status.
+            pub verification: VerificationStatusDto,
+        }
+
+        impl $name {
+            fn from_parts(
+                value: $value,
+                source: ValueSource,
+                quality: ValueQuality,
+                verification: VerificationStatus,
+            ) -> Self {
+                Self {
+                    value,
+                    source: source.into(),
+                    quality: quality.into(),
+                    verification: verification.into(),
+                }
+            }
+        }
+    };
+}
+
+ffi_quantity_value!(MillivoltsDto, i32, millivolts, "Voltage in millivolts.");
+ffi_quantity_value!(MilliampsDto, i32, milliamps, "Current in milliamps.");
+ffi_quantity_value!(MilliwattsDto, i64, milliwatts, "Power in milliwatts.");
+ffi_quantity_value!(
+    MillimetresPerSecondDto,
+    i32,
+    millimetres_per_second,
+    "Speed in millimetres per second."
+);
+ffi_quantity_value!(
+    MillicelsiusDto,
+    i32,
+    millicelsius,
+    "Temperature in millicelsius."
+);
+ffi_quantity_value!(PermilleDto, i16, permille, "Ratio in permille.");
+ffi_quantity_value!(MillimetresDto, u64, millimetres, "Distance in millimetres.");
+ffi_quantity_value!(MillidegreesDto, i32, millidegrees, "Angle in millidegrees.");
+ffi_quantity_value!(PercentDto, u8, percent, "Percent in the range 0..=100.");
+ffi_quantity_value!(
+    VersionComponentDto,
+    u16,
+    component,
+    "Version number component."
+);
+
+ffi_measured_quantity!(MeasuredVoltageDto, MillivoltsDto, "Measured voltage.");
+ffi_measured_quantity!(MeasuredCurrentDto, MilliampsDto, "Measured current.");
+ffi_measured_quantity!(MeasuredPowerDto, MilliwattsDto, "Measured power.");
+ffi_measured_quantity!(MeasuredSpeedDto, MillimetresPerSecondDto, "Measured speed.");
+ffi_measured_quantity!(
+    MeasuredTemperatureDto,
+    MillicelsiusDto,
+    "Measured temperature."
+);
+ffi_measured_quantity!(MeasuredDutyCycleDto, PermilleDto, "Measured duty cycle.");
+ffi_measured_quantity!(MeasuredDistanceDto, MillimetresDto, "Measured distance.");
+ffi_measured_quantity!(MeasuredAngleDto, MillidegreesDto, "Measured angle.");
+ffi_measured_quantity!(
+    MeasuredBatteryLevelDto,
+    PercentDto,
+    "Measured battery level."
+);
+ffi_measured_quantity!(
+    MeasuredVersionComponentDto,
+    VersionComponentDto,
+    "Measured version component."
+);
+
+impl MeasuredCurrentDto {
     fn from_bms_pack_current(current: BatteryCurrent, currents: BmsPackCurrents) -> Self {
-        Self {
-            value: current.as_milliamps(),
-            source: currents.source.into(),
-            quality: currents.quality.into(),
-            verification: currents.verification.into(),
-        }
+        Self::from_parts(
+            MilliampsDto {
+                milliamps: current.as_milliamps(),
+            },
+            currents.source,
+            currents.quality,
+            currents.verification,
+        )
     }
 }
 
@@ -571,198 +657,146 @@ impl From<Measured<ChargeMode>> for MeasuredChargeModeDto {
     }
 }
 
-/// UniFFI-ready measured i64 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MeasuredI64Dto {
-    /// Fixed-unit value.
-    pub value: i64,
-
-    /// Value source.
-    pub source: ValueSourceDto,
-
-    /// Value quality.
-    pub quality: ValueQualityDto,
-
-    /// Value verification status.
-    pub verification: VerificationStatusDto,
-}
-
-impl From<Measured<i64>> for MeasuredI64Dto {
-    fn from(measured: Measured<i64>) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-/// UniFFI-ready measured i16 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MeasuredI16Dto {
-    /// Fixed-unit value.
-    pub value: i16,
-
-    /// Value source.
-    pub source: ValueSourceDto,
-
-    /// Value quality.
-    pub quality: ValueQualityDto,
-
-    /// Value verification status.
-    pub verification: VerificationStatusDto,
-}
-
-impl From<Measured<i16>> for MeasuredI16Dto {
-    fn from(measured: Measured<i16>) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-/// UniFFI-ready measured u8 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MeasuredU8Dto {
-    /// Fixed-unit value.
-    pub value: u8,
-
-    /// Value source.
-    pub source: ValueSourceDto,
-
-    /// Value quality.
-    pub quality: ValueQualityDto,
-
-    /// Value verification status.
-    pub verification: VerificationStatusDto,
-}
-
-impl From<Measured<u8>> for MeasuredU8Dto {
-    fn from(measured: Measured<u8>) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-/// UniFFI-ready measured u16 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MeasuredU16Dto {
-    /// Fixed-unit value.
-    pub value: u16,
-
-    /// Value source.
-    pub source: ValueSourceDto,
-
-    /// Value quality.
-    pub quality: ValueQualityDto,
-
-    /// Value verification status.
-    pub verification: VerificationStatusDto,
-}
-
-impl From<Measured<u16>> for MeasuredU16Dto {
-    fn from(measured: Measured<u16>) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-impl From<Measured<Voltage>> for MeasuredI32Dto {
+impl From<Measured<Voltage>> for MeasuredVoltageDto {
     fn from(measured: Measured<Voltage>) -> Self {
-        Self::from(measured.map_value(Voltage::as_millivolts))
+        Self::from_parts(
+            MillivoltsDto {
+                millivolts: measured.value.as_millivolts(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<BatteryCurrent>> for MeasuredI32Dto {
+impl From<Measured<BatteryCurrent>> for MeasuredCurrentDto {
     fn from(measured: Measured<BatteryCurrent>) -> Self {
-        Self::from(measured.map_value(BatteryCurrent::as_milliamps))
+        Self::from_parts(
+            MilliampsDto {
+                milliamps: measured.value.as_milliamps(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<PhaseCurrent>> for MeasuredI32Dto {
+impl From<Measured<PhaseCurrent>> for MeasuredCurrentDto {
     fn from(measured: Measured<PhaseCurrent>) -> Self {
-        Self::from(measured.map_value(PhaseCurrent::as_milliamps))
+        Self::from_parts(
+            MilliampsDto {
+                milliamps: measured.value.as_milliamps(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<Power>> for MeasuredI64Dto {
+impl From<Measured<Power>> for MeasuredPowerDto {
     fn from(measured: Measured<Power>) -> Self {
-        Self::from(measured.map_value(Power::as_milliwatts))
+        Self::from_parts(
+            MilliwattsDto {
+                milliwatts: measured.value.as_milliwatts(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<Speed>> for MeasuredI32Dto {
+impl From<Measured<Speed>> for MeasuredSpeedDto {
     fn from(measured: Measured<Speed>) -> Self {
-        Self::from(measured.map_value(Speed::as_millimetres_per_second))
+        Self::from_parts(
+            MillimetresPerSecondDto {
+                millimetres_per_second: measured.value.as_millimetres_per_second(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<Temperature>> for MeasuredI32Dto {
+impl From<Measured<Temperature>> for MeasuredTemperatureDto {
     fn from(measured: Measured<Temperature>) -> Self {
-        Self::from(measured.map_value(Temperature::as_millicelsius))
+        Self::from_parts(
+            MillicelsiusDto {
+                millicelsius: measured.value.as_millicelsius(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<DutyCycle>> for MeasuredI16Dto {
+impl From<Measured<DutyCycle>> for MeasuredDutyCycleDto {
     fn from(measured: Measured<DutyCycle>) -> Self {
-        Self::from(measured.map_value(DutyCycle::as_permille))
+        Self::from_parts(
+            PermilleDto {
+                permille: measured.value.as_permille(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<Distance>> for MeasuredU64Dto {
+impl From<Measured<Distance>> for MeasuredDistanceDto {
     fn from(measured: Measured<Distance>) -> Self {
-        Self::from(measured.map_value(Distance::as_millimetres))
+        Self::from_parts(
+            MillimetresDto {
+                millimetres: measured.value.as_millimetres(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<Angle>> for MeasuredI32Dto {
+impl From<Measured<Angle>> for MeasuredAngleDto {
     fn from(measured: Measured<Angle>) -> Self {
-        Self::from(measured.map_value(Angle::as_millidegrees))
+        Self::from_parts(
+            MillidegreesDto {
+                millidegrees: measured.value.as_millidegrees(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-impl From<Measured<BatteryLevel>> for MeasuredU8Dto {
+impl From<Measured<BatteryLevel>> for MeasuredBatteryLevelDto {
     fn from(measured: Measured<BatteryLevel>) -> Self {
-        Self::from(measured.map_value(BatteryLevel::as_percent))
+        Self::from_parts(
+            PercentDto {
+                percent: measured.value.as_percent(),
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
-/// UniFFI-ready measured u64 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MeasuredU64Dto {
-    /// Fixed-unit value.
-    pub value: u64,
-
-    /// Value source.
-    pub source: ValueSourceDto,
-
-    /// Value quality.
-    pub quality: ValueQualityDto,
-
-    /// Value verification status.
-    pub verification: VerificationStatusDto,
-}
-
-impl From<Measured<u64>> for MeasuredU64Dto {
-    fn from(measured: Measured<u64>) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
+impl From<Measured<u16>> for MeasuredVersionComponentDto {
+    fn from(measured: Measured<u16>) -> Self {
+        Self::from_parts(
+            VersionComponentDto {
+                component: measured.value,
+            },
+            measured.source,
+            measured.quality,
+            measured.verification,
+        )
     }
 }
 
@@ -815,28 +849,28 @@ pub struct BatteryInfoDto {
     pub page: BatteryPageMetadataDto,
 
     /// Pack or input voltage in millivolts.
-    pub voltage: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredVoltageDto>,
 
     /// Pack or battery current in milliamps.
-    pub current: Option<MeasuredI32Dto>,
+    pub current: Option<MeasuredCurrentDto>,
 
     /// First page-specific BMS pack current in milliamps.
-    pub bms_pack_current_0: Option<MeasuredI32Dto>,
+    pub bms_pack_current_0: Option<MeasuredCurrentDto>,
 
     /// Second page-specific BMS pack current in milliamps.
-    pub bms_pack_current_1: Option<MeasuredI32Dto>,
+    pub bms_pack_current_1: Option<MeasuredCurrentDto>,
 
     /// Battery level reported by the device.
-    pub level_reported: Option<MeasuredU8Dto>,
+    pub level_reported: Option<MeasuredBatteryLevelDto>,
 
     /// Battery level estimated by Cutout.
-    pub level_estimated: Option<MeasuredU8Dto>,
+    pub level_estimated: Option<MeasuredBatteryLevelDto>,
 
     /// Battery or BMS temperature in millicelsius.
-    pub temperature: Option<MeasuredI32Dto>,
+    pub temperature: Option<MeasuredTemperatureDto>,
 
     /// Page-specific BMS temperature values in millicelsius.
-    pub temperatures: Vec<Option<MeasuredI32Dto>>,
+    pub temperatures: Vec<Option<MeasuredTemperatureDto>>,
 
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
@@ -848,7 +882,18 @@ impl From<BatteryPagePayload> for BatteryInfoDto {
         let temperatures = payload
             .temperatures()
             .into_iter()
-            .map(|measured| measured.map(Into::into))
+            .map(|measured| {
+                measured.map(|measured| {
+                    MeasuredTemperatureDto::from_parts(
+                        MillicelsiusDto {
+                            millicelsius: measured.value,
+                        },
+                        measured.source,
+                        measured.quality,
+                        measured.verification,
+                    )
+                })
+            })
             .collect();
         Self::from_payload_parts(
             payload.page(),
@@ -864,17 +909,17 @@ impl BatteryInfoDto {
         page: BatteryPageMetadata,
         battery: BatteryInfo,
         bms_pack_currents: Option<BmsPackCurrents>,
-        temperatures: Vec<Option<MeasuredI32Dto>>,
+        temperatures: Vec<Option<MeasuredTemperatureDto>>,
     ) -> Self {
         Self {
             page: page.into(),
             voltage: battery.voltage.map(Into::into),
             current: battery.current.map(Into::into),
             bms_pack_current_0: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_0(), currents)
+                MeasuredCurrentDto::from_bms_pack_current(currents.current_0(), currents)
             }),
             bms_pack_current_1: bms_pack_currents.map(|currents| {
-                MeasuredI32Dto::from_bms_pack_current(currents.current_1(), currents)
+                MeasuredCurrentDto::from_bms_pack_current(currents.current_1(), currents)
             }),
             level_reported: battery.level_reported.map(Into::into),
             level_estimated: battery.level_estimated.map(Into::into),
@@ -889,16 +934,16 @@ impl BatteryInfoDto {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FirmwareInfoDto {
     /// Protocol version, when reported.
-    pub protocol_version: Option<MeasuredU16Dto>,
+    pub protocol_version: Option<MeasuredVersionComponentDto>,
 
     /// Firmware major version, when reported.
-    pub firmware_major: Option<MeasuredU16Dto>,
+    pub firmware_major: Option<MeasuredVersionComponentDto>,
 
     /// Firmware minor version, when reported.
-    pub firmware_minor: Option<MeasuredU16Dto>,
+    pub firmware_minor: Option<MeasuredVersionComponentDto>,
 
     /// Firmware patch version, when reported.
-    pub firmware_patch: Option<MeasuredU16Dto>,
+    pub firmware_patch: Option<MeasuredVersionComponentDto>,
 
     /// Raw build identifier, when present.
     pub build_id: Option<RawFieldValueDto>,
@@ -1292,11 +1337,11 @@ pub enum ParserErrorDto {
 
     /// A parser deadline elapsed before the expected data arrived.
     Timeout {
-        /// Elapsed monotonic milliseconds.
-        elapsed_ms: MonotonicMillisDto,
+        /// Elapsed time.
+        elapsed: DurationMillisDto,
 
-        /// Timeout threshold in monotonic milliseconds.
-        timeout_ms: MonotonicMillisDto,
+        /// Timeout threshold.
+        timeout: DurationMillisDto,
     },
 
     /// A reply could not be matched to an in-flight request.
@@ -1312,12 +1357,9 @@ impl From<ParserError> for ParserErrorDto {
             },
             ParserError::BadChecksum => Self::BadChecksum,
             ParserError::MalformedFrame => Self::MalformedFrame,
-            ParserError::Timeout {
-                elapsed_ms,
-                timeout_ms,
-            } => Self::Timeout {
-                elapsed_ms: MonotonicMillisDto::from_core(elapsed_ms),
-                timeout_ms: MonotonicMillisDto::from_core(timeout_ms),
+            ParserError::Timeout { elapsed, timeout } => Self::Timeout {
+                elapsed: DurationMillisDto::from_core(elapsed),
+                timeout: DurationMillisDto::from_core(timeout),
             },
             ParserError::UnmatchedReply => Self::UnmatchedReply,
         }
@@ -1508,46 +1550,46 @@ pub struct TelemetryDeltaDto {
     pub at_ms: MonotonicMillisDto,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed: Option<MeasuredI32Dto>,
+    pub speed: Option<MeasuredSpeedDto>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredVoltageDto>,
 
     /// Battery/input current in milliamps.
-    pub battery_current: Option<MeasuredI32Dto>,
+    pub battery_current: Option<MeasuredCurrentDto>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current: Option<MeasuredI32Dto>,
+    pub motor_current: Option<MeasuredCurrentDto>,
 
     /// Electrical power in milliwatts.
-    pub power: Option<MeasuredI64Dto>,
+    pub power: Option<MeasuredPowerDto>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature: Option<MeasuredI32Dto>,
+    pub controller_temperature: Option<MeasuredTemperatureDto>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature: Option<MeasuredI32Dto>,
+    pub motor_temperature: Option<MeasuredTemperatureDto>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature: Option<MeasuredI32Dto>,
+    pub battery_temperature: Option<MeasuredTemperatureDto>,
 
     /// PWM duty in permille.
-    pub pwm: Option<MeasuredI16Dto>,
+    pub pwm: Option<MeasuredDutyCycleDto>,
 
     /// Total or trip distance in millimeters.
-    pub distance: Option<MeasuredU64Dto>,
+    pub distance: Option<MeasuredDistanceDto>,
 
     /// Pitch in millidegrees.
-    pub pitch: Option<MeasuredI32Dto>,
+    pub pitch: Option<MeasuredAngleDto>,
 
     /// Roll in millidegrees.
-    pub roll: Option<MeasuredI32Dto>,
+    pub roll: Option<MeasuredAngleDto>,
 
     /// Battery level reported by the device.
-    pub battery_level_reported: Option<MeasuredU8Dto>,
+    pub battery_level_reported: Option<MeasuredBatteryLevelDto>,
 
     /// Battery level estimated by Cutout.
-    pub battery_level_estimated: Option<MeasuredU8Dto>,
+    pub battery_level_estimated: Option<MeasuredBatteryLevelDto>,
 }
 
 impl From<TelemetryDelta> for TelemetryDeltaDto {
@@ -1579,46 +1621,46 @@ pub struct TelemetrySnapshotDto {
     pub at_ms: Option<MonotonicMillisDto>,
 
     /// Reported or calculated speed in millimeters per second.
-    pub speed: Option<MeasuredI32Dto>,
+    pub speed: Option<MeasuredSpeedDto>,
 
     /// Reported or measured input voltage in millivolts.
-    pub voltage: Option<MeasuredI32Dto>,
+    pub voltage: Option<MeasuredVoltageDto>,
 
     /// Battery/input current in milliamps.
-    pub battery_current: Option<MeasuredI32Dto>,
+    pub battery_current: Option<MeasuredCurrentDto>,
 
     /// Motor/phase current in milliamps.
-    pub motor_current: Option<MeasuredI32Dto>,
+    pub motor_current: Option<MeasuredCurrentDto>,
 
     /// Electrical power in milliwatts.
-    pub power: Option<MeasuredI64Dto>,
+    pub power: Option<MeasuredPowerDto>,
 
     /// Controller temperature in millicelsius.
-    pub controller_temperature: Option<MeasuredI32Dto>,
+    pub controller_temperature: Option<MeasuredTemperatureDto>,
 
     /// Motor temperature in millicelsius.
-    pub motor_temperature: Option<MeasuredI32Dto>,
+    pub motor_temperature: Option<MeasuredTemperatureDto>,
 
     /// Battery temperature in millicelsius.
-    pub battery_temperature: Option<MeasuredI32Dto>,
+    pub battery_temperature: Option<MeasuredTemperatureDto>,
 
     /// PWM duty in permille.
-    pub pwm: Option<MeasuredI16Dto>,
+    pub pwm: Option<MeasuredDutyCycleDto>,
 
     /// Total or trip distance in millimeters.
-    pub distance: Option<MeasuredU64Dto>,
+    pub distance: Option<MeasuredDistanceDto>,
 
     /// Pitch in millidegrees.
-    pub pitch: Option<MeasuredI32Dto>,
+    pub pitch: Option<MeasuredAngleDto>,
 
     /// Roll in millidegrees.
-    pub roll: Option<MeasuredI32Dto>,
+    pub roll: Option<MeasuredAngleDto>,
 
     /// Battery level reported by the device.
-    pub battery_level_reported: Option<MeasuredU8Dto>,
+    pub battery_level_reported: Option<MeasuredBatteryLevelDto>,
 
     /// Battery level estimated by Cutout.
-    pub battery_level_estimated: Option<MeasuredU8Dto>,
+    pub battery_level_estimated: Option<MeasuredBatteryLevelDto>,
 }
 
 impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
@@ -1787,11 +1829,11 @@ pub struct DiagnosticErrorDto {
     /// Configured maximum frame length for oversized-frame errors.
     pub max_len: Option<ParserFrameLenDto>,
 
-    /// Elapsed monotonic milliseconds for timeout errors.
-    pub elapsed_ms: Option<MonotonicMillisDto>,
+    /// Elapsed time for timeout errors.
+    pub elapsed: Option<DurationMillisDto>,
 
-    /// Timeout threshold in monotonic milliseconds for timeout errors.
-    pub timeout_ms: Option<MonotonicMillisDto>,
+    /// Timeout threshold for timeout errors.
+    pub timeout: Option<DurationMillisDto>,
 }
 
 impl From<DiagnosticError> for DiagnosticErrorDto {
@@ -1800,8 +1842,8 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
             kind: error.kind.into(),
             claimed_len: error.claimed_len.map(ParserFrameLenDto::from_core),
             max_len: error.max_len.map(ParserFrameLenDto::from_core),
-            elapsed_ms: error.elapsed_ms.map(MonotonicMillisDto::from_core),
-            timeout_ms: error.timeout_ms.map(MonotonicMillisDto::from_core),
+            elapsed: error.elapsed.map(DurationMillisDto::from_core),
+            timeout: error.timeout.map(DurationMillisDto::from_core),
         }
     }
 }
@@ -1868,22 +1910,25 @@ mod tests {
             battery.page.verification,
             VerificationStatusDto::SourceVerified
         );
-        assert_eq!(battery.voltage.expect("voltage").value, 80_000);
+        assert_eq!(battery.voltage.expect("voltage").value.millivolts, 80_000);
         assert_eq!(battery.current, None);
         assert_eq!(
             battery.bms_pack_current_0.expect("first BMS current").value,
-            -1_230
+            MilliampsDto { milliamps: -1_230 }
         );
         assert_eq!(
             battery
                 .bms_pack_current_1
                 .expect("second BMS current")
                 .value,
-            450
+            MilliampsDto { milliamps: 450 }
         );
-        assert_eq!(battery.level_reported.expect("level").value, 72);
+        assert_eq!(battery.level_reported.expect("level").value.percent, 72);
         assert_eq!(battery.level_estimated, None);
-        assert_eq!(battery.temperature.expect("temperature").value, 25_000);
+        assert_eq!(
+            battery.temperature.expect("temperature").value.millicelsius,
+            25_000
+        );
         assert_eq!(
             battery.raw_state,
             Some(RawFieldValueDto {
@@ -1909,10 +1954,13 @@ mod tests {
         let ReadOnlyResponsePayloadDto::Firmware(firmware) = dto.payload else {
             panic!("expected firmware DTO");
         };
-        assert_eq!(firmware.protocol_version.expect("protocol").value, 2);
-        assert_eq!(firmware.firmware_major.expect("major").value, 43);
+        assert_eq!(
+            firmware.protocol_version.expect("protocol").value.component,
+            2
+        );
+        assert_eq!(firmware.firmware_major.expect("major").value.component, 43);
         assert_eq!(firmware.firmware_minor, None);
-        assert_eq!(firmware.firmware_patch.expect("patch").value, 7);
+        assert_eq!(firmware.firmware_patch.expect("patch").value.component, 7);
         assert_eq!(
             firmware.build_id,
             Some(RawFieldValueDto {
@@ -2123,10 +2171,16 @@ mod tests {
         let dto = TelemetrySnapshotDto::from(snapshot);
 
         assert_eq!(dto.at_ms, Some(ms(42)));
-        assert_eq!(dto.speed.expect("speed").value, 1_200);
-        assert_eq!(dto.voltage.expect("voltage").value, 84_000);
+        assert_eq!(
+            dto.speed.expect("speed").value.millimetres_per_second,
+            1_200
+        );
+        assert_eq!(dto.voltage.expect("voltage").value.millivolts, 84_000);
         assert_eq!(dto.battery_current, None);
-        assert_eq!(dto.motor_current.expect("current").value, -1_500);
-        assert_eq!(dto.battery_level_estimated.expect("level").value, 80);
+        assert_eq!(dto.motor_current.expect("current").value.milliamps, -1_500);
+        assert_eq!(
+            dto.battery_level_estimated.expect("level").value.percent,
+            80
+        );
     }
 }

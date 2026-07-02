@@ -223,54 +223,81 @@ public struct TelemetryReading<Value: Equatable & Hashable & Sendable>: Equatabl
         self.verification = verification
     }
 
-    fileprivate init(_ dto: MobileMeasuredI32Dto) where Value == Int32 {
+    fileprivate init(_ dto: MobileMeasuredVoltageDto) where Value == Int32 {
         self.init(
-            value: dto.value,
+            value: dto.value.millivolts,
             source: TelemetryValueSource(dto.source),
             quality: TelemetryValueQuality(dto.quality),
             verification: TelemetryVerificationStatus(dto.verification)
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredI64Dto) where Value == Int64 {
+    fileprivate init(_ dto: MobileMeasuredCurrentDto) where Value == Int32 {
         self.init(
-            value: dto.value,
+            value: dto.value.milliamps,
             source: TelemetryValueSource(dto.source),
             quality: TelemetryValueQuality(dto.quality),
             verification: TelemetryVerificationStatus(dto.verification)
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredI16Dto) where Value == Int16 {
+    fileprivate init(_ dto: MobileMeasuredTemperatureDto) where Value == Int32 {
         self.init(
-            value: dto.value,
+            value: dto.value.millicelsius,
             source: TelemetryValueSource(dto.source),
             quality: TelemetryValueQuality(dto.quality),
             verification: TelemetryVerificationStatus(dto.verification)
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredI16Dto) where Value == DutyCycle {
+    fileprivate init(_ dto: MobileMeasuredAngleDto) where Value == Int32 {
         self.init(
-            value: DutyCycle(permille: dto.value),
+            value: dto.value.millidegrees,
             source: TelemetryValueSource(dto.source),
             quality: TelemetryValueQuality(dto.quality),
             verification: TelemetryVerificationStatus(dto.verification)
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredU64Dto) where Value == UInt64 {
+    fileprivate init(_ dto: MobileMeasuredSpeedDto) where Value == Int32 {
         self.init(
-            value: dto.value,
+            value: dto.value.millimetresPerSecond,
             source: TelemetryValueSource(dto.source),
             quality: TelemetryValueQuality(dto.quality),
             verification: TelemetryVerificationStatus(dto.verification)
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredU8Dto) where Value == UInt8 {
+    fileprivate init(_ dto: MobileMeasuredPowerDto) where Value == Int64 {
         self.init(
-            value: dto.value,
+            value: dto.value.milliwatts,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredDutyCycleDto) where Value == DutyCycle {
+        self.init(
+            value: DutyCycle(permille: dto.value.permille),
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredDistanceDto) where Value == UInt64 {
+        self.init(
+            value: dto.value.millimetres,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredBatteryLevelDto) where Value == UInt8 {
+        self.init(
+            value: dto.value.percent,
             source: TelemetryValueSource(dto.source),
             quality: TelemetryValueQuality(dto.quality),
             verification: TelemetryVerificationStatus(dto.verification)
@@ -518,7 +545,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let energyPercent: TelemetryReading<UInt8>?
     public let voltage: TelemetryReading<Int32>?
     public let current: TelemetryReading<Int32>?
-    public let cellDeltaMillivolts: TelemetryReading<Int32>?
+    public let cellDelta: TelemetryReading<Int32>?
     public let lowestGroupIndex: Int?
     public let highestTemperature: TelemetryReading<Int32>?
     public let highestTemperatureLabel: String?
@@ -536,7 +563,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         energyPercent: TelemetryReading<UInt8>? = nil,
         voltage: TelemetryReading<Int32>? = nil,
         current: TelemetryReading<Int32>? = nil,
-        cellDeltaMillivolts: TelemetryReading<Int32>? = nil,
+        cellDelta: TelemetryReading<Int32>? = nil,
         lowestGroupIndex: Int? = nil,
         highestTemperature: TelemetryReading<Int32>? = nil,
         highestTemperatureLabel: String? = nil,
@@ -553,7 +580,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.energyPercent = energyPercent
         self.voltage = voltage
         self.current = current
-        self.cellDeltaMillivolts = cellDeltaMillivolts
+        self.cellDelta = cellDelta
         self.lowestGroupIndex = lowestGroupIndex
         self.highestTemperature = highestTemperature
         self.highestTemperatureLabel = highestTemperatureLabel
@@ -573,7 +600,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             energyPercent: dto.energyPercent.map(TelemetryReading.init),
             voltage: dto.voltage.map(TelemetryReading.init),
             current: dto.current.map(TelemetryReading.init),
-            cellDeltaMillivolts: dto.cellDeltaMillivolts.map(TelemetryReading.init),
+            cellDelta: dto.cellDelta.map(TelemetryReading.init),
             lowestGroupIndex: dto.lowestGroupIndex.map(Int.init),
             highestTemperature: dto.highestTemperature.map(TelemetryReading.init),
             highestTemperatureLabel: dto.highestTemperatureLabel,
