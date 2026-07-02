@@ -209,7 +209,7 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
 }
 
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
-    case supported(connectionRoute: MockupConnectionRoute?)
+    case supported(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case unsupported(disabledReason: String)
 }
 
@@ -217,7 +217,10 @@ public extension DevicePickerCandidateSupport {
     init(_ dto: MobileDiscoveryCandidateDto) {
         switch dto.support {
         case .supported:
-            self = .supported(connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)))
+            self = .supported(
+                connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)),
+                electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
+            )
         case .unsupported:
             self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
         }
@@ -300,7 +303,11 @@ public extension DevicePickerCandidateSupport {
     }
 
     var connectionRoute: MockupConnectionRoute? {
-        if case .supported(let connectionRoute) = self { connectionRoute } else { nil }
+        if case .supported(let connectionRoute, _) = self { connectionRoute } else { nil }
+    }
+
+    var electricUnicycleModel: ElectricUnicycleModel? {
+        if case .supported(_, let electricUnicycleModel) = self { electricUnicycleModel } else { nil }
     }
 
     var pickerRowState: MockupPickerRowState {
@@ -438,7 +445,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
             detail: "126.0 V - strong signal",
-            support: .supported(connectionRoute: .electricUnicycle),
+            support: .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero),
             symbolName: "circle.hexagongrid.circle"
         ),
         DevicePickerDiscoveryCandidate(
@@ -447,7 +454,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "VESC Onewheel",
             evidence: "UART bridge detected",
             detail: "75.4 V - moderate signal",
-            support: .supported(connectionRoute: .vescOnewheel),
+            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
             symbolName: "oval.portrait"
         ),
         DevicePickerDiscoveryCandidate(

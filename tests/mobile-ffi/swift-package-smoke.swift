@@ -22,8 +22,8 @@ struct CutoutMobilePackageSmoke {
             channel: linkActions.firstSubscribeChannel!,
             at: MonotonicMilliseconds(2)
         )
-        precondition(telemetry.voltageMillivolts == 108_760)
-        precondition(telemetry.speedMillimetersPerSecond == 0)
+        precondition(telemetry.voltage?.value == 108_760)
+        precondition(telemetry.speed?.value == 0)
         precondition(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
         precondition(SpeedReadout(millimetersPerSecond: nil).displayValue == "--")
         precondition(LiveSpeedConnectionPhase.starting.displayText == "Starting Bluetooth...")
@@ -47,7 +47,7 @@ struct CutoutMobilePackageSmoke {
                 at: MonotonicMilliseconds(UInt64(11 + offset))
             )
         }
-        precondition(falcon.currentSnapshot.voltageMillivolts != nil)
+        precondition(falcon.currentSnapshot.voltage != nil)
 
         do {
             _ = try falcon.perform(.soundHorn, at: MonotonicMilliseconds(3))
@@ -143,8 +143,8 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(21)
         ))
-        precondition(runnerTelemetry.snapshot?.voltageMillivolts == 108_760)
-        precondition(runnerTelemetry.snapshot?.speedMillimetersPerSecond == 0)
+        precondition(runnerTelemetry.snapshot?.voltage?.value == 108_760)
+        precondition(runnerTelemetry.snapshot?.speed?.value == 0)
 
         let liveSink = RecordingCoreBluetoothOperationSink()
         let liveOwner = CoreBluetoothLiveSessionOwner(
@@ -176,8 +176,8 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(31)
         )
-        precondition(liveTelemetry.snapshot?.voltageMillivolts == 108_760)
-        precondition(liveTelemetry.snapshot?.speedMillimetersPerSecond == 0)
+        precondition(liveTelemetry.snapshot?.voltage?.value == 108_760)
+        precondition(liveTelemetry.snapshot?.speed?.value == 0)
         let initialSpeedState = LiveSpeedDisplayState()
         precondition(initialSpeedState.speed.displayValue == "--")
         precondition(initialSpeedState.notificationCount == 0)
@@ -192,9 +192,12 @@ struct CutoutMobilePackageSmoke {
         let nonzeroSpeedStep = CoreBluetoothSessionStep(
             operations: [],
             snapshot: TelemetrySnapshot(
-                speedMillimetersPerSecond: 1_000,
-                voltageMillivolts: nil,
-                batteryLevelEstimated: nil
+                speed: TelemetryReading<Int32>(
+                    value: 1_000,
+                    source: .reported,
+                    quality: .known,
+                    verification: .sourceVerified
+                )
             )
         )
         let nonzeroSpeedState = zeroSpeedState.reducing(

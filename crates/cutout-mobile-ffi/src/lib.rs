@@ -4,14 +4,15 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, MeasuredI32Dto, MeasuredU8Dto, MonotonicMillisDto, MonotonicTimestamp,
-    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
-    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
-    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
-    PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
-    ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
-    ValueQualityDto, ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    GattRoles, MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
+    MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
+    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto,
+    SemanticEventCountDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
+    TransportActionDto, TransportWriteLimit, TransportWriteLimitDto, ValueQualityDto,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
     WallClockUnixTimestamp,
 };
 use cutout_protocols::{
@@ -30,6 +31,16 @@ pub enum MobileDiscoveryCandidateSupportDto {
 
     /// Candidate looks relevant but is not supported for launch.
     Unsupported,
+}
+
+/// Mobile EUC read-only session model.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileElectricUnicycleModelDto {
+    /// NOSFET Aero session.
+    Aero,
+
+    /// Begode Falcon session.
+    Falcon,
 }
 
 /// Mobile discovery candidate for picker UI.
@@ -59,11 +70,19 @@ pub struct MobileDiscoveryCandidateDto {
     /// Supported connection route key, when connecting is allowed.
     pub connection_route: Option<String>,
 
+    /// Electric-unicycle session model to construct for the route.
+    pub electric_unicycle_model: Option<MobileElectricUnicycleModelDto>,
+
     /// Disabled reason, when connecting is not allowed.
     pub disabled_reason: Option<String>,
 }
 
 /// Build a mobile discovery candidate from advertisement evidence.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned sequences"
+)]
 #[uniffi::export]
 pub fn mobile_discovery_candidate_from_advertisement(
     platform_identifier: String,
@@ -73,16 +92,28 @@ pub fn mobile_discovery_candidate_from_advertisement(
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
     let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
+        let electric_unicycle_model = mobile_electric_unicycle_model_from_name(&lower_name);
         return MobileDiscoveryCandidateDto {
             platform_identifier,
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "advertisement hint".to_owned(),
-            detail: "Bluetooth candidate".to_owned(),
+            detail: electric_unicycle_model
+                .map_or("Model not confirmed", |model| match model {
+                    MobileElectricUnicycleModelDto::Aero => "NOSFET Aero candidate",
+                    MobileElectricUnicycleModelDto::Falcon => "Begode Falcon candidate",
+                })
+                .to_owned(),
             is_picker_candidate: true,
-            support: MobileDiscoveryCandidateSupportDto::Supported,
-            connection_route: Some("electric_unicycle".to_owned()),
-            disabled_reason: None,
+            support: electric_unicycle_model
+                .map_or(MobileDiscoveryCandidateSupportDto::Unsupported, |_| {
+                    MobileDiscoveryCandidateSupportDto::Supported
+                }),
+            connection_route: electric_unicycle_model.map(|_| "electric_unicycle".to_owned()),
+            electric_unicycle_model,
+            disabled_reason: electric_unicycle_model
+                .is_none()
+                .then(|| "Model not confirmed".to_owned()),
         };
     }
 
@@ -101,6 +132,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
             is_picker_candidate: true,
             support: MobileDiscoveryCandidateSupportDto::Unsupported,
             connection_route: None,
+            electric_unicycle_model: None,
             disabled_reason: Some("Not yet supported".to_owned()),
         };
     }
@@ -114,8 +146,27 @@ pub fn mobile_discovery_candidate_from_advertisement(
         is_picker_candidate: false,
         support: MobileDiscoveryCandidateSupportDto::Unsupported,
         connection_route: None,
+        electric_unicycle_model: None,
         disabled_reason: Some("Not yet supported".to_owned()),
     }
+}
+
+fn mobile_electric_unicycle_model_from_name(
+    lower_name: &str,
+) -> Option<MobileElectricUnicycleModelDto> {
+    if lower_name.contains("falcon")
+        || lower_name.contains("begode")
+        || lower_name.contains("gotway")
+    {
+        return Some(MobileElectricUnicycleModelDto::Falcon);
+    }
+
+    if lower_name.contains("aero") || lower_name.contains("nosfet") || lower_name.starts_with("nf")
+    {
+        return Some(MobileElectricUnicycleModelDto::Aero);
+    }
+
+    None
 }
 
 /// Mobile DTO command kind.
@@ -523,6 +574,39 @@ pub struct MobileTelemetrySnapshotDto {
     /// Reported voltage in millivolts.
     pub voltage: Option<MobileMeasuredI32Dto>,
 
+    /// Reported battery current in milliamps.
+    pub battery_current: Option<MobileMeasuredI32Dto>,
+
+    /// Reported motor current in milliamps.
+    pub motor_current: Option<MobileMeasuredI32Dto>,
+
+    /// Reported power in milliwatts.
+    pub power: Option<MobileMeasuredI64Dto>,
+
+    /// Reported controller temperature in millicelsius.
+    pub controller_temperature: Option<MobileMeasuredI32Dto>,
+
+    /// Reported motor temperature in millicelsius.
+    pub motor_temperature: Option<MobileMeasuredI32Dto>,
+
+    /// Reported battery temperature in millicelsius.
+    pub battery_temperature: Option<MobileMeasuredI32Dto>,
+
+    /// Reported PWM duty in permille.
+    pub pwm: Option<MobileMeasuredI16Dto>,
+
+    /// Reported distance in millimeters.
+    pub distance: Option<MobileMeasuredU64Dto>,
+
+    /// Reported pitch in millidegrees.
+    pub pitch: Option<MobileMeasuredI32Dto>,
+
+    /// Reported roll in millidegrees.
+    pub roll: Option<MobileMeasuredI32Dto>,
+
+    /// Reported battery level.
+    pub battery_level_reported: Option<MobileMeasuredU8Dto>,
+
     /// Estimated battery percent.
     pub battery_level_estimated: Option<MobileMeasuredU8Dto>,
 }
@@ -543,11 +627,59 @@ pub struct MobileMeasuredI32Dto {
     pub verification: MobileVerificationStatusDto,
 }
 
+/// Mobile measured i64 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMeasuredI64Dto {
+    /// Fixed-unit value.
+    pub value: i64,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Mobile measured i16 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMeasuredI16Dto {
+    /// Fixed-unit value.
+    pub value: i16,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
+}
+
 /// Mobile measured u8 value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMeasuredU8Dto {
     /// Fixed-unit value.
     pub value: u8,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Mobile measured u64 value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMeasuredU64Dto {
+    /// Fixed-unit value.
+    pub value: u64,
 
     /// Value source.
     pub source: MobileValueSourceDto,
@@ -1271,8 +1403,41 @@ impl From<MeasuredI32Dto> for MobileMeasuredI32Dto {
     }
 }
 
+impl From<MeasuredI64Dto> for MobileMeasuredI64Dto {
+    fn from(measured: MeasuredI64Dto) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
+impl From<MeasuredI16Dto> for MobileMeasuredI16Dto {
+    fn from(measured: MeasuredI16Dto) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
 impl From<MeasuredU8Dto> for MobileMeasuredU8Dto {
     fn from(measured: MeasuredU8Dto) -> Self {
+        Self {
+            value: measured.value,
+            source: measured.source.into(),
+            quality: measured.quality.into(),
+            verification: measured.verification.into(),
+        }
+    }
+}
+
+impl From<MeasuredU64Dto> for MobileMeasuredU64Dto {
+    fn from(measured: MeasuredU64Dto) -> Self {
         Self {
             value: measured.value,
             source: measured.source.into(),
@@ -1405,6 +1570,17 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
+            battery_current: snapshot.battery_current.map(Into::into),
+            motor_current: snapshot.motor_current.map(Into::into),
+            power: snapshot.power.map(Into::into),
+            controller_temperature: snapshot.controller_temperature.map(Into::into),
+            motor_temperature: snapshot.motor_temperature.map(Into::into),
+            battery_temperature: snapshot.battery_temperature.map(Into::into),
+            pwm: snapshot.pwm.map(Into::into),
+            distance: snapshot.distance.map(Into::into),
+            pitch: snapshot.pitch.map(Into::into),
+            roll: snapshot.roll.map(Into::into),
+            battery_level_reported: snapshot.battery_level_reported.map(Into::into),
             battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
         }
     }
@@ -1537,7 +1713,7 @@ mod tests {
         assert_eq!(candidate.display_name, "NOSFET Aero");
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "advertisement hint");
-        assert_eq!(candidate.detail, "Bluetooth candidate");
+        assert_eq!(candidate.detail, "NOSFET Aero candidate");
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
@@ -1547,7 +1723,55 @@ mod tests {
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
         );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
         assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_routes_gotway_name_to_falcon_session() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-falcon".to_owned(),
+            Some("GotWay_002441".to_owned()),
+            vec![0xffe0],
+        );
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Supported
+        );
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Falcon)
+        );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_keeps_unconfirmed_euc_visible_but_unrouteable() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-unknown-euc".to_owned(),
+            Some("EUC-unknown".to_owned()),
+            vec![0xffe0],
+        );
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Unsupported
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Model not confirmed".to_owned())
+        );
     }
 
     #[test]
@@ -1565,6 +1789,7 @@ mod tests {
             MobileDiscoveryCandidateSupportDto::Unsupported
         );
         assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason,
             Some("Not yet supported".to_owned())
@@ -1837,8 +2062,9 @@ mod tests {
         assert_eq!(ingest.reserved, None);
         assert_eq!(ingest.gap, None);
         assert!(result.outputs.iter().all(|output| output.bytes.is_empty()));
+        let snapshot = session.current_snapshot();
         assert_eq!(
-            session.current_snapshot().voltage,
+            snapshot.voltage,
             Some(MobileMeasuredI32Dto {
                 value: 108_760,
                 source: MobileValueSourceDto::Reported,
@@ -1846,6 +2072,11 @@ mod tests {
                 verification: MobileVerificationStatusDto::HardwareVerified,
             })
         );
+        assert!(snapshot.battery_current.is_some());
+        assert!(snapshot.power.is_some());
+        assert!(snapshot.controller_temperature.is_some() || snapshot.motor_temperature.is_some());
+        assert!(snapshot.pwm.is_some());
+        assert!(snapshot.battery_level_estimated.is_some());
     }
 
     #[test]

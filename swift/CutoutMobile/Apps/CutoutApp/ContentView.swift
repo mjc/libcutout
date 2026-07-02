@@ -1,3 +1,4 @@
+import Foundation
 import CutoutMobile
 import SwiftUI
 
@@ -23,6 +24,15 @@ struct ContentView: View {
                     MockupScreenContainer(
                         screen: screen,
                         devicePickerScanState: model.devicePickerScanState,
+                        rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
+                            ? nil
+                            : model.rideState,
+                        rideTitle: model.selectedRideTitle,
+                        disconnect: {
+                            model.disconnectAndSearch()
+                            pairedDestinationScreenID = nil
+                            selectedScreenID = .devicePicker
+                        },
                         pair: pair
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -75,6 +85,9 @@ struct ContentView: View {
 private struct MockupScreenContainer: View {
     let screen: MockupScreen
     let devicePickerScanState: DevicePickerScanState?
+    let rideState: EucRideScreenState?
+    let rideTitle: String?
+    let disconnect: () -> Void
     let pair: (MockupPickerRow) -> Void
 
     var body: some View {
@@ -82,7 +95,7 @@ private struct MockupScreenContainer: View {
         case .devicePicker:
             DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
-            EucRideMockupView(screen: screen)
+            EucRideMockupView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
         case .eucGarage:
             EucGarageMockupView(screen: screen)
         case .vescOnewheelRide:
@@ -493,10 +506,51 @@ private struct VescPushbackWarningCard: View {
 
 private struct EucRideMockupView: View {
     let screen: MockupScreen
+    let rideState: EucRideScreenState?
+    let rideTitle: String?
+    let disconnect: () -> Void
 
     private var speedParts: (value: String, unit: String) {
+        if let rideState {
+            return (rideState.speedText, rideState.speedUnit)
+        }
         let parts = screen.primaryValue.split(separator: " ", maxSplits: 1).map(String.init)
         return (parts.first ?? screen.primaryValue, parts.dropFirst().first ?? "")
+    }
+
+    private var phaseText: String {
+        rideState?.phaseText ?? screen.displaySubtitle
+    }
+
+    private var titleText: String {
+        rideTitle ?? screen.title
+    }
+
+    private var warningCard: MockupWarningCard? {
+        if let rideState {
+            return liveWarningCard(for: rideState)
+        }
+        return screen.warningCard
+    }
+
+    private var safetyBars: [MockupSafetyBar] {
+        if let rideState {
+            if let telemetry = rideState.telemetry {
+                return liveSafetyBars(from: telemetry)
+            }
+            return unavailableSafetyBars(from: screen.safetyBars)
+        }
+        return screen.safetyBars
+    }
+
+    private var dashboardTiles: [MockupDashboardTile] {
+        if let rideState {
+            if let telemetry = rideState.telemetry {
+                return liveDashboardTiles(from: telemetry)
+            }
+            return unavailableDashboardTiles(from: screen.dashboardTiles)
+        }
+        return screen.dashboardTiles
     }
 
     var body: some View {
@@ -506,14 +560,27 @@ private struct EucRideMockupView: View {
             allowsVerticalScroll: false,
             columnSpacing: 12
         ) { scale, columns in
+            HStack(alignment: .firstTextBaseline) {
+                if rideState == nil {
+                    Text("CutOut")
+                        .font(.system(size: 18 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.yellow)
+                } else {
+                    Button("Disconnect", action: disconnect)
+                        .font(.system(size: 18 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.yellow)
+                }
+                Spacer()
+            }
+
             HStack(alignment: .center, spacing: 12 * scale) {
-                Text(screen.title)
+                Text(titleText)
                     .font(.system(size: 18 * scale, weight: .bold))
                     .foregroundStyle(MockupColors.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 Spacer(minLength: 8 * scale)
-                EucStatusBadge(title: screen.displaySubtitle, scale: scale)
+                EucStatusBadge(title: phaseText, scale: scale)
             }
             .padding(.top, 8 * scale)
 
@@ -536,18 +603,18 @@ private struct EucRideMockupView: View {
             .foregroundStyle(MockupColors.primaryText)
 
             VStack(spacing: 10 * scale) {
-                ForEach(screen.safetyBars, id: \.label) { bar in
+                ForEach(safetyBars, id: \.label) { bar in
                     EucSafetyBar(bar: bar, scale: scale)
                 }
             }
 
-            if let warningCard = screen.warningCard {
+            if let warningCard {
                 EucWarningCard(card: warningCard, scale: scale)
                     .padding(.top, 14 * scale)
             }
 
             LazyVGrid(columns: columns, spacing: 12 * scale) {
-                ForEach(screen.dashboardTiles) { tile in
+                ForEach(dashboardTiles) { tile in
                     EucDashboardTile(tile: tile, scale: scale)
                 }
             }
@@ -1218,6 +1285,171 @@ private extension MockupPickerRowState {
     var isSupported: Bool {
         if case .supported = self { true } else { false }
     }
+}
+
+private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard {
+    switch state.phase {
+    case .failed(let failure):
+        MockupWarningCard(title: "Connection failed", detail: failure.displayText)
+    case .live where state.telemetry != nil:
+        MockupWarningCard(
+            title: "Telemetry live",
+            detail: state.telemetry?.speed?.provenanceText ?? "Live telemetry from typed Rust/FFI state"
+        )
+    case .live:
+        MockupWarningCard(title: "Telemetry unavailable", detail: "No live snapshot yet")
+    case .connecting, .discoveringServices, .subscribing:
+        MockupWarningCard(title: state.phaseText, detail: "Waiting for live telemetry")
+    case .starting, .bluetoothUnavailable, .scanning:
+        MockupWarningCard(title: state.phaseText, detail: "Ride screen is not active yet")
+    }
+}
+
+private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyBar] {
+    [
+        telemetry.pwm.map { pwm in
+            let usedPermille = min(1_000, abs(Int(pwm.value.permille)))
+            let headroomPermille = max(0, 1_000 - usedPermille)
+            return MockupSafetyBar(
+                label: "PWM headroom",
+                value: percentageString(fromPermille: headroomPermille),
+                progress: Double(headroomPermille) / 1_000.0,
+                accent: .yellow
+            )
+        } ?? MockupSafetyBar(label: "PWM headroom", value: "Unavailable", progress: 0, accent: .yellow),
+        telemetry.batteryLevelEstimated.map { batteryLevel in
+            MockupSafetyBar(
+                label: "estimated energy",
+                value: percentageString(fromPercent: Int(batteryLevel.value)),
+                progress: Double(batteryLevel.value) / 100.0,
+                accent: .cyan
+            )
+        } ?? MockupSafetyBar(label: "sag-adjusted energy", value: "Unavailable", progress: 0, accent: .cyan),
+    ]
+}
+
+private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDashboardTile] {
+    [
+        telemetry.voltage.map { voltage in
+            MockupDashboardTile(
+                label: "pack",
+                value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
+                unit: "V",
+                detail: voltage.provenanceText,
+                accent: .cyan
+            )
+        } ?? MockupDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
+        livePowerTile(from: telemetry),
+        (telemetry.controllerTemperature != nil || telemetry.motorTemperature != nil || telemetry.batteryTemperature != nil)
+            ? MockupDashboardTile(
+                label: "thermal",
+                value: liveThermalValue(telemetry: telemetry),
+                unit: "°C",
+                detail: liveThermalDetail(telemetry: telemetry),
+                accent: .green
+            )
+            : MockupDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
+        telemetry.batteryLevelEstimated.map { batteryLevel in
+            MockupDashboardTile(
+                label: "energy",
+                value: percentageString(fromPercent: Int(batteryLevel.value)),
+                unit: "%",
+                detail: batteryLevel.provenanceText,
+                accent: .cyan
+            )
+        } ?? MockupDashboardTile(label: "limp-home", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
+    ]
+}
+
+private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboardTile {
+    if let voltage = telemetry.voltage,
+       let current = telemetry.batteryCurrent,
+       current.value != 0 {
+        let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
+        return MockupDashboardTile(
+            label: "power",
+            value: decimalString(
+                fromMilliwatts: milliwatts,
+                fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
+            ),
+            unit: "kW",
+            detail: "calculated from pack current",
+            accent: .yellow
+        )
+    }
+
+    if let power = telemetry.power {
+        return MockupDashboardTile(
+            label: "power",
+            value: decimalString(
+                fromMilliwatts: power.value,
+                fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
+            ),
+            unit: "kW",
+            detail: power.provenanceText,
+            accent: .yellow
+        )
+    }
+
+    return MockupDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
+}
+
+private func unavailableSafetyBars(from bars: [MockupSafetyBar]) -> [MockupSafetyBar] {
+    bars.map {
+        MockupSafetyBar(label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
+    }
+}
+
+private func unavailableDashboardTiles(from tiles: [MockupDashboardTile]) -> [MockupDashboardTile] {
+    tiles.map {
+        MockupDashboardTile(label: $0.label, value: "--", unit: $0.unit, detail: "unavailable", accent: $0.accent)
+    }
+}
+
+private func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
+    let values = [telemetry.controllerTemperature, telemetry.motorTemperature, telemetry.batteryTemperature]
+        .compactMap { $0?.value }
+    guard let maxValue = values.max() else {
+        return "--"
+    }
+    return decimalString(fromMillicelsius: maxValue, fractionDigits: 0)
+}
+
+private func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
+    let parts = [
+        telemetry.controllerTemperature.map { "ESC " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
+        telemetry.motorTemperature.map { "motor " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
+        telemetry.batteryTemperature.map { "battery " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
+    ].compactMap { $0 }
+    return parts.isEmpty ? "typed telemetry" : parts.joined(separator: " · ")
+}
+
+private func percentageString<T: BinaryInteger>(fromPercent percent: T) -> String {
+    "\(percent)%"
+}
+
+private func percentageString<T: BinaryInteger>(fromPermille permille: T) -> String {
+    "\(permille / 10)%"
+}
+
+private func decimalString<T: BinaryInteger>(fromMillivolts value: T, fractionDigits: Int) -> String {
+    decimalString(Double(value) / 1_000.0, fractionDigits: fractionDigits)
+}
+
+private func decimalString<T: BinaryInteger>(fromMilliwatts value: T, fractionDigits: Int) -> String {
+    decimalString(Double(value) / 1_000_000.0, fractionDigits: fractionDigits)
+}
+
+private func powerFractionDigits<T: BinaryInteger>(fromMilliwatts value: T) -> Int {
+    abs(Int64(value)) < 1_000_000 ? 2 : 1
+}
+
+private func decimalString<T: BinaryInteger>(fromMillicelsius value: T, fractionDigits: Int) -> String {
+    decimalString(Double(value) / 1_000.0, fractionDigits: fractionDigits)
+}
+
+private func decimalString(_ value: Double, fractionDigits: Int) -> String {
+    String(format: "%.\(fractionDigits)f", value)
 }
 
 

@@ -108,25 +108,245 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     }
 }
 
-public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
-    public let speedMillimetersPerSecond: Int32?
-    public let voltageMillivolts: Int32?
-    public let batteryLevelEstimated: UInt8?
+public enum TelemetryValueSource: Equatable, Hashable, Sendable {
+    case reported
+    case calculated
+    case estimated
+
+    fileprivate init(_ dto: MobileValueSourceDto) {
+        switch dto {
+        case .reported:
+            self = .reported
+        case .calculated:
+            self = .calculated
+        case .estimated:
+            self = .estimated
+        }
+    }
+
+    public var displayText: String {
+        switch self {
+        case .reported:
+            "reported"
+        case .calculated:
+            "calculated"
+        case .estimated:
+            "estimated"
+        }
+    }
+}
+
+public enum TelemetryValueQuality: Equatable, Hashable, Sendable {
+    case known
+    case inferred
+
+    fileprivate init(_ dto: MobileValueQualityDto) {
+        switch dto {
+        case .known:
+            self = .known
+        case .inferred:
+            self = .inferred
+        }
+    }
+
+    public var displayText: String {
+        switch self {
+        case .known:
+            "known"
+        case .inferred:
+            "inferred"
+        }
+    }
+}
+
+public enum TelemetryVerificationStatus: Equatable, Hashable, Sendable {
+    case unverified
+    case inferred
+    case sourceVerified
+    case hardwareVerified
+    case sourceAndHardwareVerified
+
+    fileprivate init(_ dto: MobileVerificationStatusDto) {
+        switch dto {
+        case .unverified:
+            self = .unverified
+        case .inferred:
+            self = .inferred
+        case .sourceVerified:
+            self = .sourceVerified
+        case .hardwareVerified:
+            self = .hardwareVerified
+        case .sourceAndHardwareVerified:
+            self = .sourceAndHardwareVerified
+        }
+    }
+
+    public var displayText: String {
+        switch self {
+        case .unverified:
+            "unverified"
+        case .inferred:
+            "inferred"
+        case .sourceVerified:
+            "source verified"
+        case .hardwareVerified:
+            "hardware verified"
+        case .sourceAndHardwareVerified:
+            "source + hardware verified"
+        }
+    }
+}
+
+public struct DutyCycle: Equatable, Hashable, Sendable {
+    public let permille: Int16
+
+    public init(permille: Int16) {
+        self.permille = permille
+    }
+}
+
+public struct TelemetryReading<Value: Equatable & Hashable & Sendable>: Equatable, Hashable, Sendable {
+    public let value: Value
+    public let source: TelemetryValueSource
+    public let quality: TelemetryValueQuality
+    public let verification: TelemetryVerificationStatus
 
     public init(
-        speedMillimetersPerSecond: Int32?,
-        voltageMillivolts: Int32?,
-        batteryLevelEstimated: UInt8?
+        value: Value,
+        source: TelemetryValueSource,
+        quality: TelemetryValueQuality,
+        verification: TelemetryVerificationStatus
     ) {
-        self.speedMillimetersPerSecond = speedMillimetersPerSecond
-        self.voltageMillivolts = voltageMillivolts
+        self.value = value
+        self.source = source
+        self.quality = quality
+        self.verification = verification
+    }
+
+    fileprivate init(_ dto: MobileMeasuredI32Dto) where Value == Int32 {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredI64Dto) where Value == Int64 {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredI16Dto) where Value == Int16 {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredI16Dto) where Value == DutyCycle {
+        self.init(
+            value: DutyCycle(permille: dto.value),
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredU64Dto) where Value == UInt64 {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: MobileMeasuredU8Dto) where Value == UInt8 {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    public var provenanceText: String {
+        "\(source.displayText) · \(quality.displayText) · \(verification.displayText)"
+    }
+}
+
+public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
+    public let speed: TelemetryReading<Int32>?
+    public let voltage: TelemetryReading<Int32>?
+    public let batteryCurrent: TelemetryReading<Int32>?
+    public let motorCurrent: TelemetryReading<Int32>?
+    public let power: TelemetryReading<Int64>?
+    public let controllerTemperature: TelemetryReading<Int32>?
+    public let motorTemperature: TelemetryReading<Int32>?
+    public let batteryTemperature: TelemetryReading<Int32>?
+    public let pwm: TelemetryReading<DutyCycle>?
+    public let distance: TelemetryReading<UInt64>?
+    public let pitch: TelemetryReading<Int32>?
+    public let roll: TelemetryReading<Int32>?
+    public let batteryLevelReported: TelemetryReading<UInt8>?
+    public let batteryLevelEstimated: TelemetryReading<UInt8>?
+
+    public init(
+        speed: TelemetryReading<Int32>? = nil,
+        voltage: TelemetryReading<Int32>? = nil,
+        batteryCurrent: TelemetryReading<Int32>? = nil,
+        motorCurrent: TelemetryReading<Int32>? = nil,
+        power: TelemetryReading<Int64>? = nil,
+        controllerTemperature: TelemetryReading<Int32>? = nil,
+        motorTemperature: TelemetryReading<Int32>? = nil,
+        batteryTemperature: TelemetryReading<Int32>? = nil,
+        pwm: TelemetryReading<DutyCycle>? = nil,
+        distance: TelemetryReading<UInt64>? = nil,
+        pitch: TelemetryReading<Int32>? = nil,
+        roll: TelemetryReading<Int32>? = nil,
+        batteryLevelReported: TelemetryReading<UInt8>? = nil,
+        batteryLevelEstimated: TelemetryReading<UInt8>? = nil
+    ) {
+        self.speed = speed
+        self.voltage = voltage
+        self.batteryCurrent = batteryCurrent
+        self.motorCurrent = motorCurrent
+        self.power = power
+        self.controllerTemperature = controllerTemperature
+        self.motorTemperature = motorTemperature
+        self.batteryTemperature = batteryTemperature
+        self.pwm = pwm
+        self.distance = distance
+        self.pitch = pitch
+        self.roll = roll
+        self.batteryLevelReported = batteryLevelReported
         self.batteryLevelEstimated = batteryLevelEstimated
     }
 
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
-        self.speedMillimetersPerSecond = dto.speed?.value
-        self.voltageMillivolts = dto.voltage?.value
-        self.batteryLevelEstimated = dto.batteryLevelEstimated?.value
+        self.init(
+            speed: dto.speed.map { TelemetryReading<Int32>($0) },
+            voltage: dto.voltage.map { TelemetryReading<Int32>($0) },
+            batteryCurrent: dto.batteryCurrent.map { TelemetryReading<Int32>($0) },
+            motorCurrent: dto.motorCurrent.map { TelemetryReading<Int32>($0) },
+            power: dto.power.map { TelemetryReading<Int64>($0) },
+            controllerTemperature: dto.controllerTemperature.map { TelemetryReading<Int32>($0) },
+            motorTemperature: dto.motorTemperature.map { TelemetryReading<Int32>($0) },
+            batteryTemperature: dto.batteryTemperature.map { TelemetryReading<Int32>($0) },
+            pwm: dto.pwm.map { TelemetryReading<DutyCycle>($0) },
+            distance: dto.distance.map { TelemetryReading<UInt64>($0) },
+            pitch: dto.pitch.map { TelemetryReading<Int32>($0) },
+            roll: dto.roll.map { TelemetryReading<Int32>($0) },
+            batteryLevelReported: dto.batteryLevelReported.map { TelemetryReading<UInt8>($0) },
+            batteryLevelEstimated: dto.batteryLevelEstimated.map { TelemetryReading<UInt8>($0) }
+        )
     }
 }
 
@@ -136,7 +356,7 @@ public struct SpeedReadout: Equatable, Hashable, Sendable {
     public let millimetersPerSecond: Int32?
 
     public init(snapshot: TelemetrySnapshot?) {
-        self.init(millimetersPerSecond: snapshot?.speedMillimetersPerSecond)
+        self.init(millimetersPerSecond: snapshot?.speed?.value)
     }
 
     public init(millimetersPerSecond: Int32?) {
@@ -168,15 +388,18 @@ public struct LiveSpeedDebugRow: Equatable, Hashable, Sendable {
 
 public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
     public let speed: SpeedReadout
+    public let telemetry: TelemetrySnapshot?
     public let notificationCount: UInt64
     public let lastUpdate: MonotonicMilliseconds?
 
     public init(
         speed: SpeedReadout = SpeedReadout(millimetersPerSecond: nil),
+        telemetry: TelemetrySnapshot? = nil,
         notificationCount: UInt64 = 0,
         lastUpdate: MonotonicMilliseconds? = nil
     ) {
         self.speed = speed
+        self.telemetry = telemetry
         self.notificationCount = notificationCount
         self.lastUpdate = lastUpdate
     }
@@ -192,9 +415,10 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
         _ step: CoreBluetoothSessionStep,
         receivedAt: MonotonicMilliseconds
     ) -> LiveSpeedDisplayState {
-        let nextSpeed = step.snapshot?.speedMillimetersPerSecond.map(SpeedReadout.init) ?? speed
+        let nextSpeed = step.snapshot?.speed.map { SpeedReadout(millimetersPerSecond: $0.value) } ?? speed
         return LiveSpeedDisplayState(
             speed: nextSpeed,
+            telemetry: step.snapshot ?? telemetry,
             notificationCount: notificationCount + 1,
             lastUpdate: receivedAt
         )
@@ -202,6 +426,32 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
 
     private var lastUpdateText: String {
         lastUpdate.map { "\($0.rawValue) ms" } ?? "never"
+    }
+}
+
+public struct EucRideScreenState: Equatable, Hashable, Sendable {
+    public let phase: LiveSpeedConnectionPhase
+    public let displayState: LiveSpeedDisplayState
+
+    public init(phase: LiveSpeedConnectionPhase, displayState: LiveSpeedDisplayState) {
+        self.phase = phase
+        self.displayState = displayState
+    }
+
+    public var telemetry: TelemetrySnapshot? {
+        displayState.telemetry
+    }
+
+    public var phaseText: String {
+        phase.displayText
+    }
+
+    public var speedText: String {
+        displayState.speed.displayValue
+    }
+
+    public var speedUnit: String {
+        displayState.speed.displayUnit
     }
 }
 
@@ -310,6 +560,15 @@ public enum ElectricUnicycleModel: Equatable, Hashable, Sendable {
 }
 
 public extension ElectricUnicycleModel {
+    init(_ dto: MobileElectricUnicycleModelDto) {
+        switch dto {
+        case .aero:
+            self = .aero
+        case .falcon:
+            self = .falcon
+        }
+    }
+
     var displayName: String {
         switch self {
         case .aero:

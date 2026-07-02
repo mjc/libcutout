@@ -20,8 +20,10 @@ public final class LiveSpeedSessionCore: NSObject {
     private var discoveredAdvertisements: [CoreBluetoothAdvertisement] = []
     private var discoveredPeripherals: [CoreBluetoothPeripheralIdentifier: CBPeripheral] = [:]
     private var liveOwner: CoreBluetoothLiveSessionOwner?
+    private var selectedModel: ElectricUnicycleModel?
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
+    private var suppressReconnect = false
 
     public override init() {}
 
@@ -45,25 +47,47 @@ public final class LiveSpeedSessionCore: NSObject {
         guard
             let peripheral = discoveredPeripherals[identifier],
             let advertisement = discoveredAdvertisements.last(where: { $0.peripheralIdentifier == identifier }),
-            DevicePickerDiscoveryCandidate(advertisement: advertisement).support.isSupported
+            let model = DevicePickerDiscoveryCandidate(advertisement: advertisement).support.electricUnicycleModel
         else {
             return false
         }
-        connect(to: peripheral, using: advertisement)
+        connect(to: peripheral, using: advertisement, model: model)
         return true
+    }
+
+    public func disconnectAndScan() {
+        suppressReconnect = true
+        selectedModel = nil
+        liveOwner = nil
+        subscribedCharacteristics.removeAll()
+        pendingServiceDiscoveries.removeAll()
+        displayState = LiveSpeedDisplayState()
+        hasObservedSpeedSnapshot = false
+        onDisplayStateChange?(displayState)
+
+        if let peripheral {
+            central?.cancelPeripheralConnection(peripheral)
+        }
+        peripheral = nil
+        advertisement = nil
+
+        scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
+        onScanStateChange?(scanState)
+        setPhase(.scanning(model: .aero))
+        central?.scanForPeripherals(withServices: nil)
     }
 
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
         record("link_operations=\(step.operations.map(String.init(describing:)).joined(separator: ","))")
         if let snapshot = step.snapshot {
-            hasObservedSpeedSnapshot = snapshot.speedMillimetersPerSecond != nil
+            hasObservedSpeedSnapshot = snapshot.speed?.value != nil
         }
         setPhase(.subscribing)
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
         displayState = displayState.reducing(step, receivedAt: receivedAt)
-        hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speedMillimetersPerSecond != nil
+        hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speed?.value != nil
         onDisplayStateChange?(displayState)
         setPhase(.live)
     }
@@ -73,22 +97,28 @@ public final class LiveSpeedSessionCore: NSObject {
         onPhaseChange?(phase)
     }
 
-    private func connect(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement) {
+    private func connect(
+        to peripheral: CBPeripheral,
+        using advertisement: CoreBluetoothAdvertisement,
+        model: ElectricUnicycleModel
+    ) {
+        suppressReconnect = false
         self.peripheral = peripheral
         self.advertisement = advertisement
+        selectedModel = model
         peripheral.delegate = self
-        setPhase(.connecting(model: .aero))
+        setPhase(.connecting(model: model))
         central?.stopScan()
         central?.connect(peripheral)
     }
 
     private func buildOwner(for peripheral: CBPeripheral) {
-        guard liveOwner == nil, let advertisement else {
+        guard liveOwner == nil, let advertisement, let selectedModel else {
             return
         }
         do {
             liveOwner = CoreBluetoothLiveSessionOwner(
-                session: try .electricUnicycle(model: .aero),
+                session: try .electricUnicycle(model: selectedModel),
                 advertisement: advertisement,
                 writeLimit: TransportWriteLimitBytes(23),
                 operationSink: self
@@ -103,6 +133,26 @@ public final class LiveSpeedSessionCore: NSObject {
         } catch {
             setPhase(.failed(.sessionFailed(error.liveSpeedMessage)))
         }
+    }
+
+    private func handleDisconnect(from peripheral: CBPeripheral, error: Error?) {
+        record("disconnected=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
+        liveOwner = nil
+        subscribedCharacteristics.removeAll()
+        pendingServiceDiscoveries.removeAll()
+
+        guard !suppressReconnect else {
+            suppressReconnect = false
+            return
+        }
+
+        guard let selectedModel else {
+            setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+            return
+        }
+
+        setPhase(.connecting(model: selectedModel))
+        central?.connect(peripheral)
     }
 
     private func record(_ message: String) {
@@ -156,6 +206,14 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
         setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+    }
+
+    public func centralManager(
+        _: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        handleDisconnect(from: peripheral, error: error)
     }
 }
 
@@ -217,9 +275,9 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
                 at: receivedAt
             )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
-            record("speed_mm_s=\(step.snapshot?.speedMillimetersPerSecond.map(String.init) ?? "nil")")
-            record("voltage_mv=\(step.snapshot?.voltageMillivolts.map(String.init) ?? "nil")")
-            record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map(String.init) ?? "nil")")
+            record("speed_mm_s=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
+            record("voltage_mv=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
+            record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value) } ?? "nil")")
             record("live_records=\(liveOwner.records.count)")
             applyNotificationStep(step, receivedAt: receivedAt)
         } catch {

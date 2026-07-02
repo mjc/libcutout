@@ -586,7 +586,8 @@ impl VeteranTelemetry {
                     .be_i16(ParserOffset::from_bytes(32))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
             )),
-            hardware_pwm: DutyCycle::from_centered_pwm(
+            hardware_pwm: veteran_hardware_pwm(
+                firmware.model_id,
                 cursor
                     .be_u16(ParserOffset::from_bytes(34))
                     .ok_or(VeteranTelemetryError::FrameTooShort)?,
@@ -749,6 +750,15 @@ pub fn estimate_veteran_battery_level(model_id: VeteranModelId, voltage: Voltage
     })
 }
 
+fn veteran_hardware_pwm(model_id: VeteranModelId, raw: u16) -> DutyCycle {
+    match model_id.get() {
+        // NOSFET Aero hardware captures at parked idle report raw 0x0000.
+        // Older Veteran profiles use a centered register where 0x8000 is idle.
+        43 => DutyCycle::from_decipermille(i16::from_be_bytes(raw.to_be_bytes())),
+        _ => DutyCycle::from_centered_pwm(raw),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     const fn ms(value: u64) -> MonotonicTimestamp {
@@ -837,7 +847,7 @@ mod tests {
                 speed_tiltback: Speed::from_millimetres_per_second(15_000),
                 pedals_mode: VeteranPedalsMode::new(1_920),
                 pitch: Angle::from_millidegrees(69_060),
-                hardware_pwm: DutyCycle::from_permille(-1_000),
+                hardware_pwm: DutyCycle::from_permille(0),
                 battery_level_estimated: BatteryLevel::from_percent(47),
             }
         );
@@ -1357,7 +1367,7 @@ mod tests {
         );
         assert_eq!(
             delta.pwm,
-            Some(Measured::reported(DutyCycle::from_permille(-1_000)))
+            Some(Measured::reported(DutyCycle::from_permille(0)))
         );
         assert_eq!(
             delta.distance,
@@ -1494,5 +1504,11 @@ mod tests {
         assert_eq!(DutyCycle::from_centered_pwm(0).as_permille(), -1_000);
         assert_eq!(DutyCycle::from_centered_pwm(0x8000).as_permille(), 0);
         assert_eq!(DutyCycle::from_centered_pwm(u16::MAX).as_permille(), 999);
+    }
+
+    #[test]
+    fn aero_pwm_conversion_maps_parked_idle_to_zero_duty() {
+        assert_eq!(veteran_hardware_pwm(mid(43), 0).as_permille(), 0);
+        assert_eq!(veteran_hardware_pwm(mid(0), 0).as_permille(), -1_000);
     }
 }

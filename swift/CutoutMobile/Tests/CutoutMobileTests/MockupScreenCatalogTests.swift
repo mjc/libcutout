@@ -126,7 +126,7 @@ extension MockupScreenCatalogTests {
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
             detail: "126.0 V - strong signal",
-            support: .supported(connectionRoute: .electricUnicycle),
+            support: .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero),
             symbolName: "circle"
         )
         let unsupported = DevicePickerDiscoveryCandidate(
@@ -157,7 +157,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.platformIdentifier, "ios-local-aero")
         XCTAssertEqual(candidate.displayName, "NOSFET Aero")
         XCTAssertEqual(candidate.productCategory, "Electric unicycle")
-        XCTAssertEqual(candidate.support, .supported(connectionRoute: .electricUnicycle))
+        XCTAssertEqual(candidate.support, .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero))
         XCTAssertEqual(candidate.pickerRow.id, "ios-local-aero")
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
@@ -173,11 +173,15 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: true,
             support: .supported,
             connectionRoute: "future_route",
+            electricUnicycleModel: nil,
             disabledReason: nil
         )
         let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
 
-        XCTAssertEqual(candidate.support, DevicePickerCandidateSupport.supported(connectionRoute: nil))
+        XCTAssertEqual(
+            candidate.support,
+            DevicePickerCandidateSupport.supported(connectionRoute: nil, electricUnicycleModel: nil)
+        )
         XCTAssertEqual(candidate.pickerRow.state, MockupPickerRowState.supported(action: "Pair"))
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
