@@ -528,6 +528,9 @@ pub struct MobileNotificationIngestOutcomeDto {
 /// Mobile step-error kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSessionStepErrorKindDto {
+    /// Mobile input was malformed before it reached the protocol session.
+    InvalidInput,
+
     /// Command was refused.
     CommandRefused,
 
@@ -1009,6 +1012,14 @@ pub enum MobileCaptureExportError {
     EncodeFailed,
 }
 
+/// Mobile PEVCAP input error.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileInvalidInputError {
+    /// UUID byte slices must be exactly 128-bit Bluetooth UUIDs.
+    #[error("invalid UUID byte length")]
+    InvalidUuidLength,
+}
+
 /// Mobile-facing builder for a PEVCAP capture export.
 #[derive(Debug, uniffi::Object)]
 pub struct MobilePevcapCaptureBuilder {
@@ -1045,20 +1056,37 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Adds an advertised service UUID observed by the mobile BLE stack.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileInvalidInputError::InvalidUuidLength`] when `service`
+    /// is not exactly 16 bytes.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn add_advertised_service(&self, service: Vec<u8>) {
+    pub fn add_advertised_service(&self, service: Vec<u8>) -> Result<(), MobileInvalidInputError> {
+        let service = mobile_gatt_channel(&service)?;
         self.advertised_services
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(mobile_gatt_channel(&service));
+            .push(service);
+        Ok(())
     }
 
     /// Adds an observed GATT service/characteristic fingerprint.
-    pub fn add_gatt_fingerprint(&self, fingerprint: MobileGattFingerprintDto) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileInvalidInputError::InvalidUuidLength`] when either UUID
+    /// is not exactly 16 bytes.
+    pub fn add_gatt_fingerprint(
+        &self,
+        fingerprint: MobileGattFingerprintDto,
+    ) -> Result<(), MobileInvalidInputError> {
+        let fingerprint = GattFingerprint::try_from(fingerprint)?;
         self.gatt_fingerprints
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(fingerprint.into());
+            .push(fingerprint);
+        Ok(())
     }
 
     /// Sets the resolved model/firmware identity for the capture.
@@ -1101,6 +1129,11 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records inbound notification bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileInvalidInputError::InvalidUuidLength`] when either UUID
+    /// is not exactly 16 bytes.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_notification(
         &self,
@@ -1108,16 +1141,19 @@ impl MobilePevcapCaptureBuilder {
         characteristic: Vec<u8>,
         service: Vec<u8>,
         bytes: Vec<u8>,
-    ) {
+    ) -> Result<(), MobileInvalidInputError> {
+        let characteristic = mobile_gatt_channel(&characteristic)?;
+        let service = mobile_gatt_channel(&service)?;
         self.records
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(PevcapRecord::inbound_notification(
                 monotonic_ms.into_core(),
-                mobile_gatt_channel(&characteristic),
-                mobile_gatt_channel(&service),
+                characteristic,
+                service,
                 bytes,
             ));
+        Ok(())
     }
 
     /// Exports the current capture as PEVCAP bytes.
@@ -1267,14 +1303,16 @@ fn mobile_gatt_roles(roles: Vec<MobileGattRoleDto>) -> GattRoles {
         })
 }
 
-impl From<MobileGattFingerprintDto> for GattFingerprint {
-    fn from(fingerprint: MobileGattFingerprintDto) -> Self {
-        Self {
-            service: mobile_gatt_channel(&fingerprint.service),
-            characteristic: mobile_gatt_channel(&fingerprint.characteristic),
+impl TryFrom<MobileGattFingerprintDto> for GattFingerprint {
+    type Error = MobileInvalidInputError;
+
+    fn try_from(fingerprint: MobileGattFingerprintDto) -> Result<Self, Self::Error> {
+        Ok(Self {
+            service: mobile_gatt_channel(&fingerprint.service)?,
+            characteristic: mobile_gatt_channel(&fingerprint.characteristic)?,
             roles: mobile_gatt_roles(fingerprint.roles),
             verification: fingerprint.verification.into(),
-        }
+        })
     }
 }
 
@@ -1306,8 +1344,10 @@ impl From<MobilePevcapEncodingDto> for PevcapEncoding {
     }
 }
 
-fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
-    GattChannel::from_bytes(mobile_channel_bytes(channel))
+fn mobile_gatt_channel(channel: &[u8]) -> Result<GattChannel, MobileInvalidInputError> {
+    mobile_channel_bytes(channel)
+        .map(GattChannel::from_bytes)
+        .ok_or(MobileInvalidInputError::InvalidUuidLength)
 }
 
 /// Mobile-facing wrapper for a NOSFET Aero read-only session.
@@ -1329,7 +1369,10 @@ impl AeroReadOnlySession {
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
-        let input = SessionInputDto::from(input);
+        let input = match SessionInputDto::try_from(input) {
+            Ok(input) => input,
+            Err(reason) => return invalid_mobile_input(reason),
+        };
         MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
     }
 
@@ -1367,9 +1410,11 @@ impl Default for AeroReadOnlySession {
     }
 }
 
-impl From<MobileSessionInputDto> for SessionInputDto {
-    fn from(input: MobileSessionInputDto) -> Self {
-        match input.kind {
+impl TryFrom<MobileSessionInputDto> for SessionInputDto {
+    type Error = &'static str;
+
+    fn try_from(input: MobileSessionInputDto) -> Result<Self, Self::Error> {
+        Ok(match input.kind {
             MobileSessionInputKindDto::LinkUp => Self::LinkUp {
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
                 max_write_len: input
@@ -1378,28 +1423,34 @@ impl From<MobileSessionInputDto> for SessionInputDto {
             },
             MobileSessionInputKindDto::LinkDown => Self::LinkDown,
             MobileSessionInputKindDto::Notification => Self::Notification {
-                channel: mobile_channel_bytes(&input.channel),
+                channel: mobile_channel_bytes(&input.channel)
+                    .ok_or("invalid_channel_uuid_length")?,
                 bytes: input.bytes,
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
             MobileSessionInputKindDto::Tick => Self::Tick {
                 monotonic_ms: input.monotonic_ms.into_core_ffi(),
             },
-            MobileSessionInputKindDto::Command => Self::Command(
-                input
-                    .command
-                    .unwrap_or(MobileCommandDto::RequestTelemetry)
-                    .into(),
-            ),
-        }
+            MobileSessionInputKindDto::Command => {
+                Self::Command(input.command.ok_or("missing_command")?.into())
+            }
+        })
     }
 }
 
-fn mobile_channel_bytes(channel: &[u8]) -> [u8; 16] {
-    let mut bytes = [0; 16];
-    let len = channel.len().min(bytes.len());
-    bytes[..len].copy_from_slice(&channel[..len]);
-    bytes
+fn invalid_mobile_input(reason: &'static str) -> MobileSessionStepResultDto {
+    MobileSessionStepResultDto {
+        outputs: Vec::new(),
+        error: Some(MobileSessionStepErrorDto {
+            kind: MobileSessionStepErrorKindDto::InvalidInput,
+            command: None,
+            reason: Some(reason.to_owned()),
+        }),
+    }
+}
+
+fn mobile_channel_bytes(channel: &[u8]) -> Option<[u8; 16]> {
+    channel.try_into().ok()
 }
 
 impl From<MobileCommandDto> for DeviceCommandDto {
@@ -1415,18 +1466,20 @@ impl From<MobileCommandDto> for DeviceCommandDto {
     }
 }
 
-impl From<CommandKindDto> for MobileCommandDto {
-    fn from(command: CommandKindDto) -> Self {
+impl TryFrom<CommandKindDto> for MobileCommandDto {
+    type Error = ();
+
+    fn try_from(command: CommandKindDto) -> Result<Self, Self::Error> {
         match command {
-            CommandKindDto::RequestIdentity => Self::RequestIdentity,
-            CommandKindDto::RequestTelemetry => Self::RequestTelemetry,
-            CommandKindDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
-            CommandKindDto::RequestBatteryInfo => Self::RequestBatteryInfo,
-            CommandKindDto::RequestDiagnostics
-            | CommandKindDto::RequestSettings
+            CommandKindDto::RequestIdentity => Ok(Self::RequestIdentity),
+            CommandKindDto::RequestTelemetry => Ok(Self::RequestTelemetry),
+            CommandKindDto::RequestFirmwareInfo => Ok(Self::RequestFirmwareInfo),
+            CommandKindDto::RequestBatteryInfo => Ok(Self::RequestBatteryInfo),
+            CommandKindDto::RequestDiagnostics => Ok(Self::RequestDiagnostics),
+            CommandKindDto::SoundHorn => Ok(Self::SoundHorn),
+            CommandKindDto::RequestSettings
             | CommandKindDto::SetLights
-            | CommandKindDto::SetRawMotorCurrent => Self::RequestDiagnostics,
-            CommandKindDto::SoundHorn => Self::SoundHorn,
+            | CommandKindDto::SetRawMotorCurrent => Err(()),
         }
     }
 }
@@ -1690,7 +1743,7 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
         match error {
             ConcreteSessionErrorDto::CommandRefused { refusal } => Self {
                 kind: MobileSessionStepErrorKindDto::CommandRefused,
-                command: Some(refusal.command.into()),
+                command: MobileCommandDto::try_from(refusal.command).ok(),
                 reason: Some(control_refusal_reason_text(refusal.reason).to_owned()),
             },
             ConcreteSessionErrorDto::UnsupportedFalconProfile { .. } => Self {
@@ -1808,7 +1861,10 @@ impl FalconReadOnlySession {
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
-        let input = SessionInputDto::from(input);
+        let input = match SessionInputDto::try_from(input) {
+            Ok(input) => input,
+            Err(reason) => return invalid_mobile_input(reason),
+        };
         MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
     }
 
@@ -2266,6 +2322,63 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_rejects_missing_mobile_command_input() {
+        let session = AeroReadOnlySession::new();
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+
+        assert_eq!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::InvalidInput,
+                command: None,
+                reason: Some("missing_command".to_owned()),
+            })
+        );
+        assert!(result.outputs.is_empty());
+    }
+
+    #[test]
+    fn wrapper_rejects_invalid_notification_channel_lengths() {
+        let session = AeroReadOnlySession::new();
+
+        for channel in [vec![0; 15], vec![0; 17]] {
+            let result = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Notification,
+                monotonic_ms: ms(0),
+                max_write_len: None,
+                channel,
+                bytes: Vec::new(),
+                command: None,
+            });
+
+            assert_eq!(
+                result.error,
+                Some(MobileSessionStepErrorDto {
+                    kind: MobileSessionStepErrorKindDto::InvalidInput,
+                    command: None,
+                    reason: Some("invalid_channel_uuid_length".to_owned()),
+                })
+            );
+            assert!(result.outputs.is_empty());
+        }
+    }
+
+    #[test]
+    fn unsupported_command_kind_does_not_remap_to_request_diagnostics() {
+        assert!(MobileCommandDto::try_from(CommandKindDto::RequestSettings).is_err());
+        assert!(MobileCommandDto::try_from(CommandKindDto::SetLights).is_err());
+        assert!(MobileCommandDto::try_from(CommandKindDto::SetRawMotorCurrent).is_err());
+    }
+
+    #[test]
     fn falcon_wrapper_rejects_unsupported_profile() {
         let result = FalconReadOnlySession::with_profile(MobileFalconProfileDto::Unsupported);
 
@@ -2360,12 +2473,14 @@ mod tests {
         builder.add_annotation("capture_distribution=redistributable".into());
         builder.add_annotation("capture_evidence=hardware_tested".into());
         builder.record_link_up(ms(1), Some(mobile_write_len(185)));
-        builder.record_notification(
-            ms(2),
-            vec![0x11; 16],
-            vec![0x22; 16],
-            vec![0xde, 0xad, 0xbe, 0xef],
-        );
+        builder
+            .record_notification(
+                ms(2),
+                vec![0x11; 16],
+                vec![0x22; 16],
+                vec![0xde, 0xad, 0xbe, 0xef],
+            )
+            .expect("valid notification UUIDs");
 
         let bytes = builder
             .export(MobilePevcapEncodingDto::Jsonl)
@@ -2397,17 +2512,21 @@ mod tests {
         let service = vec![0x22; 16];
         let characteristic = vec![0x11; 16];
 
-        builder.add_advertised_service(service.clone());
-        builder.add_gatt_fingerprint(MobileGattFingerprintDto {
-            service: service.clone(),
-            characteristic: characteristic.clone(),
-            roles: vec![
-                MobileGattRoleDto::Read,
-                MobileGattRoleDto::WriteWithoutResponse,
-                MobileGattRoleDto::Notify,
-            ],
-            verification: MobileVerificationStatusDto::HardwareVerified,
-        });
+        builder
+            .add_advertised_service(service.clone())
+            .expect("valid advertised service UUID");
+        builder
+            .add_gatt_fingerprint(MobileGattFingerprintDto {
+                service: service.clone(),
+                characteristic: characteristic.clone(),
+                roles: vec![
+                    MobileGattRoleDto::Read,
+                    MobileGattRoleDto::WriteWithoutResponse,
+                    MobileGattRoleDto::Notify,
+                ],
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            })
+            .expect("valid GATT fingerprint UUIDs");
 
         let bytes = builder
             .export(MobilePevcapEncodingDto::Jsonl)
@@ -2428,6 +2547,37 @@ mod tests {
             fingerprint.verification,
             VerificationStatus::HardwareVerified
         );
+    }
+
+    #[test]
+    fn mobile_capture_builder_rejects_invalid_uuid_lengths() {
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        let err = builder
+            .add_advertised_service(vec![0x22; 15])
+            .expect_err("short advertised service UUID is rejected");
+
+        assert_eq!(err, MobileInvalidInputError::InvalidUuidLength);
+
+        let err = builder
+            .record_notification(ms(2), vec![0x11; 17], vec![0x22; 16], vec![0xde])
+            .expect_err("long characteristic UUID is rejected");
+
+        assert_eq!(err, MobileInvalidInputError::InvalidUuidLength);
+
+        let err = builder
+            .add_gatt_fingerprint(MobileGattFingerprintDto {
+                service: vec![0x22; 16],
+                characteristic: vec![0x11; 15],
+                roles: vec![MobileGattRoleDto::Notify],
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            })
+            .expect_err("short fingerprint characteristic UUID is rejected");
+
+        assert_eq!(err, MobileInvalidInputError::InvalidUuidLength);
     }
 
     #[test]

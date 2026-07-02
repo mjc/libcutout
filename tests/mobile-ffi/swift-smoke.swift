@@ -68,8 +68,8 @@ struct MobileFfiSmoke {
         capture.addAnnotation(annotation: "capture_evidence=hardware_tested")
         let ffe0 = hexBytes("0000ffe000001000800000805f9b34fb")
         let ffe1 = hexBytes("0000ffe100001000800000805f9b34fb")
-        capture.addAdvertisedService(service: ffe0)
-        capture.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
+        try capture.addAdvertisedService(service: ffe0)
+        try capture.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
             service: ffe0,
             characteristic: ffe1,
             roles: [.read, .writeWithoutResponse, .notify],
@@ -84,7 +84,7 @@ struct MobileFfiSmoke {
             monotonicMs: MobileMonotonicMillisDto(milliseconds: 1),
             maxWriteLen: MobileTransportWriteLimitDto(bytes: 185)
         )
-        capture.recordNotification(
+        try capture.recordNotification(
             monotonicMs: MobileMonotonicMillisDto(milliseconds: 2),
             characteristic: Data(repeating: 0x11, count: 16),
             service: Data(repeating: 0x22, count: 16),
