@@ -69,6 +69,7 @@ pub use registry::{
 mod request_encoder;
 mod session;
 mod vesc_codec;
+mod vesc_session;
 mod veteran_bms;
 mod veteran_frame;
 mod veteran_telemetry;
@@ -84,11 +85,7 @@ pub use session::{
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
     SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
-    SupportsSettingsWrites, VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
-    VESC_RAW_FAULT_CODE_FIELD_ID, VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-    VESC_RAW_STATS_CURRENT_AVG_FIELD_ID, VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-    VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel,
-    VescNotificationDecoder, VeteranNotificationDecoder,
+    SupportsSettingsWrites, VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
     GearRatioDenominator, MotorPolePairs, VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN,
@@ -96,6 +93,12 @@ pub use vesc_codec::{
     VescFaultCode, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
     VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask, VescStatsTelemetry,
     VescValuesMask, VescValuesTelemetry,
+};
+pub use vesc_session::{
+    VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID, VESC_RAW_FAULT_CODE_FIELD_ID,
+    VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
+    VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
+    VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,
