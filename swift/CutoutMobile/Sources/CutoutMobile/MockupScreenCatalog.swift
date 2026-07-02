@@ -8,6 +8,20 @@ public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable 
     case vescDebug
 }
 
+public enum MockupConnectionRoute: String, Equatable, Hashable, Sendable {
+    case electricUnicycle = "electric_unicycle"
+    case vescOnewheel = "vesc_onewheel"
+
+    public var destinationScreenID: MockupScreenID {
+        switch self {
+        case .electricUnicycle:
+            .eucRide
+        case .vescOnewheel:
+            .vescOnewheelRide
+        }
+    }
+}
+
 public struct MockupMetric: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
@@ -134,7 +148,7 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let detail: String
     public let state: MockupPickerRowState
     public let symbolName: String
-    public let connectionRoute: String?
+    public let connectionRoute: MockupConnectionRoute?
 
     public init(
         id: String? = nil,
@@ -143,7 +157,7 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
         detail: String,
         state: MockupPickerRowState,
         symbolName: String,
-        connectionRoute: String? = nil
+        connectionRoute: MockupConnectionRoute? = nil
     ) {
         self.id = id ?? title
         self.title = title
@@ -195,15 +209,16 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
 }
 
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
-    case supported(connectionRoute: String)
+    case supported(connectionRoute: MockupConnectionRoute?)
     case unsupported(disabledReason: String)
 }
 
 public extension DevicePickerCandidateSupport {
     init(_ dto: MobileDiscoveryCandidateDto) {
-        if let connectionRoute = dto.connectionRoute {
-            self = .supported(connectionRoute: connectionRoute)
-        } else {
+        switch dto.support {
+        case .supported:
+            self = .supported(connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)))
+        case .unsupported:
             self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
         }
     }
@@ -284,7 +299,7 @@ public extension DevicePickerCandidateSupport {
         if case .supported = self { true } else { false }
     }
 
-    var connectionRoute: String? {
+    var connectionRoute: MockupConnectionRoute? {
         if case .supported(let connectionRoute) = self { connectionRoute } else { nil }
     }
 
@@ -423,7 +438,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
             detail: "126.0 V - strong signal",
-            support: .supported(connectionRoute: "electric_unicycle"),
+            support: .supported(connectionRoute: .electricUnicycle),
             symbolName: "circle.hexagongrid.circle"
         ),
         DevicePickerDiscoveryCandidate(
@@ -432,7 +447,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             productCategory: "VESC Onewheel",
             evidence: "UART bridge detected",
             detail: "75.4 V - moderate signal",
-            support: .supported(connectionRoute: "vesc_onewheel"),
+            support: .supported(connectionRoute: .vescOnewheel),
             symbolName: "oval.portrait"
         ),
         DevicePickerDiscoveryCandidate(

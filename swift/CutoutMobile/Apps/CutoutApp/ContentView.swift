@@ -40,8 +40,8 @@ struct ContentView: View {
     }
 
     private func pair(_ row: MockupPickerRow) {
-        guard let screenID = Self.destinationScreenID(for: row),
-              model.pair(platformIdentifier: row.id) else { return }
+        guard model.pair(platformIdentifier: row.id) else { return }
+        guard let screenID = Self.destinationScreenID(for: row) else { return }
         pairedDestinationScreenID = screenID
         selectedScreenID = screenID
     }
@@ -68,14 +68,7 @@ struct ContentView: View {
     }
 
     private static func destinationScreenID(for row: MockupPickerRow) -> MockupScreenID? {
-        switch row.connectionRoute {
-        case "electric_unicycle":
-            .eucRide
-        case "vesc_onewheel":
-            .vescOnewheelRide
-        default:
-            nil
-        }
+        row.connectionRoute?.destinationScreenID
     }
 }
 
@@ -786,7 +779,7 @@ private struct DevicePickerMockupView: View {
     let pair: (MockupPickerRow) -> Void
 
     private var renderedScanState: DevicePickerScanState {
-        scanState ?? DevicePickerScanState(status: .scanning, rows: [])
+        scanState ?? DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
     }
 
     private var sections: MockupPickerSections {
