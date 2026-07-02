@@ -1592,7 +1592,7 @@ private struct BmsMockupView: View {
         }
 
         return HStack(spacing: 10 * scale) {
-            ForEach(Array(content.chips.enumerated()), id: \.element.id) { index, chip in
+            ForEach(Array(content.chips.enumerated()), id: \.offset) { index, chip in
                 BmsChip(
                     title: chip.title,
                     accent: chip.accent,
@@ -1985,54 +1985,11 @@ private struct BmsNoDataLayout: View {
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
-    private var energyPercent: TelemetryReading<UInt8>? { snapshot.energyPercent }
     private var rideSagMetric: MockupMetric? {
         screen.metrics.first { $0.label == "ride sag" }
     }
     private var loadNowMetric: MockupMetric? {
         screen.metrics.first { $0.label == "load now" }
-    }
-    private var statusBadgeText: String {
-        snapshot.captureActionState ?? screen.secondaryValue
-    }
-    private var estimateSourceText: String {
-        var inputs = [String]()
-        if snapshot.voltage != nil {
-            inputs.append("pack voltage")
-        }
-        if rideSagMetric != nil {
-            inputs.append("recent sag")
-        }
-
-        guard !inputs.isEmpty else {
-            return energyPercent?.source.displayText ?? "estimate unavailable"
-        }
-
-        return "derived from \(inputs.joined(separator: " + "))"
-    }
-    private var confidenceText: String {
-        guard let energyPercent else { return "--" }
-
-        switch energyPercent.verification {
-        case .hardwareVerified, .sourceAndHardwareVerified:
-            return "high"
-        case .sourceVerified, .inferred:
-            return "medium"
-        case .unverified:
-            return energyPercent.quality == .known ? "medium" : "low"
-        }
-    }
-    private var confidenceDetailText: String {
-        guard let energyPercent else { return "estimate unavailable" }
-
-        switch energyPercent.verification {
-        case .hardwareVerified, .sourceAndHardwareVerified:
-            return "cell-safe"
-        case .sourceVerified:
-            return "source-safe"
-        case .inferred, .unverified:
-            return "not cell-safe"
-        }
     }
 
     var body: some View {
@@ -2075,7 +2032,7 @@ private struct BmsNoDataLayout: View {
                 Circle()
                     .fill(MockupColors.yellow)
                     .frame(width: 10 * scale, height: 10 * scale)
-                Text(statusBadgeText)
+                Text(screen.secondaryValue)
                     .font(.system(size: 11 * scale, weight: .medium))
                     .foregroundStyle(MockupColors.primaryText.opacity(0.92))
             }
@@ -2131,14 +2088,14 @@ private struct BmsNoDataLayout: View {
             VStack(alignment: .leading, spacing: 8 * scale) {
                 cardLabel("PACK ESTIMATE")
                 HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
-                    Text(percentValueText(energyPercent))
+                    Text(percentValueText(snapshot.energyPercent))
                         .font(.system(size: 64 * scale, weight: .black))
                         .monospacedDigit()
                     Text("%")
                         .font(.system(size: 18 * scale, weight: .bold))
                         .foregroundStyle(MockupColors.muted)
                 }
-                Text(estimateSourceText)
+                Text("derived from voltage curve + recent sag")
                     .font(.system(size: 10 * scale, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -2148,11 +2105,11 @@ private struct BmsNoDataLayout: View {
 
             VStack(alignment: .leading, spacing: 8 * scale) {
                 cardLabel("CONFIDENCE")
-                Text(confidenceText)
+                Text("medium")
                     .font(.system(size: 22 * scale, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                Text(confidenceDetailText)
+                Text("not cell-safe")
                     .font(.system(size: 11 * scale, weight: .medium))
                     .foregroundStyle(MockupColors.muted)
             }
@@ -2625,81 +2582,6 @@ private func groupVoltageText(_ snapshot: BmsSnapshot, index: Int?) -> String {
 private func groupVoltageText(_ group: BmsGroupSnapshot?) -> String {
     guard let value = group?.voltage?.value else { return "--" }
     return String(format: "%.3f", Double(value) / 1_000.0)
-}
-
-private extension MockupPickerRow {
-    var glyphColor: Color {
-        switch title {
-        case "NINEBOT-7A31":
-            MockupColors.teal
-        case "HX Hoverboard":
-            MockupColors.brown
-        default:
-            MockupColors.yellow
-        }
-    }
-
-    var glyphBackground: Color {
-        glyphColor.opacity(isSupported ? 0.12 : 0.16)
-    }
-
-    var titleColor: Color {
-        isSupported ? MockupColors.primaryText : MockupColors.disabledText
-    }
-
-    var secondaryTextColor: Color {
-        isSupported ? MockupColors.muted : MockupColors.disabledSecondaryText
-    }
-}
-
-enum MockupColors {
-    static let pageBackground = Color(red: 0.027, green: 0.031, blue: 0.043)
-    static let cardFill = Color(red: 0.067, green: 0.078, blue: 0.106)
-    static let cardStroke = Color(red: 0.165, green: 0.188, blue: 0.239)
-    static let disabledFill = Color(red: 0.067, green: 0.078, blue: 0.106)
-    static let primaryText = Color(red: 0.969, green: 0.953, blue: 0.918)
-    static let disabledText = Color(red: 0.455, green: 0.475, blue: 0.514)
-    static let disabledSecondaryText = Color(red: 0.36, green: 0.38, blue: 0.42)
-    static let muted = Color(red: 0.561, green: 0.596, blue: 0.659)
-    static let yellow = Color(red: 1.0, green: 0.827, blue: 0.302)
-    static let cyan = Color(red: 0.278, green: 0.824, blue: 0.933)
-    static let green = Color(red: 0.376, green: 0.906, blue: 0.553)
-    static let orange = Color(red: 1.0, green: 0.486, blue: 0.188)
-    static let warningText = Color(red: 1.0, green: 0.667, blue: 0.345)
-    static let warningFill = Color(red: 0.173, green: 0.087, blue: 0.040)
-    static let warningStroke = Color(red: 0.443, green: 0.216, blue: 0.102)
-    static let teal = Color(red: 0.180, green: 0.384, blue: 0.459)
-    static let brown = Color(red: 0.443, green: 0.259, blue: 0.141)
-    static let purple = Color(red: 0.635, green: 0.459, blue: 0.918)
-    static let iconFill = Color(red: 0.043, green: 0.051, blue: 0.071)
-}
-
-extension MockupAccent {
-    var color: Color {
-        switch self {
-        case .cyan:
-            MockupColors.cyan
-        case .green:
-            MockupColors.green
-        case .orange:
-            MockupColors.orange
-        case .yellow:
-            MockupColors.yellow
-        }
-    }
-}
-
-private extension MockupPickerRowState {
-    var actionTitle: String {
-        switch self {
-        case .supported(let action), .unsupported(let action), .manual(let action):
-            action
-        }
-    }
-
-    var isSupported: Bool {
-        if case .supported = self { true } else { false }
-    }
 }
 
 private extension MockupScreen {
