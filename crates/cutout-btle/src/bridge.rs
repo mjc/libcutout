@@ -270,7 +270,7 @@ where
 
     for command in config.commands {
         monotonic_ms = monotonic_ms.next();
-        session.handle(SessionInput::Command(*command), &mut outputs);
+        session.handle(SessionInput::Command(*command), &mut outputs)?;
         process_session_outputs(
             SessionOutputContext {
                 peripheral,
@@ -294,7 +294,7 @@ where
             monotonic_ms: monotonic_ms.into_core(),
         },
         &mut outputs,
-    );
+    )?;
     process_session_outputs(
         SessionOutputContext {
             peripheral,
@@ -370,7 +370,7 @@ where
             max_write_len: max_write_len.map(|len| TransportWriteLimit::from_bytes(len.as_bytes())),
         }),
         outputs,
-    );
+    )?;
     info!(
         outputs = outputs.len(),
         "session bridge link-up handling completed"
@@ -453,7 +453,7 @@ where
                     outputs,
                     &notification,
                     *monotonic_ms,
-                );
+                )?;
                 process_session_outputs(
                     SessionOutputContext {
                         peripheral: context.peripheral,
@@ -526,7 +526,7 @@ fn ingest_notification<P, S>(
     outputs: &mut Vec<SessionOutput>,
     notification: &BtleNotification,
     monotonic_ms: MonotonicMs,
-) -> Option<NotificationDecodeOutcome>
+) -> Result<Option<NotificationDecodeOutcome>, BtleError>
 where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
@@ -550,8 +550,8 @@ where
             monotonic_ms: monotonic_ms.into_core(),
         },
         outputs,
-    );
-    notification_decode_outcome(outputs)
+    )?;
+    Ok(notification_decode_outcome(outputs))
 }
 
 fn link_loss_next_wait(
@@ -584,7 +584,7 @@ where
         records.push(SessionCaptureRecord::LinkDown { monotonic_ms });
     }
     report.disconnects = report.disconnects.increment();
-    session.handle(SessionInput::LinkDown, outputs);
+    session.handle(SessionInput::LinkDown, outputs)?;
     while !outputs.is_empty() {
         for output in std::mem::take(outputs) {
             match output {
@@ -797,7 +797,7 @@ where
                         records.push(SessionCaptureRecord::LinkDown { monotonic_ms });
                     }
                     context.report.disconnects = context.report.disconnects.increment();
-                    session.handle(SessionInput::LinkDown, outputs);
+                    session.handle(SessionInput::LinkDown, outputs)?;
                 }
                 SessionOutput::Event(event) => {
                     process_device_event(context.report, event, monotonic_ms);

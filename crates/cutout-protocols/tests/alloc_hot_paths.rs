@@ -1,4 +1,5 @@
 #![allow(unsafe_code)]
+#![allow(unused_must_use)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::{

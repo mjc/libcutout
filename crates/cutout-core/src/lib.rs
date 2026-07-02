@@ -6065,17 +6065,143 @@ pub enum SessionOutput {
     NotificationIngest(NotificationIngestOutcome),
 }
 
+/// Default number of session outputs retained by the host facade before drain.
+pub const DEFAULT_SESSION_OUTPUT_CAPACITY: usize = 16;
+
+/// Session output sink capacity.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SessionOutputCapacity(usize);
+
+impl SessionOutputCapacity {
+    /// Creates a session output capacity from an already parsed value.
+    #[must_use]
+    pub const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    /// Returns the underlying output count.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+/// Error returned when a session cannot emit an output.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum SessionOutputError {
+    /// The output sink is full.
+    #[error("session output sink is full at capacity {capacity:?}")]
+    Full {
+        /// Configured output capacity.
+        capacity: SessionOutputCapacity,
+    },
+}
+
+/// Session output sink used by protocol engines.
+pub trait SessionOutputSink {
+    /// Pushes one output into the sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the sink has no free slot.
+    fn push(&mut self, output: SessionOutput) -> Result<(), SessionOutputError>;
+}
+
+impl SessionOutputSink for Vec<SessionOutput> {
+    fn push(&mut self, output: SessionOutput) -> Result<(), SessionOutputError> {
+        Vec::push(self, output);
+        Ok(())
+    }
+}
+
+/// Bounded session output storage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundedSessionOutput<const CAPACITY: usize> {
+    output: ArrayVec<SessionOutput, CAPACITY>,
+}
+
+impl<const CAPACITY: usize> BoundedSessionOutput<CAPACITY> {
+    /// Creates an empty bounded output buffer.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            output: ArrayVec::new_const(),
+        }
+    }
+
+    /// Returns buffered outputs.
+    #[must_use]
+    pub fn as_slice(&self) -> &[SessionOutput] {
+        self.output.as_slice()
+    }
+
+    /// Returns buffered output count.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.output.len()
+    }
+
+    /// Returns true when no outputs are buffered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.output.is_empty()
+    }
+
+    /// Drains buffered outputs into an owned vector.
+    #[must_use]
+    pub fn drain(&mut self) -> Vec<SessionOutput> {
+        self.output.drain(..).collect()
+    }
+
+    /// Drains buffered outputs into an existing vector.
+    pub fn drain_into(&mut self, output: &mut Vec<SessionOutput>) {
+        output.extend(self.output.drain(..));
+    }
+
+    /// Returns the configured output capacity.
+    #[must_use]
+    pub const fn capacity(&self) -> SessionOutputCapacity {
+        SessionOutputCapacity::new(CAPACITY)
+    }
+}
+
+impl<const CAPACITY: usize> Default for BoundedSessionOutput<CAPACITY> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const CAPACITY: usize> SessionOutputSink for BoundedSessionOutput<CAPACITY> {
+    fn push(&mut self, output: SessionOutput) -> Result<(), SessionOutputError> {
+        self.output
+            .try_push(output)
+            .map_err(|_| SessionOutputError::Full {
+                capacity: self.capacity(),
+            })
+    }
+}
+
 /// Synchronous protocol reactor.
 pub trait ProtocolSession {
     /// Handles one input and appends any resulting outputs.
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError`] when the output sink cannot accept every
+    /// output produced for the input.
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError>;
 }
 
 /// Host-facing synchronous session facade.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HostSession<S> {
+pub struct HostSession<S, const OUTPUT_CAPACITY: usize = DEFAULT_SESSION_OUTPUT_CAPACITY> {
     session: S,
-    output: Vec<SessionOutput>,
+    output: BoundedSessionOutput<OUTPUT_CAPACITY>,
     snapshot: TelemetrySnapshot,
     diagnostics: ParserDiagnostics,
 }
@@ -6089,7 +6215,39 @@ where
     pub fn new(session: S) -> Self {
         Self {
             session,
-            output: Vec::with_capacity(4),
+            output: BoundedSessionOutput::new(),
+            snapshot: TelemetrySnapshot {
+                at_ms: None,
+                speed: None,
+                voltage: None,
+                battery_current: None,
+                motor_current: None,
+                power: None,
+                controller_temperature: None,
+                motor_temperature: None,
+                battery_temperature: None,
+                pwm: None,
+                distance: None,
+                pitch: None,
+                roll: None,
+                battery_level_reported: None,
+                battery_level_estimated: None,
+            },
+            diagnostics: ParserDiagnostics::default(),
+        }
+    }
+}
+
+impl<S, const OUTPUT_CAPACITY: usize> HostSession<S, OUTPUT_CAPACITY>
+where
+    S: ProtocolSession,
+{
+    /// Creates a host session with an explicit bounded output capacity.
+    #[must_use]
+    pub fn with_output_capacity(session: S) -> Self {
+        Self {
+            session,
+            output: BoundedSessionOutput::new(),
             snapshot: TelemetrySnapshot {
                 at_ms: None,
                 speed: None,
@@ -6112,54 +6270,78 @@ where
     }
 
     /// Supplies a link-up event to the protocol session.
-    pub fn ingest_link_up(&mut self, link: LinkInfo) {
-        self.handle(SessionInput::LinkUp(link));
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+    pub fn ingest_link_up(&mut self, link: LinkInfo) -> Result<(), SessionOutputError> {
+        self.handle(SessionInput::LinkUp(link))
     }
 
     /// Supplies a link-down event to the protocol session.
-    pub fn ingest_link_down(&mut self) {
-        self.handle(SessionInput::LinkDown);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+    pub fn ingest_link_down(&mut self) -> Result<(), SessionOutputError> {
+        self.handle(SessionInput::LinkDown)
     }
 
     /// Supplies owned notification bytes to the protocol session.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the host output buffer fills.
     pub fn ingest_notification_owned(
         &mut self,
         channel: GattChannel,
         bytes: Vec<u8>,
         monotonic_ms: MonotonicTimestamp,
-    ) {
+    ) -> Result<(), SessionOutputError> {
         let bytes = bytes.into_boxed_slice();
         self.handle(SessionInput::Notification {
             channel,
             bytes: &bytes,
             monotonic_ms,
-        });
+        })
     }
 
     /// Supplies a host timer tick to the protocol session.
-    pub fn tick(&mut self, monotonic_ms: MonotonicTimestamp) {
-        self.handle(SessionInput::Tick { monotonic_ms });
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+    pub fn tick(&mut self, monotonic_ms: MonotonicTimestamp) -> Result<(), SessionOutputError> {
+        self.handle(SessionInput::Tick { monotonic_ms })
     }
 
     /// Supplies a host command to the protocol session.
-    pub fn issue_command(&mut self, command: DeviceCommand) {
-        self.handle(SessionInput::Command(command));
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+    pub fn issue_command(&mut self, command: DeviceCommand) -> Result<(), SessionOutputError> {
+        self.handle(SessionInput::Command(command))
     }
 
     /// Supplies one borrowed host input to the protocol session.
-    pub fn ingest(&mut self, input: SessionInput<'_>) {
-        self.handle(input);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+    pub fn ingest(&mut self, input: SessionInput<'_>) -> Result<(), SessionOutputError> {
+        self.handle(input)
     }
 
     /// Drains owned session outputs accumulated so far.
     #[must_use]
     pub fn drain_outputs(&mut self) -> Vec<SessionOutput> {
-        core::mem::take(&mut self.output)
+        self.output.drain()
     }
 
     /// Moves accumulated session outputs into an existing buffer.
     pub fn drain_outputs_into(&mut self, output: &mut Vec<SessionOutput>) {
-        output.append(&mut self.output);
+        self.output.drain_into(output);
     }
 
     /// Returns the latest telemetry snapshot.
@@ -6174,14 +6356,15 @@ where
         self.diagnostics
     }
 
-    fn handle(&mut self, input: SessionInput<'_>) {
+    fn handle(&mut self, input: SessionInput<'_>) -> Result<(), SessionOutputError> {
         let start = self.output.len();
-        self.session.handle(input, &mut self.output);
+        self.session.handle(input, &mut self.output)?;
         self.apply_state_from_outputs(start);
+        Ok(())
     }
 
     fn apply_state_from_outputs(&mut self, start: usize) {
-        for output in &self.output[start..] {
+        for output in &self.output.as_slice()[start..] {
             if let SessionOutput::Event(event) = output {
                 match event {
                     DeviceEvent::Telemetry(delta) => {
@@ -6335,16 +6518,23 @@ where
     S: ProtocolSession,
 {
     let mut outputs = Vec::new();
-    replay_capture_into(host, records, &mut outputs);
+    if replay_capture_into(host, records, &mut outputs).is_err() {
+        return outputs;
+    }
     outputs
 }
 
 /// Replays captured host inputs through a host session into an existing buffer.
-pub fn replay_capture_into<S>(
-    host: &mut HostSession<S>,
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+pub fn replay_capture_into<S, const OUTPUT_CAPACITY: usize>(
+    host: &mut HostSession<S, OUTPUT_CAPACITY>,
     records: &[CaptureRecord],
     outputs: &mut Vec<SessionOutput>,
-) where
+) -> Result<(), SessionOutputError>
+where
     S: ProtocolSession,
 {
     for record in records {
@@ -6362,11 +6552,12 @@ pub fn replay_capture_into<S>(
             }),
             CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
             CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
-                host.issue_command(*command);
+                host.issue_command(*command)
             }
-        }
+        }?;
         host.drain_outputs_into(outputs);
     }
+    Ok(())
 }
 
 /// Summary of deterministic replay equivalence across notification chunking
@@ -6709,9 +6900,9 @@ mod tests {
         Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
         DeviceEvent, Distance, Duration, DutyCycle, Energy, GattChannel, LinkInfo, Measured,
         MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power, ProtocolSession,
-        SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot,
-        Temperature, TransportAction, UnsupportedReason, ValueQuality, ValueSource,
-        VerificationStatus, Voltage, WriteMode, WritePayload,
+        SeriesCount, SessionInput, SessionOutput, SessionOutputSink, Speed, TelemetryDelta,
+        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -7040,15 +7231,19 @@ mod tests {
     }
 
     impl ProtocolSession for EchoSession {
-        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), crate::SessionOutputError> {
             match input {
                 SessionInput::LinkUp(info) => {
                     self.link_is_up = true;
-                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
+                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)))?;
                 }
                 SessionInput::LinkDown => {
                     self.link_is_up = false;
-                    output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
                 }
                 SessionInput::Notification {
                     bytes,
@@ -7062,10 +7257,10 @@ mod tests {
                             crate::NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                         ),
-                    ));
+                    ))?;
                 }
                 SessionInput::Tick { monotonic_ms } => {
-                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }))?;
                 }
                 SessionInput::Command(DeviceCommand::RequestTelemetry) => {
                     output.push(SessionOutput::Transport(TransportAction::Write {
@@ -7073,12 +7268,12 @@ mod tests {
                         bytes: WritePayload::try_from_slice(b"telemetry")
                             .expect("test write payload fits"),
                         mode: WriteMode::WithResponse,
-                    }));
+                    }))?;
                 }
                 SessionInput::Command(DeviceCommand::RequestIdentity) => {
                     output.push(SessionOutput::Transport(TransportAction::Subscribe {
                         channel: GattChannel::from_bytes([2; 16]),
-                    }));
+                    }))?;
                 }
                 SessionInput::Command(
                     DeviceCommand::RequestFirmwareInfo
@@ -7090,6 +7285,7 @@ mod tests {
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
             }
+            Ok(())
         }
     }
 
@@ -7102,7 +7298,9 @@ mod tests {
             max_write_len: Some(write_len(185)),
         };
 
-        session.handle(SessionInput::LinkUp(link), &mut output);
+        session
+            .handle(SessionInput::LinkUp(link), &mut output)
+            .expect("Vec-backed test sink accepts link output");
 
         assert!(session.link_is_up);
         assert_eq!(
@@ -7117,14 +7315,16 @@ mod tests {
         let mut output = Vec::new();
         let channel = GattChannel::from_bytes([0xfe; 16]);
 
-        session.handle(
-            SessionInput::Notification {
-                channel,
-                bytes: &[0xdc, 0x5a, 0x5c],
-                monotonic_ms: ms(20),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel,
+                    bytes: &[0xdc, 0x5a, 0x5c],
+                    monotonic_ms: ms(20),
+                },
+                &mut output,
+            )
+            .expect("Vec-backed test sink accepts notification output");
 
         assert_eq!(session.last_notification_len, 3);
         assert_eq!(
@@ -7144,10 +7344,12 @@ mod tests {
         let mut session = EchoSession::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestTelemetry),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestTelemetry),
+                &mut output,
+            )
+            .expect("Vec-backed test sink accepts command output");
         let drained = core::mem::take(&mut output);
 
         assert!(output.is_empty());
@@ -9838,7 +10040,8 @@ mod tests {
             max_write_len: Some(write_len(185)),
         };
 
-        host.ingest_link_up(link);
+        host.ingest_link_up(link)
+            .expect("default host output capacity accepts link output");
         let drained = host.drain_outputs();
 
         assert_eq!(
@@ -9849,11 +10052,36 @@ mod tests {
     }
 
     #[test]
+    fn bounded_session_output_reports_overflow_without_allocating() {
+        let mut output = crate::BoundedSessionOutput::<1>::new();
+        let link = LinkInfo {
+            monotonic_ms: ms(10),
+            max_write_len: Some(write_len(185)),
+        };
+
+        assert_eq!(
+            output.push(SessionOutput::Event(DeviceEvent::LinkUp(link))),
+            Ok(())
+        );
+        assert_eq!(
+            output.push(SessionOutput::Event(DeviceEvent::LinkDown)),
+            Err(crate::SessionOutputError::Full {
+                capacity: crate::SessionOutputCapacity::new(1),
+            })
+        );
+        assert_eq!(
+            output.as_slice(),
+            &[SessionOutput::Event(DeviceEvent::LinkUp(link))]
+        );
+    }
+
+    #[test]
     fn host_session_ingests_owned_notifications_without_retaining_bytes() {
         let mut host = crate::HostSession::new(EchoSession::default());
         let channel = GattChannel::from_bytes([0xfe; 16]);
 
-        host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], ms(20));
+        host.ingest_notification_owned(channel, vec![0xdc, 0x5a, 0x5c], ms(20))
+            .expect("default host output capacity accepts notification output");
 
         assert_eq!(
             host.drain_outputs().as_slice(),
@@ -9877,7 +10105,8 @@ mod tests {
             channel,
             bytes: &bytes,
             monotonic_ms: ms(42),
-        });
+        })
+        .expect("default host output capacity accepts borrowed notification output");
 
         assert_eq!(
             host.drain_outputs().as_slice(),
@@ -9895,7 +10124,8 @@ mod tests {
     fn host_session_issues_commands_through_facade() {
         let mut host = crate::HostSession::new(EchoSession::default());
 
-        host.issue_command(DeviceCommand::RequestTelemetry);
+        host.issue_command(DeviceCommand::RequestTelemetry)
+            .expect("default host output capacity accepts command output");
 
         assert_eq!(
             host.drain_outputs().as_slice(),
@@ -9911,7 +10141,11 @@ mod tests {
     struct StateSession;
 
     impl ProtocolSession for StateSession {
-        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), crate::SessionOutputError> {
             match input {
                 SessionInput::Command(DeviceCommand::RequestTelemetry) => {
                     output.push(SessionOutput::Event(DeviceEvent::Telemetry(
@@ -9922,7 +10156,7 @@ mod tests {
                             ))),
                             ..TelemetryDelta::empty(ms(40))
                         },
-                    )));
+                    )))?;
                 }
                 SessionInput::Tick { monotonic_ms } => {
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
@@ -9930,13 +10164,14 @@ mod tests {
                             timeouts: diag_count(monotonic_ms.get()),
                             ..crate::ParserDiagnostics::default()
                         },
-                    )));
+                    )))?;
                 }
                 SessionInput::LinkUp(_)
                 | SessionInput::LinkDown
                 | SessionInput::Notification { .. }
                 | SessionInput::Command(_) => {}
             }
+            Ok(())
         }
     }
 
@@ -9944,7 +10179,8 @@ mod tests {
     fn host_session_updates_current_snapshot_from_events() {
         let mut host = crate::HostSession::new(StateSession);
 
-        host.issue_command(DeviceCommand::RequestTelemetry);
+        host.issue_command(DeviceCommand::RequestTelemetry)
+            .expect("default host output capacity accepts telemetry output");
 
         assert_eq!(host.current_snapshot().at_ms, Some(ms(40)));
         assert_eq!(
@@ -9959,8 +10195,10 @@ mod tests {
     fn host_session_merges_diagnostics_from_events() {
         let mut host = crate::HostSession::new(StateSession);
 
-        host.tick(ms(2));
-        host.tick(ms(3));
+        host.tick(ms(2))
+            .expect("default host output capacity accepts diagnostic output");
+        host.tick(ms(3))
+            .expect("default host output capacity accepts diagnostic output");
 
         assert_eq!(host.diagnostics().timeouts, diag_count(5));
     }
@@ -9969,7 +10207,8 @@ mod tests {
     fn diagnostic_snapshot_maps_from_host_session_diagnostics() {
         let mut host = crate::HostSession::new(StateSession);
 
-        host.tick(ms(2));
+        host.tick(ms(2))
+            .expect("default host output capacity accepts diagnostic output");
 
         assert_eq!(
             crate::DiagnosticSnapshot::from_parser_diagnostics(host.diagnostics()),
@@ -9986,13 +10225,17 @@ mod tests {
     }
 
     impl ProtocolSession for FramedCaptureSession {
-        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), crate::SessionOutputError> {
             match input {
                 SessionInput::LinkUp(info) => {
-                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
+                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)))?;
                 }
                 SessionInput::LinkDown => {
-                    output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
                 }
                 SessionInput::Notification { bytes, .. } => {
                     for byte in bytes {
@@ -10005,7 +10248,7 @@ mod tests {
                                     )),
                                     ..TelemetryDelta::empty(ms(90))
                                 },
-                            )));
+                            )))?;
                             self.sum = 0;
                         } else {
                             self.sum += i32::from(*byte);
@@ -10013,7 +10256,7 @@ mod tests {
                     }
                 }
                 SessionInput::Tick { monotonic_ms } => {
-                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }))?;
                 }
                 SessionInput::Command(command) => {
                     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
@@ -10021,9 +10264,10 @@ mod tests {
                             unmatched_replies: diag_count(command.kind() as u64),
                             ..crate::ParserDiagnostics::default()
                         },
-                    )));
+                    )))?;
                 }
             }
+            Ok(())
         }
     }
 
@@ -10201,14 +10445,18 @@ mod tests {
         struct NotificationLengthSession;
 
         impl ProtocolSession for NotificationLengthSession {
-            fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            fn handle(
+                &mut self,
+                input: SessionInput<'_>,
+                output: &mut dyn SessionOutputSink,
+            ) -> Result<(), crate::SessionOutputError> {
                 let SessionInput::Notification {
                     bytes,
                     monotonic_ms,
                     ..
                 } = input
                 else {
-                    return;
+                    return Ok(());
                 };
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
@@ -10218,7 +10466,7 @@ mod tests {
                         ))),
                         ..TelemetryDelta::empty(monotonic_ms)
                     },
-                )));
+                )))
             }
         }
 

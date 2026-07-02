@@ -404,7 +404,9 @@ where
     let comparison_session = session.clone();
     let mut host = HostSession::new(session);
     let mut outputs = Vec::with_capacity(capture.replay_input_count());
-    capture.replay_into_host(&mut host, &mut outputs);
+    capture
+        .replay_into_host(&mut host, &mut outputs)
+        .expect("PEVCAP replay fits the default session output buffer");
     let arbitrary_chunks = capture.arbitrary_notification_chunk_lengths();
     let comparison =
         capture.compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks);
@@ -2624,8 +2626,9 @@ mod tests {
     use cutout_core::{
         DeviceEvent, GattChannel, MonotonicTimestamp, NotificationByteLen, ParserDiagnosticCount,
         ParserDroppedBytes, ParserFrameLen, PayloadBodyLen, PevcapHeader, PevcapRecord,
-        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, SignalStrength,
-        TransportWriteLimit, VerificationStatus, VerifiedValue, WriteMode,
+        ProtocolFamily, ProtocolSelector, SemanticEventCount, SessionInput, SessionOutputError,
+        SessionOutputSink, SignalStrength, TransportWriteLimit, VerificationStatus, VerifiedValue,
+        WriteMode,
     };
     use uuid::Uuid;
 
@@ -2672,13 +2675,17 @@ mod tests {
     struct RecordingSession;
 
     impl cutout_core::ProtocolSession for RecordingSession {
-        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), SessionOutputError> {
             match input {
                 SessionInput::LinkUp(link) => {
-                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(link)));
+                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(link)))?;
                 }
                 SessionInput::LinkDown => {
-                    output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
                 }
                 SessionInput::Notification {
                     channel,
@@ -2690,12 +2697,13 @@ mod tests {
                         NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                     ),
-                )),
+                ))?,
                 SessionInput::Tick { monotonic_ms } => {
-                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }))?;
                 }
                 SessionInput::Command(_) => {}
             }
+            Ok(())
         }
     }
 
@@ -3399,7 +3407,9 @@ mod tests {
 
         let mut host = HostSession::new(RecordingSession);
         let mut replay = Vec::with_capacity(3);
-        decoded.replay_into_host(&mut host, &mut replay);
+        decoded
+            .replay_into_host(&mut host, &mut replay)
+            .expect("PEVCAP replay fits the default session output buffer");
 
         assert!(matches!(
             replay[0],
@@ -3722,12 +3732,13 @@ mod tests {
         match mode {
             PevcapReplayMode::Whole => capture.replay_into_host(&mut host, &mut outputs),
             PevcapReplayMode::OneByte => {
-                capture.replay_one_byte_notifications_into_host(&mut host, &mut outputs);
+                capture.replay_one_byte_notifications_into_host(&mut host, &mut outputs)
             }
             PevcapReplayMode::Arbitrary(lengths) => {
-                capture.replay_notification_chunks_into_host(lengths, &mut host, &mut outputs);
+                capture.replay_notification_chunks_into_host(lengths, &mut host, &mut outputs)
             }
         }
+        .expect("PEVCAP replay fits the default session output buffer");
         outputs
             .into_iter()
             .filter_map(|output| match output {

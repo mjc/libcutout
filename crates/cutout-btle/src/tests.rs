@@ -13,8 +13,9 @@ use cutout_core::{
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection,
     PevcapResolvedIdentity, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
     ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput,
-    SettingsEntry, SettingsReadback, SignalStrength, TelemetryDelta, TransportAction, ValueQuality,
-    ValueSource, VerificationStatus, VerifiedValue, WriteMode,
+    SessionOutputError, SessionOutputSink, SettingsEntry, SettingsReadback, SignalStrength,
+    TelemetryDelta, TransportAction, ValueQuality, ValueSource, VerificationStatus, VerifiedValue,
+    WriteMode,
 };
 use futures_util::{StreamExt, stream};
 use smallvec::smallvec;
@@ -2020,14 +2021,19 @@ struct BridgeSession {
 struct SubscribeOnlySession;
 
 impl ProtocolSession for SubscribeOnlySession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         if matches!(input, SessionInput::LinkUp(_)) {
             output.push(SessionOutput::Transport(TransportAction::Subscribe {
                 channel: GattChannel::from_bytes(
                     *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
                 ),
-            }));
+            }))?;
         }
+        Ok(())
     }
 }
 
@@ -2087,20 +2093,24 @@ impl crate::ReconnectingSessionHost for FakeReconnectHost {
 }
 
 impl ProtocolSession for CommandWriteSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::LinkUp(_) => {
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: GattChannel::from_bytes(
                         *Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb).as_bytes(),
                     ),
-                }));
+                }))?;
             }
             SessionInput::Command(command) => {
                 let bytes = match command {
                     DeviceCommand::RequestIdentity => b"N".as_slice(),
                     DeviceCommand::RequestFirmwareInfo => b"V".as_slice(),
-                    _ => return,
+                    _ => return Ok(()),
                 };
                 output.push(SessionOutput::Transport(TransportAction::Write {
                     channel: GattChannel::from_bytes(
@@ -2109,128 +2119,158 @@ impl ProtocolSession for CommandWriteSession {
                     bytes: cutout_core::WritePayload::try_from_slice(bytes)
                         .expect("fixture payload fits"),
                     mode: WriteMode::WithoutResponse,
-                }));
+                }))?;
             }
             SessionInput::LinkDown
             | SessionInput::Tick { .. }
             | SessionInput::Notification { .. } => {}
         }
+        Ok(())
     }
 }
 
 impl ProtocolSession for LargeWriteSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         if matches!(input, SessionInput::Tick { .. }) {
             output.push(SessionOutput::Transport(TransportAction::Write {
                 channel: GattChannel::from_bytes([0xA1; 16]),
                 bytes: cutout_core::WritePayload::try_from_slice(b"0123456789")
                     .expect("fixture payload fits"),
                 mode: WriteMode::WithoutResponse,
-            }));
+            }))?;
         }
+        Ok(())
     }
 }
 
 impl ProtocolSession for CommandThenDisconnectSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::LinkUp(_) => {
                 self.link_ups += 1;
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: GattChannel::from_bytes([0xA1; 16]),
-                }));
+                }))?;
             }
             SessionInput::Command(command) => {
                 let bytes = match command {
                     DeviceCommand::RequestIdentity => b"N".as_slice(),
                     DeviceCommand::RequestFirmwareInfo => b"V".as_slice(),
-                    _ => return,
+                    _ => return Ok(()),
                 };
                 output.push(SessionOutput::Transport(TransportAction::Write {
                     channel: GattChannel::from_bytes([0xA1; 16]),
                     bytes: cutout_core::WritePayload::try_from_slice(bytes)
                         .expect("fixture payload fits"),
                     mode: WriteMode::WithoutResponse,
-                }));
+                }))?;
             }
             SessionInput::Tick { .. } => {
                 if self.link_ups == 1 {
-                    output.push(SessionOutput::Transport(TransportAction::Disconnect));
+                    output.push(SessionOutput::Transport(TransportAction::Disconnect))?;
                 }
             }
             SessionInput::LinkDown | SessionInput::Notification { .. } => {}
         }
+        Ok(())
     }
 }
 
 impl ProtocolSession for DisconnectOnTickSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::Tick { .. } => {
-                output.push(SessionOutput::Transport(TransportAction::Disconnect));
+                output.push(SessionOutput::Transport(TransportAction::Disconnect))?;
             }
             SessionInput::LinkDown => {
                 *self.link_down_count.lock().expect("link down count") += 1;
-                output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
             }
             SessionInput::LinkUp(_)
             | SessionInput::Command(_)
             | SessionInput::Notification { .. } => {}
         }
+        Ok(())
     }
 }
 
 impl ProtocolSession for ReconnectOnceSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::LinkUp(_) => {
                 let mut link_ups = self.link_ups.lock().expect("link ups");
                 *link_ups += 1;
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: GattChannel::from_bytes([0xA1; 16]),
-                }));
+                }))?;
             }
             SessionInput::Tick { .. } => {
                 if *self.link_ups.lock().expect("link ups") == 1 {
-                    output.push(SessionOutput::Transport(TransportAction::Disconnect));
+                    output.push(SessionOutput::Transport(TransportAction::Disconnect))?;
                 }
             }
             SessionInput::LinkDown => {
                 *self.link_downs.lock().expect("link downs") += 1;
-                output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
             }
             SessionInput::Command(_) | SessionInput::Notification { .. } => {}
         }
+        Ok(())
     }
 }
 
 impl ProtocolSession for ExternalLinkLossSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::LinkUp(_) => {
                 *self.link_ups.lock().expect("link ups") += 1;
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: GattChannel::from_bytes([0xA1; 16]),
-                }));
+                }))?;
             }
             SessionInput::LinkDown => {
                 *self.link_downs.lock().expect("link downs") += 1;
-                output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+                output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
             }
             SessionInput::Command(_)
             | SessionInput::Notification { .. }
             | SessionInput::Tick { .. } => {}
         }
+        Ok(())
     }
 }
 
 impl ProtocolSession for BridgeSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::LinkUp(_) => {
                 output.push(SessionOutput::Transport(TransportAction::Subscribe {
                     channel: GattChannel::from_bytes([0xA1; 16]),
-                }));
+                }))?;
             }
             SessionInput::Tick { .. } => {
                 output.push(SessionOutput::Transport(TransportAction::Write {
@@ -2238,7 +2278,7 @@ impl ProtocolSession for BridgeSession {
                     bytes: cutout_core::WritePayload::try_from_slice(b"bridge:write")
                         .expect("fixture payload fits"),
                     mode: WriteMode::WithResponse,
-                }));
+                }))?;
             }
             SessionInput::Notification { channel, .. } => {
                 *self
@@ -2257,7 +2297,7 @@ impl ProtocolSession for BridgeSession {
                         ms(0),
                         SemanticEventCount::from_events(1),
                     ),
-                ));
+                ))?;
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     TelemetryDelta {
                         speed: Some(speed(1_200)),
@@ -2265,13 +2305,13 @@ impl ProtocolSession for BridgeSession {
                         battery_level_estimated: Some(battery_level_estimated(61)),
                         ..TelemetryDelta::empty(ms(0))
                     },
-                )));
+                )))?;
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::Firmware(FirmwareInfo {
                         firmware_major: Some(Measured::reported(43)),
                         ..FirmwareInfo::default()
                     }),
-                )));
+                )))?;
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::Settings(SettingsReadback {
                         entries: [
@@ -2286,19 +2326,20 @@ impl ProtocolSession for BridgeSession {
                             None,
                         ],
                     }),
-                )));
+                )))?;
                 output.push(SessionOutput::Event(DeviceEvent::DiagnosticError(
                     DiagnosticError::from_parser_error(ParserError::MalformedFrame),
-                )));
+                )))?;
                 output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
                     ParserDiagnostics {
                         malformed_frames: parser_diag_count(1),
                         ..ParserDiagnostics::default()
                     },
-                )));
+                )))?;
             }
             SessionInput::LinkDown | SessionInput::Command(_) => {}
         }
+        Ok(())
     }
 }
 

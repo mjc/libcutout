@@ -4,7 +4,7 @@ use cutout_core::{
 };
 use cutout_protocols::{BEGODE_FALCON_SESSION_KEY, find_session_registration};
 
-fn main() {
+fn main() -> Result<(), cutout_core::SessionOutputError> {
     let registration = find_session_registration(BEGODE_FALCON_SESSION_KEY)
         .expect("Falcon session registration should exist");
     let mut session = registration.construct();
@@ -16,7 +16,7 @@ fn main() {
             max_write_len: Some(TransportWriteLimit::from_bytes(185)),
         }),
         &mut output,
-    );
+    )?;
 
     assert!(output.iter().any(|item| matches!(
         item,
@@ -26,4 +26,5 @@ fn main() {
         "read-only session produced {} transport action(s)",
         output.len()
     );
+    Ok(())
 }

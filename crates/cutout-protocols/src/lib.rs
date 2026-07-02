@@ -126,6 +126,8 @@ pub const fn crate_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_must_use)]
+
     const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
         cutout_core::MonotonicTimestamp::new(value)
     }

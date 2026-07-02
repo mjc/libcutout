@@ -2,7 +2,7 @@
 
 use cutout_core::{
     GattChannel, ModelCatalogEntry, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
-    ProtocolSession, SessionInput, SessionKey, SessionOutput,
+    ProtocolSession, SessionInput, SessionKey, SessionOutputError, SessionOutputSink,
 };
 
 use crate::{
@@ -125,7 +125,11 @@ pub enum RegisteredReadOnlySession {
 }
 
 impl ProtocolSession for RegisteredReadOnlySession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match self {
             Self::NosfetAero(session) => session.handle(input, output),
             Self::BegodeFalcon(session) => session.handle(input, output),

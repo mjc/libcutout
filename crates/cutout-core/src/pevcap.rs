@@ -6,6 +6,8 @@ use thiserror::Error;
 
 #[cfg(any(feature = "serde", test))]
 use crate::GattRoles;
+#[cfg(test)]
+use crate::SessionOutputSink;
 #[cfg(feature = "serde")]
 use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
@@ -13,8 +15,8 @@ use crate::VescControllerId;
 use crate::{
     DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicTimestamp,
     NotificationChunkLen, ProtocolFamily, ProtocolSession, ReplayChunkComparison, RequestTarget,
-    SemanticEventCount, SessionInput, SessionOutput, TransportWriteLimit, VerifiedValue,
-    WallClockUnixTimestamp, WriteMode,
+    SemanticEventCount, SessionInput, SessionOutput, SessionOutputError, TransportWriteLimit,
+    VerifiedValue, WallClockUnixTimestamp, WriteMode,
 };
 
 /// PEVCAP file format magic bytes.
@@ -624,36 +626,54 @@ impl PevcapCapture {
     ///
     /// Outbound writes are preserved in PEVCAP for audit but are intentionally
     /// not replayed as host inputs.
-    pub fn replay_into_host<S>(&self, host: &mut HostSession<S>, outputs: &mut Vec<SessionOutput>)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError`] when the host session output buffer is full.
+    pub fn replay_into_host<S>(
+        &self,
+        host: &mut HostSession<S>,
+        outputs: &mut Vec<SessionOutput>,
+    ) -> Result<(), SessionOutputError>
     where
         S: ProtocolSession,
     {
-        self.replay_mode_into_host(PevcapReplayMode::Whole, host, outputs);
+        self.replay_mode_into_host(PevcapReplayMode::Whole, host, outputs)
     }
 
     /// Replays PEVCAP records directly through a host session, splitting each
     /// inbound notification into one-byte chunks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError`] when the host session output buffer is full.
     pub fn replay_one_byte_notifications_into_host<S>(
         &self,
         host: &mut HostSession<S>,
         outputs: &mut Vec<SessionOutput>,
-    ) where
+    ) -> Result<(), SessionOutputError>
+    where
         S: ProtocolSession,
     {
-        self.replay_mode_into_host(PevcapReplayMode::OneByte, host, outputs);
+        self.replay_mode_into_host(PevcapReplayMode::OneByte, host, outputs)
     }
 
     /// Replays PEVCAP records directly through a host session, splitting each
     /// inbound notification by the provided chunk lengths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError`] when the host session output buffer is full.
     pub fn replay_notification_chunks_into_host<S>(
         &self,
         lengths: &[NotificationChunkLen],
         host: &mut HostSession<S>,
         outputs: &mut Vec<SessionOutput>,
-    ) where
+    ) -> Result<(), SessionOutputError>
+    where
         S: ProtocolSession,
     {
-        self.replay_mode_into_host(PevcapReplayMode::Lengths(lengths), host, outputs);
+        self.replay_mode_into_host(PevcapReplayMode::Lengths(lengths), host, outputs)
     }
 
     /// Counts host inputs represented by this capture's replay path.
@@ -740,7 +760,12 @@ impl PevcapCapture {
         S: ProtocolSession,
     {
         let mut outputs = Vec::new();
-        self.replay_mode_into_host(mode, &mut host, &mut outputs);
+        if self
+            .replay_mode_into_host(mode, &mut host, &mut outputs)
+            .is_err()
+        {
+            return Vec::new();
+        }
         outputs
             .into_iter()
             .filter_map(|output| match output {
@@ -755,7 +780,8 @@ impl PevcapCapture {
         mode: PevcapReplayMode<'_>,
         host: &mut HostSession<S>,
         outputs: &mut Vec<SessionOutput>,
-    ) where
+    ) -> Result<(), SessionOutputError>
+    where
         S: ProtocolSession,
     {
         if !self
@@ -766,7 +792,7 @@ impl PevcapCapture {
             host.ingest_link_up(LinkInfo {
                 monotonic_ms: MonotonicTimestamp::new(0),
                 max_write_len: self.header.write_limit,
-            });
+            })?;
             host.drain_outputs_into(outputs);
         }
 
@@ -776,17 +802,18 @@ impl PevcapCapture {
                     host.ingest_link_up(LinkInfo {
                         monotonic_ms: record.monotonic_ms,
                         max_write_len: record.link_max_write_len,
-                    });
+                    })?;
                 }
-                PevcapDirection::LinkDown => host.ingest_link_down(),
+                PevcapDirection::LinkDown => host.ingest_link_down()?,
                 PevcapDirection::Inbound => {
-                    replay_pevcap_notification(record, mode, host, outputs);
+                    replay_pevcap_notification(record, mode, host, outputs)?;
                     continue;
                 }
                 PevcapDirection::Outbound => {}
             }
             host.drain_outputs_into(outputs);
         }
+        Ok(())
     }
 
     /// Serializes this capture as line-delimited JSON for review tooling.
@@ -1027,7 +1054,8 @@ fn replay_pevcap_notification<S>(
     mode: PevcapReplayMode<'_>,
     host: &mut HostSession<S>,
     outputs: &mut Vec<SessionOutput>,
-) where
+) -> Result<(), SessionOutputError>
+where
     S: ProtocolSession,
 {
     match mode {
@@ -1036,7 +1064,7 @@ fn replay_pevcap_notification<S>(
                 channel: record.characteristic,
                 bytes: record.bytes.as_ref(),
                 monotonic_ms: record.monotonic_ms,
-            });
+            })?;
             host.drain_outputs_into(outputs);
         }
         PevcapReplayMode::OneByte => {
@@ -1045,7 +1073,7 @@ fn replay_pevcap_notification<S>(
                     channel: record.characteristic,
                     bytes: chunk,
                     monotonic_ms: record.monotonic_ms,
-                });
+                })?;
                 host.drain_outputs_into(outputs);
             }
         }
@@ -1062,7 +1090,7 @@ fn replay_pevcap_notification<S>(
                     channel: record.characteristic,
                     bytes: &record.bytes[offset..end],
                     monotonic_ms: record.monotonic_ms,
-                });
+                })?;
                 host.drain_outputs_into(outputs);
                 offset = end;
             }
@@ -1071,11 +1099,12 @@ fn replay_pevcap_notification<S>(
                     channel: record.characteristic,
                     bytes: &record.bytes[offset..],
                     monotonic_ms: record.monotonic_ms,
-                });
+                })?;
                 host.drain_outputs_into(outputs);
             }
         }
     }
+    Ok(())
 }
 
 /// JSONL PEVCAP import/export error.
@@ -1880,12 +1909,18 @@ mod tests {
     }
 
     impl ProtocolSession for RecordingSession {
-        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), SessionOutputError> {
             match input {
                 SessionInput::LinkUp(link) => {
-                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(link)));
+                    output.push(SessionOutput::Event(DeviceEvent::LinkUp(link)))?;
                 }
-                SessionInput::LinkDown => output.push(SessionOutput::Event(DeviceEvent::LinkDown)),
+                SessionInput::LinkDown => {
+                    output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
+                }
                 SessionInput::Notification {
                     channel,
                     bytes,
@@ -1898,13 +1933,14 @@ mod tests {
                             NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
                         ),
-                    ));
+                    ))?;
                 }
                 SessionInput::Tick { monotonic_ms } => {
-                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }))?;
                 }
                 SessionInput::Command(_) => {}
             }
+            Ok(())
         }
     }
 
@@ -1912,7 +1948,9 @@ mod tests {
         let recorder = RecordingSession::default();
         let mut host = HostSession::new(recorder);
         let mut outputs = Vec::new();
-        capture.replay_mode_into_host(mode, &mut host, &mut outputs);
+        capture
+            .replay_mode_into_host(mode, &mut host, &mut outputs)
+            .expect("recording replay stays within default output capacity");
         outputs
     }
 
@@ -1921,7 +1959,9 @@ mod tests {
         let bytes = Rc::clone(&recorder.bytes);
         let mut host = HostSession::new(recorder);
         let mut outputs = Vec::new();
-        capture.replay_mode_into_host(mode, &mut host, &mut outputs);
+        capture
+            .replay_mode_into_host(mode, &mut host, &mut outputs)
+            .expect("recording replay stays within default output capacity");
         bytes.borrow().clone()
     }
 

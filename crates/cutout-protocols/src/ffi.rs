@@ -1,7 +1,7 @@
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
-    HostSession, ParserDiagnosticsDto, SessionEventDto, SessionInputDto, SessionOutputDto,
-    TelemetrySnapshotDto,
+    HostSession, ParserDiagnosticsDto, SessionEventDto, SessionInputDto, SessionOutputCapacity,
+    SessionOutputDto, SessionOutputError, TelemetrySnapshotDto,
 };
 
 use crate::{BegodeFalconModel, NosfetAeroModel, ReadOnlySession};
@@ -33,6 +33,12 @@ pub enum ConcreteSessionErrorDto {
         /// Unsupported Falcon construction profile.
         profile: ConcreteFalconProfileDto,
     },
+
+    /// The bounded session output buffer filled before the step could finish.
+    OutputBufferFull {
+        /// Output capacity configured for the concrete session wrapper.
+        capacity: SessionOutputCapacity,
+    },
 }
 
 /// Concrete Falcon construction profile for mobile bindings.
@@ -62,17 +68,18 @@ impl ConcreteAeroReadOnlySession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        let _ = self.host.ingest(input.as_session_input());
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
-        self.ingest(input);
+        let step_error = self.host.ingest(input.as_session_input()).err();
         checked_drain_outputs(
             &mut self.host,
             input,
             ReadOnlySession::<NosfetAeroModel, false>::capabilities(),
+            step_error,
         )
     }
 
@@ -133,17 +140,18 @@ impl ConcreteFalconReadOnlySession {
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
     pub fn ingest(&mut self, input: &SessionInputDto) {
-        self.host.ingest(input.as_session_input());
+        let _ = self.host.ingest(input.as_session_input());
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
     #[must_use]
     pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
-        self.ingest(input);
+        let step_error = self.host.ingest(input.as_session_input()).err();
         checked_drain_outputs(
             &mut self.host,
             input,
             ReadOnlySession::<BegodeFalconModel, true>::capabilities(),
+            step_error,
         )
     }
 
@@ -204,14 +212,25 @@ fn checked_drain_outputs<S>(
     host: &mut HostSession<S>,
     input: &SessionInputDto,
     capabilities: Capabilities,
+    step_error: Option<SessionOutputError>,
 ) -> ConcreteSessionStepResultDto
 where
     S: cutout_core::ProtocolSession,
 {
     let outputs = drain_host_outputs(host);
     ConcreteSessionStepResultDto {
-        error: first_error(input, capabilities, &outputs),
+        error: step_error
+            .map(ConcreteSessionErrorDto::from)
+            .or_else(|| first_error(input, capabilities, &outputs)),
         outputs,
+    }
+}
+
+impl From<SessionOutputError> for ConcreteSessionErrorDto {
+    fn from(error: SessionOutputError) -> Self {
+        match error {
+            SessionOutputError::Full { capacity } => Self::OutputBufferFull { capacity },
+        }
     }
 }
 

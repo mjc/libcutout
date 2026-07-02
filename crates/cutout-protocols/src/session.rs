@@ -8,8 +8,8 @@ use cutout_core::{
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
     ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
     ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SeriesCount,
-    SessionInput, SessionOutput, Temperature, TransportAction, Unit, ValueQuality,
-    VerificationStatus, VerifiedValue, Voltage, WritePayload,
+    SessionInput, SessionOutput, SessionOutputError, SessionOutputSink, Temperature,
+    TransportAction, Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WritePayload,
 };
 
 use crate::{
@@ -155,13 +155,17 @@ pub trait ReadOnlyNotificationDecoder {
     fn reset(&mut self);
 
     /// Handles an accepted notification payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the output sink fills.
     fn handle_notification(
         &mut self,
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
-        output: &mut Vec<SessionOutput>,
-    );
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError>;
 }
 
 /// No-op notification decoder for models without typed notification decoding yet.
@@ -176,15 +180,15 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
-        output: &mut Vec<SessionOutput>,
-    ) {
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         output.push(SessionOutput::NotificationIngest(
             NotificationIngestOutcome::ignored_wrong_channel(
                 channel,
                 NotificationByteLen::from_bytes(bytes.len()),
                 monotonic_ms,
             ),
-        ));
+        ))
     }
 }
 
@@ -213,8 +217,8 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
-        output: &mut Vec<SessionOutput>,
-    ) {
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         let mut completed_frames = CompletedFrames::default();
         let mut buffered = false;
         for byte in bytes {
@@ -222,14 +226,14 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                 Ok(VeteranFrameParseResult::Complete(frame)) => {
                     completed_frames = completed_frames.next();
                     buffered = false;
-                    let event_count = push_veteran_frame(&frame, monotonic_ms, output);
+                    let event_count = push_veteran_frame(&frame, monotonic_ms, output)?;
                     push_veteran_ingest_outcome_for_frame(
                         &frame,
                         channel,
                         monotonic_ms,
                         event_count,
                         output,
-                    );
+                    )?;
                 }
                 Ok(VeteranFrameParseResult::Buffered) => {
                     buffered = true;
@@ -238,7 +242,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     buffered = false;
                 }
                 Err(VeteranReassemblyError::CrcMismatch) => {
-                    push_parser_error(ParserError::BadChecksum, output);
+                    push_parser_error(ParserError::BadChecksum, output)?;
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
@@ -247,12 +251,12 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                             monotonic_ms,
                             ParserError::BadChecksum,
                         ),
-                    ));
-                    return;
+                    ))?;
+                    return Ok(());
                 }
                 Err(VeteranReassemblyError::OversizedFrame { claimed, max }) => {
                     let error = ParserError::OversizedFrame { claimed, max };
-                    push_parser_error(error, output);
+                    push_parser_error(error, output)?;
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
@@ -261,11 +265,11 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                             monotonic_ms,
                             error,
                         ),
-                    ));
-                    return;
+                    ))?;
+                    return Ok(());
                 }
                 Err(VeteranReassemblyError::InvalidFrame) => {
-                    push_parser_error(ParserError::MalformedFrame, output);
+                    push_parser_error(ParserError::MalformedFrame, output)?;
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::VeteranLeaperkimNosfet,
@@ -274,8 +278,8 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                             monotonic_ms,
                             ParserError::MalformedFrame,
                         ),
-                    ));
-                    return;
+                    ))?;
+                    return Ok(());
                 }
             }
         }
@@ -294,8 +298,9 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
-            }));
+            }))?;
         }
+        Ok(())
     }
 }
 
@@ -304,8 +309,8 @@ fn push_veteran_ingest_outcome_for_frame(
     channel: GattChannel,
     monotonic_ms: MonotonicTimestamp,
     event_count: SemanticEventCount,
-    output: &mut Vec<SessionOutput>,
-) {
+    output: &mut dyn SessionOutputSink,
+) -> Result<(), SessionOutputError> {
     let frame_len = NotificationByteLen::from_bytes(frame.as_slice().len());
     if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
         && evidence.kind == BatteryPageKind::Raw
@@ -323,7 +328,7 @@ fn push_veteran_ingest_outcome_for_frame(
                         verification: VerificationStatus::HardwareVerified,
                     },
                 ),
-            ));
+            ))?;
         } else {
             output.push(SessionOutput::NotificationIngest(
                 NotificationIngestOutcome::parser_gap(
@@ -336,9 +341,9 @@ fn push_veteran_ingest_outcome_for_frame(
                         body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
                     },
                 ),
-            ));
+            ))?;
         }
-        return;
+        return Ok(());
     }
 
     output.push(SessionOutput::NotificationIngest(
@@ -349,7 +354,7 @@ fn push_veteran_ingest_outcome_for_frame(
             monotonic_ms,
             event_count,
         ),
-    ));
+    ))
 }
 
 /// Begode/Gotway notification decoder for Falcon read-only telemetry.
@@ -395,8 +400,8 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
-        output: &mut Vec<SessionOutput>,
-    ) {
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         let mut event_count = SemanticEventCount::default();
         for byte in bytes {
             match self.reassembler.feed_byte_result_at(*byte, monotonic_ms) {
@@ -407,11 +412,11 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                         &frame,
                         monotonic_ms,
                         output,
-                    ));
+                    )?);
                 }
                 Ok(BegodeFrameParseResult::Seeking | BegodeFrameParseResult::Buffered) => {}
                 Err(BegodeFrameError::InvalidFrame) => {
-                    push_parser_error(ParserError::MalformedFrame, output);
+                    push_parser_error(ParserError::MalformedFrame, output)?;
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
                             ProtocolFamily::BegodeGotway,
@@ -420,8 +425,8 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                             monotonic_ms,
                             ParserError::MalformedFrame,
                         ),
-                    ));
-                    return;
+                    ))?;
+                    return Ok(());
                 }
             }
         }
@@ -443,7 +448,8 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                     monotonic_ms,
                 )
             },
-        ));
+        ))?;
+        Ok(())
     }
 }
 
@@ -475,8 +481,8 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
-        output: &mut Vec<SessionOutput>,
-    ) {
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match self.stream.feed_result(bytes) {
             Ok(VescReadOnlyStreamResult::Replies(replies)) => {
                 let event_count = replies
@@ -485,7 +491,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         count.saturating_add(vesc_reply_event_count(reply))
                     });
                 for reply in &replies {
-                    push_vesc_reply(reply, monotonic_ms, self.board_profile, output);
+                    push_vesc_reply(reply, monotonic_ms, self.board_profile, output)?;
                 }
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
@@ -495,10 +501,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         monotonic_ms,
                         event_count,
                     ),
-                ));
+                ))?;
             }
             Err(VescCodecError::UnsupportedReply) => {
-                push_parser_error(ParserError::UnmatchedReply, output);
+                push_parser_error(ParserError::UnmatchedReply, output)?;
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::Vesc,
@@ -507,14 +513,14 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         monotonic_ms,
                         ParserError::UnmatchedReply,
                     ),
-                ));
+                ))?;
             }
             Err(
                 VescCodecError::DecodeFailed
                 | VescCodecError::EncodedFrameTooLong
                 | VescCodecError::EncodeFailed,
             ) => {
-                push_parser_error(ParserError::MalformedFrame, output);
+                push_parser_error(ParserError::MalformedFrame, output)?;
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
                         ProtocolFamily::Vesc,
@@ -523,7 +529,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         monotonic_ms,
                         ParserError::MalformedFrame,
                     ),
-                ));
+                ))?;
             }
             Ok(VescReadOnlyStreamResult::Buffered) => {
                 output.push(SessionOutput::NotificationIngest(
@@ -533,9 +539,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                     ),
-                ));
+                ))?;
             }
         }
+        Ok(())
     }
 }
 
@@ -552,8 +559,8 @@ fn push_vesc_reply(
     reply: &VescReadOnlyReply,
     monotonic_ms: MonotonicTimestamp,
     board_profile: Option<VescBoardProfile>,
-    output: &mut Vec<SessionOutput>,
-) {
+    output: &mut dyn SessionOutputSink,
+) -> Result<(), SessionOutputError> {
     match reply {
         VescReadOnlyReply::FirmwareInfo {
             major,
@@ -571,15 +578,15 @@ fn push_vesc_reply(
         VescReadOnlyReply::Values(values) => {
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 vesc_values_to_delta(*values, monotonic_ms, board_profile),
-            )));
+            )))?;
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::RawTelemetry(vesc_values_to_raw_telemetry(*values)),
-            )));
+            )))
         }
         VescReadOnlyReply::Stats(stats) => {
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::Diagnostics(vesc_stats_to_diagnostics(*stats)),
-            )));
+            )))
         }
     }
 }
@@ -668,15 +675,15 @@ fn push_begode_frame(
     pack_voltage_profile: BegodePackVoltageProfile,
     frame: &BegodeFrame,
     monotonic_ms: MonotonicTimestamp,
-    output: &mut Vec<SessionOutput>,
-) -> SemanticEventCount {
+    output: &mut dyn SessionOutputSink,
+) -> Result<SemanticEventCount, SessionOutputError> {
     match frame.tag().get() {
         0x00 => match BegodeLiveATelemetry::decode(frame, pack_voltage_profile) {
             Ok(telemetry) => {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
-                )));
-                SemanticEventCount::from_events(1)
+                )))?;
+                Ok(SemanticEventCount::from_events(1))
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
@@ -684,11 +691,11 @@ fn push_begode_frame(
             Ok(summary) => {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     summary.to_delta(monotonic_ms),
-                )));
+                )))?;
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     summary.to_battery_response(),
-                )));
-                SemanticEventCount::from_events(2)
+                )))?;
+                Ok(SemanticEventCount::from_events(2))
             }
             Err(error) => push_begode_bms_error(error, output),
         },
@@ -696,8 +703,8 @@ fn push_begode_frame(
             Ok(page) => {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     page.to_battery_response(),
-                )));
-                SemanticEventCount::from_events(1)
+                )))?;
+                Ok(SemanticEventCount::from_events(1))
             }
             Err(error) => push_begode_bms_error(error, output),
         },
@@ -706,14 +713,14 @@ fn push_begode_frame(
                 context.observe_live_b(telemetry);
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_b_to_delta(telemetry, monotonic_ms),
-                )));
+                )))?;
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     context.live_b_to_settings_response(telemetry),
-                )));
+                )))?;
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     telemetry.to_diagnostics_response(),
-                )));
-                SemanticEventCount::from_events(3)
+                )))?;
+                Ok(SemanticEventCount::from_events(3))
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
@@ -721,38 +728,38 @@ fn push_begode_frame(
             Ok(telemetry) => {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     telemetry.to_delta(monotonic_ms),
-                )));
-                SemanticEventCount::from_events(1)
+                )))?;
+                Ok(SemanticEventCount::from_events(1))
             }
             Err(error) => push_begode_telemetry_error(error, output),
         },
         _ => {
-            push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::from_events(2)
+            push_parser_error(ParserError::MalformedFrame, output)?;
+            Ok(SemanticEventCount::from_events(2))
         }
     }
 }
 
 fn push_begode_telemetry_error(
     error: BegodeTelemetryError,
-    output: &mut Vec<SessionOutput>,
-) -> SemanticEventCount {
+    output: &mut dyn SessionOutputSink,
+) -> Result<SemanticEventCount, SessionOutputError> {
     match error {
         BegodeTelemetryError::UnexpectedFrameTag { .. } => {
-            push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::from_events(2)
+            push_parser_error(ParserError::MalformedFrame, output)?;
+            Ok(SemanticEventCount::from_events(2))
         }
     }
 }
 
 fn push_begode_bms_error(
     error: BegodeBmsPageError,
-    output: &mut Vec<SessionOutput>,
-) -> SemanticEventCount {
+    output: &mut dyn SessionOutputSink,
+) -> Result<SemanticEventCount, SessionOutputError> {
     match error {
         BegodeBmsPageError::UnexpectedFrameTag { .. } => {
-            push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::from_events(2)
+            push_parser_error(ParserError::MalformedFrame, output)?;
+            Ok(SemanticEventCount::from_events(2))
         }
     }
 }
@@ -760,22 +767,22 @@ fn push_begode_bms_error(
 fn push_veteran_frame(
     frame: &VeteranFrame,
     monotonic_ms: MonotonicTimestamp,
-    output: &mut Vec<SessionOutput>,
-) -> SemanticEventCount {
+    output: &mut dyn SessionOutputSink,
+) -> Result<SemanticEventCount, SessionOutputError> {
     match VeteranTelemetry::decode(frame) {
         Ok(telemetry) => {
             let settings_responses = telemetry.to_settings_responses();
             let settings_count = SemanticEventCount::from_events(settings_responses.len());
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                 telemetry.to_delta(monotonic_ms),
-            )));
+            )))?;
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 telemetry.to_firmware_response(),
-            )));
+            )))?;
             for response in settings_responses {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     response,
-                )));
+                )))?;
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
                 if evidence.kind != BatteryPageKind::Raw
@@ -783,15 +790,15 @@ fn push_veteran_frame(
                 {
                     output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                         ReadOnlyResponse::Battery(payload),
-                    )));
-                    return SemanticEventCount::from_events(3).saturating_add(settings_count);
+                    )))?;
+                    return Ok(SemanticEventCount::from_events(3).saturating_add(settings_count));
                 }
             }
-            SemanticEventCount::from_events(2).saturating_add(settings_count)
+            Ok(SemanticEventCount::from_events(2).saturating_add(settings_count))
         }
         Err(VeteranTelemetryError::FrameTooShort) => {
-            push_parser_error(ParserError::MalformedFrame, output);
-            SemanticEventCount::from_events(2)
+            push_parser_error(ParserError::MalformedFrame, output)?;
+            Ok(SemanticEventCount::from_events(2))
         }
     }
 }
@@ -862,13 +869,16 @@ fn diagnostics_for(error: ParserError) -> ParserDiagnostics {
     diagnostics
 }
 
-fn push_parser_error(error: ParserError, output: &mut Vec<SessionOutput>) {
+fn push_parser_error(
+    error: ParserError,
+    output: &mut dyn SessionOutputSink,
+) -> Result<(), SessionOutputError> {
     output.push(SessionOutput::Event(DeviceEvent::DiagnosticError(
         cutout_core::DiagnosticError::from_parser_error(error),
-    )));
+    )))?;
     output.push(SessionOutput::Event(DeviceEvent::Diagnostics(
         diagnostics_for(error),
-    )));
+    )))
 }
 
 /// Type-level settings-write capability.
@@ -1060,24 +1070,24 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
     connected: &mut bool,
     decoder: &mut M::NotificationDecoder,
     input: SessionInput<'_>,
-    output: &mut Vec<SessionOutput>,
-) {
+    output: &mut dyn SessionOutputSink,
+) -> Result<(), SessionOutputError> {
     match input {
         SessionInput::LinkUp(info) => {
             *connected = true;
             decoder.reset();
-            output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
+            output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)))?;
             output.push(SessionOutput::Transport(TransportAction::Subscribe {
                 channel: M::SUBSCRIBE_CHANNEL,
-            }));
+            }))?;
         }
         SessionInput::LinkDown => {
             *connected = false;
             decoder.reset();
-            output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+            output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
         }
         SessionInput::Tick { monotonic_ms } => {
-            output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+            output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }))?;
         }
         SessionInput::Notification {
             channel,
@@ -1085,18 +1095,22 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             monotonic_ms,
         } => {
             if *connected && (ACCEPT_ANY_NOTIFICATION || channel == M::SUBSCRIBE_CHANNEL) {
-                decoder.handle_notification(channel, bytes, monotonic_ms, output);
+                decoder.handle_notification(channel, bytes, monotonic_ms, output)?;
             }
         }
         SessionInput::Command(command) => {
             if let ReadOnlyCommandGate::SupportedRead(kind) = gate_read_only_command::<M>(command) {
-                push_read_request::<M>(kind, output);
+                push_read_request::<M>(kind, output)?;
             }
         }
     }
+    Ok(())
 }
 
-fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Vec<SessionOutput>) {
+fn push_read_request<M: SupportsReadRequests>(
+    kind: CommandKind,
+    output: &mut dyn SessionOutputSink,
+) -> Result<(), SessionOutputError> {
     if let Some(RequestDisposition::Write(request)) = M::encode_read_command(kind)
         && let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice())
     {
@@ -1104,8 +1118,9 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
             channel: M::WRITE_CHANNEL,
             bytes,
             mode: request.mode,
-        }));
+        }))?;
     }
+    Ok(())
 }
 
 /// Generic read-only session shell for one statically-known model.
@@ -1169,13 +1184,17 @@ impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool>
 impl<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION: bool> ProtocolSession
     for ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>
 {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         handle_read_only_session::<M, ACCEPT_ANY_NOTIFICATION>(
             &mut self.connected,
             &mut self.decoder,
             input,
             output,
-        );
+        )
     }
 }
 
@@ -1208,7 +1227,7 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
     }
 
     fn push_refusal(
-        output: &mut Vec<SessionOutput>,
+        output: &mut dyn SessionOutputSink,
         command: CommandKind,
         safety_class: SafetyClass,
         reason: cutout_core::ControlRefusalReason,
@@ -1225,7 +1244,7 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
 
 #[cfg(feature = "dangerous-controls")]
 impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<M> {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut dyn SessionOutputSink) {
         match input {
             SessionInput::Tick { monotonic_ms } => {
                 self.monotonic_ms = monotonic_ms;
@@ -1267,6 +1286,8 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_must_use)]
+
     const fn ms(value: u64) -> MonotonicTimestamp {
         MonotonicTimestamp::new(value)
     }

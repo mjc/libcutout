@@ -536,6 +536,9 @@ pub enum MobileSessionStepErrorKindDto {
 
     /// Falcon profile was not supported.
     UnsupportedFalconProfile,
+
+    /// Session output buffer filled before a step could finish.
+    OutputBufferFull,
 }
 
 /// Mobile session step error DTO.
@@ -1751,6 +1754,11 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
                 command: None,
                 reason: None,
             },
+            ConcreteSessionErrorDto::OutputBufferFull { .. } => Self {
+                kind: MobileSessionStepErrorKindDto::OutputBufferFull,
+                command: None,
+                reason: Some("session_output_buffer_full".to_owned()),
+            },
         }
     }
 }
@@ -1806,9 +1814,8 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
     fn from(error: ConcreteSessionErrorDto) -> Self {
         match error {
             ConcreteSessionErrorDto::CommandRefused { .. }
-            | ConcreteSessionErrorDto::UnsupportedFalconProfile { .. } => {
-                Self::UnsupportedFalconProfile
-            }
+            | ConcreteSessionErrorDto::UnsupportedFalconProfile { .. }
+            | ConcreteSessionErrorDto::OutputBufferFull { .. } => Self::UnsupportedFalconProfile,
         }
     }
 }

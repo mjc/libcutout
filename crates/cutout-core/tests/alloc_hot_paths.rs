@@ -10,8 +10,8 @@ use cutout_core::{
     CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
     ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, MonotonicTimestamp,
     ParserKey, ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue,
-    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, TransportWriteLimit,
-    VerificationStatus,
+    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, SessionOutputError,
+    SessionOutputSink, TransportWriteLimit, VerificationStatus,
 };
 
 const fn ms(value: u64) -> MonotonicTimestamp {
@@ -95,13 +95,17 @@ unsafe impl GlobalAlloc for CountingAllocator {
 struct NoOpSession;
 
 impl ProtocolSession for NoOpSession {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::LinkUp(info) => {
-                output.push(SessionOutput::Event(cutout_core::DeviceEvent::LinkUp(info)));
+                output.push(SessionOutput::Event(cutout_core::DeviceEvent::LinkUp(info)))?;
             }
             SessionInput::LinkDown => {
-                output.push(SessionOutput::Event(cutout_core::DeviceEvent::LinkDown));
+                output.push(SessionOutput::Event(cutout_core::DeviceEvent::LinkDown))?;
             }
             SessionInput::Notification {
                 channel,
@@ -114,15 +118,16 @@ impl ProtocolSession for NoOpSession {
                         cutout_core::NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                     ),
-                ));
+                ))?;
             }
             SessionInput::Tick { monotonic_ms } => {
                 output.push(SessionOutput::Event(cutout_core::DeviceEvent::Tick {
                     monotonic_ms,
-                }));
+                }))?;
             }
             SessionInput::Command(_) => {}
         }
+        Ok(())
     }
 }
 
@@ -158,13 +163,17 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
     });
 }
 
+#[allow(clippy::too_many_lines)]
 fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     let mut link_up_host = HostSession::new(NoOpSession);
     assert_no_allocations("host link-up", || {
-        link_up_host.ingest_link_up(LinkInfo {
-            monotonic_ms: ms(10),
-            max_write_len: Some(write_len(185)),
-        });
+        assert_eq!(
+            link_up_host.ingest_link_up(LinkInfo {
+                monotonic_ms: ms(10),
+                max_write_len: Some(write_len(185)),
+            }),
+            Ok(())
+        );
         let drained = link_up_host.drain_outputs();
 
         assert_eq!(drained.len(), 1);
@@ -173,10 +182,13 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     let mut notification_host = HostSession::new(NoOpSession);
     let notification = vec![0x11, 0x22, 0x33];
     assert_no_allocations("notification ingest", || {
-        notification_host.ingest_notification_owned(
-            GattChannel::from_bytes([0x22; 16]),
-            notification,
-            ms(20),
+        assert_eq!(
+            notification_host.ingest_notification_owned(
+                GattChannel::from_bytes([0x22; 16]),
+                notification,
+                ms(20),
+            ),
+            Ok(())
         );
         let drained = notification_host.drain_outputs();
 
@@ -256,7 +268,14 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
         ms(30),
     )];
     assert_no_allocations("borrowed replay capture notification", || {
-        cutout_core::replay_capture_into(&mut replay_host, &replay_records, &mut replay_outputs);
+        assert_eq!(
+            cutout_core::replay_capture_into(
+                &mut replay_host,
+                &replay_records,
+                &mut replay_outputs
+            ),
+            Ok(())
+        );
 
         assert_eq!(replay_outputs.len(), 1);
     });
