@@ -74,6 +74,7 @@ mod vesc_codec;
 mod vesc_session;
 mod veteran_bms;
 mod veteran_frame;
+mod veteran_session;
 mod veteran_telemetry;
 pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition, VescCanTarget,
@@ -83,10 +84,10 @@ pub use request_encoder::{
 pub use session::DangerousControlSession;
 pub use session::{
     BenignControlOperation, DangerousActuationOperation, Manufacturer, NoopNotificationDecoder,
-    NosfetAeroModel, ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec,
-    ReadOnlyNotificationDecoder, ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec,
-    SettingsWriteOperation, SupportsBenignControls, SupportsDangerousActuation,
-    SupportsReadRequests, SupportsSettingsWrites, VeteranNotificationDecoder,
+    ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
+    ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
+    SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
+    SupportsSettingsWrites,
 };
 pub use vesc_codec::{
     GearRatioDenominator, MotorPolePairs, VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN,
@@ -112,6 +113,7 @@ pub use veteran_frame::{
     MAX_VETERAN_FRAME_LEN, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
     VeteranReassemblyError,
 };
+pub use veteran_session::{NosfetAeroModel, VeteranNotificationDecoder};
 pub use veteran_telemetry::{
     NOSFET_AERO_MAX_VOLTAGE, NOSFET_AERO_MIN_VOLTAGE,
     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, VETERAN_FIELD_CHARGE_MODE,
