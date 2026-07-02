@@ -70,9 +70,8 @@ pub struct BtleWriteChunk<'a> {
 impl<'a> BtleWriteChunk<'a> {
     /// Creates a write chunk after negotiated MTU splitting.
     ///
-    /// # Panics
-    ///
     /// Returns `None` when `bytes` exceeds `negotiated_limit`.
+    ///
     #[must_use]
     pub fn new(bytes: &'a [u8], negotiated_limit: NegotiatedWriteLimit) -> Option<Self> {
         (bytes.len() <= negotiated_limit.chunk_len()).then_some(Self {
