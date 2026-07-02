@@ -22,17 +22,11 @@ struct ContentView: View {
                 ForEach(catalog.screens) { screen in
                     MockupScreenContainer(
                         screen: screen,
-                        liveSpeed: model.speed.displayValue,
                         devicePickerScanState: model.devicePickerScanState,
-                        pair: { row in
-                            guard let screenID = Self.destinationScreenID(for: row),
-                                  model.pair(platformIdentifier: row.id) else { return }
-                            pairedDestinationScreenID = screenID
-                            selectedScreenID = screenID
-                        }
+                        pair: pair
                     )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .tag(screen.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .tag(screen.id)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -41,10 +35,20 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MockupColors.pageBackground.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
-            if phase.opensRideScreen {
-                selectedScreenID = pairedDestinationScreenID ?? .eucRide
-            }
+            openRideScreen(ifNeededFor: phase)
         }
+    }
+
+    private func pair(_ row: MockupPickerRow) {
+        guard let screenID = Self.destinationScreenID(for: row),
+              model.pair(platformIdentifier: row.id) else { return }
+        pairedDestinationScreenID = screenID
+        selectedScreenID = screenID
+    }
+
+    private func openRideScreen(ifNeededFor phase: LiveSpeedConnectionPhase) {
+        guard phase.opensRideScreen else { return }
+        selectedScreenID = pairedDestinationScreenID ?? .eucRide
     }
 
     private static func initialScreenID() -> MockupScreenID {
@@ -77,7 +81,6 @@ struct ContentView: View {
 
 private struct MockupScreenContainer: View {
     let screen: MockupScreen
-    let liveSpeed: String
     let devicePickerScanState: DevicePickerScanState?
     let pair: (MockupPickerRow) -> Void
 
@@ -679,7 +682,7 @@ private struct EucSummaryRows: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+            ForEach(rows) { row in
                 HStack {
                     Text(row.label)
                         .font(.system(size: 14 * scale, weight: .bold))
@@ -692,7 +695,7 @@ private struct EucSummaryRows: View {
                 }
                 .frame(height: 31 * scale)
 
-                if index < rows.count - 1 {
+                if row.id != rows.last?.id {
                     Rectangle()
                         .fill(MockupColors.cardStroke)
                         .frame(height: 1)
@@ -1144,54 +1147,6 @@ private struct CardBackground: View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(MockupColors.cardStroke, lineWidth: 1)
             )
-    }
-}
-
-private struct GenericMockupView: View {
-    let screen: MockupScreen
-    let liveSpeed: String
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(screen.title)
-                    .font(.largeTitle.weight(.bold))
-                Text(screen.subtitle)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Text(screen.primaryValue)
-                    .font(.system(size: 58, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                Text(screen.secondaryValue)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                if let warning = screen.warning {
-                    Text(warning)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.orange)
-                }
-
-                ForEach(screen.metrics, id: \.label) { metric in
-                    HStack {
-                        Text(metric.label).foregroundStyle(.secondary)
-                        Spacer()
-                        Text(metric.value).monospacedDigit()
-                    }
-                }
-
-                Divider()
-                HStack {
-                    Text("Live speed").foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(liveSpeed) mph").monospacedDigit()
-                }
-            }
-            .padding(24)
-        }
-        .background(Color.black)
-        .foregroundStyle(.white)
     }
 }
 
