@@ -109,6 +109,7 @@ public final class LiveSpeedSessionCore: NSObject {
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
         displayState = displayState.reducing(step, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speed?.value != nil
+        record("display_speed=\(displayState.speed.displayValue) display_unit=\(displayState.speed.displayUnit)")
         onDisplayStateChange?(displayState)
         setPhase(.live)
     }

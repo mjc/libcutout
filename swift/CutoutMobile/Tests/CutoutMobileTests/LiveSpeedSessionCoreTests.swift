@@ -131,6 +131,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.telemetry?.speed?.value, 1_234)
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
+        XCTAssertTrue(core.records.contains("display_speed=2.8 display_unit=mph"))
     }
 
     func testSpeedObservationRemainsStickyAcrossTelemetryWithoutSpeed() {
