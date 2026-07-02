@@ -2669,6 +2669,36 @@ mod tests {
     }
 
     #[test]
+    fn request_tracker_enforces_write_pacing_from_retry_start() {
+        let policy = crate::RequestPolicy {
+            min_interval: Duration::from_milliseconds(100),
+            timeout: Duration::from_milliseconds(250),
+            max_retries: 1,
+        };
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
+        let mut diagnostics = crate::ParserDiagnostics::default();
+
+        assert_eq!(tracker.start(key, policy, ms(10)), Ok(()));
+        assert_eq!(
+            tracker.on_tick(ms(260)),
+            crate::RequestTick::Retry { key, attempt: 1 }
+        );
+        assert_eq!(tracker.retry_started(ms(260)), Ok(()));
+        assert_eq!(
+            tracker.correlate_reply(key, &mut diagnostics),
+            crate::CorrelationResult::Matched { key, attempts: 2 }
+        );
+        assert_eq!(
+            tracker.start(key, policy, ms(300)),
+            Err(crate::RequestStartError::Pacing {
+                ready_at_ms: ms(360),
+            })
+        );
+        assert_eq!(tracker.start(key, policy, ms(360)), Ok(()));
+    }
+
+    #[test]
     fn request_tracker_correlates_reply_and_clears_slot() {
         let policy = crate::RequestPolicy::default();
         let mut tracker = crate::RequestTracker::default();

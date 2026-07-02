@@ -38,8 +38,7 @@ where
     adapter.start_scan().await?;
     tokio::time::sleep(scan_for.as_duration()).await;
     let observations = adapter.collect_observations().await;
-    let _ = adapter.stop_scan().await;
-    observations
+    finish_scan(observations, adapter.stop_scan().await)
 }
 
 /// Connects to the first peripheral matching the target and returns a summary.
@@ -64,8 +63,10 @@ pub async fn connect_and_discover(
         find_peripheral(&adapter, target)
     })
     .await;
-    let _ = backend_call("stop scan", Central::stop_scan(&adapter)).await;
-    let peripheral = peripheral?;
+    let peripheral = finish_scan(
+        peripheral,
+        backend_call("stop scan", Central::stop_scan(&adapter)).await,
+    )?;
 
     backend_call("connect peripheral", peripheral.connect()).await?;
     backend_call("discover services", peripheral.discover_services()).await?;
@@ -84,6 +85,16 @@ pub async fn connect_and_discover(
             services,
         },
     })
+}
+
+fn finish_scan<T>(
+    primary: Result<T, BtleError>,
+    stop: Result<(), BtleError>,
+) -> Result<T, BtleError> {
+    match (primary, stop) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(error)) | (Err(error), _) => Err(error),
+    }
 }
 
 async fn first_adapter() -> Result<Adapter, BtleError> {
@@ -212,6 +223,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeScanAdapter {
         collect_result: Arc<Mutex<Option<FakeScanResult>>>,
+        stop_result: Arc<Mutex<Option<Result<(), BtleError>>>>,
         start_calls: Arc<AtomicUsize>,
         stop_calls: Arc<AtomicUsize>,
         collect_calls: Arc<AtomicUsize>,
@@ -241,6 +253,14 @@ mod tests {
         fn stopped_after_collect(&self) -> bool {
             self.stopped_after_collect.load(Ordering::SeqCst)
         }
+
+        fn with_stop_result(self, result: Result<(), BtleError>) -> Self {
+            *self
+                .stop_result
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(result);
+            self
+        }
     }
 
     #[async_trait]
@@ -255,7 +275,11 @@ mod tests {
             if self.collect_calls() > 0 {
                 self.stopped_after_collect.store(true, Ordering::SeqCst);
             }
-            Ok(())
+            self.stop_result
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+                .unwrap_or(Ok(()))
         }
 
         async fn collect_observations(&self) -> Result<Vec<PeripheralObservation>, BtleError> {
@@ -284,12 +308,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scan_adapter_reports_stop_failure_after_successful_collection() {
+        let adapter = FakeScanAdapter::returning(Ok(Vec::new()))
+            .with_stop_result(Err(BtleError::NoAdapterAvailable));
+
+        let err = scan_adapter(&adapter, ScanWindow::from_millis(0))
+            .await
+            .expect_err("stop error is surfaced after successful collection");
+
+        assert!(matches!(err, BtleError::NoAdapterAvailable));
+        assert_eq!(adapter.start_calls(), 1);
+        assert_eq!(adapter.collect_calls(), 1);
+        assert_eq!(adapter.stop_calls(), 1);
+        assert!(adapter.stopped_after_collect());
+    }
+
+    #[tokio::test]
     async fn scan_adapter_stops_after_collection_failure() {
         let adapter = FakeScanAdapter::returning(Err(BtleError::NoPeripheralMatched));
 
         let err = scan_adapter(&adapter, ScanWindow::from_millis(0))
             .await
             .expect_err("collection error is preserved");
+
+        assert!(matches!(err, BtleError::NoPeripheralMatched));
+        assert_eq!(adapter.start_calls(), 1);
+        assert_eq!(adapter.collect_calls(), 1);
+        assert_eq!(adapter.stop_calls(), 1);
+        assert!(adapter.stopped_after_collect());
+    }
+
+    #[tokio::test]
+    async fn scan_adapter_preserves_collection_failure_over_stop_failure() {
+        let adapter = FakeScanAdapter::returning(Err(BtleError::NoPeripheralMatched))
+            .with_stop_result(Err(BtleError::NoAdapterAvailable));
+
+        let err = scan_adapter(&adapter, ScanWindow::from_millis(0))
+            .await
+            .expect_err("collection error remains primary");
 
         assert!(matches!(err, BtleError::NoPeripheralMatched));
         assert_eq!(adapter.start_calls(), 1);

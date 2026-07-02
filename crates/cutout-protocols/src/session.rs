@@ -1768,6 +1768,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn nosfet_aero_session_continues_after_diagnostic_in_coalesced_notification() {
+        let mut bad_frame = live_aero_selector_0_frame();
+        bad_frame[10] ^= 0xff;
+        let reserved_frame = live_aero_selector_8_frame();
+        let mut coalesced = Vec::with_capacity(bad_frame.len() + reserved_frame.len());
+        coalesced.extend_from_slice(&bad_frame);
+        coalesced.extend_from_slice(&reserved_frame);
+
+        let output = aero_output_for_notification(&coalesced);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                NotificationIngestOutcome::parser_diagnostic(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    VETERAN_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(coalesced.len()),
+                    ms(42),
+                    ParserError::BadChecksum,
+                ),
+                NotificationIngestOutcome::known_reserved(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    VETERAN_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(coalesced.len()),
+                    ms(42),
+                    ReservedPayloadEvidence {
+                        classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
+                        body_len: PayloadBodyLen::from_bytes(24),
+                        verification: VerificationStatus::HardwareVerified,
+                    },
+                ),
+            ]
+        );
+    }
+
     proptest! {
         #[test]
         fn nosfet_aero_session_fragmentation_outcomes_end_in_same_semantic_result(

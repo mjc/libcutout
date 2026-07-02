@@ -244,6 +244,7 @@ impl RequestTracker {
         }
         active.retries = active.retries.saturating_add(1);
         active.started_at_ms = now_ms;
+        self.last_started = Some((active.key, now_ms));
         self.in_flight = Some(active);
         Ok(())
     }

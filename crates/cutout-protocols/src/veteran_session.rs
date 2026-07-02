@@ -47,6 +47,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
     ) -> Result<(), SessionOutputError> {
         let mut completed_frames = CompletedFrames::default();
         let mut buffered = false;
+        let mut emitted_outcome = false;
         for byte in bytes {
             match self.reassembler.feed_byte_result(*byte) {
                 Ok(VeteranFrameParseResult::Complete(frame)) => {
@@ -61,6 +62,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                         event_count,
                         output,
                     )?;
+                    emitted_outcome = true;
                 }
                 Ok(VeteranFrameParseResult::Buffered) => {
                     buffered = true;
@@ -79,7 +81,8 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                             ParserError::BadChecksum,
                         ),
                     ))?;
-                    return Ok(());
+                    emitted_outcome = true;
+                    buffered = false;
                 }
                 Err(VeteranReassemblyError::OversizedFrame { claimed, max }) => {
                     let error = ParserError::OversizedFrame { claimed, max };
@@ -93,7 +96,8 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                             error,
                         ),
                     ))?;
-                    return Ok(());
+                    emitted_outcome = true;
+                    buffered = false;
                 }
                 Err(VeteranReassemblyError::InvalidFrame) => {
                     push_parser_error(ParserError::MalformedFrame, output)?;
@@ -106,12 +110,13 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                             ParserError::MalformedFrame,
                         ),
                     ))?;
-                    return Ok(());
+                    emitted_outcome = true;
+                    buffered = false;
                 }
             }
         }
 
-        if completed_frames.has_no_events() {
+        if completed_frames.has_no_events() && !emitted_outcome {
             output.push(SessionOutput::NotificationIngest(if buffered {
                 NotificationIngestOutcome::buffered_fragment(
                     ProtocolFamily::VeteranLeaperkimNosfet,

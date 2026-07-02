@@ -358,12 +358,7 @@ where
     /// Creates a host session around a protocol session.
     #[must_use]
     pub fn new(session: S) -> Self {
-        Self {
-            session,
-            output: Box::new(BoundedSessionOutput::new()),
-            snapshot: TelemetrySnapshot::default(),
-            diagnostics: ParserDiagnostics::default(),
-        }
+        Self::with_output_capacity(session)
     }
 }
 

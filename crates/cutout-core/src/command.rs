@@ -167,10 +167,24 @@ pub enum UnsupportedReason {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DangerousActuationArm {
     /// Model this token was issued for.
-    pub model: &'static str,
+    model: &'static str,
 
     /// Monotonic expiry time in milliseconds.
-    pub expires_at_ms: MonotonicTimestamp,
+    expires_at_ms: MonotonicTimestamp,
+}
+
+impl DangerousActuationArm {
+    /// Returns the model this token was issued for.
+    #[must_use]
+    pub const fn model(self) -> &'static str {
+        self.model
+    }
+
+    /// Returns the monotonic expiry timestamp for diagnostics.
+    #[must_use]
+    pub const fn expires_at_ms(self) -> MonotonicTimestamp {
+        self.expires_at_ms
+    }
 }
 
 /// Dangerous actuation policy for a single model/session.

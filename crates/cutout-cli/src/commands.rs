@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use cutout_btle::{
     BridgeIdentityResolution, BtleError, BtleplugReconnectHost, ConnectedPeripheral,
     ConnectionTarget, DiagnosticEventCount, DisconnectCount, MonotonicMs, NotificationCount,
@@ -291,9 +291,9 @@ fn replay_pevcap_capture(
     profile: SelectedSessionProfile,
 ) -> Result<PevcapReplayReport> {
     let mut report = if profile.is_falcon() {
-        replay_pevcap_with_session(capture, falcon_replay_session(capture)?)
+        replay_pevcap_with_session(capture, falcon_replay_session(capture)?)?
     } else {
-        replay_pevcap_with_session(capture, profile.session_registration()?.construct())
+        replay_pevcap_with_session(capture, profile.session_registration()?.construct())?
     };
     report.capacity =
         select_begode_pack_capacity_from_annotations(capture.header.annotations.iter());
@@ -397,7 +397,7 @@ fn falcon_bms_voltage_evidence_from_records<'a>(
     evidence
 }
 
-fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapReplayReport
+fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> Result<PevcapReplayReport>
 where
     S: Clone + cutout_core::ProtocolSession,
 {
@@ -406,17 +406,17 @@ where
     let mut outputs = Vec::with_capacity(capture.replay_input_count());
     capture
         .replay_into_host(&mut host, &mut outputs)
-        .expect("PEVCAP replay fits the default session output buffer");
+        .context("PEVCAP replay filled the session output buffer")?;
     let arbitrary_chunks = capture.arbitrary_notification_chunk_lengths();
     let comparison = capture
         .compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks)
-        .expect("PEVCAP replay chunk comparison fits the default session output buffer");
-    summarize_pevcap_replay(
+        .context("PEVCAP replay chunk comparison filled the session output buffer")?;
+    Ok(summarize_pevcap_replay(
         ReplayRecordCount::new(capture.replay_input_count()),
         ReplayChunkPlanLen::new(arbitrary_chunks.len()),
         &outputs,
         comparison,
-    )
+    ))
 }
 
 fn summarize_pevcap_replay(
@@ -674,8 +674,8 @@ fn render_diagnostic_error_jsonl(
         "kind": diagnostic_error_kind_name(error.kind),
         "claimed_len": error.claimed_len.map(cutout_core::ParserFrameLen::get),
         "max_len": error.max_len.map(cutout_core::ParserFrameLen::get),
-        "elapsed": error.elapsed.map(cutout_core::Duration::as_milliseconds),
-        "timeout": error.timeout.map(cutout_core::Duration::as_milliseconds),
+        "elapsed_ms": error.elapsed.map(cutout_core::Duration::as_milliseconds),
+        "timeout_ms": error.timeout.map(cutout_core::Duration::as_milliseconds),
     }))
 }
 
@@ -2693,6 +2693,24 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct OverflowingReplaySession;
+
+    impl cutout_core::ProtocolSession for OverflowingReplaySession {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), SessionOutputError> {
+            if let SessionInput::Notification { monotonic_ms, .. } = input {
+                for _ in 0..=cutout_core::DEFAULT_SESSION_OUTPUT_CAPACITY {
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }))?;
+                }
+            }
+            Ok(())
+        }
+    }
+
     fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
         DashboardArgs {
             demo,
@@ -2744,6 +2762,19 @@ mod tests {
                 ),
             ],
         )
+    }
+
+    #[test]
+    fn pevcap_replay_surfaces_output_overflow_as_cli_error() {
+        let capture = sample_pevcap_capture();
+
+        let err = replay_pevcap_with_session(&capture, OverflowingReplaySession)
+            .expect_err("overflowing replay should be a CLI error");
+
+        assert!(
+            err.to_string()
+                .contains("PEVCAP replay filled the session output buffer")
+        );
     }
 
     fn sample_falcon_live_a_replay_capture(annotations: &[&str]) -> PevcapCapture {
@@ -3862,8 +3893,8 @@ mod tests {
         assert_eq!(value["kind"], "timeout");
         assert_eq!(value["claimed_len"], serde_json::Value::Null);
         assert_eq!(value["max_len"], serde_json::Value::Null);
-        assert_eq!(value["elapsed"], 1_234);
-        assert_eq!(value["timeout"], 5_000);
+        assert_eq!(value["elapsed_ms"], 1_234);
+        assert_eq!(value["timeout_ms"], 5_000);
     }
 
     #[test]
