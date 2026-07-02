@@ -80,11 +80,11 @@ PY
 cutout_build_ios_cutout_app_bundle() {
   local root package_dir project scheme destination derived_data rust_lib product
   root="$(cutout_repo_root)"
-  package_dir="${CUTOUT_IOS_SPEED_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
-  project="${CUTOUT_IOS_SPEED_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
-  scheme="${CUTOUT_IOS_SPEED_SCHEME:-CutoutApp}"
-  destination="${CUTOUT_IOS_SPEED_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
-  derived_data="${CUTOUT_IOS_SPEED_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}"
+  package_dir="${CUTOUT_IOS_APP_PACKAGE_DIR:-${CUTOUT_IOS_SPEED_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}}"
+  project="${CUTOUT_IOS_APP_PROJECT:-${CUTOUT_IOS_SPEED_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}}"
+  scheme="${CUTOUT_IOS_APP_SCHEME:-${CUTOUT_IOS_SPEED_SCHEME:-CutoutApp}}"
+  destination="${CUTOUT_IOS_APP_BUILD_DESTINATION:-${CUTOUT_IOS_SPEED_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}}"
+  derived_data="${CUTOUT_IOS_APP_DERIVED_DATA:-${CUTOUT_IOS_SPEED_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}}"
   rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
 

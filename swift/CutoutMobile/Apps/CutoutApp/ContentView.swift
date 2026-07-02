@@ -70,7 +70,7 @@ struct ContentView: View {
             return id
         }
 
-        if let value = ProcessInfo.processInfo.environment["CUTOUT_MOCKUP_SCREEN"],
+        if let value = ProcessInfo.processInfo.environment["CUTOUT_PREVIEW_SCREEN"],
            let id = PreviewScreenID(rawValue: value) {
             return id
         }

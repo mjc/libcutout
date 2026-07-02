@@ -2,6 +2,8 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveRideSessionCoreTests: XCTestCase {
+    deinit {}
+
     func testSessionErrorWrapsNewRustInputAndBufferFailures() {
         XCTAssertEqual(
             CutoutSessionError(
