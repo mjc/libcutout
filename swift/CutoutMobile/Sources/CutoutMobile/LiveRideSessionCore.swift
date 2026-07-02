@@ -1,21 +1,21 @@
 import CoreBluetooth
 import Foundation
 
-public enum LiveSpeedSessionLifecycleStep: Equatable, Sendable {
+public enum LiveRideSessionLifecycleStep: Equatable, Sendable {
     case connecting(model: ElectricUnicycleModel, platformIdentifier: String)
     case discoveringServices([String])
     case subscribing([String])
 }
 
-public final class LiveSpeedSessionCore: NSObject {
-    public private(set) var displayState = LiveSpeedDisplayState()
-    public private(set) var phase = LiveSpeedConnectionPhase.starting
+public final class LiveRideSessionCore: NSObject {
+    public private(set) var displayState = LiveRideDisplayState()
+    public private(set) var phase = LiveRideConnectionPhase.starting
     public private(set) var records: [String] = []
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
 
-    public var onDisplayStateChange: ((LiveSpeedDisplayState) -> Void)?
-    public var onPhaseChange: ((LiveSpeedConnectionPhase) -> Void)?
+    public var onDisplayStateChange: ((LiveRideDisplayState) -> Void)?
+    public var onPhaseChange: ((LiveRideConnectionPhase) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
 
@@ -61,7 +61,7 @@ public final class LiveSpeedSessionCore: NSObject {
         return true
     }
 
-    public func applyLifecycleStep(_ step: LiveSpeedSessionLifecycleStep) {
+    public func applyLifecycleStep(_ step: LiveRideSessionLifecycleStep) {
         switch step {
         case let .connecting(model, platformIdentifier):
             selectedModel = model
@@ -82,7 +82,7 @@ public final class LiveSpeedSessionCore: NSObject {
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
-        displayState = LiveSpeedDisplayState()
+        displayState = LiveRideDisplayState()
         hasObservedSpeedSnapshot = false
         onDisplayStateChange?(displayState)
 
@@ -124,7 +124,7 @@ public final class LiveSpeedSessionCore: NSObject {
         ]
     }
 
-    private func setPhase(_ phase: LiveSpeedConnectionPhase) {
+    private func setPhase(_ phase: LiveRideConnectionPhase) {
         self.phase = phase
         onPhaseChange?(phase)
     }
@@ -163,7 +163,7 @@ public final class LiveSpeedSessionCore: NSObject {
                 applyLinkUpStep(step)
             }
         } catch {
-            setPhase(.failed(.sessionFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.sessionFailed(error.liveRideMessage)))
         }
     }
 
@@ -182,7 +182,7 @@ public final class LiveSpeedSessionCore: NSObject {
         }
 
         guard let selectedModel else {
-            setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.connectFailed(error.liveRideMessage)))
             return
         }
 
@@ -224,7 +224,7 @@ public final class LiveSpeedSessionCore: NSObject {
     }
 }
 
-extension LiveSpeedSessionCore: CBCentralManagerDelegate {
+extension LiveRideSessionCore: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         record("central_state=\(central.state.rawValue)")
         guard central.state == .poweredOn else {
@@ -268,7 +268,7 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
-        setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+        setPhase(.failed(.connectFailed(error.liveRideMessage)))
     }
 
     public func centralManager(
@@ -280,10 +280,10 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
     }
 }
 
-extension LiveSpeedSessionCore: CBPeripheralDelegate {
+extension LiveRideSessionCore: CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error {
-            setPhase(.failed(.serviceDiscoveryFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.serviceDiscoveryFailed(error.liveRideMessage)))
             return
         }
         let services = peripheral.services ?? []
@@ -300,7 +300,7 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.characteristicDiscoveryFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.characteristicDiscoveryFailed(error.liveRideMessage)))
             return
         }
         service.characteristics?.forEach { characteristic in
@@ -320,7 +320,7 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.notificationFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.notificationFailed(error.liveRideMessage)))
             return
         }
         guard
@@ -345,12 +345,12 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
             applyNotificationStep(step, receivedAt: receivedAt)
         } catch {
             record("notification_ingest_error=\(error)")
-            setPhase(.failed(.notificationIngestFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.notificationIngestFailed(error.liveRideMessage)))
         }
     }
 }
 
-extension LiveSpeedSessionCore: CoreBluetoothOperationSink {
+extension LiveRideSessionCore: CoreBluetoothOperationSink {
     public func subscribe(channel: BluetoothUuid) {
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingNotifyChannel))
@@ -380,13 +380,13 @@ private struct MonotonicClock {
 }
 
 private extension Optional where Wrapped == Error {
-    var liveSpeedMessage: String {
+    var liveRideMessage: String {
         map(String.init(describing:)) ?? "unknown error"
     }
 }
 
 private extension Error {
-    var liveSpeedMessage: String {
+    var liveRideMessage: String {
         String(describing: self)
     }
 }

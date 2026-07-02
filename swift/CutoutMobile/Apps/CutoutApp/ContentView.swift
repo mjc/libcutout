@@ -3,13 +3,13 @@ import CutoutMobile
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject var model: LiveSpeedModel
+    @ObservedObject var model: LiveRideModel
     @State private var selectedScreenID: MockupScreenID
     @State private var pairedDestinationScreenID: MockupScreenID?
 
     private let catalog = MockupScreenCatalog.v2
 
-    init(model: LiveSpeedModel) {
+    init(model: LiveRideModel) {
         self.model = model
         _selectedScreenID = State(initialValue: Self.initialScreenID())
     }
@@ -57,7 +57,7 @@ struct ContentView: View {
         selectedScreenID = screenID
     }
 
-    private func openRideScreen(ifNeededFor phase: LiveSpeedConnectionPhase) {
+    private func openRideScreen(ifNeededFor phase: LiveRideConnectionPhase) {
         guard phase.opensRideScreen else { return }
         selectedScreenID = pairedDestinationScreenID ?? .eucRide
     }
@@ -2611,7 +2611,7 @@ private extension MockupScreen {
     }
 }
 
-private extension LiveSpeedConnectionPhase {
+private extension LiveRideConnectionPhase {
     var opensRideScreen: Bool {
         switch self {
         case .connecting, .discoveringServices, .subscribing, .live:

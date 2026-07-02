@@ -77,7 +77,7 @@ raise SystemExit("no connected booted iOS device found")
 PY
 }
 
-cutout_build_ios_speed_app_bundle() {
+cutout_build_ios_cutout_app_bundle() {
   local root package_dir project scheme destination derived_data rust_lib product
   root="$(cutout_repo_root)"
   package_dir="${CUTOUT_IOS_SPEED_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
@@ -125,7 +125,7 @@ cutout_build_ios_speed_app_bundle() {
   printf '%s\n' "$product"
 }
 
-cutout_build_ios_device_speed_app_bundle() {
+cutout_build_ios_device_cutout_app_bundle() {
   local root package_dir project scheme device_udid destination derived_data rust_lib product
   local development_team bundle_id
   root="$(cutout_repo_root)"
@@ -142,7 +142,7 @@ cutout_build_ios_device_speed_app_bundle() {
 
   if [[ -z "$development_team" ]]; then
     echo "CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone signing" >&2
-    echo "Set CUTOUT_IOS_DEVELOPMENT_TEAM and optionally CUTOUT_IOS_APP_BUNDLE_ID, then rerun scripts/run-ios-speed-app-on-phone.sh" >&2
+    echo "Set CUTOUT_IOS_DEVELOPMENT_TEAM and optionally CUTOUT_IOS_APP_BUNDLE_ID, then rerun scripts/run-ios-cutout-app-on-phone.sh" >&2
     return 1
   fi
 

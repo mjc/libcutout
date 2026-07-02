@@ -589,7 +589,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     }
 }
 
-public struct LiveSpeedDebugRow: Equatable, Hashable, Sendable {
+public struct LiveRideDebugRow: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
 
@@ -599,7 +599,7 @@ public struct LiveSpeedDebugRow: Equatable, Hashable, Sendable {
     }
 }
 
-public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
+public struct LiveRideDisplayState: Equatable, Hashable, Sendable {
     public let speed: SpeedReadout
     public let telemetry: TelemetrySnapshot?
     public let notificationCount: UInt64
@@ -617,19 +617,19 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
         self.lastUpdate = lastUpdate
     }
 
-    public var debugRows: [LiveSpeedDebugRow] {
+    public var debugRows: [LiveRideDebugRow] {
         [
-            LiveSpeedDebugRow(label: "Notifications", value: "\(notificationCount)"),
-            LiveSpeedDebugRow(label: "Last update", value: lastUpdateText),
+            LiveRideDebugRow(label: "Notifications", value: "\(notificationCount)"),
+            LiveRideDebugRow(label: "Last update", value: lastUpdateText),
         ]
     }
 
     public func reducing(
         _ step: CoreBluetoothSessionStep,
         receivedAt: MonotonicMilliseconds
-    ) -> LiveSpeedDisplayState {
+    ) -> LiveRideDisplayState {
         let nextSpeed = step.snapshot?.speed.map { SpeedReadout(millimetersPerSecond: $0.value) } ?? speed
-        return LiveSpeedDisplayState(
+        return LiveRideDisplayState(
             speed: nextSpeed,
             telemetry: step.snapshot ?? telemetry,
             notificationCount: notificationCount + 1,
@@ -643,10 +643,10 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
 }
 
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
-    public let phase: LiveSpeedConnectionPhase
-    public let displayState: LiveSpeedDisplayState
+    public let phase: LiveRideConnectionPhase
+    public let displayState: LiveRideDisplayState
 
-    public init(phase: LiveSpeedConnectionPhase, displayState: LiveSpeedDisplayState) {
+    public init(phase: LiveRideConnectionPhase, displayState: LiveRideDisplayState) {
         self.phase = phase
         self.displayState = displayState
     }
@@ -668,7 +668,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     }
 }
 
-public enum LiveSpeedConnectionFailure: Equatable, Hashable, Sendable {
+public enum LiveRideConnectionFailure: Equatable, Hashable, Sendable {
     case missingNotifyChannel
     case sessionFailed(String)
     case connectFailed(String)
@@ -700,7 +700,7 @@ public enum LiveSpeedConnectionFailure: Equatable, Hashable, Sendable {
     }
 }
 
-public enum LiveSpeedConnectionPhase: Equatable, Hashable, Sendable {
+public enum LiveRideConnectionPhase: Equatable, Hashable, Sendable {
     case starting
     case bluetoothUnavailable(rawState: Int)
     case scanning(model: ElectricUnicycleModel)
@@ -708,7 +708,7 @@ public enum LiveSpeedConnectionPhase: Equatable, Hashable, Sendable {
     case discoveringServices
     case subscribing
     case live
-    case failed(LiveSpeedConnectionFailure)
+    case failed(LiveRideConnectionFailure)
 
     public var displayText: String {
         switch self {

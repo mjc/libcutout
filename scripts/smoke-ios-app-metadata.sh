@@ -14,7 +14,7 @@ fi
 export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
 unset SDKROOT
 
-product="${CUTOUT_IOS_METADATA_PRODUCT:-$(cutout_build_ios_speed_app_bundle)}"
+product="${CUTOUT_IOS_METADATA_PRODUCT:-$(cutout_build_ios_cutout_app_bundle)}"
 
 python3 - "$product/Info.plist" <<'PY'
 import plistlib
@@ -40,4 +40,4 @@ for key in ("UISupportedInterfaceOrientations", "UISupportedInterfaceOrientation
 PY
 
 echo "ios_app_metadata=ok"
-echo "ios_speed_app_product=$product"
+echo "ios_cutout_app_product=$product"
