@@ -2160,10 +2160,10 @@ fn render_read_only_response_jsonl(
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "firmware",
-            "firmware_major": measured_u16_json(firmware.firmware_major),
-            "firmware_minor": measured_u16_json(firmware.firmware_minor),
-            "firmware_patch": measured_u16_json(firmware.firmware_patch),
-            "protocol_version": measured_u16_json(firmware.protocol_version),
+            "firmware_major": measured_json(firmware.firmware_major),
+            "firmware_minor": measured_json(firmware.firmware_minor),
+            "firmware_patch": measured_json(firmware.firmware_patch),
+            "protocol_version": measured_json(firmware.protocol_version),
             "build_id": raw_field_json(firmware.build_id),
         })),
         ReadOnlyResponse::Settings(settings) => serde_json::to_string(&serde_json::json!({
@@ -2217,7 +2217,7 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
             payload
                 .temperatures()
                 .into_iter()
-                .map(measured_i32_json)
+                .map(measured_json)
                 .collect::<Vec<_>>()
         ),
         BatteryPagePayload::CellVoltage(_) | BatteryPagePayload::Raw(_) => serde_json::Value::Null,
@@ -2227,10 +2227,10 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
 fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
     let battery = payload.battery();
     serde_json::json!({
-        "voltage": measured_i32_json(battery.voltage.map(|measured| {
+        "voltage": measured_json(battery.voltage.map(|measured| {
             measured.map_value(cutout_core::Voltage::as_millivolts)
         })),
-        "current": measured_i32_json(battery.current.map(|measured| {
+        "current": measured_json(battery.current.map(|measured| {
             measured.map_value(cutout_core::BatteryCurrent::as_milliamps)
         })),
         "bms_pack_current_0": bms_pack_current_json(
@@ -2241,13 +2241,13 @@ fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
             payload.bms_pack_currents(),
             cutout_core::BmsPackCurrents::current_1,
         ),
-        "level_reported": measured_u8_json(battery.level_reported.map(|measured| {
+        "level_reported": measured_json(battery.level_reported.map(|measured| {
             measured.map_value(cutout_core::PercentQuantity::as_percent)
         })),
-        "level_estimated": measured_u8_json(battery.level_estimated.map(|measured| {
+        "level_estimated": measured_json(battery.level_estimated.map(|measured| {
             measured.map_value(cutout_core::PercentQuantity::as_percent)
         })),
-        "temperature": measured_i32_json(battery.temperature.map(|measured| {
+        "temperature": measured_json(battery.temperature.map(|measured| {
             measured.map_value(cutout_core::Temperature::as_millicelsius)
         })),
         "raw_state": raw_field_json(battery.raw_state),
@@ -2268,32 +2268,13 @@ fn bms_pack_current_json(
     })
 }
 
-fn measured_i32_json(measured: Option<Measured<i32>>) -> serde_json::Value {
+fn measured_json<T>(measured: Option<Measured<T>>) -> serde_json::Value
+where
+    T: Into<serde_json::Value>,
+{
     measured.map_or(serde_json::Value::Null, |measured| {
         serde_json::json!(measured_json_parts(
-            i64::from(measured.value),
-            measured.source,
-            measured.quality,
-            measured.verification
-        ))
-    })
-}
-
-fn measured_u8_json(measured: Option<Measured<u8>>) -> serde_json::Value {
-    measured.map_or(serde_json::Value::Null, |measured| {
-        serde_json::json!(measured_json_parts(
-            u64::from(measured.value),
-            measured.source,
-            measured.quality,
-            measured.verification
-        ))
-    })
-}
-
-fn measured_u16_json(measured: Option<Measured<u16>>) -> serde_json::Value {
-    measured.map_or(serde_json::Value::Null, |measured| {
-        serde_json::json!(measured_json_parts(
-            u64::from(measured.value),
+            measured.value,
             measured.source,
             measured.quality,
             measured.verification

@@ -1723,11 +1723,11 @@ struct FirmwareSummary(FirmwareInfo);
 
 impl fmt::Display for FirmwareSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_optional_measured_u16(f, self.0.firmware_major)?;
+        write_optional_version_component(f, self.0.firmware_major)?;
         write!(f, ".")?;
-        write_optional_measured_u16(f, self.0.firmware_minor)?;
+        write_optional_version_component(f, self.0.firmware_minor)?;
         write!(f, ".")?;
-        write_optional_measured_u16(f, self.0.firmware_patch)
+        write_optional_version_component(f, self.0.firmware_patch)
     }
 }
 
@@ -1735,7 +1735,7 @@ pub(crate) fn firmware_summary_string(firmware: FirmwareInfo) -> String {
     FirmwareSummary(firmware).to_string()
 }
 
-fn write_optional_measured_u16(
+fn write_optional_version_component(
     f: &mut fmt::Formatter<'_>,
     value: Option<Measured<u16>>,
 ) -> fmt::Result {
