@@ -3,6 +3,12 @@ import Foundation
 public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case devicePicker
     case eucRide
+    case bmsOverview
+    case bmsCellMap6S
+    case bmsCellMap40S
+    case bmsCellDetail
+    case bmsUnknownTopology
+    case bmsNoData
     case eucGarage
     case vescOnewheelRide
     case vescDebug
@@ -133,7 +139,52 @@ public struct MockupFaultCard: Equatable, Hashable, Sendable {
         self.accent = accent
     }
 }
+public enum MockupBmsScreenKind: Equatable, Hashable, Sendable {
+    case overview
+    case cellMapInline
+    case cellMapScrollable
+    case cellDetail
+    case unknownTopology
+    case noData
+}
 
+public struct MockupBmsChip: Equatable, Hashable, Sendable, Identifiable {
+    public let id: UUID
+
+    public let title: String
+    public let accent: MockupAccent
+
+    public init(id: UUID = UUID(), title: String, accent: MockupAccent) {
+        self.id = id
+        self.title = title
+        self.accent = accent
+    }
+}
+
+public struct MockupBmsContent: Equatable, Hashable, Sendable {
+    public let kind: MockupBmsScreenKind
+    public let snapshot: BmsSnapshot
+    public let chips: [MockupBmsChip]
+    public let highlightedGroupIndices: [Int]
+    public let selectedGroupIndex: Int?
+    public let modeTitles: [String]
+
+    public init(
+        kind: MockupBmsScreenKind,
+        snapshot: BmsSnapshot,
+        chips: [MockupBmsChip] = [],
+        highlightedGroupIndices: [Int] = [],
+        selectedGroupIndex: Int? = nil,
+        modeTitles: [String] = []
+    ) {
+        self.kind = kind
+        self.snapshot = snapshot
+        self.chips = chips
+        self.highlightedGroupIndices = highlightedGroupIndices
+        self.selectedGroupIndex = selectedGroupIndex
+        self.modeTitles = modeTitles
+    }
+}
 public enum MockupPickerRowState: Equatable, Hashable, Sendable {
     case supported(action: String)
     case unsupported(action: String)
@@ -384,6 +435,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let summaryRows: [MockupSummaryRow]
     public let faultCard: MockupFaultCard?
     public let tabs: [MockupScreenTab]
+    public let bmsContent: MockupBmsContent?
     public let isFixtureOnly: Bool
 
     public init(
@@ -404,6 +456,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         summaryRows: [MockupSummaryRow] = [],
         faultCard: MockupFaultCard? = nil,
         tabs: [MockupScreenTab] = [],
+        bmsContent: MockupBmsContent? = nil,
         isFixtureOnly: Bool = true
     ) {
         self.id = id
@@ -423,6 +476,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.summaryRows = summaryRows
         self.faultCard = faultCard
         self.tabs = tabs
+        self.bmsContent = bmsContent
         self.isFixtureOnly = isFixtureOnly
     }
 }
@@ -476,6 +530,141 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             symbolName: "capsule"
         ),
     ]
+
+    private static func makeBmsGroups(
+        count: Int,
+        _ build: (Int) -> BmsGroupSnapshot
+    ) -> [BmsGroupSnapshot] {
+        (1...count).map(build)
+    }
+
+    private static let bmsOverviewSnapshot = BmsSnapshot(
+        topology: BmsTopology(
+            layoutLabel: "20S4P split pack",
+            seriesGroupCount: 20,
+            parallelCount: 4,
+            packCount: 2,
+            bmsCount: 2,
+            confidence: .verified
+        ),
+        energyPercent: .fixture(value: 72),
+        voltage: .fixture(value: 81_600),
+        cellDeltaMillivolts: .fixture(value: 18),
+        lowestGroupIndex: 17,
+        highestTemperature: .fixture(value: 37_800),
+        highestTemperatureLabel: "right pack",
+        balancingSummary: "idle • top groups only",
+        balancingDetail: "3 groups bleeding: 03, 11, 19",
+        faultSummary: "no active faults",
+        faultDetail: "last: under-voltage warning · 3 days ago",
+        groups: makeBmsGroups(count: 20) { index in
+            BmsGroupSnapshot(
+                index: index,
+                voltage: .fixture(value: 4_089 - Int32(index % 5) * 4),
+                alertLevel: index == 17 ? .warning : .nominal
+            )
+        }
+    )
+
+    private static let bmsInlineSnapshot = BmsSnapshot(
+        topology: BmsTopology(
+            layoutLabel: "skateboard pack",
+            seriesGroupCount: 6,
+            parallelCount: 2,
+            packCount: 1,
+            bmsCount: 1,
+            confidence: .verified
+        ),
+        cellDeltaMillivolts: .fixture(value: 12),
+        groups: [
+            BmsGroupSnapshot(index: 1, voltage: .fixture(value: 4_104), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 2, voltage: .fixture(value: 4_101), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 3, voltage: .fixture(value: 4_096), alertLevel: .warning),
+            BmsGroupSnapshot(index: 4, voltage: .fixture(value: 4_099), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 5, voltage: .fixture(value: 4_103), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 6, voltage: .fixture(value: 4_092), alertLevel: .warning),
+        ]
+    )
+
+    private static let bmsScrollableSnapshot = BmsSnapshot(
+        topology: BmsTopology(
+            layoutLabel: "large EUC pack",
+            seriesGroupCount: 40,
+            parallelCount: 4,
+            packCount: 1,
+            bmsCount: 1,
+            confidence: .verified
+        ),
+        cellDeltaMillivolts: .fixture(value: 18),
+        highestTemperature: .fixture(value: 31_000),
+        highestTemperatureLabel: "group 31",
+        groups: makeBmsGroups(count: 40) { index in
+            let alertLevel: BmsAlertLevel = [17, 18, 19].contains(index) ? .warning : index == 31 ? .critical : .nominal
+            let base = 4_080 + Int32(index % 3) * 6
+            let value = [17, 18, 19].contains(index) ? 4_080 : (index == 31 ? 4_072 : base)
+            return BmsGroupSnapshot(index: index, voltage: .fixture(value: value), alertLevel: alertLevel)
+        },
+        faults: [
+            BmsFault(code: "temp-sensor", label: "31 has temp sensor mismatch", level: .warning)
+        ]
+    )
+
+    private static let bmsDetailSnapshot = BmsSnapshot(
+        topology: BmsTopology(
+            layoutLabel: "20S4P split pack",
+            seriesGroupCount: 20,
+            parallelCount: 4,
+            packCount: 2,
+            bmsCount: 2,
+            confidence: .verified
+        ),
+        cellDeltaMillivolts: .fixture(value: 18),
+        groups: makeBmsGroups(count: 20) { index in
+            BmsGroupSnapshot(
+                index: index,
+                voltage: .fixture(value: index == 17 ? 4_071 : 4_086),
+                temperature: .fixture(value: index == 17 ? 34_900 : 33_000),
+                resistanceMilliohms: index == 17 ? 21 : 18,
+                alertLevel: index == 17 ? .warning : .nominal,
+                detail: index == 17 ? "drops first during acceleration" : nil
+            )
+        }
+    )
+
+    private static let bmsUnknownSnapshot = BmsSnapshot(
+        topology: BmsTopology(
+            layoutLabel: "topology unverified",
+            seriesGroupCount: nil,
+            parallelCount: nil,
+            packCount: 1,
+            bmsCount: 1,
+            confidence: .unverified
+        ),
+        voltage: .fixture(value: 75_900),
+        faultSummary: "BMS found, map unknown",
+        faultDetail: "show raw-safe info until topology is confirmed",
+        faults: [
+            BmsFault(code: "0x0040", label: "needs decoder", level: .critical)
+        ],
+        captureActionTitle: "record unsupported pack",
+        captureActionState: "disabled for launch"
+    )
+
+    private static let bmsNoDataSnapshot = BmsSnapshot(
+        topology: BmsTopology(
+            layoutLabel: "non-smart BMS",
+            seriesGroupCount: nil,
+            parallelCount: nil,
+            packCount: 1,
+            bmsCount: 0,
+            confidence: .inferred
+        ),
+        energyPercent: .estimatedFixture(value: 71),
+        voltage: .fixture(value: 117_600),
+        current: .fixture(value: 38_000),
+        captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
+        captureActionState: "limited data"
+    )
 
     public static let v2 = MockupScreenCatalog(screens: [
         MockupScreen(
@@ -537,6 +726,136 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupScreenTab(title: "Map", isSelected: false),
                 MockupScreenTab(title: "Tune", isSelected: false),
             ]
+        ),
+        MockupScreen(
+            id: .bmsOverview,
+            title: "Pack overview",
+            subtitle: "CutOut · BMS",
+            primaryValue: "72%",
+            secondaryValue: "sag adjusted",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "topology", value: "20S4P split pack"),
+                MockupMetric(label: "BMS online", value: "2"),
+                MockupMetric(label: "lowest group", value: "group 17"),
+                MockupMetric(label: "highest temp", value: "37.8 °C"),
+            ],
+            bmsContent: MockupBmsContent(
+                kind: .overview,
+                snapshot: bmsOverviewSnapshot,
+                chips: [
+                    MockupBmsChip(title: "20S4P split pack", accent: .yellow),
+                    MockupBmsChip(title: "2 BMS online", accent: .green),
+                ]
+            )
+        ),
+        MockupScreen(
+            id: .bmsCellMap6S,
+            title: "6S cell map",
+            subtitle: "skateboard pack",
+            primaryValue: "12 mV spread",
+            secondaryValue: "no scrolling needed",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "topology", value: "6S2P"),
+                MockupMetric(label: "display", value: "all groups inline"),
+            ],
+            bmsContent: MockupBmsContent(
+                kind: .cellMapInline,
+                snapshot: bmsInlineSnapshot,
+                chips: [
+                    MockupBmsChip(title: "skateboard pack", accent: .cyan),
+                    MockupBmsChip(title: "6S2P", accent: .yellow),
+                ],
+                highlightedGroupIndices: [3, 6],
+                modeTitles: ["balance view", "temps", "faults"]
+            )
+        ),
+        MockupScreen(
+            id: .bmsCellMap40S,
+            title: "40S cell map",
+            subtitle: "large EUC pack",
+            primaryValue: "17–19 sagging under load",
+            secondaryValue: "scroll cells horizontally",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "topology", value: "40S4P"),
+                MockupMetric(label: "display", value: "overview first"),
+            ],
+            bmsContent: MockupBmsContent(
+                kind: .cellMapScrollable,
+                snapshot: bmsScrollableSnapshot,
+                chips: [
+                    MockupBmsChip(title: "large EUC pack", accent: .cyan),
+                    MockupBmsChip(title: "40S4P", accent: .yellow),
+                    MockupBmsChip(title: "scroll cells horizontally", accent: .orange),
+                ],
+                highlightedGroupIndices: [17, 18, 19, 31],
+                modeTitles: ["overview", "strip", "full cell table", "popover"]
+            )
+        ),
+        MockupScreen(
+            id: .bmsCellDetail,
+            title: "Cell detail",
+            subtitle: "from any map",
+            primaryValue: "4.071 V",
+            secondaryValue: "group 17",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "temp", value: "34.9 °C"),
+                MockupMetric(label: "IR est.", value: "21 mΩ"),
+            ],
+            bmsContent: MockupBmsContent(
+                kind: .cellDetail,
+                snapshot: bmsDetailSnapshot,
+                chips: [
+                    MockupBmsChip(title: "from any map", accent: .cyan),
+                    MockupBmsChip(title: "group 17", accent: .orange),
+                ],
+                highlightedGroupIndices: [17],
+                selectedGroupIndex: 17
+            )
+        ),
+        MockupScreen(
+            id: .bmsUnknownTopology,
+            title: "Unknown BMS",
+            subtitle: "partial data",
+            primaryValue: "BMS found, map unknown",
+            secondaryValue: "topology unverified",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "reported voltage", value: "75.9 V"),
+                MockupMetric(label: "fault bits", value: "0x0040"),
+                MockupMetric(label: "capture flow", value: "disabled for launch"),
+            ],
+            bmsContent: MockupBmsContent(
+                kind: .unknownTopology,
+                snapshot: bmsUnknownSnapshot,
+                chips: [
+                    MockupBmsChip(title: "partial data", accent: .orange),
+                    MockupBmsChip(title: "topology unverified", accent: .green),
+                ]
+            )
+        ),
+        MockupScreen(
+            id: .bmsNoData,
+            title: "Battery",
+            subtitle: "EX30 · non-smart BMS · controller-only estimate",
+            primaryValue: "71%",
+            secondaryValue: "limited data",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "pack voltage", value: "117.6 V"),
+                MockupMetric(label: "ride sag", value: "4.8 V"),
+                MockupMetric(label: "load now", value: "38 A"),
+            ],
+            bmsContent: MockupBmsContent(
+                kind: .noData,
+                snapshot: bmsNoDataSnapshot,
+                chips: [
+                    MockupBmsChip(title: "limited data", accent: .yellow),
+                ]
+            )
         ),
         MockupScreen(
             id: .eucGarage,
@@ -646,4 +965,24 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             )
         ),
     ])
+}
+
+extension TelemetryReading {
+    static func fixture(value: Value) -> Self {
+        Self(
+            value: value,
+            source: .reported,
+            quality: .known,
+            verification: .hardwareVerified
+        )
+    }
+
+    static func estimatedFixture(value: Value) -> Self {
+        Self(
+            value: value,
+            source: .estimated,
+            quality: .inferred,
+            verification: .inferred
+        )
+    }
 }

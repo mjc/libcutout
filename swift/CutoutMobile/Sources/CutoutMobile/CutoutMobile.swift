@@ -376,6 +376,219 @@ public struct SpeedReadout: Equatable, Hashable, Sendable {
     }
 }
 
+public enum BmsTopologyConfidence: Equatable, Hashable, Sendable {
+    case verified
+    case inferred
+    case unverified
+
+    fileprivate init(_ dto: MobileBmsTopologyConfidenceDto) {
+        switch dto {
+        case .verified:
+            self = .verified
+        case .inferred:
+            self = .inferred
+        case .unverified:
+            self = .unverified
+        }
+    }
+}
+
+public enum BmsAlertLevel: Equatable, Hashable, Sendable {
+    case nominal
+    case warning
+    case critical
+    case unknown
+
+    fileprivate init(_ dto: MobileBmsAlertLevelDto) {
+        switch dto {
+        case .nominal:
+            self = .nominal
+        case .warning:
+            self = .warning
+        case .critical:
+            self = .critical
+        case .unknown:
+            self = .unknown
+        }
+    }
+}
+
+public struct BmsTopology: Equatable, Hashable, Sendable {
+    public let layoutLabel: String
+    public let seriesGroupCount: Int?
+    public let parallelCount: Int?
+    public let packCount: Int
+    public let bmsCount: Int
+    public let confidence: BmsTopologyConfidence
+
+    public init(
+        layoutLabel: String,
+        seriesGroupCount: Int?,
+        parallelCount: Int?,
+        packCount: Int,
+        bmsCount: Int,
+        confidence: BmsTopologyConfidence
+    ) {
+        self.layoutLabel = layoutLabel
+        self.seriesGroupCount = seriesGroupCount
+        self.parallelCount = parallelCount
+        self.packCount = packCount
+        self.bmsCount = bmsCount
+        self.confidence = confidence
+    }
+
+    fileprivate init(_ dto: MobileBmsTopologyDto) {
+        self.init(
+            layoutLabel: dto.layoutLabel,
+            seriesGroupCount: dto.seriesGroupCount.map(Int.init),
+            parallelCount: dto.parallelCount.map(Int.init),
+            packCount: Int(dto.packCount),
+            bmsCount: Int(dto.bmsCount),
+            confidence: BmsTopologyConfidence(dto.confidence)
+        )
+    }
+}
+
+public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
+    public var id: Int { index }
+
+    public let index: Int
+    public let label: String?
+    public let voltage: TelemetryReading<Int32>?
+    public let temperature: TelemetryReading<Int32>?
+    public let resistanceMilliohms: Int?
+    public let isBalancing: Bool?
+    public let alertLevel: BmsAlertLevel
+    public let detail: String?
+
+    public init(
+        index: Int,
+        label: String? = nil,
+        voltage: TelemetryReading<Int32>? = nil,
+        temperature: TelemetryReading<Int32>? = nil,
+        resistanceMilliohms: Int? = nil,
+        isBalancing: Bool? = nil,
+        alertLevel: BmsAlertLevel = .nominal,
+        detail: String? = nil
+    ) {
+        self.index = index
+        self.label = label
+        self.voltage = voltage
+        self.temperature = temperature
+        self.resistanceMilliohms = resistanceMilliohms
+        self.isBalancing = isBalancing
+        self.alertLevel = alertLevel
+        self.detail = detail
+    }
+
+    fileprivate init(_ dto: MobileBmsGroupSnapshotDto) {
+        self.init(
+            index: Int(dto.index),
+            label: dto.label,
+            voltage: dto.voltage.map(TelemetryReading.init),
+            temperature: dto.temperature.map(TelemetryReading.init),
+            resistanceMilliohms: dto.resistanceMilliohms.map(Int.init),
+            isBalancing: dto.isBalancing,
+            alertLevel: BmsAlertLevel(dto.alertLevel),
+            detail: dto.detail
+        )
+    }
+}
+
+public struct BmsFault: Equatable, Hashable, Sendable, Identifiable {
+    public var id: String { code }
+
+    public let code: String
+    public let label: String
+    public let level: BmsAlertLevel
+
+    public init(code: String, label: String, level: BmsAlertLevel) {
+        self.code = code
+        self.label = label
+        self.level = level
+    }
+
+    fileprivate init(_ dto: MobileBmsFaultDto) {
+        self.init(code: dto.code, label: dto.label, level: BmsAlertLevel(dto.alertLevel))
+    }
+}
+
+public struct BmsSnapshot: Equatable, Hashable, Sendable {
+    public let topology: BmsTopology
+    public let energyPercent: TelemetryReading<UInt8>?
+    public let voltage: TelemetryReading<Int32>?
+    public let current: TelemetryReading<Int32>?
+    public let cellDeltaMillivolts: TelemetryReading<Int32>?
+    public let lowestGroupIndex: Int?
+    public let highestTemperature: TelemetryReading<Int32>?
+    public let highestTemperatureLabel: String?
+    public let balancingSummary: String?
+    public let balancingDetail: String?
+    public let faultSummary: String?
+    public let faultDetail: String?
+    public let groups: [BmsGroupSnapshot]
+    public let faults: [BmsFault]
+    public let captureActionTitle: String?
+    public let captureActionState: String?
+
+    public init(
+        topology: BmsTopology,
+        energyPercent: TelemetryReading<UInt8>? = nil,
+        voltage: TelemetryReading<Int32>? = nil,
+        current: TelemetryReading<Int32>? = nil,
+        cellDeltaMillivolts: TelemetryReading<Int32>? = nil,
+        lowestGroupIndex: Int? = nil,
+        highestTemperature: TelemetryReading<Int32>? = nil,
+        highestTemperatureLabel: String? = nil,
+        balancingSummary: String? = nil,
+        balancingDetail: String? = nil,
+        faultSummary: String? = nil,
+        faultDetail: String? = nil,
+        groups: [BmsGroupSnapshot] = [],
+        faults: [BmsFault] = [],
+        captureActionTitle: String? = nil,
+        captureActionState: String? = nil
+    ) {
+        self.topology = topology
+        self.energyPercent = energyPercent
+        self.voltage = voltage
+        self.current = current
+        self.cellDeltaMillivolts = cellDeltaMillivolts
+        self.lowestGroupIndex = lowestGroupIndex
+        self.highestTemperature = highestTemperature
+        self.highestTemperatureLabel = highestTemperatureLabel
+        self.balancingSummary = balancingSummary
+        self.balancingDetail = balancingDetail
+        self.faultSummary = faultSummary
+        self.faultDetail = faultDetail
+        self.groups = groups
+        self.faults = faults
+        self.captureActionTitle = captureActionTitle
+        self.captureActionState = captureActionState
+    }
+
+    fileprivate init(_ dto: MobileBmsSnapshotDto) {
+        self.init(
+            topology: BmsTopology(dto.topology),
+            energyPercent: dto.energyPercent.map(TelemetryReading.init),
+            voltage: dto.voltage.map(TelemetryReading.init),
+            current: dto.current.map(TelemetryReading.init),
+            cellDeltaMillivolts: dto.cellDeltaMillivolts.map(TelemetryReading.init),
+            lowestGroupIndex: dto.lowestGroupIndex.map(Int.init),
+            highestTemperature: dto.highestTemperature.map(TelemetryReading.init),
+            highestTemperatureLabel: dto.highestTemperatureLabel,
+            balancingSummary: dto.balancingSummary,
+            balancingDetail: dto.balancingDetail,
+            faultSummary: dto.faultSummary,
+            faultDetail: dto.faultDetail,
+            groups: dto.groups.map(BmsGroupSnapshot.init),
+            faults: dto.faults.map(BmsFault.init),
+            captureActionTitle: dto.captureActionTitle,
+            captureActionState: dto.captureActionState
+        )
+    }
+}
+
 public struct LiveSpeedDebugRow: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String

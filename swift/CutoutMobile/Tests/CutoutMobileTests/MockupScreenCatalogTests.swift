@@ -8,6 +8,12 @@ final class MockupScreenCatalogTests: XCTestCase {
             [
                 .devicePicker,
                 .eucRide,
+                .bmsOverview,
+                .bmsCellMap6S,
+                .bmsCellMap40S,
+                .bmsCellDetail,
+                .bmsUnknownTopology,
+                .bmsNoData,
                 .eucGarage,
                 .vescOnewheelRide,
                 .vescDebug,
@@ -27,6 +33,25 @@ final class MockupScreenCatalogTests: XCTestCase {
         XCTAssertEqual(screens[.eucRide]?.subtitle, "EUC - riding")
         XCTAssertEqual(screens[.eucRide]?.primaryValue, "31 mph")
         XCTAssertEqual(screens[.eucRide]?.secondaryValue, "PWM headroom 23%")
+
+        XCTAssertEqual(screens[.bmsOverview]?.title, "Pack overview")
+        XCTAssertEqual(screens[.bmsOverview]?.primaryValue, "72%")
+        XCTAssertEqual(screens[.bmsOverview]?.secondaryValue, "sag adjusted")
+
+        XCTAssertEqual(screens[.bmsCellMap6S]?.title, "6S cell map")
+        XCTAssertEqual(screens[.bmsCellMap6S]?.primaryValue, "12 mV spread")
+
+        XCTAssertEqual(screens[.bmsCellMap40S]?.title, "40S cell map")
+        XCTAssertEqual(screens[.bmsCellMap40S]?.secondaryValue, "scroll cells horizontally")
+
+        XCTAssertEqual(screens[.bmsCellDetail]?.title, "Cell detail")
+        XCTAssertEqual(screens[.bmsCellDetail]?.primaryValue, "4.071 V")
+
+        XCTAssertEqual(screens[.bmsUnknownTopology]?.title, "Unknown BMS")
+        XCTAssertEqual(screens[.bmsUnknownTopology]?.secondaryValue, "topology unverified")
+
+        XCTAssertEqual(screens[.bmsNoData]?.title, "Battery")
+        XCTAssertEqual(screens[.bmsNoData]?.secondaryValue, "limited data")
 
         XCTAssertEqual(screens[.eucGarage]?.title, "EUC health")
         XCTAssertEqual(screens[.eucGarage]?.primaryValue, "battery 85%")
@@ -241,7 +266,6 @@ extension MockupScreenCatalogTests {
             MockupScreenTab(title: "Tune", isSelected: false),
         ])
     }
-
     func testEucGarageFixtureCarriesPackHealthStructureFromMockup() throws {
         let garage = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
 
@@ -329,5 +353,89 @@ extension MockupScreenCatalogTests {
                 accent: .orange
             )
         )
+    }
+
+    func testBmsFixturesCarryTypedSnapshotsForEveryBmsScreen() throws {
+        let screenIDs: [MockupScreenID] = [
+            .bmsOverview,
+            .bmsCellMap6S,
+            .bmsCellMap40S,
+            .bmsCellDetail,
+            .bmsUnknownTopology,
+            .bmsNoData,
+        ]
+
+        let screens = try screenIDs.map {
+            try XCTUnwrap(MockupScreenCatalog.v2.screen(id: $0))
+        }
+
+        XCTAssertEqual(screens.map(\.bmsContent?.kind), [
+            .overview,
+            .cellMapInline,
+            .cellMapScrollable,
+            .cellDetail,
+            .unknownTopology,
+            .noData,
+        ])
+        XCTAssertTrue(screens.allSatisfy { $0.bmsContent?.snapshot != nil })
+    }
+
+    func testBmsOverviewFixtureCapturesTopologyAndFaultSummary() throws {
+        let overview = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let content = try XCTUnwrap(overview.bmsContent)
+        let snapshot = content.snapshot
+
+        XCTAssertEqual(snapshot.topology.layoutLabel, "20S4P split pack")
+        XCTAssertEqual(snapshot.topology.seriesGroupCount, 20)
+        XCTAssertEqual(snapshot.topology.parallelCount, 4)
+        XCTAssertEqual(snapshot.topology.packCount, 2)
+        XCTAssertEqual(snapshot.topology.bmsCount, 2)
+        XCTAssertEqual(snapshot.energyPercent?.value, 72)
+        XCTAssertEqual(snapshot.voltage?.value, 81_600)
+        XCTAssertEqual(snapshot.cellDeltaMillivolts?.value, 18)
+        XCTAssertEqual(snapshot.lowestGroupIndex, 17)
+        XCTAssertEqual(snapshot.balancingSummary, "idle • top groups only")
+        XCTAssertEqual(snapshot.faultSummary, "no active faults")
+    }
+
+    func testBmsCellFixturesPreserveHighlightedGroupsAndDetailSelection() throws {
+        let inline = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellMap6S)?.bmsContent)
+        XCTAssertEqual(inline.snapshot.groups.map(\.index), [1, 2, 3, 4, 5, 6])
+        XCTAssertEqual(inline.highlightedGroupIndices, [3, 6])
+
+        let scrollable = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellMap40S)?.bmsContent)
+        XCTAssertEqual(scrollable.snapshot.groups.count, 40)
+        XCTAssertEqual(scrollable.highlightedGroupIndices, [17, 18, 19, 31])
+
+        let detail = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellDetail)?.bmsContent)
+        XCTAssertEqual(detail.selectedGroupIndex, 17)
+        XCTAssertEqual(detail.snapshot.groups.first(where: { $0.index == 17 })?.voltage?.value, 4_071)
+        XCTAssertEqual(detail.snapshot.groups.first(where: { $0.index == 17 })?.resistanceMilliohms, 21)
+    }
+
+    func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
+        let unknown = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsUnknownTopology)?.bmsContent)
+        let snapshot = unknown.snapshot
+
+        XCTAssertEqual(snapshot.topology.confidence, .unverified)
+        XCTAssertNil(snapshot.topology.seriesGroupCount)
+        XCTAssertEqual(snapshot.groups.count, 0)
+        XCTAssertEqual(snapshot.faults.map(\.code), ["0x0040"])
+        XCTAssertEqual(snapshot.captureActionTitle, "record unsupported pack")
+    }
+
+    func testNoDataFixtureMarksControllerOnlyEstimate() throws {
+        let noData = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsNoData)?.bmsContent)
+        let snapshot = noData.snapshot
+
+        XCTAssertEqual(snapshot.topology.layoutLabel, "non-smart BMS")
+        XCTAssertEqual(snapshot.topology.confidence, .inferred)
+        XCTAssertEqual(snapshot.energyPercent?.value, 71)
+        XCTAssertEqual(snapshot.energyPercent?.source, .estimated)
+        XCTAssertEqual(snapshot.energyPercent?.quality, .inferred)
+        XCTAssertEqual(snapshot.energyPercent?.verification, .inferred)
+        XCTAssertEqual(snapshot.voltage?.value, 117_600)
+        XCTAssertEqual(snapshot.current?.value, 38_000)
+        XCTAssertEqual(snapshot.captureActionState, "limited data")
     }
 }
