@@ -2670,9 +2670,9 @@ private extension MockupScreen {
             "Picker"
         case .eucRide:
             "EUC"
-        case .bmsOverview:
+        case .bmsOverview, .bmsNoData:
             "BMS"
-        case .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsNoData:
+        case .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail:
             "Cells"
         case .bmsUnknownTopology:
             "Faults"

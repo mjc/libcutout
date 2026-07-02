@@ -149,12 +149,13 @@ public enum MockupBmsScreenKind: Equatable, Hashable, Sendable {
 }
 
 public struct MockupBmsChip: Equatable, Hashable, Sendable, Identifiable {
-    public var id: String { title }
+    public let id: UUID
 
     public let title: String
     public let accent: MockupAccent
 
-    public init(title: String, accent: MockupAccent) {
+    public init(id: UUID = UUID(), title: String, accent: MockupAccent) {
+        self.id = id
         self.title = title
         self.accent = accent
     }
@@ -651,7 +652,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 0,
             confidence: .inferred
         ),
-        energyPercent: .fixture(value: 71),
+        energyPercent: .estimatedFixture(value: 71),
         voltage: .fixture(value: 117_600),
         current: .fixture(value: 38_000),
         captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
@@ -966,6 +967,15 @@ extension TelemetryReading {
             source: .reported,
             quality: .known,
             verification: .hardwareVerified
+        )
+    }
+
+    static func estimatedFixture(value: Value) -> Self {
+        Self(
+            value: value,
+            source: .estimated,
+            quality: .inferred,
+            verification: .inferred
         )
     }
 }
