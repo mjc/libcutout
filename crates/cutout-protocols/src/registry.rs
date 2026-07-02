@@ -175,7 +175,7 @@ mod tests {
         BEGODE_SERVICE_CHANNEL, BegodeFalconModel, BegodePackVoltageProfile, MODEL_CATALOG,
         MODEL_REGISTRY, NOSFET_AERO_REGISTRY_ENTRY, NOSFET_AERO_SESSION_KEY, NosfetAeroModel,
         RegisteredModelSpec, RegisteredReadOnlySession, VETERAN_DATA_CHANNEL, VETERAN_PARSER_KEY,
-        begode_falcon_target_voltage_profile, find_session_registration,
+        VETERAN_SERVICE_CHANNEL, begode_falcon_target_voltage_profile, find_session_registration,
     };
 
     #[test]
@@ -221,6 +221,19 @@ mod tests {
             RegisteredReadOnlySession::BegodeFalcon(_)
         ));
         assert!(find_session_registration(SessionKey::new("missing")).is_none());
+    }
+
+    #[test]
+    fn aero_registry_uses_ffe0_service_and_ffe1_characteristic() {
+        let [fingerprint] = NOSFET_AERO_REGISTRY_ENTRY.gatt else {
+            panic!("Aero registry should expose one GATT fingerprint");
+        };
+
+        assert_eq!(fingerprint.service, VETERAN_SERVICE_CHANNEL);
+        assert_eq!(fingerprint.characteristic, VETERAN_DATA_CHANNEL);
+        assert_ne!(fingerprint.service, fingerprint.characteristic);
+        cutout_core::validate_registry_entries(&[&NOSFET_AERO_REGISTRY_ENTRY])
+            .expect("Aero registry GATT is structurally valid");
     }
 
     #[test]
@@ -369,8 +382,9 @@ mod tests {
             panic!("Aero should have exactly one hardware-backed GATT fingerprint");
         };
 
-        assert_eq!(fingerprint.service, VETERAN_DATA_CHANNEL);
+        assert_eq!(fingerprint.service, VETERAN_SERVICE_CHANNEL);
         assert_eq!(fingerprint.characteristic, VETERAN_DATA_CHANNEL);
+        assert_ne!(fingerprint.service, fingerprint.characteristic);
         assert!(fingerprint.roles.supports_read());
         assert!(fingerprint.roles.supports_write());
         assert!(fingerprint.roles.supports_write_without_response());

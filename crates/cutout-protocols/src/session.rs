@@ -18,11 +18,11 @@ use crate::{
     BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
     BegodeTelemetryContext, BegodeTelemetryError, FalconProbe, FalconRequestEncoder,
     RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
-    VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
-    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsTelemetry,
-    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence,
-    VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
-    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
+    VETERAN_SERVICE_CHANNEL, VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply,
+    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder,
+    VescStatsTelemetry, VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage,
+    VeteranBmsPageEvidence, VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameParseResult,
+    VeteranFrameReassembler, VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
     begode_falcon_target_voltage_profile, decode_veteran_bms_page,
 };
 
@@ -919,7 +919,7 @@ fn gate_read_only_command<M: SupportsReadRequests>(command: DeviceCommand) -> Re
 pub struct NosfetAeroModel;
 
 const NOSFET_AERO_MODEL_GATT: [GattFingerprint; 1] = [GattFingerprint {
-    service: VETERAN_DATA_CHANNEL,
+    service: VETERAN_SERVICE_CHANNEL,
     characteristic: VETERAN_DATA_CHANNEL,
     roles: GattRoles::empty()
         .with_read()

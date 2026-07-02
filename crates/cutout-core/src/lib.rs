@@ -1479,6 +1479,18 @@ pub enum RegistryValidationError {
         fingerprint_index: usize,
     },
 
+    /// Registry entry has a GATT fingerprint whose service and characteristic are identical.
+    #[error(
+        "registry entry at index {index} has identical service and characteristic UUIDs in GATT fingerprint at index {fingerprint_index}"
+    )]
+    EqualGattServiceAndCharacteristic {
+        /// Entry index in the validated slice.
+        index: usize,
+
+        /// GATT fingerprint index in the entry.
+        fingerprint_index: usize,
+    },
+
     /// Registry entry exposes no supported commands.
     #[error("registry entry at index {index} exposes no command capabilities")]
     EmptyCapabilities {
@@ -1586,6 +1598,12 @@ fn validate_registry_entry(
             fingerprint_index,
         });
     }
+    if let Some(fingerprint_index) = first_equal_gatt_service_characteristic_index(entry.gatt) {
+        return Err(RegistryValidationError::EqualGattServiceAndCharacteristic {
+            index,
+            fingerprint_index,
+        });
+    }
     if capabilities_are_empty(entry.capabilities) {
         return Err(RegistryValidationError::EmptyCapabilities { index });
     }
@@ -1651,6 +1669,11 @@ fn capabilities_are_empty(capabilities: Capabilities) -> bool {
 fn first_invalid_gatt_fingerprint_index(gatt: &[GattFingerprint]) -> Option<usize> {
     gatt.iter()
         .position(|fingerprint| fingerprint.roles.is_empty())
+}
+
+fn first_equal_gatt_service_characteristic_index(gatt: &[GattFingerprint]) -> Option<usize> {
+    gatt.iter()
+        .position(|fingerprint| fingerprint.service == fingerprint.characteristic)
 }
 
 struct RegistryHashBuilder {
@@ -8177,6 +8200,30 @@ mod tests {
                 index: 0,
                 fingerprint_index: 0,
             })
+        );
+    }
+
+    #[test]
+    fn registry_validation_rejects_equal_gatt_service_and_characteristic() {
+        const INVALID_GATT: [crate::GattFingerprint; 1] = [crate::GattFingerprint {
+            service: GattChannel::from_bytes([0x11; 16]),
+            characteristic: GattChannel::from_bytes([0x11; 16]),
+            roles: crate::GattRoles::empty()
+                .with_write_without_response()
+                .with_notify(),
+            verification: VerificationStatus::SourceVerified,
+        }];
+        let mut entry = sample_registry_entry("NOSFET", "Aero");
+        entry.gatt = &INVALID_GATT;
+
+        assert_eq!(
+            crate::validate_registry_entries(&[&entry]),
+            Err(
+                crate::RegistryValidationError::EqualGattServiceAndCharacteristic {
+                    index: 0,
+                    fingerprint_index: 0,
+                }
+            )
         );
     }
 
