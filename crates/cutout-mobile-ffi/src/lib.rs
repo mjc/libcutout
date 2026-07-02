@@ -1908,7 +1908,10 @@ mod tests {
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
-        assert_eq!(candidate.disabled_reason.as_deref(), Some("Model not confirmed"));
+        assert_eq!(
+            candidate.disabled_reason.as_deref(),
+            Some("Model not confirmed")
+        );
     }
 
     #[test]
@@ -1991,15 +1994,27 @@ mod tests {
         );
         assert_eq!(snapshot.lowest_group_index, Some(17));
         assert_eq!(
-            snapshot.groups.first().and_then(|group| group.label.as_deref()),
+            snapshot
+                .groups
+                .first()
+                .and_then(|group| group.label.as_deref()),
             Some("group 17")
         );
         assert_eq!(
             snapshot.groups.first().and_then(|group| group.is_balancing),
             Some(true)
         );
-        assert_eq!(snapshot.groups.first().map(|group| group.resistance_milliohms), Some(Some(21)));
-        assert_eq!(snapshot.faults.first().map(|fault| fault.code.as_str()), Some("0x0040"));
+        assert_eq!(
+            snapshot
+                .groups
+                .first()
+                .map(|group| group.resistance_milliohms),
+            Some(Some(21))
+        );
+        assert_eq!(
+            snapshot.faults.first().map(|fault| fault.code.as_str()),
+            Some("0x0040")
+        );
         assert_eq!(
             snapshot.capture_action_title.as_deref(),
             Some("record unsupported pack")
