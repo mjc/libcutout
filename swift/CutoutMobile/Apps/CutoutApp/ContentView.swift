@@ -1985,11 +1985,54 @@ private struct BmsNoDataLayout: View {
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
+    private var energyPercent: TelemetryReading<UInt8>? { snapshot.energyPercent }
     private var rideSagMetric: MockupMetric? {
         screen.metrics.first { $0.label == "ride sag" }
     }
     private var loadNowMetric: MockupMetric? {
         screen.metrics.first { $0.label == "load now" }
+    }
+    private var statusBadgeText: String {
+        snapshot.captureActionState ?? screen.secondaryValue
+    }
+    private var estimateSourceText: String {
+        var inputs = [String]()
+        if snapshot.voltage != nil {
+            inputs.append("pack voltage")
+        }
+        if rideSagMetric != nil {
+            inputs.append("recent sag")
+        }
+
+        guard !inputs.isEmpty else {
+            return energyPercent?.source.displayText ?? "estimate unavailable"
+        }
+
+        return "derived from \(inputs.joined(separator: " + "))"
+    }
+    private var confidenceText: String {
+        guard let energyPercent else { return "--" }
+
+        switch energyPercent.verification {
+        case .hardwareVerified, .sourceAndHardwareVerified:
+            return "high"
+        case .sourceVerified, .inferred:
+            return "medium"
+        case .unverified:
+            return energyPercent.quality == .known ? "medium" : "low"
+        }
+    }
+    private var confidenceDetailText: String {
+        guard let energyPercent else { return "estimate unavailable" }
+
+        switch energyPercent.verification {
+        case .hardwareVerified, .sourceAndHardwareVerified:
+            return "cell-safe"
+        case .sourceVerified:
+            return "source-safe"
+        case .inferred, .unverified:
+            return "not cell-safe"
+        }
     }
 
     var body: some View {
@@ -2032,7 +2075,7 @@ private struct BmsNoDataLayout: View {
                 Circle()
                     .fill(MockupColors.yellow)
                     .frame(width: 10 * scale, height: 10 * scale)
-                Text("limited data")
+                Text(statusBadgeText)
                     .font(.system(size: 11 * scale, weight: .medium))
                     .foregroundStyle(MockupColors.primaryText.opacity(0.92))
             }
@@ -2088,14 +2131,14 @@ private struct BmsNoDataLayout: View {
             VStack(alignment: .leading, spacing: 8 * scale) {
                 cardLabel("PACK ESTIMATE")
                 HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
-                    Text(percentValueText(snapshot.energyPercent))
+                    Text(percentValueText(energyPercent))
                         .font(.system(size: 64 * scale, weight: .black))
                         .monospacedDigit()
                     Text("%")
                         .font(.system(size: 18 * scale, weight: .bold))
                         .foregroundStyle(MockupColors.muted)
                 }
-                Text("derived from voltage curve + recent sag")
+                Text(estimateSourceText)
                     .font(.system(size: 10 * scale, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -2105,11 +2148,11 @@ private struct BmsNoDataLayout: View {
 
             VStack(alignment: .leading, spacing: 8 * scale) {
                 cardLabel("CONFIDENCE")
-                Text("medium")
+                Text(confidenceText)
                     .font(.system(size: 22 * scale, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                Text("not cell-safe")
+                Text(confidenceDetailText)
                     .font(.system(size: 11 * scale, weight: .medium))
                     .foregroundStyle(MockupColors.muted)
             }
