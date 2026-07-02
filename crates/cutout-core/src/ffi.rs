@@ -1924,24 +1924,23 @@ mod tests {
 
     #[test]
     fn read_only_settings_dto_owns_present_entries_only() {
-        let response = ReadOnlyResponse::Settings(SettingsReadback {
-            entries: [
-                Some(SettingsEntry {
+        let response = ReadOnlyResponse::Settings(
+            SettingsReadback::try_from_entries(&[
+                SettingsEntry {
                     field: RawFieldValue::new(0x0014, 30),
                     source: ValueSource::Reported,
                     quality: ValueQuality::Known,
                     verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                Some(SettingsEntry {
+                },
+                SettingsEntry {
                     field: RawFieldValue::new(0x0018, 45),
                     source: ValueSource::Estimated,
                     quality: ValueQuality::Inferred,
                     verification: VerificationStatus::Inferred,
-                }),
-                None,
-            ],
-        });
+                },
+            ])
+            .expect("settings DTO fixture fits readback capacity"),
+        );
 
         let dto = ReadOnlyResponseDto::from(response);
 
@@ -1958,19 +1957,15 @@ mod tests {
 
     #[test]
     fn read_only_diagnostics_dto_owns_present_details_only() {
-        let response = ReadOnlyResponse::Diagnostics(DiagnosticReadback {
-            details: [
-                Some(DiagnosticDetail {
-                    field: RawFieldValue::new(0x0005, 1),
-                    severity: DiagnosticSeverity::Warning,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::SourceVerified,
-                }),
-                None,
-                None,
-                None,
-            ],
-        });
+        let response = ReadOnlyResponse::Diagnostics(
+            DiagnosticReadback::try_from_details(&[DiagnosticDetail {
+                field: RawFieldValue::new(0x0005, 1),
+                severity: DiagnosticSeverity::Warning,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }])
+            .expect("diagnostic DTO fixture fits readback capacity"),
+        );
 
         let dto = ReadOnlyResponseDto::from(response);
 
@@ -1991,14 +1986,13 @@ mod tests {
 
     #[test]
     fn read_only_raw_telemetry_dto_owns_present_fields_only() {
-        let response = ReadOnlyResponse::RawTelemetry(RawTelemetryReadback {
-            fields: [
-                Some(RawFieldValue::new(0x8001, 989)),
-                None,
-                Some(RawFieldValue::new(0x8002, -21_973)),
-                None,
-            ],
-        });
+        let response = ReadOnlyResponse::RawTelemetry(
+            RawTelemetryReadback::try_from_fields(&[
+                RawFieldValue::new(0x8001, 989),
+                RawFieldValue::new(0x8002, -21_973),
+            ])
+            .expect("raw telemetry DTO fixture fits readback capacity"),
+        );
 
         let dto = ReadOnlyResponseDto::from(response);
 

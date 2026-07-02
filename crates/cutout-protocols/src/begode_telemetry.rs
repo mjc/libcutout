@@ -1034,35 +1034,31 @@ impl BegodeLiveBTelemetry {
     /// Converts decoded Live B settings into a generic read-only response.
     #[must_use]
     pub fn to_settings_response_with_units(self) -> ReadOnlyResponse {
-        ReadOnlyResponse::Settings(SettingsReadback {
-            entries: [
-                Some(settings_entry(
-                    BEGODE_FIELD_SETTINGS_BITS,
-                    i64::from(self.settings_bits.get()),
-                )),
-                Some(settings_entry(
-                    BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
-                    i64::try_from(self.power_off_timer.as_minutes()).unwrap_or(i64::MAX),
-                )),
-                Some(settings_entry(
-                    BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(
-                        u16::try_from(
-                            self.tiltback_speed
-                                .as_kmh_rounded()
-                                .clamp(0, i32::from(u16::MAX)),
-                        )
-                        .unwrap_or(u16::MAX),
-                    ),
-                )),
-                Some(settings_entry(
-                    BEGODE_FIELD_LED_AND_LIGHT_MODE,
-                    i64::from(
-                        (u16::from(self.led_mode.get()) << 8) | u16::from(self.light_mode.get()),
-                    ),
-                )),
-            ],
-        })
+        ReadOnlyResponse::Settings(SettingsReadback::from_entries([
+            settings_entry(
+                BEGODE_FIELD_SETTINGS_BITS,
+                i64::from(self.settings_bits.get()),
+            ),
+            settings_entry(
+                BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
+                i64::try_from(self.power_off_timer.as_minutes()).unwrap_or(i64::MAX),
+            ),
+            settings_entry(
+                BEGODE_FIELD_TILTBACK_SPEED_KMH,
+                i64::from(
+                    u16::try_from(
+                        self.tiltback_speed
+                            .as_kmh_rounded()
+                            .clamp(0, i32::from(u16::MAX)),
+                    )
+                    .unwrap_or(u16::MAX),
+                ),
+            ),
+            settings_entry(
+                BEGODE_FIELD_LED_AND_LIGHT_MODE,
+                i64::from((u16::from(self.led_mode.get()) << 8) | u16::from(self.light_mode.get())),
+            ),
+        ]))
     }
 
     /// Returns the unit mode encoded by Live B settings bit 0.
@@ -1074,26 +1070,16 @@ impl BegodeLiveBTelemetry {
     /// Converts decoded Live B alert flags into a diagnostic readback response.
     #[must_use]
     pub fn to_diagnostics_response(self) -> ReadOnlyResponse {
-        ReadOnlyResponse::Diagnostics(DiagnosticReadback {
-            details: [
-                Some(DiagnosticDetail {
-                    field: RawFieldValue::new(
-                        BEGODE_FIELD_ALERT_FLAGS,
-                        i64::from(self.alert_flags.get()),
-                    ),
-                    severity: if self.alert_flags.get() == 0 {
-                        DiagnosticSeverity::Info
-                    } else {
-                        DiagnosticSeverity::Warning
-                    },
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::SourceVerified,
-                }),
-                None,
-                None,
-                None,
-            ],
-        })
+        ReadOnlyResponse::Diagnostics(DiagnosticReadback::from_detail(DiagnosticDetail {
+            field: RawFieldValue::new(BEGODE_FIELD_ALERT_FLAGS, i64::from(self.alert_flags.get())),
+            severity: if self.alert_flags.get() == 0 {
+                DiagnosticSeverity::Info
+            } else {
+                DiagnosticSeverity::Warning
+            },
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::SourceVerified,
+        }))
     }
 }
 

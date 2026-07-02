@@ -608,26 +608,21 @@ fn vesc_values_to_delta(
 }
 
 fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryReadback {
-    RawTelemetryReadback {
-        fields: [
-            Some(RawFieldValue::new(
-                VESC_RAW_ERPM_FIELD_ID,
-                i64::from(values.rpm.as_erpm()),
-            )),
-            Some(RawFieldValue::new(
-                VESC_RAW_TACHOMETER_FIELD_ID,
-                i64::from(values.tachometer.as_counts()),
-            )),
-            Some(RawFieldValue::new(
-                VESC_RAW_CONTROLLER_ID_FIELD_ID,
-                i64::from(values.controller_id.get()),
-            )),
-            Some(RawFieldValue::new(
-                VESC_RAW_FAULT_CODE_FIELD_ID,
-                i64::from(vesc_fault_code_raw(values.fault_code)),
-            )),
-        ],
-    }
+    RawTelemetryReadback::from_fields([
+        RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, i64::from(values.rpm.as_erpm())),
+        RawFieldValue::new(
+            VESC_RAW_TACHOMETER_FIELD_ID,
+            i64::from(values.tachometer.as_counts()),
+        ),
+        RawFieldValue::new(
+            VESC_RAW_CONTROLLER_ID_FIELD_ID,
+            i64::from(values.controller_id.get()),
+        ),
+        RawFieldValue::new(
+            VESC_RAW_FAULT_CODE_FIELD_ID,
+            i64::from(vesc_fault_code_raw(values.fault_code)),
+        ),
+    ])
 }
 
 const fn vesc_fault_code_raw(code: VescFaultCode) -> u8 {
@@ -639,26 +634,24 @@ const fn vesc_fault_code_raw(code: VescFaultCode) -> u8 {
 }
 
 fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
-    DiagnosticReadback {
-        details: [
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
-                i64::from(stats.speed_avg.as_millimetres_per_second()),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-                stats.power_avg.as_milliwatts(),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
-                i64::from(stats.current_avg.as_milliamps()),
-            )),
-            Some(vesc_diagnostic_detail(
-                VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-                i64::try_from(stats.count_time.as_milliseconds()).unwrap_or(i64::MAX),
-            )),
-        ],
-    }
+    DiagnosticReadback::from_details([
+        vesc_diagnostic_detail(
+            VESC_RAW_STATS_SPEED_AVG_FIELD_ID,
+            i64::from(stats.speed_avg.as_millimetres_per_second()),
+        ),
+        vesc_diagnostic_detail(
+            VESC_RAW_STATS_POWER_AVG_FIELD_ID,
+            stats.power_avg.as_milliwatts(),
+        ),
+        vesc_diagnostic_detail(
+            VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
+            i64::from(stats.current_avg.as_milliamps()),
+        ),
+        vesc_diagnostic_detail(
+            VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
+            i64::try_from(stats.count_time.as_milliseconds()).unwrap_or(i64::MAX),
+        ),
+    ])
 }
 
 const fn vesc_diagnostic_detail(id: u16, value: i64) -> DiagnosticDetail {

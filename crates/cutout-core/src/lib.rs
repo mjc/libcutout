@@ -5638,18 +5638,120 @@ pub struct DiagnosticDetail {
     pub verification: VerificationStatus,
 }
 
+/// Number of diagnostic detail slots retained in a diagnostic readback.
+///
+/// This is a temporary implementation capacity for compact read-only responses,
+/// not a protocol-level limit.
+pub const DIAGNOSTIC_READBACK_CAPACITY: usize = 4;
+
+/// Number of protocol-native fields retained in a raw telemetry readback.
+///
+/// This is a temporary implementation capacity for compact read-only responses,
+/// not a protocol-level limit.
+pub const RAW_TELEMETRY_READBACK_CAPACITY: usize = 4;
+
+/// Number of settings entries retained in a settings readback.
+///
+/// This is a temporary implementation capacity for compact read-only responses,
+/// not a protocol-level limit.
+pub const SETTINGS_READBACK_CAPACITY: usize = 4;
+
+/// Error returned when a fixed readback cannot store every provided item.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum ReadbackCapacityError {
+    /// More items were provided than the readback can store.
+    #[error("readback capacity {capacity} exceeded by {requested} requested items")]
+    TooManyItems {
+        /// Fixed readback capacity.
+        capacity: usize,
+
+        /// Requested item count.
+        requested: usize,
+    },
+}
+
 /// Bounded diagnostic readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticReadback {
     /// Diagnostic detail slots.
-    pub details: [Option<DiagnosticDetail>; 4],
+    pub details: [Option<DiagnosticDetail>; DIAGNOSTIC_READBACK_CAPACITY],
+}
+
+impl DiagnosticReadback {
+    /// Builds a diagnostic readback from exactly one diagnostic detail.
+    #[must_use]
+    pub const fn from_detail(detail: DiagnosticDetail) -> Self {
+        Self {
+            details: [Some(detail), None, None, None],
+        }
+    }
+
+    /// Builds a full diagnostic readback from exact-capacity diagnostic details.
+    #[must_use]
+    pub fn from_details(details: [DiagnosticDetail; DIAGNOSTIC_READBACK_CAPACITY]) -> Self {
+        Self {
+            details: details.map(Some),
+        }
+    }
+
+    /// Builds a diagnostic readback from diagnostic details.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadbackCapacityError::TooManyItems`] when `details` exceeds
+    /// [`DIAGNOSTIC_READBACK_CAPACITY`].
+    pub fn try_from_details(details: &[DiagnosticDetail]) -> Result<Self, ReadbackCapacityError> {
+        if details.len() > DIAGNOSTIC_READBACK_CAPACITY {
+            return Err(ReadbackCapacityError::TooManyItems {
+                capacity: DIAGNOSTIC_READBACK_CAPACITY,
+                requested: details.len(),
+            });
+        }
+
+        let mut readback = Self::default();
+        for (slot, detail) in readback.details.iter_mut().zip(details.iter().copied()) {
+            *slot = Some(detail);
+        }
+        Ok(readback)
+    }
 }
 
 /// Bounded protocol-native raw telemetry readback.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RawTelemetryReadback {
     /// Raw telemetry field slots.
-    pub fields: [Option<RawFieldValue>; 4],
+    pub fields: [Option<RawFieldValue>; RAW_TELEMETRY_READBACK_CAPACITY],
+}
+
+impl RawTelemetryReadback {
+    /// Builds a full raw telemetry readback from exact-capacity fields.
+    #[must_use]
+    pub fn from_fields(fields: [RawFieldValue; RAW_TELEMETRY_READBACK_CAPACITY]) -> Self {
+        Self {
+            fields: fields.map(Some),
+        }
+    }
+
+    /// Builds a raw telemetry readback from protocol-native fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadbackCapacityError::TooManyItems`] when `fields` exceeds
+    /// [`RAW_TELEMETRY_READBACK_CAPACITY`].
+    pub fn try_from_fields(fields: &[RawFieldValue]) -> Result<Self, ReadbackCapacityError> {
+        if fields.len() > RAW_TELEMETRY_READBACK_CAPACITY {
+            return Err(ReadbackCapacityError::TooManyItems {
+                capacity: RAW_TELEMETRY_READBACK_CAPACITY,
+                requested: fields.len(),
+            });
+        }
+
+        let mut readback = Self::default();
+        for (slot, field) in readback.fields.iter_mut().zip(fields.iter().copied()) {
+            *slot = Some(field);
+        }
+        Ok(readback)
+    }
 }
 
 /// Generic read-only settings entry.
@@ -5672,7 +5774,46 @@ pub struct SettingsEntry {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettingsReadback {
     /// Settings entries.
-    pub entries: [Option<SettingsEntry>; 4],
+    pub entries: [Option<SettingsEntry>; SETTINGS_READBACK_CAPACITY],
+}
+
+impl SettingsReadback {
+    /// Builds a settings readback from exactly one settings entry.
+    #[must_use]
+    pub const fn from_entry(entry: SettingsEntry) -> Self {
+        Self {
+            entries: [Some(entry), None, None, None],
+        }
+    }
+
+    /// Builds a full settings readback from exact-capacity settings entries.
+    #[must_use]
+    pub fn from_entries(entries: [SettingsEntry; SETTINGS_READBACK_CAPACITY]) -> Self {
+        Self {
+            entries: entries.map(Some),
+        }
+    }
+
+    /// Builds a settings readback from settings entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadbackCapacityError::TooManyItems`] when `entries` exceeds
+    /// [`SETTINGS_READBACK_CAPACITY`].
+    pub fn try_from_entries(entries: &[SettingsEntry]) -> Result<Self, ReadbackCapacityError> {
+        if entries.len() > SETTINGS_READBACK_CAPACITY {
+            return Err(ReadbackCapacityError::TooManyItems {
+                capacity: SETTINGS_READBACK_CAPACITY,
+                requested: entries.len(),
+            });
+        }
+
+        let mut readback = Self::default();
+        for (slot, entry) in readback.entries.iter_mut().zip(entries.iter().copied()) {
+            *slot = Some(entry);
+        }
+        Ok(readback)
+    }
 }
 
 /// Generic read-only response payload.
@@ -7046,6 +7187,29 @@ mod tests {
     }
 
     #[test]
+    fn raw_telemetry_readback_reports_over_capacity_fields() {
+        let fields = [
+            crate::RawFieldValue::new(0x8001, 1),
+            crate::RawFieldValue::new(0x8002, 2),
+            crate::RawFieldValue::new(0x8003, 3),
+            crate::RawFieldValue::new(0x8004, 4),
+        ];
+        let readback = crate::RawTelemetryReadback::try_from_fields(&fields)
+            .expect("exact raw telemetry capacity is accepted");
+
+        assert_eq!(readback.fields, fields.map(Some));
+        assert_eq!(
+            crate::RawTelemetryReadback::try_from_fields(&[
+                fields[0], fields[1], fields[2], fields[3], fields[0],
+            ]),
+            Err(crate::ReadbackCapacityError::TooManyItems {
+                capacity: crate::RAW_TELEMETRY_READBACK_CAPACITY,
+                requested: crate::RAW_TELEMETRY_READBACK_CAPACITY + 1,
+            })
+        );
+    }
+
+    #[test]
     fn request_scheduler_size_snapshot_separates_queue_and_diagnostics_cost() {
         assert_eq!(size_of::<crate::QueuedRequest>(), 32);
         assert_eq!(size_of::<crate::RequestSchedulerDiagnostics>(), 72);
@@ -7886,6 +8050,30 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_readback_reports_over_capacity_details() {
+        let detail = crate::DiagnosticDetail {
+            field: crate::RawFieldValue::new(0x55, -7),
+            severity: crate::DiagnosticSeverity::Warning,
+            quality: ValueQuality::Inferred,
+            verification: VerificationStatus::Inferred,
+        };
+        let details = [detail; crate::DIAGNOSTIC_READBACK_CAPACITY];
+        let readback = crate::DiagnosticReadback::try_from_details(&details)
+            .expect("exact diagnostic capacity is accepted");
+
+        assert_eq!(readback.details, details.map(Some));
+        assert_eq!(
+            crate::DiagnosticReadback::try_from_details(&[
+                details[0], details[1], details[2], details[3], details[0],
+            ]),
+            Err(crate::ReadbackCapacityError::TooManyItems {
+                capacity: crate::DIAGNOSTIC_READBACK_CAPACITY,
+                requested: crate::DIAGNOSTIC_READBACK_CAPACITY + 1,
+            })
+        );
+    }
+
+    #[test]
     fn settings_readback_entry_carries_numeric_values_without_writes() {
         let entry = crate::SettingsEntry {
             field: crate::RawFieldValue::new(0x10, 2),
@@ -7902,6 +8090,30 @@ mod tests {
         assert_eq!(
             response.entries[0].map(|entry| entry.verification),
             Some(VerificationStatus::HardwareVerified)
+        );
+    }
+
+    #[test]
+    fn settings_readback_reports_over_capacity_entries() {
+        let entry = crate::SettingsEntry {
+            field: crate::RawFieldValue::new(0x10, 2),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        };
+        let entries = [entry; crate::SETTINGS_READBACK_CAPACITY];
+        let readback = crate::SettingsReadback::try_from_entries(&entries)
+            .expect("exact settings capacity is accepted");
+
+        assert_eq!(readback.entries, entries.map(Some));
+        assert_eq!(
+            crate::SettingsReadback::try_from_entries(&[
+                entries[0], entries[1], entries[2], entries[3], entries[0],
+            ]),
+            Err(crate::ReadbackCapacityError::TooManyItems {
+                capacity: crate::SETTINGS_READBACK_CAPACITY,
+                requested: crate::SETTINGS_READBACK_CAPACITY + 1,
+            })
         );
     }
 
