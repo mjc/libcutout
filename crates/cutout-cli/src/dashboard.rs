@@ -4199,6 +4199,18 @@ mod tests {
     }
 
     fn estimated_battery_report() -> SessionBridgeReport {
+        let telemetry = TelemetryDelta {
+            speed: Some(speed(0)),
+            voltage: Some(voltage(108_760)),
+            battery_current: Some(battery_current(0)),
+            controller_temperature: Some(temperature(33_270)),
+            pwm: Some(duty_cycle_permille(0)),
+            distance: Some(distance(1_551_169_000)),
+            pitch: Some(angle_mdeg(69_060)),
+            battery_level_estimated: Some(level_estimated(47)),
+            ..TelemetryDelta::empty(ms(42))
+        };
+
         SessionBridgeReport {
             protocol_writes: protocol_writes(0),
             writes: writes(0),
@@ -4207,7 +4219,7 @@ mod tests {
             notification_bytes: NotificationPayloadTotal::from_bytes(20),
             latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(1),
-            telemetry_snapshot: live_aero_telemetry_snapshot(),
+            telemetry_snapshot: snapshot_from_delta(telemetry),
             read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
@@ -4218,17 +4230,7 @@ mod tests {
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(42),
-                delta: TelemetryDelta {
-                    speed: Some(speed(0)),
-                    voltage: Some(voltage(108_760)),
-                    motor_current: Some(phase_current(0)),
-                    controller_temperature: Some(temperature(33_270)),
-                    pwm: Some(duty_cycle_permille(-1_000)),
-                    distance: Some(distance(1_551_169_000)),
-                    pitch: Some(angle_mdeg(69_060)),
-                    battery_level_estimated: Some(level_estimated(47)),
-                    ..TelemetryDelta::empty(ms(42))
-                },
+                delta: telemetry,
             }],
             disconnects: disconnects(0),
         }
@@ -6081,7 +6083,7 @@ mod tests {
         assert_eq!(
             state.telemetry.latest_pwm,
             Some(DisplayDutyCycle::from_duty_cycle(DutyCycle::from_permille(
-                -1_000,
+                0
             )))
         );
         assert_eq!(state.telemetry.voltage_samples.len(), HISTORY_LIMIT);
@@ -6103,7 +6105,7 @@ mod tests {
         assert!(text.contains("109 V"));
         assert!(text.contains("0 A"));
         assert!(text.contains("33 C"));
-        assert!(text.contains("-100%"));
+        assert!(text.contains("0%"));
         assert!(text.contains("1551.2 km"));
         assert!(!text.contains("1551169 m"));
         assert!(text.contains("69 deg"));

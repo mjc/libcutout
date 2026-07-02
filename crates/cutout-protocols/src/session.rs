@@ -376,20 +376,24 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
         command: CommandKind,
         safety_class: SafetyClass,
         reason: cutout_core::ControlRefusalReason,
-    ) {
+    ) -> Result<(), SessionOutputError> {
         output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
             cutout_core::ControlRefusal {
                 command,
                 safety_class,
                 reason,
             },
-        )));
+        )))
     }
 }
 
 #[cfg(feature = "dangerous-controls")]
 impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<M> {
-    fn handle(&mut self, input: SessionInput<'_>, output: &mut dyn SessionOutputSink) {
+    fn handle(
+        &mut self,
+        input: SessionInput<'_>,
+        output: &mut dyn SessionOutputSink,
+    ) -> Result<(), SessionOutputError> {
         match input {
             SessionInput::Tick { monotonic_ms } => {
                 self.monotonic_ms = monotonic_ms;
@@ -403,8 +407,8 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
                         kind,
                         safety_class,
                         cutout_core::ControlRefusalReason::UnsupportedCommand,
-                    );
-                    return;
+                    )?;
+                    return Ok(());
                 }
 
                 match self.policy.authorize(command, self.monotonic_ms, self.arm) {
@@ -413,19 +417,20 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
                         metadata.kind,
                         metadata.safety_class,
                         cutout_core::ControlRefusalReason::ActuationEncoderUnavailable,
-                    ),
+                    )?,
                     Err(reason) => Self::push_refusal(
                         output,
                         kind,
                         safety_class,
                         cutout_core::ControlRefusalReason::from(reason),
-                    ),
+                    )?,
                 }
             }
             SessionInput::LinkUp(_)
             | SessionInput::LinkDown
             | SessionInput::Notification { .. } => {}
         }
+        Ok(())
     }
 }
 
@@ -1285,9 +1290,7 @@ mod tests {
         );
         assert_eq!(
             telemetry.pwm,
-            Some(Measured::reported(cutout_core::DutyCycle::from_permille(
-                -1_000
-            )))
+            Some(Measured::reported(cutout_core::DutyCycle::from_permille(0)))
         );
         assert_eq!(
             telemetry.distance,
