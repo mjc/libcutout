@@ -723,56 +723,55 @@ impl PevcapCapture {
     /// Compares whole-notification PEVCAP replay against one-byte and
     /// arbitrary notification chunk replay without materializing owned replay
     /// records.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::Full`] when the host output buffer fills
+    /// during any replay mode.
     pub fn compare_replay_chunks<S, F>(
         &self,
         mut make_session: F,
         arbitrary_lengths: &[NotificationChunkLen],
-    ) -> ReplayChunkComparison
+    ) -> Result<ReplayChunkComparison, SessionOutputError>
     where
         S: ProtocolSession,
         F: FnMut() -> S,
     {
         let whole =
-            self.replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::Whole);
+            self.replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::Whole)?;
         let one_byte = self
-            .replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::OneByte);
+            .replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::OneByte)?;
         let arbitrary = self.replay_semantic_events(
             HostSession::new(make_session()),
             PevcapReplayMode::Lengths(arbitrary_lengths),
-        );
+        )?;
 
-        ReplayChunkComparison {
+        Ok(ReplayChunkComparison {
             whole_semantic_events: SemanticEventCount::from_events(whole.len()),
             one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
             arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
             one_byte_matches: one_byte == whole,
             arbitrary_matches: arbitrary == whole,
-        }
+        })
     }
 
     fn replay_semantic_events<S>(
         &self,
         mut host: HostSession<S>,
         mode: PevcapReplayMode<'_>,
-    ) -> Vec<DeviceEvent>
+    ) -> Result<Vec<DeviceEvent>, SessionOutputError>
     where
         S: ProtocolSession,
     {
         let mut outputs = Vec::new();
-        if self
-            .replay_mode_into_host(mode, &mut host, &mut outputs)
-            .is_err()
-        {
-            return Vec::new();
-        }
-        outputs
+        self.replay_mode_into_host(mode, &mut host, &mut outputs)?;
+        Ok(outputs
             .into_iter()
             .filter_map(|output| match output {
                 SessionOutput::Event(event) => Some(event),
                 SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
             })
-            .collect()
+            .collect())
     }
 
     fn replay_mode_into_host<S>(
@@ -1944,6 +1943,24 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Default)]
+    struct OverflowingSession;
+
+    impl ProtocolSession for OverflowingSession {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), SessionOutputError> {
+            if let SessionInput::Notification { monotonic_ms, .. } = input {
+                for _ in 0..=crate::DEFAULT_SESSION_OUTPUT_CAPACITY {
+                    output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }))?;
+                }
+            }
+            Ok(())
+        }
+    }
+
     fn replay_outputs(capture: &PevcapCapture, mode: PevcapReplayMode<'_>) -> Vec<SessionOutput> {
         let recorder = RecordingSession::default();
         let mut host = HostSession::new(recorder);
@@ -2529,6 +2546,40 @@ mod tests {
             SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
                 if evidence.len == NotificationByteLen::from_bytes(2)
         ));
+    }
+
+    #[test]
+    fn pevcap_chunk_comparison_reports_replay_output_overflow() {
+        let characteristic = GattChannel::from_bytes([0x66; 16]);
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            Some(write_len(128)),
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                ms(9),
+                characteristic,
+                characteristic,
+                Bytes::from_static(b"abcd"),
+            )],
+        );
+
+        assert_eq!(
+            capture.compare_replay_chunks(|| OverflowingSession, &[]),
+            Err(SessionOutputError::Full {
+                capacity: crate::SessionOutputCapacity::new(crate::DEFAULT_SESSION_OUTPUT_CAPACITY),
+            })
+        );
     }
 
     proptest! {

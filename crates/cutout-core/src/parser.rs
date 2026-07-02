@@ -729,6 +729,23 @@ impl NotificationIngestOutcome {
         }
     }
 
+    /// Creates an ignored outcome for bytes accepted by a known protocol
+    /// family.
+    #[must_use]
+    pub const fn ignored(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored(NotificationEvidence::new(
+            Some(family),
+            channel,
+            len,
+            monotonic_ms,
+        ))
+    }
+
     /// Creates an ignored wrong-channel/unsupported notification outcome.
     #[must_use]
     pub const fn ignored_wrong_channel(

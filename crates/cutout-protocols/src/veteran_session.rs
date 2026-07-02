@@ -120,7 +120,8 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     monotonic_ms,
                 )
             } else {
-                NotificationIngestOutcome::ignored_wrong_channel(
+                NotificationIngestOutcome::ignored(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
                     channel,
                     NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
@@ -343,5 +344,37 @@ impl SupportsReadRequests for NosfetAeroModel {
 
     fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
         AeroRequestEncoder::encode_command(kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn ms(value: u64) -> MonotonicTimestamp {
+        MonotonicTimestamp::new(value)
+    }
+
+    #[test]
+    fn veteran_accepted_channel_ignored_outcome_preserves_family() {
+        let channel = GattChannel::from_bytes([0x66; 16]);
+        let mut decoder = VeteranNotificationDecoder::default();
+        let mut outputs = Vec::new();
+
+        decoder
+            .handle_notification(channel, &[0xff], ms(7), &mut outputs)
+            .expect("vec output sink cannot fill");
+
+        assert_eq!(
+            outputs.as_slice(),
+            &[SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::Ignored(cutout_core::NotificationEvidence::new(
+                    Some(ProtocolFamily::VeteranLeaperkimNosfet),
+                    channel,
+                    NotificationByteLen::from_bytes(1),
+                    ms(7),
+                ))
+            )]
+        );
     }
 }

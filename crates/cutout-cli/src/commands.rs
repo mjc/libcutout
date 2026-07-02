@@ -408,8 +408,9 @@ where
         .replay_into_host(&mut host, &mut outputs)
         .expect("PEVCAP replay fits the default session output buffer");
     let arbitrary_chunks = capture.arbitrary_notification_chunk_lengths();
-    let comparison =
-        capture.compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks);
+    let comparison = capture
+        .compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks)
+        .expect("PEVCAP replay chunk comparison fits the default session output buffer");
     summarize_pevcap_replay(
         ReplayRecordCount::new(capture.replay_input_count()),
         ReplayChunkPlanLen::new(arbitrary_chunks.len()),
