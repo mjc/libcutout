@@ -611,6 +611,150 @@ pub struct MobileTelemetrySnapshotDto {
     pub battery_level_estimated: Option<MobileMeasuredU8Dto>,
 }
 
+/// Confidence level for BMS topology mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileBmsTopologyConfidenceDto {
+    /// Topology and group mapping were verified from known device evidence.
+    Verified,
+
+    /// Topology is plausible but not fully confirmed.
+    Inferred,
+
+    /// BMS data exists, but group mapping is not trustworthy yet.
+    Unverified,
+}
+
+/// Alert level for BMS groups and decoded fault summaries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileBmsAlertLevelDto {
+    /// Value is in the nominal range.
+    Nominal,
+
+    /// Value deserves attention but is not yet critical.
+    Warning,
+
+    /// Value is critical or should block stronger claims in the UI.
+    Critical,
+
+    /// Data exists but cannot be classified yet.
+    Unknown,
+}
+
+/// Topology summary for a BMS snapshot.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsTopologyDto {
+    /// Human-readable topology label such as `20S4P split pack`.
+    pub layout_label: String,
+
+    /// Series group count when known.
+    pub series_group_count: Option<u16>,
+
+    /// Parallel count when known.
+    pub parallel_count: Option<u16>,
+
+    /// Number of packs or modules visible in the snapshot.
+    pub pack_count: u8,
+
+    /// Number of BMS controllers reporting in the snapshot.
+    pub bms_count: u8,
+
+    /// Confidence in the current topology mapping.
+    pub confidence: MobileBmsTopologyConfidenceDto,
+}
+
+/// Per-group BMS reading for cells or grouped series strings.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsGroupSnapshotDto {
+    /// One-based group index used in the UI.
+    pub index: u16,
+
+    /// Optional explicit label such as `left pack`.
+    pub label: Option<String>,
+
+    /// Group voltage in millivolts.
+    pub voltage: Option<MobileMeasuredI32Dto>,
+
+    /// Group temperature in millicelsius.
+    pub temperature: Option<MobileMeasuredI32Dto>,
+
+    /// Estimated internal resistance in milliohms.
+    pub resistance_milliohms: Option<u16>,
+
+    /// Whether balancing is active for this group when known.
+    pub is_balancing: Option<bool>,
+
+    /// Alert level for coloring and prioritization.
+    pub alert_level: MobileBmsAlertLevelDto,
+
+    /// Optional UI-safe detail string such as a trend note.
+    pub detail: Option<String>,
+}
+
+/// Decoded BMS fault or advisory.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsFaultDto {
+    /// Fault code or bitmask label.
+    pub code: String,
+
+    /// Human-readable fault label.
+    pub label: String,
+
+    /// Severity for operator-facing treatment.
+    pub alert_level: MobileBmsAlertLevelDto,
+}
+
+/// Typed BMS snapshot for mobile pack and cells screens.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBmsSnapshotDto {
+    /// Topology summary for this reading.
+    pub topology: MobileBmsTopologyDto,
+
+    /// State of charge or usable energy percent when known.
+    pub energy_percent: Option<MobileMeasuredU8Dto>,
+
+    /// Pack voltage in millivolts.
+    pub voltage: Option<MobileMeasuredI32Dto>,
+
+    /// Pack current in milliamps.
+    pub current: Option<MobileMeasuredI32Dto>,
+
+    /// Cell-group delta in millivolts.
+    pub cell_delta_millivolts: Option<MobileMeasuredI32Dto>,
+
+    /// One-based index of the lowest group when known.
+    pub lowest_group_index: Option<u16>,
+
+    /// Highest observed temperature in millicelsius.
+    pub highest_temperature: Option<MobileMeasuredI32Dto>,
+
+    /// Human-readable label for the hottest area.
+    pub highest_temperature_label: Option<String>,
+
+    /// Pack-level balancing summary.
+    pub balancing_summary: Option<String>,
+
+    /// Additional balancing detail.
+    pub balancing_detail: Option<String>,
+
+    /// Pack-level fault summary.
+    pub fault_summary: Option<String>,
+
+    /// Additional fault detail.
+    pub fault_detail: Option<String>,
+
+    /// Per-group readings.
+    pub groups: Vec<MobileBmsGroupSnapshotDto>,
+
+    /// Decoded faults or advisories.
+    pub faults: Vec<MobileBmsFaultDto>,
+
+    /// Optional unsupported-device capture action title.
+    pub capture_action_title: Option<String>,
+
+    /// Optional state label for the capture action.
+    pub capture_action_state: Option<String>,
+}
+
 /// Mobile measured i32 value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMeasuredI32Dto {
@@ -1750,6 +1894,101 @@ mod tests {
         assert_eq!(
             candidate.electric_unicycle_model,
             Some(MobileElectricUnicycleModelDto::Falcon)
+        );
+    }
+
+    #[test]
+    fn mobile_bms_snapshot_dto_preserves_topology_and_group_detail() {
+        let snapshot = MobileBmsSnapshotDto {
+            topology: MobileBmsTopologyDto {
+                layout_label: "20S4P split pack".to_owned(),
+                series_group_count: Some(20),
+                parallel_count: Some(4),
+                pack_count: 2,
+                bms_count: 2,
+                confidence: MobileBmsTopologyConfidenceDto::Verified,
+            },
+            energy_percent: Some(MobileMeasuredU8Dto {
+                value: 72,
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            }),
+            voltage: Some(MobileMeasuredI32Dto {
+                value: 81_600,
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            }),
+            current: None,
+            cell_delta_millivolts: Some(MobileMeasuredI32Dto {
+                value: 18,
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            }),
+            lowest_group_index: Some(17),
+            highest_temperature: Some(MobileMeasuredI32Dto {
+                value: 37_800,
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            }),
+            highest_temperature_label: Some("right pack".to_owned()),
+            balancing_summary: Some("idle • top groups only".to_owned()),
+            balancing_detail: Some("3 groups bleeding: 03, 11, 19".to_owned()),
+            fault_summary: Some("no active faults".to_owned()),
+            fault_detail: Some("last: under-voltage warning · 3 days ago".to_owned()),
+            groups: vec![MobileBmsGroupSnapshotDto {
+                index: 17,
+                label: Some("group 17".to_owned()),
+                voltage: Some(MobileMeasuredI32Dto {
+                    value: 4_071,
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }),
+                temperature: Some(MobileMeasuredI32Dto {
+                    value: 34_900,
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }),
+                resistance_milliohms: Some(21),
+                is_balancing: Some(true),
+                alert_level: MobileBmsAlertLevelDto::Warning,
+                detail: Some("drops first during acceleration".to_owned()),
+            }],
+            faults: vec![MobileBmsFaultDto {
+                code: "0x0040".to_owned(),
+                label: "needs decoder".to_owned(),
+                alert_level: MobileBmsAlertLevelDto::Critical,
+            }],
+            capture_action_title: Some("record unsupported pack".to_owned()),
+            capture_action_state: Some("disabled for launch".to_owned()),
+        };
+
+        assert_eq!(snapshot.topology.series_group_count, Some(20));
+        assert_eq!(snapshot.topology.pack_count, 2);
+        assert_eq!(snapshot.topology.bms_count, 2);
+        assert_eq!(
+            snapshot.topology.confidence,
+            MobileBmsTopologyConfidenceDto::Verified
+        );
+        assert_eq!(snapshot.lowest_group_index, Some(17));
+        assert_eq!(
+            snapshot.groups.first().and_then(|group| group.label.as_deref()),
+            Some("group 17")
+        );
+        assert_eq!(
+            snapshot.groups.first().and_then(|group| group.is_balancing),
+            Some(true)
+        );
+        assert_eq!(snapshot.groups.first().map(|group| group.resistance_milliohms), Some(Some(21)));
+        assert_eq!(snapshot.faults.first().map(|fault| fault.code.as_str()), Some("0x0040"));
+        assert_eq!(
+            snapshot.capture_action_title.as_deref(),
+            Some("record unsupported pack")
         );
     }
 
