@@ -56,6 +56,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     push_veteran_ingest_outcome_for_frame(
                         &frame,
                         channel,
+                        NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
                         event_count,
                         output,
@@ -133,11 +134,11 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
 fn push_veteran_ingest_outcome_for_frame(
     frame: &VeteranFrame,
     channel: GattChannel,
+    notification_len: NotificationByteLen,
     monotonic_ms: MonotonicTimestamp,
     event_count: SemanticEventCount,
     output: &mut dyn SessionOutputSink,
 ) -> Result<(), SessionOutputError> {
-    let frame_len = NotificationByteLen::from_bytes(frame.as_slice().len());
     if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
         && evidence.kind == BatteryPageKind::Raw
     {
@@ -146,7 +147,7 @@ fn push_veteran_ingest_outcome_for_frame(
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     channel,
-                    frame_len,
+                    notification_len,
                     monotonic_ms,
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
@@ -160,7 +161,7 @@ fn push_veteran_ingest_outcome_for_frame(
                 NotificationIngestOutcome::parser_gap(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     channel,
-                    frame_len,
+                    notification_len,
                     monotonic_ms,
                     ParserGapEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
@@ -176,7 +177,7 @@ fn push_veteran_ingest_outcome_for_frame(
         NotificationIngestOutcome::semantic_events(
             ProtocolFamily::VeteranLeaperkimNosfet,
             channel,
-            frame_len,
+            notification_len,
             monotonic_ms,
             event_count,
         ),

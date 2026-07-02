@@ -29,6 +29,8 @@ final class LiveRideModel: ObservableObject {
         }
     }
 
+    deinit {}
+
     func start() {
         core.start()
     }

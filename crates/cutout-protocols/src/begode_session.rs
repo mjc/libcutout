@@ -60,6 +60,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         output: &mut dyn SessionOutputSink,
     ) -> Result<(), SessionOutputError> {
         let mut event_count = SemanticEventCount::default();
+        let mut emitted_diagnostic = false;
         for byte in bytes {
             match self.reassembler.feed_byte_result_at(*byte, monotonic_ms) {
                 Ok(BegodeFrameParseResult::Complete(frame)) => {
@@ -73,6 +74,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 }
                 Ok(BegodeFrameParseResult::Seeking | BegodeFrameParseResult::Buffered) => {}
                 Err(BegodeFrameError::InvalidFrame) => {
+                    emitted_diagnostic = true;
                     push_parser_error(ParserError::MalformedFrame, output)?;
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
@@ -83,9 +85,12 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                             ParserError::MalformedFrame,
                         ),
                     ))?;
-                    return Ok(());
                 }
             }
+        }
+
+        if emitted_diagnostic && event_count.as_events() == 0 {
+            return Ok(());
         }
 
         output.push(SessionOutput::NotificationIngest(

@@ -1,5 +1,4 @@
 #![allow(unsafe_code)]
-#![allow(unused_must_use)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::{
@@ -102,13 +101,15 @@ where
 {
     let mut session = ReadOnlySession::<M, false>::default();
     let mut output = Vec::with_capacity(8);
-    session.handle(
-        SessionInput::LinkUp(LinkInfo {
-            monotonic_ms: ms(1),
-            max_write_len: Some(write_len(185)),
-        }),
-        &mut output,
-    );
+    session
+        .handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
+            }),
+            &mut output,
+        )
+        .expect("fixture output fits");
     output.clear();
     reset_counts();
     (session, output)
@@ -124,36 +125,42 @@ fn protocol_parser_owned_results_do_not_allocate() {
 fn veteran_parser_owned_results_do_not_allocate() {
     let mut veteran = ReadOnlySession::<NosfetAeroModel, false>::default();
     let mut veteran_output = Vec::with_capacity(8);
-    veteran.handle(
-        SessionInput::LinkUp(LinkInfo {
-            monotonic_ms: ms(1),
-            max_write_len: Some(write_len(185)),
-        }),
-        &mut veteran_output,
-    );
+    veteran
+        .handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
+            }),
+            &mut veteran_output,
+        )
+        .expect("fixture output fits");
     veteran_output.clear();
     assert_no_allocations("Veteran partial frame", || {
-        veteran.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &LIVE_AERO_SELECTOR_0[..20],
-                monotonic_ms: ms(2),
-            },
-            &mut veteran_output,
-        );
+        veteran
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &LIVE_AERO_SELECTOR_0[..20],
+                    monotonic_ms: ms(2),
+                },
+                &mut veteran_output,
+            )
+            .expect("fixture output fits");
         veteran_output.clear();
     });
 
     let (mut veteran, mut veteran_output) = linked_session::<NosfetAeroModel>();
     assert_no_allocations("Veteran complete frame", || {
-        veteran.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &LIVE_AERO_SELECTOR_0,
-                monotonic_ms: ms(3),
-            },
-            &mut veteran_output,
-        );
+        veteran
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &LIVE_AERO_SELECTOR_0,
+                    monotonic_ms: ms(3),
+                },
+                &mut veteran_output,
+            )
+            .expect("fixture output fits");
         veteran_output.clear();
     });
 
@@ -161,14 +168,16 @@ fn veteran_parser_owned_results_do_not_allocate() {
     reserved[60] = 8;
     let (mut veteran, mut veteran_output) = linked_session::<NosfetAeroModel>();
     assert_no_allocations("Veteran reserved frame", || {
-        veteran.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &reserved,
-                monotonic_ms: ms(4),
-            },
-            &mut veteran_output,
-        );
+        veteran
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &reserved,
+                    monotonic_ms: ms(4),
+                },
+                &mut veteran_output,
+            )
+            .expect("fixture output fits");
         veteran_output.clear();
     });
 
@@ -176,14 +185,16 @@ fn veteran_parser_owned_results_do_not_allocate() {
     gap[60] = 9;
     let (mut veteran, mut veteran_output) = linked_session::<NosfetAeroModel>();
     assert_no_allocations("Veteran parser gap", || {
-        veteran.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &gap,
-                monotonic_ms: ms(5),
-            },
-            &mut veteran_output,
-        );
+        veteran
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &gap,
+                    monotonic_ms: ms(5),
+                },
+                &mut veteran_output,
+            )
+            .expect("fixture output fits");
         veteran_output.clear();
     });
 }
@@ -203,14 +214,16 @@ fn begode_parser_owned_results_do_not_allocate() {
 
     let (mut begode, mut begode_output) = linked_session::<BegodeFalconModel>();
     assert_no_allocations("Begode notification session", || {
-        begode.handle(
-            SessionInput::Notification {
-                channel: BEGODE_DATA_CHANNEL,
-                bytes: &BEGODE_LIVE_A,
-                monotonic_ms: ms(6),
-            },
-            &mut begode_output,
-        );
+        begode
+            .handle(
+                SessionInput::Notification {
+                    channel: BEGODE_DATA_CHANNEL,
+                    bytes: &BEGODE_LIVE_A,
+                    monotonic_ms: ms(6),
+                },
+                &mut begode_output,
+            )
+            .expect("fixture output fits");
         begode_output.clear();
     });
 }
@@ -233,7 +246,8 @@ fn vesc_parser_owned_results_do_not_allocate() {
                 monotonic_ms: ms(7),
             },
             &mut vesc_output,
-        );
+        )
+        .expect("fixture output fits");
         vesc_output.clear();
     });
 }

@@ -132,7 +132,6 @@ pub const fn crate_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_must_use)]
 
     const fn ms(value: u64) -> cutout_core::MonotonicTimestamp {
         cutout_core::MonotonicTimestamp::new(value)
@@ -174,13 +173,15 @@ mod tests {
         let mut session = crate::ReadOnlySession::<crate::NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(output.iter().any(|item| matches!(
             item,
@@ -195,13 +196,15 @@ mod tests {
         let mut session = crate::ReadOnlySession::<crate::BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(output.iter().any(|item| matches!(
             item,

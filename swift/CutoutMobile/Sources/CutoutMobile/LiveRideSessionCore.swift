@@ -33,6 +33,8 @@ public final class LiveRideSessionCore: NSObject {
 
     public override init() {}
 
+    deinit {}
+
     public func start() {
         guard central == nil else {
             return
@@ -381,7 +383,7 @@ private struct MonotonicClock {
 
 private extension Optional where Wrapped == Error {
     var liveRideMessage: String {
-        map(String.init(describing:)) ?? "unknown error"
+        self?.liveRideMessage ?? "unknown error"
     }
 }
 

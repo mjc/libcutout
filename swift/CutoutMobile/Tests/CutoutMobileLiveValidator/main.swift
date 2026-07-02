@@ -30,6 +30,8 @@ private final class LiveRideValidator {
         }
     }
 
+    deinit {}
+
     func start() {
         core.start()
         while !didValidate, Date().timeIntervalSince(startedAt) < timeout {

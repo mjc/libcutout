@@ -67,8 +67,14 @@ impl ConcreteAeroReadOnlySession {
     }
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
-    pub fn ingest(&mut self, input: &SessionInputDto) {
-        let _ = self.host.ingest(input.as_session_input());
+    ///
+    /// # Errors
+    ///
+    /// Returns a session error DTO when the wrapped reactor output buffer fills.
+    pub fn ingest(&mut self, input: &SessionInputDto) -> Result<(), ConcreteSessionErrorDto> {
+        self.host
+            .ingest(input.as_session_input())
+            .map_err(ConcreteSessionErrorDto::from)
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
@@ -139,8 +145,14 @@ impl ConcreteFalconReadOnlySession {
     }
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
-    pub fn ingest(&mut self, input: &SessionInputDto) {
-        let _ = self.host.ingest(input.as_session_input());
+    ///
+    /// # Errors
+    ///
+    /// Returns a session error DTO when the wrapped reactor output buffer fills.
+    pub fn ingest(&mut self, input: &SessionInputDto) -> Result<(), ConcreteSessionErrorDto> {
+        self.host
+            .ingest(input.as_session_input())
+            .map_err(ConcreteSessionErrorDto::from)
     }
 
     /// Drives one DTO input and returns owned outputs plus any stable error DTO.
@@ -315,10 +327,12 @@ mod tests {
     fn concrete_aero_session_drives_link_up_and_drains_owned_outputs() {
         let mut session = new_nosfet_aero_read_only_session();
 
-        session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: ms(1),
-            max_write_len: Some(write_len_dto(185)),
-        });
+        session
+            .ingest(&SessionInputDto::LinkUp {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len_dto(185)),
+            })
+            .expect("fixture output fits");
 
         assert!(session.drain_outputs().iter().any(|output| matches!(
             output,
@@ -330,13 +344,17 @@ mod tests {
     #[test]
     fn concrete_falcon_session_maps_command_dto_to_write_output() {
         let mut session = new_begode_falcon_read_only_session();
-        session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: ms(1),
-            max_write_len: Some(write_len_dto(185)),
-        });
+        session
+            .ingest(&SessionInputDto::LinkUp {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len_dto(185)),
+            })
+            .expect("fixture output fits");
         let _ = session.drain_outputs();
 
-        session.ingest(&SessionInputDto::Command(DeviceCommandDto::RequestIdentity));
+        session
+            .ingest(&SessionInputDto::Command(DeviceCommandDto::RequestIdentity))
+            .expect("fixture output fits");
 
         assert!(session.drain_outputs().iter().any(|output| matches!(
             output,
@@ -348,10 +366,12 @@ mod tests {
     #[test]
     fn checked_ingest_surfaces_unsupported_command_as_error_dto() {
         let mut session = new_begode_falcon_read_only_session();
-        session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: ms(1),
-            max_write_len: Some(write_len_dto(185)),
-        });
+        session
+            .ingest(&SessionInputDto::LinkUp {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len_dto(185)),
+            })
+            .expect("fixture output fits");
         let _ = session.drain_outputs();
 
         let result = session.ingest_checked(&SessionInputDto::Command(DeviceCommandDto::SoundHorn));
@@ -410,17 +430,21 @@ mod tests {
         let mut malformed = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
         malformed[20] = 0;
 
-        session.ingest(&SessionInputDto::LinkUp {
-            monotonic_ms: ms(1),
-            max_write_len: Some(write_len_dto(185)),
-        });
+        session
+            .ingest(&SessionInputDto::LinkUp {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len_dto(185)),
+            })
+            .expect("fixture output fits");
         let _ = session.drain_outputs();
 
-        session.ingest(&SessionInputDto::Notification {
-            channel,
-            bytes: malformed.to_vec(),
-            monotonic_ms: ms(42),
-        });
+        session
+            .ingest(&SessionInputDto::Notification {
+                channel,
+                bytes: malformed.to_vec(),
+                monotonic_ms: ms(42),
+            })
+            .expect("fixture output fits");
 
         assert_eq!(session.current_snapshot().at_ms, None);
         assert_eq!(
@@ -443,9 +467,11 @@ mod tests {
             max_write_len: Some(write_len(20)),
         };
 
-        session.ingest(&SessionInputDto::from(cutout_core::SessionInput::LinkUp(
-            link,
-        )));
+        session
+            .ingest(&SessionInputDto::from(cutout_core::SessionInput::LinkUp(
+                link,
+            )))
+            .expect("fixture output fits");
 
         assert!(!session.drain_outputs().is_empty());
     }

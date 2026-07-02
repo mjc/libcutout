@@ -368,7 +368,7 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
 
     /// Installs an explicit arming token.
     pub const fn arm(&mut self, arm: cutout_core::DangerousActuationArm) {
-        self.arm = Some(arm);
+        self.arm = Some(arm).expect("fixture output fits");
     }
 
     fn push_refusal(
@@ -436,7 +436,6 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_must_use)]
 
     const fn ms(value: u64) -> MonotonicTimestamp {
         MonotonicTimestamp::new(value)
@@ -626,23 +625,27 @@ mod tests {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
         output.clear();
 
-        session.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes,
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes,
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         output
     }
@@ -651,24 +654,28 @@ mod tests {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
         output.clear();
 
         for (index, bytes) in chunks.iter().enumerate() {
-            session.handle(
-                SessionInput::Notification {
-                    channel: VETERAN_DATA_CHANNEL,
-                    bytes,
-                    monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
-                },
-                &mut output,
-            );
+            session
+                .handle(
+                    SessionInput::Notification {
+                        channel: VETERAN_DATA_CHANNEL,
+                        bytes,
+                        monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
+                    },
+                    &mut output,
+                )
+                .expect("fixture output fits");
         }
 
         output
@@ -678,22 +685,26 @@ mod tests {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        for (index, bytes) in notifications.iter().enumerate() {
-            session.handle(
-                SessionInput::Notification {
-                    channel: BEGODE_DATA_CHANNEL,
-                    bytes,
-                    monotonic_ms: ms(42 + u64::try_from(index).expect("fixture index fits")),
-                },
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
                 &mut output,
-            );
+            )
+            .expect("fixture output fits");
+        for (index, bytes) in notifications.iter().enumerate() {
+            session
+                .handle(
+                    SessionInput::Notification {
+                        channel: BEGODE_DATA_CHANNEL,
+                        bytes,
+                        monotonic_ms: ms(42 + u64::try_from(index).expect("fixture index fits")),
+                    },
+                    &mut output,
+                )
+                .expect("fixture output fits");
         }
 
         telemetry_events(&output)
@@ -703,21 +714,25 @@ mod tests {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes,
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes,
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         read_only_response_events(&output)
     }
@@ -726,21 +741,25 @@ mod tests {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &live_aero_frame(),
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &live_aero_frame(),
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         telemetry_events(&output)
             .into_iter()
@@ -762,7 +781,8 @@ mod tests {
                 max_write_len: Some(write_len(185)),
             }),
             &mut output,
-        );
+        )
+        .expect("fixture output fits");
 
         assert!(connected);
         assert!(output.iter().any(|item| matches!(
@@ -775,24 +795,28 @@ mod tests {
     fn begode_malformed_frame_emits_detailed_and_aggregate_diagnostics() {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         let mut malformed = live_begode_a_frame();
         malformed[20] = 0;
-        session.handle(
-            SessionInput::Notification {
-                channel: BEGODE_DATA_CHANNEL,
-                bytes: &malformed,
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: BEGODE_DATA_CHANNEL,
+                    bytes: &malformed,
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert_eq!(
             diagnostic_error_events(&output),
@@ -823,7 +847,8 @@ mod tests {
                 monotonic_ms: ms(11),
             },
             &mut output,
-        );
+        )
+        .expect("fixture output fits");
 
         assert!(output.iter().any(|item| matches!(
             item,
@@ -849,7 +874,8 @@ mod tests {
                 monotonic_ms: ms(11),
             },
             &mut output,
-        );
+        )
+        .expect("fixture output fits");
 
         assert!(output.is_empty());
     }
@@ -890,21 +916,25 @@ mod tests {
         );
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: BEGODE_DATA_CHANNEL,
-                bytes: &live_a,
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: BEGODE_DATA_CHANNEL,
+                    bytes: &live_a,
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         let telemetry = telemetry_events(&output);
         assert_eq!(telemetry.len(), 1);
@@ -929,13 +959,15 @@ mod tests {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert_eq!(
             output,
@@ -956,10 +988,12 @@ mod tests {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestTelemetry),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestTelemetry),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert_eq!(
             output,
@@ -977,10 +1011,12 @@ mod tests {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestDiagnostics),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestDiagnostics),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert_eq!(
             output,
@@ -998,12 +1034,14 @@ mod tests {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: cutout_core::PhaseCurrent::from_milliamps(1),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                    current: cutout_core::PhaseCurrent::from_milliamps(1),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(output.is_empty());
     }
@@ -1013,22 +1051,26 @@ mod tests {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        for chunk in vesc_selective_values_frame().chunks(5) {
-            session.handle(
-                SessionInput::Notification {
-                    channel: VESC_NOTIFY_CHANNEL,
-                    bytes: chunk,
-                    monotonic_ms: ms(42),
-                },
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
                 &mut output,
-            );
+            )
+            .expect("fixture output fits");
+        for chunk in vesc_selective_values_frame().chunks(5) {
+            session
+                .handle(
+                    SessionInput::Notification {
+                        channel: VESC_NOTIFY_CHANNEL,
+                        bytes: chunk,
+                        monotonic_ms: ms(42),
+                    },
+                    &mut output,
+                )
+                .expect("fixture output fits");
         }
 
         let telemetry = telemetry_events(&output);
@@ -1078,21 +1120,25 @@ mod tests {
         let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VESC_NOTIFY_CHANNEL,
-                bytes: &vesc_selective_values_frame(),
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes: &vesc_selective_values_frame(),
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
@@ -1120,21 +1166,25 @@ mod tests {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VESC_NOTIFY_CHANNEL,
-                bytes: &vesc_stats_frame(),
-                monotonic_ms: ms(43),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes: &vesc_stats_frame(),
+                    monotonic_ms: ms(43),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         let responses = read_only_response_events(&output);
         let ReadOnlyResponse::Diagnostics(diagnostics) =
@@ -1200,37 +1250,47 @@ mod tests {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: BEGODE_DATA_CHANNEL,
-                bytes: &live_b,
-                monotonic_ms: ms(2),
-            },
-            &mut output,
-        );
-        session.handle(SessionInput::LinkDown, &mut output);
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(3),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: BEGODE_DATA_CHANNEL,
-                bytes: &live_a,
-                monotonic_ms: ms(4),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: BEGODE_DATA_CHANNEL,
+                    bytes: &live_b,
+                    monotonic_ms: ms(2),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(SessionInput::LinkDown, &mut output)
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(3),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: BEGODE_DATA_CHANNEL,
+                    bytes: &live_a,
+                    monotonic_ms: ms(4),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         let telemetry = telemetry_events(&output);
         assert_eq!(
@@ -1311,21 +1371,25 @@ mod tests {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VETERAN_DATA_CHANNEL,
-                bytes: &live_aero_frame(),
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::LinkUp(LinkInfo {
+                    monotonic_ms: ms(1),
+                    max_write_len: Some(write_len(185)),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Notification {
+                    channel: VETERAN_DATA_CHANNEL,
+                    bytes: &live_aero_frame(),
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         let responses = read_only_response_events(&output);
         assert_eq!(responses.len(), 4);
@@ -1577,7 +1641,9 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output);
+        decoder
+            .handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output)
+            .expect("fixture output fits");
 
         let error = ParserError::OversizedFrame {
             claimed: cutout_core::ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN + 1),
@@ -1618,7 +1684,7 @@ mod tests {
             Some(NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
-                NotificationByteLen::from_bytes(frame.len()),
+                NotificationByteLen::from_bytes(1),
                 ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1),
                 SemanticEventCount::from_events(5),
             ))
@@ -1682,14 +1748,14 @@ mod tests {
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::from_bytes(semantic_frame.len()),
+                    NotificationByteLen::from_bytes(coalesced.len()),
                     ms(42),
                     SemanticEventCount::from_events(5),
                 ),
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::from_bytes(reserved_frame.len()),
+                    NotificationByteLen::from_bytes(coalesced.len()),
                     ms(42),
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
@@ -1731,7 +1797,7 @@ mod tests {
                 Some(NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
-                    NotificationByteLen::from_bytes(frame.len()),
+                    NotificationByteLen::from_bytes(chunks.last().expect("at least one chunk").len()),
                     ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
                     SemanticEventCount::from_events(5),
                 ))
@@ -1865,10 +1931,12 @@ mod tests {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestIdentity),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestIdentity),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert_eq!(
             output,
@@ -1885,10 +1953,12 @@ mod tests {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestFirmwareInfo),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestFirmwareInfo),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert_eq!(
             output,
@@ -1905,14 +1975,18 @@ mod tests {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestTelemetry),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestTelemetry),
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(output.is_empty());
     }
@@ -1922,10 +1996,12 @@ mod tests {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::RequestDiagnostics),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::RequestDiagnostics),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(output.is_empty());
     }
@@ -1935,12 +2011,14 @@ mod tests {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: cutout_core::PhaseCurrent::from_milliamps(1),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                    current: cutout_core::PhaseCurrent::from_milliamps(1),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(
             output
@@ -1960,12 +2038,14 @@ mod tests {
             });
         let mut output = Vec::new();
 
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                    current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(
             output
@@ -1996,18 +2076,22 @@ mod tests {
         let mut output = Vec::new();
 
         session.arm(policy.arm(ms(10)));
-        session.handle(
-            SessionInput::Tick {
-                monotonic_ms: ms(1_011),
-            },
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Tick {
+                    monotonic_ms: ms(1_011),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                    current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(
             output
@@ -2042,18 +2126,22 @@ mod tests {
         let mut output = Vec::new();
 
         session.arm(wrong_model_policy.arm(ms(10)));
-        session.handle(
-            SessionInput::Tick {
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Tick {
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                    current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(
             output
@@ -2083,18 +2171,22 @@ mod tests {
         let mut output = Vec::new();
 
         session.arm(policy.arm(ms(10)));
-        session.handle(
-            SessionInput::Tick {
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: cutout_core::PhaseCurrent::from_milliamps(5_001),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Tick {
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                    current: cutout_core::PhaseCurrent::from_milliamps(5_001),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(
             output
@@ -2124,18 +2216,22 @@ mod tests {
         let mut output = Vec::new();
 
         session.arm(policy.arm(ms(10)));
-        session.handle(
-            SessionInput::Tick {
-                monotonic_ms: ms(42),
-            },
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
-                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
-            }),
-            &mut output,
-        );
+        session
+            .handle(
+                SessionInput::Tick {
+                    monotonic_ms: ms(42),
+                },
+                &mut output,
+            )
+            .expect("fixture output fits");
+        session
+            .handle(
+                SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                    current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+                }),
+                &mut output,
+            )
+            .expect("fixture output fits");
 
         assert!(
             output
