@@ -368,7 +368,7 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
 
     /// Installs an explicit arming token.
     pub const fn arm(&mut self, arm: cutout_core::DangerousActuationArm) {
-        self.arm = Some(arm).expect("fixture output fits");
+        self.arm = Some(arm);
     }
 
     fn push_refusal(
@@ -1440,6 +1440,7 @@ mod tests {
                         .temperatures()[5]
                         .expect("sixth temperature")
                         .value
+                        .as_millicelsius()
                         == 17_830
         )));
     }

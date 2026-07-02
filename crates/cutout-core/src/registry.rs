@@ -1583,6 +1583,8 @@ const ALL_COMMAND_KINDS: [CommandKind; 9] = [
     CommandKind::SetRawMotorCurrent,
 ];
 
+const _: () = assert!(ALL_COMMAND_KINDS.len() <= u16::BITS as usize);
+
 const fn protocol_family_code(family: ProtocolFamily) -> u8 {
     match family {
         ProtocolFamily::VeteranLeaperkimNosfet => 1,

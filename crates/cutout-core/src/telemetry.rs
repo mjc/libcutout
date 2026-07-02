@@ -293,6 +293,24 @@ pub enum ReadbackCapacityError {
     },
 }
 
+fn fill_bounded_slots<T: Copy, const N: usize>(
+    items: &[T],
+) -> Result<[Option<T>; N], ReadbackCapacityError> {
+    if items.len() > N {
+        return Err(ReadbackCapacityError::TooManyItems {
+            capacity: N,
+            requested: items.len(),
+        });
+    }
+
+    let mut slots = [None; N];
+    slots
+        .iter_mut()
+        .zip(items.iter().copied())
+        .for_each(|(slot, item)| *slot = Some(item));
+    Ok(slots)
+}
+
 /// Bounded diagnostic readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticReadback {
@@ -324,18 +342,9 @@ impl DiagnosticReadback {
     /// Returns [`ReadbackCapacityError::TooManyItems`] when `details` exceeds
     /// [`DIAGNOSTIC_READBACK_CAPACITY`].
     pub fn try_from_details(details: &[DiagnosticDetail]) -> Result<Self, ReadbackCapacityError> {
-        if details.len() > DIAGNOSTIC_READBACK_CAPACITY {
-            return Err(ReadbackCapacityError::TooManyItems {
-                capacity: DIAGNOSTIC_READBACK_CAPACITY,
-                requested: details.len(),
-            });
-        }
-
-        let mut readback = Self::default();
-        for (slot, detail) in readback.details.iter_mut().zip(details.iter().copied()) {
-            *slot = Some(detail);
-        }
-        Ok(readback)
+        Ok(Self {
+            details: fill_bounded_slots(details)?,
+        })
     }
 }
 
@@ -362,18 +371,9 @@ impl RawTelemetryReadback {
     /// Returns [`ReadbackCapacityError::TooManyItems`] when `fields` exceeds
     /// [`RAW_TELEMETRY_READBACK_CAPACITY`].
     pub fn try_from_fields(fields: &[RawFieldValue]) -> Result<Self, ReadbackCapacityError> {
-        if fields.len() > RAW_TELEMETRY_READBACK_CAPACITY {
-            return Err(ReadbackCapacityError::TooManyItems {
-                capacity: RAW_TELEMETRY_READBACK_CAPACITY,
-                requested: fields.len(),
-            });
-        }
-
-        let mut readback = Self::default();
-        for (slot, field) in readback.fields.iter_mut().zip(fields.iter().copied()) {
-            *slot = Some(field);
-        }
-        Ok(readback)
+        Ok(Self {
+            fields: fill_bounded_slots(fields)?,
+        })
     }
 }
 
@@ -424,18 +424,9 @@ impl SettingsReadback {
     /// Returns [`ReadbackCapacityError::TooManyItems`] when `entries` exceeds
     /// [`SETTINGS_READBACK_CAPACITY`].
     pub fn try_from_entries(entries: &[SettingsEntry]) -> Result<Self, ReadbackCapacityError> {
-        if entries.len() > SETTINGS_READBACK_CAPACITY {
-            return Err(ReadbackCapacityError::TooManyItems {
-                capacity: SETTINGS_READBACK_CAPACITY,
-                requested: entries.len(),
-            });
-        }
-
-        let mut readback = Self::default();
-        for (slot, entry) in readback.entries.iter_mut().zip(entries.iter().copied()) {
-            *slot = Some(entry);
-        }
-        Ok(readback)
+        Ok(Self {
+            entries: fill_bounded_slots(entries)?,
+        })
     }
 }
 

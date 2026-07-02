@@ -243,15 +243,13 @@ impl BatteryPagePayload {
     #[must_use]
     pub const fn temperatures(
         self,
-    ) -> [Option<Measured<i32>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
+    ) -> [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
         match self {
             Self::Temperature(page) => {
                 let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
                 let mut index = 0;
                 while index < page.temperature_count.get() as usize {
-                    temperatures[index] = Some(Measured::reported(
-                        page.temperatures[index].as_millicelsius(),
-                    ));
+                    temperatures[index] = Some(Measured::reported(page.temperatures[index]));
                     index += 1;
                 }
                 temperatures

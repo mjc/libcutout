@@ -360,9 +360,8 @@ mod tests {
 
     #[test]
     fn parser_hot_path_types_remain_small() {
-        assert!(size_of::<Measured<u16>>() <= 8);
-        assert!(size_of::<Measured<i32>>() <= 16);
-        assert!(size_of::<Measured<u64>>() <= 24);
+        assert!(size_of::<Measured<Temperature>>() <= 16);
+        assert!(size_of::<Measured<Duration>>() <= 24);
         assert_eq!(size_of::<crate::NotificationByteLen>(), size_of::<usize>());
         assert_eq!(size_of::<crate::NotificationChunkLen>(), size_of::<usize>());
         assert_eq!(size_of::<crate::PayloadBodyLen>(), size_of::<usize>());
@@ -3164,6 +3163,37 @@ mod tests {
         assert_eq!(scheduler.pop_next(), Some(telemetry));
         assert_eq!(scheduler.pop_next(), Some(identity));
 
+        assert_eq!(scheduler.diagnostics().starvation_aging_events, 0);
+    }
+
+    #[test]
+    fn request_scheduler_preserves_fifo_for_plain_enqueues_after_multiple_pops() {
+        let mut scheduler = crate::RequestScheduler::<4>::new();
+        let telemetry = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestTelemetry),
+            crate::RequestPolicy::default(),
+        );
+        let identity = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestIdentity),
+            crate::RequestPolicy::default(),
+        );
+        let firmware = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestFirmwareInfo),
+            crate::RequestPolicy::default(),
+        );
+        let diagnostics = crate::QueuedRequest::new(
+            crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestPolicy::default(),
+        );
+
+        for request in [telemetry, identity, firmware, diagnostics] {
+            assert_eq!(scheduler.enqueue(request), Ok(()));
+        }
+
+        assert_eq!(scheduler.pop_next(), Some(telemetry));
+        assert_eq!(scheduler.pop_next(), Some(identity));
+        assert_eq!(scheduler.pop_next(), Some(firmware));
+        assert_eq!(scheduler.pop_next(), Some(diagnostics));
         assert_eq!(scheduler.diagnostics().starvation_aging_events, 0);
     }
 

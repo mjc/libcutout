@@ -1781,10 +1781,7 @@ impl fmt::Display for BmsTemperatureValues {
             write!(
                 f,
                 "{}",
-                DisplayTemperature::from_temperature(Temperature::from_millicelsius(
-                    temperature.value,
-                ))
-                .get()
+                DisplayTemperature::from_temperature(temperature.value).get()
             )?;
         }
         Ok(())
@@ -4377,7 +4374,8 @@ mod tests {
                 row.push_str(buffer[(x, y)].symbol());
             }
             if let Some(x) = row.find(needle) {
-                return Some((u16::try_from(x).expect("x position fits u16"), y));
+                let x = u16::try_from(x).ok()?;
+                return Some((x, y));
             }
         }
         None

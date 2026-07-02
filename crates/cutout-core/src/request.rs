@@ -610,13 +610,14 @@ impl<const N: usize> RequestScheduler<N> {
             self.diagnostics.starvation_aging_events =
                 self.diagnostics.starvation_aging_events.saturating_add(1);
         }
-        self.age_skipped_after_pop(selected);
+        self.age_entries_skipped_by(request.urgency);
         self.diagnostics.dequeued.increment(request.urgency);
         Some(request)
     }
 
     fn insert_skip_count(&mut self, insert_at: usize) {
-        let mut move_from = self.queue.len().saturating_sub(1);
+        let shifted_len = self.queue.len();
+        let mut move_from = shifted_len.saturating_sub(1);
         while move_from > insert_at {
             self.skip_counts[move_from] = self.skip_counts[move_from - 1];
             move_from -= 1;
@@ -652,16 +653,13 @@ impl<const N: usize> RequestScheduler<N> {
         Some(request)
     }
 
-    fn age_skipped_after_pop(&mut self, selected: usize) {
-        for (index, skip_count) in self
-            .skip_counts
-            .iter_mut()
-            .take(self.queue.len())
-            .enumerate()
-        {
-            if index >= selected {
-                *skip_count = skip_count.saturating_add(1);
+    fn age_entries_skipped_by(&mut self, urgency: RequestUrgency) {
+        let mut index = 0;
+        while index < self.queue.len() {
+            if self.queue.entries[index].is_some_and(|queued| urgency > queued.urgency) {
+                self.skip_counts[index] = self.skip_counts[index].saturating_add(1);
             }
+            index += 1;
         }
     }
 

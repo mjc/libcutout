@@ -2217,7 +2217,11 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
             payload
                 .temperatures()
                 .into_iter()
-                .map(measured_json)
+                .map(|temperature| {
+                    measured_json(temperature.map(|temperature| {
+                        temperature.map_value(cutout_core::Temperature::as_millicelsius)
+                    }))
+                })
                 .collect::<Vec<_>>()
         ),
         BatteryPagePayload::CellVoltage(_) | BatteryPagePayload::Raw(_) => serde_json::Value::Null,

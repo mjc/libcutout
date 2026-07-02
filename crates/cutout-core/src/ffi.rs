@@ -886,7 +886,7 @@ impl From<BatteryPagePayload> for BatteryInfoDto {
                 measured.map(|measured| {
                     MeasuredTemperatureDto::from_parts(
                         MillicelsiusDto {
-                            millicelsius: measured.value,
+                            millicelsius: measured.value.as_millicelsius(),
                         },
                         measured.source,
                         measured.quality,
