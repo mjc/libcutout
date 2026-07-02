@@ -98,16 +98,14 @@ private struct MockupScreenContainer: View {
             DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
             EucRideMockupView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
+        case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
+            BmsMockupView(screen: screen, selectScreen: selectScreen)
         case .eucGarage:
             EucGarageMockupView(screen: screen)
         case .vescOnewheelRide:
             VescOnewheelRideMockupView(screen: screen)
         case .vescDebug:
             VescDebugMockupView(screen: screen)
-        case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
-            BmsMockupView(screen: screen, selectScreen: selectScreen)
-        default:
-            GenericMockupView(screen: screen, liveSpeed: liveSpeed)
         }
     }
 }

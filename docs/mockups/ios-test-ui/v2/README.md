@@ -37,7 +37,7 @@ and tracker work can reference stable repo paths.
 | `cutout-07-bms-cell-map-40s.png` | 390x844 | `LIBCU-442` |
 | `cutout-08-bms-cell-detail-popover.png` | 390x844 | `LIBCU-443` |
 | `cutout-09-bms-unknown-topology.png` | 390x844 | `LIBCU-444` |
-| `cutout-10-dumb-bms-no-data.svg` | SVG | `LIBCU-446` |
+| `cutout-10-dumb-bms-no-data.svg` | 390x844 | `LIBCU-446` |
 | `cutout-bms-mockups-sheet.png` | 1468x663 | `LIBCU-438` |
 
 ## Tracker Map
