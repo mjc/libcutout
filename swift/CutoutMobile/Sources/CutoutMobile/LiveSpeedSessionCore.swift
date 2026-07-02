@@ -137,6 +137,9 @@ public final class LiveSpeedSessionCore: NSObject {
 
     private func handleDisconnect(from peripheral: CBPeripheral, error: Error?) {
         record("disconnected=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
+        guard self.peripheral?.identifier == peripheral.identifier else {
+            return
+        }
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
