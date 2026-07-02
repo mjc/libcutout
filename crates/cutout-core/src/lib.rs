@@ -6201,7 +6201,7 @@ pub trait ProtocolSession {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostSession<S, const OUTPUT_CAPACITY: usize = DEFAULT_SESSION_OUTPUT_CAPACITY> {
     session: S,
-    output: BoundedSessionOutput<OUTPUT_CAPACITY>,
+    output: Box<BoundedSessionOutput<OUTPUT_CAPACITY>>,
     snapshot: TelemetrySnapshot,
     diagnostics: ParserDiagnostics,
 }
@@ -6215,7 +6215,7 @@ where
     pub fn new(session: S) -> Self {
         Self {
             session,
-            output: BoundedSessionOutput::new(),
+            output: Box::new(BoundedSessionOutput::new()),
             snapshot: TelemetrySnapshot {
                 at_ms: None,
                 speed: None,
@@ -6247,7 +6247,7 @@ where
     pub fn with_output_capacity(session: S) -> Self {
         Self {
             session,
-            output: BoundedSessionOutput::new(),
+            output: Box::new(BoundedSessionOutput::new()),
             snapshot: TelemetrySnapshot {
                 at_ms: None,
                 speed: None,
@@ -6358,7 +6358,7 @@ where
 
     fn handle(&mut self, input: SessionInput<'_>) -> Result<(), SessionOutputError> {
         let start = self.output.len();
-        self.session.handle(input, &mut self.output)?;
+        self.session.handle(input, &mut *self.output)?;
         self.apply_state_from_outputs(start);
         Ok(())
     }
@@ -6522,6 +6522,23 @@ where
         return outputs;
     }
     outputs
+}
+
+/// Replays captured host inputs through a host session and returns outputs.
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::Full`] when the host output buffer fills.
+pub fn try_replay_capture<S, const OUTPUT_CAPACITY: usize>(
+    host: &mut HostSession<S, OUTPUT_CAPACITY>,
+    records: &[CaptureRecord],
+) -> Result<Vec<SessionOutput>, SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    let mut outputs = Vec::new();
+    replay_capture_into(host, records, &mut outputs)?;
+    Ok(outputs)
 }
 
 /// Replays captured host inputs through a host session into an existing buffer.
@@ -7284,6 +7301,23 @@ mod tests {
                     | DeviceCommand::SoundHorn
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct BurstSession;
+
+    impl ProtocolSession for BurstSession {
+        fn handle(
+            &mut self,
+            input: SessionInput<'_>,
+            output: &mut dyn SessionOutputSink,
+        ) -> Result<(), crate::SessionOutputError> {
+            if let SessionInput::LinkUp(info) = input {
+                output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)))?;
+                output.push(SessionOutput::Event(DeviceEvent::LinkDown))?;
             }
             Ok(())
         }
@@ -10072,6 +10106,22 @@ mod tests {
         assert_eq!(
             output.as_slice(),
             &[SessionOutput::Event(DeviceEvent::LinkUp(link))]
+        );
+    }
+
+    #[test]
+    fn try_replay_capture_reports_bounded_output_overflow() {
+        let mut host = crate::HostSession::<_, 1>::with_output_capacity(BurstSession);
+        let records = [crate::CaptureRecord::LinkUp(LinkInfo {
+            monotonic_ms: ms(10),
+            max_write_len: Some(write_len(185)),
+        })];
+
+        assert_eq!(
+            crate::try_replay_capture(&mut host, &records),
+            Err(crate::SessionOutputError::Full {
+                capacity: crate::SessionOutputCapacity::new(1),
+            })
         );
     }
 

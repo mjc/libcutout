@@ -166,6 +166,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
 #[allow(clippy::too_many_lines)]
 fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
     let mut link_up_host = HostSession::new(NoOpSession);
+    let mut link_up_outputs = Vec::with_capacity(1);
     assert_no_allocations("host link-up", || {
         assert_eq!(
             link_up_host.ingest_link_up(LinkInfo {
@@ -174,13 +175,15 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
             }),
             Ok(())
         );
-        let drained = link_up_host.drain_outputs();
+        link_up_host.drain_outputs_into(&mut link_up_outputs);
 
-        assert_eq!(drained.len(), 1);
+        assert_eq!(link_up_outputs.len(), 1);
+        link_up_outputs.clear();
     });
 
     let mut notification_host = HostSession::new(NoOpSession);
     let notification = vec![0x11, 0x22, 0x33];
+    let mut notification_outputs = Vec::with_capacity(1);
     assert_no_allocations("notification ingest", || {
         assert_eq!(
             notification_host.ingest_notification_owned(
@@ -190,9 +193,10 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
             ),
             Ok(())
         );
-        let drained = notification_host.drain_outputs();
+        notification_host.drain_outputs_into(&mut notification_outputs);
 
-        assert_eq!(drained.len(), 1);
+        assert_eq!(notification_outputs.len(), 1);
+        notification_outputs.clear();
     });
 
     assert_no_allocations("request queue churn", || {
