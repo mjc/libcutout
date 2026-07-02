@@ -63,6 +63,13 @@ extension MockupScreenCatalogTests {
             .unsupported(action: "Not yet"),
             .manual(action: "later"),
         ])
+        XCTAssertEqual(picker.pickerRows.map(\.connectionRoute), [
+            "electric_unicycle",
+            "vesc_onewheel",
+            nil,
+            nil,
+            nil,
+        ])
     }
     func testDevicePickerFixtureRowsComeFromDiscoveryCandidates() throws {
         let picker = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .devicePicker))
@@ -134,7 +141,9 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(supported.pickerRow.state, .supported(action: "Pair"))
         XCTAssertEqual(supported.pickerRow.subtitle, "Electric unicycle - telemetry profile found")
+        XCTAssertEqual(supported.pickerRow.connectionRoute, "electric_unicycle")
         XCTAssertEqual(unsupported.pickerRow.state, .unsupported(action: "Not yet"))
+        XCTAssertNil(unsupported.pickerRow.connectionRoute)
     }
 
     func testCoreBluetoothAdvertisementMapsToPickerCandidateWithoutMacAddress() {
@@ -151,6 +160,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.support, .supported(connectionRoute: "electric_unicycle"))
         XCTAssertEqual(candidate.pickerRow.id, "ios-local-aero")
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
+        XCTAssertEqual(candidate.pickerRow.connectionRoute, "electric_unicycle")
     }
 
     func testCoreBluetoothAdvertisementsMapToScanningPickerState() {
@@ -177,6 +187,7 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(state.statusText, "Scanning Bluetooth")
         XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
+        XCTAssertEqual(state.rows.map(\.connectionRoute), ["electric_unicycle", nil])
         XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero"])
         XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
         XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Not yet supported"))

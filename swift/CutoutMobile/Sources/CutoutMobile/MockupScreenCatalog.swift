@@ -134,6 +134,7 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let detail: String
     public let state: MockupPickerRowState
     public let symbolName: String
+    public let connectionRoute: String?
 
     public init(
         id: String? = nil,
@@ -141,7 +142,8 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
         subtitle: String,
         detail: String,
         state: MockupPickerRowState,
-        symbolName: String
+        symbolName: String,
+        connectionRoute: String? = nil
     ) {
         self.id = id ?? title
         self.title = title
@@ -149,6 +151,7 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
         self.detail = detail
         self.state = state
         self.symbolName = symbolName
+        self.connectionRoute = connectionRoute
     }
 }
 
@@ -270,7 +273,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             subtitle: "\(productCategory) - \(evidence)",
             detail: detail,
             state: support.pickerRowState,
-            symbolName: symbolName
+            symbolName: symbolName,
+            connectionRoute: support.connectionRoute
         )
     }
 }
@@ -278,6 +282,10 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
 public extension DevicePickerCandidateSupport {
     var isSupported: Bool {
         if case .supported = self { true } else { false }
+    }
+
+    var connectionRoute: String? {
+        if case .supported(let connectionRoute) = self { connectionRoute } else { nil }
     }
 
     var pickerRowState: MockupPickerRowState {

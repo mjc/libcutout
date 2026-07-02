@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var model: LiveSpeedModel
     @State private var selectedScreenID: MockupScreenID
+    @State private var pairedDestinationScreenID: MockupScreenID?
 
     private let catalog = MockupScreenCatalog.v2
 
@@ -23,10 +24,11 @@ struct ContentView: View {
                         screen: screen,
                         liveSpeed: model.speed.displayValue,
                         devicePickerScanState: model.devicePickerScanState,
-                        pair: { platformIdentifier in
-                            if model.pair(platformIdentifier: platformIdentifier) {
-                                selectedScreenID = .eucRide
-                            }
+                        pair: { row in
+                            guard let screenID = Self.destinationScreenID(for: row),
+                                  model.pair(platformIdentifier: row.id) else { return }
+                            pairedDestinationScreenID = screenID
+                            selectedScreenID = screenID
                         }
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -40,7 +42,7 @@ struct ContentView: View {
         .background(MockupColors.pageBackground.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
             if phase.opensRideScreen {
-                selectedScreenID = .eucRide
+                selectedScreenID = pairedDestinationScreenID ?? .eucRide
             }
         }
     }
@@ -60,13 +62,24 @@ struct ContentView: View {
 
         return .devicePicker
     }
+
+    private static func destinationScreenID(for row: MockupPickerRow) -> MockupScreenID? {
+        switch row.connectionRoute {
+        case "electric_unicycle":
+            .eucRide
+        case "vesc_onewheel":
+            .vescOnewheelRide
+        default:
+            nil
+        }
+    }
 }
 
 private struct MockupScreenContainer: View {
     let screen: MockupScreen
     let liveSpeed: String
     let devicePickerScanState: DevicePickerScanState?
-    let pair: (String) -> Void
+    let pair: (MockupPickerRow) -> Void
 
     var body: some View {
         switch screen.id {
@@ -767,7 +780,7 @@ private struct EucRideTabs: View {
 private struct DevicePickerMockupView: View {
     let screen: MockupScreen
     let scanState: DevicePickerScanState?
-    let pair: (String) -> Void
+    let pair: (MockupPickerRow) -> Void
 
     private var renderedScanState: DevicePickerScanState {
         scanState ?? DevicePickerScanState(status: .scanning, rows: [])
@@ -812,7 +825,7 @@ private struct DevicePickerMockupView: View {
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.supported) { row in
                                 Button {
-                                    pair(row.id)
+                                    pair(row)
                                 } label: {
                                     PickerDeviceRow(row: row, scale: scale)
                                 }
