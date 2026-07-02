@@ -1,6 +1,6 @@
 use crate::{
     BatteryInfo, BmsPackCurrents, BmsTemperatureValuesPerPage, Measured, ProtocolSelector,
-    Temperature, VerificationStatus,
+    Temperature, ValueQuality, ValueSource, VerificationStatus,
 };
 
 /// Fixed number of temperature values carried by typed BMS temperature pages.
@@ -105,11 +105,122 @@ pub struct BatteryTemperaturePage {
     /// Generic battery measurements decoded from this page.
     pub battery: BatteryInfo,
 
-    /// Contiguous BMS temperature values.
-    pub temperatures: [Temperature; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
+    /// BMS temperature values.
+    temperatures: [Temperature; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
 
-    /// Number of populated temperature values.
-    pub temperature_count: BmsTemperatureValuesPerPage,
+    /// Packed per-value provenance for BMS temperature values.
+    temperature_metadata: BatteryTemperatureMetadata,
+}
+
+/// Packed per-value provenance for BMS temperature values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BatteryTemperatureMetadata {
+    bits: u64,
+}
+
+impl BatteryTemperatureMetadata {
+    const SLOT_BITS: usize = 8;
+    const PRESENT: u64 = 1;
+
+    /// Empty temperature slot.
+    const EMPTY: Self = Self { bits: 0 };
+
+    /// Records per-value provenance for a present temperature slot.
+    #[must_use]
+    const fn with_measured(mut self, index: usize, measured: Measured<Temperature>) -> Self {
+        let shift = Self::slot_shift(index);
+        self.bits &= !(0xff << shift);
+        self.bits |= Self::PRESENT << shift;
+        self.bits |= Self::source_code(measured.source) << (shift + 1);
+        self.bits |= Self::quality_code(measured.quality) << (shift + 3);
+        self.bits |= Self::verification_code(measured.verification) << (shift + 4);
+        self
+    }
+
+    /// Returns measured value provenance for a present temperature slot.
+    #[must_use]
+    const fn measured(self, index: usize, value: Temperature) -> Option<Measured<Temperature>> {
+        let shift = Self::slot_shift(index);
+        let slot = (self.bits >> shift) & 0xff;
+        if slot & Self::PRESENT == 0 {
+            return None;
+        }
+
+        Some(Measured {
+            value,
+            source: Self::source_from_code((slot >> 1) & 0x3),
+            quality: Self::quality_from_code((slot >> 3) & 0x1),
+            verification: Self::verification_from_code((slot >> 4) & 0x7),
+        })
+    }
+
+    /// Counts present temperature slots.
+    #[must_use]
+    const fn count(self) -> BmsTemperatureValuesPerPage {
+        let mut index = 0;
+        let mut count = 0_u8;
+        while index < BATTERY_TEMPERATURE_VALUES_PER_PAGE {
+            if ((self.bits >> Self::slot_shift(index)) & Self::PRESENT) != 0 {
+                count += 1;
+            }
+            index += 1;
+        }
+        BmsTemperatureValuesPerPage::new(count)
+    }
+
+    const fn slot_shift(index: usize) -> usize {
+        index * Self::SLOT_BITS
+    }
+
+    const fn source_code(source: ValueSource) -> u64 {
+        match source {
+            ValueSource::Reported => 0,
+            ValueSource::Calculated => 1,
+            ValueSource::Estimated => 2,
+        }
+    }
+
+    const fn source_from_code(code: u64) -> ValueSource {
+        match code {
+            1 => ValueSource::Calculated,
+            2 => ValueSource::Estimated,
+            _ => ValueSource::Reported,
+        }
+    }
+
+    const fn quality_code(quality: ValueQuality) -> u64 {
+        match quality {
+            ValueQuality::Known => 0,
+            ValueQuality::Inferred => 1,
+        }
+    }
+
+    const fn quality_from_code(code: u64) -> ValueQuality {
+        match code {
+            1 => ValueQuality::Inferred,
+            _ => ValueQuality::Known,
+        }
+    }
+
+    const fn verification_code(verification: VerificationStatus) -> u64 {
+        match verification {
+            VerificationStatus::Unverified => 0,
+            VerificationStatus::Inferred => 1,
+            VerificationStatus::SourceVerified => 2,
+            VerificationStatus::HardwareVerified => 3,
+            VerificationStatus::SourceAndHardwareVerified => 4,
+        }
+    }
+
+    const fn verification_from_code(code: u64) -> VerificationStatus {
+        match code {
+            1 => VerificationStatus::Inferred,
+            2 => VerificationStatus::SourceVerified,
+            3 => VerificationStatus::HardwareVerified,
+            4 => VerificationStatus::SourceAndHardwareVerified,
+            _ => VerificationStatus::Unverified,
+        }
+    }
 }
 
 impl BatteryTemperaturePage {
@@ -120,7 +231,7 @@ impl BatteryTemperaturePage {
             page,
             battery,
             temperatures: [Temperature::from_millicelsius(0); BATTERY_TEMPERATURE_VALUES_PER_PAGE],
-            temperature_count: BmsTemperatureValuesPerPage::new(0),
+            temperature_metadata: BatteryTemperatureMetadata::EMPTY,
         }
     }
 
@@ -132,22 +243,41 @@ impl BatteryTemperaturePage {
         temperatures: [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
     ) -> Self {
         let mut values = [Temperature::from_millicelsius(0); BATTERY_TEMPERATURE_VALUES_PER_PAGE];
+        let mut metadata = BatteryTemperatureMetadata::EMPTY;
         let mut index = 0;
-        let mut count = 0_u8;
         while index < BATTERY_TEMPERATURE_VALUES_PER_PAGE {
-            let Some(temperature) = temperatures[index] else {
-                break;
-            };
-            values[index] = temperature.value;
+            if let Some(temperature) = temperatures[index] {
+                values[index] = temperature.value;
+                metadata = metadata.with_measured(index, temperature);
+            }
             index += 1;
-            count += 1;
         }
         Self {
             page,
             battery,
             temperatures: values,
-            temperature_count: BmsTemperatureValuesPerPage::new(count),
+            temperature_metadata: metadata,
         }
+    }
+
+    /// Returns the number of present page-specific temperature values.
+    #[must_use]
+    pub const fn temperature_count(self) -> BmsTemperatureValuesPerPage {
+        self.temperature_metadata.count()
+    }
+
+    const fn measured_temperatures(
+        self,
+    ) -> [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
+        let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
+        let mut index = 0;
+        while index < BATTERY_TEMPERATURE_VALUES_PER_PAGE {
+            temperatures[index] = self
+                .temperature_metadata
+                .measured(index, self.temperatures[index]);
+            index += 1;
+        }
+        temperatures
     }
 }
 
@@ -245,15 +375,7 @@ impl BatteryPagePayload {
         self,
     ) -> [Option<Measured<Temperature>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
         match self {
-            Self::Temperature(page) => {
-                let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
-                let mut index = 0;
-                while index < page.temperature_count.get() as usize {
-                    temperatures[index] = Some(Measured::reported(page.temperatures[index]));
-                    index += 1;
-                }
-                temperatures
-            }
+            Self::Temperature(page) => page.measured_temperatures(),
             Self::CellVoltage(_) | Self::Raw(_) => [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE],
         }
     }
@@ -379,8 +501,27 @@ mod tests {
         assert_eq!(payload.battery(), battery);
         if let BatteryPagePayload::Temperature(temperature_page) = payload {
             assert_eq!(
-                temperature_page.temperature_count,
+                temperature_page.temperature_count(),
                 BmsTemperatureValuesPerPage::new(0)
+            );
+        }
+    }
+
+    #[test]
+    fn temperature_payload_preserves_page_value_measurement_metadata() {
+        let page = BatteryPageMetadata::temperature(sel(3), VerificationStatus::SourceVerified);
+        let estimated = Measured::estimated(Temperature::from_millicelsius(17_830));
+        let payload = BatteryPagePayload::temperature_values(
+            page,
+            BatteryInfo::default(),
+            [Some(estimated), None, None, None, None, None],
+        );
+
+        assert_eq!(payload.temperatures()[0], Some(estimated));
+        if let BatteryPagePayload::Temperature(temperature_page) = payload {
+            assert_eq!(
+                temperature_page.temperature_count(),
+                BmsTemperatureValuesPerPage::new(1)
             );
         }
     }
