@@ -4969,8 +4969,8 @@ impl Speed {
         }
 
         let numerator = i64::from(value) * i64::from(scale_milli);
-        let scaled = (numerator + 500_000) / 1_000_000;
-        Self::from_milli_kmh(saturating_i64_to_i32(scaled))
+        let scaled = round_div_i64_to_i32(numerator, 1_000_000);
+        Self::from_milli_kmh(scaled)
     }
 
     /// Returns this speed in whole miles per hour, rounded to the nearest mph.
@@ -7418,6 +7418,26 @@ mod tests {
         assert_eq!(
             Speed::from_milli_kmh_scaled(10_000, 1_609_344).as_millimetres_per_second(),
             4_470
+        );
+        assert_eq!(
+            Speed::from_milli_kmh_scaled(-10_000, 1_609_344).as_millimetres_per_second(),
+            -4_470
+        );
+        assert_eq!(
+            Speed::from_milli_kmh_scaled(35, 500_000).as_millimetres_per_second(),
+            5
+        );
+        assert_eq!(
+            Speed::from_milli_kmh_scaled(-35, 500_000).as_millimetres_per_second(),
+            -5
+        );
+        assert_eq!(
+            Speed::from_milli_kmh_scaled(0, 1_609_344).as_millimetres_per_second(),
+            0
+        );
+        assert_eq!(
+            Speed::from_milli_kmh_scaled(-10_000, 0).as_millimetres_per_second(),
+            0
         );
         assert_eq!(round_div_i32(5, 2), 3);
         assert_eq!(round_div_i32(-5, 2), -3);
