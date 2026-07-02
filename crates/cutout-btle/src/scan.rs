@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use async_trait::async_trait;
 use btleplug::{
     api::{Central, Manager as _, Peripheral as _, ScanFilter},
     platform::{Adapter, Manager},
@@ -24,11 +25,21 @@ pub async fn scan_peripherals(
     scan_for: ScanWindow,
 ) -> Result<Vec<PeripheralObservation>, BtleError> {
     let adapter = first_adapter().await?;
-    backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
+    scan_adapter(&adapter, scan_for).await
+}
+
+async fn scan_adapter<A>(
+    adapter: &A,
+    scan_for: ScanWindow,
+) -> Result<Vec<PeripheralObservation>, BtleError>
+where
+    A: ScanAdapter + Sync,
+{
+    adapter.start_scan().await?;
     tokio::time::sleep(scan_for.as_duration()).await;
-    let observations = collect_observations(&adapter).await?;
-    let _ = backend_call("stop scan", adapter.stop_scan()).await;
-    Ok(observations)
+    let observations = adapter.collect_observations().await;
+    let _ = adapter.stop_scan().await;
+    observations
 }
 
 /// Connects to the first peripheral matching the target and returns a summary.
@@ -43,13 +54,17 @@ pub async fn connect_and_discover(
     scan_for: ScanWindow,
 ) -> Result<ConnectedPeripheral, BtleError> {
     let adapter = first_adapter().await?;
-    backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
+    backend_call(
+        "start scan",
+        Central::start_scan(&adapter, ScanFilter::default()),
+    )
+    .await?;
 
     let peripheral = wait_for_scan_match(scan_for, TARGETED_SCAN_POLL_INTERVAL, || {
         find_peripheral(&adapter, target)
     })
     .await;
-    let _ = backend_call("stop scan", adapter.stop_scan()).await;
+    let _ = backend_call("stop scan", Central::stop_scan(&adapter)).await;
     let peripheral = peripheral?;
 
     backend_call("connect peripheral", peripheral.connect()).await?;
@@ -73,8 +88,43 @@ pub async fn connect_and_discover(
 
 async fn first_adapter() -> Result<Adapter, BtleError> {
     let manager = Manager::new().await?;
-    let mut adapters = backend_call("list adapters", manager.adapters()).await?;
-    adapters.pop().ok_or(BtleError::NoAdapterAvailable)
+    let adapters = backend_call("list adapters", manager.adapters()).await?;
+    select_first_adapter(adapters)
+}
+
+fn select_first_adapter<T>(adapters: Vec<T>) -> Result<T, BtleError> {
+    adapters
+        .into_iter()
+        .next()
+        .ok_or(BtleError::NoAdapterAvailable)
+}
+
+#[async_trait]
+trait ScanAdapter {
+    async fn start_scan(&self) -> Result<(), BtleError>;
+
+    async fn stop_scan(&self) -> Result<(), BtleError>;
+
+    async fn collect_observations(&self) -> Result<Vec<PeripheralObservation>, BtleError>;
+}
+
+#[async_trait]
+impl ScanAdapter for Adapter {
+    async fn start_scan(&self) -> Result<(), BtleError> {
+        backend_call(
+            "start scan",
+            Central::start_scan(self, ScanFilter::default()),
+        )
+        .await
+    }
+
+    async fn stop_scan(&self) -> Result<(), BtleError> {
+        backend_call("stop scan", Central::stop_scan(self)).await
+    }
+
+    async fn collect_observations(&self) -> Result<Vec<PeripheralObservation>, BtleError> {
+        collect_observations(self).await
+    }
 }
 
 async fn collect_observations(adapter: &Adapter) -> Result<Vec<PeripheralObservation>, BtleError> {
@@ -145,5 +195,120 @@ where
             }
             Err(error) => return Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+
+    use super::*;
+
+    type FakeScanResult = Result<Vec<PeripheralObservation>, BtleError>;
+
+    #[derive(Clone, Default)]
+    struct FakeScanAdapter {
+        collect_result: Arc<Mutex<Option<FakeScanResult>>>,
+        start_calls: Arc<AtomicUsize>,
+        stop_calls: Arc<AtomicUsize>,
+        collect_calls: Arc<AtomicUsize>,
+        stopped_after_collect: Arc<AtomicBool>,
+    }
+
+    impl FakeScanAdapter {
+        fn returning(result: FakeScanResult) -> Self {
+            Self {
+                collect_result: Arc::new(Mutex::new(Some(result))),
+                ..Self::default()
+            }
+        }
+
+        fn start_calls(&self) -> usize {
+            self.start_calls.load(Ordering::SeqCst)
+        }
+
+        fn stop_calls(&self) -> usize {
+            self.stop_calls.load(Ordering::SeqCst)
+        }
+
+        fn collect_calls(&self) -> usize {
+            self.collect_calls.load(Ordering::SeqCst)
+        }
+
+        fn stopped_after_collect(&self) -> bool {
+            self.stopped_after_collect.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl ScanAdapter for FakeScanAdapter {
+        async fn start_scan(&self) -> Result<(), BtleError> {
+            self.start_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn stop_scan(&self) -> Result<(), BtleError> {
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            if self.collect_calls() > 0 {
+                self.stopped_after_collect.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+
+        async fn collect_observations(&self) -> Result<Vec<PeripheralObservation>, BtleError> {
+            self.collect_calls.fetch_add(1, Ordering::SeqCst);
+            self.collect_result
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+                .expect("fake result is configured")
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_adapter_stops_after_successful_collection() {
+        let adapter = FakeScanAdapter::returning(Ok(Vec::new()));
+
+        let observations = scan_adapter(&adapter, ScanWindow::from_millis(0))
+            .await
+            .expect("scan succeeds");
+
+        assert!(observations.is_empty());
+        assert_eq!(adapter.start_calls(), 1);
+        assert_eq!(adapter.collect_calls(), 1);
+        assert_eq!(adapter.stop_calls(), 1);
+        assert!(adapter.stopped_after_collect());
+    }
+
+    #[tokio::test]
+    async fn scan_adapter_stops_after_collection_failure() {
+        let adapter = FakeScanAdapter::returning(Err(BtleError::NoPeripheralMatched));
+
+        let err = scan_adapter(&adapter, ScanWindow::from_millis(0))
+            .await
+            .expect_err("collection error is preserved");
+
+        assert!(matches!(err, BtleError::NoPeripheralMatched));
+        assert_eq!(adapter.start_calls(), 1);
+        assert_eq!(adapter.collect_calls(), 1);
+        assert_eq!(adapter.stop_calls(), 1);
+        assert!(adapter.stopped_after_collect());
+    }
+
+    #[test]
+    fn select_first_adapter_uses_backend_order() {
+        let adapter = select_first_adapter(vec!["first", "second"]).expect("adapter");
+
+        assert_eq!(adapter, "first");
+    }
+
+    #[test]
+    fn select_first_adapter_rejects_empty_backend_list() {
+        let err = select_first_adapter::<&str>(Vec::new()).expect_err("no adapter");
+
+        assert!(matches!(err, BtleError::NoAdapterAvailable));
     }
 }
