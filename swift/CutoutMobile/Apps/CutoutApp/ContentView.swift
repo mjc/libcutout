@@ -140,6 +140,8 @@ private struct MockupScreenScaffold<Content: View>: View {
     let bottomPadding: CGFloat
     let allowsVerticalScroll: Bool
     let columnSpacing: CGFloat
+    let contentSpacing: CGFloat
+    let horizontalPadding: CGFloat
     private let content: (CGFloat, [GridItem]) -> Content
 
     init(
@@ -147,12 +149,16 @@ private struct MockupScreenScaffold<Content: View>: View {
         bottomPadding: CGFloat,
         allowsVerticalScroll: Bool = true,
         columnSpacing: CGFloat = 26,
+        contentSpacing: CGFloat = 16,
+        horizontalPadding: CGFloat = 24,
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
         self.bottomPadding = bottomPadding
         self.allowsVerticalScroll = allowsVerticalScroll
         self.columnSpacing = columnSpacing
+        self.contentSpacing = contentSpacing
+        self.horizontalPadding = horizontalPadding
         self.content = content
     }
 
@@ -181,12 +187,12 @@ private struct MockupScreenScaffold<Content: View>: View {
     }
 
     private func scaffoldContent(scale: CGFloat, columns: [GridItem], width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 16 * scale) {
+        VStack(alignment: .leading, spacing: contentSpacing * scale) {
             MockupScreenHeader(sectionTitle: sectionTitle, scale: scale)
 
             content(scale, columns)
         }
-        .padding(.horizontal, 24 * scale)
+        .padding(.horizontal, horizontalPadding * scale)
         .padding(.bottom, bottomPadding * scale)
         .frame(width: width, alignment: .topLeading)
     }
@@ -764,10 +770,7 @@ private struct DevicePickerMockupView: View {
     let pair: (String) -> Void
 
     private var renderedScanState: DevicePickerScanState {
-        if let scanState {
-            return scanState
-        }
-        return DevicePickerScanState(status: .scanning, rows: [])
+        scanState ?? DevicePickerScanState(status: .scanning, rows: [])
     }
 
     private var sections: MockupPickerSections {
@@ -775,73 +778,70 @@ private struct DevicePickerMockupView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
-            VStack(alignment: .leading, spacing: 18 * scale) {
-                MockupScreenHeader(sectionTitle: "setup", scale: scale)
+        MockupScreenScaffold(
+            sectionTitle: "setup",
+            bottomPadding: 24,
+            allowsVerticalScroll: false,
+            contentSpacing: 18,
+            horizontalPadding: 18
+        ) { scale, _ in
+            VStack(alignment: .leading, spacing: 7 * scale) {
+                Text("Pick your device(s)")
+                    .font(.system(size: 34 * scale, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Text("Nearby devices that look rideable. Pair supported ones.")
+                    .font(.system(size: 15 * scale, weight: .semibold))
+                    .foregroundStyle(MockupColors.muted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-                VStack(alignment: .leading, spacing: 7 * scale) {
-                    Text("Pick your device(s)")
-                        .font(.system(size: 34 * scale, weight: .bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                    Text("Nearby devices that look rideable. Pair supported ones.")
-                        .font(.system(size: 15 * scale, weight: .semibold))
-                        .foregroundStyle(MockupColors.muted)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            ScanStatusPill(
+                text: renderedScanState.statusText,
+                isScanning: renderedScanState.status == .scanning,
+                scale: scale
+            )
+                .padding(.top, 4 * scale)
 
-                ScanStatusPill(
-                    text: renderedScanState.statusText,
-                    isScanning: renderedScanState.status == .scanning,
-                    scale: scale
-                )
-                    .padding(.top, 4 * scale)
-
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 18 * scale) {
-                        if !sections.supported.isEmpty {
-                            SectionLabel("Supported now", scale: scale)
-                                .padding(.top, 8 * scale)
-                            VStack(spacing: 12 * scale) {
-                                ForEach(sections.supported) { row in
-                                    Button {
-                                        pair(row.id)
-                                    } label: {
-                                        PickerDeviceRow(row: row, scale: scale)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contentShape(Rectangle())
-                                }
-                            }
-                        }
-
-                        if !sections.unsupported.isEmpty {
-                            SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
-                                .padding(.top, 8 * scale)
-                            VStack(spacing: 12 * scale) {
-                                ForEach(sections.unsupported) { row in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18 * scale) {
+                    if !sections.supported.isEmpty {
+                        SectionLabel("Supported now", scale: scale)
+                            .padding(.top, 8 * scale)
+                        VStack(spacing: 12 * scale) {
+                            ForEach(sections.supported) { row in
+                                Button {
+                                    pair(row.id)
+                                } label: {
                                     PickerDeviceRow(row: row, scale: scale)
                                 }
+                                .buttonStyle(.plain)
+                                .contentShape(Rectangle())
                             }
                         }
+                    }
 
-                        if let manualRow = sections.manual {
-                            ManualPickerRow(row: manualRow, scale: scale)
-                                .padding(.top, 32 * scale)
+                    if !sections.unsupported.isEmpty {
+                        SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
+                            .padding(.top, 8 * scale)
+                        VStack(spacing: 12 * scale) {
+                            ForEach(sections.unsupported) { row in
+                                PickerDeviceRow(row: row, scale: scale)
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let manualRow = sections.manual {
+                        ManualPickerRow(row: manualRow, scale: scale)
+                            .padding(.top, 32 * scale)
+                    }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 18 * scale)
-            .padding(.bottom, 24 * scale)
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-            .background(MockupColors.pageBackground)
-            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .foregroundStyle(.white)
     }
 }
 
