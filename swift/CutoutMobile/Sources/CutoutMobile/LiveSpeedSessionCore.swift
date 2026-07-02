@@ -114,6 +114,16 @@ public final class LiveSpeedSessionCore: NSObject {
         setPhase(.live)
     }
 
+    public func timeoutDiagnosticRecords(timeoutSeconds: Int) -> [String] {
+        [
+            "timeout_seconds=\(timeoutSeconds)",
+            "phase=\(phase)",
+            "candidate_count=\(scanState.rows.count)",
+            "selected_model=\(timeoutDiagnosticModelName)",
+            "blocker=\(timeoutDiagnosticBlocker)",
+        ]
+    }
+
     private func setPhase(_ phase: LiveSpeedConnectionPhase) {
         self.phase = phase
         onPhaseChange?(phase)
@@ -183,6 +193,34 @@ public final class LiveSpeedSessionCore: NSObject {
     private func record(_ message: String) {
         records.append(message)
         onRecord?(message)
+    }
+
+    private var timeoutDiagnosticModelName: String {
+        switch phase {
+        case .scanning(let model), .connecting(let model):
+            model.displayName
+        default:
+            selectedModel?.displayName ?? "unknown"
+        }
+    }
+
+    private var timeoutDiagnosticBlocker: String {
+        switch phase {
+        case .starting:
+            "bluetooth_pending"
+        case .bluetoothUnavailable:
+            "bluetooth_unavailable"
+        case .scanning:
+            scanState.rows.isEmpty ? "no_candidate" : "discovered_no_connect"
+        case .connecting, .discoveringServices:
+            "discovered_no_connect"
+        case .subscribing:
+            "connected_no_telemetry"
+        case .live:
+            hasObservedSpeedSnapshot ? "speed_observed" : "parsed_no_speed"
+        case .failed:
+            "code_failure"
+        }
     }
 }
 

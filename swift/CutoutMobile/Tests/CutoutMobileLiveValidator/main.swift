@@ -42,6 +42,7 @@ private final class LiveSpeedValidator {
             printRecords()
         } else {
             print("validation=timeout")
+            records.append(contentsOf: core.timeoutDiagnosticRecords(timeoutSeconds: Int(timeout)))
             printRecords()
         }
     }

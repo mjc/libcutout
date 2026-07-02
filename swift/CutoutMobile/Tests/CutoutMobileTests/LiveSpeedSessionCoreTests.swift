@@ -242,6 +242,52 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
             ]
         )
     }
+
+    func testTimeoutDiagnosticIdentifiesNoCandidateScanBlocker() {
+        let core = LiveSpeedSessionCore()
+        core.disconnectAndScan()
+
+        XCTAssertEqual(
+            core.timeoutDiagnosticRecords(timeoutSeconds: 5),
+            [
+                "timeout_seconds=5",
+                "phase=scanning(model: CutoutMobile.ElectricUnicycleModel.aero)",
+                "candidate_count=0",
+                "selected_model=Aero",
+                "blocker=no_candidate",
+            ]
+        )
+    }
+
+    func testTimeoutDiagnosticClassifiesConnectedTelemetryAndParsedNoSpeedBlockers() {
+        let core = LiveSpeedSessionCore()
+        core.applyLifecycleStep(.connecting(model: .aero, platformIdentifier: "peripheral-1"))
+        core.applyLifecycleStep(.subscribing(["FFE1"]))
+
+        XCTAssertEqual(
+            core.timeoutDiagnosticRecords(timeoutSeconds: 3),
+            [
+                "timeout_seconds=3",
+                "phase=subscribing",
+                "candidate_count=0",
+                "selected_model=Aero",
+                "blocker=connected_no_telemetry",
+            ]
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(speed: nil)
+            ),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(
+            core.timeoutDiagnosticRecords(timeoutSeconds: 3).last,
+            "blocker=parsed_no_speed"
+        )
+    }
 }
 
 private func telemetryReading(_ value: Int32) -> TelemetryReading<Int32> {
