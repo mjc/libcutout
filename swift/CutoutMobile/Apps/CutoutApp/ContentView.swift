@@ -33,7 +33,8 @@ struct ContentView: View {
                             pairedDestinationScreenID = nil
                             selectedScreenID = .devicePicker
                         },
-                        pair: pair
+                        pair: pair,
+                        selectScreen: { selectedScreenID = $0 }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .tag(screen.id)
@@ -89,6 +90,7 @@ private struct MockupScreenContainer: View {
     let rideTitle: String?
     let disconnect: () -> Void
     let pair: (MockupPickerRow) -> Void
+    let selectScreen: (MockupScreenID) -> Void
 
     var body: some View {
         switch screen.id {
@@ -102,6 +104,10 @@ private struct MockupScreenContainer: View {
             VescOnewheelRideMockupView(screen: screen)
         case .vescDebug:
             VescDebugMockupView(screen: screen)
+        case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
+            BmsMockupView(screen: screen, selectScreen: selectScreen)
+        default:
+            GenericMockupView(screen: screen, liveSpeed: liveSpeed)
         }
     }
 }
@@ -1452,6 +1458,1171 @@ private func decimalString(_ value: Double, fractionDigits: Int) -> String {
     String(format: "%.\(fractionDigits)f", value)
 }
 
+private struct GenericMockupView: View {
+    let screen: MockupScreen
+    let liveSpeed: String
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(screen.title)
+                    .font(.largeTitle.weight(.bold))
+                Text(screen.subtitle)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Text(screen.primaryValue)
+                    .font(.system(size: 58, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                Text(screen.secondaryValue)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if let warning = screen.warning {
+                    Text(warning)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.orange)
+                }
+
+                ForEach(screen.metrics, id: \.label) { metric in
+                    HStack {
+                        Text(metric.label).foregroundStyle(.secondary)
+                        Spacer()
+                        Text(metric.value).monospacedDigit()
+                    }
+                }
+
+                Divider()
+                HStack {
+                    Text("Live speed").foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(liveSpeed) mph").monospacedDigit()
+                }
+            }
+            .padding(24)
+        }
+        .background(Color.black)
+        .foregroundStyle(.white)
+    }
+}
+
+private struct BmsMockupView: View {
+    let screen: MockupScreen
+    let selectScreen: (MockupScreenID) -> Void
+
+    private var content: MockupBmsContent {
+        screen.bmsContent ?? MockupBmsContent(
+            kind: .unknownTopology,
+            snapshot: BmsSnapshot(
+                topology: BmsTopology(
+                    layoutLabel: "missing fixture",
+                    seriesGroupCount: nil,
+                    parallelCount: nil,
+                    packCount: 0,
+                    bmsCount: 0,
+                    confidence: .unverified
+                )
+            )
+        )
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let designWidth = min(proxy.size.width, 390)
+            let scale = min(1, designWidth / 390.0, proxy.size.height / 844.0)
+
+            Group {
+                if content.kind == .noData {
+                    BmsNoDataLayout(screen: screen, content: content, scale: scale)
+                } else {
+                    VStack(alignment: .leading, spacing: 14 * scale) {
+                        header(scale: scale)
+                        chipRow(scale: scale, contentWidth: designWidth - (46 * scale))
+                        contentSection(scale: scale)
+                        Spacer(minLength: 0)
+                        bottomTabs(scale: scale)
+                    }
+                    .padding(.horizontal, 23 * scale)
+                    .padding(.top, 31 * scale)
+                    .padding(.bottom, 18 * scale)
+                }
+            }
+            .frame(width: designWidth, height: proxy.size.height, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(MockupColors.pageBackground)
+            .foregroundStyle(MockupColors.primaryText)
+        }
+    }
+
+    @ViewBuilder
+    private func contentSection(scale: CGFloat) -> some View {
+        switch content.kind {
+        case .overview:
+            BmsOverviewLayout(content: content, scale: scale)
+        case .cellMapInline:
+            BmsInlineLayout(content: content, scale: scale)
+        case .cellMapScrollable:
+            BmsScrollableLayout(content: content, scale: scale)
+        case .cellDetail:
+            BmsDetailLayout(content: content, scale: scale)
+        case .unknownTopology:
+            BmsUnknownLayout(content: content, scale: scale)
+        case .noData:
+            EmptyView()
+        }
+    }
+
+    private func header(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 2 * scale) {
+            Text("CutOut · BMS")
+                .font(.system(size: 15 * scale, weight: .medium))
+                .foregroundStyle(MockupColors.muted)
+            Text(screen.title)
+                .font(.system(size: 32 * scale, weight: .black))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+        }
+    }
+
+    private func chipRow(scale: CGFloat, contentWidth: CGFloat) -> some View {
+        let chipWidths: [CGFloat?]
+        if content.chips.count == 3 {
+            let availableWidth = max(contentWidth - (20 * scale), 0)
+            chipWidths = [availableWidth * 0.38, availableWidth * 0.22, availableWidth * 0.40]
+        } else {
+            chipWidths = Array(repeating: nil, count: content.chips.count)
+        }
+
+        return HStack(spacing: 10 * scale) {
+            ForEach(Array(content.chips.enumerated()), id: \.element.id) { index, chip in
+                BmsChip(
+                    title: chip.title,
+                    accent: chip.accent,
+                    scale: scale,
+                    maxWidth: chipWidths[index]
+                )
+            }
+        }
+    }
+
+    private func bottomTabs(scale: CGFloat) -> some View {
+        HStack {
+            BmsBottomTab(title: "Ride", isSelected: false, scale: scale) {
+                selectScreen(.eucRide)
+            }
+            Spacer()
+            BmsBottomTab(title: "Pack", isSelected: false, scale: scale) {
+                selectScreen(.bmsOverview)
+            }
+            Spacer()
+            BmsBottomTab(
+                title: "Cells",
+                isSelected: true,
+                scale: scale
+            ) {
+                selectScreen(.bmsCellMap40S)
+            }
+            Spacer()
+            BmsBottomTab(title: "Faults", isSelected: false, scale: scale) {
+                selectScreen(.bmsUnknownTopology)
+            }
+        }
+        .padding(.horizontal, 18 * scale)
+    }
+}
+
+private struct BmsOverviewLayout: View {
+    let content: MockupBmsContent
+    let scale: CGFloat
+
+    private var snapshot: BmsSnapshot { content.snapshot }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14 * scale) {
+            BmsHeroCard(
+                eyebrow: "usable energy",
+                title: percentText(snapshot.energyPercent),
+                trailing: "sag adjusted",
+                detail: "15.8 mi confident · 21.4 mi gentle",
+                accent: .yellow,
+                scale: scale
+            )
+
+            HStack(spacing: 14 * scale) {
+                BmsMetricCard(
+                    title: "pack voltage",
+                    value: voltageText(snapshot.voltage),
+                    unit: "V",
+                    detail: "4.08 V avg",
+                    accent: .green,
+                    scale: scale
+                )
+                BmsMetricCard(
+                    title: "cell delta",
+                    value: millivoltsText(snapshot.cellDeltaMillivolts),
+                    unit: "mV",
+                    detail: "balanced enough",
+                    accent: .green,
+                    scale: scale
+                )
+            }
+
+            HStack(spacing: 14 * scale) {
+                BmsMetricCard(
+                    title: "lowest group",
+                    value: groupVoltageText(snapshot, index: snapshot.lowestGroupIndex),
+                    unit: "V",
+                    detail: "group 17",
+                    accent: .orange,
+                    scale: scale
+                )
+                BmsMetricCard(
+                    title: "highest temp",
+                    value: temperatureText(snapshot.highestTemperature),
+                    unit: "°C",
+                    detail: snapshot.highestTemperatureLabel ?? "",
+                    accent: .green,
+                    scale: scale
+                )
+            }
+
+            BmsWideCard(
+                title: "balancing",
+                value: snapshot.balancingSummary ?? "--",
+                detail: snapshot.balancingDetail ?? "",
+                accent: .orange,
+                border: .normal,
+                scale: scale
+            )
+
+            BmsWideCard(
+                title: "fault state",
+                value: snapshot.faultSummary ?? "--",
+                detail: snapshot.faultDetail ?? "",
+                accent: .orange,
+                border: .critical,
+                scale: scale
+            )
+        }
+    }
+}
+
+private struct BmsInlineLayout: View {
+    let content: MockupBmsContent
+    let scale: CGFloat
+
+    private var snapshot: BmsSnapshot { content.snapshot }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16 * scale) {
+            BmsWideCard(
+                title: "topology fits inline",
+                value: "no scrolling needed",
+                detail: "show every group with readable numbers",
+                accent: .green,
+                border: .normal,
+                scale: scale
+            )
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12 * scale), count: 3), spacing: 14 * scale) {
+                ForEach(snapshot.groups) { group in
+                    BmsGroupCell(
+                        group: group,
+                        isHighlighted: content.highlightedGroupIndices.contains(group.index),
+                        isSelected: false,
+                        scale: scale
+                    )
+                }
+            }
+
+            BmsWideCard(
+                title: "range of interest",
+                value: "12 mV spread",
+                detail: "tiny packs can expose exact state immediately",
+                accent: .cyan,
+                border: .normal,
+                scale: scale
+            )
+
+            VStack(alignment: .leading, spacing: 14 * scale) {
+                Text("controls")
+                    .font(.system(size: 15 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                HStack(spacing: 10 * scale) {
+                    ForEach(content.modeTitles, id: \.self) { title in
+                        BmsModeChip(title: title, isSelected: title == content.modeTitles.first, scale: scale)
+                    }
+                }
+                Text("tap a cell for history, IR estimate, and BMS raw fields")
+                    .font(.system(size: 13 * scale, weight: .semibold))
+                    .foregroundStyle(MockupColors.muted)
+            }
+            .padding(.horizontal, 18 * scale)
+            .padding(.vertical, 18 * scale)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(BmsCardBackground(cornerRadius: 24 * scale))
+        }
+    }
+}
+
+private struct BmsScrollableLayout: View {
+    let content: MockupBmsContent
+    let scale: CGFloat
+
+    private var snapshot: BmsSnapshot { content.snapshot }
+
+    private let columns = Array(repeating: GridItem(.fixed(31), spacing: 5), count: 10)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16 * scale) {
+            BmsWideCard(
+                title: "large packs use grouped overview first",
+                value: "tap / horizontal-scroll for exact cells",
+                detail: nil,
+                accent: .cyan,
+                border: .normal,
+                scale: scale
+            )
+
+            LazyVGrid(columns: columns, spacing: 8 * scale) {
+                ForEach(snapshot.groups) { group in
+                    BmsStripCell(
+                        group: group,
+                        isHighlighted: content.highlightedGroupIndices.contains(group.index),
+                        scale: scale
+                    )
+                }
+            }
+
+            BmsWideCard(
+                title: "interesting groups",
+                value: "17–19 sagging under load",
+                detail: "31 has temp sensor mismatch",
+                accent: .orange,
+                border: .warning,
+                scale: scale
+            )
+
+            VStack(alignment: .leading, spacing: 10 * scale) {
+                Text("display modes")
+                    .font(.system(size: 15 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                Text(content.modeTitles.joined(separator: " • "))
+                    .font(.system(size: 19 * scale, weight: .black))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                Text("Rule: never render 40+ cells as a tiny unreadable grid.")
+                    .font(.system(size: 13 * scale, weight: .semibold))
+                    .foregroundStyle(MockupColors.muted)
+                Text("Show anomalies first, raw table second.")
+                    .font(.system(size: 13 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.yellow)
+            }
+            .padding(.horizontal, 18 * scale)
+            .padding(.vertical, 18 * scale)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(BmsCardBackground(cornerRadius: 24 * scale))
+        }
+    }
+}
+
+private struct BmsDetailLayout: View {
+    let content: MockupBmsContent
+    let scale: CGFloat
+
+    private var snapshot: BmsSnapshot { content.snapshot }
+    private var selectedGroup: BmsGroupSnapshot? {
+        snapshot.groups.first { $0.index == content.selectedGroupIndex }
+    }
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 5)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12 * scale) {
+            LazyVGrid(columns: columns, spacing: 10 * scale) {
+                ForEach(snapshot.groups) { group in
+                    BmsGroupIndexCell(
+                        group: group,
+                        isSelected: group.index == content.selectedGroupIndex,
+                        scale: scale
+                    )
+                }
+            }
+
+            if let selectedGroup {
+                VStack(alignment: .leading, spacing: 15 * scale) {
+                    Text("group \(selectedGroup.index)")
+                        .font(.system(size: 15 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                    Text(groupVoltageText(selectedGroup))
+                        .font(.system(size: 58 * scale, weight: .black))
+                        .monospacedDigit()
+                    Text("lowest group · 18 mV below pack avg")
+                        .font(.system(size: 14 * scale, weight: .black))
+                        .foregroundStyle(MockupColors.orange)
+
+                    HStack(spacing: 14 * scale) {
+                        BmsMetricCard(
+                            title: "temp",
+                            value: temperatureText(selectedGroup.temperature),
+                            unit: "°C",
+                            detail: "",
+                            accent: .green,
+                            scale: scale
+                        )
+                        BmsMetricCard(
+                            title: "IR est.",
+                            value: selectedGroup.resistanceMilliohms.map(String.init) ?? "--",
+                            unit: "mΩ",
+                            detail: "",
+                            accent: .green,
+                            scale: scale
+                        )
+                    }
+
+                    BmsWideCard(
+                        title: nil,
+                        value: "trend: \(selectedGroup.detail ?? "not enough history")",
+                        detail: "actions: mark, compare neighbors, export raw sample",
+                        accent: .yellow,
+                        border: .normal,
+                        scale: scale
+                    )
+                }
+                .padding(.horizontal, 18 * scale)
+                .padding(.vertical, 20 * scale)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(BmsOutlinedCardBackground(cornerRadius: 34 * scale, stroke: MockupColors.yellow))
+            }
+        }
+    }
+}
+
+private struct BmsUnknownLayout: View {
+    let content: MockupBmsContent
+    let scale: CGFloat
+
+    private var snapshot: BmsSnapshot { content.snapshot }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16 * scale) {
+            BmsWideCard(
+                title: "do not pretend certainty",
+                value: snapshot.faultSummary ?? "--",
+                detail: snapshot.faultDetail ?? "",
+                accent: .orange,
+                border: .warning,
+                scale: scale
+            )
+
+            HStack(spacing: 14 * scale) {
+                BmsMetricCard(
+                    title: "reported voltage",
+                    value: voltageText(snapshot.voltage),
+                    unit: "V",
+                    detail: "source: BMS",
+                    accent: .yellow,
+                    scale: scale
+                )
+                BmsMetricCard(
+                    title: "cell count",
+                    value: "?",
+                    unit: "",
+                    detail: "advertised 18–24S?",
+                    accent: .orange,
+                    scale: scale
+                )
+            }
+
+            HStack(spacing: 14 * scale) {
+                BmsMetricCard(
+                    title: "temps",
+                    value: "3",
+                    unit: "sensors",
+                    detail: "names unknown",
+                    accent: .green,
+                    scale: scale
+                )
+                BmsMetricCard(
+                    title: "fault bits",
+                    value: snapshot.faults.first?.code ?? "--",
+                    unit: "",
+                    detail: snapshot.faults.first?.label ?? "",
+                    accent: .orange,
+                    scale: scale
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 10 * scale) {
+                Text("next capture flow")
+                    .font(.system(size: 15 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                Text(snapshot.captureActionTitle ?? "--")
+                    .font(.system(size: 25 * scale, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.84)
+                Text("capture BLE services, characteristic samples, vendor strings")
+                    .font(.system(size: 13 * scale, weight: .semibold))
+                    .foregroundStyle(MockupColors.muted)
+                Text(snapshot.captureActionState ?? "")
+                    .font(.system(size: 15 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.primaryText.opacity(0.82))
+                    .padding(.horizontal, 18 * scale)
+                    .frame(height: 34 * scale)
+                    .background(Capsule().fill(MockupColors.muted.opacity(0.33)))
+            }
+            .padding(.horizontal, 18 * scale)
+            .padding(.vertical, 18 * scale)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(BmsCardBackground(cornerRadius: 24 * scale))
+        }
+    }
+}
+
+private struct BmsNoDataLayout: View {
+    let screen: MockupScreen
+    let content: MockupBmsContent
+    let scale: CGFloat
+
+    private var snapshot: BmsSnapshot { content.snapshot }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14 * scale) {
+            header
+
+            warningCard
+
+            packEstimateCard
+
+            telemetryCard
+
+            unknownsCard
+
+            ridingRuleCard
+        }
+        .padding(.horizontal, 24 * scale)
+        .padding(.top, 44 * scale)
+        .padding(.bottom, 20 * scale)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(MockupColors.pageBackground)
+        .foregroundStyle(MockupColors.primaryText)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6 * scale) {
+                Text(screen.title)
+                    .font(.system(size: 24 * scale, weight: .bold))
+                Text(screen.subtitle)
+                    .font(.system(size: 11 * scale, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .foregroundStyle(MockupColors.muted)
+            }
+
+            Spacer(minLength: 12 * scale)
+
+            HStack(spacing: 10 * scale) {
+                Circle()
+                    .fill(MockupColors.yellow)
+                    .frame(width: 10 * scale, height: 10 * scale)
+                Text("limited data")
+                    .font(.system(size: 11 * scale, weight: .medium))
+                    .foregroundStyle(MockupColors.primaryText.opacity(0.92))
+            }
+            .padding(.horizontal, 12 * scale)
+            .frame(height: 30 * scale)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(MockupColors.cardFill)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(MockupColors.cardStroke, lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    private var warningCard: some View {
+        VStack(alignment: .leading, spacing: 8 * scale) {
+            HStack(spacing: 14 * scale) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 28 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.yellow)
+                    .frame(width: 28 * scale, height: 28 * scale)
+
+                Text("No cell-level BMS data")
+                    .font(.system(size: 15 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.yellow)
+            }
+            Text("CutOut can’t see cell balance, weak groups,")
+                .font(.system(size: 14 * scale, weight: .medium))
+                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("BMS faults, or pack temperature from this wheel.")
+                .font(.system(size: 14 * scale, weight: .medium))
+                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 18 * scale)
+        .padding(.vertical, 16 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22 * scale, style: .continuous)
+                .fill(Color(red: 0.145, green: 0.094, blue: 0.102))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22 * scale, style: .continuous)
+                        .stroke(Color(red: 0.318, green: 0.188, blue: 0.208), lineWidth: 1.2)
+                )
+        )
+    }
+
+    private var packEstimateCard: some View {
+        HStack(alignment: .top, spacing: 14 * scale) {
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                cardLabel("PACK ESTIMATE")
+                HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
+                    Text("71")
+                        .font(.system(size: 64 * scale, weight: .black))
+                        .monospacedDigit()
+                    Text("%")
+                        .font(.system(size: 18 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                }
+                Text("derived from voltage curve + recent sag")
+                    .font(.system(size: 10 * scale, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .foregroundStyle(MockupColors.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                cardLabel("CONFIDENCE")
+                Text("medium")
+                    .font(.system(size: 22 * scale, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text("not cell-safe")
+                    .font(.system(size: 11 * scale, weight: .medium))
+                    .foregroundStyle(MockupColors.muted)
+            }
+            .padding(.horizontal, 10 * scale)
+            .padding(.vertical, 14 * scale)
+            .frame(width: 112 * scale, alignment: .leading)
+            .background(dashedCard(cornerRadius: 18 * scale))
+        }
+        .padding(.horizontal, 20 * scale)
+        .padding(.vertical, 18 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BmsCardBackground(cornerRadius: 28 * scale))
+    }
+
+    private var telemetryCard: some View {
+        VStack(alignment: .leading, spacing: 14 * scale) {
+            cardLabel("WHAT WE CAN SEE")
+            HStack(alignment: .top, spacing: 18 * scale) {
+                noDataMetric(value: "117.6", unit: "V", label: "pack voltage")
+                noDataMetric(value: "4.8", unit: "V", label: "ride sag")
+                noDataMetric(value: "38", unit: "A", label: "load now")
+            }
+        }
+        .padding(.horizontal, 20 * scale)
+        .padding(.vertical, 18 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BmsCardBackground(cornerRadius: 24 * scale))
+    }
+
+    private var unknownsCard: some View {
+        VStack(alignment: .leading, spacing: 10 * scale) {
+            cardLabel("WHAT IS UNKNOWN")
+            noDataUnknownRow("individual cell/group voltages")
+            noDataUnknownRow("cell balance / weak parallel group")
+            noDataUnknownRow("BMS temperature, faults, and cutout reason")
+        }
+        .padding(.horizontal, 20 * scale)
+        .padding(.vertical, 18 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BmsCardBackground(cornerRadius: 24 * scale))
+    }
+
+    private var ridingRuleCard: some View {
+        VStack(alignment: .leading, spacing: 10 * scale) {
+            cardLabel("RIDING RULE")
+            Text(snapshot.captureActionTitle ?? "--")
+                .font(.system(size: 13 * scale, weight: .medium))
+                .lineLimit(2)
+                .minimumScaleFactor(0.84)
+                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
+            Capsule()
+                .fill(MockupColors.cardStroke)
+                .frame(height: 6 * scale)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [MockupColors.yellow, MockupColors.orange],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: 186 * scale)
+                }
+        }
+        .padding(.horizontal, 20 * scale)
+        .padding(.vertical, 18 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BmsCardBackground(cornerRadius: 24 * scale))
+    }
+
+    private func cardLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12 * scale, weight: .bold))
+            .foregroundStyle(MockupColors.muted)
+    }
+
+    private func noDataMetric(value: String, unit: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 6 * scale) {
+            HStack(alignment: .firstTextBaseline, spacing: 3 * scale) {
+                Text(value)
+                    .font(.system(size: 24 * scale, weight: .black))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(unit)
+                    .font(.system(size: 18 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+            }
+            Text(label)
+                .font(.system(size: 12 * scale, weight: .medium))
+                .foregroundStyle(MockupColors.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func noDataUnknownRow(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 14 * scale, weight: .medium))
+            .foregroundStyle(MockupColors.primaryText.opacity(0.92))
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .padding(.horizontal, 12 * scale)
+            .frame(maxWidth: .infinity, minHeight: 30 * scale, alignment: .leading)
+            .background(dashedCard(cornerRadius: 10 * scale))
+    }
+
+    private func dashedCard(cornerRadius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(MockupColors.cardFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5 * scale, 5 * scale]))
+                    .foregroundStyle(MockupColors.cardStroke)
+            )
+    }
+}
+
+private struct BmsChip: View {
+    let title: String
+    let accent: MockupAccent
+    let scale: CGFloat
+    let maxWidth: CGFloat?
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 15 * scale, weight: .bold))
+            .foregroundStyle(.black.opacity(accent == .green ? 0.82 : 0.92))
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.horizontal, 16 * scale)
+            .frame(maxWidth: maxWidth, minHeight: 30 * scale)
+            .background(chipBackground)
+    }
+
+    @ViewBuilder
+    private var chipBackground: some View {
+        if #available(iOS 26, macOS 26, *) {
+            Capsule()
+                .fill(accent.color)
+                .glassEffect(.regular.tint(accent.color.opacity(0.78)), in: .capsule)
+        } else {
+            Capsule().fill(accent.color)
+        }
+    }
+}
+
+private struct BmsBottomTab: View {
+    let title: String
+    let isSelected: Bool
+    let scale: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 7 * scale) {
+                Text(title)
+                    .font(.system(size: 15 * scale, weight: isSelected ? .black : .medium))
+                    .foregroundStyle(isSelected ? MockupColors.yellow : MockupColors.muted)
+                Capsule()
+                    .fill(isSelected ? MockupColors.yellow : Color.clear)
+                    .frame(width: 24 * scale, height: 3 * scale)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct BmsHeroCard: View {
+    let eyebrow: String
+    let title: String
+    let trailing: String
+    let detail: String
+    let accent: MockupAccent
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2 * scale) {
+            Text(eyebrow)
+                .font(.system(size: 14 * scale, weight: .bold))
+                .foregroundStyle(MockupColors.muted)
+            HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
+                Text(title)
+                    .font(.system(size: 58 * scale, weight: .black))
+                    .monospacedDigit()
+                Text(trailing)
+                    .font(.system(size: 15 * scale, weight: .black))
+                    .foregroundStyle(accent.color)
+            }
+            Text(detail)
+                .font(.system(size: 13 * scale, weight: .bold))
+                .foregroundStyle(MockupColors.muted)
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(MockupColors.cardStroke)
+                    Capsule()
+                        .fill(accent.color)
+                        .frame(width: proxy.size.width * 0.72)
+                }
+            }
+            .frame(height: 12 * scale)
+        }
+        .padding(.horizontal, 18 * scale)
+        .padding(.vertical, 16 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BmsCardBackground(cornerRadius: 24 * scale))
+    }
+}
+
+private struct BmsMetricCard: View {
+    let title: String
+    let value: String
+    let unit: String
+    let detail: String
+    let accent: MockupAccent
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5 * scale) {
+            Text(title)
+                .font(.system(size: 14 * scale, weight: .bold))
+                .foregroundStyle(MockupColors.muted)
+            HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
+                Text(value)
+                    .font(.system(size: 25 * scale, weight: .black))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                if !unit.isEmpty {
+                    Text(unit)
+                        .font(.system(size: 13 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                }
+            }
+            if !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 13 * scale, weight: .black))
+                    .foregroundStyle(accent.color)
+            }
+        }
+        .padding(.horizontal, 16 * scale)
+        .padding(.vertical, 16 * scale)
+        .frame(maxWidth: .infinity, minHeight: 106 * scale, alignment: .topLeading)
+        .background(BmsCardBackground(cornerRadius: 20 * scale))
+    }
+}
+
+private struct BmsWideCard: View {
+    let title: String?
+    let value: String
+    let detail: String?
+    let accent: MockupAccent
+    let border: BmsCardBorder
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7 * scale) {
+            if let title {
+                Text(title)
+                    .font(.system(size: 14 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+            }
+            Text(value)
+                .font(.system(size: 25 * scale, weight: .black))
+                .lineLimit(2)
+                .minimumScaleFactor(0.74)
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 13 * scale, weight: .black))
+                    .foregroundStyle(accent.color)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.72)
+            }
+        }
+        .padding(.horizontal, 18 * scale)
+        .padding(.vertical, 18 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BmsOutlinedCardBackground(cornerRadius: 24 * scale, stroke: border.strokeColor))
+    }
+}
+
+private struct BmsGroupCell: View {
+    let group: BmsGroupSnapshot
+    let isHighlighted: Bool
+    let isSelected: Bool
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(spacing: 8 * scale) {
+            Text("\(group.index)")
+                .font(.system(size: 14 * scale, weight: .medium))
+                .foregroundStyle(MockupColors.muted)
+            Text(groupVoltageText(group))
+                .font(.system(size: 20 * scale, weight: .black))
+                .monospacedDigit()
+                .minimumScaleFactor(0.84)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 70 * scale)
+        .background(BmsOutlinedCardBackground(cornerRadius: 10 * scale, stroke: strokeColor))
+    }
+
+    private var strokeColor: Color {
+        if isSelected {
+            return MockupColors.yellow
+        }
+        if isHighlighted {
+            return MockupColors.orange
+        }
+        return MockupColors.green
+    }
+}
+
+private struct BmsStripCell: View {
+    let group: BmsGroupSnapshot
+    let isHighlighted: Bool
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(spacing: 2 * scale) {
+            Text(String(format: "%02d", group.index))
+                .font(.system(size: 8 * scale, weight: .medium))
+                .foregroundStyle(MockupColors.muted)
+            Text(groupVoltageText(group))
+                .font(.system(size: 9 * scale, weight: .black))
+                .monospacedDigit()
+                .minimumScaleFactor(0.7)
+        }
+        .frame(width: 31 * scale, height: 44 * scale)
+        .background(BmsOutlinedCardBackground(cornerRadius: 8 * scale, stroke: strokeColor))
+    }
+
+    private var strokeColor: Color {
+        switch group.alertLevel {
+        case .critical:
+            MockupColors.warningStroke
+        case .warning:
+            MockupColors.orange
+        case .nominal, .unknown:
+            isHighlighted ? MockupColors.orange : MockupColors.green
+        }
+    }
+}
+
+private struct BmsGroupIndexCell: View {
+    let group: BmsGroupSnapshot
+    let isSelected: Bool
+    let scale: CGFloat
+
+    var body: some View {
+        Text("\(group.index)")
+            .font(.system(size: 14 * scale, weight: .medium))
+            .foregroundStyle(MockupColors.muted)
+            .frame(maxWidth: .infinity)
+            .frame(height: 34 * scale)
+            .background(BmsOutlinedCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? MockupColors.orange : MockupColors.green))
+    }
+}
+
+private struct BmsModeChip: View {
+    let title: String
+    let isSelected: Bool
+    let scale: CGFloat
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 15 * scale, weight: .bold))
+            .foregroundStyle(isSelected ? .black : MockupColors.primaryText)
+            .padding(.horizontal, 16 * scale)
+            .frame(height: 32 * scale)
+            .background(Capsule().fill(isSelected ? MockupColors.yellow : MockupColors.iconFill))
+    }
+}
+
+private struct BmsCardBackground: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(MockupColors.cardFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(MockupColors.cardStroke, lineWidth: 1)
+            )
+    }
+}
+
+private struct BmsOutlinedCardBackground: View {
+    let cornerRadius: CGFloat
+    let stroke: Color
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(MockupColors.cardFill)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(stroke, lineWidth: 1.2)
+            )
+    }
+}
+
+private enum BmsCardBorder {
+    case normal
+    case warning
+    case critical
+
+    var strokeColor: Color {
+        switch self {
+        case .normal:
+            MockupColors.cardStroke
+        case .warning:
+            MockupColors.orange
+        case .critical:
+            Color(red: 0.92, green: 0.33, blue: 0.35)
+        }
+    }
+}
+
+private func percentText(_ reading: TelemetryReading<UInt8>?) -> String {
+    guard let reading else { return "--" }
+    return "\(reading.value)%"
+}
+
+private func voltageText(_ reading: TelemetryReading<Int32>?) -> String {
+    reading.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
+private func millivoltsText(_ reading: TelemetryReading<Int32>?) -> String {
+    reading.map { String($0.value) } ?? "--"
+}
+
+private func temperatureText(_ reading: TelemetryReading<Int32>?) -> String {
+    reading.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
+private func groupVoltageText(_ snapshot: BmsSnapshot, index: Int?) -> String {
+    guard let index else { return "--" }
+    return groupVoltageText(snapshot.groups.first { $0.index == index })
+}
+
+private func groupVoltageText(_ group: BmsGroupSnapshot?) -> String {
+    guard let value = group?.voltage?.value else { return "--" }
+    return String(format: "%.3f", Double(value) / 1_000.0)
+}
+
+private extension MockupPickerRow {
+    var glyphColor: Color {
+        switch title {
+        case "NINEBOT-7A31":
+            MockupColors.teal
+        case "HX Hoverboard":
+            MockupColors.brown
+        default:
+            MockupColors.yellow
+        }
+    }
+
+    var glyphBackground: Color {
+        glyphColor.opacity(isSupported ? 0.12 : 0.16)
+    }
+
+    var titleColor: Color {
+        isSupported ? MockupColors.primaryText : MockupColors.disabledText
+    }
+
+    var secondaryTextColor: Color {
+        isSupported ? MockupColors.muted : MockupColors.disabledSecondaryText
+    }
+}
+
+enum MockupColors {
+    static let pageBackground = Color(red: 0.027, green: 0.031, blue: 0.043)
+    static let cardFill = Color(red: 0.067, green: 0.078, blue: 0.106)
+    static let cardStroke = Color(red: 0.165, green: 0.188, blue: 0.239)
+    static let disabledFill = Color(red: 0.067, green: 0.078, blue: 0.106)
+    static let primaryText = Color(red: 0.969, green: 0.953, blue: 0.918)
+    static let disabledText = Color(red: 0.455, green: 0.475, blue: 0.514)
+    static let disabledSecondaryText = Color(red: 0.36, green: 0.38, blue: 0.42)
+    static let muted = Color(red: 0.561, green: 0.596, blue: 0.659)
+    static let yellow = Color(red: 1.0, green: 0.827, blue: 0.302)
+    static let cyan = Color(red: 0.278, green: 0.824, blue: 0.933)
+    static let green = Color(red: 0.376, green: 0.906, blue: 0.553)
+    static let orange = Color(red: 1.0, green: 0.486, blue: 0.188)
+    static let warningText = Color(red: 1.0, green: 0.667, blue: 0.345)
+    static let warningFill = Color(red: 0.173, green: 0.087, blue: 0.040)
+    static let warningStroke = Color(red: 0.443, green: 0.216, blue: 0.102)
+    static let teal = Color(red: 0.180, green: 0.384, blue: 0.459)
+    static let brown = Color(red: 0.443, green: 0.259, blue: 0.141)
+    static let purple = Color(red: 0.635, green: 0.459, blue: 0.918)
+    static let iconFill = Color(red: 0.043, green: 0.051, blue: 0.071)
+}
+
+extension MockupAccent {
+    var color: Color {
+        switch self {
+        case .cyan:
+            MockupColors.cyan
+        case .green:
+            MockupColors.green
+        case .orange:
+            MockupColors.orange
+        case .yellow:
+            MockupColors.yellow
+        }
+    }
+}
+
+private extension MockupPickerRowState {
+    var actionTitle: String {
+        switch self {
+        case .supported(let action), .unsupported(let action), .manual(let action):
+            action
+        }
+    }
+
+    var isSupported: Bool {
+        if case .supported = self { true } else { false }
+    }
+}
 
 private extension MockupScreen {
     var displaySubtitle: String {
@@ -1464,6 +2635,12 @@ private extension MockupScreen {
             "Picker"
         case .eucRide:
             "EUC"
+        case .bmsOverview:
+            "BMS"
+        case .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsNoData:
+            "Cells"
+        case .bmsUnknownTopology:
+            "Faults"
         case .eucGarage:
             "Pack"
         case .vescOnewheelRide:

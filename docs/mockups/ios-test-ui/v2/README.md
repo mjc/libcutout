@@ -6,9 +6,13 @@ not final visual design.
 ## Source
 
 - Original archive: `source/cutout-screen-mockups-v2.zip`
+- BMS archive: `source/cutout-bms-mockups.zip`
 - Extracted assets and source spec: `screens/`
 - Spec file: `screens/cutout-screen-mockups-spec-v2.md`
 - Combined sheet: `screens/cutout-screen-mockups-v2-sheet.png`
+- BMS assets and source spec: `bms/`
+- BMS spec file: `bms/cutout-bms-mockups-spec.md`
+- BMS combined sheet: `bms/cutout-bms-mockups-sheet.png`
 
 The mockups were supplied as project input and stored here so the app, fixture,
 and tracker work can reference stable repo paths.
@@ -24,6 +28,18 @@ and tracker work can reference stable repo paths.
 | `cutout-04-vesc-onewheel-debug.png` | 390x844 | `LIBCU-422` |
 | `cutout-screen-mockups-v2-sheet.png` | 2118x956 | `LIBCU-417` |
 
+## BMS Screens
+
+| Screen | PNG size | Tracker epic |
+| --- | ---: | --- |
+| `cutout-05-bms-overview.png` | 390x844 | `LIBCU-440` |
+| `cutout-06-bms-cell-map-6s.png` | 390x844 | `LIBCU-441` |
+| `cutout-07-bms-cell-map-40s.png` | 390x844 | `LIBCU-442` |
+| `cutout-08-bms-cell-detail-popover.png` | 390x844 | `LIBCU-443` |
+| `cutout-09-bms-unknown-topology.png` | 390x844 | `LIBCU-444` |
+| `cutout-10-dumb-bms-no-data.svg` | SVG | supplemental mockup, tracker follow-up needed |
+| `cutout-bms-mockups-sheet.png` | 1468x663 | `LIBCU-438` |
+
 ## Tracker Map
 
 - Parent screen-set epic: `LIBCU-417`
@@ -33,6 +49,8 @@ and tracker work can reference stable repo paths.
 - Typed EUC pack health/settings readback contract: `LIBCU-414`
 - Typed VESC Onewheel ride dashboard contract: `LIBCU-415`
 - Typed VESC debug/config/logging contract: `LIBCU-416`
+- Parent BMS screen-set epic: `LIBCU-438`
+- Typed BMS topology and per-group readback contract: `LIBCU-439`
 
 The screen epics intentionally link each visible datum back to the Rust,
 mobile FFI, and Swift API work needed to make the UI hard to misuse. Mockup-only
