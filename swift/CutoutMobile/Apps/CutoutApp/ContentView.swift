@@ -4,10 +4,10 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var model: LiveRideModel
-    @State private var selectedScreenID: MockupScreenID
-    @State private var pairedDestinationScreenID: MockupScreenID?
+    @State private var selectedScreenID: PreviewScreenID
+    @State private var pairedDestinationScreenID: PreviewScreenID?
 
-    private let catalog = MockupScreenCatalog.v2
+    private let catalog = PreviewScreenCatalog.v2
 
     init(model: LiveRideModel) {
         self.model = model
@@ -16,12 +16,12 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            MockupColors.pageBackground
+            PreviewColors.pageBackground
                 .ignoresSafeArea()
 
             TabView(selection: $selectedScreenID) {
                 ForEach(catalog.screens) { screen in
-                    MockupScreenContainer(
+                    PreviewScreenContainer(
                         screen: screen,
                         devicePickerScanState: model.devicePickerScanState,
                         rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
@@ -44,13 +44,13 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MockupColors.pageBackground.ignoresSafeArea())
+        .background(PreviewColors.pageBackground.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
             openRideScreen(ifNeededFor: phase)
         }
     }
 
-    private func pair(_ row: MockupPickerRow) {
+    private func pair(_ row: PreviewPickerRow) {
         guard model.pair(platformIdentifier: row.id) else { return }
         guard let screenID = Self.destinationScreenID(for: row) else { return }
         pairedDestinationScreenID = screenID
@@ -62,66 +62,66 @@ struct ContentView: View {
         selectedScreenID = pairedDestinationScreenID ?? .eucRide
     }
 
-    private static func initialScreenID() -> MockupScreenID {
+    private static func initialScreenID() -> PreviewScreenID {
         let arguments = CommandLine.arguments
-        if let index = arguments.firstIndex(of: "--mockup-screen"),
+        if let index = arguments.firstIndex(of: "--preview-screen"),
            arguments.indices.contains(index + 1),
-           let id = MockupScreenID(rawValue: arguments[index + 1]) {
+           let id = PreviewScreenID(rawValue: arguments[index + 1]) {
             return id
         }
 
         if let value = ProcessInfo.processInfo.environment["CUTOUT_MOCKUP_SCREEN"],
-           let id = MockupScreenID(rawValue: value) {
+           let id = PreviewScreenID(rawValue: value) {
             return id
         }
 
         return .devicePicker
     }
 
-    private static func destinationScreenID(for row: MockupPickerRow) -> MockupScreenID? {
+    private static func destinationScreenID(for row: PreviewPickerRow) -> PreviewScreenID? {
         row.connectionRoute?.destinationScreenID
     }
 }
 
-private struct MockupScreenContainer: View {
-    let screen: MockupScreen
+private struct PreviewScreenContainer: View {
+    let screen: PreviewScreen
     let devicePickerScanState: DevicePickerScanState?
     let rideState: EucRideScreenState?
     let rideTitle: String?
     let disconnect: () -> Void
-    let pair: (MockupPickerRow) -> Void
-    let selectScreen: (MockupScreenID) -> Void
+    let pair: (PreviewPickerRow) -> Void
+    let selectScreen: (PreviewScreenID) -> Void
 
     var body: some View {
         switch screen.id {
         case .devicePicker:
-            DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
+            DevicePickerPreviewView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
-            EucRideMockupView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
+            EucRidePreviewView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
-            BmsMockupView(screen: screen, selectScreen: selectScreen)
+            BmsPreviewView(screen: screen, selectScreen: selectScreen)
         case .eucGarage:
-            EucGarageMockupView(screen: screen)
+            EucGaragePreviewView(screen: screen)
         case .vescOnewheelRide:
-            VescOnewheelRideMockupView(screen: screen)
+            VescOnewheelRidePreviewView(screen: screen)
         case .vescDebug:
-            VescDebugMockupView(screen: screen)
+            VescDebugPreviewView(screen: screen)
         }
     }
 }
 
-private struct EucGarageMockupView: View {
-    let screen: MockupScreen
+private struct EucGaragePreviewView: View {
+    let screen: PreviewScreen
 
     var body: some View {
-        MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
+        PreviewScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
             VStack(alignment: .leading, spacing: 8 * scale) {
                 Text(screen.title)
                     .font(.system(size: 31 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                 Text(screen.subtitle)
                     .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -141,7 +141,7 @@ private struct EucGarageMockupView: View {
             if let summaryTitle = screen.summaryTitle {
                 Text(summaryTitle)
                     .font(.system(size: 18 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                     .padding(.top, 2 * scale)
             }
 
@@ -152,7 +152,7 @@ private struct EucGarageMockupView: View {
             if let faultCard = screen.faultCard {
                 Text(faultCard.title)
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                     .padding(.top, 12 * scale)
 
                 EucFaultStatusCard(card: faultCard, scale: scale)
@@ -161,7 +161,7 @@ private struct EucGarageMockupView: View {
     }
 }
 
-private struct MockupScreenScaffold<Content: View>: View {
+private struct PreviewScreenScaffold<Content: View>: View {
     let sectionTitle: String
     let bottomPadding: CGFloat
     let allowsVerticalScroll: Bool
@@ -207,14 +207,14 @@ private struct MockupScreenScaffold<Content: View>: View {
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-            .background(MockupColors.pageBackground)
-            .foregroundStyle(MockupColors.primaryText)
+            .background(PreviewColors.pageBackground)
+            .foregroundStyle(PreviewColors.primaryText)
         }
     }
 
     private func scaffoldContent(scale: CGFloat, columns: [GridItem], width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: contentSpacing * scale) {
-            MockupScreenHeader(sectionTitle: sectionTitle, scale: scale)
+            PreviewScreenHeader(sectionTitle: sectionTitle, scale: scale)
 
             content(scale, columns)
         }
@@ -224,7 +224,7 @@ private struct MockupScreenScaffold<Content: View>: View {
     }
 }
 
-private struct MockupScreenHeader: View {
+private struct PreviewScreenHeader: View {
     let sectionTitle: String
     let scale: CGFloat
 
@@ -232,18 +232,18 @@ private struct MockupScreenHeader: View {
         HStack(alignment: .firstTextBaseline) {
             Text("CutOut")
                 .font(.system(size: 18 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.yellow)
+                .foregroundStyle(PreviewColors.yellow)
             Spacer()
             Text(sectionTitle)
                 .font(.system(size: 15 * scale, weight: .semibold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
         }
         .padding(.top, 10 * scale)
     }
 }
 
 private struct EucDeviceStatusCard: View {
-    let card: MockupDeviceCard
+    let card: PreviewDeviceCard
     let scale: CGFloat
 
     var body: some View {
@@ -251,10 +251,10 @@ private struct EucDeviceStatusCard: View {
             VStack(alignment: .leading, spacing: 8 * scale) {
                 Text(card.title)
                     .font(.system(size: 22 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                 Text(card.detail)
                     .font(.system(size: 13 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.62)
             }
@@ -276,18 +276,18 @@ private struct EucDeviceStatusCard: View {
     }
 }
 
-private struct VescDebugMockupView: View {
-    let screen: MockupScreen
+private struct VescDebugPreviewView: View {
+    let screen: PreviewScreen
 
     var body: some View {
-        MockupScreenScaffold(sectionTitle: "VESC debug", bottomPadding: 20) { scale, columns in
+        PreviewScreenScaffold(sectionTitle: "VESC debug", bottomPadding: 20) { scale, columns in
             VStack(alignment: .leading, spacing: 8 * scale) {
                 Text(screen.title)
                     .font(.system(size: 29 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                 Text(screen.subtitle)
                     .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                     .lineLimit(2)
             }
 
@@ -306,7 +306,7 @@ private struct VescDebugMockupView: View {
             if let summaryTitle = screen.summaryTitle {
                 Text(summaryTitle)
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                     .padding(.top, 0)
             }
 
@@ -317,7 +317,7 @@ private struct VescDebugMockupView: View {
             if let guardrail = screen.faultCard {
                 Text(guardrail.title)
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                     .padding(.top, 6 * scale)
 
                 VescGuardrailCard(card: guardrail, scale: scale)
@@ -327,19 +327,19 @@ private struct VescDebugMockupView: View {
 }
 
 private struct VescProfileCard: View {
-    let card: MockupDeviceCard
+    let card: PreviewDeviceCard
     let scale: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8 * scale) {
             Text(card.title)
                 .font(.system(size: 22 * scale, weight: .black))
-                .foregroundStyle(MockupColors.primaryText)
+                .foregroundStyle(PreviewColors.primaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             Text(card.detail)
                 .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
         }
@@ -351,11 +351,11 @@ private struct VescProfileCard: View {
 }
 
 private struct VescGuardrailCard: View {
-    let card: MockupFaultCard
+    let card: PreviewFaultCard
     let scale: CGFloat
 
     var body: some View {
-        MockupFaultDetailCard(
+        PreviewFaultDetailCard(
             card: card,
             scale: scale,
             fontSize: 13,
@@ -368,15 +368,15 @@ private struct VescGuardrailCard: View {
     }
 }
 
-private struct VescOnewheelRideMockupView: View {
-    let screen: MockupScreen
+private struct VescOnewheelRidePreviewView: View {
+    let screen: PreviewScreen
 
     var body: some View {
-        MockupScreenScaffold(sectionTitle: "OW ride", bottomPadding: 20, allowsVerticalScroll: false) { scale, columns in
+        PreviewScreenScaffold(sectionTitle: "OW ride", bottomPadding: 20, allowsVerticalScroll: false) { scale, columns in
             HStack(alignment: .center, spacing: 12 * scale) {
                 Text(screen.title)
                     .font(.system(size: 18 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 Spacer(minLength: 8 * scale)
@@ -392,14 +392,14 @@ private struct VescOnewheelRideMockupView: View {
                         .minimumScaleFactor(0.75)
                     Text("mph")
                         .font(.system(size: 22 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PreviewColors.muted)
                 }
                 Text(screen.secondaryValue)
                     .font(.system(size: 13 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
             .frame(maxWidth: .infinity)
-            .foregroundStyle(MockupColors.primaryText)
+            .foregroundStyle(PreviewColors.primaryText)
 
             if let duty = screen.safetyBars.first {
                 VescDutyHeadroomCard(bar: duty, scale: scale)
@@ -436,12 +436,12 @@ private struct VescArmedBadge: View {
             .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 14 * scale)
             .frame(height: 31 * scale)
-            .background(Capsule().fill(MockupColors.purple))
+            .background(Capsule().fill(PreviewColors.purple))
     }
 }
 
 private struct VescDutyHeadroomCard: View {
-    let bar: MockupSafetyBar
+    let bar: PreviewSafetyBar
     let scale: CGFloat
 
     var body: some View {
@@ -449,18 +449,18 @@ private struct VescDutyHeadroomCard: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(bar.label)
                     .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                 Spacer()
                 Text(bar.value)
                     .font(.system(size: 25 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.yellow)
+                    .foregroundStyle(PreviewColors.yellow)
                     .monospacedDigit()
             }
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(MockupColors.cardStroke)
+                        .fill(PreviewColors.cardStroke)
                     Capsule()
                         .fill(bar.accent.color)
                         .frame(width: max(0, min(1, bar.progress)) * proxy.size.width)
@@ -470,7 +470,7 @@ private struct VescDutyHeadroomCard: View {
 
             Text("Nose authority is the ride-critical value here.")
                 .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
                 .lineLimit(2)
         }
         .padding(.horizontal, 22 * scale)
@@ -481,17 +481,17 @@ private struct VescDutyHeadroomCard: View {
 }
 
 private struct VescPushbackWarningCard: View {
-    let card: MockupWarningCard
+    let card: PreviewWarningCard
     let scale: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8 * scale) {
             Text(card.title)
                 .font(.system(size: 20 * scale, weight: .black))
-                .foregroundStyle(MockupColors.purple)
+                .foregroundStyle(PreviewColors.purple)
             Text(card.detail)
                 .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.primaryText)
+                .foregroundStyle(PreviewColors.primaryText)
                 .lineLimit(2)
         }
         .padding(.horizontal, 22 * scale)
@@ -499,17 +499,17 @@ private struct VescPushbackWarningCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 24 * scale, style: .continuous)
-                .fill(MockupColors.purple.opacity(0.18))
+                .fill(PreviewColors.purple.opacity(0.18))
                 .overlay(
                     RoundedRectangle(cornerRadius: 24 * scale, style: .continuous)
-                        .stroke(MockupColors.purple.opacity(0.55), lineWidth: 1)
+                        .stroke(PreviewColors.purple.opacity(0.55), lineWidth: 1)
                 )
         )
     }
 }
 
-private struct EucRideMockupView: View {
-    let screen: MockupScreen
+private struct EucRidePreviewView: View {
+    let screen: PreviewScreen
     let rideState: EucRideScreenState?
     let rideTitle: String?
     let disconnect: () -> Void
@@ -530,14 +530,14 @@ private struct EucRideMockupView: View {
         rideTitle ?? screen.title
     }
 
-    private var warningCard: MockupWarningCard? {
+    private var warningCard: PreviewWarningCard? {
         if let rideState {
             return liveWarningCard(for: rideState)
         }
         return screen.warningCard
     }
 
-    private var safetyBars: [MockupSafetyBar] {
+    private var safetyBars: [PreviewSafetyBar] {
         if let rideState {
             if let telemetry = rideState.telemetry {
                 return liveSafetyBars(from: telemetry)
@@ -547,7 +547,7 @@ private struct EucRideMockupView: View {
         return screen.safetyBars
     }
 
-    private var dashboardTiles: [MockupDashboardTile] {
+    private var dashboardTiles: [PreviewDashboardTile] {
         if let rideState {
             if let telemetry = rideState.telemetry {
                 return liveDashboardTiles(from: telemetry)
@@ -558,7 +558,7 @@ private struct EucRideMockupView: View {
     }
 
     var body: some View {
-        MockupScreenScaffold(
+        PreviewScreenScaffold(
             sectionTitle: "EUC ride",
             bottomPadding: 20,
             allowsVerticalScroll: false,
@@ -568,11 +568,11 @@ private struct EucRideMockupView: View {
                 if rideState == nil {
                     Text("CutOut")
                         .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.yellow)
+                        .foregroundStyle(PreviewColors.yellow)
                 } else {
                     Button("Disconnect", action: disconnect)
                         .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.yellow)
+                        .foregroundStyle(PreviewColors.yellow)
                 }
                 Spacer()
             }
@@ -580,7 +580,7 @@ private struct EucRideMockupView: View {
             HStack(alignment: .center, spacing: 12 * scale) {
                 Text(titleText)
                     .font(.system(size: 18 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PreviewColors.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 Spacer(minLength: 8 * scale)
@@ -597,14 +597,14 @@ private struct EucRideMockupView: View {
                         .minimumScaleFactor(0.72)
                     Text(speedParts.unit)
                         .font(.system(size: 27 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PreviewColors.muted)
                 }
                 Text("speed")
                     .font(.system(size: 13 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
             .frame(maxWidth: .infinity)
-            .foregroundStyle(MockupColors.primaryText)
+            .foregroundStyle(PreviewColors.primaryText)
 
             VStack(spacing: 10 * scale) {
                 ForEach(safetyBars, id: \.label) { bar in
@@ -642,12 +642,12 @@ private struct EucStatusBadge: View {
             .minimumScaleFactor(0.75)
             .padding(.horizontal, 12 * scale)
             .frame(height: 30 * scale)
-            .background(Capsule().fill(MockupColors.green))
+            .background(Capsule().fill(PreviewColors.green))
     }
 }
 
 private struct EucSafetyBar: View {
-    let bar: MockupSafetyBar
+    let bar: PreviewSafetyBar
     let scale: CGFloat
 
     var body: some View {
@@ -655,7 +655,7 @@ private struct EucSafetyBar: View {
             HStack {
                 Text(bar.label)
                     .font(.system(size: 15 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                 Spacer()
                 Text(bar.value)
                     .font(.system(size: 14 * scale, weight: .black))
@@ -666,7 +666,7 @@ private struct EucSafetyBar: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(MockupColors.cardFill)
+                        .fill(PreviewColors.cardFill)
                     Capsule()
                         .fill(bar.accent.color)
                         .frame(width: max(0, min(1, bar.progress)) * proxy.size.width)
@@ -678,41 +678,41 @@ private struct EucSafetyBar: View {
 }
 
 private struct EucWarningCard: View {
-    let card: MockupWarningCard
+    let card: PreviewWarningCard
     let scale: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5 * scale) {
             Text(card.title)
                 .font(.system(size: 20 * scale, weight: .black))
-                .foregroundStyle(MockupColors.orange)
+                .foregroundStyle(PreviewColors.orange)
             Text(card.detail)
                 .font(.system(size: 13 * scale, weight: .black))
-                .foregroundStyle(MockupColors.warningText)
+                .foregroundStyle(PreviewColors.warningText)
         }
         .padding(.horizontal, 22 * scale)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 76 * scale)
         .background(
             RoundedRectangle(cornerRadius: 23 * scale, style: .continuous)
-                .fill(MockupColors.warningFill)
+                .fill(PreviewColors.warningFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 23 * scale, style: .continuous)
-                        .stroke(MockupColors.warningStroke, lineWidth: 1)
+                        .stroke(PreviewColors.warningStroke, lineWidth: 1)
                 )
         )
     }
 }
 
 private struct EucDashboardTile: View {
-    let tile: MockupDashboardTile
+    let tile: PreviewDashboardTile
     let scale: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8 * scale) {
             Text(tile.label)
                 .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
 
             HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
                 Text(tile.value)
@@ -728,7 +728,7 @@ private struct EucDashboardTile: View {
             VStack(alignment: .leading, spacing: 4 * scale) {
                 Text(tile.detail)
                     .font(.system(size: 12 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
             }
@@ -741,7 +741,7 @@ private struct EucDashboardTile: View {
 }
 
 private struct EucSummaryRows: View {
-    let rows: [MockupSummaryRow]
+    let rows: [PreviewSummaryRow]
     let scale: CGFloat
 
     var body: some View {
@@ -750,18 +750,18 @@ private struct EucSummaryRows: View {
                 HStack {
                     Text(row.label)
                         .font(.system(size: 14 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PreviewColors.muted)
                     Spacer()
                     Text(row.value)
                         .font(.system(size: 15 * scale, weight: .black))
                         .monospacedDigit()
-                        .foregroundStyle(row.accent?.color ?? MockupColors.primaryText)
+                        .foregroundStyle(row.accent?.color ?? PreviewColors.primaryText)
                 }
                 .frame(height: 31 * scale)
 
                 if row.id != rows.last?.id {
                     Rectangle()
-                        .fill(MockupColors.cardStroke)
+                        .fill(PreviewColors.cardStroke)
                         .frame(height: 1)
                 }
             }
@@ -773,11 +773,11 @@ private struct EucSummaryRows: View {
 }
 
 private struct EucFaultStatusCard: View {
-    let card: MockupFaultCard
+    let card: PreviewFaultCard
     let scale: CGFloat
 
     var body: some View {
-        MockupFaultDetailCard(
+        PreviewFaultDetailCard(
             card: card,
             scale: scale,
             fontSize: 15,
@@ -789,8 +789,8 @@ private struct EucFaultStatusCard: View {
     }
 }
 
-private struct MockupFaultDetailCard: View {
-    let card: MockupFaultCard
+private struct PreviewFaultDetailCard: View {
+    let card: PreviewFaultCard
     let scale: CGFloat
     let fontSize: CGFloat
     let horizontalAlignment: Alignment
@@ -813,13 +813,13 @@ private struct MockupFaultDetailCard: View {
 }
 
 private struct EucRideTabs: View {
-    let tabs: [MockupScreenTab]
+    let tabs: [PreviewScreenTab]
     let scale: CGFloat
 
     var body: some View {
         VStack(spacing: 12 * scale) {
             Rectangle()
-                .fill(MockupColors.cardStroke)
+                .fill(PreviewColors.cardStroke)
                 .frame(width: 254 * scale, height: 1)
 
             HStack(spacing: 0) {
@@ -827,11 +827,11 @@ private struct EucRideTabs: View {
                     VStack(spacing: 8 * scale) {
                         Text(tab.title)
                             .font(.system(size: 14 * scale, weight: tab.isSelected ? .black : .semibold))
-                            .foregroundStyle(tab.isSelected ? MockupColors.yellow : MockupColors.muted)
+                            .foregroundStyle(tab.isSelected ? PreviewColors.yellow : PreviewColors.muted)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                         Capsule()
-                            .fill(tab.isSelected ? MockupColors.yellow : Color.clear)
+                            .fill(tab.isSelected ? PreviewColors.yellow : Color.clear)
                             .frame(width: 28 * scale, height: 4 * scale)
                     }
                     .frame(maxWidth: .infinity)
@@ -844,21 +844,21 @@ private struct EucRideTabs: View {
     }
 }
 
-private struct DevicePickerMockupView: View {
-    let screen: MockupScreen
+private struct DevicePickerPreviewView: View {
+    let screen: PreviewScreen
     let scanState: DevicePickerScanState?
-    let pair: (MockupPickerRow) -> Void
+    let pair: (PreviewPickerRow) -> Void
 
     private var renderedScanState: DevicePickerScanState {
         scanState ?? DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
     }
 
-    private var sections: MockupPickerSections {
+    private var sections: PreviewPickerSections {
         renderedScanState.sections
     }
 
     var body: some View {
-        MockupScreenScaffold(
+        PreviewScreenScaffold(
             sectionTitle: "setup",
             bottomPadding: 24,
             allowsVerticalScroll: false,
@@ -872,7 +872,7 @@ private struct DevicePickerMockupView: View {
                     .minimumScaleFactor(0.78)
                 Text("Nearby devices that look rideable. Pair supported ones.")
                     .font(.system(size: 15 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -943,7 +943,7 @@ private struct ScanStatusPill: View {
                         .opacity(!isScanning || index == phase ? 1 : 0.32)
                 }
             }
-            .foregroundStyle(MockupColors.yellow)
+            .foregroundStyle(PreviewColors.yellow)
         }
         .padding(.horizontal, 22 * scale)
         .frame(height: 64 * scale)
@@ -971,12 +971,12 @@ private struct SectionLabel: View {
     var body: some View {
         Text(title)
             .font(.system(size: 15 * scale, weight: .semibold))
-            .foregroundStyle(MockupColors.muted)
+            .foregroundStyle(PreviewColors.muted)
     }
 }
 
 private struct PickerDeviceRow: View {
-    let row: MockupPickerRow
+    let row: PreviewPickerRow
     let scale: CGFloat
 
     var body: some View {
@@ -1015,14 +1015,14 @@ private struct PickerDeviceRow: View {
 }
 
 private struct ManualPickerRow: View {
-    let row: MockupPickerRow
+    let row: PreviewPickerRow
     let scale: CGFloat
 
     var body: some View {
         HStack {
             Text(row.title)
                 .font(.system(size: 15 * scale, weight: .semibold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Spacer()
@@ -1037,28 +1037,28 @@ private struct ManualPickerRow: View {
 }
 
 private struct ActionBadge: View {
-    let state: MockupPickerRowState
+    let state: PreviewPickerRowState
     let scale: CGFloat
 
     var body: some View {
         Text(state.actionTitle)
             .font(.system(size: 15 * scale, weight: .bold))
-            .foregroundStyle(state.isSupported ? .black : MockupColors.muted)
+            .foregroundStyle(state.isSupported ? .black : PreviewColors.muted)
             .frame(width: state.isSupported ? 76 * scale : 64 * scale)
             .frame(height: state.isSupported ? 38 * scale : 30 * scale)
             .background(
                 Capsule()
-                    .fill(state.isSupported ? MockupColors.yellow : MockupColors.disabledFill)
+                    .fill(state.isSupported ? PreviewColors.yellow : PreviewColors.disabledFill)
             )
             .overlay(
                 Capsule()
-                    .stroke(MockupColors.cardStroke, lineWidth: state.isSupported ? 0 : 1)
+                    .stroke(PreviewColors.cardStroke, lineWidth: state.isSupported ? 0 : 1)
             )
     }
 }
 
 private struct DeviceGlyph: View {
-    let row: MockupPickerRow
+    let row: PreviewPickerRow
 
     var body: some View {
         GeometryReader { proxy in
@@ -1070,7 +1070,7 @@ private struct DeviceGlyph: View {
                 case "Aero-126V":
                     EucGlyph(color: row.glyphColor, lineWidth: line)
                 case "Little FOCer BT":
-                    OnewheelGlyph(color: row.glyphColor, accent: MockupColors.purple, lineWidth: line)
+                    OnewheelGlyph(color: row.glyphColor, accent: PreviewColors.purple, lineWidth: line)
                 case "NINEBOT-7A31":
                     ScooterGlyph(color: row.glyphColor, lineWidth: line)
                 case "HX Hoverboard":
@@ -1097,11 +1097,11 @@ private struct EucGlyph: View {
             let side = min(proxy.size.width, proxy.size.height)
             ZStack {
                 Circle()
-                    .fill(MockupColors.iconFill)
+                    .fill(PreviewColors.iconFill)
                 Circle()
                     .stroke(color, lineWidth: lineWidth)
                 Circle()
-                    .fill(MockupColors.cardFill)
+                    .fill(PreviewColors.cardFill)
                     .frame(width: side * 0.42, height: side * 0.42)
                 ForEach(0..<8, id: \.self) { index in
                     Circle()
@@ -1131,7 +1131,7 @@ private struct OnewheelGlyph: View {
                     .stroke(accent, lineWidth: lineWidth * 0.8)
                     .frame(width: side * 0.92, height: side * 0.34)
                 Circle()
-                    .fill(MockupColors.iconFill)
+                    .fill(PreviewColors.iconFill)
                     .frame(width: side * 0.46, height: side * 0.46)
                 Circle()
                     .stroke(color, lineWidth: lineWidth)
@@ -1206,23 +1206,23 @@ private struct CardBackground: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(MockupColors.cardFill)
+            .fill(PreviewColors.cardFill)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(MockupColors.cardStroke, lineWidth: 1)
+                    .stroke(PreviewColors.cardStroke, lineWidth: 1)
             )
     }
 }
 
-private extension MockupPickerRow {
+private extension PreviewPickerRow {
     var glyphColor: Color {
         switch title {
         case "NINEBOT-7A31":
-            MockupColors.teal
+            PreviewColors.teal
         case "HX Hoverboard":
-            MockupColors.brown
+            PreviewColors.brown
         default:
-            MockupColors.yellow
+            PreviewColors.yellow
         }
     }
 
@@ -1231,15 +1231,15 @@ private extension MockupPickerRow {
     }
 
     var titleColor: Color {
-        isSupported ? MockupColors.primaryText : MockupColors.disabledText
+        isSupported ? PreviewColors.primaryText : PreviewColors.disabledText
     }
 
     var secondaryTextColor: Color {
-        isSupported ? MockupColors.muted : MockupColors.disabledSecondaryText
+        isSupported ? PreviewColors.muted : PreviewColors.disabledSecondaryText
     }
 }
 
-private enum MockupColors {
+private enum PreviewColors {
     static let pageBackground = Color(red: 0.027, green: 0.031, blue: 0.043)
     static let cardFill = Color(red: 0.067, green: 0.078, blue: 0.106)
     static let cardStroke = Color(red: 0.165, green: 0.188, blue: 0.239)
@@ -1261,24 +1261,24 @@ private enum MockupColors {
     static let iconFill = Color(red: 0.043, green: 0.051, blue: 0.071)
 }
 
-private extension MockupAccent {
+private extension PreviewAccent {
     var color: Color {
         switch self {
         case .cyan:
-            MockupColors.cyan
+            PreviewColors.cyan
         case .green:
-            MockupColors.green
+            PreviewColors.green
         case .orange:
-            MockupColors.orange
+            PreviewColors.orange
         case .purple:
-            MockupColors.purple
+            PreviewColors.purple
         case .yellow:
-            MockupColors.yellow
+            PreviewColors.yellow
         }
     }
 }
 
-private extension MockupPickerRowState {
+private extension PreviewPickerRowState {
     var actionTitle: String {
         switch self {
         case .supported(let action), .unsupported(let action), .manual(let action):
@@ -1291,86 +1291,86 @@ private extension MockupPickerRowState {
     }
 }
 
-private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard {
+private func liveWarningCard(for state: EucRideScreenState) -> PreviewWarningCard {
     switch state.phase {
     case .failed(let failure):
-        MockupWarningCard(title: "Connection failed", detail: failure.displayText)
+        PreviewWarningCard(title: "Connection failed", detail: failure.displayText)
     case .live where state.telemetry != nil:
-        MockupWarningCard(
+        PreviewWarningCard(
             title: "Telemetry live",
             detail: state.telemetry?.speed?.provenanceText ?? "Live telemetry from typed Rust/FFI state"
         )
     case .live:
-        MockupWarningCard(title: "Telemetry unavailable", detail: "No live snapshot yet")
+        PreviewWarningCard(title: "Telemetry unavailable", detail: "No live snapshot yet")
     case .connecting, .discoveringServices, .subscribing:
-        MockupWarningCard(title: state.phaseText, detail: "Waiting for live telemetry")
+        PreviewWarningCard(title: state.phaseText, detail: "Waiting for live telemetry")
     case .starting, .bluetoothUnavailable, .scanning:
-        MockupWarningCard(title: state.phaseText, detail: "Ride screen is not active yet")
+        PreviewWarningCard(title: state.phaseText, detail: "Ride screen is not active yet")
     }
 }
 
-private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyBar] {
+private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [PreviewSafetyBar] {
     [
         telemetry.pwm.map { pwm in
             let usedPermille = min(1_000, abs(Int(pwm.value.permille)))
             let headroomPermille = max(0, 1_000 - usedPermille)
-            return MockupSafetyBar(
+            return PreviewSafetyBar(
                 label: "PWM headroom",
                 value: percentageString(fromPermille: headroomPermille),
                 progress: Double(headroomPermille) / 1_000.0,
                 accent: .yellow
             )
-        } ?? MockupSafetyBar(label: "PWM headroom", value: "Unavailable", progress: 0, accent: .yellow),
+        } ?? PreviewSafetyBar(label: "PWM headroom", value: "Unavailable", progress: 0, accent: .yellow),
         telemetry.batteryLevelEstimated.map { batteryLevel in
-            MockupSafetyBar(
+            PreviewSafetyBar(
                 label: "estimated energy",
                 value: percentageString(fromPercent: Int(batteryLevel.value)),
                 progress: Double(batteryLevel.value) / 100.0,
                 accent: .cyan
             )
-        } ?? MockupSafetyBar(label: "estimated energy", value: "Unavailable", progress: 0, accent: .cyan),
+        } ?? PreviewSafetyBar(label: "estimated energy", value: "Unavailable", progress: 0, accent: .cyan),
     ]
 }
 
-private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDashboardTile] {
+private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [PreviewDashboardTile] {
     [
         telemetry.voltage.map { voltage in
-            MockupDashboardTile(
+            PreviewDashboardTile(
                 label: "pack",
                 value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
                 detail: voltage.provenanceText,
                 accent: .cyan
             )
-        } ?? MockupDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
+        } ?? PreviewDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
         livePowerTile(from: telemetry),
         (telemetry.controllerTemperature != nil || telemetry.motorTemperature != nil || telemetry.batteryTemperature != nil)
-            ? MockupDashboardTile(
+            ? PreviewDashboardTile(
                 label: "thermal",
                 value: liveThermalValue(telemetry: telemetry),
                 unit: "°C",
                 detail: liveThermalDetail(telemetry: telemetry),
                 accent: .green
             )
-            : MockupDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
+            : PreviewDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
         telemetry.batteryLevelEstimated.map { batteryLevel in
-            MockupDashboardTile(
+            PreviewDashboardTile(
                 label: "energy",
                 value: percentageString(fromPercent: Int(batteryLevel.value)),
                 unit: "%",
                 detail: batteryLevel.provenanceText,
                 accent: .cyan
             )
-        } ?? MockupDashboardTile(label: "energy", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
+        } ?? PreviewDashboardTile(label: "energy", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
     ]
 }
 
-private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboardTile {
+private func livePowerTile(from telemetry: TelemetrySnapshot) -> PreviewDashboardTile {
     if let voltage = telemetry.voltage,
        let current = telemetry.batteryCurrent,
        current.value != 0 {
         let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
-        return MockupDashboardTile(
+        return PreviewDashboardTile(
             label: "power",
             value: decimalString(
                 fromMilliwatts: milliwatts,
@@ -1383,7 +1383,7 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
     }
 
     if let power = telemetry.power {
-        return MockupDashboardTile(
+        return PreviewDashboardTile(
             label: "power",
             value: decimalString(
                 fromMilliwatts: power.value,
@@ -1395,18 +1395,18 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
         )
     }
 
-    return MockupDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
+    return PreviewDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
 }
 
-private func unavailableSafetyBars(from bars: [MockupSafetyBar]) -> [MockupSafetyBar] {
+private func unavailableSafetyBars(from bars: [PreviewSafetyBar]) -> [PreviewSafetyBar] {
     bars.map {
-        MockupSafetyBar(label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
+        PreviewSafetyBar(label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
     }
 }
 
-private func unavailableDashboardTiles(from tiles: [MockupDashboardTile]) -> [MockupDashboardTile] {
+private func unavailableDashboardTiles(from tiles: [PreviewDashboardTile]) -> [PreviewDashboardTile] {
     tiles.map {
-        MockupDashboardTile(label: $0.label, value: "--", unit: $0.unit, detail: "unavailable", accent: $0.accent)
+        PreviewDashboardTile(label: $0.label, value: "--", unit: $0.unit, detail: "unavailable", accent: $0.accent)
     }
 }
 
@@ -1456,9 +1456,9 @@ private func decimalString(_ value: Double, fractionDigits: Int) -> String {
     String(format: "%.\(fractionDigits)f", value)
 }
 
-private struct GenericMockupView: View {
-    let screen: MockupScreen
-    let liveSpeed: String
+private struct GenericPreviewView: View {
+    let screen: PreviewScreen
+    let displaySpeed: String
 
     var body: some View {
         ScrollView {
@@ -1494,7 +1494,7 @@ private struct GenericMockupView: View {
                 HStack {
                     Text("Live speed").foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(liveSpeed) mph").monospacedDigit()
+                    Text("\(displaySpeed) mph").monospacedDigit()
                 }
             }
             .padding(24)
@@ -1504,12 +1504,12 @@ private struct GenericMockupView: View {
     }
 }
 
-private struct BmsMockupView: View {
-    let screen: MockupScreen
-    let selectScreen: (MockupScreenID) -> Void
+private struct BmsPreviewView: View {
+    let screen: PreviewScreen
+    let selectScreen: (PreviewScreenID) -> Void
 
-    private var content: MockupBmsContent {
-        screen.bmsContent ?? MockupBmsContent(
+    private var content: PreviewBmsContent {
+        screen.bmsContent ?? PreviewBmsContent(
             kind: .unknownTopology,
             snapshot: BmsSnapshot(
                 topology: BmsTopology(
@@ -1547,8 +1547,8 @@ private struct BmsMockupView: View {
             }
             .frame(width: designWidth, height: proxy.size.height, alignment: .topLeading)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(MockupColors.pageBackground)
-            .foregroundStyle(MockupColors.primaryText)
+            .background(PreviewColors.pageBackground)
+            .foregroundStyle(PreviewColors.primaryText)
         }
     }
 
@@ -1574,7 +1574,7 @@ private struct BmsMockupView: View {
         VStack(alignment: .leading, spacing: 2 * scale) {
             Text("CutOut · BMS")
                 .font(.system(size: 15 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
             Text(screen.title)
                 .font(.system(size: 32 * scale, weight: .black))
                 .lineLimit(1)
@@ -1630,7 +1630,7 @@ private struct BmsMockupView: View {
 }
 
 private struct BmsOverviewLayout: View {
-    let content: MockupBmsContent
+    let content: PreviewBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -1706,7 +1706,7 @@ private struct BmsOverviewLayout: View {
 }
 
 private struct BmsInlineLayout: View {
-    let content: MockupBmsContent
+    let content: PreviewBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -1745,7 +1745,7 @@ private struct BmsInlineLayout: View {
             VStack(alignment: .leading, spacing: 14 * scale) {
                 Text("controls")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                 HStack(spacing: 10 * scale) {
                     ForEach(content.modeTitles, id: \.self) { title in
                         BmsModeChip(title: title, isSelected: title == content.modeTitles.first, scale: scale)
@@ -1753,7 +1753,7 @@ private struct BmsInlineLayout: View {
                 }
                 Text("tap a cell for history, IR estimate, and BMS raw fields")
                     .font(.system(size: 13 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
             .padding(.horizontal, 18 * scale)
             .padding(.vertical, 18 * scale)
@@ -1764,7 +1764,7 @@ private struct BmsInlineLayout: View {
 }
 
 private struct BmsScrollableLayout: View {
-    let content: MockupBmsContent
+    let content: PreviewBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -1806,17 +1806,17 @@ private struct BmsScrollableLayout: View {
             VStack(alignment: .leading, spacing: 10 * scale) {
                 Text("display modes")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                 Text(content.modeTitles.joined(separator: " • "))
                     .font(.system(size: 19 * scale, weight: .black))
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
                 Text("Rule: never render 40+ cells as a tiny unreadable grid.")
                     .font(.system(size: 13 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                 Text("Show anomalies first, raw table second.")
                     .font(.system(size: 13 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.yellow)
+                    .foregroundStyle(PreviewColors.yellow)
             }
             .padding(.horizontal, 18 * scale)
             .padding(.vertical, 18 * scale)
@@ -1827,7 +1827,7 @@ private struct BmsScrollableLayout: View {
 }
 
 private struct BmsDetailLayout: View {
-    let content: MockupBmsContent
+    let content: PreviewBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -1853,13 +1853,13 @@ private struct BmsDetailLayout: View {
                 VStack(alignment: .leading, spacing: 15 * scale) {
                     Text("group \(selectedGroup.index)")
                         .font(.system(size: 15 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PreviewColors.muted)
                     Text(groupVoltageText(selectedGroup))
                         .font(.system(size: 58 * scale, weight: .black))
                         .monospacedDigit()
                     Text("lowest group · 18 mV below pack avg")
                         .font(.system(size: 14 * scale, weight: .black))
-                        .foregroundStyle(MockupColors.orange)
+                        .foregroundStyle(PreviewColors.orange)
 
                     HStack(spacing: 14 * scale) {
                         BmsMetricCard(
@@ -1892,14 +1892,14 @@ private struct BmsDetailLayout: View {
                 .padding(.horizontal, 18 * scale)
                 .padding(.vertical, 20 * scale)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(BmsOutlinedCardBackground(cornerRadius: 34 * scale, stroke: MockupColors.yellow))
+                .background(BmsOutlinedCardBackground(cornerRadius: 34 * scale, stroke: PreviewColors.yellow))
             }
         }
     }
 }
 
 private struct BmsUnknownLayout: View {
-    let content: MockupBmsContent
+    let content: PreviewBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -1956,20 +1956,20 @@ private struct BmsUnknownLayout: View {
             VStack(alignment: .leading, spacing: 10 * scale) {
                 Text("next capture flow")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                 Text(snapshot.captureActionTitle ?? "--")
                     .font(.system(size: 25 * scale, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.84)
                 Text("capture BLE services, characteristic samples, vendor strings")
                     .font(.system(size: 13 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
                 Text(snapshot.captureActionState ?? "")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.primaryText.opacity(0.82))
+                    .foregroundStyle(PreviewColors.primaryText.opacity(0.82))
                     .padding(.horizontal, 18 * scale)
                     .frame(height: 34 * scale)
-                    .background(Capsule().fill(MockupColors.muted.opacity(0.33)))
+                    .background(Capsule().fill(PreviewColors.muted.opacity(0.33)))
             }
             .padding(.horizontal, 18 * scale)
             .padding(.vertical, 18 * scale)
@@ -1980,15 +1980,16 @@ private struct BmsUnknownLayout: View {
 }
 
 private struct BmsNoDataLayout: View {
-    let screen: MockupScreen
-    let content: MockupBmsContent
+    let screen: PreviewScreen
+    let content: PreviewBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
-    private var rideSagMetric: MockupMetric? {
+    private var energyPercent: TelemetryReading<UInt8>? { snapshot.energyPercent }
+    private var rideSagMetric: PreviewMetric? {
         screen.metrics.first { $0.label == "ride sag" }
     }
-    private var loadNowMetric: MockupMetric? {
+    private var loadNowMetric: PreviewMetric? {
         screen.metrics.first { $0.label == "load now" }
     }
 
@@ -2010,8 +2011,8 @@ private struct BmsNoDataLayout: View {
         .padding(.top, 44 * scale)
         .padding(.bottom, 20 * scale)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MockupColors.pageBackground)
-        .foregroundStyle(MockupColors.primaryText)
+        .background(PreviewColors.pageBackground)
+        .foregroundStyle(PreviewColors.primaryText)
     }
 
     private var header: some View {
@@ -2023,27 +2024,27 @@ private struct BmsNoDataLayout: View {
                     .font(.system(size: 11 * scale, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
 
             Spacer(minLength: 12 * scale)
 
             HStack(spacing: 10 * scale) {
                 Circle()
-                    .fill(MockupColors.yellow)
+                    .fill(PreviewColors.yellow)
                     .frame(width: 10 * scale, height: 10 * scale)
                 Text(screen.secondaryValue)
                     .font(.system(size: 11 * scale, weight: .medium))
-                    .foregroundStyle(MockupColors.primaryText.opacity(0.92))
+                    .foregroundStyle(PreviewColors.primaryText.opacity(0.92))
             }
             .padding(.horizontal, 12 * scale)
             .frame(height: 30 * scale)
             .background(
                 Capsule(style: .continuous)
-                    .fill(MockupColors.cardFill)
+                    .fill(PreviewColors.cardFill)
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(MockupColors.cardStroke, lineWidth: 1)
+                            .stroke(PreviewColors.cardStroke, lineWidth: 1)
                     )
             )
         }
@@ -2054,20 +2055,20 @@ private struct BmsNoDataLayout: View {
             HStack(spacing: 14 * scale) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.system(size: 28 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.yellow)
+                    .foregroundStyle(PreviewColors.yellow)
                     .frame(width: 28 * scale, height: 28 * scale)
 
                 Text("No cell-level BMS data")
                     .font(.system(size: 15 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.yellow)
+                    .foregroundStyle(PreviewColors.yellow)
             }
             Text("CutOut can’t see cell balance, weak groups,")
                 .font(.system(size: 14 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
+                .foregroundStyle(PreviewColors.primaryText.opacity(0.9))
                 .fixedSize(horizontal: false, vertical: true)
             Text("BMS faults, or pack temperature from this wheel.")
                 .font(.system(size: 14 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
+                .foregroundStyle(PreviewColors.primaryText.opacity(0.9))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 18 * scale)
@@ -2093,13 +2094,13 @@ private struct BmsNoDataLayout: View {
                         .monospacedDigit()
                     Text("%")
                         .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PreviewColors.muted)
                 }
                 Text("derived from voltage curve + recent sag")
                     .font(.system(size: 10 * scale, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -2111,7 +2112,7 @@ private struct BmsNoDataLayout: View {
                     .minimumScaleFactor(0.8)
                 Text("not cell-safe")
                     .font(.system(size: 11 * scale, weight: .medium))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
             .padding(.horizontal, 10 * scale)
             .padding(.vertical, 14 * scale)
@@ -2167,15 +2168,15 @@ private struct BmsNoDataLayout: View {
                 .font(.system(size: 13 * scale, weight: .medium))
                 .lineLimit(2)
                 .minimumScaleFactor(0.84)
-                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
+                .foregroundStyle(PreviewColors.primaryText.opacity(0.9))
             Capsule()
-                .fill(MockupColors.cardStroke)
+                .fill(PreviewColors.cardStroke)
                 .frame(height: 6 * scale)
                 .overlay(alignment: .leading) {
                     Capsule()
                         .fill(
                             LinearGradient(
-                                colors: [MockupColors.yellow, MockupColors.orange],
+                                colors: [PreviewColors.yellow, PreviewColors.orange],
                                 startPoint: .leading,
                                 endPoint: .trailing
                             )
@@ -2192,7 +2193,7 @@ private struct BmsNoDataLayout: View {
     private func cardLabel(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12 * scale, weight: .bold))
-            .foregroundStyle(MockupColors.muted)
+            .foregroundStyle(PreviewColors.muted)
     }
 
     private func percentValueText(_ reading: TelemetryReading<UInt8>?) -> String {
@@ -2208,11 +2209,11 @@ private struct BmsNoDataLayout: View {
         reading.map { _ in "A" }
     }
 
-    private func metricUnitText(_ metric: MockupMetric) -> String {
+    private func metricUnitText(_ metric: PreviewMetric) -> String {
         metric.value.split(separator: " ").dropFirst().first.map(String.init) ?? ""
     }
 
-    private func metricValueText(_ metric: MockupMetric) -> String {
+    private func metricValueText(_ metric: PreviewMetric) -> String {
         metric.value.split(separator: " ").first.map(String.init) ?? metric.value
     }
 
@@ -2226,11 +2227,11 @@ private struct BmsNoDataLayout: View {
                     .minimumScaleFactor(0.7)
                 Text(unit)
                     .font(.system(size: 18 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
             Text(label)
                 .font(.system(size: 12 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -2238,7 +2239,7 @@ private struct BmsNoDataLayout: View {
     private func noDataUnknownRow(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 14 * scale, weight: .medium))
-            .foregroundStyle(MockupColors.primaryText.opacity(0.92))
+            .foregroundStyle(PreviewColors.primaryText.opacity(0.92))
             .lineLimit(1)
             .minimumScaleFactor(0.82)
             .padding(.horizontal, 12 * scale)
@@ -2248,18 +2249,18 @@ private struct BmsNoDataLayout: View {
 
     private func dashedCard(cornerRadius: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(MockupColors.cardFill)
+            .fill(PreviewColors.cardFill)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5 * scale, 5 * scale]))
-                    .foregroundStyle(MockupColors.cardStroke)
+                    .foregroundStyle(PreviewColors.cardStroke)
             )
     }
 }
 
 private struct BmsChip: View {
     let title: String
-    let accent: MockupAccent
+    let accent: PreviewAccent
     let scale: CGFloat
     let maxWidth: CGFloat?
 
@@ -2297,9 +2298,9 @@ private struct BmsBottomTab: View {
             VStack(spacing: 7 * scale) {
                 Text(title)
                     .font(.system(size: 15 * scale, weight: isSelected ? .black : .medium))
-                    .foregroundStyle(isSelected ? MockupColors.yellow : MockupColors.muted)
+                    .foregroundStyle(isSelected ? PreviewColors.yellow : PreviewColors.muted)
                 Capsule()
-                    .fill(isSelected ? MockupColors.yellow : Color.clear)
+                    .fill(isSelected ? PreviewColors.yellow : Color.clear)
                     .frame(width: 24 * scale, height: 3 * scale)
             }
         }
@@ -2312,14 +2313,14 @@ private struct BmsHeroCard: View {
     let title: String
     let trailing: String
     let detail: String
-    let accent: MockupAccent
+    let accent: PreviewAccent
     let scale: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2 * scale) {
             Text(eyebrow)
                 .font(.system(size: 14 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
             HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
                 Text(title)
                     .font(.system(size: 58 * scale, weight: .black))
@@ -2330,10 +2331,10 @@ private struct BmsHeroCard: View {
             }
             Text(detail)
                 .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(MockupColors.cardStroke)
+                    Capsule().fill(PreviewColors.cardStroke)
                     Capsule()
                         .fill(accent.color)
                         .frame(width: proxy.size.width * 0.72)
@@ -2353,14 +2354,14 @@ private struct BmsMetricCard: View {
     let value: String
     let unit: String
     let detail: String
-    let accent: MockupAccent
+    let accent: PreviewAccent
     let scale: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5 * scale) {
             Text(title)
                 .font(.system(size: 14 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
             HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
                 Text(value)
                     .font(.system(size: 25 * scale, weight: .black))
@@ -2370,7 +2371,7 @@ private struct BmsMetricCard: View {
                 if !unit.isEmpty {
                     Text(unit)
                         .font(.system(size: 13 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PreviewColors.muted)
                 }
             }
             if !detail.isEmpty {
@@ -2390,7 +2391,7 @@ private struct BmsWideCard: View {
     let title: String?
     let value: String
     let detail: String?
-    let accent: MockupAccent
+    let accent: PreviewAccent
     let border: BmsCardBorder
     let scale: CGFloat
 
@@ -2399,7 +2400,7 @@ private struct BmsWideCard: View {
             if let title {
                 Text(title)
                     .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PreviewColors.muted)
             }
             Text(value)
                 .font(.system(size: 25 * scale, weight: .black))
@@ -2430,7 +2431,7 @@ private struct BmsGroupCell: View {
         VStack(spacing: 8 * scale) {
             Text("\(group.index)")
                 .font(.system(size: 14 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
             Text(groupVoltageText(group))
                 .font(.system(size: 20 * scale, weight: .black))
                 .monospacedDigit()
@@ -2443,12 +2444,12 @@ private struct BmsGroupCell: View {
 
     private var strokeColor: Color {
         if isSelected {
-            return MockupColors.yellow
+            return PreviewColors.yellow
         }
         if isHighlighted {
-            return MockupColors.orange
+            return PreviewColors.orange
         }
-        return MockupColors.green
+        return PreviewColors.green
     }
 }
 
@@ -2461,7 +2462,7 @@ private struct BmsStripCell: View {
         VStack(spacing: 2 * scale) {
             Text(String(format: "%02d", group.index))
                 .font(.system(size: 8 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PreviewColors.muted)
             Text(groupVoltageText(group))
                 .font(.system(size: 9 * scale, weight: .black))
                 .monospacedDigit()
@@ -2474,11 +2475,11 @@ private struct BmsStripCell: View {
     private var strokeColor: Color {
         switch group.alertLevel {
         case .critical:
-            MockupColors.warningStroke
+            PreviewColors.warningStroke
         case .warning:
-            MockupColors.orange
+            PreviewColors.orange
         case .nominal, .unknown:
-            isHighlighted ? MockupColors.orange : MockupColors.green
+            isHighlighted ? PreviewColors.orange : PreviewColors.green
         }
     }
 }
@@ -2491,10 +2492,10 @@ private struct BmsGroupIndexCell: View {
     var body: some View {
         Text("\(group.index)")
             .font(.system(size: 14 * scale, weight: .medium))
-            .foregroundStyle(MockupColors.muted)
+            .foregroundStyle(PreviewColors.muted)
             .frame(maxWidth: .infinity)
             .frame(height: 34 * scale)
-            .background(BmsOutlinedCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? MockupColors.orange : MockupColors.green))
+            .background(BmsOutlinedCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? PreviewColors.orange : PreviewColors.green))
     }
 }
 
@@ -2506,10 +2507,10 @@ private struct BmsModeChip: View {
     var body: some View {
         Text(title)
             .font(.system(size: 15 * scale, weight: .bold))
-            .foregroundStyle(isSelected ? .black : MockupColors.primaryText)
+            .foregroundStyle(isSelected ? .black : PreviewColors.primaryText)
             .padding(.horizontal, 16 * scale)
             .frame(height: 32 * scale)
-            .background(Capsule().fill(isSelected ? MockupColors.yellow : MockupColors.iconFill))
+            .background(Capsule().fill(isSelected ? PreviewColors.yellow : PreviewColors.iconFill))
     }
 }
 
@@ -2518,10 +2519,10 @@ private struct BmsCardBackground: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(MockupColors.cardFill)
+            .fill(PreviewColors.cardFill)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(MockupColors.cardStroke, lineWidth: 1)
+                    .stroke(PreviewColors.cardStroke, lineWidth: 1)
             )
     }
 }
@@ -2532,7 +2533,7 @@ private struct BmsOutlinedCardBackground: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(MockupColors.cardFill)
+            .fill(PreviewColors.cardFill)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(stroke, lineWidth: 1.2)
@@ -2548,9 +2549,9 @@ private enum BmsCardBorder {
     var strokeColor: Color {
         switch self {
         case .normal:
-            MockupColors.cardStroke
+            PreviewColors.cardStroke
         case .warning:
-            MockupColors.orange
+            PreviewColors.orange
         case .critical:
             Color(red: 0.92, green: 0.33, blue: 0.35)
         }
@@ -2584,7 +2585,7 @@ private func groupVoltageText(_ group: BmsGroupSnapshot?) -> String {
     return String(format: "%.3f", Double(value) / 1_000.0)
 }
 
-private extension MockupScreen {
+private extension PreviewScreen {
     var displaySubtitle: String {
         subtitle.replacingOccurrences(of: " - ", with: " · ")
     }

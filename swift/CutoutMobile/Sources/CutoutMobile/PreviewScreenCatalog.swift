@@ -1,6 +1,6 @@
 import Foundation
 
-public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
+public enum PreviewScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case devicePicker
     case eucRide
     case bmsOverview
@@ -14,11 +14,11 @@ public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable 
     case vescDebug
 }
 
-public enum MockupConnectionRoute: String, Equatable, Hashable, Sendable {
+public enum PreviewConnectionRoute: String, Equatable, Hashable, Sendable {
     case electricUnicycle = "electric_unicycle"
     case vescOnewheel = "vesc_onewheel"
 
-    public var destinationScreenID: MockupScreenID {
+    public var destinationScreenID: PreviewScreenID {
         switch self {
         case .electricUnicycle:
             .eucRide
@@ -28,7 +28,7 @@ public enum MockupConnectionRoute: String, Equatable, Hashable, Sendable {
     }
 }
 
-public struct MockupMetric: Equatable, Hashable, Sendable {
+public struct PreviewMetric: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
 
@@ -38,7 +38,7 @@ public struct MockupMetric: Equatable, Hashable, Sendable {
     }
 }
 
-public enum MockupAccent: String, Equatable, Hashable, Sendable {
+public enum PreviewAccent: String, Equatable, Hashable, Sendable {
     case cyan
     case green
     case orange
@@ -46,13 +46,13 @@ public enum MockupAccent: String, Equatable, Hashable, Sendable {
     case yellow
 }
 
-public struct MockupDeviceCard: Equatable, Hashable, Sendable {
+public struct PreviewDeviceCard: Equatable, Hashable, Sendable {
     public let title: String
     public let detail: String
     public let status: String
-    public let accent: MockupAccent
+    public let accent: PreviewAccent
 
-    public init(title: String, detail: String, status: String, accent: MockupAccent) {
+    public init(title: String, detail: String, status: String, accent: PreviewAccent) {
         self.title = title
         self.detail = detail
         self.status = status
@@ -60,13 +60,13 @@ public struct MockupDeviceCard: Equatable, Hashable, Sendable {
     }
 }
 
-public struct MockupSafetyBar: Equatable, Hashable, Sendable {
+public struct PreviewSafetyBar: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
     public let progress: Double
-    public let accent: MockupAccent
+    public let accent: PreviewAccent
 
-    public init(label: String, value: String, progress: Double, accent: MockupAccent) {
+    public init(label: String, value: String, progress: Double, accent: PreviewAccent) {
         self.label = label
         self.value = value
         self.progress = progress
@@ -74,7 +74,7 @@ public struct MockupSafetyBar: Equatable, Hashable, Sendable {
     }
 }
 
-public struct MockupWarningCard: Equatable, Hashable, Sendable {
+public struct PreviewWarningCard: Equatable, Hashable, Sendable {
     public let title: String
     public let detail: String
 
@@ -84,16 +84,16 @@ public struct MockupWarningCard: Equatable, Hashable, Sendable {
     }
 }
 
-public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
+public struct PreviewDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { label }
 
     public let label: String
     public let value: String
     public let unit: String
     public let detail: String
-    public let accent: MockupAccent
+    public let accent: PreviewAccent
 
-    public init(label: String, value: String, unit: String, detail: String, accent: MockupAccent) {
+    public init(label: String, value: String, unit: String, detail: String, accent: PreviewAccent) {
         self.label = label
         self.value = value
         self.unit = unit
@@ -102,7 +102,7 @@ public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public struct MockupScreenTab: Equatable, Hashable, Sendable, Identifiable {
+public struct PreviewScreenTab: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { title }
 
     public let title: String
@@ -114,32 +114,32 @@ public struct MockupScreenTab: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public struct MockupSummaryRow: Equatable, Hashable, Sendable, Identifiable {
+public struct PreviewSummaryRow: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { label }
 
     public let label: String
     public let value: String
-    public let accent: MockupAccent?
+    public let accent: PreviewAccent?
 
-    public init(label: String, value: String, accent: MockupAccent?) {
+    public init(label: String, value: String, accent: PreviewAccent?) {
         self.label = label
         self.value = value
         self.accent = accent
     }
 }
 
-public struct MockupFaultCard: Equatable, Hashable, Sendable {
+public struct PreviewFaultCard: Equatable, Hashable, Sendable {
     public let title: String
     public let detail: String
-    public let accent: MockupAccent
+    public let accent: PreviewAccent
 
-    public init(title: String, detail: String, accent: MockupAccent) {
+    public init(title: String, detail: String, accent: PreviewAccent) {
         self.title = title
         self.detail = detail
         self.accent = accent
     }
 }
-public enum MockupBmsScreenKind: Equatable, Hashable, Sendable {
+public enum PreviewBmsScreenKind: Equatable, Hashable, Sendable {
     case overview
     case cellMapInline
     case cellMapScrollable
@@ -148,28 +148,31 @@ public enum MockupBmsScreenKind: Equatable, Hashable, Sendable {
     case noData
 }
 
-public struct MockupBmsChip: Equatable, Hashable, Sendable {
-    public let title: String
-    public let accent: MockupAccent
+public struct PreviewBmsChip: Equatable, Hashable, Sendable, Identifiable {
+    public let id: UUID
 
-    public init(title: String, accent: MockupAccent) {
+    public let title: String
+    public let accent: PreviewAccent
+
+    public init(id: UUID = UUID(), title: String, accent: PreviewAccent) {
+        self.id = id
         self.title = title
         self.accent = accent
     }
 }
 
-public struct MockupBmsContent: Equatable, Hashable, Sendable {
-    public let kind: MockupBmsScreenKind
+public struct PreviewBmsContent: Equatable, Hashable, Sendable {
+    public let kind: PreviewBmsScreenKind
     public let snapshot: BmsSnapshot
-    public let chips: [MockupBmsChip]
+    public let chips: [PreviewBmsChip]
     public let highlightedGroupIndices: [Int]
     public let selectedGroupIndex: Int?
     public let modeTitles: [String]
 
     public init(
-        kind: MockupBmsScreenKind,
+        kind: PreviewBmsScreenKind,
         snapshot: BmsSnapshot,
-        chips: [MockupBmsChip] = [],
+        chips: [PreviewBmsChip] = [],
         highlightedGroupIndices: [Int] = [],
         selectedGroupIndex: Int? = nil,
         modeTitles: [String] = []
@@ -182,30 +185,30 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
         self.modeTitles = modeTitles
     }
 }
-public enum MockupPickerRowState: Equatable, Hashable, Sendable {
+public enum PreviewPickerRowState: Equatable, Hashable, Sendable {
     case supported(action: String)
     case unsupported(action: String)
     case manual(action: String)
 }
 
-public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
+public struct PreviewPickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let id: String
 
     public let title: String
     public let subtitle: String
     public let detail: String
-    public let state: MockupPickerRowState
+    public let state: PreviewPickerRowState
     public let symbolName: String
-    public let connectionRoute: MockupConnectionRoute?
+    public let connectionRoute: PreviewConnectionRoute?
 
     public init(
         id: String? = nil,
         title: String,
         subtitle: String,
         detail: String,
-        state: MockupPickerRowState,
+        state: PreviewPickerRowState,
         symbolName: String,
-        connectionRoute: MockupConnectionRoute? = nil
+        connectionRoute: PreviewConnectionRoute? = nil
     ) {
         self.id = id ?? title
         self.title = title
@@ -217,7 +220,7 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public extension MockupPickerRow {
+public extension PreviewPickerRow {
     var isSupported: Bool {
         if case .supported = state { true } else { false }
     }
@@ -231,7 +234,7 @@ public extension MockupPickerRow {
     }
 }
 
-public extension MockupPickerRowState {
+public extension PreviewPickerRowState {
     var actionTitle: String {
         switch self {
         case .supported(let action), .unsupported(let action), .manual(let action):
@@ -244,12 +247,12 @@ public extension MockupPickerRowState {
     }
 }
 
-public struct MockupPickerSections: Equatable, Hashable, Sendable {
-    public let supported: [MockupPickerRow]
-    public let unsupported: [MockupPickerRow]
-    public let manual: MockupPickerRow?
+public struct PreviewPickerSections: Equatable, Hashable, Sendable {
+    public let supported: [PreviewPickerRow]
+    public let unsupported: [PreviewPickerRow]
+    public let manual: PreviewPickerRow?
 
-    public init(rows: [MockupPickerRow]) {
+    public init(rows: [PreviewPickerRow]) {
         supported = rows.filter { $0.isSupported }
         unsupported = rows.filter { $0.isUnsupported }
         manual = rows.first { $0.isManual }
@@ -257,7 +260,7 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
 }
 
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
-    case supported(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
+    case supported(connectionRoute: PreviewConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case unsupported(disabledReason: String)
 }
 
@@ -266,7 +269,7 @@ public extension DevicePickerCandidateSupport {
         switch dto.support {
         case .supported:
             self = .supported(
-                connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)),
+                connectionRoute: dto.connectionRoute.flatMap(PreviewConnectionRoute.init(rawValue:)),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
         case .unsupported:
@@ -322,7 +325,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         )
     }
 
-    public static func pickerRow(advertisement: CoreBluetoothAdvertisement) -> MockupPickerRow? {
+    public static func pickerRow(advertisement: CoreBluetoothAdvertisement) -> PreviewPickerRow? {
         let candidate = mobileDiscoveryCandidateFromAdvertisement(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             localName: advertisement.localName,
@@ -332,8 +335,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         return DevicePickerDiscoveryCandidate(candidate: candidate).pickerRow
     }
 
-    public var pickerRow: MockupPickerRow {
-        MockupPickerRow(
+    public var pickerRow: PreviewPickerRow {
+        PreviewPickerRow(
             id: platformIdentifier,
             title: displayName,
             subtitle: "\(productCategory) - \(evidence)",
@@ -350,7 +353,7 @@ public extension DevicePickerCandidateSupport {
         if case .supported = self { true } else { false }
     }
 
-    var connectionRoute: MockupConnectionRoute? {
+    var connectionRoute: PreviewConnectionRoute? {
         if case .supported(let connectionRoute, _) = self { connectionRoute } else { nil }
     }
 
@@ -358,7 +361,7 @@ public extension DevicePickerCandidateSupport {
         if case .supported(_, let electricUnicycleModel) = self { electricUnicycleModel } else { nil }
     }
 
-    var pickerRowState: MockupPickerRowState {
+    var pickerRowState: PreviewPickerRowState {
         switch self {
         case .supported:
             .supported(action: "Pair")
@@ -377,9 +380,9 @@ public enum DevicePickerScanStatus: Equatable, Hashable, Sendable {
 
 public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     public let status: DevicePickerScanStatus
-    public let rows: [MockupPickerRow]
+    public let rows: [PreviewPickerRow]
 
-    public init(status: DevicePickerScanStatus, rows: [MockupPickerRow]) {
+    public init(status: DevicePickerScanStatus, rows: [PreviewPickerRow]) {
         self.status = status
         self.rows = rows
     }
@@ -391,8 +394,8 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
         )
     }
 
-    public var sections: MockupPickerSections {
-        MockupPickerSections(rows: rows)
+    public var sections: PreviewPickerSections {
+        PreviewPickerSections(rows: rows)
     }
 
     public var statusText: String {
@@ -414,46 +417,46 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     public static let permissionDenied = DevicePickerScanState(status: .permissionDenied, rows: [])
 }
 
-public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
-    public let id: MockupScreenID
+public struct PreviewScreen: Equatable, Hashable, Sendable, Identifiable {
+    public let id: PreviewScreenID
     public let title: String
     public let subtitle: String
     public let primaryValue: String
     public let secondaryValue: String
     public let warning: String?
-    public let metrics: [MockupMetric]
-    public let pickerRows: [MockupPickerRow]
+    public let metrics: [PreviewMetric]
+    public let pickerRows: [PreviewPickerRow]
     public let discoveryCandidates: [DevicePickerDiscoveryCandidate]
-    public let deviceCard: MockupDeviceCard?
-    public let safetyBars: [MockupSafetyBar]
-    public let warningCard: MockupWarningCard?
-    public let dashboardTiles: [MockupDashboardTile]
+    public let deviceCard: PreviewDeviceCard?
+    public let safetyBars: [PreviewSafetyBar]
+    public let warningCard: PreviewWarningCard?
+    public let dashboardTiles: [PreviewDashboardTile]
     public let summaryTitle: String?
-    public let summaryRows: [MockupSummaryRow]
-    public let faultCard: MockupFaultCard?
-    public let tabs: [MockupScreenTab]
-    public let bmsContent: MockupBmsContent?
+    public let summaryRows: [PreviewSummaryRow]
+    public let faultCard: PreviewFaultCard?
+    public let tabs: [PreviewScreenTab]
+    public let bmsContent: PreviewBmsContent?
     public let isFixtureOnly: Bool
 
     public init(
-        id: MockupScreenID,
+        id: PreviewScreenID,
         title: String,
         subtitle: String,
         primaryValue: String,
         secondaryValue: String,
         warning: String?,
-        metrics: [MockupMetric],
-        pickerRows: [MockupPickerRow] = [],
+        metrics: [PreviewMetric],
+        pickerRows: [PreviewPickerRow] = [],
         discoveryCandidates: [DevicePickerDiscoveryCandidate] = [],
-        deviceCard: MockupDeviceCard? = nil,
-        safetyBars: [MockupSafetyBar] = [],
-        warningCard: MockupWarningCard? = nil,
-        dashboardTiles: [MockupDashboardTile] = [],
+        deviceCard: PreviewDeviceCard? = nil,
+        safetyBars: [PreviewSafetyBar] = [],
+        warningCard: PreviewWarningCard? = nil,
+        dashboardTiles: [PreviewDashboardTile] = [],
         summaryTitle: String? = nil,
-        summaryRows: [MockupSummaryRow] = [],
-        faultCard: MockupFaultCard? = nil,
-        tabs: [MockupScreenTab] = [],
-        bmsContent: MockupBmsContent? = nil,
+        summaryRows: [PreviewSummaryRow] = [],
+        faultCard: PreviewFaultCard? = nil,
+        tabs: [PreviewScreenTab] = [],
+        bmsContent: PreviewBmsContent? = nil,
         isFixtureOnly: Bool = true
     ) {
         self.id = id
@@ -478,14 +481,14 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
-    public let screens: [MockupScreen]
+public struct PreviewScreenCatalog: Equatable, Hashable, Sendable {
+    public let screens: [PreviewScreen]
 
-    public init(screens: [MockupScreen]) {
+    public init(screens: [PreviewScreen]) {
         self.screens = screens
     }
 
-    public func screen(id: MockupScreenID) -> MockupScreen? {
+    public func screen(id: PreviewScreenID) -> PreviewScreen? {
         screens.first { $0.id == id }
     }
 
@@ -656,8 +659,8 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         captureActionState: "limited data"
     )
 
-    public static let v2 = MockupScreenCatalog(screens: [
-        MockupScreen(
+    public static let v2 = PreviewScreenCatalog(screens: [
+        PreviewScreen(
             id: .devicePicker,
             title: "Device picker",
             subtitle: "Scanning Bluetooth",
@@ -665,14 +668,14 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "Little FOCer BT",
             warning: "Unsupported rows remain disabled fixtures.",
             metrics: [
-                MockupMetric(label: "Supported EUC", value: "Aero-126V"),
-                MockupMetric(label: "Supported VESC OW", value: "Little FOCer BT"),
-                MockupMetric(label: "Unsupported", value: "NINEBOT-7A31"),
-                MockupMetric(label: "Unsupported", value: "HX Hoverboard"),
-                MockupMetric(label: "Manual add", value: "disabled"),
+                PreviewMetric(label: "Supported EUC", value: "Aero-126V"),
+                PreviewMetric(label: "Supported VESC OW", value: "Little FOCer BT"),
+                PreviewMetric(label: "Unsupported", value: "NINEBOT-7A31"),
+                PreviewMetric(label: "Unsupported", value: "HX Hoverboard"),
+                PreviewMetric(label: "Manual add", value: "disabled"),
             ],
             pickerRows: devicePickerDiscoveryCandidates.map(\.pickerRow) + [
-                MockupPickerRow(
+                PreviewPickerRow(
                     title: "Manual add / record unknown device",
                     subtitle: "",
                     detail: "",
@@ -682,7 +685,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             ],
             discoveryCandidates: devicePickerDiscoveryCandidates
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .eucRide,
             title: "Aero-126V",
             subtitle: "EUC - riding",
@@ -690,34 +693,34 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "PWM headroom 23%",
             warning: "Reduce acceleration - voltage sag under load: 9.4 V",
             metrics: [
-                MockupMetric(label: "sag-adjusted energy", value: "62%"),
-                MockupMetric(label: "pack", value: "115.8 V"),
-                MockupMetric(label: "power", value: "4.2 kW"),
-                MockupMetric(label: "thermal", value: "61 C"),
-                MockupMetric(label: "limp-home", value: "14.2 mi"),
+                PreviewMetric(label: "sag-adjusted energy", value: "62%"),
+                PreviewMetric(label: "pack", value: "115.8 V"),
+                PreviewMetric(label: "power", value: "4.2 kW"),
+                PreviewMetric(label: "thermal", value: "61 C"),
+                PreviewMetric(label: "limp-home", value: "14.2 mi"),
             ],
             safetyBars: [
-                MockupSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
-                MockupSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
+                PreviewSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
+                PreviewSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
             ],
-            warningCard: MockupWarningCard(
+            warningCard: PreviewWarningCard(
                 title: "Reduce acceleration",
                 detail: "Voltage sag under load: 9.4 V"
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
-                MockupDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
-                MockupDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
-                MockupDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
+                PreviewDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
+                PreviewDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
+                PreviewDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
+                PreviewDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
             ],
             tabs: [
-                MockupScreenTab(title: "Ride", isSelected: true),
-                MockupScreenTab(title: "Pack", isSelected: false),
-                MockupScreenTab(title: "Map", isSelected: false),
-                MockupScreenTab(title: "Tune", isSelected: false),
+                PreviewScreenTab(title: "Ride", isSelected: true),
+                PreviewScreenTab(title: "Pack", isSelected: false),
+                PreviewScreenTab(title: "Map", isSelected: false),
+                PreviewScreenTab(title: "Tune", isSelected: false),
             ]
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .bmsOverview,
             title: "Pack overview",
             subtitle: "CutOut · BMS",
@@ -725,21 +728,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "sag adjusted",
             warning: nil,
             metrics: [
-                MockupMetric(label: "topology", value: "20S4P split pack"),
-                MockupMetric(label: "BMS online", value: "2"),
-                MockupMetric(label: "lowest group", value: "group 17"),
-                MockupMetric(label: "highest temp", value: "37.8 °C"),
+                PreviewMetric(label: "topology", value: "20S4P split pack"),
+                PreviewMetric(label: "BMS online", value: "2"),
+                PreviewMetric(label: "lowest group", value: "group 17"),
+                PreviewMetric(label: "highest temp", value: "37.8 °C"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PreviewBmsContent(
                 kind: .overview,
                 snapshot: bmsOverviewSnapshot,
                 chips: [
-                    MockupBmsChip(title: "20S4P split pack", accent: .yellow),
-                    MockupBmsChip(title: "2 BMS online", accent: .green),
+                    PreviewBmsChip(title: "20S4P split pack", accent: .yellow),
+                    PreviewBmsChip(title: "2 BMS online", accent: .green),
                 ]
             )
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .bmsCellMap6S,
             title: "6S cell map",
             subtitle: "skateboard pack",
@@ -747,21 +750,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "no scrolling needed",
             warning: nil,
             metrics: [
-                MockupMetric(label: "topology", value: "6S2P"),
-                MockupMetric(label: "display", value: "all groups inline"),
+                PreviewMetric(label: "topology", value: "6S2P"),
+                PreviewMetric(label: "display", value: "all groups inline"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PreviewBmsContent(
                 kind: .cellMapInline,
                 snapshot: bmsInlineSnapshot,
                 chips: [
-                    MockupBmsChip(title: "skateboard pack", accent: .cyan),
-                    MockupBmsChip(title: "6S2P", accent: .yellow),
+                    PreviewBmsChip(title: "skateboard pack", accent: .cyan),
+                    PreviewBmsChip(title: "6S2P", accent: .yellow),
                 ],
                 highlightedGroupIndices: [3, 6],
                 modeTitles: ["balance view", "temps", "faults"]
             )
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .bmsCellMap40S,
             title: "40S cell map",
             subtitle: "large EUC pack",
@@ -769,22 +772,22 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "scroll cells horizontally",
             warning: nil,
             metrics: [
-                MockupMetric(label: "topology", value: "40S4P"),
-                MockupMetric(label: "display", value: "overview first"),
+                PreviewMetric(label: "topology", value: "40S4P"),
+                PreviewMetric(label: "display", value: "overview first"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PreviewBmsContent(
                 kind: .cellMapScrollable,
                 snapshot: bmsScrollableSnapshot,
                 chips: [
-                    MockupBmsChip(title: "large EUC pack", accent: .cyan),
-                    MockupBmsChip(title: "40S4P", accent: .yellow),
-                    MockupBmsChip(title: "scroll cells horizontally", accent: .orange),
+                    PreviewBmsChip(title: "large EUC pack", accent: .cyan),
+                    PreviewBmsChip(title: "40S4P", accent: .yellow),
+                    PreviewBmsChip(title: "scroll cells horizontally", accent: .orange),
                 ],
                 highlightedGroupIndices: [17, 18, 19, 31],
                 modeTitles: ["overview", "strip", "full cell table", "popover"]
             )
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .bmsCellDetail,
             title: "Cell detail",
             subtitle: "from any map",
@@ -792,21 +795,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "group 17",
             warning: nil,
             metrics: [
-                MockupMetric(label: "temp", value: "34.9 °C"),
-                MockupMetric(label: "IR est.", value: "21 mΩ"),
+                PreviewMetric(label: "temp", value: "34.9 °C"),
+                PreviewMetric(label: "IR est.", value: "21 mΩ"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PreviewBmsContent(
                 kind: .cellDetail,
                 snapshot: bmsDetailSnapshot,
                 chips: [
-                    MockupBmsChip(title: "from any map", accent: .cyan),
-                    MockupBmsChip(title: "group 17", accent: .orange),
+                    PreviewBmsChip(title: "from any map", accent: .cyan),
+                    PreviewBmsChip(title: "group 17", accent: .orange),
                 ],
                 highlightedGroupIndices: [17],
                 selectedGroupIndex: 17
             )
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .bmsUnknownTopology,
             title: "Unknown BMS",
             subtitle: "partial data",
@@ -814,20 +817,20 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "topology unverified",
             warning: nil,
             metrics: [
-                MockupMetric(label: "reported voltage", value: "75.9 V"),
-                MockupMetric(label: "fault bits", value: "0x0040"),
-                MockupMetric(label: "capture flow", value: "disabled for launch"),
+                PreviewMetric(label: "reported voltage", value: "75.9 V"),
+                PreviewMetric(label: "fault bits", value: "0x0040"),
+                PreviewMetric(label: "capture flow", value: "disabled for launch"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PreviewBmsContent(
                 kind: .unknownTopology,
                 snapshot: bmsUnknownSnapshot,
                 chips: [
-                    MockupBmsChip(title: "partial data", accent: .orange),
-                    MockupBmsChip(title: "topology unverified", accent: .green),
+                    PreviewBmsChip(title: "partial data", accent: .orange),
+                    PreviewBmsChip(title: "topology unverified", accent: .green),
                 ]
             )
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .bmsNoData,
             title: "Battery",
             subtitle: "EX30 · non-smart BMS · controller-only estimate",
@@ -835,19 +838,19 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "limited data",
             warning: nil,
             metrics: [
-                MockupMetric(label: "pack voltage", value: "117.6 V"),
-                MockupMetric(label: "ride sag", value: "4.8 V"),
-                MockupMetric(label: "load now", value: "38 A"),
+                PreviewMetric(label: "pack voltage", value: "117.6 V"),
+                PreviewMetric(label: "ride sag", value: "4.8 V"),
+                PreviewMetric(label: "load now", value: "38 A"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PreviewBmsContent(
                 kind: .noData,
                 snapshot: bmsNoDataSnapshot,
                 chips: [
-                    MockupBmsChip(title: "limited data", accent: .yellow),
+                    PreviewBmsChip(title: "limited data", accent: .yellow),
                 ]
             )
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .eucGarage,
             title: "EUC health",
             subtitle: "Stationary diagnostics for wheel-specific data",
@@ -855,33 +858,33 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "pack 115.8 V",
             warning: nil,
             metrics: [
-                MockupMetric(label: "beep margin", value: "11.6 mph"),
-                MockupMetric(label: "tiltback", value: "42 mph"),
-                MockupMetric(label: "pedal mode", value: "72%"),
-                MockupMetric(label: "cell delta", value: "0.018 V"),
-                MockupMetric(label: "last fault", value: "none"),
+                PreviewMetric(label: "beep margin", value: "11.6 mph"),
+                PreviewMetric(label: "tiltback", value: "42 mph"),
+                PreviewMetric(label: "pedal mode", value: "72%"),
+                PreviewMetric(label: "cell delta", value: "0.018 V"),
+                PreviewMetric(label: "last fault", value: "none"),
             ],
-            deviceCard: MockupDeviceCard(
+            deviceCard: PreviewDeviceCard(
                 title: "Aero-126V",
                 detail: "126 V nominal · 20s? mapped profile · BLE",
                 status: "Safe",
                 accent: .green
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
-                MockupDashboardTile(label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
-                MockupDashboardTile(label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
-                MockupDashboardTile(label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+                PreviewDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
+                PreviewDashboardTile(label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+                PreviewDashboardTile(label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+                PreviewDashboardTile(label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
             ],
             summaryTitle: "Cell / BMS summary",
             summaryRows: [
-                MockupSummaryRow(label: "high group", value: "4.18 V", accent: nil),
-                MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
-                MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
+                PreviewSummaryRow(label: "high group", value: "4.18 V", accent: nil),
+                PreviewSummaryRow(label: "low group", value: "4.13 V", accent: nil),
+                PreviewSummaryRow(label: "delta", value: "0.05 V", accent: .green),
             ],
-            faultCard: MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green)
+            faultCard: PreviewFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green)
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .vescOnewheelRide,
             title: "Fungineers X7",
             subtitle: "VESC OW · armed",
@@ -889,33 +892,33 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "board speed",
             warning: "Pushback soon - duty and pack sag are both climbing.",
             metrics: [
-                MockupMetric(label: "battery current", value: "38 A"),
-                MockupMetric(label: "motor current", value: "71 A"),
-                MockupMetric(label: "board angle", value: "-1.8 deg"),
-                MockupMetric(label: "controller", value: "54 C"),
-                MockupMetric(label: "motor", value: "49 C"),
+                PreviewMetric(label: "battery current", value: "38 A"),
+                PreviewMetric(label: "motor current", value: "71 A"),
+                PreviewMetric(label: "board angle", value: "-1.8 deg"),
+                PreviewMetric(label: "controller", value: "54 C"),
+                PreviewMetric(label: "motor", value: "49 C"),
             ],
             safetyBars: [
-                MockupSafetyBar(label: "Duty headroom", value: "18%", progress: 0.82, accent: .orange),
+                PreviewSafetyBar(label: "Duty headroom", value: "18%", progress: 0.82, accent: .orange),
             ],
-            warningCard: MockupWarningCard(
+            warningCard: PreviewWarningCard(
                 title: "Pushback soon",
                 detail: "Duty and pack sag are both climbing."
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "battery current", value: "38", unit: "A", detail: "limit 45 A", accent: .yellow),
-                MockupDashboardTile(label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
-                MockupDashboardTile(label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
-                MockupDashboardTile(label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
+                PreviewDashboardTile(label: "battery current", value: "38", unit: "A", detail: "limit 45 A", accent: .yellow),
+                PreviewDashboardTile(label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
+                PreviewDashboardTile(label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
+                PreviewDashboardTile(label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
             ],
             tabs: [
-                MockupScreenTab(title: "Ride", isSelected: true),
-                MockupScreenTab(title: "VESC", isSelected: false),
-                MockupScreenTab(title: "Map", isSelected: false),
-                MockupScreenTab(title: "Logs", isSelected: false),
+                PreviewScreenTab(title: "Ride", isSelected: true),
+                PreviewScreenTab(title: "VESC", isSelected: false),
+                PreviewScreenTab(title: "Map", isSelected: false),
+                PreviewScreenTab(title: "Logs", isSelected: false),
             ]
         ),
-        MockupScreen(
+        PreviewScreen(
             id: .vescDebug,
             title: "VESC state",
             subtitle: "For tuning/debug. Not the riding screen",
@@ -923,32 +926,32 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "pack 75.4 V",
             warning: "Dangerous writes hidden until parked and confirmed.",
             metrics: [
-                MockupMetric(label: "battery limit", value: "45 A"),
-                MockupMetric(label: "motor limit", value: "90 A"),
-                MockupMetric(label: "last fault", value: "FAULT_CODE_NONE"),
-                MockupMetric(label: "input app", value: "ADC + balance"),
-                MockupMetric(label: "logging", value: "local CSV armed"),
+                PreviewMetric(label: "battery limit", value: "45 A"),
+                PreviewMetric(label: "motor limit", value: "90 A"),
+                PreviewMetric(label: "last fault", value: "FAULT_CODE_NONE"),
+                PreviewMetric(label: "input app", value: "ADC + balance"),
+                PreviewMetric(label: "logging", value: "local CSV armed"),
             ],
-            deviceCard: MockupDeviceCard(
+            deviceCard: PreviewDeviceCard(
                 title: "Profile: Street stable",
                 detail: "VESC Express · FW 6.x · UART bridge",
                 status: "",
                 accent: .cyan
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
-                MockupDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
-                MockupDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
-                MockupDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
+                PreviewDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
+                PreviewDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
+                PreviewDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
+                PreviewDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
             ],
             summaryTitle: "Fault / app channels",
             summaryRows: [
-                MockupSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
-                MockupSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
-                MockupSummaryRow(label: "CAN status", value: "single controller", accent: nil),
-                MockupSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
+                PreviewSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
+                PreviewSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
+                PreviewSummaryRow(label: "CAN status", value: "single controller", accent: nil),
+                PreviewSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
             ],
-            faultCard: MockupFaultCard(
+            faultCard: PreviewFaultCard(
                 title: "Guardrails",
                 detail: "Hide dangerous writes until parked + confirmed.",
                 accent: .orange
