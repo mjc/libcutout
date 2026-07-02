@@ -1768,6 +1768,7 @@ fn control_refusal_reason_text(reason: ControlRefusalReasonDto) -> &'static str 
         ControlRefusalReasonDto::ExpiredArm => "expired_arm",
         ControlRefusalReasonDto::CurrentLimitExceeded => "current_limit_exceeded",
         ControlRefusalReasonDto::UnsupportedCommand => "unsupported_command",
+        ControlRefusalReasonDto::ActuationEncoderUnavailable => "actuation_encoder_unavailable",
     }
 }
 

@@ -1686,6 +1686,9 @@ pub enum ControlRefusalReasonDto {
 
     /// Command is not supported by this model/session.
     UnsupportedCommand,
+
+    /// Command was authorized, but this shell has no encoder yet.
+    ActuationEncoderUnavailable,
 }
 
 impl From<ControlRefusalReason> for ControlRefusalReasonDto {
@@ -1697,6 +1700,7 @@ impl From<ControlRefusalReason> for ControlRefusalReasonDto {
             ControlRefusalReason::ExpiredArm => Self::ExpiredArm,
             ControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             ControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+            ControlRefusalReason::ActuationEncoderUnavailable => Self::ActuationEncoderUnavailable,
         }
     }
 }

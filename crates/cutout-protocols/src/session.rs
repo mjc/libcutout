@@ -1248,7 +1248,7 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
                         output,
                         metadata.kind,
                         metadata.safety_class,
-                        cutout_core::ControlRefusalReason::UnsupportedCommand,
+                        cutout_core::ControlRefusalReason::ActuationEncoderUnavailable,
                     ),
                     Err(reason) => Self::push_refusal(
                         output,
@@ -2925,6 +2925,47 @@ mod tests {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
                     reason: cutout_core::ControlRefusalReason::CurrentLimitExceeded,
+                }
+            )))
+        );
+    }
+
+    #[cfg(feature = "dangerous-controls")]
+    #[test]
+    fn dangerous_control_session_reports_authorized_actuation_without_encoder() {
+        let policy = cutout_core::DangerousActuationPolicy {
+            model: TestModel::MODEL,
+            max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
+            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+        };
+        let mut session = DangerousControlSession::<TestModel>::new(policy);
+        let mut output = Vec::new();
+
+        session.arm(policy.arm(ms(10)));
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(42),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRawMotorCurrent {
+                current: cutout_core::PhaseCurrent::from_milliamps(1_000),
+            }),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert!(
+            output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
+                cutout_core::ControlRefusal {
+                    command: CommandKind::SetRawMotorCurrent,
+                    safety_class: SafetyClass::Actuation,
+                    reason: cutout_core::ControlRefusalReason::ActuationEncoderUnavailable,
                 }
             )))
         );

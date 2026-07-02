@@ -442,6 +442,9 @@ pub enum ControlRefusalReason {
 
     /// Command is not supported by this model/session.
     UnsupportedCommand,
+
+    /// Command was authorized, but this shell has no encoder yet.
+    ActuationEncoderUnavailable,
 }
 
 impl From<DangerousActuationRefusal> for ControlRefusalReason {
