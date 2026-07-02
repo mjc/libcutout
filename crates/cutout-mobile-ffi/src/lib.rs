@@ -18,8 +18,8 @@ use cutout_core::{
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
-    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, new_nosfet_aero_read_only_session,
-    try_new_begode_falcon_read_only_session,
+    ConcreteSessionConstructorErrorDto, ConcreteSessionErrorDto, ConcreteSessionStepResultDto,
+    new_nosfet_aero_read_only_session, try_new_begode_falcon_read_only_session,
 };
 
 uniffi::setup_scaffolding!();
@@ -1918,12 +1918,12 @@ impl From<MobileFalconProfileDto> for ConcreteFalconProfileDto {
     }
 }
 
-impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
-    fn from(error: ConcreteSessionErrorDto) -> Self {
+impl From<ConcreteSessionConstructorErrorDto> for MobileSessionConstructorError {
+    fn from(error: ConcreteSessionConstructorErrorDto) -> Self {
         match error {
-            ConcreteSessionErrorDto::CommandRefused { .. }
-            | ConcreteSessionErrorDto::UnsupportedFalconProfile { .. }
-            | ConcreteSessionErrorDto::OutputBufferFull { .. } => Self::UnsupportedFalconProfile,
+            ConcreteSessionConstructorErrorDto::UnsupportedFalconProfile { .. } => {
+                Self::UnsupportedFalconProfile
+            }
         }
     }
 }

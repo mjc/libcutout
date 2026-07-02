@@ -41,6 +41,16 @@ pub enum ConcreteSessionErrorDto {
     },
 }
 
+/// Stable concrete mobile-wrapper construction error DTO.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConcreteSessionConstructorErrorDto {
+    /// The requested Falcon construction profile is not supported yet.
+    UnsupportedFalconProfile {
+        /// Unsupported Falcon construction profile.
+        profile: ConcreteFalconProfileDto,
+    },
+}
+
 /// Concrete Falcon construction profile for mobile bindings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConcreteFalconProfileDto {
@@ -133,13 +143,15 @@ impl ConcreteFalconReadOnlySession {
     ///
     /// # Errors
     ///
-    /// Returns [`ConcreteSessionErrorDto::UnsupportedFalconProfile`] when the
+    /// Returns [`ConcreteSessionConstructorErrorDto::UnsupportedFalconProfile`] when the
     /// selected profile is not supported by the concrete wrapper.
-    pub fn try_new(profile: ConcreteFalconProfileDto) -> Result<Self, ConcreteSessionErrorDto> {
+    pub fn try_new(
+        profile: ConcreteFalconProfileDto,
+    ) -> Result<Self, ConcreteSessionConstructorErrorDto> {
         match profile {
             ConcreteFalconProfileDto::Default => Ok(Self::new()),
             ConcreteFalconProfileDto::Unsupported => {
-                Err(ConcreteSessionErrorDto::UnsupportedFalconProfile { profile })
+                Err(ConcreteSessionConstructorErrorDto::UnsupportedFalconProfile { profile })
             }
         }
     }
@@ -212,11 +224,11 @@ pub fn new_begode_falcon_read_only_session() -> ConcreteFalconReadOnlySession {
 ///
 /// # Errors
 ///
-/// Returns [`ConcreteSessionErrorDto::UnsupportedFalconProfile`] when the
+/// Returns [`ConcreteSessionConstructorErrorDto::UnsupportedFalconProfile`] when the
 /// selected profile is not supported by the concrete wrapper.
 pub fn try_new_begode_falcon_read_only_session(
     profile: ConcreteFalconProfileDto,
-) -> Result<ConcreteFalconReadOnlySession, ConcreteSessionErrorDto> {
+) -> Result<ConcreteFalconReadOnlySession, ConcreteSessionConstructorErrorDto> {
     ConcreteFalconReadOnlySession::try_new(profile)
 }
 
@@ -305,8 +317,9 @@ mod tests {
     use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
 
     use super::{
-        ConcreteFalconProfileDto, ConcreteSessionErrorDto, new_begode_falcon_read_only_session,
-        new_nosfet_aero_read_only_session, try_new_begode_falcon_read_only_session,
+        ConcreteFalconProfileDto, ConcreteSessionConstructorErrorDto, ConcreteSessionErrorDto,
+        new_begode_falcon_read_only_session, new_nosfet_aero_read_only_session,
+        try_new_begode_falcon_read_only_session,
     };
 
     const fn ms(value: u64) -> MonotonicMillisDto {
@@ -398,7 +411,7 @@ mod tests {
         assert_eq!(
             try_new_begode_falcon_read_only_session(ConcreteFalconProfileDto::Unsupported)
                 .expect_err("unsupported profile should return typed error"),
-            ConcreteSessionErrorDto::UnsupportedFalconProfile {
+            ConcreteSessionConstructorErrorDto::UnsupportedFalconProfile {
                 profile: ConcreteFalconProfileDto::Unsupported
             }
         );
