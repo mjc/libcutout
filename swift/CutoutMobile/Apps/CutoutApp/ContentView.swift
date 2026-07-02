@@ -1771,7 +1771,9 @@ private struct BmsScrollableLayout: View {
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
-    private let columns = Array(repeating: GridItem(.fixed(31), spacing: 5), count: 10)
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.fixed(31 * scale), spacing: 5 * scale), count: 10)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16 * scale) {
