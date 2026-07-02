@@ -37,7 +37,7 @@ and tracker work can reference stable repo paths.
 | `cutout-07-bms-cell-map-40s.png` | 390x844 | `LIBCU-442` |
 | `cutout-08-bms-cell-detail-popover.png` | 390x844 | `LIBCU-443` |
 | `cutout-09-bms-unknown-topology.png` | 390x844 | `LIBCU-444` |
-| `cutout-10-dumb-bms-no-data.svg` | SVG | supplemental mockup, tracker follow-up needed |
+| `cutout-10-dumb-bms-no-data.svg` | SVG | `LIBCU-446` |
 | `cutout-bms-mockups-sheet.png` | 1468x663 | `LIBCU-438` |
 
 ## Tracker Map
@@ -51,6 +51,7 @@ and tracker work can reference stable repo paths.
 - Typed VESC debug/config/logging contract: `LIBCU-416`
 - Parent BMS screen-set epic: `LIBCU-438`
 - Typed BMS topology and per-group readback contract: `LIBCU-439`
+- Controller-only / non-smart BMS no-data screen: `LIBCU-446`
 
 The screen epics intentionally link each visible datum back to the Rust,
 mobile FFI, and Swift API work needed to make the UI hard to misuse. Mockup-only

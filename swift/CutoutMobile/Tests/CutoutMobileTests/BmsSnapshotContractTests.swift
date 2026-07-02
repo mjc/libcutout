@@ -12,12 +12,12 @@ final class BmsSnapshotContractTests: XCTestCase {
                 bmsCount: 2,
                 confidence: .verified
             ),
-            energyPercent: telemetryReading(72),
-            voltage: telemetryReading(81_600),
-            current: telemetryReading(-12_400),
-            cellDeltaMillivolts: telemetryReading(18),
+            energyPercent: TelemetryReading.fixture(value: 72),
+            voltage: TelemetryReading.fixture(value: 81_600),
+            current: TelemetryReading.fixture(value: -12_400),
+            cellDeltaMillivolts: TelemetryReading.fixture(value: 18),
             lowestGroupIndex: 17,
-            highestTemperature: telemetryReading(37_800),
+            highestTemperature: TelemetryReading.fixture(value: 37_800),
             highestTemperatureLabel: "right pack",
             balancingSummary: "idle - top groups only",
             balancingDetail: "3 groups bleeding: 03, 11, 19",
@@ -27,8 +27,8 @@ final class BmsSnapshotContractTests: XCTestCase {
                 BmsGroupSnapshot(
                     index: 17,
                     label: "right pack group 17",
-                    voltage: telemetryReading(4_071),
-                    temperature: telemetryReading(34_900),
+                    voltage: TelemetryReading.fixture(value: 4_071),
+                    temperature: TelemetryReading.fixture(value: 34_900),
                     resistanceMilliohms: 21,
                     isBalancing: true,
                     alertLevel: .warning,
@@ -62,7 +62,7 @@ final class BmsSnapshotContractTests: XCTestCase {
                 bmsCount: 1,
                 confidence: .unverified
             ),
-            voltage: telemetryReading(75_900),
+            voltage: TelemetryReading.fixture(value: 75_900),
             faultSummary: "BMS found, map unknown",
             faultDetail: "show raw-safe info until topology is confirmed",
             groups: [],
@@ -76,22 +76,4 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertTrue(snapshot.groups.isEmpty)
         XCTAssertEqual(snapshot.faults.map { $0.code }, ["0x0040"])
     }
-}
-
-private func telemetryReading(_ value: Int32) -> TelemetryReading<Int32> {
-    TelemetryReading(
-        value: value,
-        source: .reported,
-        quality: .known,
-        verification: .sourceVerified
-    )
-}
-
-private func telemetryReading(_ value: UInt8) -> TelemetryReading<UInt8> {
-    TelemetryReading(
-        value: value,
-        source: .reported,
-        quality: .known,
-        verification: .sourceVerified
-    )
 }

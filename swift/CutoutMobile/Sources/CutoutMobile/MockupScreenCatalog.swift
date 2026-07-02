@@ -653,6 +653,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         ),
         energyPercent: .fixture(value: 71),
         voltage: .fixture(value: 117_600),
+        current: .fixture(value: 38_000),
         captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
         captureActionState: "limited data"
     )
@@ -958,7 +959,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
     ])
 }
 
-private extension TelemetryReading {
+extension TelemetryReading {
     static func fixture(value: Value) -> Self {
         Self(
             value: value,

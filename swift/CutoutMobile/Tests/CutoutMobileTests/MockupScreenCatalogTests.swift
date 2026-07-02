@@ -432,6 +432,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(snapshot.topology.confidence, .inferred)
         XCTAssertEqual(snapshot.energyPercent?.value, 71)
         XCTAssertEqual(snapshot.voltage?.value, 117_600)
+        XCTAssertEqual(snapshot.current?.value, 38_000)
         XCTAssertEqual(snapshot.captureActionState, "limited data")
     }
 }

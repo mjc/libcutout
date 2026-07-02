@@ -9,6 +9,7 @@ These screens are disposable wiring references for BMS support across wildly dif
 3. `cutout-07-bms-cell-map-40s` — large EUC-style pack. Overview heatmap first, exact cell/group table via horizontal scroll or full-screen detail.
 4. `cutout-08-bms-cell-detail-popover` — tap target model for any cell/group. Shows exact voltage, deviation, temp, internal-resistance estimate, trend, and export/compare actions.
 5. `cutout-09-bms-unknown-topology` — partial/unknown BMS state. Avoids fake certainty and points toward the later unsupported-device capture flow.
+6. `cutout-10-dumb-bms-no-data` / `MockupScreenID.bmsNoData` — controller-only battery estimate for non-smart BMS devices. Distinct from BMS telemetry screens: it shows what CutOut can still infer while keeping cell-level, fault, and temperature visibility explicitly unknown.
 
 ## Layout rules
 
@@ -21,6 +22,8 @@ Large packs, roughly 25S–40S+: show an overview heatmap or strip first. Exact 
 Split packs: display topology explicitly, such as `20S4P split pack`, `2 × 20S`, `master + slave BMS`, or `left/right pack`. The UI should preserve pack identity instead of flattening everything into one anonymous list.
 
 Unknown topology: show raw-safe values, mark confidence, and avoid naming cells/groups until the mapping is known.
+
+No-data controller-only estimate: treat this as its own layout, not another size tier. Emphasize the estimate/confidence split, keep unknowns explicit, and avoid implying cell topology or BMS fault visibility that the device does not report.
 
 ## Data model hints
 

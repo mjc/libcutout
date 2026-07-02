@@ -1330,7 +1330,7 @@ private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyB
                 progress: Double(batteryLevel.value) / 100.0,
                 accent: .cyan
             )
-        } ?? MockupSafetyBar(label: "sag-adjusted energy", value: "Unavailable", progress: 0, accent: .cyan),
+        } ?? MockupSafetyBar(label: "estimated energy", value: "Unavailable", progress: 0, accent: .cyan),
     ]
 }
 
@@ -1363,7 +1363,7 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
                 detail: batteryLevel.provenanceText,
                 accent: .cyan
             )
-        } ?? MockupDashboardTile(label: "limp-home", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
+        } ?? MockupDashboardTile(label: "energy", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
     ]
 }
 
@@ -1611,19 +1611,19 @@ private struct BmsMockupView: View {
                 selectScreen(.eucRide)
             }
             Spacer()
-            BmsBottomTab(title: "Pack", isSelected: false, scale: scale) {
+            BmsBottomTab(title: "Pack", isSelected: content.kind == .overview || content.kind == .noData, scale: scale) {
                 selectScreen(.bmsOverview)
             }
             Spacer()
             BmsBottomTab(
                 title: "Cells",
-                isSelected: true,
+                isSelected: [.cellMapInline, .cellMapScrollable, .cellDetail].contains(content.kind),
                 scale: scale
             ) {
                 selectScreen(.bmsCellMap40S)
             }
             Spacer()
-            BmsBottomTab(title: "Faults", isSelected: false, scale: scale) {
+            BmsBottomTab(title: "Faults", isSelected: content.kind == .unknownTopology, scale: scale) {
                 selectScreen(.bmsUnknownTopology)
             }
         }
@@ -1987,6 +1987,12 @@ private struct BmsNoDataLayout: View {
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
+    private var rideSagMetric: MockupMetric? {
+        screen.metrics.first { $0.label == "ride sag" }
+    }
+    private var loadNowMetric: MockupMetric? {
+        screen.metrics.first { $0.label == "load now" }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14 * scale) {
@@ -2084,7 +2090,7 @@ private struct BmsNoDataLayout: View {
             VStack(alignment: .leading, spacing: 8 * scale) {
                 cardLabel("PACK ESTIMATE")
                 HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
-                    Text("71")
+                    Text(percentValueText(snapshot.energyPercent))
                         .font(.system(size: 64 * scale, weight: .black))
                         .monospacedDigit()
                     Text("%")
@@ -2124,9 +2130,17 @@ private struct BmsNoDataLayout: View {
         VStack(alignment: .leading, spacing: 14 * scale) {
             cardLabel("WHAT WE CAN SEE")
             HStack(alignment: .top, spacing: 18 * scale) {
-                noDataMetric(value: "117.6", unit: "V", label: "pack voltage")
-                noDataMetric(value: "4.8", unit: "V", label: "ride sag")
-                noDataMetric(value: "38", unit: "A", label: "load now")
+                noDataMetric(value: voltageText(snapshot.voltage), unit: "V", label: "pack voltage")
+                noDataMetric(
+                    value: rideSagMetric.map(metricValueText) ?? "--",
+                    unit: rideSagMetric.map(metricUnitText) ?? "",
+                    label: "ride sag"
+                )
+                noDataMetric(
+                    value: currentText(snapshot.current) ?? loadNowMetric.map(metricValueText) ?? "--",
+                    unit: currentUnitText(snapshot.current) ?? loadNowMetric.map(metricUnitText) ?? "",
+                    label: "load now"
+                )
             }
         }
         .padding(.horizontal, 20 * scale)
@@ -2181,6 +2195,27 @@ private struct BmsNoDataLayout: View {
         Text(text)
             .font(.system(size: 12 * scale, weight: .bold))
             .foregroundStyle(MockupColors.muted)
+    }
+
+    private func percentValueText(_ reading: TelemetryReading<UInt8>?) -> String {
+        guard let reading else { return "--" }
+        return String(reading.value)
+    }
+
+    private func currentText(_ reading: TelemetryReading<Int32>?) -> String? {
+        reading.map { decimalString(Double($0.value) / 1_000.0, fractionDigits: 0) }
+    }
+
+    private func currentUnitText(_ reading: TelemetryReading<Int32>?) -> String? {
+        reading.map { _ in "A" }
+    }
+
+    private func metricUnitText(_ metric: MockupMetric) -> String {
+        metric.value.split(separator: " ").dropFirst().first.map(String.init) ?? ""
+    }
+
+    private func metricValueText(_ metric: MockupMetric) -> String {
+        metric.value.split(separator: " ").first.map(String.init) ?? metric.value
     }
 
     private func noDataMetric(value: String, unit: String, label: String) -> some View {

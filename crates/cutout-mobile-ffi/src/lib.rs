@@ -154,15 +154,11 @@ pub fn mobile_discovery_candidate_from_advertisement(
 fn mobile_electric_unicycle_model_from_name(
     lower_name: &str,
 ) -> Option<MobileElectricUnicycleModelDto> {
-    if lower_name.contains("falcon")
-        || lower_name.contains("begode")
-        || lower_name.contains("gotway")
-    {
+    if lower_name.contains("falcon") {
         return Some(MobileElectricUnicycleModelDto::Falcon);
     }
 
-    if lower_name.contains("aero") || lower_name.contains("nosfet") || lower_name.starts_with("nf")
-    {
+    if lower_name.contains("aero") || lower_name.contains("nosfet") {
         return Some(MobileElectricUnicycleModelDto::Aero);
     }
 
@@ -1875,10 +1871,10 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_gotway_name_to_falcon_session() {
+    fn mobile_discovery_candidate_routes_explicit_falcon_name_to_session() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-falcon".to_owned(),
-            Some("GotWay_002441".to_owned()),
+            Some("Begode Falcon".to_owned()),
             vec![0xffe0],
         );
 
@@ -1895,6 +1891,24 @@ mod tests {
             candidate.electric_unicycle_model,
             Some(MobileElectricUnicycleModelDto::Falcon)
         );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_keeps_generic_brand_name_unconfirmed() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-begode".to_owned(),
+            Some("GotWay_002441".to_owned()),
+            vec![0xffe0],
+        );
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Unsupported
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(candidate.disabled_reason.as_deref(), Some("Model not confirmed"));
     }
 
     #[test]
