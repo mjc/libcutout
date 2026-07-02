@@ -4,6 +4,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var model: LiveSpeedModel
     @State private var selectedScreenID: MockupScreenID
+    @State private var pairedDestinationScreenID: MockupScreenID?
 
     private let catalog = MockupScreenCatalog.v2
 
@@ -21,16 +22,11 @@ struct ContentView: View {
                 ForEach(catalog.screens) { screen in
                     MockupScreenContainer(
                         screen: screen,
-                        liveSpeed: model.speed.displayValue,
                         devicePickerScanState: model.devicePickerScanState,
-                        pair: { platformIdentifier in
-                            if model.pair(platformIdentifier: platformIdentifier) {
-                                selectedScreenID = .eucRide
-                            }
-                        }
+                        pair: pair
                     )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .tag(screen.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .tag(screen.id)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -39,10 +35,20 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MockupColors.pageBackground.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
-            if phase.opensRideScreen {
-                selectedScreenID = .eucRide
-            }
+            openRideScreen(ifNeededFor: phase)
         }
+    }
+
+    private func pair(_ row: MockupPickerRow) {
+        guard model.pair(platformIdentifier: row.id) else { return }
+        guard let screenID = Self.destinationScreenID(for: row) else { return }
+        pairedDestinationScreenID = screenID
+        selectedScreenID = screenID
+    }
+
+    private func openRideScreen(ifNeededFor phase: LiveSpeedConnectionPhase) {
+        guard phase.opensRideScreen else { return }
+        selectedScreenID = pairedDestinationScreenID ?? .eucRide
     }
 
     private static func initialScreenID() -> MockupScreenID {
@@ -60,13 +66,16 @@ struct ContentView: View {
 
         return .devicePicker
     }
+
+    private static func destinationScreenID(for row: MockupPickerRow) -> MockupScreenID? {
+        row.connectionRoute?.destinationScreenID
+    }
 }
 
 private struct MockupScreenContainer: View {
     let screen: MockupScreen
-    let liveSpeed: String
     let devicePickerScanState: DevicePickerScanState?
-    let pair: (String) -> Void
+    let pair: (MockupPickerRow) -> Void
 
     var body: some View {
         switch screen.id {
@@ -74,9 +83,411 @@ private struct MockupScreenContainer: View {
             DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
             EucRideMockupView(screen: screen)
-        default:
-            GenericMockupView(screen: screen, liveSpeed: liveSpeed)
+        case .eucGarage:
+            EucGarageMockupView(screen: screen)
+        case .vescOnewheelRide:
+            VescOnewheelRideMockupView(screen: screen)
+        case .vescDebug:
+            VescDebugMockupView(screen: screen)
         }
+    }
+}
+
+private struct EucGarageMockupView: View {
+    let screen: MockupScreen
+
+    var body: some View {
+        MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                Text(screen.title)
+                    .font(.system(size: 31 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                Text(screen.subtitle)
+                    .font(.system(size: 14 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let deviceCard = screen.deviceCard {
+                EucDeviceStatusCard(card: deviceCard, scale: scale)
+                    .padding(.top, 10 * scale)
+            }
+
+            LazyVGrid(columns: columns, spacing: 16 * scale) {
+                ForEach(screen.dashboardTiles) { tile in
+                    EucDashboardTile(tile: tile, scale: scale)
+                }
+            }
+            .padding(.top, 6 * scale)
+
+            if let summaryTitle = screen.summaryTitle {
+                Text(summaryTitle)
+                    .font(.system(size: 18 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 2 * scale)
+            }
+
+            if !screen.summaryRows.isEmpty {
+                EucSummaryRows(rows: screen.summaryRows, scale: scale)
+            }
+
+            if let faultCard = screen.faultCard {
+                Text(faultCard.title)
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 12 * scale)
+
+                EucFaultStatusCard(card: faultCard, scale: scale)
+            }
+        }
+    }
+}
+
+private struct MockupScreenScaffold<Content: View>: View {
+    let sectionTitle: String
+    let bottomPadding: CGFloat
+    let allowsVerticalScroll: Bool
+    let columnSpacing: CGFloat
+    let contentSpacing: CGFloat
+    let horizontalPadding: CGFloat
+    private let content: (CGFloat, [GridItem]) -> Content
+
+    init(
+        sectionTitle: String,
+        bottomPadding: CGFloat,
+        allowsVerticalScroll: Bool = true,
+        columnSpacing: CGFloat = 26,
+        contentSpacing: CGFloat = 16,
+        horizontalPadding: CGFloat = 24,
+        @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
+    ) {
+        self.sectionTitle = sectionTitle
+        self.bottomPadding = bottomPadding
+        self.allowsVerticalScroll = allowsVerticalScroll
+        self.columnSpacing = columnSpacing
+        self.contentSpacing = contentSpacing
+        self.horizontalPadding = horizontalPadding
+        self.content = content
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
+            let columns = [
+                GridItem(.flexible(), spacing: columnSpacing * scale),
+                GridItem(.flexible(), spacing: columnSpacing * scale),
+            ]
+
+            Group {
+                if allowsVerticalScroll {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        scaffoldContent(scale: scale, columns: columns, width: proxy.size.width)
+                    }
+                } else {
+                    scaffoldContent(scale: scale, columns: columns, width: proxy.size.width)
+                        .frame(height: proxy.size.height, alignment: .topLeading)
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .background(MockupColors.pageBackground)
+            .foregroundStyle(MockupColors.primaryText)
+        }
+    }
+
+    private func scaffoldContent(scale: CGFloat, columns: [GridItem], width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: contentSpacing * scale) {
+            MockupScreenHeader(sectionTitle: sectionTitle, scale: scale)
+
+            content(scale, columns)
+        }
+        .padding(.horizontal, horizontalPadding * scale)
+        .padding(.bottom, bottomPadding * scale)
+        .frame(width: width, alignment: .topLeading)
+    }
+}
+
+private struct MockupScreenHeader: View {
+    let sectionTitle: String
+    let scale: CGFloat
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("CutOut")
+                .font(.system(size: 18 * scale, weight: .bold))
+                .foregroundStyle(MockupColors.yellow)
+            Spacer()
+            Text(sectionTitle)
+                .font(.system(size: 15 * scale, weight: .semibold))
+                .foregroundStyle(MockupColors.muted)
+        }
+        .padding(.top, 10 * scale)
+    }
+}
+
+private struct EucDeviceStatusCard: View {
+    let card: MockupDeviceCard
+    let scale: CGFloat
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12 * scale) {
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                Text(card.title)
+                    .font(.system(size: 22 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                Text(card.detail)
+                    .font(.system(size: 13 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
+            }
+            .layoutPriority(1)
+
+            Text(card.status)
+                .font(.system(size: 14 * scale, weight: .black))
+                .foregroundStyle(.black)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 18 * scale)
+                .frame(minWidth: 58 * scale, minHeight: 32 * scale)
+                .background(Capsule().fill(card.accent.color))
+        }
+        .padding(.horizontal, 22 * scale)
+        .frame(height: 104 * scale)
+        .frame(maxWidth: .infinity)
+        .background(CardBackground(cornerRadius: 26 * scale))
+    }
+}
+
+private struct VescDebugMockupView: View {
+    let screen: MockupScreen
+
+    var body: some View {
+        MockupScreenScaffold(sectionTitle: "VESC debug", bottomPadding: 20) { scale, columns in
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                Text(screen.title)
+                    .font(.system(size: 29 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                Text(screen.subtitle)
+                    .font(.system(size: 14 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                    .lineLimit(2)
+            }
+
+            if let profile = screen.deviceCard {
+                VescProfileCard(card: profile, scale: scale)
+                    .padding(.top, 10 * scale)
+            }
+
+            LazyVGrid(columns: columns, spacing: 20 * scale) {
+                ForEach(screen.dashboardTiles) { tile in
+                    EucDashboardTile(tile: tile, scale: scale)
+                }
+            }
+            .padding(.top, 8 * scale)
+
+            if let summaryTitle = screen.summaryTitle {
+                Text(summaryTitle)
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 0)
+            }
+
+            if !screen.summaryRows.isEmpty {
+                EucSummaryRows(rows: screen.summaryRows, scale: scale)
+            }
+
+            if let guardrail = screen.faultCard {
+                Text(guardrail.title)
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 6 * scale)
+
+                VescGuardrailCard(card: guardrail, scale: scale)
+            }
+        }
+    }
+}
+
+private struct VescProfileCard: View {
+    let card: MockupDeviceCard
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8 * scale) {
+            Text(card.title)
+                .font(.system(size: 22 * scale, weight: .black))
+                .foregroundStyle(MockupColors.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(card.detail)
+                .font(.system(size: 13 * scale, weight: .bold))
+                .foregroundStyle(MockupColors.muted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(.horizontal, 22 * scale)
+        .frame(height: 87 * scale, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CardBackground(cornerRadius: 25 * scale))
+    }
+}
+
+private struct VescGuardrailCard: View {
+    let card: MockupFaultCard
+    let scale: CGFloat
+
+    var body: some View {
+        MockupFaultDetailCard(
+            card: card,
+            scale: scale,
+            fontSize: 13,
+            horizontalAlignment: .center,
+            horizontalPadding: 20,
+            height: 57,
+            cornerRadius: 18,
+            minimumScaleFactor: 0.72
+        )
+    }
+}
+
+private struct VescOnewheelRideMockupView: View {
+    let screen: MockupScreen
+
+    var body: some View {
+        MockupScreenScaffold(sectionTitle: "OW ride", bottomPadding: 20, allowsVerticalScroll: false) { scale, columns in
+            HStack(alignment: .center, spacing: 12 * scale) {
+                Text(screen.title)
+                    .font(.system(size: 18 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 8 * scale)
+                VescArmedBadge(title: screen.subtitle, scale: scale)
+            }
+
+            VStack(alignment: .center, spacing: 2 * scale) {
+                HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
+                    Text(screen.primaryValue)
+                        .font(.system(size: 92 * scale, weight: .black))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Text("mph")
+                        .font(.system(size: 22 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                }
+                Text(screen.secondaryValue)
+                    .font(.system(size: 13 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+            }
+            .frame(maxWidth: .infinity)
+            .foregroundStyle(MockupColors.primaryText)
+
+            if let duty = screen.safetyBars.first {
+                VescDutyHeadroomCard(bar: duty, scale: scale)
+                    .padding(.top, 16 * scale)
+            }
+
+            if let warningCard = screen.warningCard {
+                VescPushbackWarningCard(card: warningCard, scale: scale)
+                    .padding(.top, 6 * scale)
+            }
+
+            LazyVGrid(columns: columns, spacing: 20 * scale) {
+                ForEach(screen.dashboardTiles) { tile in
+                    EucDashboardTile(tile: tile, scale: scale)
+                }
+            }
+            .padding(.top, 6 * scale)
+
+            EucRideTabs(tabs: screen.tabs, scale: scale)
+                .padding(.top, 14 * scale)
+        }
+    }
+}
+
+private struct VescArmedBadge: View {
+    let title: String
+    let scale: CGFloat
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 13 * scale, weight: .black))
+            .foregroundStyle(.black)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 14 * scale)
+            .frame(height: 31 * scale)
+            .background(Capsule().fill(MockupColors.purple))
+    }
+}
+
+private struct VescDutyHeadroomCard: View {
+    let bar: MockupSafetyBar
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11 * scale) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(bar.label)
+                    .font(.system(size: 14 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                Spacer()
+                Text(bar.value)
+                    .font(.system(size: 25 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.yellow)
+                    .monospacedDigit()
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(MockupColors.cardStroke)
+                    Capsule()
+                        .fill(bar.accent.color)
+                        .frame(width: max(0, min(1, bar.progress)) * proxy.size.width)
+                }
+            }
+            .frame(height: 17 * scale)
+
+            Text("Nose authority is the ride-critical value here.")
+                .font(.system(size: 13 * scale, weight: .bold))
+                .foregroundStyle(MockupColors.muted)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 17 * scale)
+        .frame(maxWidth: .infinity)
+        .background(CardBackground(cornerRadius: 25 * scale))
+    }
+}
+
+private struct VescPushbackWarningCard: View {
+    let card: MockupWarningCard
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8 * scale) {
+            Text(card.title)
+                .font(.system(size: 20 * scale, weight: .black))
+                .foregroundStyle(MockupColors.purple)
+            Text(card.detail)
+                .font(.system(size: 13 * scale, weight: .bold))
+                .foregroundStyle(MockupColors.primaryText)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 16 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24 * scale, style: .continuous)
+                .fill(MockupColors.purple.opacity(0.18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24 * scale, style: .continuous)
+                        .stroke(MockupColors.purple.opacity(0.55), lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -89,85 +500,61 @@ private struct EucRideMockupView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
-            let columns = [
-                GridItem(.flexible(), spacing: 12 * scale),
-                GridItem(.flexible(), spacing: 12 * scale),
-            ]
-
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14 * scale) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("CutOut")
-                            .font(.system(size: 18 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.yellow)
-                        Spacer()
-                        Text("EUC ride")
-                            .font(.system(size: 15 * scale, weight: .semibold))
-                            .foregroundStyle(MockupColors.muted)
-                    }
-                    .padding(.top, 10 * scale)
-
-                    HStack(alignment: .center, spacing: 12 * scale) {
-                        Text(screen.title)
-                            .font(.system(size: 18 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.primaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                        Spacer(minLength: 8 * scale)
-                        EucStatusBadge(title: screen.displaySubtitle, scale: scale)
-                    }
-                    .padding(.top, 8 * scale)
-
-                    VStack(alignment: .center, spacing: 2 * scale) {
-                        HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
-                            Text(speedParts.value)
-                                .font(.system(size: 104 * scale, weight: .black))
-                                .monospacedDigit()
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.72)
-                            Text(speedParts.unit)
-                                .font(.system(size: 27 * scale, weight: .bold))
-                                .foregroundStyle(MockupColors.muted)
-                        }
-                        Text("speed")
-                            .font(.system(size: 13 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.muted)
-                    }
-                    .frame(maxWidth: .infinity)
+        MockupScreenScaffold(
+            sectionTitle: "EUC ride",
+            bottomPadding: 20,
+            allowsVerticalScroll: false,
+            columnSpacing: 12
+        ) { scale, columns in
+            HStack(alignment: .center, spacing: 12 * scale) {
+                Text(screen.title)
+                    .font(.system(size: 18 * scale, weight: .bold))
                     .foregroundStyle(MockupColors.primaryText)
-                    .padding(.top, 0)
-
-                    VStack(spacing: 10 * scale) {
-                        ForEach(screen.safetyBars, id: \.label) { bar in
-                            EucSafetyBar(bar: bar, scale: scale)
-                        }
-                    }
-                    .padding(.top, 0)
-
-                    if let warningCard = screen.warningCard {
-                        EucWarningCard(card: warningCard, scale: scale)
-                            .padding(.top, 14 * scale)
-                    }
-
-                    LazyVGrid(columns: columns, spacing: 12 * scale) {
-                        ForEach(screen.dashboardTiles) { tile in
-                            EucDashboardTile(tile: tile, scale: scale)
-                        }
-                    }
-                    .padding(.top, 12 * scale)
-
-                    EucRideTabs(tabs: screen.tabs, scale: scale)
-                        .padding(.top, 48 * scale)
-                }
-                .padding(.horizontal, 24 * scale)
-                .padding(.bottom, 20 * scale)
-                .frame(width: proxy.size.width, alignment: .topLeading)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Spacer(minLength: 8 * scale)
+                EucStatusBadge(title: screen.displaySubtitle, scale: scale)
             }
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-            .background(MockupColors.pageBackground)
+            .padding(.top, 8 * scale)
+
+            VStack(alignment: .center, spacing: 2 * scale) {
+                HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
+                    Text(speedParts.value)
+                        .font(.system(size: 104 * scale, weight: .black))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(speedParts.unit)
+                        .font(.system(size: 27 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                }
+                Text("speed")
+                    .font(.system(size: 13 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+            }
+            .frame(maxWidth: .infinity)
             .foregroundStyle(MockupColors.primaryText)
+
+            VStack(spacing: 10 * scale) {
+                ForEach(screen.safetyBars, id: \.label) { bar in
+                    EucSafetyBar(bar: bar, scale: scale)
+                }
+            }
+
+            if let warningCard = screen.warningCard {
+                EucWarningCard(card: warningCard, scale: scale)
+                    .padding(.top, 14 * scale)
+            }
+
+            LazyVGrid(columns: columns, spacing: 12 * scale) {
+                ForEach(screen.dashboardTiles) { tile in
+                    EucDashboardTile(tile: tile, scale: scale)
+                }
+            }
+            .padding(.top, 12 * scale)
+
+            EucRideTabs(tabs: screen.tabs, scale: scale)
+                .padding(.top, 48 * scale)
         }
     }
 }
@@ -282,6 +669,78 @@ private struct EucDashboardTile: View {
     }
 }
 
+private struct EucSummaryRows: View {
+    let rows: [MockupSummaryRow]
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                HStack {
+                    Text(row.label)
+                        .font(.system(size: 14 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                    Spacer()
+                    Text(row.value)
+                        .font(.system(size: 15 * scale, weight: .black))
+                        .monospacedDigit()
+                        .foregroundStyle(row.accent?.color ?? MockupColors.primaryText)
+                }
+                .frame(height: 31 * scale)
+
+                if row.id != rows.last?.id {
+                    Rectangle()
+                        .fill(MockupColors.cardStroke)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 12 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
+private struct EucFaultStatusCard: View {
+    let card: MockupFaultCard
+    let scale: CGFloat
+
+    var body: some View {
+        MockupFaultDetailCard(
+            card: card,
+            scale: scale,
+            fontSize: 15,
+            horizontalAlignment: .leading,
+            horizontalPadding: 22,
+            height: 54,
+            cornerRadius: 19
+        )
+    }
+}
+
+private struct MockupFaultDetailCard: View {
+    let card: MockupFaultCard
+    let scale: CGFloat
+    let fontSize: CGFloat
+    let horizontalAlignment: Alignment
+    let horizontalPadding: CGFloat
+    let height: CGFloat
+    let cornerRadius: CGFloat
+    var minimumScaleFactor: CGFloat = 1
+
+    var body: some View {
+        Text(card.detail)
+            .font(.system(size: fontSize * scale, weight: .black))
+            .foregroundStyle(card.accent.color)
+            .lineLimit(1)
+            .minimumScaleFactor(minimumScaleFactor)
+            .frame(maxWidth: .infinity, alignment: horizontalAlignment)
+            .padding(.horizontal, horizontalPadding * scale)
+            .frame(height: height * scale)
+            .background(CardBackground(cornerRadius: cornerRadius * scale))
+    }
+}
+
 private struct EucRideTabs: View {
     let tabs: [MockupScreenTab]
     let scale: CGFloat
@@ -317,13 +776,10 @@ private struct EucRideTabs: View {
 private struct DevicePickerMockupView: View {
     let screen: MockupScreen
     let scanState: DevicePickerScanState?
-    let pair: (String) -> Void
+    let pair: (MockupPickerRow) -> Void
 
     private var renderedScanState: DevicePickerScanState {
-        if let scanState {
-            return scanState
-        }
-        return DevicePickerScanState(status: .scanning, rows: [])
+        scanState ?? DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
     }
 
     private var sections: MockupPickerSections {
@@ -331,48 +787,41 @@ private struct DevicePickerMockupView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
-            VStack(alignment: .leading, spacing: 18 * scale) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("CutOut")
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.yellow)
-                    Spacer()
-                    Text("setup")
-                        .font(.system(size: 15 * scale, weight: .semibold))
-                        .foregroundStyle(MockupColors.muted)
-                }
-                .padding(.top, 10 * scale)
+        MockupScreenScaffold(
+            sectionTitle: "setup",
+            bottomPadding: 24,
+            allowsVerticalScroll: false,
+            contentSpacing: 18,
+            horizontalPadding: 18
+        ) { scale, _ in
+            VStack(alignment: .leading, spacing: 7 * scale) {
+                Text("Pick your device(s)")
+                    .font(.system(size: 34 * scale, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Text("Nearby devices that look rideable. Pair supported ones.")
+                    .font(.system(size: 15 * scale, weight: .semibold))
+                    .foregroundStyle(MockupColors.muted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-                VStack(alignment: .leading, spacing: 7 * scale) {
-                    Text("Pick your device(s)")
-                        .font(.system(size: 34 * scale, weight: .bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                    Text("Nearby devices that look rideable. Pair supported ones.")
-                        .font(.system(size: 15 * scale, weight: .semibold))
-                        .foregroundStyle(MockupColors.muted)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            ScanStatusPill(
+                text: renderedScanState.statusText,
+                isScanning: renderedScanState.status == .scanning,
+                scale: scale
+            )
+                .padding(.top, 4 * scale)
 
-                ScanStatusPill(
-                    text: renderedScanState.statusText,
-                    isScanning: renderedScanState.status == .scanning,
-                    scale: scale
-                )
-                    .padding(.top, 4 * scale)
-
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 18 * scale) {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18 * scale) {
                     if !sections.supported.isEmpty {
                         SectionLabel("Supported now", scale: scale)
                             .padding(.top, 8 * scale)
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.supported) { row in
                                 Button {
-                                    pair(row.id)
+                                    pair(row)
                                 } label: {
                                     PickerDeviceRow(row: row, scale: scale)
                                 }
@@ -396,17 +845,12 @@ private struct DevicePickerMockupView: View {
                         ManualPickerRow(row: manualRow, scale: scale)
                             .padding(.top, 32 * scale)
                     }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 18 * scale)
-            .padding(.bottom, 24 * scale)
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-            .background(MockupColors.pageBackground)
-            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .foregroundStyle(.white)
     }
 }
 
@@ -699,54 +1143,6 @@ private struct CardBackground: View {
     }
 }
 
-private struct GenericMockupView: View {
-    let screen: MockupScreen
-    let liveSpeed: String
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Text(screen.title)
-                    .font(.largeTitle.weight(.bold))
-                Text(screen.subtitle)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Text(screen.primaryValue)
-                    .font(.system(size: 58, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                Text(screen.secondaryValue)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                if let warning = screen.warning {
-                    Text(warning)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.orange)
-                }
-
-                ForEach(screen.metrics, id: \.label) { metric in
-                    HStack {
-                        Text(metric.label).foregroundStyle(.secondary)
-                        Spacer()
-                        Text(metric.value).monospacedDigit()
-                    }
-                }
-
-                Divider()
-                HStack {
-                    Text("Live speed").foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(liveSpeed) mph").monospacedDigit()
-                }
-            }
-            .padding(24)
-        }
-        .background(Color.black)
-        .foregroundStyle(.white)
-    }
-}
-
 private extension MockupPickerRow {
     var glyphColor: Color {
         switch title {
@@ -803,6 +1199,8 @@ private extension MockupAccent {
             MockupColors.green
         case .orange:
             MockupColors.orange
+        case .purple:
+            MockupColors.purple
         case .yellow:
             MockupColors.yellow
         }
