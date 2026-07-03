@@ -2242,7 +2242,7 @@ private struct BmsDetailLayout: View {
                     Text(groupVoltageText(selectedGroup))
                         .font(.system(size: 58 * scale, weight: .black))
                         .monospacedDigit()
-                    Text("lowest group · 18 mV below pack avg")
+                    Text(snapshot.detailGroupStatus(for: selectedGroup.index))
                         .font(.system(size: 14 * scale, weight: .black))
                         .foregroundStyle(MockupColors.orange)
 
@@ -2267,8 +2267,8 @@ private struct BmsDetailLayout: View {
 
                     BmsWideCard(
                         title: nil,
-                        value: "trend: \(selectedGroup.detail ?? "not enough history")",
-                        detail: "actions: mark, compare neighbors, export raw sample",
+                        value: "trend: \(snapshot.detailGroupTrend(for: selectedGroup.index))",
+                        detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index),
                         accent: .yellow,
                         border: .normal,
                         scale: scale

@@ -226,4 +226,36 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.cellMapFocusSummary, "groups 17, 18, 19, 31 flagged")
         XCTAssertEqual(snapshot.cellMapFocusDetail, "sagging under load")
     }
+
+    func testSnapshotExposesDetailHelpersForSelectedGroup() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "large EUC pack",
+                seriesGroupCount: 40,
+                parallelCount: 4,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            cellDelta: VoltageDelta(value: 18),
+            lowestGroupIndex: 17,
+            highestTemperatureLabel: "group 31",
+            groups: [
+                BmsGroupSnapshot(
+                    index: 17,
+                    label: "front pack group 17",
+                    voltage: Voltage(value: 4_071),
+                    temperature: Temperature(value: 34_900),
+                    resistance: Resistance(value: 21),
+                    alertLevel: .warning,
+                    detail: "sagging under load"
+                ),
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+            ]
+        )
+
+        XCTAssertEqual(snapshot.detailGroupStatus(for: 17), "lowest group · 18 mV below pack avg")
+        XCTAssertEqual(snapshot.detailGroupTrend(for: 17), "sagging under load")
+        XCTAssertEqual(snapshot.detailGroupTrendDetail(for: 17), "18 mV spread")
+    }
 }

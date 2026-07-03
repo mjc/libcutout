@@ -1007,6 +1007,37 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         flaggedGroups.lazy.compactMap(\.detail).first ?? highestTemperatureLabel
     }
 
+    public func detailGroupStatus(for index: Int) -> String {
+        guard let group = groups.first(where: { $0.index == index }) else {
+            return topology.layoutLabel
+        }
+
+        if lowestGroupIndex == group.index {
+            return cellDelta.map { "lowest group · \($0.value) mV below pack avg" } ?? "lowest group"
+        }
+
+        guard
+            let averageGroupVoltage,
+            let groupVoltage = group.voltage
+        else {
+            return group.label ?? "group \(group.index)"
+        }
+
+        let delta = abs(Int(averageGroupVoltage.value) - Int(groupVoltage.value))
+        return "group \(group.index) · \(delta) mV from pack avg"
+    }
+
+    public func detailGroupTrend(for index: Int) -> String {
+        groups.first(where: { $0.index == index })?.detail ?? "not enough history"
+    }
+
+    public func detailGroupTrendDetail(for index: Int) -> String {
+        guard groups.contains(where: { $0.index == index }) else {
+            return topology.layoutLabel
+        }
+        return cellMapSpreadSummary
+    }
+
     private var groupVoltages: [Voltage] {
         groups.compactMap(\.voltage)
     }
