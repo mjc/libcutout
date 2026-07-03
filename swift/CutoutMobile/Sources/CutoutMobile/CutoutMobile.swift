@@ -564,7 +564,7 @@ public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, 
     public let value: Value?
     public let availability: ReadbackAvailability
 
-    public init(value: Value?, availability: ReadbackAvailability) {
+    private init(value: Value?, availability: ReadbackAvailability) {
         self.value = value
         self.availability = availability
     }
@@ -877,23 +877,24 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         captureActionTitle: String? = nil,
         captureActionState: String? = nil
     ) {
+        let hasReadbackData = availability == .available
         self.availability = availability
         self.topology = topology
-        self.energyPercent = energyPercent
-        self.voltage = voltage
-        self.current = current
-        self.cellDelta = cellDelta
-        self.lowestGroupIndex = lowestGroupIndex
-        self.highestTemperature = highestTemperature
-        self.highestTemperatureLabel = highestTemperatureLabel
-        self.balancingSummary = balancingSummary
-        self.balancingDetail = balancingDetail
-        self.faultSummary = faultSummary
-        self.faultDetail = faultDetail
-        self.groups = groups
-        self.faults = faults
-        self.captureActionTitle = captureActionTitle
-        self.captureActionState = captureActionState
+        self.energyPercent = hasReadbackData ? energyPercent : nil
+        self.voltage = hasReadbackData ? voltage : nil
+        self.current = hasReadbackData ? current : nil
+        self.cellDelta = hasReadbackData ? cellDelta : nil
+        self.lowestGroupIndex = hasReadbackData ? lowestGroupIndex : nil
+        self.highestTemperature = hasReadbackData ? highestTemperature : nil
+        self.highestTemperatureLabel = hasReadbackData ? highestTemperatureLabel : nil
+        self.balancingSummary = hasReadbackData ? balancingSummary : nil
+        self.balancingDetail = hasReadbackData ? balancingDetail : nil
+        self.faultSummary = hasReadbackData ? faultSummary : nil
+        self.faultDetail = hasReadbackData ? faultDetail : nil
+        self.groups = hasReadbackData ? groups : []
+        self.faults = hasReadbackData ? faults : []
+        self.captureActionTitle = hasReadbackData ? captureActionTitle : nil
+        self.captureActionState = hasReadbackData ? captureActionState : nil
     }
 
     fileprivate init(_ dto: MobileBmsSnapshotDto) {

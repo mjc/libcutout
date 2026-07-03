@@ -81,4 +81,55 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertTrue(snapshot.groups.isEmpty)
         XCTAssertEqual(snapshot.faults.map { $0.code }, ["0x0040"])
     }
+
+    func testUnavailableSnapshotDoesNotCarryPackDetails() {
+        let snapshot = BmsSnapshot(
+            availability: .unsupported,
+            topology: BmsTopology(
+                layoutLabel: "unsupported pack",
+                seriesGroupCount: 20,
+                parallelCount: 4,
+                packCount: 2,
+                bmsCount: 2,
+                confidence: .verified
+            ),
+            energyPercent: BatteryLevel(value: 72),
+            voltage: Voltage(value: 81_600),
+            current: BatteryCurrent(value: -12_400),
+            cellDelta: VoltageDelta(value: 18),
+            lowestGroupIndex: 17,
+            highestTemperature: Temperature(value: 37_800),
+            highestTemperatureLabel: "right pack",
+            balancingSummary: "idle",
+            balancingDetail: "3 groups bleeding",
+            faultSummary: "no active faults",
+            faultDetail: "last warning",
+            groups: [
+                BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), alertLevel: .warning)
+            ],
+            faults: [
+                BmsFault(code: "0x0040", label: "needs decoder", level: .critical)
+            ],
+            captureActionTitle: "record pack",
+            captureActionState: "disabled"
+        )
+
+        XCTAssertEqual(snapshot.availability, .unsupported)
+        XCTAssertEqual(snapshot.topology.layoutLabel, "unsupported pack")
+        XCTAssertNil(snapshot.energyPercent)
+        XCTAssertNil(snapshot.voltage)
+        XCTAssertNil(snapshot.current)
+        XCTAssertNil(snapshot.cellDelta)
+        XCTAssertNil(snapshot.lowestGroupIndex)
+        XCTAssertNil(snapshot.highestTemperature)
+        XCTAssertNil(snapshot.highestTemperatureLabel)
+        XCTAssertNil(snapshot.balancingSummary)
+        XCTAssertNil(snapshot.balancingDetail)
+        XCTAssertNil(snapshot.faultSummary)
+        XCTAssertNil(snapshot.faultDetail)
+        XCTAssertTrue(snapshot.groups.isEmpty)
+        XCTAssertTrue(snapshot.faults.isEmpty)
+        XCTAssertNil(snapshot.captureActionTitle)
+        XCTAssertNil(snapshot.captureActionState)
+    }
 }
