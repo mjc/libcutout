@@ -2669,6 +2669,17 @@ mod tests {
     }
 
     #[test]
+    fn nosfet_aero_fragmented_replay_preserves_read_only_responses() {
+        let frame = live_aero_selector_0_frame();
+        let chunks: Vec<_> = frame.chunks(1).collect();
+        let whole_responses = read_only_response_events(&aero_output_for_notification(&frame));
+        let fragmented_responses =
+            read_only_response_events(&aero_output_for_notification_chunks(&chunks));
+
+        assert_eq!(fragmented_responses, whole_responses);
+    }
+
+    #[test]
     fn nosfet_aero_session_reports_bms_selectors_zero_through_eight_without_parser_gaps() {
         for selector in 0..=8 {
             let frame = live_aero_selector_0_frame_with_selector(selector);
@@ -2775,6 +2786,10 @@ mod tests {
                     ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
                     SemanticEventCount::from_events(5),
                 ))
+            );
+            prop_assert_eq!(
+                read_only_response_events(&output),
+                read_only_response_events(&aero_output_for_notification(&frame))
             );
         }
     }
