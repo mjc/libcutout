@@ -667,6 +667,34 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(chargingState.visibleFieldCoverage.source(for: .regenPower), .explicitlyUnavailable)
     }
 
+    func testRideStateAccountsForVoltageSagAndLimpHomeOnlyWhenTypedValuesExist() {
+        let unavailableState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(voltage: voltageValue(96_700))
+            )
+        )
+        let typedState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(96_700),
+                    voltageSag: VoltageDelta(value: -1_200),
+                    limpHomeRange: Distance(value: 22_852_500)
+                )
+            )
+        )
+
+        XCTAssertNil(unavailableState.voltageSag)
+        XCTAssertNil(unavailableState.limpHomeRange)
+        XCTAssertEqual(unavailableState.visibleFieldCoverage.source(for: .voltageSag), .explicitlyUnavailable)
+        XCTAssertEqual(unavailableState.visibleFieldCoverage.source(for: .limpHomeRange), .explicitlyUnavailable)
+        XCTAssertEqual(typedState.voltageSag, VoltageDelta(value: -1_200))
+        XCTAssertEqual(typedState.limpHomeRange, Distance(value: 22_852_500))
+        XCTAssertEqual(typedState.visibleFieldCoverage.source(for: .voltageSag), .derivedTelemetry)
+        XCTAssertEqual(typedState.visibleFieldCoverage.source(for: .limpHomeRange), .derivedTelemetry)
+    }
+
     func testRideStateAccountsForParkedPwmAsNotApplicable() {
         let rideState = EucRideScreenState(
             phase: .live,

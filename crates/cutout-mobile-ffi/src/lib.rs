@@ -743,6 +743,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Signed power/current flow direction when known enough for conservative UI labels.
     pub power_flow: Option<PowerFlowDirection>,
 
+    /// Voltage sag/loaded-pack delta when modeled by the product contract.
+    pub voltage_sag: Option<VoltageDeltaReading>,
+
     /// Reported controller temperature.
     pub controller_temperature: Option<TemperatureReading>,
 
@@ -757,6 +760,9 @@ pub struct MobileTelemetrySnapshotDto {
 
     /// Reported distance.
     pub distance: Option<DistanceReading>,
+
+    /// Limp-home/range estimate when modeled by the product contract.
+    pub limp_home_range: Option<DistanceReading>,
 
     /// Reported pitch.
     pub pitch: Option<AngleReading>,
@@ -2646,11 +2652,13 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             power_flow: snapshot
                 .battery_current
                 .map(|current| power_flow_from_signed_current(current, operating_state)),
+            voltage_sag: None,
             controller_temperature: snapshot.controller_temperature.map(Into::into),
             motor_temperature: snapshot.motor_temperature.map(Into::into),
             battery_temperature: snapshot.battery_temperature.map(Into::into),
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
+            limp_home_range: None,
             pitch: snapshot.pitch.map(Into::into),
             roll: snapshot.roll.map(Into::into),
             battery_level_reported: snapshot.battery_level_reported.map(Into::into),

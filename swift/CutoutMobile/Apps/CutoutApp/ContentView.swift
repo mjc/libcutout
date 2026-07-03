@@ -929,7 +929,7 @@ private struct EucRideScreenView: View {
     private var dashboardTiles: [MockupDashboardTile] {
         if let rideState {
             if let telemetry = rideState.telemetry {
-                return liveDashboardTiles(from: telemetry)
+                return liveDashboardTiles(from: rideState, telemetry: telemetry)
             }
             return unavailableDashboardTiles(from: screen.dashboardTiles)
         }
@@ -1716,14 +1716,16 @@ private func liveSafetyBars(for state: EucRideScreenState, telemetry: TelemetryS
     ]
 }
 
-private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDashboardTile] {
+private func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [MockupDashboardTile] {
     [
         telemetry.voltage.map { voltage in
             MockupDashboardTile(
                 label: "pack",
                 value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
-                detail: "live telemetry",
+                detail: state.voltageSag.map {
+                    decimalString(fromMillivolts: $0.value, fractionDigits: 1) + " V sag"
+                } ?? "sag unavailable",
                 accent: .cyan
             )
         } ?? MockupDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
@@ -1737,7 +1739,15 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
                 accent: .green
             )
             : MockupDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
-        MockupDashboardTile(label: "limp-home", value: "--", unit: "mi", detail: "unavailable", accent: .cyan),
+        state.limpHomeRange.map { range in
+            MockupDashboardTile(
+                label: "limp-home",
+                value: decimalString(fromMillimetres: range.value, fractionDigits: 1),
+                unit: "mi",
+                detail: "typed range estimate",
+                accent: .cyan
+            )
+        } ?? MockupDashboardTile(label: "limp-home", value: "--", unit: "mi", detail: "unavailable", accent: .cyan),
     ]
 }
 
@@ -1843,6 +1853,10 @@ private func powerFractionDigits<T: BinaryInteger>(fromMilliwatts value: T) -> I
 
 private func decimalString<T: BinaryInteger>(fromMillicelsius value: T, fractionDigits: Int) -> String {
     decimalString(Double(value) / 1_000.0, fractionDigits: fractionDigits)
+}
+
+private func decimalString<T: BinaryInteger>(fromMillimetres value: T, fractionDigits: Int) -> String {
+    decimalString(Double(value) / 1_609_344.0, fractionDigits: fractionDigits)
 }
 
 private func decimalString(_ value: Double, fractionDigits: Int) -> String {

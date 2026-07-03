@@ -460,11 +460,13 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let motorCurrent: PhaseCurrent?
     public let power: Power?
     public let powerFlow: PowerFlowDirection?
+    public let voltageSag: VoltageDelta?
     public let controllerTemperature: Temperature?
     public let motorTemperature: Temperature?
     public let batteryTemperature: Temperature?
     public let pwm: DutyCycle?
     public let distance: Distance?
+    public let limpHomeRange: Distance?
     public let pitch: Angle?
     public let roll: Angle?
     public let batteryLevelReported: BatteryLevel?
@@ -478,11 +480,13 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         motorCurrent: PhaseCurrent? = nil,
         power: Power? = nil,
         powerFlow: PowerFlowDirection? = nil,
+        voltageSag: VoltageDelta? = nil,
         controllerTemperature: Temperature? = nil,
         motorTemperature: Temperature? = nil,
         batteryTemperature: Temperature? = nil,
         pwm: DutyCycle? = nil,
         distance: Distance? = nil,
+        limpHomeRange: Distance? = nil,
         pitch: Angle? = nil,
         roll: Angle? = nil,
         batteryLevelReported: BatteryLevel? = nil,
@@ -495,11 +499,13 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.motorCurrent = motorCurrent
         self.power = power
         self.powerFlow = powerFlow
+        self.voltageSag = voltageSag
         self.controllerTemperature = controllerTemperature
         self.motorTemperature = motorTemperature
         self.batteryTemperature = batteryTemperature
         self.pwm = pwm
         self.distance = distance
+        self.limpHomeRange = limpHomeRange
         self.pitch = pitch
         self.roll = roll
         self.batteryLevelReported = batteryLevelReported
@@ -515,11 +521,13 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             motorCurrent: dto.motorCurrent?.value,
             power: dto.power?.value,
             powerFlow: dto.powerFlow,
+            voltageSag: dto.voltageSag?.value,
             controllerTemperature: dto.controllerTemperature?.value,
             motorTemperature: dto.motorTemperature?.value,
             batteryTemperature: dto.batteryTemperature?.value,
             pwm: dto.pwm,
             distance: dto.distance?.value,
+            limpHomeRange: dto.limpHomeRange?.value,
             pitch: dto.pitch?.value,
             roll: dto.roll?.value,
             batteryLevelReported: dto.batteryLevelReported?.value,
@@ -1087,6 +1095,14 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         return telemetry?.displayPower
     }
 
+    public var voltageSag: VoltageDelta? {
+        telemetry?.voltageSag
+    }
+
+    public var limpHomeRange: Distance? {
+        telemetry?.limpHomeRange
+    }
+
     public var phaseText: String {
         phase.displayText
     }
@@ -1129,9 +1145,9 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
             EucRideVisibleFieldCoverage(field: .power, source: powerCoverage),
             EucRideVisibleFieldCoverage(field: .thermal, source: thermalCoverage),
             EucRideVisibleFieldCoverage(field: .warningState, source: .sessionState),
-            EucRideVisibleFieldCoverage(field: .voltageSag, source: .explicitlyUnavailable),
+            EucRideVisibleFieldCoverage(field: .voltageSag, source: voltageSagCoverage),
             EucRideVisibleFieldCoverage(field: .regenPower, source: regenerationPowerCoverage),
-            EucRideVisibleFieldCoverage(field: .limpHomeRange, source: .explicitlyUnavailable),
+            EucRideVisibleFieldCoverage(field: .limpHomeRange, source: limpHomeRangeCoverage),
             EucRideVisibleFieldCoverage(field: .tabs, source: .staticNavigation),
         ]
     }
@@ -1170,6 +1186,14 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     private var regenerationPowerCoverage: EucRideVisibleFieldSource {
         regenerationPower == nil ? .explicitlyUnavailable : .derivedTelemetry
+    }
+
+    private var voltageSagCoverage: EucRideVisibleFieldSource {
+        voltageSag == nil ? .explicitlyUnavailable : .derivedTelemetry
+    }
+
+    private var limpHomeRangeCoverage: EucRideVisibleFieldSource {
+        limpHomeRange == nil ? .explicitlyUnavailable : .derivedTelemetry
     }
 
     private var thermalCoverage: EucRideVisibleFieldSource {
