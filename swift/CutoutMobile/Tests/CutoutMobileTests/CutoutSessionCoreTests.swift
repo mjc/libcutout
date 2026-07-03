@@ -590,6 +590,75 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(rideState.pwmHeadroomPermille)
     }
 
+    func testRideStateAccountsForVisibleFieldsInPopulatedLiveSnapshot() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                speed: SpeedReadout(millimetersPerSecond: 1_234),
+                telemetry: TelemetrySnapshot(
+                    speed: speedValue(1_234),
+                    operatingState: .riding,
+                    voltage: voltageValue(118_000),
+                    batteryCurrent: batteryCurrentValue(2_000),
+                    controllerTemperature: temperatureValue(31_000),
+                    pwm: dutyCycle(230),
+                    batteryLevelEstimated: batteryLevelValue(80)
+                )
+            )
+        )
+
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .status), .sessionState)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .speed), .liveTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .pwmHeadroom), .derivedTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .estimatedEnergy), .derivedTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .packVoltage), .liveTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .derivedTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .thermal), .liveTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .warningState), .sessionState)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .voltageSag), .fixtureOnly)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .regenPower), .fixtureOnly)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .limpHomeRange), .fixtureOnly)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .tabs), .staticNavigation)
+    }
+
+    func testRideStateAccountsForParkedPwmAsNotApplicable() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .parked, pwm: dutyCycle(0))
+            )
+        )
+
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .pwmHeadroom), .notApplicable)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .speed), .explicitlyUnavailable)
+    }
+
+    func testRideStateAccountsForEmptyLiveSnapshotAsExplicitlyUnavailable() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: TelemetrySnapshot())
+        )
+
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .speed), .explicitlyUnavailable)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .packVoltage), .explicitlyUnavailable)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .explicitlyUnavailable)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .thermal), .explicitlyUnavailable)
+    }
+
+    func testRideStateDoesNotClaimDerivedPowerForZeroCurrent() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(118_000),
+                    batteryCurrent: batteryCurrentValue(0)
+                )
+            )
+        )
+
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .explicitlyUnavailable)
+    }
+
     func testDisplayStateProvidesDebugRowsForLiveValidation() {
         let displayState = RideDisplayState(
             speed: SpeedReadout(millimetersPerSecond: 1_234),
@@ -615,10 +684,24 @@ private func voltageValue(_ value: Int32) -> Voltage {
     Voltage(value: value)
 }
 
+private func batteryCurrentValue(_ value: Int32) -> BatteryCurrent {
+    BatteryCurrent(value: value)
+}
+
+private func temperatureValue(_ value: Int32) -> Temperature {
+    Temperature(value: value)
+}
+
 private func batteryLevelValue(_ value: UInt8) -> BatteryLevel {
     BatteryLevel(value: value)
 }
 
 private func dutyCycle(_ permille: Int16) -> DutyCycle {
     DutyCycle(permille: permille)
+}
+
+private extension [EucRideVisibleFieldCoverage] {
+    func source(for field: EucRideVisibleField) -> EucRideVisibleFieldSource? {
+        first { $0.field == field }?.source
+    }
 }

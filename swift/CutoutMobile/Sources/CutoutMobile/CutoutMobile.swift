@@ -1003,6 +1003,41 @@ public enum EucRideTelemetryAvailability: Equatable, Hashable, Sendable {
     case populated
 }
 
+public enum EucRideVisibleField: Equatable, Hashable, Sendable {
+    case status
+    case speed
+    case pwmHeadroom
+    case estimatedEnergy
+    case packVoltage
+    case power
+    case thermal
+    case warningState
+    case voltageSag
+    case regenPower
+    case limpHomeRange
+    case tabs
+}
+
+public enum EucRideVisibleFieldSource: Equatable, Hashable, Sendable {
+    case sessionState
+    case liveTelemetry
+    case derivedTelemetry
+    case explicitlyUnavailable
+    case notApplicable
+    case staticNavigation
+    case fixtureOnly
+}
+
+public struct EucRideVisibleFieldCoverage: Equatable, Hashable, Sendable {
+    public let field: EucRideVisibleField
+    public let source: EucRideVisibleFieldSource
+
+    public init(field: EucRideVisibleField, source: EucRideVisibleFieldSource) {
+        self.field = field
+        self.source = source
+    }
+}
+
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
     public let phase: SessionConnectionPhase
     public let displayState: RideDisplayState
@@ -1073,6 +1108,65 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     public var speedUnit: String {
         displayState.speed.displayUnit
     }
+
+    public var visibleFieldCoverage: [EucRideVisibleFieldCoverage] {
+        [
+            EucRideVisibleFieldCoverage(field: .status, source: .sessionState),
+            EucRideVisibleFieldCoverage(field: .speed, source: speedCoverage),
+            EucRideVisibleFieldCoverage(field: .pwmHeadroom, source: pwmHeadroomCoverage),
+            EucRideVisibleFieldCoverage(field: .estimatedEnergy, source: estimatedEnergyCoverage),
+            EucRideVisibleFieldCoverage(
+                field: .packVoltage,
+                source: telemetry?.voltage == nil ? .explicitlyUnavailable : .liveTelemetry
+            ),
+            EucRideVisibleFieldCoverage(field: .power, source: powerCoverage),
+            EucRideVisibleFieldCoverage(field: .thermal, source: thermalCoverage),
+            EucRideVisibleFieldCoverage(field: .warningState, source: .sessionState),
+            EucRideVisibleFieldCoverage(field: .voltageSag, source: .fixtureOnly),
+            EucRideVisibleFieldCoverage(field: .regenPower, source: .fixtureOnly),
+            EucRideVisibleFieldCoverage(field: .limpHomeRange, source: .fixtureOnly),
+            EucRideVisibleFieldCoverage(field: .tabs, source: .staticNavigation),
+        ]
+    }
+
+    private var speedCoverage: EucRideVisibleFieldSource {
+        displayState.speed.millimetersPerSecond == nil ? .explicitlyUnavailable : .liveTelemetry
+    }
+
+    private var pwmHeadroomCoverage: EucRideVisibleFieldSource {
+        switch pwmHeadroomApplicability {
+        case .available:
+            .derivedTelemetry
+        case .unavailable:
+            .explicitlyUnavailable
+        case .notApplicable:
+            .notApplicable
+        }
+    }
+
+    private var estimatedEnergyCoverage: EucRideVisibleFieldSource {
+        telemetry?.batteryLevelEstimated == nil ? .explicitlyUnavailable : .derivedTelemetry
+    }
+
+    private var powerCoverage: EucRideVisibleFieldSource {
+        guard let telemetry else {
+            return .explicitlyUnavailable
+        }
+        if telemetry.voltage != nil, let current = telemetry.batteryCurrent, current.value != 0 {
+            return .derivedTelemetry
+        }
+        if telemetry.power != nil {
+            return .liveTelemetry
+        }
+        return .explicitlyUnavailable
+    }
+
+    private var thermalCoverage: EucRideVisibleFieldSource {
+        guard let telemetry else {
+            return .explicitlyUnavailable
+        }
+        return telemetry.hasTemperature ? .liveTelemetry : .explicitlyUnavailable
+    }
 }
 
 private extension TelemetrySnapshot {
@@ -1088,6 +1182,10 @@ private extension TelemetrySnapshot {
             || pwm != nil
             || batteryLevelReported != nil
             || batteryLevelEstimated != nil
+    }
+
+    var hasTemperature: Bool {
+        controllerTemperature != nil || motorTemperature != nil || batteryTemperature != nil
     }
 }
 
