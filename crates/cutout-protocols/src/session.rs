@@ -1633,6 +1633,42 @@ mod tests {
         output
     }
 
+    fn vesc_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
+            }),
+            &mut output,
+        );
+
+        for (index, bytes) in chunks.iter().enumerate() {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes,
+                    monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
+                },
+                &mut output,
+            );
+        }
+
+        output
+    }
+
+    fn assert_vesc_fragmented_read_only_responses_match(frame: &[u8]) {
+        let chunks: Vec<_> = frame.chunks(1).collect();
+        let whole_responses =
+            read_only_response_events(&vesc_output_for_notification_chunks(&[frame]));
+        let fragmented_responses =
+            read_only_response_events(&vesc_output_for_notification_chunks(&chunks));
+
+        assert_eq!(fragmented_responses, whole_responses);
+    }
+
     fn falcon_telemetry_for_notifications(notifications: &[&[u8]]) -> Vec<TelemetryDelta> {
         let output = falcon_output_for_notification_chunks(notifications);
 
@@ -1992,26 +2028,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_emits_values_telemetry_and_preserves_raw_readback() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
-        let mut output = Vec::new();
-
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        for chunk in vesc_selective_values_frame().chunks(5) {
-            session.handle(
-                SessionInput::Notification {
-                    channel: VESC_NOTIFY_CHANNEL,
-                    bytes: chunk,
-                    monotonic_ms: ms(42),
-                },
-                &mut output,
-            );
-        }
+        let output = vesc_output_for_notification_chunks(&[&vesc_selective_values_frame()]);
 
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
@@ -2048,6 +2065,11 @@ mod tests {
             raw.fields[3].expect("fault"),
             RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
         );
+    }
+
+    #[test]
+    fn generic_vesc_fragmented_values_preserves_read_only_responses() {
+        assert_vesc_fragmented_read_only_responses_match(&vesc_selective_values_frame());
     }
 
     #[test]
@@ -2134,24 +2156,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_maps_stats_to_diagnostics_readback() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
-        let mut output = Vec::new();
-
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VESC_NOTIFY_CHANNEL,
-                bytes: &vesc_stats_frame(),
-                monotonic_ms: ms(43),
-            },
-            &mut output,
-        );
+        let output = vesc_output_for_notification_chunks(&[&vesc_stats_frame()]);
 
         let responses = read_only_response_events(&output);
         let ReadOnlyResponse::Diagnostics(diagnostics) =
@@ -2175,6 +2180,11 @@ mod tests {
             diagnostics.details[3].expect("count time").field,
             RawFieldValue::new(VESC_RAW_STATS_COUNT_TIME_FIELD_ID, 11_000)
         );
+    }
+
+    #[test]
+    fn generic_vesc_fragmented_stats_preserves_read_only_responses() {
+        assert_vesc_fragmented_read_only_responses_match(&vesc_stats_frame());
     }
 
     #[test]
