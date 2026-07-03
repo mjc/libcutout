@@ -3,9 +3,10 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    BatteryInfoDto, CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto,
-    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
-    FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
+    BatteryInfoDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, CommandKindDto,
+    ControlRefusalReasonDto, DeviceCommandDto, FaultHistoryAvailability,
+    FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
+    FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
     IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredI16Dto, MeasuredI32Dto,
     MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto, MonotonicMillisDto, MonotonicTimestamp,
     NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
@@ -783,6 +784,9 @@ pub struct MobileBmsFaultDto {
 /// Typed BMS snapshot for mobile pack and cells screens.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBmsSnapshotDto {
+    /// Whether BMS or pack-health data is available for display.
+    pub availability: MobileReadbackAvailabilityDto,
+
     /// Topology summary for this reading.
     pub topology: MobileBmsTopologyDto,
 
@@ -834,7 +838,23 @@ pub struct MobileBmsSnapshotDto {
 
 impl From<BatteryInfoDto> for MobileBmsSnapshotDto {
     fn from(battery: BatteryInfoDto) -> Self {
+        Self::from_page(MobileReadbackAvailabilityDto::Available, battery)
+    }
+}
+
+impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
+    fn from(readback: BatteryReadbackDto) -> Self {
+        readback.page.map_or_else(
+            || Self::empty_readback(readback.availability.into()),
+            |page| Self::from_page(readback.availability.into(), page),
+        )
+    }
+}
+
+impl MobileBmsSnapshotDto {
+    fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
         Self {
+            availability,
             topology: MobileBmsTopologyDto::unknown_readback(),
             energy_percent: battery
                 .level_reported
@@ -848,6 +868,28 @@ impl From<BatteryInfoDto> for MobileBmsSnapshotDto {
                 battery.temperature,
                 battery.temperatures,
             ),
+            highest_temperature_label: None,
+            balancing_summary: None,
+            balancing_detail: None,
+            fault_summary: None,
+            fault_detail: None,
+            groups: Vec::new(),
+            faults: Vec::new(),
+            capture_action_title: None,
+            capture_action_state: None,
+        }
+    }
+
+    fn empty_readback(availability: MobileReadbackAvailabilityDto) -> Self {
+        Self {
+            availability,
+            topology: MobileBmsTopologyDto::unknown_readback(),
+            energy_percent: None,
+            voltage: None,
+            current: None,
+            cell_delta: None,
+            lowest_group_index: None,
+            highest_temperature: None,
             highest_temperature_label: None,
             balancing_summary: None,
             balancing_detail: None,
@@ -1617,6 +1659,16 @@ impl From<FaultHistoryAvailabilityDto> for MobileReadbackAvailabilityDto {
             FaultHistoryAvailabilityDto::Available => Self::Available,
             FaultHistoryAvailabilityDto::Unavailable => Self::Unavailable,
             FaultHistoryAvailabilityDto::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<BatteryReadbackAvailabilityDto> for MobileReadbackAvailabilityDto {
+    fn from(availability: BatteryReadbackAvailabilityDto) -> Self {
+        match availability {
+            BatteryReadbackAvailabilityDto::Available => Self::Available,
+            BatteryReadbackAvailabilityDto::Unavailable => Self::Unavailable,
+            BatteryReadbackAvailabilityDto::Unsupported => Self::Unsupported,
         }
     }
 }
@@ -2442,6 +2494,7 @@ mod tests {
 
     fn bms_snapshot_fixture() -> MobileBmsSnapshotDto {
         MobileBmsSnapshotDto {
+            availability: MobileReadbackAvailabilityDto::Available,
             topology: MobileBmsTopologyDto {
                 layout_label: "20S4P split pack".to_owned(),
                 series_group_count: Some(20),
@@ -2759,26 +2812,29 @@ mod tests {
         };
         let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
             command_kind: CommandKindDto::RequestBatteryInfo,
-            payload: ReadOnlyOutputPayload::Battery(BatteryInfoDto {
-                page: cutout_core::BatteryPageMetadataDto {
-                    selector: 3,
-                    kind: cutout_core::BatteryPageKindDto::Temperature,
-                    verification: VerificationStatusDto::HardwareVerified,
-                },
-                voltage: Some(reported(81_600)),
-                current: Some(reported(-1_250)),
-                bms_pack_current_0: None,
-                bms_pack_current_1: None,
-                level_reported: Some(MeasuredU8Dto {
-                    value: 72,
-                    source: ValueSourceDto::Reported,
-                    quality: ValueQualityDto::Known,
-                    verification: VerificationStatusDto::HardwareVerified,
+            payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
+                availability: BatteryReadbackAvailabilityDto::Available,
+                page: Some(BatteryInfoDto {
+                    page: cutout_core::BatteryPageMetadataDto {
+                        selector: 3,
+                        kind: cutout_core::BatteryPageKindDto::Temperature,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    },
+                    voltage: Some(reported(81_600)),
+                    current: Some(reported(-1_250)),
+                    bms_pack_current_0: None,
+                    bms_pack_current_1: None,
+                    level_reported: Some(MeasuredU8Dto {
+                        value: 72,
+                        source: ValueSourceDto::Reported,
+                        quality: ValueQualityDto::Known,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    }),
+                    level_estimated: None,
+                    temperature: Some(reported(31_000)),
+                    temperatures: vec![None, Some(reported(37_800)), Some(reported(35_200))],
+                    raw_state: None,
                 }),
-                level_estimated: None,
-                temperature: Some(reported(31_000)),
-                temperatures: vec![None, Some(reported(37_800)), Some(reported(35_200))],
-                raw_state: None,
             }),
         });
 
@@ -2791,6 +2847,10 @@ mod tests {
         assert_eq!(mobile.settings_readback, None);
         assert_eq!(mobile.fault_history_readback, None);
         let snapshot = mobile.bms_snapshot.expect("BMS snapshot");
+        assert_eq!(
+            snapshot.availability,
+            MobileReadbackAvailabilityDto::Available
+        );
         assert_eq!(snapshot.topology.layout_label, "unknown BMS topology");
         assert_eq!(
             snapshot.topology.confidence,
@@ -2816,6 +2876,30 @@ mod tests {
                 .value,
             Temperature { value: 37_800 }
         );
+    }
+
+    #[test]
+    fn mobile_session_output_preserves_unsupported_battery_readback() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestBatteryInfo,
+            payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
+                availability: BatteryReadbackAvailabilityDto::Unsupported,
+                page: None,
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::BmsSnapshot);
+        let snapshot = mobile.bms_snapshot.expect("BMS snapshot");
+        assert_eq!(
+            snapshot.availability,
+            MobileReadbackAvailabilityDto::Unsupported
+        );
+        assert_eq!(snapshot.energy_percent, None);
+        assert_eq!(snapshot.voltage, None);
+        assert_eq!(snapshot.current, None);
+        assert!(snapshot.groups.is_empty());
     }
 
     #[test]

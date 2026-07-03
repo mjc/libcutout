@@ -640,6 +640,7 @@ public struct BmsFault: Equatable, Hashable, Sendable, Identifiable {
 }
 
 public struct BmsSnapshot: Equatable, Hashable, Sendable {
+    public let availability: ReadbackAvailability
     public let topology: BmsTopology
     public let energyPercent: BatteryLevel?
     public let voltage: Voltage?
@@ -658,6 +659,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let captureActionState: String?
 
     public init(
+        availability: ReadbackAvailability = .available,
         topology: BmsTopology,
         energyPercent: BatteryLevel? = nil,
         voltage: Voltage? = nil,
@@ -675,6 +677,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         captureActionTitle: String? = nil,
         captureActionState: String? = nil
     ) {
+        self.availability = availability
         self.topology = topology
         self.energyPercent = energyPercent
         self.voltage = voltage
@@ -695,6 +698,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     fileprivate init(_ dto: MobileBmsSnapshotDto) {
         self.init(
+            availability: ReadbackAvailability(dto.availability),
             topology: BmsTopology(dto.topology),
             energyPercent: dto.energyPercent?.value,
             voltage: dto.voltage?.value,

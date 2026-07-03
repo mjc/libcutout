@@ -18,14 +18,14 @@ use cutout_btle::{
     ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
-    CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, Count, Current,
-    DiagnosticReadback, Distance, DutyCycle, FaultHistoryReadback, FirmwareInfo, Measured,
-    ModelCatalog, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
-    PercentQuantity, PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity,
-    QuantityDisplayValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot,
-    Temperature, Unit, Voltage,
+    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, BatteryReadbackAvailability,
+    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+    CatalogModelResolution, Count, Current, DiagnosticReadback, Distance, DutyCycle,
+    FaultHistoryReadback, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, PercentQuantity, PevcapHeader, PhaseCurrent,
+    Power, ProtocolFamily, Quantity, QuantityDisplayValue, RawTelemetryReadback, ReadOnlyResponse,
+    SettingsEntry, SettingsReadback, SettingsReadbackAvailability, SignalStrength, Speed,
+    TelemetryDelta, TelemetrySnapshot, Temperature, Unit, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelId,
@@ -911,18 +911,20 @@ impl ReadOnlyDashboardState {
                     push_bounded(&mut self.settings, entry);
                 }
             }
-            ReadOnlyResponse::Battery(payload) => {
-                let page = payload.page();
-                if matches!(
-                    page.kind,
-                    cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
-                ) {
-                    self.unknown_raw_pages = self.unknown_raw_pages.increment();
+            ReadOnlyResponse::Battery(readback) => {
+                if let Some(payload) = readback.page {
+                    let page = payload.page();
+                    if matches!(
+                        page.kind,
+                        cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
+                    ) {
+                        self.unknown_raw_pages = self.unknown_raw_pages.increment();
+                    }
+                    if BmsTemperatureValues(payload).has_values() {
+                        self.latest_bms_temperature = Some(payload);
+                    }
+                    push_bounded(&mut self.bms_pages, payload);
                 }
-                if BmsTemperatureValues(payload).has_values() {
-                    self.latest_bms_temperature = Some(payload);
-                }
-                push_bounded(&mut self.bms_pages, payload);
             }
             ReadOnlyResponse::Diagnostics(_) => {
                 self.diagnostics = self.diagnostics.increment();
@@ -2423,23 +2425,32 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
         ReadOnlyResponse::FaultHistory(fault_history) => {
             FaultHistoryReadbackLog(fault_history).to_string()
         }
-        ReadOnlyResponse::Battery(payload) => {
-            let page = payload.page();
-            let mut summary = format!(
-                "read-only battery selector={}{} kind={} verification={}",
-                page.selector,
-                battery_page_side_suffix(page.kind, page.selector.get()),
-                battery_page_kind_name(page.kind),
-                verification_name(page.verification)
-            );
-            let _ = write!(
-                summary,
-                "{}{}",
-                BmsTemperatureValues(payload),
-                BmsCurrentSummary(payload)
-            );
-            summary
-        }
+        ReadOnlyResponse::Battery(readback) => readback.page.map_or_else(
+            || {
+                format!(
+                    "read-only battery availability={}",
+                    battery_readback_availability_name(readback.availability)
+                )
+            },
+            |payload| {
+                let page = payload.page();
+                let mut summary = format!(
+                    "read-only battery selector={}{} kind={} verification={} availability={}",
+                    page.selector,
+                    battery_page_side_suffix(page.kind, page.selector.get()),
+                    battery_page_kind_name(page.kind),
+                    verification_name(page.verification),
+                    battery_readback_availability_name(readback.availability)
+                );
+                let _ = write!(
+                    summary,
+                    "{}{}",
+                    BmsTemperatureValues(payload),
+                    BmsCurrentSummary(payload)
+                );
+                summary
+            },
+        ),
         ReadOnlyResponse::Diagnostics(diagnostics) => {
             let populated = PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics);
             format!("read-only diagnostics details={populated}")
@@ -2490,6 +2501,14 @@ fn settings_readback_availability_name(availability: SettingsReadbackAvailabilit
         SettingsReadbackAvailability::Available => "none observed",
         SettingsReadbackAvailability::Unavailable => "unavailable",
         SettingsReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
+fn battery_readback_availability_name(availability: BatteryReadbackAvailability) -> &'static str {
+    match availability {
+        BatteryReadbackAvailability::Available => "available",
+        BatteryReadbackAvailability::Unavailable => "unavailable",
+        BatteryReadbackAvailability::Unsupported => "unsupported",
     }
 }
 
@@ -4126,14 +4145,14 @@ mod tests {
         SubscribeCount, TelemetryEventCount, TransportWriteCount,
     };
     use cutout_core::{
-        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, CaptureDistribution,
-        CaptureEvidence, CapturePrivacy, CaptureSessionLabel, DiagnosticDetail, DiagnosticSeverity,
-        FirmwareInfo, GattChannel, Measured, MonotonicTimestamp, NotificationByteLen,
-        NotificationIngestOutcome, ParserDiagnosticCount, ParserError, ParserGapEvidence,
-        PayloadBodyLen, PevcapHeader, ProtocolFamily, ProtocolSelector, RawFieldValue,
-        ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry, SettingsReadback, SignalStrength,
-        TelemetrySnapshot, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
-        WallClockUnixTimestamp,
+        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BatteryReadback,
+        CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+        DiagnosticDetail, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured,
+        MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount,
+        ParserError, ParserGapEvidence, PayloadBodyLen, PevcapHeader, ProtocolFamily,
+        ProtocolSelector, RawFieldValue, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
+        SettingsReadback, SignalStrength, TelemetrySnapshot, TransportWriteLimit, ValueQuality,
+        ValueSource, VerificationStatus, WallClockUnixTimestamp,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -4184,6 +4203,10 @@ mod tests {
 
     const fn sel(value: u8) -> ProtocolSelector {
         ProtocolSelector::new(value)
+    }
+
+    fn battery_response(payload: BatteryPagePayload) -> ReadOnlyResponse {
+        ReadOnlyResponse::Battery(BatteryReadback::available(payload))
     }
 
     fn speed(value: i32) -> Measured<Speed> {
@@ -4398,11 +4421,11 @@ mod tests {
                 None,
                 None,
             ])),
-            ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+            battery_response(BatteryPagePayload::cell_voltage(
                 BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
             )),
-            ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+            battery_response(BatteryPagePayload::temperature_values(
                 BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                 BatteryInfo {
                     temperature: Some(temperature(16_730)),
@@ -4417,7 +4440,7 @@ mod tests {
                     Some(temperature(19_100)),
                 ],
             )),
-            ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+            battery_response(BatteryPagePayload::raw(
                 BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
             )),
@@ -5464,7 +5487,7 @@ mod tests {
     #[test]
     fn read_only_response_events_render_as_parsed_aero_events() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+        let read_only_response = battery_response(BatteryPagePayload::temperature_values(
             BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
             BatteryInfo {
                 temperature: Some(temperature(17_600)),
@@ -5513,7 +5536,7 @@ mod tests {
     #[test]
     fn read_only_metadata_current_renders_as_parsed_aero_event() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(
+        let read_only_response = battery_response(
             BatteryPagePayload::raw(
                 BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                 BatteryInfo {
@@ -5687,7 +5710,7 @@ mod tests {
     #[test]
     fn read_only_session_report_does_not_warn_about_missing_telemetry_samples() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+        let read_only_response = battery_response(BatteryPagePayload::raw(
             BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
             BatteryInfo::default(),
         ));
@@ -5749,11 +5772,11 @@ mod tests {
                     None,
                     None,
                 ])),
-                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                battery_response(BatteryPagePayload::cell_voltage(
                     BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
@@ -5830,7 +5853,7 @@ mod tests {
         let mut state = DashboardState::empty();
         let pages: Vec<_> = (0_u8..20)
             .map(|selector| {
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(sel(selector), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 ))
@@ -5879,7 +5902,7 @@ mod tests {
         let report = SessionBridgeReport {
             read_only_responses: read_only_responses(4),
             read_only_response_events: vec![
-                ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+                battery_response(BatteryPagePayload::temperature_values(
                     BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                     BatteryInfo {
                         temperature: Some(temperature(17_600)),
@@ -5894,15 +5917,15 @@ mod tests {
                         Some(temperature(19_100)),
                     ],
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                battery_response(BatteryPagePayload::cell_voltage(
                     BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),

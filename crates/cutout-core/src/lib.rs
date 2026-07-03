@@ -5902,6 +5902,59 @@ pub struct BatteryInfo {
     pub raw_state: Option<RawFieldValue>,
 }
 
+/// Availability of read-only battery or BMS data.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BatteryReadbackAvailability {
+    /// Battery or BMS data was reported by the device.
+    Available,
+
+    /// Battery or BMS data is expected for this device/profile but was not reported.
+    #[default]
+    Unavailable,
+
+    /// Battery or BMS data is not supported for this device/profile.
+    Unsupported,
+}
+
+/// Read-only battery or BMS page readback.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BatteryReadback {
+    /// Whether battery or BMS data is available for display.
+    pub availability: BatteryReadbackAvailability,
+
+    /// Battery/BMS page payload, when available.
+    pub page: Option<BatteryPagePayload>,
+}
+
+impl BatteryReadback {
+    /// Creates an available battery/BMS readback.
+    #[must_use]
+    pub const fn available(page: BatteryPagePayload) -> Self {
+        Self {
+            availability: BatteryReadbackAvailability::Available,
+            page: Some(page),
+        }
+    }
+
+    /// Creates an unavailable battery/BMS readback.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            availability: BatteryReadbackAvailability::Unavailable,
+            page: None,
+        }
+    }
+
+    /// Creates an unsupported battery/BMS readback.
+    #[must_use]
+    pub const fn unsupported() -> Self {
+        Self {
+            availability: BatteryReadbackAvailability::Unsupported,
+            page: None,
+        }
+    }
+}
+
 /// Severity for a diagnostic detail.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DiagnosticSeverity {
@@ -6122,7 +6175,7 @@ pub enum ReadOnlyResponse {
     Firmware(FirmwareInfo),
 
     /// Battery or BMS response.
-    Battery(BatteryPagePayload),
+    Battery(BatteryReadback),
 
     /// Diagnostic response.
     Diagnostics(DiagnosticReadback),
@@ -9133,14 +9186,14 @@ mod tests {
     #[test]
     fn read_only_response_reports_matching_command_kind() {
         let firmware = crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo::default());
-        let battery = crate::ReadOnlyResponse::Battery(crate::BatteryPagePayload::Raw(
-            crate::BatteryRawPage::new(
+        let battery = crate::ReadOnlyResponse::Battery(crate::BatteryReadback::available(
+            crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
                 crate::BatteryPageMetadata::raw(
                     crate::ProtocolSelector::new(8),
                     VerificationStatus::SourceVerified,
                 ),
                 crate::BatteryInfo::default(),
-            ),
+            )),
         ));
         let diagnostics = crate::ReadOnlyResponse::Diagnostics(crate::DiagnosticReadback {
             details: [None, None, None, None],

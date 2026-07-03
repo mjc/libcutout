@@ -227,7 +227,7 @@ private extension FaultHistoryReadback {
 
 private extension BmsSnapshot {
     var shouldRenderReadback: Bool {
-        energyPercent != nil || voltage != nil || current != nil || highestTemperature != nil
+        availability != .available || energyPercent != nil || voltage != nil || current != nil || highestTemperature != nil
     }
 }
 
@@ -237,6 +237,7 @@ private struct BmsReadbackRows: View {
 
     private var rows: [SessionDebugRow] {
         [
+            SessionDebugRow(label: "availability", value: snapshot.availability.displayText),
             SessionDebugRow(label: "charge", value: percentText(snapshot.energyPercent)),
             SessionDebugRow(label: "voltage", value: voltageText(snapshot.voltage)),
             SessionDebugRow(label: "current", value: currentText(snapshot.current)),

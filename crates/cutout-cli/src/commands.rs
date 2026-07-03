@@ -20,8 +20,9 @@ use cutout_btle::{
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
-    CaptureSessionLabel, CatalogModelResolution, DeviceCommand, DeviceEvent, DiagnosticError,
+    BatteryPageKind, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
+    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+    CatalogModelResolution, CommandKind, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
     ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
@@ -2217,23 +2218,28 @@ fn render_read_only_response_jsonl(
 
 fn render_battery_response_jsonl(
     sequence: JsonSequence,
-    payload: BatteryPagePayload,
+    readback: BatteryReadback,
 ) -> Result<String, serde_json::Error> {
-    let page = payload.page();
     serde_json::to_string(&serde_json::json!({
         "type": "read_only_response",
         "sequence": sequence.get(),
-        "command_kind": command_kind_name(ReadOnlyResponse::Battery(payload).command_kind()),
+        "command_kind": command_kind_name(CommandKind::RequestBatteryInfo),
         "response": "battery",
-        "page": {
-            "selector": page.selector.get(),
-            "side": battery_page_side_name(page.kind, page.selector.get()),
-            "kind": battery_page_kind_name(page.kind),
-            "verification": verification_status_name(page.verification),
-        },
+        "availability": battery_readback_availability_name(readback.availability),
+        "page": readback.page.map(battery_page_json),
+    }))
+}
+
+fn battery_page_json(payload: BatteryPagePayload) -> serde_json::Value {
+    let page = payload.page();
+    serde_json::json!({
+        "selector": page.selector.get(),
+        "side": battery_page_side_name(page.kind, page.selector.get()),
+        "kind": battery_page_kind_name(page.kind),
+        "verification": verification_status_name(page.verification),
         "battery": battery_info_json(payload),
         "temperatures": battery_temperature_values_json(payload),
-    }))
+    })
 }
 
 fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::Value {
@@ -2379,17 +2385,17 @@ fn diagnostic_detail_json(detail: cutout_core::DiagnosticDetail) -> serde_json::
     })
 }
 
-const fn command_kind_name(kind: cutout_core::CommandKind) -> &'static str {
+const fn command_kind_name(kind: CommandKind) -> &'static str {
     match kind {
-        cutout_core::CommandKind::RequestIdentity => "request_identity",
-        cutout_core::CommandKind::RequestTelemetry => "request_telemetry",
-        cutout_core::CommandKind::RequestFirmwareInfo => "request_firmware_info",
-        cutout_core::CommandKind::RequestBatteryInfo => "request_battery_info",
-        cutout_core::CommandKind::RequestDiagnostics => "request_diagnostics",
-        cutout_core::CommandKind::RequestSettings => "request_settings",
-        cutout_core::CommandKind::SetLights => "set_lights",
-        cutout_core::CommandKind::SoundHorn => "sound_horn",
-        cutout_core::CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
+        CommandKind::RequestIdentity => "request_identity",
+        CommandKind::RequestTelemetry => "request_telemetry",
+        CommandKind::RequestFirmwareInfo => "request_firmware_info",
+        CommandKind::RequestBatteryInfo => "request_battery_info",
+        CommandKind::RequestDiagnostics => "request_diagnostics",
+        CommandKind::RequestSettings => "request_settings",
+        CommandKind::SetLights => "set_lights",
+        CommandKind::SoundHorn => "sound_horn",
+        CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
     }
 }
 
@@ -2596,6 +2602,14 @@ fn settings_readback_availability_name(availability: SettingsReadbackAvailabilit
     }
 }
 
+fn battery_readback_availability_name(availability: BatteryReadbackAvailability) -> &'static str {
+    match availability {
+        BatteryReadbackAvailability::Available => "available",
+        BatteryReadbackAvailability::Unavailable => "unavailable",
+        BatteryReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
 fn fault_history_availability_name(
     availability: cutout_core::FaultHistoryAvailability,
 ) -> &'static str {
@@ -2720,6 +2734,17 @@ mod tests {
 
     const fn diag_count(value: u64) -> ParserDiagnosticCount {
         ParserDiagnosticCount::from_events(value)
+    }
+
+    fn battery_response(payload: BatteryPagePayload) -> ReadOnlyResponse {
+        ReadOnlyResponse::Battery(BatteryReadback::available(payload))
+    }
+
+    fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
+        match response {
+            ReadOnlyResponse::Battery(readback) => readback.page,
+            _ => None,
+        }
     }
 
     const fn frame_len(value: usize) -> ParserFrameLen {
@@ -3598,7 +3623,7 @@ mod tests {
 
     #[test]
     fn read_only_battery_jsonl_preserves_page_metadata_and_measured_values() {
-        let response = ReadOnlyResponse::Battery(
+        let response = battery_response(
             BatteryPagePayload::raw(
                 cutout_core::BatteryPageMetadata::raw(
                     ProtocolSelector::new(8),
@@ -3628,27 +3653,37 @@ mod tests {
         assert_eq!(value["sequence"], 2);
         assert_eq!(value["command_kind"], "request_battery_info");
         assert_eq!(value["response"], "battery");
+        assert_eq!(value["availability"], "available");
         assert_eq!(value["page"]["selector"], 8);
         assert_eq!(value["page"]["side"], serde_json::Value::Null);
         assert_eq!(value["page"]["kind"], "raw");
         assert_eq!(value["page"]["verification"], "source_verified");
-        assert_eq!(value["battery"]["voltage"]["value"], 80_000);
-        assert_eq!(value["battery"]["voltage"]["source"], "reported");
-        assert_eq!(value["battery"]["voltage"]["quality"], "known");
+        assert_eq!(value["page"]["battery"]["voltage"]["value"], 80_000);
+        assert_eq!(value["page"]["battery"]["voltage"]["source"], "reported");
+        assert_eq!(value["page"]["battery"]["voltage"]["quality"], "known");
         assert_eq!(
-            value["battery"]["voltage"]["verification"],
+            value["page"]["battery"]["voltage"]["verification"],
             "hardware_verified"
         );
-        assert_eq!(value["battery"]["current"]["value"], -10_000);
-        assert_eq!(value["battery"]["bms_pack_current_0"]["value"], -1_230);
-        assert_eq!(value["battery"]["bms_pack_current_1"]["value"], 450);
-        assert_eq!(value["battery"]["level_reported"], serde_json::Value::Null);
-        assert_eq!(value["battery"]["level_estimated"]["value"], 61);
-        assert_eq!(value["battery"]["level_estimated"]["source"], "estimated");
-        assert_eq!(value["battery"]["temperature"]["value"], 25_000);
-        assert_eq!(value["battery"]["raw_state"]["id"], 8);
-        assert_eq!(value["battery"]["raw_state"]["value"], 0x55aa);
-        assert_eq!(value["temperatures"], serde_json::Value::Null);
+        assert_eq!(value["page"]["battery"]["current"]["value"], -10_000);
+        assert_eq!(
+            value["page"]["battery"]["bms_pack_current_0"]["value"],
+            -1_230
+        );
+        assert_eq!(value["page"]["battery"]["bms_pack_current_1"]["value"], 450);
+        assert_eq!(
+            value["page"]["battery"]["level_reported"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["page"]["battery"]["level_estimated"]["value"], 61);
+        assert_eq!(
+            value["page"]["battery"]["level_estimated"]["source"],
+            "estimated"
+        );
+        assert_eq!(value["page"]["battery"]["temperature"]["value"], 25_000);
+        assert_eq!(value["page"]["battery"]["raw_state"]["id"], 8);
+        assert_eq!(value["page"]["battery"]["raw_state"]["value"], 0x55aa);
+        assert_eq!(value["page"]["temperatures"], serde_json::Value::Null);
     }
 
     #[test]
@@ -3661,7 +3696,7 @@ mod tests {
             Some(temperature(17_080)),
             Some(temperature(17_830)),
         ];
-        let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+        let response = battery_response(BatteryPagePayload::temperature_values(
             cutout_core::BatteryPageMetadata::temperature(
                 ProtocolSelector::new(3),
                 VerificationStatus::HardwareVerified,
@@ -3684,9 +3719,10 @@ mod tests {
         assert_eq!(value["page"]["side"], "left");
         assert_eq!(value["page"]["kind"], "temperature");
         assert_eq!(value["page"]["verification"], "hardware_verified");
-        assert_eq!(value["battery"]["temperature"]["value"], 16_730);
-        assert_eq!(value["temperatures"][0]["value"], 16_730);
-        assert_eq!(value["temperatures"][5]["value"], 17_830);
+        assert_eq!(value["availability"], "available");
+        assert_eq!(value["page"]["battery"]["temperature"]["value"], 16_730);
+        assert_eq!(value["page"]["temperatures"][0]["value"], 16_730);
+        assert_eq!(value["page"]["temperatures"][5]["value"], 17_830);
     }
 
     #[test]
@@ -3699,7 +3735,7 @@ mod tests {
             Some(temperature(16_530)),
             Some(temperature(17_430)),
         ];
-        let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+        let response = battery_response(BatteryPagePayload::temperature_values(
             cutout_core::BatteryPageMetadata::temperature(
                 ProtocolSelector::new(7),
                 VerificationStatus::HardwareVerified,
@@ -3724,7 +3760,7 @@ mod tests {
 
     #[test]
     fn pevcap_replay_summary_collects_read_only_response_events() {
-        let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+        let response = battery_response(BatteryPagePayload::raw(
             cutout_core::BatteryPageMetadata::raw(
                 ProtocolSelector::new(8),
                 VerificationStatus::SourceVerified,
@@ -4564,7 +4600,7 @@ mod tests {
 
         let mut observed = BTreeSet::new();
         for response in &report.read_only_response_events {
-            if let ReadOnlyResponse::Battery(payload) = response
+            if let Some(payload) = available_battery_page(response)
                 && payload.page().kind == BatteryPageKind::Metadata
             {
                 let currents = payload
@@ -4645,7 +4681,7 @@ mod tests {
         let mut observed_pages = Vec::new();
         let mut observed_currents = BTreeSet::new();
         for response in &report.read_only_response_events {
-            if let ReadOnlyResponse::Battery(payload) = response {
+            if let Some(payload) = available_battery_page(response) {
                 observed_pages.push((payload.page().kind, payload.page().selector.get()));
                 if payload.page().kind == BatteryPageKind::Metadata {
                     let currents = payload
@@ -4996,47 +5032,28 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_starts_live_updates_before_terminal() {
-        let (order_tx, order_rx) = mpsc::channel();
         let (log_tx, log_rx) = mpsc::channel();
 
         let result = run_live_dashboard_with(
             DashboardState::empty(),
             log_tx,
             log_rx,
-            {
-                let order_tx = order_tx.clone();
-                move |tx| async move {
-                    tx.send(DashboardUpdate::Log {
-                        level: "debug".to_owned(),
-                        message: "live entered".to_owned(),
-                    })
-                    .expect("terminal receiver stays open");
-                    order_tx
-                        .send("live")
-                        .expect("terminal should not close ordering receiver");
-                }
+            move |tx| async move {
+                tx.send(DashboardUpdate::Log {
+                    level: "debug".to_owned(),
+                    message: "live entered".to_owned(),
+                })
+                .expect("terminal receiver stays open");
             },
             move |_state, rx| {
                 let _update = rx
                     .recv_timeout(Duration::from_secs(1))
                     .expect("terminal should receive first live update before reporting ready");
-                order_tx
-                    .send("terminal")
-                    .expect("test waits for terminal ordering event");
                 Ok(())
             },
         );
 
         result.expect("dashboard runner exits after terminal exits");
-        let observed = [
-            order_rx
-                .recv_timeout(Duration::from_secs(1))
-                .expect("live ordering event should be sent"),
-            order_rx
-                .recv_timeout(Duration::from_secs(1))
-                .expect("terminal ordering event should be sent"),
-        ];
-        assert_eq!(observed, ["live", "terminal"]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

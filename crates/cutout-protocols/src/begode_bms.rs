@@ -102,14 +102,16 @@ impl BegodeBmsSummary {
     /// Converts the BMS summary into a generic battery response.
     #[must_use]
     pub fn to_battery_response(self) -> ReadOnlyResponse {
-        ReadOnlyResponse::Battery(BatteryPagePayload::raw(
-            BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
-            BatteryInfo {
-                voltage: Some(source_reported(self.pack_voltage)),
-                current: Some(source_reported(self.current)),
-                temperature: Some(source_reported(self.temperature_0)),
-                ..BatteryInfo::default()
-            },
+        ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(
+            BatteryPagePayload::raw(
+                BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
+                BatteryInfo {
+                    voltage: Some(source_reported(self.pack_voltage)),
+                    current: Some(source_reported(self.current)),
+                    temperature: Some(source_reported(self.temperature_0)),
+                    ..BatteryInfo::default()
+                },
+            ),
         ))
     }
 }
@@ -170,9 +172,14 @@ impl BegodeBmsCellPage {
     /// Converts the cell page into a generic battery page response.
     #[must_use]
     pub fn to_battery_response(&self) -> ReadOnlyResponse {
-        ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
-            BatteryPageMetadata::cell_voltage(self.page_index, VerificationStatus::SourceVerified),
-            BatteryInfo::default(),
+        ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(
+            BatteryPagePayload::cell_voltage(
+                BatteryPageMetadata::cell_voltage(
+                    self.page_index,
+                    VerificationStatus::SourceVerified,
+                ),
+                BatteryInfo::default(),
+            ),
         ))
     }
 }
@@ -314,9 +321,10 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&SUMMARY).expect("summary frame is valid");
         let summary = BegodeBmsSummary::decode(&frame).expect("summary decodes");
 
-        let ReadOnlyResponse::Battery(payload) = summary.to_battery_response() else {
+        let ReadOnlyResponse::Battery(readback) = summary.to_battery_response() else {
             panic!("expected battery response");
         };
+        let payload = readback.page.expect("available battery page");
 
         assert_eq!(payload.page().selector, ProtocolSelector::new(3));
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
@@ -363,9 +371,10 @@ mod tests {
         let frame = BegodeFrame::try_from_slice(&CELL_PAGE).expect("cell frame is valid");
         let page = BegodeBmsCellPage::decode(&frame).expect("cell page decodes");
 
-        let ReadOnlyResponse::Battery(payload) = page.to_battery_response() else {
+        let ReadOnlyResponse::Battery(readback) = page.to_battery_response() else {
             panic!("expected battery response");
         };
+        let payload = readback.page.expect("available battery page");
 
         assert_eq!(payload.page().selector, ProtocolSelector::new(2));
         assert_eq!(payload.page().kind, BatteryPageKind::CellVoltage);

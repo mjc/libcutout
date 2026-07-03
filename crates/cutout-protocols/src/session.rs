@@ -793,7 +793,7 @@ fn push_veteran_frame(
                     && let Some(payload) = veteran_bms_payload(evidence)
                 {
                     output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                        ReadOnlyResponse::Battery(payload),
+                        ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(payload)),
                     )));
                     return SemanticEventCount::from_events(3).saturating_add(settings_count);
                 }
@@ -1124,6 +1124,11 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                     ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported()),
                 )));
             }
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestBatteryInfo) => {
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported()),
+                )));
+            }
             ReadOnlyCommandGate::Unsupported(_) => {}
         },
     }
@@ -1439,6 +1444,13 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
+        match response {
+            ReadOnlyResponse::Battery(readback) => readback.page,
+            _ => None,
+        }
     }
 
     fn diagnostic_error_events(output: &[SessionOutput]) -> Vec<cutout_core::DiagnosticError> {
@@ -2228,71 +2240,84 @@ mod tests {
             .map(|entry| entry.field)
             .collect();
         assert!(fields.contains(&RawFieldValue::new(crate::VETERAN_FIELD_PEDALS_MODE, 1_920,)));
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(2)
-                    && payload.page().kind == BatteryPageKind::CellVoltage
-        )));
+        assert!(
+            responses
+                .iter()
+                .any(
+                    |response| available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(2)
+                        && payload.page().kind == BatteryPageKind::CellVoltage)
+                )
+        );
     }
 
     #[test]
     fn nosfet_aero_session_emits_typed_bms_temperature_page_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_3_frame());
 
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(3)
-                    && payload.page().kind == BatteryPageKind::Temperature
-                    && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload
-                        .battery()
-                        .temperature
-                        .expect("representative temperature")
-                        .value
-                        .get()
-                        == 16_730
-                    && payload
-                        .temperatures()[5]
-                        .expect("sixth temperature")
-                        .value
-                        == 17_830
-        )));
+        assert!(
+            responses
+                .iter()
+                .any(
+                    |response| available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(3)
+                        && payload.page().kind == BatteryPageKind::Temperature
+                        && payload.page().verification == VerificationStatus::HardwareVerified
+                        && payload
+                            .battery()
+                            .temperature
+                            .is_some_and(|temperature| temperature.value.get() == 16_730)
+                        && payload.temperatures()[5]
+                            .is_some_and(|temperature| temperature.value == 17_830))
+                )
+        );
     }
 
     #[test]
     fn nosfet_aero_session_emits_typed_bms_cell_page_response() {
         let responses = read_only_responses_for_notification(&live_aero_frame());
 
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(2)
-                    && payload.page().kind == BatteryPageKind::CellVoltage
-                    && payload.page().verification == VerificationStatus::HardwareVerified
-        )));
+        assert!(
+            responses
+                .iter()
+                .any(
+                    |response| available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(2)
+                        && payload.page().kind == BatteryPageKind::CellVoltage
+                        && payload.page().verification == VerificationStatus::HardwareVerified)
+                )
+        );
     }
 
     #[test]
     fn nosfet_aero_session_emits_metadata_bms_current_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_0_frame());
 
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(0)
-                    && payload.page().kind == BatteryPageKind::Metadata
-                    && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload.battery().current == Some(Measured::reported(
-                        BatteryCurrent::from_milliamps(20)
-                    ))
-                    && payload.bms_pack_currents()
-                        == Some(cutout_core::BmsPackCurrents::reported(
-                            BatteryCurrent::from_milliamps(20),
-                            BatteryCurrent::from_milliamps(20)
-                        ))
-        )));
+        assert!(
+            responses
+                .iter()
+                .any(
+                    |response| available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(0)
+                        && payload.page().kind == BatteryPageKind::Metadata
+                        && payload.page().verification == VerificationStatus::HardwareVerified
+                        && payload.battery().current
+                            == Some(Measured::reported(BatteryCurrent::from_milliamps(20)))
+                        && payload.bms_pack_currents()
+                            == Some(cutout_core::BmsPackCurrents::reported(
+                                BatteryCurrent::from_milliamps(20),
+                                BatteryCurrent::from_milliamps(20)
+                            )))
+                )
+        );
     }
 
     #[test]
@@ -2324,14 +2349,17 @@ mod tests {
     fn nosfet_aero_session_does_not_emit_reserved_bms_page_as_raw_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_8_frame());
 
-        assert!(responses.iter().all(|response| {
-            !matches!(
-                response,
-                ReadOnlyResponse::Battery(payload)
-                    if payload.page().selector == ProtocolSelector::new(8)
-                        && payload.page().kind == BatteryPageKind::Raw
-            )
-        }));
+        assert!(
+            responses
+                .iter()
+                .all(
+                    |response| !available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(8)
+                        && payload.page().kind == BatteryPageKind::Raw)
+                )
+        );
     }
 
     #[test]
@@ -2422,12 +2450,10 @@ mod tests {
             )]
         );
         assert!(read_only_response_events(&output).iter().all(|response| {
-            !matches!(
-                response,
-                ReadOnlyResponse::Battery(payload)
-                    if payload.page().selector == ProtocolSelector::new(9)
-                        && payload.page().kind == BatteryPageKind::Raw
-            )
+            !available_battery_page(response).is_some_and(|payload| {
+                payload.page().selector == ProtocolSelector::new(9)
+                    && payload.page().kind == BatteryPageKind::Raw
+            })
         }));
     }
 
@@ -2820,6 +2846,29 @@ mod tests {
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn generic_vesc_session_reports_unsupported_battery_readback_without_writes() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported())
+            ))]
+        );
     }
 
     #[test]

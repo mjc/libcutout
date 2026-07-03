@@ -1,10 +1,10 @@
 use crate::{
     Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
-    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle,
-    FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo,
-    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
+    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BmsPackCurrents, ChargeMode,
+    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
+    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
+    Distance, DutyCycle, FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback,
+    FirmwareInfo, IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, RawFieldValue,
@@ -167,7 +167,7 @@ pub enum ReadOnlyOutputPayload {
     Firmware(FirmwareInfoDto),
 
     /// Battery or BMS response.
-    Battery(BatteryInfoDto),
+    Battery(BatteryReadbackDto),
 
     /// Settings readback response.
     Settings(SettingsReadbackDto),
@@ -813,6 +813,48 @@ impl From<BatteryPageMetadata> for BatteryPageMetadataDto {
             selector: page.selector.get(),
             kind: page.kind.into(),
             verification: page.verification.into(),
+        }
+    }
+}
+
+/// UniFFI-ready battery or BMS readback availability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BatteryReadbackAvailabilityDto {
+    /// Battery or BMS data was reported by the device.
+    Available,
+
+    /// Battery or BMS data is expected but was not reported.
+    Unavailable,
+
+    /// Battery or BMS data is not supported for this device/profile.
+    Unsupported,
+}
+
+impl From<BatteryReadbackAvailability> for BatteryReadbackAvailabilityDto {
+    fn from(availability: BatteryReadbackAvailability) -> Self {
+        match availability {
+            BatteryReadbackAvailability::Available => Self::Available,
+            BatteryReadbackAvailability::Unavailable => Self::Unavailable,
+            BatteryReadbackAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+/// UniFFI-ready battery or BMS readback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatteryReadbackDto {
+    /// Whether battery or BMS data is available for display.
+    pub availability: BatteryReadbackAvailabilityDto,
+
+    /// Battery or BMS page, when available.
+    pub page: Option<BatteryInfoDto>,
+}
+
+impl From<BatteryReadback> for BatteryReadbackDto {
+    fn from(readback: BatteryReadback) -> Self {
+        Self {
+            availability: readback.availability.into(),
+            page: readback.page.map(Into::into),
         }
     }
 }
@@ -2004,11 +2046,11 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
 mod tests {
     use crate::{
         BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageMetadata, BatteryPagePayload,
-        DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity,
-        Distance, DutyCycle, FirmwareInfo, GattChannel, LinkInfo, Measured, ProtocolSelector,
-        RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry,
-        SettingsReadback, Speed, TelemetrySnapshot, Temperature, TransportAction, ValueQuality,
-        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        BatteryReadback, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback,
+        DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, GattChannel, LinkInfo, Measured,
+        ProtocolSelector, RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput,
+        SettingsEntry, SettingsReadback, Speed, TelemetrySnapshot, Temperature, TransportAction,
+        ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
 
     use super::*;
@@ -2029,7 +2071,7 @@ mod tests {
 
     #[test]
     fn read_only_battery_output_preserves_page_and_unknown_values() {
-        let response = ReadOnlyResponse::Battery(
+        let response = ReadOnlyResponse::Battery(BatteryReadback::available(
             BatteryPagePayload::raw(
                 BatteryPageMetadata::raw(
                     ProtocolSelector::new(8),
@@ -2048,14 +2090,19 @@ mod tests {
                 BatteryCurrent::from_milliamps(-1_230),
                 BatteryCurrent::from_milliamps(450),
             )),
-        );
+        ));
 
         let output = ReadOnlyOutput::from(response);
 
         assert_eq!(output.command_kind, CommandKindDto::RequestBatteryInfo);
-        let ReadOnlyOutputPayload::Battery(battery) = output.payload else {
+        let ReadOnlyOutputPayload::Battery(readback) = output.payload else {
             panic!("expected battery DTO");
         };
+        assert_eq!(
+            readback.availability,
+            BatteryReadbackAvailabilityDto::Available
+        );
+        let battery = readback.page.expect("battery page");
         assert_eq!(battery.page.selector, 8);
         assert_eq!(battery.page.kind, BatteryPageKindDto::Raw);
         assert_eq!(
@@ -2085,6 +2132,22 @@ mod tests {
                 value: 0x55aa
             })
         );
+    }
+
+    #[test]
+    fn read_only_battery_output_preserves_unsupported_availability() {
+        let output =
+            ReadOnlyOutput::from(ReadOnlyResponse::Battery(BatteryReadback::unsupported()));
+
+        assert_eq!(output.command_kind, CommandKindDto::RequestBatteryInfo);
+        let ReadOnlyOutputPayload::Battery(readback) = output.payload else {
+            panic!("expected battery DTO");
+        };
+        assert_eq!(
+            readback.availability,
+            BatteryReadbackAvailabilityDto::Unsupported
+        );
+        assert_eq!(readback.page, None);
     }
 
     #[test]
