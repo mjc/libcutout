@@ -353,6 +353,47 @@ async fn targeted_scan_wait_returns_non_match_errors_immediately() {
 }
 
 #[test]
+fn scan_finish_returns_success_when_cleanup_succeeds() {
+    let result = crate::scan::finish_scan(Ok("observed"), Ok(()))
+        .expect("successful scan with successful cleanup");
+
+    assert_eq!(result, "observed");
+}
+
+#[test]
+fn scan_finish_returns_cleanup_failure_after_successful_scan() {
+    let result = crate::scan::finish_scan::<()>(Ok(()), Err(crate::BtleError::NoAdapterAvailable));
+
+    assert!(matches!(
+        result,
+        Err(crate::BtleError::ScanCleanupFailed { cleanup })
+            if matches!(*cleanup, crate::BtleError::NoAdapterAvailable)
+    ));
+}
+
+#[test]
+fn scan_finish_preserves_primary_failure_when_cleanup_succeeds() {
+    let result = crate::scan::finish_scan::<()>(Err(crate::BtleError::NoPeripheralMatched), Ok(()));
+
+    assert!(matches!(result, Err(crate::BtleError::NoPeripheralMatched)));
+}
+
+#[test]
+fn scan_finish_keeps_primary_and_cleanup_failures() {
+    let result = crate::scan::finish_scan::<()>(
+        Err(crate::BtleError::NoPeripheralMatched),
+        Err(crate::BtleError::NoAdapterAvailable),
+    );
+
+    assert!(matches!(
+        result,
+        Err(crate::BtleError::ScanFailedWithCleanup { primary, cleanup })
+            if matches!(*primary, crate::BtleError::NoPeripheralMatched)
+                && matches!(*cleanup, crate::BtleError::NoAdapterAvailable)
+    ));
+}
+
+#[test]
 fn connection_target_matches_on_platform_identifier() {
     let target = crate::ConnectionTarget {
         address: None,

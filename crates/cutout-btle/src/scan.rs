@@ -26,9 +26,11 @@ pub async fn scan_peripherals(
     let adapter = first_adapter().await?;
     backend_call("start scan", adapter.start_scan(ScanFilter::default())).await?;
     tokio::time::sleep(scan_for.as_duration()).await;
-    let observations = collect_observations(&adapter).await?;
-    let _ = backend_call("stop scan", adapter.stop_scan()).await;
-    Ok(observations)
+    let observations = collect_observations(&adapter).await;
+    finish_scan(
+        observations,
+        backend_call("stop scan", adapter.stop_scan()).await,
+    )
 }
 
 /// Connects to the first peripheral matching the target and returns a summary.
@@ -49,8 +51,10 @@ pub async fn connect_and_discover(
         find_peripheral(&adapter, target)
     })
     .await;
-    let _ = backend_call("stop scan", adapter.stop_scan()).await;
-    let peripheral = peripheral?;
+    let peripheral = finish_scan(
+        peripheral,
+        backend_call("stop scan", adapter.stop_scan()).await,
+    )?;
 
     backend_call("connect peripheral", peripheral.connect()).await?;
     backend_call("discover services", peripheral.discover_services()).await?;
@@ -69,6 +73,23 @@ pub async fn connect_and_discover(
             services,
         },
     })
+}
+
+pub(crate) fn finish_scan<T>(
+    scan: Result<T, BtleError>,
+    cleanup: Result<(), BtleError>,
+) -> Result<T, BtleError> {
+    match (scan, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(cleanup)) => Err(BtleError::ScanCleanupFailed {
+            cleanup: Box::new(cleanup),
+        }),
+        (Err(primary), Ok(())) => Err(primary),
+        (Err(primary), Err(cleanup)) => Err(BtleError::ScanFailedWithCleanup {
+            primary: Box::new(primary),
+            cleanup: Box::new(cleanup),
+        }),
+    }
 }
 
 async fn first_adapter() -> Result<Adapter, BtleError> {

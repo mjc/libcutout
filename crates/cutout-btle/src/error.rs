@@ -71,6 +71,23 @@ pub enum BtleError {
         after: Duration,
     },
 
+    /// Scan cleanup failed after the scan operation otherwise succeeded.
+    #[error("bluetooth scan cleanup failed after successful scan: {cleanup}")]
+    ScanCleanupFailed {
+        /// Failure reported while stopping the scan.
+        cleanup: Box<BtleError>,
+    },
+
+    /// Scan cleanup failed after the scan operation also failed.
+    #[error("bluetooth scan failed: {primary}; cleanup also failed: {cleanup}")]
+    ScanFailedWithCleanup {
+        /// Primary scan failure.
+        primary: Box<BtleError>,
+
+        /// Failure reported while stopping the scan.
+        cleanup: Box<BtleError>,
+    },
+
     /// Error reported by the session bridge.
     #[error(transparent)]
     Bridge(#[from] SessionBridgeError),
@@ -89,6 +106,9 @@ impl BtleError {
             }
             Self::OperationTimedOut { .. } => {
                 "retry the operation, move closer to the device, and check whether another app is holding the BLE connection"
+            }
+            Self::ScanCleanupFailed { .. } | Self::ScanFailedWithCleanup { .. } => {
+                "retry scanning, verify the adapter is still present, and include the cleanup failure in capture notes"
             }
             Self::Bridge(SessionBridgeError::MissingSessionEndpoint) => {
                 "inspect GATT services and select a device exposing a writable and notify-capable session characteristic"
