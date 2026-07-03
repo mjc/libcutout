@@ -258,4 +258,32 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.detailGroupTrend(for: 17), "sagging under load")
         XCTAssertEqual(snapshot.detailGroupTrendDetail(for: 17), "18 mV spread")
     }
+
+    func testSnapshotExposesUnknownTopologyHelpers() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "topology unverified",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            voltage: Voltage(value: 75_900),
+            faultSummary: "BMS found, map unknown",
+            faultDetail: "show raw-safe info until topology is confirmed",
+            faults: [
+                BmsFault(code: "0x0040", label: "needs decoder", level: .critical)
+            ],
+            captureActionTitle: "record unsupported pack",
+            captureActionState: "disabled for launch"
+        )
+
+        XCTAssertEqual(snapshot.unknownTopologyVoltageDetail, "topology unverified")
+        XCTAssertEqual(snapshot.unknownTopologyCellCountValue, "?")
+        XCTAssertEqual(snapshot.unknownTopologyCellCountDetail, "layout unverified")
+        XCTAssertEqual(snapshot.unknownTopologyTemperatureValue, "--")
+        XCTAssertEqual(snapshot.unknownTopologyTemperatureDetail, "sensor names unavailable")
+        XCTAssertEqual(snapshot.unknownTopologyCaptureDetail, "show raw-safe info until topology is confirmed")
+    }
 }

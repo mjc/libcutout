@@ -1038,6 +1038,41 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         return cellMapSpreadSummary
     }
 
+    public var unknownTopologyVoltageDetail: String {
+        topology.layoutLabel
+    }
+
+    public var unknownTopologyCellCountValue: String {
+        topology.seriesGroupCount.map(String.init) ?? "?"
+    }
+
+    public var unknownTopologyCellCountDetail: String {
+        switch topology.confidence {
+        case .verified:
+            "layout verified"
+        case .inferred:
+            "layout inferred"
+        case .unverified:
+            "layout unverified"
+        }
+    }
+
+    public var unknownTopologyTemperatureValue: String {
+        let sensorCount = groups.compactMap(\.temperature).count
+        guard sensorCount > 0 else {
+            return "--"
+        }
+        return String(sensorCount)
+    }
+
+    public var unknownTopologyTemperatureDetail: String {
+        highestTemperatureLabel ?? "sensor names unavailable"
+    }
+
+    public var unknownTopologyCaptureDetail: String {
+        faultDetail ?? topology.layoutLabel
+    }
+
     private var groupVoltages: [Voltage] {
         groups.compactMap(\.voltage)
     }

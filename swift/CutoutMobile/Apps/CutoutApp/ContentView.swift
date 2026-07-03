@@ -2305,15 +2305,15 @@ private struct BmsUnknownLayout: View {
                     title: "reported voltage",
                     value: voltageText(snapshot.voltage),
                     unit: "V",
-                    detail: "source: BMS",
+                    detail: snapshot.unknownTopologyVoltageDetail,
                     accent: .yellow,
                     scale: scale
                 )
                 BmsMetricCard(
                     title: "cell count",
-                    value: "?",
+                    value: snapshot.unknownTopologyCellCountValue,
                     unit: "",
-                    detail: "advertised 18–24S?",
+                    detail: snapshot.unknownTopologyCellCountDetail,
                     accent: .orange,
                     scale: scale
                 )
@@ -2322,9 +2322,9 @@ private struct BmsUnknownLayout: View {
             HStack(spacing: 14 * scale) {
                 BmsMetricCard(
                     title: "temps",
-                    value: "3",
+                    value: snapshot.unknownTopologyTemperatureValue,
                     unit: "sensors",
-                    detail: "names unknown",
+                    detail: snapshot.unknownTopologyTemperatureDetail,
                     accent: .green,
                     scale: scale
                 )
@@ -2346,7 +2346,7 @@ private struct BmsUnknownLayout: View {
                     .font(.system(size: 25 * scale, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.84)
-                Text("capture BLE services, characteristic samples, vendor strings")
+                Text(snapshot.unknownTopologyCaptureDetail)
                     .font(.system(size: 13 * scale, weight: .semibold))
                     .foregroundStyle(MockupColors.muted)
                 Text(snapshot.captureActionState ?? "")
