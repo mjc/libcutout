@@ -1,28 +1,31 @@
 use crate::{
     Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
-    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
+    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BmsPackCurrents, ChargeMode,
+    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
+    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
+    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
+    FaultHistoryReadback, FirmwareInfo, IgnoredNotificationEvidence, IgnoredNotificationReason,
     LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
     NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
     ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
     ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
     SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
+    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    WriteMode,
 };
 
-/// UniFFI-ready owned read-only response DTO.
+/// UniFFI-ready owned read-only output.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReadOnlyResponseDto {
+pub struct ReadOnlyOutput {
     /// Command kind associated with this response.
     pub command_kind: CommandKindDto,
 
     /// Owned response payload.
-    pub payload: ReadOnlyResponsePayloadDto,
+    pub payload: ReadOnlyOutputPayload,
 }
 
-impl From<ReadOnlyResponse> for ReadOnlyResponseDto {
+impl From<ReadOnlyResponse> for ReadOnlyOutput {
     fn from(response: ReadOnlyResponse) -> Self {
         Self {
             command_kind: response.command_kind().into(),
@@ -157,17 +160,20 @@ impl ParserFrameLenDto {
     }
 }
 
-/// UniFFI-ready owned read-only response payload.
+/// UniFFI-ready owned read-only output payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReadOnlyResponsePayloadDto {
+pub enum ReadOnlyOutputPayload {
     /// Firmware or protocol version response.
     Firmware(FirmwareInfoDto),
 
     /// Battery or BMS response.
-    Battery(BatteryInfoDto),
+    Battery(BatteryReadbackDto),
 
     /// Settings readback response.
     Settings(SettingsReadbackDto),
+
+    /// Fault-history readback response.
+    FaultHistory(FaultHistoryReadbackDto),
 
     /// Diagnostic readback response.
     Diagnostics(DiagnosticReadbackDto),
@@ -176,12 +182,15 @@ pub enum ReadOnlyResponsePayloadDto {
     RawTelemetry(RawTelemetryReadbackDto),
 }
 
-impl From<ReadOnlyResponse> for ReadOnlyResponsePayloadDto {
+impl From<ReadOnlyResponse> for ReadOnlyOutputPayload {
     fn from(response: ReadOnlyResponse) -> Self {
         match response {
             ReadOnlyResponse::Firmware(firmware) => Self::Firmware(firmware.into()),
             ReadOnlyResponse::Battery(battery) => Self::Battery(battery.into()),
             ReadOnlyResponse::Settings(settings) => Self::Settings(settings.into()),
+            ReadOnlyResponse::FaultHistory(fault_history) => {
+                Self::FaultHistory(fault_history.into())
+            }
             ReadOnlyResponse::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics.into()),
             ReadOnlyResponse::RawTelemetry(raw) => Self::RawTelemetry(raw.into()),
         }
@@ -206,6 +215,9 @@ pub enum CommandKindDto {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -227,6 +239,7 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             CommandKind::RequestBatteryInfo => Self::RequestBatteryInfo,
             CommandKind::RequestDiagnostics => Self::RequestDiagnostics,
+            CommandKind::RequestFaultHistory => Self::RequestFaultHistory,
             CommandKind::RequestSettings => Self::RequestSettings,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SoundHorn => Self::SoundHorn,
@@ -253,6 +266,9 @@ pub enum DeviceCommandDto {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -277,6 +293,7 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             DeviceCommand::RequestBatteryInfo => Self::RequestBatteryInfo,
             DeviceCommand::RequestDiagnostics => Self::RequestDiagnostics,
+            DeviceCommand::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
@@ -295,6 +312,7 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             DeviceCommandDto::RequestBatteryInfo => Self::RequestBatteryInfo,
             DeviceCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
+            DeviceCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
@@ -808,6 +826,48 @@ impl From<BatteryPageMetadata> for BatteryPageMetadataDto {
     }
 }
 
+/// UniFFI-ready battery or BMS readback availability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BatteryReadbackAvailabilityDto {
+    /// Battery or BMS data was reported by the device.
+    Available,
+
+    /// Battery or BMS data is expected but was not reported.
+    Unavailable,
+
+    /// Battery or BMS data is not supported for this device/profile.
+    Unsupported,
+}
+
+impl From<BatteryReadbackAvailability> for BatteryReadbackAvailabilityDto {
+    fn from(availability: BatteryReadbackAvailability) -> Self {
+        match availability {
+            BatteryReadbackAvailability::Available => Self::Available,
+            BatteryReadbackAvailability::Unavailable => Self::Unavailable,
+            BatteryReadbackAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+/// UniFFI-ready battery or BMS readback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatteryReadbackDto {
+    /// Whether battery or BMS data is available for display.
+    pub availability: BatteryReadbackAvailabilityDto,
+
+    /// Battery or BMS page, when available.
+    pub page: Option<BatteryInfoDto>,
+}
+
+impl From<BatteryReadback> for BatteryReadbackDto {
+    fn from(readback: BatteryReadback) -> Self {
+        Self {
+            availability: readback.availability().into(),
+            page: readback.page().cloned().map(Into::into),
+        }
+    }
+}
+
 /// UniFFI-ready battery or BMS response.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatteryInfoDto {
@@ -838,6 +898,9 @@ pub struct BatteryInfoDto {
     /// Page-specific BMS temperature values in millicelsius.
     pub temperatures: Vec<Option<MeasuredI32Dto>>,
 
+    /// Page-specific cell or cell-group voltage values in millivolts.
+    pub cell_voltages: Vec<MeasuredI32Dto>,
+
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
 }
@@ -850,11 +913,22 @@ impl From<BatteryPagePayload> for BatteryInfoDto {
             .into_iter()
             .map(|measured| measured.map(Into::into))
             .collect();
+        let cell_voltages = match &payload {
+            BatteryPagePayload::CellVoltage(page) => page
+                .cell_voltages
+                .iter()
+                .copied()
+                .map(Measured::reported)
+                .map(Into::into)
+                .collect(),
+            BatteryPagePayload::Temperature(_) | BatteryPagePayload::Raw(_) => Vec::new(),
+        };
         Self::from_payload_parts(
             payload.page(),
             battery,
             payload.bms_pack_currents(),
             temperatures,
+            cell_voltages,
         )
     }
 }
@@ -865,6 +939,7 @@ impl BatteryInfoDto {
         battery: BatteryInfo,
         bms_pack_currents: Option<BmsPackCurrents>,
         temperatures: Vec<Option<MeasuredI32Dto>>,
+        cell_voltages: Vec<MeasuredI32Dto>,
     ) -> Self {
         Self {
             page: page.into(),
@@ -880,6 +955,7 @@ impl BatteryInfoDto {
             level_estimated: battery.level_estimated.map(Into::into),
             temperature: battery.temperature.map(Into::into),
             temperatures,
+            cell_voltages,
             raw_state: battery.raw_state.map(Into::into),
         }
     }
@@ -919,19 +995,134 @@ impl From<FirmwareInfo> for FirmwareInfoDto {
 /// UniFFI-ready settings readback response.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SettingsReadbackDto {
+    /// Whether the requested settings readback is available for display.
+    pub availability: SettingsReadbackAvailabilityDto,
+
     /// Present settings entries.
     pub entries: Vec<SettingsEntryDto>,
+}
+
+/// UniFFI-ready settings readback availability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingsReadbackAvailabilityDto {
+    /// Settings were reported by the device.
+    Available,
+
+    /// Settings are expected for this device/profile but were not reported.
+    Unavailable,
+
+    /// Settings are not supported for this device/profile.
+    Unsupported,
+}
+
+impl From<SettingsReadbackAvailability> for SettingsReadbackAvailabilityDto {
+    fn from(availability: SettingsReadbackAvailability) -> Self {
+        match availability {
+            SettingsReadbackAvailability::Available => Self::Available,
+            SettingsReadbackAvailability::Unavailable => Self::Unavailable,
+            SettingsReadbackAvailability::Unsupported => Self::Unsupported,
+        }
+    }
 }
 
 impl From<SettingsReadback> for SettingsReadbackDto {
     fn from(settings: SettingsReadback) -> Self {
         Self {
+            availability: settings.availability().into(),
             entries: settings
-                .entries
+                .entries()
                 .into_iter()
                 .flatten()
                 .map(Into::into)
                 .collect(),
+        }
+    }
+}
+
+/// UniFFI-ready fault-history readback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FaultHistoryReadbackDto {
+    /// Whether the requested fault-history readback is available for display.
+    pub availability: FaultHistoryAvailabilityDto,
+
+    /// Last reported fault, if any.
+    pub last_fault: Option<FaultHistoryEntryDto>,
+
+    /// Distance since the last fault, if reported separately.
+    pub since_distance: Option<MeasuredU64Dto>,
+}
+
+impl From<FaultHistoryReadback> for FaultHistoryReadbackDto {
+    fn from(readback: FaultHistoryReadback) -> Self {
+        Self {
+            availability: readback.availability().into(),
+            last_fault: readback.last_fault().map(Into::into),
+            since_distance: readback.since_distance().map(Into::into),
+        }
+    }
+}
+
+/// UniFFI-ready fault-history availability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FaultHistoryAvailabilityDto {
+    /// Fault history was reported by the device.
+    Available,
+
+    /// Fault history is expected for this device/profile but was not reported.
+    Unavailable,
+
+    /// Fault history is not supported for this device/profile.
+    Unsupported,
+}
+
+impl From<FaultHistoryAvailability> for FaultHistoryAvailabilityDto {
+    fn from(availability: FaultHistoryAvailability) -> Self {
+        match availability {
+            FaultHistoryAvailability::Available => Self::Available,
+            FaultHistoryAvailability::Unavailable => Self::Unavailable,
+            FaultHistoryAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+/// UniFFI-ready last-fault entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultHistoryEntryDto {
+    /// Protocol-specific fault code without proven semantic mapping.
+    pub code: FaultCodeDto,
+
+    /// Value source.
+    pub source: ValueSourceDto,
+
+    /// Value quality.
+    pub quality: ValueQualityDto,
+
+    /// Value verification status.
+    pub verification: VerificationStatusDto,
+}
+
+impl From<FaultHistoryEntry> for FaultHistoryEntryDto {
+    fn from(entry: FaultHistoryEntry) -> Self {
+        Self {
+            code: entry.code.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+/// UniFFI-ready protocol-specific fault code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultCodeDto {
+    /// Raw protocol field/value pair for an unknown fault code.
+    pub raw: RawFieldValueDto,
+}
+
+impl From<FaultCode> for FaultCodeDto {
+    fn from(code: FaultCode) -> Self {
+        Self {
+            raw: code.raw.into(),
         }
     }
 }
@@ -1123,6 +1314,9 @@ pub enum SessionOutputDto {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportActionDto),
 
+    /// Read-only response emitted by a protocol session.
+    ReadOnly(ReadOnlyOutput),
+
     /// Semantic event to report to the application.
     Event(SessionEventDto),
 
@@ -1134,14 +1328,20 @@ impl From<SessionOutput> for SessionOutputDto {
     fn from(output: SessionOutput) -> Self {
         match output {
             SessionOutput::Transport(action) => Self::Transport(action.into()),
-            SessionOutput::Event(event) => Self::Event(event.into()),
+            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
+                Self::ReadOnly(response.into())
+            }
+            SessionOutput::Event(event) => match SessionEventDto::from_event(event) {
+                SessionEventProjection::Event(event) => Self::Event(event),
+                SessionEventProjection::ReadOnly(response) => Self::ReadOnly(response.into()),
+            },
             SessionOutput::NotificationIngest(outcome) => Self::NotificationIngest(outcome.into()),
         }
     }
 }
 
 /// UniFFI-ready notification ingest outcome.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NotificationIngestOutcomeDto {
     /// Notification produced semantic protocol events.
     SemanticEvents {
@@ -1182,8 +1382,14 @@ pub enum NotificationIngestOutcomeDto {
         gap: ParserGapEvidenceDto,
     },
 
-    /// Notification was intentionally ignored.
-    Ignored(NotificationEvidenceDto),
+    /// Notification was explicitly ignored.
+    Ignored {
+        /// Ignored-notification evidence.
+        evidence: IgnoredNotificationEvidenceDto,
+
+        /// Reason the notification was ignored.
+        reason: IgnoredNotificationReasonDto,
+    },
 }
 
 impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
@@ -1217,7 +1423,10 @@ impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
                 notification: notification.into(),
                 gap: gap.into(),
             },
-            NotificationIngestOutcome::Ignored(notification) => Self::Ignored(notification.into()),
+            NotificationIngestOutcome::Ignored { evidence, reason } => Self::Ignored {
+                evidence: evidence.into(),
+                reason: reason.into(),
+            },
         }
     }
 }
@@ -1225,8 +1434,8 @@ impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
 /// UniFFI-ready notification evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NotificationEvidenceDto {
-    /// Protocol family if known.
-    pub family: Option<ProtocolFamilyDto>,
+    /// Protocol family that accepted or classified the notification.
+    pub family: ProtocolFamilyDto,
 
     /// GATT channel UUID bytes.
     pub channel: [u8; 16],
@@ -1241,10 +1450,76 @@ pub struct NotificationEvidenceDto {
 impl From<NotificationEvidence> for NotificationEvidenceDto {
     fn from(evidence: NotificationEvidence) -> Self {
         Self {
+            family: evidence.family.into(),
+            channel: evidence.channel.as_bytes(),
+            len: NotificationByteLenDto::from_core(evidence.len),
+            monotonic_ms: MonotonicMillisDto::from_core(evidence.monotonic_ms),
+        }
+    }
+}
+
+/// UniFFI-ready ignored notification evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IgnoredNotificationEvidenceDto {
+    /// Protocol family when classification got that far.
+    pub family: Option<ProtocolFamilyDto>,
+
+    /// GATT channel UUID bytes.
+    pub channel: [u8; 16],
+
+    /// Notification payload length.
+    pub len: NotificationByteLenDto,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: MonotonicMillisDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
+}
+
+impl From<IgnoredNotificationEvidence> for IgnoredNotificationEvidenceDto {
+    fn from(evidence: IgnoredNotificationEvidence) -> Self {
+        Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.as_bytes(),
             len: NotificationByteLenDto::from_core(evidence.len),
             monotonic_ms: MonotonicMillisDto::from_core(evidence.monotonic_ms),
+            retained_payload: evidence.retained_payload.as_slice().to_vec(),
+        }
+    }
+}
+
+/// UniFFI-ready ignored notification reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IgnoredNotificationReasonDto {
+    /// Notification arrived on a channel the selected protocol does not consume.
+    WrongChannel,
+
+    /// Notification could not be associated with a supported protocol family.
+    UnsupportedFamily,
+
+    /// Notification was classified to a family but not to a supported channel.
+    UnsupportedChannel,
+
+    /// Notification was accepted by a known family but no semantic mapping exists yet.
+    AcceptedButUnmapped,
+
+    /// Notification advanced frame-boundary search without completing a frame.
+    SeekingFrameBoundary,
+
+    /// Notification was classified and intentionally dropped by policy.
+    IntentionallyDropped,
+}
+
+impl From<IgnoredNotificationReason> for IgnoredNotificationReasonDto {
+    fn from(reason: IgnoredNotificationReason) -> Self {
+        match reason {
+            IgnoredNotificationReason::WrongChannel => Self::WrongChannel,
+            IgnoredNotificationReason::UnsupportedFamily => Self::UnsupportedFamily,
+            IgnoredNotificationReason::UnsupportedChannel => Self::UnsupportedChannel,
+            IgnoredNotificationReason::AcceptedButUnmapped => Self::AcceptedButUnmapped,
+            IgnoredNotificationReason::SeekingFrameBoundary => Self::SeekingFrameBoundary,
+            IgnoredNotificationReason::IntentionallyDropped => Self::IntentionallyDropped,
         }
     }
 }
@@ -1325,7 +1600,7 @@ impl From<ParserError> for ParserErrorDto {
 }
 
 /// UniFFI-ready reserved payload evidence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReservedPayloadEvidenceDto {
     /// Selector byte when the family has one.
     pub selector: Option<u8>,
@@ -1335,6 +1610,9 @@ pub struct ReservedPayloadEvidenceDto {
 
     /// Reserved payload body length.
     pub body_len: PayloadBodyLenDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
 
     /// Evidence verification status.
     pub verification: VerificationStatusDto,
@@ -1349,13 +1627,14 @@ impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: PayloadBodyLenDto::from_core(evidence.body_len),
+            retained_payload: evidence.retained_payload.as_slice().to_vec(),
             verification: evidence.verification.into(),
         }
     }
 }
 
 /// UniFFI-ready parser gap evidence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParserGapEvidenceDto {
     /// Selector byte when the family has one.
     pub selector: Option<u8>,
@@ -1365,6 +1644,9 @@ pub struct ParserGapEvidenceDto {
 
     /// Unparsed body length.
     pub body_len: PayloadBodyLenDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
 }
 
 impl From<ParserGapEvidence> for ParserGapEvidenceDto {
@@ -1376,6 +1658,7 @@ impl From<ParserGapEvidence> for ParserGapEvidenceDto {
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: PayloadBodyLenDto::from_core(evidence.body_len),
+            retained_payload: evidence.retained_payload.as_slice().to_vec(),
         }
     }
 }
@@ -1468,9 +1751,6 @@ pub enum SessionEventDto {
     /// Telemetry update emitted by a protocol session.
     Telemetry(TelemetryDeltaDto),
 
-    /// Read-only response emitted by a protocol session.
-    ReadOnlyResponse(ReadOnlyResponseDto),
-
     /// Control command refused before transport writes.
     ControlRefusal(ControlRefusalDto),
 
@@ -1481,22 +1761,35 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
-impl From<DeviceEvent> for SessionEventDto {
-    fn from(event: DeviceEvent) -> Self {
+enum SessionEventProjection {
+    Event(SessionEventDto),
+    ReadOnly(ReadOnlyResponse),
+}
+
+impl SessionEventDto {
+    fn from_event(event: DeviceEvent) -> SessionEventProjection {
         match event {
-            DeviceEvent::LinkUp(link) => Self::LinkUp {
+            DeviceEvent::LinkUp(link) => SessionEventProjection::Event(Self::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
                 max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
-            },
-            DeviceEvent::LinkDown => Self::LinkDown,
-            DeviceEvent::Tick { monotonic_ms } => Self::Tick {
+            }),
+            DeviceEvent::LinkDown => SessionEventProjection::Event(Self::LinkDown),
+            DeviceEvent::Tick { monotonic_ms } => SessionEventProjection::Event(Self::Tick {
                 monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
-            },
-            DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
-            DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnlyResponse(response.into()),
-            DeviceEvent::ControlRefusal(refusal) => Self::ControlRefusal(refusal.into()),
-            DeviceEvent::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics.into()),
-            DeviceEvent::DiagnosticError(error) => Self::DiagnosticError(error.into()),
+            }),
+            DeviceEvent::Telemetry(delta) => {
+                SessionEventProjection::Event(Self::Telemetry(delta.into()))
+            }
+            DeviceEvent::ControlRefusal(refusal) => {
+                SessionEventProjection::Event(Self::ControlRefusal(refusal.into()))
+            }
+            DeviceEvent::Diagnostics(diagnostics) => {
+                SessionEventProjection::Event(Self::Diagnostics(diagnostics.into()))
+            }
+            DeviceEvent::DiagnosticError(error) => {
+                SessionEventProjection::Event(Self::DiagnosticError(error.into()))
+            }
+            DeviceEvent::ReadOnlyResponse(response) => SessionEventProjection::ReadOnly(response),
         }
     }
 }
@@ -1515,6 +1808,9 @@ pub struct TelemetryDeltaDto {
 
     /// Battery/input current in milliamps.
     pub battery_current: Option<MeasuredI32Dto>,
+
+    /// Device charging state decoded from protocol-specific status fields.
+    pub charge_mode: Option<MeasuredChargeModeDto>,
 
     /// Motor/phase current in milliamps.
     pub motor_current: Option<MeasuredI32Dto>,
@@ -1557,6 +1853,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             speed: delta.speed.map(Into::into),
             voltage: delta.voltage.map(Into::into),
             battery_current: delta.battery_current.map(Into::into),
+            charge_mode: delta.charge_mode.map(Into::into),
             motor_current: delta.motor_current.map(Into::into),
             power: delta.power.map(Into::into),
             controller_temperature: delta.controller_temperature.map(Into::into),
@@ -1586,6 +1883,9 @@ pub struct TelemetrySnapshotDto {
 
     /// Battery/input current in milliamps.
     pub battery_current: Option<MeasuredI32Dto>,
+
+    /// Device charging state decoded from protocol-specific status fields.
+    pub charge_mode: Option<MeasuredChargeModeDto>,
 
     /// Motor/phase current in milliamps.
     pub motor_current: Option<MeasuredI32Dto>,
@@ -1628,6 +1928,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
+            charge_mode: snapshot.charge_mode.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
             controller_temperature: snapshot.controller_temperature.map(Into::into),
@@ -1806,11 +2107,11 @@ impl From<DiagnosticError> for DiagnosticErrorDto {
 mod tests {
     use crate::{
         BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageMetadata, BatteryPagePayload,
-        DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback, DiagnosticSeverity,
-        Distance, DutyCycle, FirmwareInfo, GattChannel, LinkInfo, Measured, ProtocolSelector,
-        RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput, SettingsEntry,
-        SettingsReadback, Speed, TelemetrySnapshot, Temperature, TransportAction, ValueQuality,
-        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        BatteryReadback, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticReadback,
+        DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo, GattChannel, LinkInfo, Measured,
+        ProtocolSelector, RawFieldValue, ReadOnlyResponse, SessionInput, SessionOutput,
+        SettingsEntry, SettingsReadback, Speed, TelemetrySnapshot, Temperature, TransportAction,
+        ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
 
     use super::*;
@@ -1830,8 +2131,8 @@ mod tests {
     }
 
     #[test]
-    fn read_only_battery_dto_preserves_page_and_unknown_values() {
-        let response = ReadOnlyResponse::Battery(
+    fn read_only_battery_output_preserves_page_and_unknown_values() {
+        let response = ReadOnlyResponse::Battery(BatteryReadback::available(
             BatteryPagePayload::raw(
                 BatteryPageMetadata::raw(
                     ProtocolSelector::new(8),
@@ -1850,14 +2151,19 @@ mod tests {
                 BatteryCurrent::from_milliamps(-1_230),
                 BatteryCurrent::from_milliamps(450),
             )),
-        );
+        ));
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestBatteryInfo);
-        let ReadOnlyResponsePayloadDto::Battery(battery) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestBatteryInfo);
+        let ReadOnlyOutputPayload::Battery(readback) = output.payload else {
             panic!("expected battery DTO");
         };
+        assert_eq!(
+            readback.availability,
+            BatteryReadbackAvailabilityDto::Available
+        );
+        let battery = readback.page.expect("battery page");
         assert_eq!(battery.page.selector, 8);
         assert_eq!(battery.page.kind, BatteryPageKindDto::Raw);
         assert_eq!(
@@ -1890,7 +2196,23 @@ mod tests {
     }
 
     #[test]
-    fn read_only_firmware_dto_preserves_optional_fields() {
+    fn read_only_battery_output_preserves_unsupported_availability() {
+        let output =
+            ReadOnlyOutput::from(ReadOnlyResponse::Battery(BatteryReadback::unsupported()));
+
+        assert_eq!(output.command_kind, CommandKindDto::RequestBatteryInfo);
+        let ReadOnlyOutputPayload::Battery(readback) = output.payload else {
+            panic!("expected battery DTO");
+        };
+        assert_eq!(
+            readback.availability,
+            BatteryReadbackAvailabilityDto::Unsupported
+        );
+        assert_eq!(readback.page, None);
+    }
+
+    #[test]
+    fn read_only_firmware_output_preserves_optional_fields() {
         let response = ReadOnlyResponse::Firmware(FirmwareInfo {
             protocol_version: Some(Measured::reported(2)),
             firmware_major: Some(Measured::reported(43)),
@@ -1899,10 +2221,10 @@ mod tests {
             build_id: Some(RawFieldValue::new(0x002a, 99)),
         });
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestFirmwareInfo);
-        let ReadOnlyResponsePayloadDto::Firmware(firmware) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestFirmwareInfo);
+        let ReadOnlyOutputPayload::Firmware(firmware) = output.payload else {
             panic!("expected firmware DTO");
         };
         assert_eq!(firmware.protocol_version.expect("protocol").value, 2);
@@ -1919,32 +2241,34 @@ mod tests {
     }
 
     #[test]
-    fn read_only_settings_dto_owns_present_entries_only() {
-        let response = ReadOnlyResponse::Settings(SettingsReadback {
-            entries: [
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0014, 30),
-                    source: ValueSource::Reported,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0018, 45),
-                    source: ValueSource::Estimated,
-                    quality: ValueQuality::Inferred,
-                    verification: VerificationStatus::Inferred,
-                }),
-                None,
-            ],
-        });
+    fn read_only_settings_output_owns_present_entries_only() {
+        let response = ReadOnlyResponse::Settings(SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0014, 30),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0018, 45),
+                source: ValueSource::Estimated,
+                quality: ValueQuality::Inferred,
+                verification: VerificationStatus::Inferred,
+            }),
+            None,
+        ]));
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestSettings);
-        let ReadOnlyResponsePayloadDto::Settings(settings) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestSettings);
+        let ReadOnlyOutputPayload::Settings(settings) = output.payload else {
             panic!("expected settings DTO");
         };
+        assert_eq!(
+            settings.availability,
+            SettingsReadbackAvailabilityDto::Available
+        );
         assert_eq!(settings.entries.len(), 2);
         assert_eq!(settings.entries[0].field.id, 0x0014);
         assert_eq!(settings.entries[0].source, ValueSourceDto::Reported);
@@ -1953,7 +2277,33 @@ mod tests {
     }
 
     #[test]
-    fn read_only_diagnostics_dto_owns_present_details_only() {
+    fn fault_history_output_preserves_structured_unknown_code_and_distance() {
+        let readback = FaultHistoryReadback::fault_since(
+            FaultHistoryEntry::reported_unknown(FaultCode::unknown(RawFieldValue::new(0x0040, 1))),
+            Some(Measured::reported(Distance::from_millimetres(61_456_941))),
+        );
+
+        let output = ReadOnlyOutput::from(ReadOnlyResponse::FaultHistory(readback));
+
+        assert_eq!(output.command_kind, CommandKindDto::RequestFaultHistory);
+        let ReadOnlyOutputPayload::FaultHistory(dto) = output.payload else {
+            panic!("expected fault-history DTO");
+        };
+        assert_eq!(dto.availability, FaultHistoryAvailabilityDto::Available);
+        assert_eq!(
+            dto.last_fault.expect("fault").code,
+            FaultCodeDto {
+                raw: RawFieldValueDto {
+                    id: 0x0040,
+                    value: 1
+                }
+            }
+        );
+        assert_eq!(dto.since_distance.expect("distance").value, 61_456_941);
+    }
+
+    #[test]
+    fn read_only_diagnostics_output_owns_present_details_only() {
         let response = ReadOnlyResponse::Diagnostics(DiagnosticReadback {
             details: [
                 Some(DiagnosticDetail {
@@ -1968,10 +2318,10 @@ mod tests {
             ],
         });
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestDiagnostics);
-        let ReadOnlyResponsePayloadDto::Diagnostics(diagnostics) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestDiagnostics);
+        let ReadOnlyOutputPayload::Diagnostics(diagnostics) = output.payload else {
             panic!("expected diagnostics DTO");
         };
         assert_eq!(diagnostics.details.len(), 1);
@@ -1986,7 +2336,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_raw_telemetry_dto_owns_present_fields_only() {
+    fn read_only_raw_telemetry_output_owns_present_fields_only() {
         let response = ReadOnlyResponse::RawTelemetry(RawTelemetryReadback {
             fields: [
                 Some(RawFieldValue::new(0x8001, 989)),
@@ -1996,10 +2346,10 @@ mod tests {
             ],
         });
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestTelemetry);
-        let ReadOnlyResponsePayloadDto::RawTelemetry(raw) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestTelemetry);
+        let ReadOnlyOutputPayload::RawTelemetry(raw) = output.payload else {
             panic!("expected raw telemetry DTO");
         };
         assert_eq!(raw.fields.len(), 2);
@@ -2070,7 +2420,7 @@ mod tests {
     }
 
     #[test]
-    fn session_output_dto_owns_transport_write_bytes_and_events() {
+    fn session_output_owns_transport_write_bytes_and_events() {
         let write = SessionOutputDto::from(SessionOutput::Transport(TransportAction::Write {
             channel: GattChannel::from_bytes([0xB2; 16]),
             bytes: WritePayload::try_from_slice(&[1, 2, 3]).expect("payload fits"),
@@ -2080,6 +2430,19 @@ mod tests {
             monotonic_ms: MonotonicTimestamp::new(7),
             max_write_len: Some(write_len(182)),
         })));
+        let readback = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x0014, 30),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                None,
+                None,
+            ])),
+        )));
 
         assert_eq!(
             write,
@@ -2096,6 +2459,19 @@ mod tests {
                 max_write_len: Some(write_len_dto(182)),
             })
         );
+        let SessionOutputDto::ReadOnly(response) = readback else {
+            panic!("read-only responses must not be nested under event outputs");
+        };
+        assert_eq!(response.command_kind, CommandKindDto::RequestSettings);
+        let ReadOnlyOutputPayload::Settings(settings) = response.payload else {
+            panic!("expected settings readback");
+        };
+        assert_eq!(
+            settings.availability,
+            SettingsReadbackAvailabilityDto::Available
+        );
+        assert_eq!(settings.entries[0].field.id, 0x0014);
+        assert_eq!(settings.entries[0].field.value, 30);
     }
 
     #[test]
@@ -2107,6 +2483,7 @@ mod tests {
             ))),
             voltage: Some(Measured::reported(Voltage::from_millivolts(84_000))),
             battery_current: None,
+            charge_mode: Some(Measured::reported(ChargeMode::Charging)),
             motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(-1_500))),
             power: None,
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
@@ -2128,6 +2505,10 @@ mod tests {
         assert_eq!(dto.speed.expect("speed").value, 1_200);
         assert_eq!(dto.voltage.expect("voltage").value, 84_000);
         assert_eq!(dto.battery_current, None);
+        assert_eq!(
+            dto.charge_mode.expect("charge mode").value,
+            ChargeModeDto::Charging
+        );
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
         assert_eq!(dto.battery_level_estimated.expect("level").value, 80);
     }

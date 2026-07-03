@@ -1,11 +1,14 @@
 import CutoutMobile
 import Foundation
 
-final class LiveSpeedModel: ObservableObject {
-    @Published private(set) var displayState = LiveSpeedDisplayState()
-    @Published private(set) var phase = LiveSpeedConnectionPhase.starting
+final class CutoutAppModel: ObservableObject {
+    @Published private(set) var displayState = RideDisplayState()
+    @Published private(set) var phase = SessionConnectionPhase.starting
     @Published private(set) var devicePickerScanState: DevicePickerScanState?
     @Published private(set) var selectedRideTitle: String?
+    @Published private(set) var settingsReadback: SettingsReadback?
+    @Published private(set) var faultHistoryReadback: FaultHistoryReadback?
+    @Published private(set) var bmsSnapshot: BmsSnapshot?
 
     var speed: SpeedReadout {
         displayState.speed
@@ -15,7 +18,7 @@ final class LiveSpeedModel: ObservableObject {
         EucRideScreenState(phase: phase, displayState: displayState)
     }
 
-    private let core = LiveSpeedSessionCore()
+    private let core = CutoutSessionCore()
 
     init() {
         core.onDisplayStateChange = { [weak self] displayState in
@@ -26,6 +29,19 @@ final class LiveSpeedModel: ObservableObject {
         }
         core.onScanStateChange = { [weak self] scanState in
             self?.devicePickerScanState = scanState
+        }
+        core.onSettingsReadbackChange = { [weak self] settingsReadback in
+            self?.settingsReadback = settingsReadback
+        }
+        core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
+            self?.faultHistoryReadback = faultHistoryReadback
+        }
+        core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
+            self?.bmsSnapshot = bmsSnapshot
+        }
+        core.onProtocolIdentityCandidateChange = { [weak self] candidate in
+            guard case .supported = candidate?.support else { return }
+            self?.selectedRideTitle = candidate?.detail
         }
     }
 

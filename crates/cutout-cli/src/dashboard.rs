@@ -18,12 +18,13 @@ use cutout_btle::{
     ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
 };
 use cutout_core::{
-    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
-    CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, Count, Current,
-    DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PercentQuantity,
-    PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity, QuantityDisplayValue,
-    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, SignalStrength, Speed,
+    Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, BatteryReadbackAvailability,
+    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+    CatalogModelResolution, Count, Current, DiagnosticReadback, Distance, DutyCycle,
+    FaultHistoryReadback, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen,
+    NotificationIngestOutcome, ParserDiagnostics, PercentQuantity, PevcapHeader, PhaseCurrent,
+    Power, ProtocolFamily, Quantity, QuantityDisplayValue, RawTelemetryReadback, ReadOnlyResponse,
+    SettingsEntry, SettingsReadback, SettingsReadbackAvailability, SignalStrength, Speed,
     TelemetryDelta, TelemetrySnapshot, Temperature, Unit, Voltage,
 };
 use cutout_protocols::{
@@ -906,26 +907,29 @@ impl ReadOnlyDashboardState {
                 self.firmware = Some(firmware);
             }
             ReadOnlyResponse::Settings(settings) => {
-                for entry in settings.entries.into_iter().flatten() {
+                for entry in settings.entries().into_iter().flatten() {
                     push_bounded(&mut self.settings, entry);
                 }
             }
-            ReadOnlyResponse::Battery(payload) => {
-                let page = payload.page();
-                if matches!(
-                    page.kind,
-                    cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
-                ) {
-                    self.unknown_raw_pages = self.unknown_raw_pages.increment();
+            ReadOnlyResponse::Battery(readback) => {
+                if let Some(payload) = readback.page() {
+                    let page = payload.page();
+                    if matches!(
+                        page.kind,
+                        cutout_core::BatteryPageKind::Raw | cutout_core::BatteryPageKind::Metadata
+                    ) {
+                        self.unknown_raw_pages = self.unknown_raw_pages.increment();
+                    }
+                    if BmsTemperatureValues(payload).has_values() {
+                        self.latest_bms_temperature = Some(payload.clone());
+                    }
+                    push_bounded(&mut self.bms_pages, payload.clone());
                 }
-                if BmsTemperatureValues(payload).has_values() {
-                    self.latest_bms_temperature = Some(payload);
-                }
-                push_bounded(&mut self.bms_pages, payload);
             }
             ReadOnlyResponse::Diagnostics(_) => {
                 self.diagnostics = self.diagnostics.increment();
             }
+            ReadOnlyResponse::FaultHistory(_) => {}
             ReadOnlyResponse::RawTelemetry(_) => {
                 self.raw_telemetry = self.raw_telemetry.increment();
             }
@@ -1312,7 +1316,7 @@ impl DashboardState {
             self.telemetry.apply_snapshot(snapshot);
         }
         for response in &report.read_only_response_events {
-            self.read_only.apply_response(*response);
+            self.read_only.apply_response(response.clone());
         }
         if report.read_only_responses.has_events() {
             self.push_log(
@@ -1329,7 +1333,7 @@ impl DashboardState {
                 outcome,
             } = event
             {
-                self.push_notification_ingest_log(*monotonic_ms, *outcome);
+                self.push_notification_ingest_log(*monotonic_ms, outcome.clone());
             } else {
                 let (level, message) = format_bridge_event(event);
                 self.push_log(level, &message);
@@ -1755,10 +1759,10 @@ const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static 
     }
 }
 
-struct BmsTemperatureValues(BatteryPagePayload);
+struct BmsTemperatureValues<'a>(&'a BatteryPagePayload);
 
-impl BmsTemperatureValues {
-    fn has_values(self) -> bool {
+impl BmsTemperatureValues<'_> {
+    fn has_values(&self) -> bool {
         matches!(self.0, BatteryPagePayload::Temperature(_))
             && self
                 .0
@@ -1768,7 +1772,7 @@ impl BmsTemperatureValues {
     }
 }
 
-impl fmt::Display for BmsTemperatureValues {
+impl fmt::Display for BmsTemperatureValues<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut wrote = false;
         for temperature in self.0.temperatures().into_iter().flatten() {
@@ -1791,9 +1795,9 @@ impl fmt::Display for BmsTemperatureValues {
     }
 }
 
-struct BmsCurrentSummary(BatteryPagePayload);
+struct BmsCurrentSummary<'a>(&'a BatteryPagePayload);
 
-impl fmt::Display for BmsCurrentSummary {
+impl fmt::Display for BmsCurrentSummary<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let battery = self.0.battery();
         if let Some(current) = battery.current {
@@ -1816,9 +1820,9 @@ impl fmt::Display for BmsCurrentSummary {
 }
 
 #[allow(dead_code)]
-struct BmsPageSummary(BatteryPagePayload);
+struct BmsPageSummary<'a>(&'a BatteryPagePayload);
 
-impl fmt::Display for BmsPageSummary {
+impl fmt::Display for BmsPageSummary<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let page = self.0.page();
         write!(
@@ -1846,7 +1850,7 @@ impl fmt::Display for LatestBmsTemperatureSummary {
             page.selector,
             battery_page_side_suffix(page.kind, page.selector.get()),
             verification_name(page.verification),
-            BmsTemperatureValues(self.0)
+            BmsTemperatureValues(&self.0)
         )
     }
 }
@@ -2228,7 +2232,7 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
             "info",
             format!(
                 "t={monotonic_ms}ms {}",
-                format_read_only_response(*response)
+                format_read_only_response(response.clone())
             ),
         ),
         SessionBridgeEvent::Diagnostics {
@@ -2257,28 +2261,28 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NotificationIngestLog {
     monotonic_ms: u64,
     outcome: NotificationIngestOutcome,
 }
 
 impl NotificationIngestLog {
-    const fn level(self) -> &'static str {
-        match self.outcome {
+    fn level(&self) -> &'static str {
+        match &self.outcome {
             NotificationIngestOutcome::SemanticEvents { .. }
             | NotificationIngestOutcome::KnownReserved { .. } => "info",
             NotificationIngestOutcome::ParserDiagnostic { .. }
             | NotificationIngestOutcome::ParserGap { .. } => "warn",
             NotificationIngestOutcome::BufferedFragment(_)
-            | NotificationIngestOutcome::Ignored(_) => "trace",
+            | NotificationIngestOutcome::Ignored { .. } => "trace",
         }
     }
 }
 
 impl fmt::Display for NotificationIngestLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.outcome {
+        match &self.outcome {
             NotificationIngestOutcome::SemanticEvents {
                 notification,
                 event_count,
@@ -2312,7 +2316,7 @@ impl fmt::Display for NotificationIngestLog {
                 payload,
             } => write!(
                 f,
-                "t={}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
+                "t={}ms protocol known reserved family={} selector={} tag={} body_len={} retained_bytes={} verification={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
                 OptionalU8(
@@ -2328,12 +2332,13 @@ impl fmt::Display for NotificationIngestLog {
                         .map(cutout_core::ProtocolTag::get)
                 ),
                 payload.body_len.as_bytes(),
+                payload.retained_payload.len(),
                 verification_name(payload.verification),
                 notification.len.as_bytes()
             ),
             NotificationIngestOutcome::ParserGap { notification, gap } => write!(
                 f,
-                "t={}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
+                "t={}ms protocol parser gap family={} selector={} tag={} body_len={} retained_bytes={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
                 OptionalU8(
@@ -2347,14 +2352,17 @@ impl fmt::Display for NotificationIngestLog {
                         .map(cutout_core::ProtocolTag::get)
                 ),
                 gap.body_len.as_bytes(),
+                gap.retained_payload.len(),
                 notification.len.as_bytes()
             ),
-            NotificationIngestOutcome::Ignored(notification) => write!(
+            NotificationIngestOutcome::Ignored { evidence, reason } => write!(
                 f,
-                "t={}ms protocol ignored notification family={} len={}",
+                "t={}ms protocol ignored notification reason={} family={} len={} retained_bytes={}",
                 self.monotonic_ms,
-                family_name(notification.family),
-                notification.len.as_bytes()
+                ignored_reason_name(*reason),
+                optional_family_name(evidence.family),
+                evidence.len.as_bytes(),
+                evidence.retained_payload.len()
             ),
         }
     }
@@ -2382,12 +2390,29 @@ impl fmt::Display for OptionalU16 {
     }
 }
 
-fn family_name(family: Option<ProtocolFamily>) -> &'static str {
+fn family_name(family: ProtocolFamily) -> &'static str {
     match family {
-        Some(ProtocolFamily::VeteranLeaperkimNosfet) => "VeteranLeaperkimNosfet",
-        Some(ProtocolFamily::BegodeGotway) => "BegodeGotway",
-        Some(ProtocolFamily::Vesc) => "Vesc",
+        ProtocolFamily::VeteranLeaperkimNosfet => "VeteranLeaperkimNosfet",
+        ProtocolFamily::BegodeGotway => "BegodeGotway",
+        ProtocolFamily::Vesc => "Vesc",
+    }
+}
+
+fn optional_family_name(family: Option<ProtocolFamily>) -> &'static str {
+    match family {
+        Some(family) => family_name(family),
         None => "unknown",
+    }
+}
+
+fn ignored_reason_name(reason: cutout_core::IgnoredNotificationReason) -> &'static str {
+    match reason {
+        cutout_core::IgnoredNotificationReason::WrongChannel => "wrong_channel",
+        cutout_core::IgnoredNotificationReason::UnsupportedFamily => "unsupported_family",
+        cutout_core::IgnoredNotificationReason::UnsupportedChannel => "unsupported_channel",
+        cutout_core::IgnoredNotificationReason::AcceptedButUnmapped => "accepted_but_unmapped",
+        cutout_core::IgnoredNotificationReason::SeekingFrameBoundary => "seeking_frame_boundary",
+        cutout_core::IgnoredNotificationReason::IntentionallyDropped => "intentionally_dropped",
     }
 }
 
@@ -2397,23 +2422,35 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
             format!("read-only firmware {}", FirmwareSummary(firmware))
         }
         ReadOnlyResponse::Settings(settings) => SettingsReadbackLog(settings).to_string(),
-        ReadOnlyResponse::Battery(payload) => {
-            let page = payload.page();
-            let mut summary = format!(
-                "read-only battery selector={}{} kind={} verification={}",
-                page.selector,
-                battery_page_side_suffix(page.kind, page.selector.get()),
-                battery_page_kind_name(page.kind),
-                verification_name(page.verification)
-            );
-            let _ = write!(
-                summary,
-                "{}{}",
-                BmsTemperatureValues(payload),
-                BmsCurrentSummary(payload)
-            );
-            summary
+        ReadOnlyResponse::FaultHistory(fault_history) => {
+            FaultHistoryReadbackLog(fault_history).to_string()
         }
+        ReadOnlyResponse::Battery(readback) => readback.page().map_or_else(
+            || {
+                format!(
+                    "read-only battery availability={}",
+                    battery_readback_availability_name(readback.availability())
+                )
+            },
+            |payload| {
+                let page = payload.page();
+                let mut summary = format!(
+                    "read-only battery selector={}{} kind={} verification={} availability={}",
+                    page.selector,
+                    battery_page_side_suffix(page.kind, page.selector.get()),
+                    battery_page_kind_name(page.kind),
+                    verification_name(page.verification),
+                    battery_readback_availability_name(readback.availability())
+                );
+                let _ = write!(
+                    summary,
+                    "{}{}",
+                    BmsTemperatureValues(payload),
+                    BmsCurrentSummary(payload)
+                );
+                summary
+            },
+        ),
         ReadOnlyResponse::Diagnostics(diagnostics) => {
             let populated = PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics);
             format!("read-only diagnostics details={populated}")
@@ -2430,7 +2467,7 @@ struct SettingsReadbackLog(SettingsReadback);
 impl fmt::Display for SettingsReadbackLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut wrote = false;
-        for entry in self.0.entries.into_iter().flatten() {
+        for entry in self.0.entries().into_iter().flatten() {
             if wrote {
                 write!(f, " ")?;
             } else {
@@ -2450,8 +2487,65 @@ impl fmt::Display for SettingsReadbackLog {
         if wrote {
             Ok(())
         } else {
-            write!(f, "read-only settings none observed")
+            write!(
+                f,
+                "read-only settings {}",
+                settings_readback_availability_name(self.0.availability())
+            )
         }
+    }
+}
+
+fn settings_readback_availability_name(availability: SettingsReadbackAvailability) -> &'static str {
+    match availability {
+        SettingsReadbackAvailability::Available => "none observed",
+        SettingsReadbackAvailability::Unavailable => "unavailable",
+        SettingsReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
+fn battery_readback_availability_name(availability: BatteryReadbackAvailability) -> &'static str {
+    match availability {
+        BatteryReadbackAvailability::Available => "available",
+        BatteryReadbackAvailability::Unavailable => "unavailable",
+        BatteryReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
+struct FaultHistoryReadbackLog(FaultHistoryReadback);
+
+impl fmt::Display for FaultHistoryReadbackLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(entry) = self.0.last_fault() else {
+            return write!(
+                f,
+                "read-only fault-history {}",
+                fault_history_availability_name(self.0.availability())
+            );
+        };
+
+        write!(
+            f,
+            "read-only fault-history code={} value={} quality={} verification={}",
+            entry.code.raw.id,
+            entry.code.raw.value,
+            quality_name(entry.quality),
+            verification_name(entry.verification)
+        )?;
+        if let Some(distance) = self.0.since_distance() {
+            write!(f, " since_mm={}", distance.value.as_millimetres())?;
+        }
+        Ok(())
+    }
+}
+
+fn fault_history_availability_name(
+    availability: cutout_core::FaultHistoryAvailability,
+) -> &'static str {
+    match availability {
+        cutout_core::FaultHistoryAvailability::Available => "none observed",
+        cutout_core::FaultHistoryAvailability::Unavailable => "unavailable",
+        cutout_core::FaultHistoryAvailability::Unsupported => "unsupported",
     }
 }
 
@@ -3725,12 +3819,14 @@ fn speed_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize)
 }
 
 fn dashboard_voltage_range(state: &DashboardState) -> Option<RangeInclusive<Voltage>> {
-    if ModelCatalog::new(&MODEL_CATALOG)
+    let is_nosfet_aero = ModelCatalog::new(&MODEL_CATALOG)
         .find_model_names(&state.device.make, &state.device.model)
-        .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY))
-        && let Some(profile) = VeteranModelProfile::from_model_id(VeteranModelId::new(43))
-    {
-        return Some(profile.voltage_range);
+        .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY));
+
+    if is_nosfet_aero {
+        if let Some(profile) = VeteranModelProfile::from_model_id(VeteranModelId::new(43)) {
+            return Some(profile.voltage_range);
+        }
     }
 
     None
@@ -4051,14 +4147,14 @@ mod tests {
         SubscribeCount, TelemetryEventCount, TransportWriteCount,
     };
     use cutout_core::{
-        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, CaptureDistribution,
-        CaptureEvidence, CapturePrivacy, CaptureSessionLabel, DiagnosticDetail, DiagnosticSeverity,
-        FirmwareInfo, GattChannel, Measured, MonotonicTimestamp, NotificationByteLen,
-        NotificationIngestOutcome, ParserDiagnosticCount, ParserError, ParserGapEvidence,
-        PayloadBodyLen, PevcapHeader, ProtocolFamily, ProtocolSelector, RawFieldValue,
-        ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry, SettingsReadback, SignalStrength,
-        TelemetrySnapshot, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
-        WallClockUnixTimestamp,
+        BatteryCellVoltages, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
+        BatteryReadback, CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+        DiagnosticDetail, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured,
+        MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount,
+        ParserError, ParserGapEvidence, PayloadBodyLen, PevcapHeader, ProtocolFamily,
+        ProtocolSelector, RawFieldValue, ReadOnlyResponse, ReservedPayloadEvidence, SettingsEntry,
+        SettingsReadback, SignalStrength, TelemetrySnapshot, TransportWriteLimit, ValueQuality,
+        ValueSource, VerificationStatus, WallClockUnixTimestamp,
     };
     use cutout_protocols::{VeteranFrame, VeteranTelemetry};
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
@@ -4109,6 +4205,10 @@ mod tests {
 
     const fn sel(value: u8) -> ProtocolSelector {
         ProtocolSelector::new(value)
+    }
+
+    fn battery_response(payload: BatteryPagePayload) -> ReadOnlyResponse {
+        ReadOnlyResponse::Battery(BatteryReadback::available(payload))
     }
 
     fn speed(value: i32) -> Measured<Speed> {
@@ -4199,6 +4299,18 @@ mod tests {
     }
 
     fn estimated_battery_report() -> SessionBridgeReport {
+        let delta = TelemetryDelta {
+            speed: Some(speed(0)),
+            voltage: Some(voltage(108_760)),
+            battery_current: Some(battery_current(0)),
+            controller_temperature: Some(temperature(33_270)),
+            pwm: Some(duty_cycle_permille(-1_000)),
+            distance: Some(distance(1_551_169_000)),
+            pitch: Some(angle_mdeg(69_060)),
+            battery_level_estimated: Some(level_estimated(47)),
+            ..TelemetryDelta::empty(ms(42))
+        };
+
         SessionBridgeReport {
             protocol_writes: protocol_writes(0),
             writes: writes(0),
@@ -4207,7 +4319,7 @@ mod tests {
             notification_bytes: NotificationPayloadTotal::from_bytes(20),
             latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(1),
-            telemetry_snapshot: live_aero_telemetry_snapshot(),
+            telemetry_snapshot: snapshot_from_delta(delta),
             read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
@@ -4218,17 +4330,7 @@ mod tests {
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(42),
-                delta: TelemetryDelta {
-                    speed: Some(speed(0)),
-                    voltage: Some(voltage(108_760)),
-                    motor_current: Some(phase_current(0)),
-                    controller_temperature: Some(temperature(33_270)),
-                    pwm: Some(duty_cycle_permille(-1_000)),
-                    distance: Some(distance(1_551_169_000)),
-                    pitch: Some(angle_mdeg(69_060)),
-                    battery_level_estimated: Some(level_estimated(47)),
-                    ..TelemetryDelta::empty(ms(42))
-                },
+                delta,
             }],
             disconnects: disconnects(0),
         }
@@ -4315,14 +4417,18 @@ mod tests {
     fn sample_aero_read_only_responses() -> Vec<ReadOnlyResponse> {
         vec![
             ReadOnlyResponse::Firmware(firmware_43_2_54()),
-            ReadOnlyResponse::Settings(SettingsReadback {
-                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
-            }),
-            ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(hardware_setting(0x20, 540)),
+                None,
+                None,
+                None,
+            ])),
+            battery_response(BatteryPagePayload::cell_voltage(
                 BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
+                BatteryCellVoltages::default(),
             )),
-            ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+            battery_response(BatteryPagePayload::temperature_values(
                 BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                 BatteryInfo {
                     temperature: Some(temperature(16_730)),
@@ -4337,7 +4443,7 @@ mod tests {
                     Some(temperature(19_100)),
                 ],
             )),
-            ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+            battery_response(BatteryPagePayload::raw(
                 BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
             )),
@@ -5068,6 +5174,7 @@ mod tests {
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::from_bytes(24),
+                    retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
                     verification: VerificationStatus::HardwareVerified,
                 },
             ),
@@ -5076,7 +5183,7 @@ mod tests {
         assert_eq!(log.level(), "info");
         assert_eq!(
             log.to_string(),
-            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75"
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 retained_bytes=1 verification=hardware_verified len=75"
         );
     }
 
@@ -5108,24 +5215,22 @@ mod tests {
 
     #[test]
     fn settings_readback_log_streams_bounded_entries_at_render_edge() {
-        let settings = SettingsReadback {
-            entries: [
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x20, 540),
-                    source: ValueSource::Reported,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x21, -12),
-                    source: ValueSource::Estimated,
-                    quality: ValueQuality::Inferred,
-                    verification: VerificationStatus::Inferred,
-                }),
-                None,
-            ],
-        };
+        let settings = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x20, 540),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x21, -12),
+                source: ValueSource::Estimated,
+                quality: ValueQuality::Inferred,
+                verification: VerificationStatus::Inferred,
+            }),
+            None,
+        ]);
 
         assert_eq!(
             SettingsReadbackLog(settings).to_string(),
@@ -5133,7 +5238,11 @@ mod tests {
         );
         assert_eq!(
             SettingsReadbackLog(SettingsReadback::default()).to_string(),
-            "read-only settings none observed"
+            "read-only settings unavailable"
+        );
+        assert_eq!(
+            SettingsReadbackLog(SettingsReadback::unsupported()).to_string(),
+            "read-only settings unsupported"
         );
     }
 
@@ -5216,13 +5325,14 @@ mod tests {
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(sel(8)),
                     body_len: PayloadBodyLen::from_bytes(24),
+                    retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
                     verification: VerificationStatus::HardwareVerified,
                 },
             ),
         };
         assert_display_preserves_capacity(
             ingest,
-            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75",
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 retained_bytes=1 verification=hardware_verified len=75",
         );
         let parser_gap = NotificationIngestLog {
             monotonic_ms: 9,
@@ -5236,12 +5346,15 @@ mod tests {
                         0x1234,
                     )),
                     body_len: PayloadBodyLen::from_bytes(12),
+                    retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[
+                        0x12, 0x34,
+                    ]),
                 },
             ),
         };
         assert_display_preserves_capacity(
             parser_gap,
-            "t=9ms protocol parser gap family=VeteranLeaperkimNosfet selector=none tag=4660 body_len=12 len=75",
+            "t=9ms protocol parser gap family=VeteranLeaperkimNosfet selector=none tag=4660 body_len=12 retained_bytes=2 len=75",
         );
 
         assert_display_preserves_capacity(
@@ -5254,15 +5367,18 @@ mod tests {
         );
 
         assert_display_preserves_capacity(
-            SettingsReadbackLog(SettingsReadback {
-                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
-            }),
+            SettingsReadbackLog(SettingsReadback::available([
+                Some(hardware_setting(0x20, 540)),
+                None,
+                None,
+                None,
+            ])),
             "read-only settings field=32 value=540 quality=known verification=hardware_verified",
         );
 
         assert_display_preserves_capacity(
             BmsPageSummary(
-                BatteryPagePayload::raw(
+                &BatteryPagePayload::raw(
                     BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo {
                         current: Some(battery_current(2_010)),
@@ -5282,72 +5398,77 @@ mod tests {
     fn ingest_outcome_events_render_each_typed_protocol_category() {
         let mut state = DashboardState::empty();
         let channel = GattChannel::from_bytes([0xA1; 16]);
-        let report = SessionBridgeReport {
-            notifications: notifications(5),
-            notification_bytes: NotificationPayloadTotal::from_bytes(269),
-            latest_notification_len: Some(NotificationByteLen::from_bytes(77)),
-            events: vec![
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(3),
-                    outcome: NotificationIngestOutcome::buffered_fragment(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(20),
-                        ms(3),
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(4),
-                    outcome: NotificationIngestOutcome::known_reserved(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(75),
-                        ms(4),
-                        ReservedPayloadEvidence {
-                            classifier: cutout_core::PayloadClassifier::selector(
-                                ProtocolSelector::new(8),
-                            ),
-                            body_len: PayloadBodyLen::from_bytes(24),
-                            verification: VerificationStatus::HardwareVerified,
-                        },
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(5),
-                    outcome: NotificationIngestOutcome::parser_gap(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(77),
-                        ms(5),
-                        ParserGapEvidence {
-                            classifier: cutout_core::PayloadClassifier::selector(
-                                ProtocolSelector::new(9),
-                            ),
-                            body_len: PayloadBodyLen::from_bytes(26),
-                        },
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(6),
-                    outcome: NotificationIngestOutcome::parser_diagnostic(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(77),
-                        ms(6),
-                        ParserError::BadChecksum,
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                    outcome: NotificationIngestOutcome::ignored_wrong_channel(
-                        channel,
-                        NotificationByteLen::from_bytes(20),
-                        ms(7),
-                    ),
-                },
-            ],
-            ..empty_session_bridge_report()
-        };
+        let report =
+            SessionBridgeReport {
+                notifications: notifications(5),
+                notification_bytes: NotificationPayloadTotal::from_bytes(269),
+                latest_notification_len: Some(NotificationByteLen::from_bytes(77)),
+                events: vec![
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(3),
+                        outcome: NotificationIngestOutcome::buffered_fragment(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(20),
+                            ms(3),
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(4),
+                        outcome: NotificationIngestOutcome::known_reserved(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(75),
+                            ms(4),
+                            ReservedPayloadEvidence {
+                                classifier: cutout_core::PayloadClassifier::selector(
+                                    ProtocolSelector::new(8),
+                                ),
+                                body_len: PayloadBodyLen::from_bytes(24),
+                                retained_payload:
+                                    cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
+                                verification: VerificationStatus::HardwareVerified,
+                            },
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(5),
+                        outcome: NotificationIngestOutcome::parser_gap(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(77),
+                            ms(5),
+                            ParserGapEvidence {
+                                classifier: cutout_core::PayloadClassifier::selector(
+                                    ProtocolSelector::new(9),
+                                ),
+                                body_len: PayloadBodyLen::from_bytes(26),
+                                retained_payload:
+                                    cutout_core::RetainedNotificationPayload::from_bytes(&[0x09]),
+                            },
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(6),
+                        outcome: NotificationIngestOutcome::parser_diagnostic(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(77),
+                            ms(6),
+                            ParserError::BadChecksum,
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(7),
+                        outcome: NotificationIngestOutcome::ignored_wrong_channel(
+                            channel,
+                            NotificationByteLen::from_bytes(20),
+                            ms(7),
+                        ),
+                    },
+                ],
+                ..empty_session_bridge_report()
+            };
 
         state.apply_session_report(&report);
         state.active_tab = DashboardTab::new(3);
@@ -5369,7 +5490,7 @@ mod tests {
     #[test]
     fn read_only_response_events_render_as_parsed_aero_events() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+        let read_only_response = battery_response(BatteryPagePayload::temperature_values(
             BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
             BatteryInfo {
                 temperature: Some(temperature(17_600)),
@@ -5386,7 +5507,7 @@ mod tests {
         ));
         let report = SessionBridgeReport {
             read_only_responses: read_only_responses(1),
-            read_only_response_events: vec![read_only_response],
+            read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
@@ -5418,7 +5539,7 @@ mod tests {
     #[test]
     fn read_only_metadata_current_renders_as_parsed_aero_event() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(
+        let read_only_response = battery_response(
             BatteryPagePayload::raw(
                 BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                 BatteryInfo {
@@ -5433,7 +5554,7 @@ mod tests {
         );
         let report = SessionBridgeReport {
             read_only_responses: read_only_responses(1),
-            read_only_response_events: vec![read_only_response],
+            read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
@@ -5555,7 +5676,7 @@ mod tests {
             BatteryPageKind::Temperature
         );
         assert_eq!(
-            BmsPageSummary(state.read_only.bms_pages[1]).to_string(),
+            BmsPageSummary(&state.read_only.bms_pages[1]).to_string(),
             "selector=3 side=left kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
         );
         assert_eq!(
@@ -5592,14 +5713,14 @@ mod tests {
     #[test]
     fn read_only_session_report_does_not_warn_about_missing_telemetry_samples() {
         let mut state = DashboardState::empty();
-        let read_only_response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+        let read_only_response = battery_response(BatteryPagePayload::raw(
             BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
             BatteryInfo::default(),
         ));
         let report = SessionBridgeReport {
             telemetry: telemetry_events(0),
             read_only_responses: read_only_responses(1),
-            read_only_response_events: vec![read_only_response],
+            read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
@@ -5643,24 +5764,23 @@ mod tests {
                     firmware_patch: Some(Measured::reported(54)),
                     ..FirmwareInfo::default()
                 }),
-                ReadOnlyResponse::Settings(SettingsReadback {
-                    entries: [
-                        Some(SettingsEntry {
-                            field: RawFieldValue::new(0x24, 1_920),
-                            source: ValueSource::Reported,
-                            quality: ValueQuality::Known,
-                            verification: VerificationStatus::HardwareVerified,
-                        }),
-                        None,
-                        None,
-                        None,
-                    ],
-                }),
-                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                ReadOnlyResponse::Settings(SettingsReadback::available([
+                    Some(SettingsEntry {
+                        field: RawFieldValue::new(0x24, 1_920),
+                        source: ValueSource::Reported,
+                        quality: ValueQuality::Known,
+                        verification: VerificationStatus::HardwareVerified,
+                    }),
+                    None,
+                    None,
+                    None,
+                ])),
+                battery_response(BatteryPagePayload::cell_voltage(
                     BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
+                    BatteryCellVoltages::default(),
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
@@ -5737,7 +5857,7 @@ mod tests {
         let mut state = DashboardState::empty();
         let pages: Vec<_> = (0_u8..20)
             .map(|selector| {
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(sel(selector), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 ))
@@ -5786,7 +5906,7 @@ mod tests {
         let report = SessionBridgeReport {
             read_only_responses: read_only_responses(4),
             read_only_response_events: vec![
-                ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+                battery_response(BatteryPagePayload::temperature_values(
                     BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
                     BatteryInfo {
                         temperature: Some(temperature(17_600)),
@@ -5801,17 +5921,18 @@ mod tests {
                         Some(temperature(19_100)),
                     ],
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+                battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
                 )),
-                ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
+                battery_response(BatteryPagePayload::cell_voltage(
                     BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
+                    BatteryCellVoltages::default(),
                 )),
             ],
             ..empty_session_bridge_report()
@@ -6194,6 +6315,7 @@ mod tests {
             .push_back(BatteryPagePayload::cell_voltage(
                 BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
+                BatteryCellVoltages::default(),
             ));
         state.read_only.bms_pages.push_back(BatteryPagePayload::raw(
             BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),

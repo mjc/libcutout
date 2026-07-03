@@ -57,6 +57,7 @@ impl IdentityEvidence {
     const GATT_HINT: u8 = 1 << 1;
     const PASSIVE_FAMILY_MATCH: u8 = 1 << 2;
     const BANNER_MODEL_MATCH: u8 = 1 << 3;
+    const PROTOCOL_MODEL_ID: u8 = 1 << 4;
 
     /// Empty evidence set.
     #[must_use]
@@ -88,6 +89,12 @@ impl IdentityEvidence {
         self.0 & Self::BANNER_MODEL_MATCH != 0
     }
 
+    /// Returns whether protocol-owned model-id evidence was present.
+    #[must_use]
+    pub const fn has_protocol_model_id(self) -> bool {
+        self.0 & Self::PROTOCOL_MODEL_ID != 0
+    }
+
     const fn with_advertised_name_hint(self) -> Self {
         Self(self.0 | Self::ADVERTISED_NAME_HINT)
     }
@@ -102,6 +109,41 @@ impl IdentityEvidence {
 
     const fn with_banner_model_match(self) -> Self {
         Self(self.0 | Self::BANNER_MODEL_MATCH)
+    }
+
+    const fn with_protocol_model_id(self) -> Self {
+        Self(self.0 | Self::PROTOCOL_MODEL_ID)
+    }
+}
+
+/// Model identity decoded from protocol-owned bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProtocolModelIdentity {
+    /// Protocol family that owned and decoded the model id.
+    pub family: ProtocolFamily,
+
+    /// Protocol-native model id.
+    pub model_id: u16,
+}
+
+/// Protocol-owned model identity evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolModelIdentityEvidence {
+    /// No protocol model id was present.
+    Missing,
+
+    /// A protocol-owned decoder produced a model id.
+    ModelId(ProtocolModelIdentity),
+
+    /// The bytes looked like protocol identity but were malformed.
+    Malformed,
+}
+
+impl ProtocolModelIdentityEvidence {
+    /// Creates protocol-owned model-id evidence.
+    #[must_use]
+    pub const fn model_id(family: ProtocolFamily, model_id: u16) -> Self {
+        Self::ModelId(ProtocolModelIdentity { family, model_id })
     }
 }
 
@@ -119,6 +161,9 @@ pub struct StagedIdentityInput<'a, GattEvidence = &'a [GattFingerprint]> {
 
     /// Most recent parsed model banner evidence.
     pub banner_model: IdentityBannerEvidence<'a>,
+
+    /// Most recent protocol-owned model-id evidence.
+    pub protocol_model: ProtocolModelIdentityEvidence,
 }
 
 /// Result of staged identity detection.
@@ -135,6 +180,9 @@ pub struct StagedIdentityResolution {
 
     /// Evidence that contributed to this decision.
     pub evidence: IdentityEvidence,
+
+    /// Protocol-owned model-id evidence preserved with the decision.
+    pub protocol_model: ProtocolModelIdentityEvidence,
 }
 
 /// Model evidence parsed from untrusted identity bytes.
@@ -205,6 +253,7 @@ impl StagedIdentityResolution {
         outcome: StagedIdentityOutcome::NoMatch,
         confidence: IdentityConfidence::NoMatch,
         evidence: IdentityEvidence::empty(),
+        protocol_model: ProtocolModelIdentityEvidence::Missing,
     };
 }
 
@@ -214,6 +263,10 @@ pub fn identify_model(
     input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
     registry: &[&'static ModelRegistryEntry],
 ) -> StagedIdentityResolution {
+    if let Some(resolution) = protocol_model_resolution(input, registry) {
+        return resolution;
+    }
+
     let Some(expected_family) = protocol_family_from_classification(input.stream_family) else {
         return hints_only_resolution(input, registry);
     };
@@ -247,10 +300,61 @@ fn hints_only_resolution(
             outcome: StagedIdentityOutcome::HintsOnly,
             confidence: IdentityConfidence::HintsOnly,
             evidence: candidate_hints(input, entry),
+            protocol_model: input.protocol_model,
         })
         .filter(|resolution| resolution.evidence != IdentityEvidence::empty())
         .max_by_key(|resolution| resolution.confidence)
         .unwrap_or(StagedIdentityResolution::NO_MATCH)
+}
+
+fn protocol_model_resolution(
+    input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
+    registry: &[&'static ModelRegistryEntry],
+) -> Option<StagedIdentityResolution> {
+    match input.protocol_model {
+        ProtocolModelIdentityEvidence::Missing => None,
+        ProtocolModelIdentityEvidence::Malformed => Some(StagedIdentityResolution {
+            model: None,
+            outcome: StagedIdentityOutcome::Malformed,
+            confidence: IdentityConfidence::NoMatch,
+            evidence: IdentityEvidence::empty().with_protocol_model_id(),
+            protocol_model: input.protocol_model,
+        }),
+        ProtocolModelIdentityEvidence::ModelId(model_id) => {
+            let matched = registry
+                .iter()
+                .copied()
+                .filter(|entry| {
+                    entry.protocol_family == model_id.family
+                        && entry
+                            .wire_model_id
+                            .is_some_and(|wire_model_id| wire_model_id.value == model_id.model_id)
+                })
+                .map(|entry| StagedIdentityResolution {
+                    model: Some(entry),
+                    outcome: StagedIdentityOutcome::Matched,
+                    confidence: IdentityConfidence::Model,
+                    evidence: candidate_hints(input, entry)
+                        .with_passive_family_match()
+                        .with_protocol_model_id(),
+                    protocol_model: input.protocol_model,
+                });
+            let resolution = best_resolution(matched);
+            Some(if resolution.outcome == StagedIdentityOutcome::NoMatch {
+                StagedIdentityResolution {
+                    model: None,
+                    outcome: StagedIdentityOutcome::FamilyOnly,
+                    confidence: IdentityConfidence::FamilyOnly,
+                    evidence: IdentityEvidence::empty()
+                        .with_passive_family_match()
+                        .with_protocol_model_id(),
+                    protocol_model: input.protocol_model,
+                }
+            } else {
+                resolution
+            })
+        }
+    }
 }
 
 fn family_resolution<GattEvidence>(
@@ -271,6 +375,7 @@ where
                 outcome: StagedIdentityOutcome::Matched,
                 confidence: IdentityConfidence::Model,
                 evidence: evidence.with_banner_model_match(),
+                protocol_model: input.protocol_model,
             }
         }
         IdentityBannerEvidence::Model(_) => StagedIdentityResolution {
@@ -278,18 +383,21 @@ where
             outcome: StagedIdentityOutcome::Conflict,
             confidence: IdentityConfidence::NoMatch,
             evidence,
+            protocol_model: input.protocol_model,
         },
         IdentityBannerEvidence::Malformed => StagedIdentityResolution {
             model: None,
             outcome: StagedIdentityOutcome::Malformed,
             confidence: IdentityConfidence::NoMatch,
             evidence,
+            protocol_model: input.protocol_model,
         },
         IdentityBannerEvidence::Missing => StagedIdentityResolution {
             model: None,
             outcome: StagedIdentityOutcome::FamilyOnly,
             confidence: IdentityConfidence::FamilyOnly,
             evidence,
+            protocol_model: input.protocol_model,
         },
     }
 }
@@ -323,6 +431,7 @@ fn best_resolution(
             outcome: StagedIdentityOutcome::Ambiguous,
             confidence: best.confidence,
             evidence: best.evidence,
+            protocol_model: best.protocol_model,
         }
     } else {
         best
@@ -455,9 +564,9 @@ mod tests {
 
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL, DeviceFamily,
-        IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, ProtocolFamilyClassification,
-        StagedIdentityInput, StagedIdentityOutcome, identify_known_model, identify_model,
-        parse_model_banner,
+        IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, NOSFET_AERO_REGISTRY_ENTRY,
+        ProtocolFamilyClassification, ProtocolModelIdentityEvidence, StagedIdentityInput,
+        StagedIdentityOutcome, identify_known_model, identify_model, parse_model_banner,
     };
 
     const BEGODE_GATT: [GattFingerprint; 1] = [GattFingerprint {
@@ -468,6 +577,7 @@ mod tests {
             .with_notify(),
         verification: VerificationStatus::HardwareVerified,
     }];
+    const NO_GATT: [GattFingerprint; 0] = [];
 
     #[test]
     fn advertised_name_and_shared_gatt_are_hints_only() {
@@ -477,6 +587,7 @@ mod tests {
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Pending,
                 banner_model: IdentityBannerEvidence::Missing,
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -496,6 +607,7 @@ mod tests {
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
                 banner_model: IdentityBannerEvidence::Missing,
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -513,6 +625,7 @@ mod tests {
             gatt: &BEGODE_GATT,
             stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
             banner_model: IdentityBannerEvidence::model("Falcon"),
+            protocol_model: ProtocolModelIdentityEvidence::Missing,
         };
         let resolution = identify_model(&input, &[&BEGODE_FALCON_REGISTRY_ENTRY]);
         let known_resolution = identify_known_model(&input);
@@ -531,6 +644,7 @@ mod tests {
             gatt: &BEGODE_GATT,
             stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
             banner_model: IdentityBannerEvidence::model("Falcon"),
+            protocol_model: ProtocolModelIdentityEvidence::Missing,
         });
 
         assert_eq!(resolution.confidence, IdentityConfidence::Model);
@@ -546,6 +660,7 @@ mod tests {
             gatt: BEGODE_GATT.iter().copied(),
             stream_family: ProtocolFamilyClassification::Pending,
             banner_model: IdentityBannerEvidence::Missing,
+            protocol_model: ProtocolModelIdentityEvidence::Missing,
         });
 
         assert_eq!(resolution.confidence, IdentityConfidence::HintsOnly);
@@ -581,6 +696,7 @@ mod tests {
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
                 banner_model: IdentityBannerEvidence::Malformed,
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -600,6 +716,7 @@ mod tests {
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero),
                 banner_model: IdentityBannerEvidence::model("Falcon"),
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -618,6 +735,7 @@ mod tests {
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
                 banner_model: IdentityBannerEvidence::model("Master"),
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY],
         );
@@ -649,6 +767,7 @@ mod tests {
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
                 banner_model: IdentityBannerEvidence::model("Falcon"),
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY, &OTHER_FALCON],
         );
@@ -680,6 +799,7 @@ mod tests {
                 gatt: &BEGODE_GATT,
                 stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
                 banner_model: IdentityBannerEvidence::Missing,
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
             },
             &[&BEGODE_FALCON_REGISTRY_ENTRY, &OTHER_BEGODE],
         );
@@ -690,5 +810,89 @@ mod tests {
         assert!(resolution.evidence.has_gatt_hint());
         assert!(resolution.evidence.has_passive_family_match());
         assert!(!resolution.evidence.has_banner_model_match());
+    }
+
+    #[test]
+    fn veteran_protocol_model_id_resolves_registered_aero() {
+        let resolution = identify_known_model(&StagedIdentityInput {
+            advertised_name: Some("NF2557"),
+            gatt: NO_GATT,
+            stream_family: ProtocolFamilyClassification::Pending,
+            banner_model: IdentityBannerEvidence::Missing,
+            protocol_model: ProtocolModelIdentityEvidence::model_id(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                43,
+            ),
+        });
+
+        assert_eq!(resolution.confidence, IdentityConfidence::Model);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Matched);
+        assert_eq!(resolution.model, Some(&NOSFET_AERO_REGISTRY_ENTRY));
+        assert_eq!(
+            resolution.protocol_model,
+            ProtocolModelIdentityEvidence::model_id(ProtocolFamily::VeteranLeaperkimNosfet, 43)
+        );
+        assert!(resolution.evidence.has_protocol_model_id());
+    }
+
+    #[test]
+    fn unknown_veteran_protocol_model_id_preserves_family_without_inventing_aero() {
+        let resolution = identify_known_model(&StagedIdentityInput {
+            advertised_name: Some("Aero"),
+            gatt: NO_GATT,
+            stream_family: ProtocolFamilyClassification::Pending,
+            banner_model: IdentityBannerEvidence::Missing,
+            protocol_model: ProtocolModelIdentityEvidence::model_id(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                99,
+            ),
+        });
+
+        assert_eq!(resolution.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::FamilyOnly);
+        assert_eq!(resolution.model, None);
+        assert_eq!(
+            resolution.protocol_model,
+            ProtocolModelIdentityEvidence::model_id(ProtocolFamily::VeteranLeaperkimNosfet, 99)
+        );
+        assert!(resolution.evidence.has_protocol_model_id());
+    }
+
+    #[test]
+    fn unknown_veteran_protocol_model_id_is_not_ambiguous_across_registered_models() {
+        static OTHER_VETERAN: ModelRegistryEntry = ModelRegistryEntry {
+            manufacturer: cutout_core::ManufacturerKey::new("Other"),
+            model: cutout_core::ModelKey::new("Veteran Other"),
+            protocol_family: ProtocolFamily::VeteranLeaperkimNosfet,
+            advertised_name_hints: &["Other"],
+            wire_model_id: Some(cutout_core::VerifiedValue {
+                value: 44,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            battery: None,
+            bms: None,
+            gatt: &NO_GATT,
+            capabilities: Capabilities::from_supported_commands([]),
+            verification: VerificationStatus::Inferred,
+        };
+
+        let resolution = identify_model(
+            &StagedIdentityInput {
+                advertised_name: Some("Aero"),
+                gatt: NO_GATT,
+                stream_family: ProtocolFamilyClassification::Pending,
+                banner_model: IdentityBannerEvidence::Missing,
+                protocol_model: ProtocolModelIdentityEvidence::model_id(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    99,
+                ),
+            },
+            &[&NOSFET_AERO_REGISTRY_ENTRY, &OTHER_VETERAN],
+        );
+
+        assert_eq!(resolution.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::FamilyOnly);
+        assert_eq!(resolution.model, None);
+        assert!(resolution.evidence.has_protocol_model_id());
     }
 }

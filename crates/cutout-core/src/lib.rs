@@ -177,6 +177,9 @@ pub enum DeviceCommand {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -203,6 +206,7 @@ impl DeviceCommand {
             Self::RequestFirmwareInfo => CommandKind::RequestFirmwareInfo,
             Self::RequestBatteryInfo => CommandKind::RequestBatteryInfo,
             Self::RequestDiagnostics => CommandKind::RequestDiagnostics,
+            Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SoundHorn => CommandKind::SoundHorn,
@@ -254,6 +258,9 @@ pub enum CommandKind {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -277,6 +284,7 @@ impl CommandKind {
             | Self::RequestFirmwareInfo
             | Self::RequestBatteryInfo
             | Self::RequestDiagnostics
+            | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
@@ -321,13 +329,44 @@ pub enum UnsupportedReason {
 }
 
 /// Short-lived authorization token for dangerous actuation commands.
+///
+/// Arm tokens are issued by [`DangerousActuationPolicy::arm`]. External
+/// callers can inspect the derived model and expiry values, but cannot forge a
+/// valid-looking token with a struct literal.
+///
+/// ```compile_fail
+/// # use cutout_core::{DangerousActuationArm, MonotonicTimestamp};
+/// let _forged = DangerousActuationArm {
+///     model: "Begode Falcon",
+///     expires_at_ms: MonotonicTimestamp::new(u64::MAX),
+/// };
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DangerousActuationArm {
-    /// Model this token was issued for.
-    pub model: &'static str,
+    model: &'static str,
+    expires_at_ms: MonotonicTimestamp,
+}
 
-    /// Monotonic expiry time in milliseconds.
-    pub expires_at_ms: MonotonicTimestamp,
+impl DangerousActuationArm {
+    /// Returns the model this token was issued for.
+    #[must_use]
+    pub const fn model(self) -> &'static str {
+        self.model
+    }
+
+    /// Returns the monotonic expiry time for this token.
+    #[must_use]
+    pub const fn expires_at_ms(self) -> MonotonicTimestamp {
+        self.expires_at_ms
+    }
+
+    const fn is_for_model(self, model: &str) -> bool {
+        str_eq(self.model, model)
+    }
+
+    const fn is_expired_at(self, monotonic_ms: MonotonicTimestamp) -> bool {
+        monotonic_ms.get() > self.expires_at_ms.get()
+    }
 }
 
 /// Dangerous actuation policy for a single model/session.
@@ -374,10 +413,10 @@ impl DangerousActuationPolicy {
             return Err(DangerousActuationRefusal::MissingArm);
         };
 
-        if !str_eq(arm.model, self.model) {
+        if !arm.is_for_model(self.model) {
             return Err(DangerousActuationRefusal::WrongModel);
         }
-        if monotonic_ms.get() > arm.expires_at_ms.get() {
+        if arm.is_expired_at(monotonic_ms) {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
         if let DeviceCommand::SetRawMotorCurrent { current } = command
@@ -1797,9 +1836,9 @@ impl RegistryHashBuilder {
 
     fn write_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
-            for (lane_index, lane) in self.lanes.iter_mut().enumerate() {
-                let lane_index_u64 = u64::try_from(lane_index).unwrap_or_default();
-                let lane_index_u32 = u32::try_from(lane_index).unwrap_or_default();
+            for ((lane_index_u64, lane_index_u32), lane) in
+                (0_u64..).zip(0_u32..).zip(self.lanes.iter_mut())
+            {
                 *lane ^= u64::from(*byte).wrapping_add(lane_index_u64 << 8);
                 *lane = lane.wrapping_mul(0x0000_0100_0000_01b3 + lane_index_u64);
                 *lane ^= lane.rotate_left(17 + lane_index_u32);
@@ -1808,12 +1847,13 @@ impl RegistryHashBuilder {
     }
 }
 
-const ALL_COMMAND_KINDS: [CommandKind; 9] = [
+const ALL_COMMAND_KINDS: [CommandKind; 10] = [
     CommandKind::RequestIdentity,
     CommandKind::RequestTelemetry,
     CommandKind::RequestFirmwareInfo,
     CommandKind::RequestBatteryInfo,
     CommandKind::RequestDiagnostics,
+    CommandKind::RequestFaultHistory,
     CommandKind::RequestSettings,
     CommandKind::SetLights,
     CommandKind::SoundHorn,
@@ -2101,6 +2141,10 @@ pub type ParserBufferedLen = Quantity<Information, ParserBufferByte, usize>;
 /// Maximum queued parser output count.
 pub type ParserQueuedOutputCount = Quantity<Count, ParserQueuedOutput, usize>;
 
+/// Default maximum outputs retained by whole-capture replay helpers.
+pub const DEFAULT_REPLAY_OUTPUT_LIMIT: ParserQueuedOutputCount =
+    ParserQueuedOutputCount::from_outputs(16_384);
+
 impl ParserQueuedOutputCount {
     /// Creates a parser queued-output count from output count.
     #[must_use]
@@ -2259,10 +2303,10 @@ impl DiagnosticSnapshot {
 
     /// Creates a diagnostic snapshot when the event carries diagnostics.
     #[must_use]
-    pub const fn from_device_event(event: DeviceEvent) -> Option<Self> {
+    pub const fn from_device_event(event: &DeviceEvent) -> Option<Self> {
         match event {
             DeviceEvent::Diagnostics(diagnostics) => {
-                Some(Self::from_parser_diagnostics(diagnostics))
+                Some(Self::from_parser_diagnostics(*diagnostics))
             }
             DeviceEvent::LinkUp(_)
             | DeviceEvent::LinkDown
@@ -2435,8 +2479,8 @@ typed_protocol_value!(
 /// Bounded notification evidence shared by protocol ingest outcomes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NotificationEvidence {
-    /// Protocol family that accepted or classified the bytes, when known.
-    pub family: Option<ProtocolFamily>,
+    /// Protocol family that accepted or classified the bytes.
+    pub family: ProtocolFamily,
 
     /// Logical protocol channel used for session ingest.
     pub channel: GattChannel,
@@ -2449,9 +2493,169 @@ pub struct NotificationEvidence {
 }
 
 impl NotificationEvidence {
-    /// Creates bounded notification evidence without retaining raw bytes.
+    /// Creates notification evidence for outcomes whose semantic variant owns
+    /// any retained payload separately.
     #[must_use]
     pub const fn new(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self {
+            family,
+            channel,
+            monotonic_ms,
+            len,
+        }
+    }
+}
+
+/// Maximum raw notification bytes retained for unknown or partially understood
+/// protocol evidence.
+pub const MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES: usize = 4_096;
+
+const INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES: usize = 36;
+
+/// Small retained payload storage for parser paths that should not allocate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InlineRetainedNotificationPayload {
+    len: u8,
+    bytes: [u8; INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES],
+}
+
+impl InlineRetainedNotificationPayload {
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let mut retained = Self {
+            len: u8::try_from(bytes.len()).ok()?,
+            bytes: [0; INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES],
+        };
+        retained.bytes[..bytes.len()].copy_from_slice(bytes);
+        Some(retained)
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+}
+
+/// Bounded raw payload retained when protocol bytes are not fully understood.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RetainedNotificationPayload {
+    /// No raw payload was available to retain.
+    Empty,
+
+    /// Small bounded raw payload retained inline on hot parser paths.
+    Inline(InlineRetainedNotificationPayload),
+
+    /// Bounded raw payload retained for later investigation.
+    Bytes(Box<ArrayVec<u8, MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES>>),
+}
+
+impl RetainedNotificationPayload {
+    /// Creates an empty retained payload.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::Empty
+    }
+
+    /// Copies bounded raw payload bytes for later protocol investigation.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        if bytes.is_empty() {
+            return Self::Empty;
+        }
+
+        if bytes.len() <= INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES {
+            if let Some(retained) = InlineRetainedNotificationPayload::from_bytes(bytes) {
+                return Self::Inline(retained);
+            }
+        }
+
+        Self::Bytes(Box::new(
+            bytes
+                .iter()
+                .copied()
+                .take(MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES)
+                .collect(),
+        ))
+    }
+
+    /// Returns the retained payload bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Empty => &[],
+            Self::Inline(bytes) => bytes.as_slice(),
+            Self::Bytes(bytes) => bytes.as_slice(),
+        }
+    }
+
+    /// Returns the number of raw bytes retained.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    /// Returns whether no raw bytes were retained.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+}
+
+impl Default for RetainedNotificationPayload {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+/// Reason a notification did not enter a family-owned decoder path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IgnoredNotificationReason {
+    /// Notification arrived on a channel the selected protocol does not consume.
+    WrongChannel,
+
+    /// Notification could not be associated with a supported protocol family.
+    UnsupportedFamily,
+
+    /// Notification was classified to a family but not to a supported channel.
+    UnsupportedChannel,
+
+    /// Notification was accepted by a known family but no semantic mapping exists yet.
+    AcceptedButUnmapped,
+
+    /// Notification advanced frame-boundary search without completing a frame.
+    SeekingFrameBoundary,
+
+    /// Notification was classified and intentionally dropped by policy.
+    IntentionallyDropped,
+}
+
+/// Bounded evidence for notifications that were explicitly ignored.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IgnoredNotificationEvidence {
+    /// Protocol family when classification got that far.
+    pub family: Option<ProtocolFamily>,
+
+    /// Logical protocol channel used for session ingest.
+    pub channel: GattChannel,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: MonotonicTimestamp,
+
+    /// Number of notification bytes observed.
+    pub len: NotificationByteLen,
+
+    /// Bounded raw payload retained to identify ignored bytes in captures.
+    pub retained_payload: RetainedNotificationPayload,
+}
+
+impl IgnoredNotificationEvidence {
+    /// Creates ignored-notification evidence when the caller only has a
+    /// previously measured byte length.
+    #[must_use]
+    pub fn new(
         family: Option<ProtocolFamily>,
         channel: GattChannel,
         len: NotificationByteLen,
@@ -2462,6 +2666,24 @@ impl NotificationEvidence {
             channel,
             monotonic_ms,
             len,
+            retained_payload: RetainedNotificationPayload::empty(),
+        }
+    }
+
+    /// Creates bounded ignored-notification evidence with retained raw bytes.
+    #[must_use]
+    pub fn with_retained_payload(
+        family: Option<ProtocolFamily>,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self {
+            family,
+            channel,
+            monotonic_ms,
+            len: NotificationByteLen::from_bytes(bytes.len()),
+            retained_payload: RetainedNotificationPayload::from_bytes(bytes),
         }
     }
 }
@@ -2511,13 +2733,16 @@ impl PayloadClassifier {
 
 /// Bounded evidence for protocol payloads that are known but intentionally not
 /// decoded as stable telemetry yet.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReservedPayloadEvidence {
     /// Typed payload classifier for the family.
     pub classifier: PayloadClassifier,
 
-    /// Length of the classified body, without retaining raw bytes.
+    /// Length of the classified body.
     pub body_len: PayloadBodyLen,
+
+    /// Bounded raw payload bytes retained for later semantic mapping.
+    pub retained_payload: RetainedNotificationPayload,
 
     /// Verification status for this reserved-payload classification.
     pub verification: VerificationStatus,
@@ -2525,17 +2750,20 @@ pub struct ReservedPayloadEvidence {
 
 /// Bounded evidence for a known-family payload that still has no stable parser
 /// mapping.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParserGapEvidence {
     /// Typed payload classifier for the family.
     pub classifier: PayloadClassifier,
 
-    /// Length of the unparsed body, without retaining raw bytes.
+    /// Length of the unparsed body.
     pub body_len: PayloadBodyLen,
+
+    /// Bounded raw payload bytes retained for later semantic mapping.
+    pub retained_payload: RetainedNotificationPayload,
 }
 
 /// Typed result of feeding one transport notification into a protocol decoder.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NotificationIngestOutcome {
     /// The notification produced one or more semantic session events.
     SemanticEvents {
@@ -2564,7 +2792,7 @@ pub enum NotificationIngestOutcome {
         /// Bounded notification evidence.
         notification: NotificationEvidence,
 
-        /// Reserved payload evidence without raw bytes.
+        /// Reserved payload evidence with any retained bytes needed for later mapping.
         payload: ReservedPayloadEvidence,
     },
 
@@ -2574,13 +2802,18 @@ pub enum NotificationIngestOutcome {
         /// Bounded notification evidence.
         notification: NotificationEvidence,
 
-        /// Parser-gap evidence without raw bytes.
+        /// Parser-gap evidence with retained bytes needed for later mapping.
         gap: ParserGapEvidence,
     },
 
-    /// The session ignored the notification, usually because it arrived on the
-    /// wrong logical channel for the selected protocol model.
-    Ignored(NotificationEvidence),
+    /// The session explicitly ignored the notification.
+    Ignored {
+        /// Bounded ignored-notification evidence.
+        evidence: IgnoredNotificationEvidence,
+
+        /// Reason the notification did not enter a decoder path.
+        reason: IgnoredNotificationReason,
+    },
 }
 
 impl NotificationIngestOutcome {
@@ -2594,7 +2827,7 @@ impl NotificationIngestOutcome {
         event_count: SemanticEventCount,
     ) -> Self {
         Self::SemanticEvents {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             event_count,
         }
     }
@@ -2608,7 +2841,7 @@ impl NotificationIngestOutcome {
         monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::BufferedFragment(NotificationEvidence::new(
-            Some(family),
+            family,
             channel,
             len,
             monotonic_ms,
@@ -2625,7 +2858,7 @@ impl NotificationIngestOutcome {
         error: ParserError,
     ) -> Self {
         Self::ParserDiagnostic {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             error,
         }
     }
@@ -2640,7 +2873,7 @@ impl NotificationIngestOutcome {
         payload: ReservedPayloadEvidence,
     ) -> Self {
         Self::KnownReserved {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             payload,
         }
     }
@@ -2655,19 +2888,148 @@ impl NotificationIngestOutcome {
         gap: ParserGapEvidence,
     ) -> Self {
         Self::ParserGap {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             gap,
         }
     }
 
-    /// Creates an ignored wrong-channel/unsupported notification outcome.
+    /// Creates an ignored wrong-channel notification outcome.
     #[must_use]
-    pub const fn ignored_wrong_channel(
+    pub fn ignored_wrong_channel(
         channel: GattChannel,
         len: NotificationByteLen,
         monotonic_ms: MonotonicTimestamp,
     ) -> Self {
-        Self::Ignored(NotificationEvidence::new(None, channel, len, monotonic_ms))
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(None, channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::WrongChannel,
+        }
+    }
+
+    /// Creates an ignored wrong-channel notification outcome for a known family.
+    #[must_use]
+    pub fn wrong_channel_for_family(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::WrongChannel,
+        }
+    }
+
+    /// Creates a known-family wrong-channel outcome with retained raw bytes.
+    #[must_use]
+    pub fn wrong_channel_for_family_bytes(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                Some(family),
+                channel,
+                bytes,
+                monotonic_ms,
+            ),
+            reason: IgnoredNotificationReason::WrongChannel,
+        }
+    }
+
+    /// Creates an ignored unsupported-family notification outcome.
+    #[must_use]
+    pub fn unsupported_family(
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(None, channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::UnsupportedFamily,
+        }
+    }
+
+    /// Creates an ignored unsupported-channel notification outcome.
+    #[must_use]
+    pub fn unsupported_channel(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::UnsupportedChannel,
+        }
+    }
+
+    /// Creates an accepted-but-unmapped notification outcome.
+    #[must_use]
+    pub fn accepted_but_unmapped(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::AcceptedButUnmapped,
+        }
+    }
+
+    /// Creates an accepted-but-unmapped outcome with retained raw bytes.
+    #[must_use]
+    pub fn accepted_but_unmapped_bytes(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                Some(family),
+                channel,
+                bytes,
+                monotonic_ms,
+            ),
+            reason: IgnoredNotificationReason::AcceptedButUnmapped,
+        }
+    }
+
+    /// Creates a frame-boundary-search outcome with retained raw bytes.
+    #[must_use]
+    pub fn seeking_frame_boundary(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                Some(family),
+                channel,
+                bytes,
+                monotonic_ms,
+            ),
+            reason: IgnoredNotificationReason::SeekingFrameBoundary,
+        }
+    }
+
+    /// Creates an intentionally dropped notification outcome.
+    #[must_use]
+    pub fn intentionally_dropped(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::IntentionallyDropped,
+        }
     }
 }
 
@@ -2910,6 +3272,7 @@ impl RequestTracker {
         }
         active.retries = active.retries.saturating_add(1);
         active.started_at_ms = now_ms;
+        self.last_started = Some((active.key, now_ms));
         self.in_flight = Some(active);
         Ok(())
     }
@@ -5583,6 +5946,71 @@ pub struct BatteryInfo {
     pub raw_state: Option<RawFieldValue>,
 }
 
+/// Availability of read-only battery or BMS data.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BatteryReadbackAvailability {
+    /// Battery or BMS data was reported by the device.
+    Available,
+
+    /// Battery or BMS data is expected for this device/profile but was not reported.
+    #[default]
+    Unavailable,
+
+    /// Battery or BMS data is not supported for this device/profile.
+    Unsupported,
+}
+
+/// Read-only battery or BMS page readback.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BatteryReadback {
+    /// Whether battery or BMS data is available for display.
+    availability: BatteryReadbackAvailability,
+
+    /// Battery/BMS page payload, when available.
+    page: Option<BatteryPagePayload>,
+}
+
+impl BatteryReadback {
+    /// Creates an available battery/BMS readback.
+    #[must_use]
+    pub const fn available(page: BatteryPagePayload) -> Self {
+        Self {
+            availability: BatteryReadbackAvailability::Available,
+            page: Some(page),
+        }
+    }
+
+    /// Creates an unavailable battery/BMS readback.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            availability: BatteryReadbackAvailability::Unavailable,
+            page: None,
+        }
+    }
+
+    /// Creates an unsupported battery/BMS readback.
+    #[must_use]
+    pub const fn unsupported() -> Self {
+        Self {
+            availability: BatteryReadbackAvailability::Unsupported,
+            page: None,
+        }
+    }
+
+    /// Returns whether battery or BMS data is available for display.
+    #[must_use]
+    pub const fn availability(&self) -> BatteryReadbackAvailability {
+        self.availability
+    }
+
+    /// Returns the battery/BMS page payload, when available.
+    #[must_use]
+    pub const fn page(&self) -> Option<&BatteryPagePayload> {
+        self.page.as_ref()
+    }
+}
+
 /// Severity for a diagnostic detail.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DiagnosticSeverity {
@@ -5642,21 +6070,213 @@ pub struct SettingsEntry {
     pub verification: VerificationStatus,
 }
 
+/// Availability of a read-only settings response.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SettingsReadbackAvailability {
+    /// Settings were reported by the device.
+    Available,
+
+    /// Settings are expected for this device/profile but were not reported.
+    #[default]
+    Unavailable,
+
+    /// Settings are not supported for this device/profile.
+    Unsupported,
+}
+
 /// Bounded settings readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettingsReadback {
+    /// Whether settings are available for display.
+    availability: SettingsReadbackAvailability,
+
     /// Settings entries.
-    pub entries: [Option<SettingsEntry>; 4],
+    entries: [Option<SettingsEntry>; 4],
+}
+
+impl SettingsReadback {
+    /// Creates an available settings readback.
+    #[must_use]
+    pub const fn available(entries: [Option<SettingsEntry>; 4]) -> Self {
+        Self {
+            availability: SettingsReadbackAvailability::Available,
+            entries,
+        }
+    }
+
+    /// Creates an unavailable settings readback.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            availability: SettingsReadbackAvailability::Unavailable,
+            entries: [None, None, None, None],
+        }
+    }
+
+    /// Creates an unsupported settings readback.
+    #[must_use]
+    pub const fn unsupported() -> Self {
+        Self {
+            availability: SettingsReadbackAvailability::Unsupported,
+            entries: [None, None, None, None],
+        }
+    }
+
+    /// Returns whether settings are available for display.
+    #[must_use]
+    pub const fn availability(self) -> SettingsReadbackAvailability {
+        self.availability
+    }
+
+    /// Returns the bounded settings entries.
+    #[must_use]
+    pub const fn entries(self) -> [Option<SettingsEntry>; 4] {
+        self.entries
+    }
+}
+
+/// Availability of read-only fault-history data.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FaultHistoryAvailability {
+    /// Fault history was reported by the device.
+    Available,
+
+    /// Fault history is expected for this device/profile but was not reported.
+    #[default]
+    Unavailable,
+
+    /// Fault history is not supported for this device/profile.
+    Unsupported,
+}
+
+/// Protocol-specific fault code without proven semantic mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultCode {
+    /// Raw protocol field/value pair for an unknown fault code.
+    pub raw: RawFieldValue,
+}
+
+impl FaultCode {
+    /// Creates a structured unknown fault code from a raw protocol field/value pair.
+    #[must_use]
+    pub const fn unknown(raw: RawFieldValue) -> Self {
+        Self { raw }
+    }
+}
+
+/// Last reported fault, preserving fault identity separately from provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultHistoryEntry {
+    /// Protocol-specific fault code without proven semantic mapping.
+    pub code: FaultCode,
+
+    /// Source of the fault code.
+    pub source: ValueSource,
+
+    /// Confidence in the fault-code interpretation.
+    pub quality: ValueQuality,
+
+    /// Verification state for the fault-code interpretation.
+    pub verification: VerificationStatus,
+}
+
+impl FaultHistoryEntry {
+    /// Creates a structured unknown fault code reported directly by the device.
+    #[must_use]
+    pub const fn reported_unknown(code: FaultCode) -> Self {
+        Self {
+            code,
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
+}
+
+/// Read-only last-fault history.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FaultHistoryReadback {
+    /// Whether fault history is available for display.
+    availability: FaultHistoryAvailability,
+
+    /// Last reported fault, if the device reports one.
+    last_fault: Option<FaultHistoryEntry>,
+
+    /// Distance since the last fault, if reported separately.
+    since_distance: Option<Measured<Distance>>,
+}
+
+impl FaultHistoryReadback {
+    /// Creates an unavailable fault-history readback.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Unavailable,
+            last_fault: None,
+            since_distance: None,
+        }
+    }
+
+    /// Creates an unsupported fault-history readback.
+    #[must_use]
+    pub const fn unsupported() -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Unsupported,
+            last_fault: None,
+            since_distance: None,
+        }
+    }
+
+    /// Creates an available fault-history readback proving no fault at a reported distance.
+    #[must_use]
+    pub const fn no_fault_since(since_distance: Measured<Distance>) -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Available,
+            last_fault: None,
+            since_distance: Some(since_distance),
+        }
+    }
+
+    /// Creates an available fault-history readback with a last-fault code.
+    #[must_use]
+    pub const fn fault_since(
+        last_fault: FaultHistoryEntry,
+        since_distance: Option<Measured<Distance>>,
+    ) -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Available,
+            last_fault: Some(last_fault),
+            since_distance,
+        }
+    }
+
+    /// Returns whether fault-history data is available for display.
+    #[must_use]
+    pub const fn availability(self) -> FaultHistoryAvailability {
+        self.availability
+    }
+
+    /// Returns the last reported fault, if one was reported.
+    #[must_use]
+    pub const fn last_fault(self) -> Option<FaultHistoryEntry> {
+        self.last_fault
+    }
+
+    /// Returns distance since the last fault, if reported separately.
+    #[must_use]
+    pub const fn since_distance(self) -> Option<Measured<Distance>> {
+        self.since_distance
+    }
 }
 
 /// Generic read-only response payload.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadOnlyResponse {
     /// Firmware or protocol version response.
     Firmware(FirmwareInfo),
 
     /// Battery or BMS response.
-    Battery(BatteryPagePayload),
+    Battery(BatteryReadback),
 
     /// Diagnostic response.
     Diagnostics(DiagnosticReadback),
@@ -5666,16 +6286,20 @@ pub enum ReadOnlyResponse {
 
     /// Settings readback response.
     Settings(SettingsReadback),
+
+    /// Fault-history readback response.
+    FaultHistory(FaultHistoryReadback),
 }
 
 impl ReadOnlyResponse {
     /// Returns the command kind that requested this response.
     #[must_use]
-    pub const fn command_kind(self) -> CommandKind {
+    pub const fn command_kind(&self) -> CommandKind {
         match self {
             Self::Firmware(_) => CommandKind::RequestFirmwareInfo,
             Self::Battery(_) => CommandKind::RequestBatteryInfo,
             Self::Diagnostics(_) => CommandKind::RequestDiagnostics,
+            Self::FaultHistory(_) => CommandKind::RequestFaultHistory,
             Self::RawTelemetry(_) => CommandKind::RequestTelemetry,
             Self::Settings(_) => CommandKind::RequestSettings,
         }
@@ -5696,6 +6320,9 @@ pub struct TelemetryDelta {
 
     /// Battery/input current in milliamps.
     pub battery_current: Option<Measured<BatteryCurrent>>,
+
+    /// Device charging state decoded from protocol-specific status fields.
+    pub charge_mode: Option<Measured<ChargeMode>>,
 
     /// Motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
@@ -5740,6 +6367,7 @@ impl TelemetryDelta {
             speed: None,
             voltage: None,
             battery_current: None,
+            charge_mode: None,
             motor_current: None,
             power: None,
             controller_temperature: None,
@@ -5769,6 +6397,9 @@ pub struct TelemetrySnapshot {
 
     /// Latest known battery/input current in milliamps.
     pub battery_current: Option<Measured<BatteryCurrent>>,
+
+    /// Latest known device charging state.
+    pub charge_mode: Option<Measured<ChargeMode>>,
 
     /// Latest known motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
@@ -5817,6 +6448,9 @@ impl TelemetrySnapshot {
         }
         if delta.battery_current.is_some() {
             self.battery_current = delta.battery_current;
+        }
+        if delta.charge_mode.is_some() {
+            self.charge_mode = delta.charge_mode;
         }
         if delta.motor_current.is_some() {
             self.motor_current = delta.motor_current;
@@ -5996,7 +6630,7 @@ pub enum TransportAction {
 }
 
 /// Semantic event emitted by a protocol session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceEvent {
     /// Link-up event accepted by the session.
     LinkUp(LinkInfo),
@@ -6039,6 +6673,21 @@ pub enum SessionOutput {
     NotificationIngest(NotificationIngestOutcome),
 }
 
+/// Error emitted when a session produces more outputs than a checked replay
+/// path is willing to retain.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum SessionOutputError {
+    /// The session produced more outputs than the configured replay limit.
+    #[error("session output count {actual:?} exceeds checked replay limit {limit:?}")]
+    OutputOverflow {
+        /// Configured output limit.
+        limit: ParserQueuedOutputCount,
+
+        /// Outputs that would be retained.
+        actual: ParserQueuedOutputCount,
+    },
+}
+
 /// Synchronous protocol reactor.
 pub trait ProtocolSession {
     /// Handles one input and appends any resulting outputs.
@@ -6069,6 +6718,7 @@ where
                 speed: None,
                 voltage: None,
                 battery_current: None,
+                charge_mode: None,
                 motor_current: None,
                 power: None,
                 controller_temperature: None,
@@ -6134,6 +6784,29 @@ where
     /// Moves accumulated session outputs into an existing buffer.
     pub fn drain_outputs_into(&mut self, output: &mut Vec<SessionOutput>) {
         output.append(&mut self.output);
+    }
+
+    /// Moves accumulated outputs into an existing buffer while enforcing a
+    /// typed replay output limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::OutputOverflow`] when retaining this drain
+    /// would exceed `limit`.
+    pub fn drain_outputs_checked_into(
+        &mut self,
+        output: &mut Vec<SessionOutput>,
+        limit: ParserQueuedOutputCount,
+    ) -> Result<(), SessionOutputError> {
+        let actual = output.len().saturating_add(self.output.len());
+        if actual > limit.as_outputs() {
+            return Err(SessionOutputError::OutputOverflow {
+                limit,
+                actual: ParserQueuedOutputCount::from_outputs(actual),
+            });
+        }
+        self.drain_outputs_into(output);
+        Ok(())
     }
 
     /// Returns the latest telemetry snapshot.
@@ -6313,6 +6986,26 @@ where
     outputs
 }
 
+/// Replays captured host inputs through a host session and returns outputs,
+/// enforcing a typed retained-output limit.
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::OutputOverflow`] when the replay would retain
+/// more outputs than `output_limit`.
+pub fn replay_capture_checked<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+    output_limit: ParserQueuedOutputCount,
+) -> Result<Vec<SessionOutput>, SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    let mut outputs = Vec::new();
+    replay_capture_checked_into(host, records, &mut outputs, output_limit)?;
+    Ok(outputs)
+}
+
 /// Replays captured host inputs through a host session into an existing buffer.
 pub fn replay_capture_into<S>(
     host: &mut HostSession<S>,
@@ -6341,6 +7034,62 @@ pub fn replay_capture_into<S>(
         }
         host.drain_outputs_into(outputs);
     }
+}
+
+/// Replays captured host inputs through a host session into an existing buffer,
+/// enforcing a typed retained-output limit.
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::OutputOverflow`] when a drain would exceed
+/// `output_limit`.
+pub fn replay_capture_checked_into<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+    outputs: &mut Vec<SessionOutput>,
+    output_limit: ParserQueuedOutputCount,
+) -> Result<(), SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    for record in records {
+        match record {
+            CaptureRecord::LinkUp(link) => host.ingest_link_up(*link),
+            CaptureRecord::LinkDown => host.ingest_link_down(),
+            CaptureRecord::Notification {
+                channel,
+                bytes,
+                monotonic_ms,
+            } => host.ingest(SessionInput::Notification {
+                channel: *channel,
+                bytes,
+                monotonic_ms: *monotonic_ms,
+            }),
+            CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
+            CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
+                host.issue_command(*command);
+            }
+        }
+        host.drain_outputs_checked_into(outputs, output_limit)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn drain_semantic_events_checked<S>(
+    host: &mut HostSession<S>,
+    outputs: &mut Vec<SessionOutput>,
+    events: &mut Vec<DeviceEvent>,
+    output_limit: ParserQueuedOutputCount,
+) -> Result<(), SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    host.drain_outputs_checked_into(outputs, output_limit)?;
+    events.extend(outputs.drain(..).filter_map(|output| match output {
+        SessionOutput::Event(event) => Some(event),
+        SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
+    }));
+    Ok(())
 }
 
 /// Summary of deterministic replay equivalence across notification chunking
@@ -6391,51 +7140,80 @@ pub struct NotificationImpairmentReplayCase {
 /// Typed ingest outcomes are intentionally excluded because notification
 /// boundaries differ between chunking modes even when decoded protocol behavior
 /// is equivalent.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError`] when replay produces more outputs than the
+/// default replay retention limit.
 pub fn replay_capture_semantic_events<S>(
     host: &mut HostSession<S>,
     records: &[CaptureRecord],
-) -> Vec<DeviceEvent>
+) -> Result<Vec<DeviceEvent>, SessionOutputError>
 where
     S: ProtocolSession,
 {
-    replay_capture(host, records)
-        .into_iter()
-        .filter_map(|output| match output {
-            SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
-            SessionOutput::Event(event) => Some(event),
-        })
-        .collect()
+    let mut outputs = Vec::new();
+    let mut events = Vec::new();
+    for record in records {
+        match record {
+            CaptureRecord::LinkUp(link) => host.ingest_link_up(*link),
+            CaptureRecord::LinkDown => host.ingest_link_down(),
+            CaptureRecord::Notification {
+                channel,
+                bytes,
+                monotonic_ms,
+            } => host.ingest(SessionInput::Notification {
+                channel: *channel,
+                bytes,
+                monotonic_ms: *monotonic_ms,
+            }),
+            CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
+            CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
+                host.issue_command(*command);
+            }
+        }
+        drain_semantic_events_checked(
+            host,
+            &mut outputs,
+            &mut events,
+            DEFAULT_REPLAY_OUTPUT_LIMIT,
+        )?;
+    }
+    Ok(events)
 }
 
 /// Compares whole-notification replay against one-byte and arbitrary
 /// notification chunk replay.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError`] when any replay mode produces more outputs
+/// than the default replay retention limit.
 pub fn compare_replay_capture_chunks<S, F>(
     mut make_session: F,
     records: &[CaptureRecord],
     arbitrary_lengths: &[NotificationChunkLen],
-) -> ReplayChunkComparison
+) -> Result<ReplayChunkComparison, SessionOutputError>
 where
     S: ProtocolSession,
     F: FnMut() -> S,
 {
-    let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
+    let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records)?;
     let one_byte_records =
         split_capture_notifications_by_len(records, NotificationChunkLen::from_bytes(1));
     let one_byte =
-        replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records)?;
     let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
     let arbitrary =
-        replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records)?;
 
-    ReplayChunkComparison {
+    Ok(ReplayChunkComparison {
         whole_semantic_events: SemanticEventCount::from_events(whole.len()),
         one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
         arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
         one_byte_matches: one_byte == whole,
         arbitrary_matches: arbitrary == whole,
-    }
+    })
 }
 
 /// Builds a deterministic arbitrary notification chunk plan from replay
@@ -6457,7 +7235,7 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<Notifica
             | CaptureRecord::TargetedCommand { .. } => None,
         })
         .max()
-        .unwrap_or_default();
+        .unwrap_or(0);
 
     let mut lengths = Vec::new();
     let mut covered = 0usize;
@@ -6517,7 +7295,7 @@ pub fn notification_boundary_replay_cases(
 /// Builds reusable replay cases for parser tests that exercise malformed
 /// streams.
 ///
-/// The returned cases include garbage before a valid frame, duplicate first
+/// The returned cases include noise bytes before a valid frame, duplicate first
 /// chunks, missing final bytes, and a timeout tick after a partial frame.
 /// Parser tests should state the expected behavior for each named case because
 /// some protocols recover while others intentionally reject or wait.
@@ -6526,15 +7304,15 @@ pub fn notification_impairment_replay_cases(
     channel: GattChannel,
     frame: &[u8],
     monotonic_ms: MonotonicTimestamp,
-    garbage_prefix: &[u8],
+    noise_prefix: &[u8],
     timeout_ms: MonotonicTimestamp,
 ) -> Vec<NotificationImpairmentReplayCase> {
     vec![
         NotificationImpairmentReplayCase {
-            name: "garbage-prefix",
+            name: "noise-prefix",
             records: vec![CaptureRecord::notification(
                 channel,
-                prefixed_bytes(garbage_prefix, frame),
+                prefixed_bytes(noise_prefix, frame),
                 monotonic_ms,
             )],
         },
@@ -6772,8 +7550,8 @@ mod tests {
         assert!(size_of::<crate::BatteryInfo>() <= 64);
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
         assert!(size_of::<crate::RawTelemetryReadback>() <= 96);
-        assert!(size_of::<crate::ReadOnlyResponse>() <= 104);
-        assert_eq!(size_of::<SessionOutput>(), 128);
+        assert!(size_of::<crate::ReadOnlyResponse>() <= 136);
+        assert_eq!(size_of::<SessionOutput>(), 144);
         assert_eq!(size_of::<TransportAction>(), 64);
     }
 
@@ -6783,7 +7561,7 @@ mod tests {
         assert_eq!(crate::MAX_INLINE_TRANSPORT_WRITE_LEN, 32);
         assert_eq!(size_of::<WritePayload>(), 40);
         assert_eq!(size_of::<TransportAction>(), 64);
-        assert_eq!(size_of::<SessionOutput>(), 128);
+        assert_eq!(size_of::<SessionOutput>(), 144);
     }
 
     #[test]
@@ -6894,22 +7672,68 @@ mod tests {
             crate::NotificationByteLen::from_bytes(20),
             ms(7),
         );
+        let wrong_channel = crate::NotificationIngestOutcome::wrong_channel_for_family(
+            crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            TEST_CHANNEL,
+            crate::NotificationByteLen::from_bytes(9),
+            ms(8),
+        );
+        let unmapped = crate::NotificationIngestOutcome::accepted_but_unmapped(
+            crate::ProtocolFamily::Vesc,
+            TEST_CHANNEL,
+            crate::NotificationByteLen::from_bytes(10),
+            ms(9),
+        );
+        let dropped = crate::NotificationIngestOutcome::intentionally_dropped(
+            crate::ProtocolFamily::BegodeGotway,
+            TEST_CHANNEL,
+            crate::NotificationByteLen::from_bytes(12),
+            ms(10),
+        );
 
         assert!(matches!(
             buffered,
             crate::NotificationIngestOutcome::BufferedFragment(evidence)
-                if evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                if evidence.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                     && evidence.channel == TEST_CHANNEL
                     && evidence.len == crate::NotificationByteLen::from_bytes(20)
                     && evidence.monotonic_ms == ms(7)
         ));
         assert!(matches!(
             ignored,
-            crate::NotificationIngestOutcome::Ignored(evidence)
-                if evidence.family.is_none()
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::WrongChannel
+                    && evidence.family.is_none()
                     && evidence.channel == TEST_CHANNEL
                     && evidence.len == crate::NotificationByteLen::from_bytes(20)
                     && evidence.monotonic_ms == ms(7)
+        ));
+        assert!(matches!(
+            wrong_channel,
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::WrongChannel
+                    && evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == crate::NotificationByteLen::from_bytes(9)
+                    && evidence.monotonic_ms == ms(8)
+        ));
+        assert!(matches!(
+            unmapped,
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::AcceptedButUnmapped
+                    && evidence.family == Some(crate::ProtocolFamily::Vesc)
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == crate::NotificationByteLen::from_bytes(10)
+                    && evidence.monotonic_ms == ms(9)
+        ));
+        assert!(matches!(
+            dropped,
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::IntentionallyDropped
+                    && evidence.family == Some(crate::ProtocolFamily::BegodeGotway)
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == crate::NotificationByteLen::from_bytes(12)
+                    && evidence.monotonic_ms == ms(10)
         ));
     }
 
@@ -6923,6 +7747,7 @@ mod tests {
             crate::ReservedPayloadEvidence {
                 classifier: crate::PayloadClassifier::selector(crate::ProtocolSelector::new(8)),
                 body_len: crate::PayloadBodyLen::from_bytes(68),
+                retained_payload: crate::RetainedNotificationPayload::from_bytes(&[0x08, 0xaa]),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -6932,13 +7757,14 @@ mod tests {
             crate::NotificationIngestOutcome::KnownReserved {
                 notification,
                 payload,
-            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+            } if notification.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::from_bytes(75)
                 && notification.monotonic_ms == ms(12)
                 && payload.classifier.selector_value() == Some(crate::ProtocolSelector::new(8))
                 && payload.classifier.tag_value().is_none()
                 && payload.body_len == crate::PayloadBodyLen::from_bytes(68)
+                && payload.retained_payload.as_slice() == [0x08, 0xaa]
                 && payload.verification == VerificationStatus::HardwareVerified
         ));
     }
@@ -6958,7 +7784,7 @@ mod tests {
             crate::NotificationIngestOutcome::SemanticEvents {
                 notification,
                 event_count,
-            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+            } if notification.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::from_bytes(77)
                 && notification.monotonic_ms == ms(21)
@@ -6981,13 +7807,13 @@ mod tests {
             crate::NotificationIngestOutcome::ParserDiagnostic {
                 notification,
                 error: crate::ParserError::BadChecksum,
-            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+            } if notification.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                 && notification.channel == TEST_CHANNEL
         ));
     }
 
     #[test]
-    fn notification_ingest_debug_redacts_raw_bytes() {
+    fn notification_ingest_debug_keeps_retained_payload_evidence() {
         let outcome = crate::NotificationIngestOutcome::parser_gap(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
@@ -6996,6 +7822,9 @@ mod tests {
             crate::ParserGapEvidence {
                 classifier: crate::PayloadClassifier::tag(crate::ProtocolTag::new(0x5c)),
                 body_len: crate::PayloadBodyLen::from_bytes(70),
+                retained_payload: crate::RetainedNotificationPayload::from_bytes(&[
+                    0x5c, 0xde, 0xad, 0xbe, 0xef,
+                ]),
             },
         );
         let debug = format!("{outcome:?}");
@@ -7003,8 +7832,8 @@ mod tests {
         assert!(debug.contains("ParserGap"));
         assert!(debug.contains("body_len"));
         assert!(debug.contains("value: 70"));
-        assert!(!debug.contains("dc5a5c"));
-        assert!(!debug.contains("bytes"));
+        assert!(debug.contains("retained_payload"));
+        assert!(debug.contains("222"));
     }
 
     #[derive(Default)]
@@ -7058,6 +7887,7 @@ mod tests {
                     DeviceCommand::RequestFirmwareInfo
                     | DeviceCommand::RequestBatteryInfo
                     | DeviceCommand::RequestDiagnostics
+                    | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SoundHorn
@@ -7611,15 +8441,45 @@ mod tests {
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
         };
-        let response = crate::SettingsReadback {
-            entries: [Some(entry), None, None, None],
-        };
+        let response = crate::SettingsReadback::available([Some(entry), None, None, None]);
 
-        assert_eq!(response.entries[0], Some(entry));
-        assert_eq!(response.entries[1], None);
         assert_eq!(
-            response.entries[0].map(|entry| entry.verification),
+            response.availability(),
+            crate::SettingsReadbackAvailability::Available
+        );
+        assert_eq!(response.entries()[0], Some(entry));
+        assert_eq!(response.entries()[1], None);
+        assert_eq!(
+            response.entries()[0].map(|entry| entry.verification),
             Some(VerificationStatus::HardwareVerified)
+        );
+    }
+
+    #[test]
+    fn fault_history_readback_separates_unknown_code_from_since_distance() {
+        let code = crate::FaultCode::unknown(crate::RawFieldValue::new(0x0040, 1));
+        let last_fault = crate::FaultHistoryEntry::reported_unknown(code);
+        let distance = Measured::reported(Distance::from_millimetres(61_456_941));
+        let readback = crate::FaultHistoryReadback::fault_since(last_fault, Some(distance));
+
+        assert_eq!(
+            readback.availability(),
+            crate::FaultHistoryAvailability::Available
+        );
+        assert_eq!(readback.last_fault(), Some(last_fault));
+        assert_eq!(readback.last_fault().expect("fault").code, code);
+        assert_eq!(readback.since_distance(), Some(distance));
+        assert_eq!(
+            crate::FaultHistoryReadback::no_fault_since(distance).last_fault(),
+            None
+        );
+        assert_eq!(
+            crate::FaultHistoryReadback::unavailable().availability(),
+            crate::FaultHistoryAvailability::Unavailable
+        );
+        assert_eq!(
+            crate::FaultHistoryReadback::unsupported().availability(),
+            crate::FaultHistoryAvailability::Unsupported
         );
     }
 
@@ -7682,7 +8542,7 @@ mod tests {
                 crate::CommandKind::RequestTelemetry,
                 crate::CommandKind::RequestFirmwareInfo,
                 crate::CommandKind::RequestBatteryInfo,
-                crate::CommandKind::RequestDiagnostics,
+                crate::CommandKind::RequestFaultHistory,
             ]),
             verification: VerificationStatus::HardwareVerified,
         };
@@ -8441,21 +9301,22 @@ mod tests {
     #[test]
     fn read_only_response_reports_matching_command_kind() {
         let firmware = crate::ReadOnlyResponse::Firmware(crate::FirmwareInfo::default());
-        let battery = crate::ReadOnlyResponse::Battery(crate::BatteryPagePayload::Raw(
-            crate::BatteryRawPage::new(
+        let battery = crate::ReadOnlyResponse::Battery(crate::BatteryReadback::available(
+            crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
                 crate::BatteryPageMetadata::raw(
                     crate::ProtocolSelector::new(8),
                     VerificationStatus::SourceVerified,
                 ),
                 crate::BatteryInfo::default(),
-            ),
+            )),
         ));
         let diagnostics = crate::ReadOnlyResponse::Diagnostics(crate::DiagnosticReadback {
             details: [None, None, None, None],
         });
-        let settings = crate::ReadOnlyResponse::Settings(crate::SettingsReadback {
-            entries: [None, None, None, None],
-        });
+        let settings =
+            crate::ReadOnlyResponse::Settings(crate::SettingsReadback::available([None; 4]));
+        let fault_history =
+            crate::ReadOnlyResponse::FaultHistory(crate::FaultHistoryReadback::unavailable());
 
         assert_eq!(
             firmware.command_kind(),
@@ -8470,6 +9331,10 @@ mod tests {
             crate::CommandKind::RequestDiagnostics
         );
         assert_eq!(settings.command_kind(), crate::CommandKind::RequestSettings);
+        assert_eq!(
+            fault_history.command_kind(),
+            crate::CommandKind::RequestFaultHistory
+        );
     }
 
     #[test]
@@ -8515,6 +9380,10 @@ mod tests {
                 crate::CommandKind::RequestDiagnostics,
             ),
             (
+                DeviceCommand::RequestFaultHistory,
+                crate::CommandKind::RequestFaultHistory,
+            ),
+            (
                 DeviceCommand::RequestSettings,
                 crate::CommandKind::RequestSettings,
             ),
@@ -8537,6 +9406,7 @@ mod tests {
             crate::CommandKind::RequestFirmwareInfo,
             crate::CommandKind::RequestBatteryInfo,
             crate::CommandKind::RequestDiagnostics,
+            crate::CommandKind::RequestFaultHistory,
             crate::CommandKind::RequestSettings,
         ]);
 
@@ -8562,6 +9432,13 @@ mod tests {
             })
         );
         assert_eq!(
+            capabilities.check_command(DeviceCommand::RequestFaultHistory),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::RequestFaultHistory,
+                safety_class: crate::SafetyClass::ReadOnly,
+            })
+        );
+        assert_eq!(
             capabilities.check_command(DeviceCommand::RequestSettings),
             Ok(crate::CommandMetadata {
                 kind: crate::CommandKind::RequestSettings,
@@ -8578,6 +9455,7 @@ mod tests {
             crate::RequestKey::new(crate::CommandKind::RequestFirmwareInfo),
             crate::RequestKey::new(crate::CommandKind::RequestBatteryInfo),
             crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestKey::new(crate::CommandKind::RequestFaultHistory),
             crate::RequestKey::new(crate::CommandKind::RequestSettings),
         ];
 
@@ -8630,6 +9508,7 @@ mod tests {
                     crate::CommandKind::RequestFirmwareInfo,
                     crate::CommandKind::RequestBatteryInfo,
                     crate::CommandKind::RequestDiagnostics,
+                    crate::CommandKind::RequestFaultHistory,
                     crate::CommandKind::RequestSettings,
                 ][..],
             ),
@@ -8960,14 +9839,14 @@ mod tests {
         };
 
         assert_eq!(
-            crate::DiagnosticSnapshot::from_device_event(DeviceEvent::Diagnostics(diagnostics)),
+            crate::DiagnosticSnapshot::from_device_event(&DeviceEvent::Diagnostics(diagnostics)),
             Some(crate::DiagnosticSnapshot {
                 bad_checksums: diag_count(2),
                 ..crate::DiagnosticSnapshot::default()
             })
         );
         assert_eq!(
-            crate::DiagnosticSnapshot::from_device_event(DeviceEvent::LinkDown),
+            crate::DiagnosticSnapshot::from_device_event(&DeviceEvent::LinkDown),
             None
         );
     }
@@ -9021,6 +9900,56 @@ mod tests {
         assert_eq!(
             tracker.on_tick(ms(760)),
             crate::RequestTick::TimedOut { key, attempts: 3 }
+        );
+    }
+
+    #[test]
+    fn request_tracker_retry_start_updates_same_key_pacing_watermark() {
+        let policy = crate::RequestPolicy {
+            min_interval: Duration::from_milliseconds(100),
+            timeout: Duration::from_milliseconds(250),
+            max_retries: 1,
+        };
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
+
+        assert_eq!(tracker.start(key, policy, ms(10)), Ok(()));
+        assert_eq!(
+            tracker.on_tick(ms(260)),
+            crate::RequestTick::Retry { key, attempt: 1 }
+        );
+        assert_eq!(tracker.retry_started(ms(260)), Ok(()));
+        assert_eq!(
+            tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
+            crate::CorrelationResult::Matched { key, attempts: 2 }
+        );
+
+        assert_eq!(
+            tracker.start(key, policy, ms(300)),
+            Err(crate::RequestStartError::Pacing {
+                ready_at_ms: ms(360)
+            })
+        );
+    }
+
+    #[test]
+    fn request_tracker_rejects_retry_without_active_request_or_retry_budget() {
+        let policy = crate::RequestPolicy {
+            timeout: Duration::from_milliseconds(250),
+            max_retries: 0,
+            ..crate::RequestPolicy::default()
+        };
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
+
+        assert_eq!(
+            tracker.retry_started(ms(10)),
+            Err(crate::RequestStartError::NoActiveRequest)
+        );
+        assert_eq!(tracker.start(key, policy, ms(10)), Ok(()));
+        assert_eq!(
+            tracker.retry_started(ms(260)),
+            Err(crate::RequestStartError::Busy { key })
         );
     }
 
@@ -9704,13 +10633,14 @@ mod tests {
 
     proptest! {
         #[test]
-        fn poll_request_accepts_read_only_commands(value in 0u8..6) {
+        fn poll_request_accepts_read_only_commands(value in 0u8..7) {
             let kind = match value {
                 0 => crate::CommandKind::RequestIdentity,
                 1 => crate::CommandKind::RequestTelemetry,
                 2 => crate::CommandKind::RequestFirmwareInfo,
                 3 => crate::CommandKind::RequestBatteryInfo,
                 4 => crate::CommandKind::RequestDiagnostics,
+                5 => crate::CommandKind::RequestFaultHistory,
                 _ => crate::CommandKind::RequestSettings,
             };
             let request = crate::PollRequest::new(
@@ -10131,7 +11061,8 @@ mod tests {
                 crate::NotificationChunkLen::from_bytes(2),
                 crate::NotificationChunkLen::from_bytes(1),
             ],
-        );
+        )
+        .expect("bounded replay comparison should fit");
 
         assert_eq!(
             comparison,
@@ -10186,10 +11117,49 @@ mod tests {
                 crate::NotificationChunkLen::from_bytes(2),
                 crate::NotificationChunkLen::from_bytes(2),
             ],
-        );
+        )
+        .expect("bounded replay comparison should fit");
 
         assert!(!comparison.one_byte_matches);
         assert!(!comparison.arbitrary_matches);
+    }
+
+    #[test]
+    fn replay_chunk_comparison_reports_output_overflow() {
+        #[derive(Default)]
+        struct NoisySession;
+
+        impl ProtocolSession for NoisySession {
+            fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+                let SessionInput::Notification { monotonic_ms, .. } = input else {
+                    return;
+                };
+
+                output.extend((0..=128).map(|offset| {
+                    SessionOutput::Event(DeviceEvent::Tick {
+                        monotonic_ms: ms(monotonic_ms.get().saturating_add(offset)),
+                    })
+                }));
+            }
+        }
+
+        let channel = GattChannel::from_bytes([0x79; 16]);
+        let records = [crate::CaptureRecord::notification(channel, vec![1], ms(10))];
+
+        let error = crate::replay_capture_checked(
+            &mut crate::HostSession::new(NoisySession),
+            &records,
+            crate::ParserLimits::default().max_queued_outputs,
+        )
+        .expect_err("overflow must not be collapsed into an empty replay");
+
+        assert_eq!(
+            error,
+            crate::SessionOutputError::OutputOverflow {
+                limit: crate::ParserLimits::default().max_queued_outputs,
+                actual: crate::ParserQueuedOutputCount::from_outputs(129),
+            }
+        );
     }
 
     #[test]
@@ -10266,7 +11236,7 @@ mod tests {
         assert_eq!(
             cases.iter().map(|case| case.name).collect::<Vec<_>>(),
             vec![
-                "garbage-prefix",
+                "noise-prefix",
                 "duplicate-first-chunk",
                 "missing-final-byte",
                 "timeout-after-partial",

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use cutout_btle::{
     BridgeIdentityResolution, BtleError, BtleplugReconnectHost, ConnectedPeripheral,
     ConnectionTarget, DiagnosticEventCount, DisconnectCount, MonotonicMs, NotificationCount,
@@ -20,14 +20,15 @@ use cutout_btle::{
     drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
-    BatteryPageKind, BatteryPagePayload, CaptureDistribution, CaptureEvidence, CapturePrivacy,
-    CaptureSessionLabel, CatalogModelResolution, DeviceCommand, DeviceEvent, DiagnosticError,
+    BatteryPageKind, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
+    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+    CatalogModelResolution, CommandKind, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
     ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
     ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
-    SettingsReadback, TelemetrySnapshot, TransportWriteLimit, ValueQuality, ValueSource,
-    VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
+    SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot, TransportWriteLimit,
+    ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -291,9 +292,9 @@ fn replay_pevcap_capture(
     profile: SelectedSessionProfile,
 ) -> Result<PevcapReplayReport> {
     let mut report = if profile.is_falcon() {
-        replay_pevcap_with_session(capture, falcon_replay_session(capture)?)
+        replay_pevcap_with_session(capture, falcon_replay_session(capture)?)?
     } else {
-        replay_pevcap_with_session(capture, profile.session_registration()?.construct())
+        replay_pevcap_with_session(capture, profile.session_registration()?.construct())?
     };
     report.capacity =
         select_begode_pack_capacity_from_annotations(capture.header.annotations.iter());
@@ -397,7 +398,7 @@ fn falcon_bms_voltage_evidence_from_records<'a>(
     evidence
 }
 
-fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapReplayReport
+fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> Result<PevcapReplayReport>
 where
     S: Clone + cutout_core::ProtocolSession,
 {
@@ -405,15 +406,28 @@ where
     let mut host = HostSession::new(session);
     let mut outputs = Vec::with_capacity(capture.replay_input_count());
     capture.replay_into_host(&mut host, &mut outputs);
+
+    let replay_records = ReplayRecordCount::new(capture.replay_input_count());
     let arbitrary_chunks = capture.arbitrary_notification_chunk_lengths();
-    let comparison =
-        capture.compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks);
-    summarize_pevcap_replay(
-        ReplayRecordCount::new(capture.replay_input_count()),
-        ReplayChunkPlanLen::new(arbitrary_chunks.len()),
+    let arbitrary_chunk_plan_len = ReplayChunkPlanLen::new(arbitrary_chunks.len());
+    let comparison = capture
+        .compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks)
+        .with_context(|| {
+            format!(
+                "PEVCAP replay chunk comparison failed \
+                 replay_records={} arbitrary_chunk_plan_len={}; \
+                 inspect capture chunking and decoder output retention",
+                replay_records.get(),
+                arbitrary_chunk_plan_len.get()
+            )
+        })?;
+
+    Ok(summarize_pevcap_replay(
+        replay_records,
+        arbitrary_chunk_plan_len,
         &outputs,
         comparison,
-    )
+    ))
 }
 
 fn summarize_pevcap_replay(
@@ -450,7 +464,7 @@ fn summarize_pevcap_replay(
             }
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
                 report.read_only_responses = report.read_only_responses.increment();
-                report.read_only_response_events.push(*response);
+                report.read_only_response_events.push(response.clone());
                 if let ReadOnlyResponse::Firmware(firmware) = response {
                     report.firmware = Some(*firmware);
                 }
@@ -466,8 +480,8 @@ fn summarize_pevcap_replay(
             }
             SessionOutput::NotificationIngest(outcome) => {
                 report.events.push(SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: notification_ingest_monotonic_ms(*outcome),
-                    outcome: *outcome,
+                    monotonic_ms: notification_ingest_monotonic_ms(outcome),
+                    outcome: outcome.clone(),
                 });
             }
             SessionOutput::Transport(_)
@@ -483,17 +497,19 @@ fn summarize_pevcap_replay(
     report
 }
 
-const fn notification_ingest_monotonic_ms(
-    outcome: cutout_core::NotificationIngestOutcome,
+fn notification_ingest_monotonic_ms(
+    outcome: &cutout_core::NotificationIngestOutcome,
 ) -> MonotonicMs {
     MonotonicMs::new(match outcome {
         cutout_core::NotificationIngestOutcome::SemanticEvents { notification, .. }
         | cutout_core::NotificationIngestOutcome::ParserDiagnostic { notification, .. }
         | cutout_core::NotificationIngestOutcome::KnownReserved { notification, .. }
         | cutout_core::NotificationIngestOutcome::ParserGap { notification, .. }
-        | cutout_core::NotificationIngestOutcome::BufferedFragment(notification)
-        | cutout_core::NotificationIngestOutcome::Ignored(notification) => {
+        | cutout_core::NotificationIngestOutcome::BufferedFragment(notification) => {
             notification.monotonic_ms.get()
+        }
+        cutout_core::NotificationIngestOutcome::Ignored { evidence, .. } => {
+            evidence.monotonic_ms.get()
         }
     })
 }
@@ -1515,6 +1531,7 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
         ReadProbe::Telemetry => DeviceCommand::RequestTelemetry,
         ReadProbe::Battery => DeviceCommand::RequestBatteryInfo,
         ReadProbe::Diagnostics => DeviceCommand::RequestDiagnostics,
+        ReadProbe::FaultHistory => DeviceCommand::RequestFaultHistory,
     }
 }
 
@@ -1763,6 +1780,46 @@ fn pevcap_identity_for_catalog_entry(
     }
 }
 
+fn pevcap_identity_from_protocol_report(
+    profile: SelectedSessionProfile,
+    report: &SessionBridgeReport,
+) -> Option<PevcapResolvedIdentity> {
+    if profile.session_key() != NOSFET_AERO_SESSION_KEY {
+        return None;
+    }
+
+    let firmware = report.firmware?;
+    let model_id = firmware.firmware_major?;
+    let resolution =
+        cutout_protocols::identify_known_model(&cutout_protocols::StagedIdentityInput {
+            advertised_name: None,
+            gatt: core::iter::empty::<cutout_core::GattFingerprint>(),
+            stream_family: cutout_protocols::ProtocolFamilyClassification::Pending,
+            banner_model: cutout_protocols::IdentityBannerEvidence::Missing,
+            protocol_model: cutout_protocols::ProtocolModelIdentityEvidence::model_id(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                model_id.value,
+            ),
+        });
+    let model = resolution.model.map(|entry| VerifiedValue {
+        value: entry.model.as_str().to_owned(),
+        verification: entry
+            .wire_model_id
+            .map_or(VerificationStatus::Inferred, |wire_model_id| {
+                wire_model_id.verification
+            }),
+    });
+
+    Some(PevcapResolvedIdentity {
+        protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+        model,
+        firmware: Some(VerifiedValue {
+            value: firmware_summary_string(firmware),
+            verification: model_id.verification,
+        }),
+    })
+}
+
 fn print_session_endpoints(endpoints: SessionEndpoints<'_>) {
     info!(
         write = %endpoints.write.uuid,
@@ -1907,6 +1964,8 @@ fn encode_session_capture_pevcap(
     resolved_identity: Option<PevcapResolvedIdentity>,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
+    let resolved_identity =
+        pevcap_identity_from_protocol_report(profile, &capture.report).or(resolved_identity);
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
     capture_annotations.push("cutout-cli capture");
     capture_annotations.extend_from_slice(annotations);
@@ -1915,6 +1974,22 @@ fn encode_session_capture_pevcap(
         "selected_session_key={}",
         profile.session_key().as_str()
     ));
+    if profile.session_key() == NOSFET_AERO_SESSION_KEY {
+        if let Some(model_id) = capture
+            .report
+            .firmware
+            .and_then(|firmware| firmware.firmware_major)
+        {
+            resolver_evidence.push(format!("protocol_model_id={}", model_id.value));
+        }
+        if let Some(raw) = capture
+            .report
+            .firmware
+            .and_then(|firmware| firmware.build_id)
+        {
+            resolver_evidence.push(format!("protocol_firmware_raw={}", raw.value));
+        }
+    }
     if let Some(identity) = resolved_identity.as_ref() {
         if let Some(protocol_family) = identity.protocol_family {
             resolver_evidence.push(format!("resolved_protocol_family={protocol_family:?}"));
@@ -2143,13 +2218,13 @@ fn render_read_only_responses_jsonl(
     responses: &[ReadOnlyResponse],
 ) -> impl Iterator<Item = Result<String, serde_json::Error>> + '_ {
     responses.iter().enumerate().map(|(sequence, response)| {
-        render_read_only_response_jsonl(JsonSequence::new(sequence), *response)
+        render_read_only_response_jsonl(JsonSequence::new(sequence), response)
     })
 }
 
 fn render_read_only_response_jsonl(
     sequence: JsonSequence,
-    response: ReadOnlyResponse,
+    response: &ReadOnlyResponse,
 ) -> Result<String, serde_json::Error> {
     match response {
         ReadOnlyResponse::Battery(payload) => render_battery_response_jsonl(sequence, payload),
@@ -2169,47 +2244,64 @@ fn render_read_only_response_jsonl(
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "settings",
-            "entries": settings.entries.into_iter().flatten().map(settings_entry_json).collect::<Vec<_>>(),
+            "availability": settings_readback_availability_name(settings.availability()),
+            "entries": settings.entries().iter().flatten().copied().map(settings_entry_json).collect::<Vec<_>>(),
         })),
+        ReadOnlyResponse::FaultHistory(fault_history) => {
+            serde_json::to_string(&serde_json::json!({
+                "type": "read_only_response",
+                "sequence": sequence.get(),
+                "command_kind": command_kind_name(response.command_kind()),
+                "response": "fault_history",
+                "availability": fault_history_availability_name(fault_history.availability()),
+                "last_fault": fault_history.last_fault().map(fault_history_entry_json),
+                "since_distance_mm": fault_history.since_distance().map(|distance| distance.value.as_millimetres()),
+            }))
+        }
         ReadOnlyResponse::Diagnostics(diagnostics) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "diagnostics",
-            "details": diagnostics.details.into_iter().flatten().map(diagnostic_detail_json).collect::<Vec<_>>(),
+            "details": diagnostics.details.iter().flatten().copied().map(diagnostic_detail_json).collect::<Vec<_>>(),
         })),
         ReadOnlyResponse::RawTelemetry(raw) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "raw_telemetry",
-            "fields": raw.fields.into_iter().flatten().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
+            "fields": raw.fields.iter().flatten().copied().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
         })),
     }
 }
 
 fn render_battery_response_jsonl(
     sequence: JsonSequence,
-    payload: BatteryPagePayload,
+    readback: &BatteryReadback,
 ) -> Result<String, serde_json::Error> {
-    let page = payload.page();
     serde_json::to_string(&serde_json::json!({
         "type": "read_only_response",
         "sequence": sequence.get(),
-        "command_kind": command_kind_name(ReadOnlyResponse::Battery(payload).command_kind()),
+        "command_kind": command_kind_name(CommandKind::RequestBatteryInfo),
         "response": "battery",
-        "page": {
-            "selector": page.selector.get(),
-            "side": battery_page_side_name(page.kind, page.selector.get()),
-            "kind": battery_page_kind_name(page.kind),
-            "verification": verification_status_name(page.verification),
-        },
-        "battery": battery_info_json(payload),
-        "temperatures": battery_temperature_values_json(payload),
+        "availability": battery_readback_availability_name(readback.availability()),
+        "page": readback.page().map(battery_page_json),
     }))
 }
 
-fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::Value {
+fn battery_page_json(payload: &BatteryPagePayload) -> serde_json::Value {
+    let page = payload.page();
+    serde_json::json!({
+        "selector": page.selector.get(),
+        "side": battery_page_side_name(page.kind, page.selector.get()),
+        "kind": battery_page_kind_name(page.kind),
+        "verification": verification_status_name(page.verification),
+        "battery": battery_info_json(payload),
+        "temperatures": battery_temperature_values_json(payload),
+    })
+}
+
+fn battery_temperature_values_json(payload: &BatteryPagePayload) -> serde_json::Value {
     match payload {
         BatteryPagePayload::Temperature(_) => serde_json::json!(
             payload
@@ -2222,7 +2314,7 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
     }
 }
 
-fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
+fn battery_info_json(payload: &BatteryPagePayload) -> serde_json::Value {
     let battery = payload.battery();
     serde_json::json!({
         "voltage": measured_i32_json(battery.voltage.map(|measured| {
@@ -2334,6 +2426,15 @@ fn settings_entry_json(entry: cutout_core::SettingsEntry) -> serde_json::Value {
     })
 }
 
+fn fault_history_entry_json(entry: cutout_core::FaultHistoryEntry) -> serde_json::Value {
+    serde_json::json!({
+        "code": raw_field_json(Some(entry.code.raw)),
+        "source": value_source_name(entry.source),
+        "quality": value_quality_name(entry.quality),
+        "verification": verification_status_name(entry.verification),
+    })
+}
+
 fn diagnostic_detail_json(detail: cutout_core::DiagnosticDetail) -> serde_json::Value {
     serde_json::json!({
         "field": raw_field_json(Some(detail.field)),
@@ -2343,17 +2444,18 @@ fn diagnostic_detail_json(detail: cutout_core::DiagnosticDetail) -> serde_json::
     })
 }
 
-const fn command_kind_name(kind: cutout_core::CommandKind) -> &'static str {
+const fn command_kind_name(kind: CommandKind) -> &'static str {
     match kind {
-        cutout_core::CommandKind::RequestIdentity => "request_identity",
-        cutout_core::CommandKind::RequestTelemetry => "request_telemetry",
-        cutout_core::CommandKind::RequestFirmwareInfo => "request_firmware_info",
-        cutout_core::CommandKind::RequestBatteryInfo => "request_battery_info",
-        cutout_core::CommandKind::RequestDiagnostics => "request_diagnostics",
-        cutout_core::CommandKind::RequestSettings => "request_settings",
-        cutout_core::CommandKind::SetLights => "set_lights",
-        cutout_core::CommandKind::SoundHorn => "sound_horn",
-        cutout_core::CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
+        CommandKind::RequestIdentity => "request_identity",
+        CommandKind::RequestTelemetry => "request_telemetry",
+        CommandKind::RequestFirmwareInfo => "request_firmware_info",
+        CommandKind::RequestBatteryInfo => "request_battery_info",
+        CommandKind::RequestDiagnostics => "request_diagnostics",
+        CommandKind::RequestFaultHistory => "request_fault_history",
+        CommandKind::RequestSettings => "request_settings",
+        CommandKind::SetLights => "set_lights",
+        CommandKind::SoundHorn => "sound_horn",
+        CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
     }
 }
 
@@ -2423,14 +2525,15 @@ impl fmt::Display for IdentityLine<'_> {
         let identity = self.0;
         write!(
             f,
-            "identity confidence={:?} manufacturer={} model={} advertised_name_hint={} gatt_hint={} passive_family={} banner_model={}",
+            "identity confidence={:?} manufacturer={} model={} advertised_name_hint={} gatt_hint={} passive_family={} banner_model={} protocol_model_id={}",
             identity.confidence,
             identity.manufacturer.unwrap_or("<unknown>"),
             identity.model.unwrap_or("<unknown>"),
             identity.evidence.has_advertised_name_hint(),
             identity.evidence.has_gatt_hint(),
             identity.evidence.has_passive_family_match(),
-            identity.evidence.has_banner_model_match()
+            identity.evidence.has_banner_model_match(),
+            identity.evidence.has_protocol_model_id()
         )
     }
 }
@@ -2531,17 +2634,50 @@ struct SettingsLine(SettingsReadback);
 
 impl SettingsLine {
     fn has_fields(self) -> bool {
-        self.0.entries.into_iter().any(|entry| entry.is_some())
+        self.0.availability() != SettingsReadbackAvailability::Available
+            || self.0.entries().into_iter().any(|entry| entry.is_some())
     }
 }
 
 impl fmt::Display for SettingsLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut fields = CommandFieldWriter::new(f, "settings");
-        for entry in self.0.entries.into_iter().flatten() {
+        if self.0.availability() != SettingsReadbackAvailability::Available {
+            fields.write_str_field(
+                "availability",
+                settings_readback_availability_name(self.0.availability()),
+            )?;
+        }
+        for entry in self.0.entries().into_iter().flatten() {
             fields.write_raw_field(entry.field)?;
         }
         Ok(())
+    }
+}
+
+fn settings_readback_availability_name(availability: SettingsReadbackAvailability) -> &'static str {
+    match availability {
+        SettingsReadbackAvailability::Available => "available",
+        SettingsReadbackAvailability::Unavailable => "unavailable",
+        SettingsReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
+fn battery_readback_availability_name(availability: BatteryReadbackAvailability) -> &'static str {
+    match availability {
+        BatteryReadbackAvailability::Available => "available",
+        BatteryReadbackAvailability::Unavailable => "unavailable",
+        BatteryReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
+fn fault_history_availability_name(
+    availability: cutout_core::FaultHistoryAvailability,
+) -> &'static str {
+    match availability {
+        cutout_core::FaultHistoryAvailability::Available => "available",
+        cutout_core::FaultHistoryAvailability::Unavailable => "unavailable",
+        cutout_core::FaultHistoryAvailability::Unsupported => "unsupported",
     }
 }
 
@@ -2580,6 +2716,11 @@ impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
         }
         self.fields = self.fields.increment();
         write!(self.output, "raw_{:04x}={}", field.id, field.value)
+    }
+
+    fn write_str_field(&mut self, name: &'static str, value: &'static str) -> fmt::Result {
+        self.write_field_name(name)?;
+        write!(self.output, "{value}")
     }
 
     fn write_field_name(&mut self, name: &'static str) -> fmt::Result {
@@ -2656,6 +2797,17 @@ mod tests {
         ParserDiagnosticCount::from_events(value)
     }
 
+    fn battery_response(payload: BatteryPagePayload) -> ReadOnlyResponse {
+        ReadOnlyResponse::Battery(BatteryReadback::available(payload))
+    }
+
+    fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
+        match response {
+            ReadOnlyResponse::Battery(readback) => readback.page().cloned(),
+            _ => None,
+        }
+    }
+
     const fn frame_len(value: usize) -> ParserFrameLen {
         ParserFrameLen::from_bytes(value)
     }
@@ -2696,6 +2848,25 @@ mod tests {
                 }
                 SessionInput::Command(_) => {}
             }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct OverflowingReplaySession;
+
+    impl cutout_core::ProtocolSession for OverflowingReplaySession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            let SessionInput::Notification { .. } = input else {
+                return;
+            };
+
+            output.extend(
+                (0..=cutout_core::DEFAULT_REPLAY_OUTPUT_LIMIT.as_outputs()).map(|offset_ms| {
+                    SessionOutput::Event(DeviceEvent::Tick {
+                        monotonic_ms: ms(offset_ms as u64),
+                    })
+                }),
+            );
         }
     }
 
@@ -2860,6 +3031,23 @@ mod tests {
                 .into(),
             }]
             .into(),
+        }
+    }
+
+    fn aero_connection_summary() -> ConnectionSummary {
+        ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "NF2557".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: Some(rssi(-67)),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )]
+                .into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
         }
     }
 
@@ -3060,6 +3248,75 @@ mod tests {
             Some(WriteMode::WithoutResponse)
         );
         assert_eq!(decoded.records[2].bytes.as_ref(), b"NAME=NF2557");
+    }
+
+    #[test]
+    fn capture_pevcap_prefers_veteran_protocol_identity_from_report() {
+        let summary = aero_connection_summary();
+        let capture = SessionCapture {
+            records: vec![],
+            report: SessionBridgeReport {
+                firmware: Some(FirmwareInfo {
+                    firmware_major: Some(Measured::reported(43)),
+                    firmware_minor: Some(Measured::reported(2)),
+                    firmware_patch: Some(Measured::reported(54)),
+                    build_id: Some(cutout_core::RawFieldValue::new(0x20, 43_254)),
+                    ..FirmwareInfo::default()
+                }),
+                ..SessionBridgeReport::default()
+            },
+        };
+
+        let bytes = encode_session_capture_pevcap(
+            &capture,
+            &summary,
+            PevcapFormat::Binary,
+            wc(42),
+            selected_aero_session_profile(),
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+                model: None,
+                firmware: None,
+            }),
+            &[],
+        )
+        .expect("capture encodes");
+        let decoded =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
+        let identity = decoded
+            .header
+            .resolved_identity
+            .expect("protocol identity is recorded");
+
+        assert_eq!(
+            identity.protocol_family,
+            Some(ProtocolFamily::VeteranLeaperkimNosfet)
+        );
+        assert_eq!(
+            identity.model,
+            Some(VerifiedValue {
+                value: "NOSFET Aero".to_owned(),
+                verification: VerificationStatus::HardwareVerified,
+            })
+        );
+        assert_eq!(
+            identity.firmware,
+            Some(VerifiedValue {
+                value: "43.2.54".to_owned(),
+                verification: VerificationStatus::HardwareVerified,
+            })
+        );
+        assert_eq!(
+            decoded.header.resolver_evidence.as_slice(),
+            &[
+                "selected_session_key=nosfet-aero-read-only".to_owned(),
+                "protocol_model_id=43".to_owned(),
+                "protocol_firmware_raw=43254".to_owned(),
+                "resolved_protocol_family=VeteranLeaperkimNosfet".to_owned(),
+                "resolved_model=NOSFET Aero".to_owned(),
+                "resolved_firmware=43.2.54".to_owned(),
+            ]
+        );
     }
 
     #[test]
@@ -3407,9 +3664,12 @@ mod tests {
                 if link.monotonic_ms == ms(0) && link.max_write_len == Some(write_len(185))
         ));
         assert!(matches!(
-            replay[1],
+            &replay[1],
             SessionOutput::NotificationIngest(
-                cutout_core::NotificationIngestOutcome::Ignored(evidence)
+                cutout_core::NotificationIngestOutcome::Ignored {
+                    evidence,
+                    reason: cutout_core::IgnoredNotificationReason::WrongChannel,
+                }
             ) if evidence.monotonic_ms == ms(7) && evidence.len == NotificationByteLen::from_bytes(4)
         ));
         assert!(matches!(
@@ -3447,6 +3707,35 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_replay_reports_output_overflow_with_capture_context() {
+        let capture = sample_pevcap_capture();
+        let expected_records = capture.replay_input_count();
+        let expected_chunk_plan_len = capture.arbitrary_notification_chunk_lengths().len();
+        let error = replay_pevcap_with_session(&capture, OverflowingReplaySession)
+            .expect_err("overflowing replay should fail");
+        let message = format!("{error:#}");
+
+        assert!(
+            message.contains("PEVCAP replay chunk comparison failed"),
+            "missing replay context: {message}"
+        );
+        assert!(
+            message.contains(&format!("replay_records={expected_records}")),
+            "missing capture record count: {message}"
+        );
+        assert!(
+            message.contains(&format!(
+                "arbitrary_chunk_plan_len={expected_chunk_plan_len}"
+            )),
+            "missing arbitrary chunk plan length: {message}"
+        );
+        assert!(
+            message.contains("session output count"),
+            "missing overflow source: {message}"
+        );
+    }
+
+    #[test]
     fn diagnostic_snapshot_jsonl_uses_stable_snake_case_fields() {
         let line = render_diagnostic_snapshot_jsonl(
             JsonSequence::new(7),
@@ -3467,6 +3756,10 @@ mod tests {
         assert_eq!(value["type"], "diagnostic_snapshot");
         assert_eq!(value["sequence"], 7);
         assert_eq!(value["dropped_bytes"], 11);
+        assert!(
+            value.get("dropped").is_none(),
+            "byte counts must keep unit-bearing field names: {value}"
+        );
         assert_eq!(value["resyncs"], 2);
         assert_eq!(value["bad_checksums"], 3);
         assert_eq!(value["timeouts"], 5);
@@ -3477,7 +3770,7 @@ mod tests {
 
     #[test]
     fn read_only_battery_jsonl_preserves_page_metadata_and_measured_values() {
-        let response = ReadOnlyResponse::Battery(
+        let response = battery_response(
             BatteryPagePayload::raw(
                 cutout_core::BatteryPageMetadata::raw(
                     ProtocolSelector::new(8),
@@ -3498,7 +3791,7 @@ mod tests {
             )),
         );
 
-        let line = render_read_only_response_jsonl(JsonSequence::new(2), response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(2), &response)
             .expect("read-only battery response serializes");
 
         let value: serde_json::Value =
@@ -3507,27 +3800,37 @@ mod tests {
         assert_eq!(value["sequence"], 2);
         assert_eq!(value["command_kind"], "request_battery_info");
         assert_eq!(value["response"], "battery");
+        assert_eq!(value["availability"], "available");
         assert_eq!(value["page"]["selector"], 8);
         assert_eq!(value["page"]["side"], serde_json::Value::Null);
         assert_eq!(value["page"]["kind"], "raw");
         assert_eq!(value["page"]["verification"], "source_verified");
-        assert_eq!(value["battery"]["voltage"]["value"], 80_000);
-        assert_eq!(value["battery"]["voltage"]["source"], "reported");
-        assert_eq!(value["battery"]["voltage"]["quality"], "known");
+        assert_eq!(value["page"]["battery"]["voltage"]["value"], 80_000);
+        assert_eq!(value["page"]["battery"]["voltage"]["source"], "reported");
+        assert_eq!(value["page"]["battery"]["voltage"]["quality"], "known");
         assert_eq!(
-            value["battery"]["voltage"]["verification"],
+            value["page"]["battery"]["voltage"]["verification"],
             "hardware_verified"
         );
-        assert_eq!(value["battery"]["current"]["value"], -10_000);
-        assert_eq!(value["battery"]["bms_pack_current_0"]["value"], -1_230);
-        assert_eq!(value["battery"]["bms_pack_current_1"]["value"], 450);
-        assert_eq!(value["battery"]["level_reported"], serde_json::Value::Null);
-        assert_eq!(value["battery"]["level_estimated"]["value"], 61);
-        assert_eq!(value["battery"]["level_estimated"]["source"], "estimated");
-        assert_eq!(value["battery"]["temperature"]["value"], 25_000);
-        assert_eq!(value["battery"]["raw_state"]["id"], 8);
-        assert_eq!(value["battery"]["raw_state"]["value"], 0x55aa);
-        assert_eq!(value["temperatures"], serde_json::Value::Null);
+        assert_eq!(value["page"]["battery"]["current"]["value"], -10_000);
+        assert_eq!(
+            value["page"]["battery"]["bms_pack_current_0"]["value"],
+            -1_230
+        );
+        assert_eq!(value["page"]["battery"]["bms_pack_current_1"]["value"], 450);
+        assert_eq!(
+            value["page"]["battery"]["level_reported"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["page"]["battery"]["level_estimated"]["value"], 61);
+        assert_eq!(
+            value["page"]["battery"]["level_estimated"]["source"],
+            "estimated"
+        );
+        assert_eq!(value["page"]["battery"]["temperature"]["value"], 25_000);
+        assert_eq!(value["page"]["battery"]["raw_state"]["id"], 8);
+        assert_eq!(value["page"]["battery"]["raw_state"]["value"], 0x55aa);
+        assert_eq!(value["page"]["temperatures"], serde_json::Value::Null);
     }
 
     #[test]
@@ -3540,7 +3843,7 @@ mod tests {
             Some(temperature(17_080)),
             Some(temperature(17_830)),
         ];
-        let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+        let response = battery_response(BatteryPagePayload::temperature_values(
             cutout_core::BatteryPageMetadata::temperature(
                 ProtocolSelector::new(3),
                 VerificationStatus::HardwareVerified,
@@ -3552,7 +3855,7 @@ mod tests {
             temperatures,
         ));
 
-        let line = render_read_only_response_jsonl(JsonSequence::new(3), response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(3), &response)
             .expect("read-only temperature battery response serializes");
 
         let value: serde_json::Value =
@@ -3563,9 +3866,10 @@ mod tests {
         assert_eq!(value["page"]["side"], "left");
         assert_eq!(value["page"]["kind"], "temperature");
         assert_eq!(value["page"]["verification"], "hardware_verified");
-        assert_eq!(value["battery"]["temperature"]["value"], 16_730);
-        assert_eq!(value["temperatures"][0]["value"], 16_730);
-        assert_eq!(value["temperatures"][5]["value"], 17_830);
+        assert_eq!(value["availability"], "available");
+        assert_eq!(value["page"]["battery"]["temperature"]["value"], 16_730);
+        assert_eq!(value["page"]["temperatures"][0]["value"], 16_730);
+        assert_eq!(value["page"]["temperatures"][5]["value"], 17_830);
     }
 
     #[test]
@@ -3578,7 +3882,7 @@ mod tests {
             Some(temperature(16_530)),
             Some(temperature(17_430)),
         ];
-        let response = ReadOnlyResponse::Battery(BatteryPagePayload::temperature_values(
+        let response = battery_response(BatteryPagePayload::temperature_values(
             cutout_core::BatteryPageMetadata::temperature(
                 ProtocolSelector::new(7),
                 VerificationStatus::HardwareVerified,
@@ -3590,7 +3894,7 @@ mod tests {
             temperatures,
         ));
 
-        let line = render_read_only_response_jsonl(JsonSequence::new(4), response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(4), &response)
             .expect("read-only temperature battery response serializes");
 
         let value: serde_json::Value =
@@ -3603,7 +3907,7 @@ mod tests {
 
     #[test]
     fn pevcap_replay_summary_collects_read_only_response_events() {
-        let response = ReadOnlyResponse::Battery(BatteryPagePayload::raw(
+        let response = battery_response(BatteryPagePayload::raw(
             cutout_core::BatteryPageMetadata::raw(
                 ProtocolSelector::new(8),
                 VerificationStatus::SourceVerified,
@@ -3611,7 +3915,7 @@ mod tests {
             cutout_core::BatteryInfo::default(),
         ));
         let outputs = [SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-            response,
+            response.clone(),
         ))];
 
         let report = summarize_pevcap_replay(
@@ -3640,10 +3944,11 @@ mod tests {
             cutout_core::ReservedPayloadEvidence {
                 classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::from_bytes(24),
+                retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
-        let outputs = [SessionOutput::NotificationIngest(outcome)];
+        let outputs = [SessionOutput::NotificationIngest(outcome.clone())];
 
         let report = summarize_pevcap_replay(
             ReplayRecordCount::new(1),
@@ -3854,6 +4159,14 @@ mod tests {
         assert_eq!(value["max_len"], serde_json::Value::Null);
         assert_eq!(value["elapsed_ms"], 1_234);
         assert_eq!(value["timeout_ms"], 5_000);
+        assert!(
+            value.get("elapsed").is_none(),
+            "durations must keep unit-bearing field names: {value}"
+        );
+        assert!(
+            value.get("timeout").is_none(),
+            "durations must keep unit-bearing field names: {value}"
+        );
     }
 
     #[test]
@@ -4409,7 +4722,7 @@ mod tests {
 
         assert_eq!(profile, selected_falcon_session_profile());
         assert_eq!(report.replay_records.get(), 1153);
-        assert_eq!(report.outputs.get(), 2687);
+        assert_eq!(report.outputs.get(), 3645);
         assert_eq!(report.telemetry.get(), 767);
         assert_eq!(report.read_only_responses.get(), 766);
         assert_eq!(report.diagnostics.get(), 0);
@@ -4434,7 +4747,7 @@ mod tests {
 
         let mut observed = BTreeSet::new();
         for response in &report.read_only_response_events {
-            if let ReadOnlyResponse::Battery(payload) = response
+            if let Some(payload) = available_battery_page(response)
                 && payload.page().kind == BatteryPageKind::Metadata
             {
                 let currents = payload
@@ -4515,7 +4828,7 @@ mod tests {
         let mut observed_pages = Vec::new();
         let mut observed_currents = BTreeSet::new();
         for response in &report.read_only_response_events {
-            if let ReadOnlyResponse::Battery(payload) = response {
+            if let Some(payload) = available_battery_page(response) {
                 observed_pages.push((payload.page().kind, payload.page().selector.get()));
                 if payload.page().kind == BatteryPageKind::Metadata {
                     let currents = payload
@@ -4632,7 +4945,8 @@ mod tests {
                     .with(BridgeIdentityEvidenceKind::AdvertisedNameHint)
                     .with(BridgeIdentityEvidenceKind::GattHint)
                     .with(BridgeIdentityEvidenceKind::PassiveFamilyMatch)
-                    .with(BridgeIdentityEvidenceKind::BannerModelMatch),
+                    .with(BridgeIdentityEvidenceKind::BannerModelMatch)
+                    .with(BridgeIdentityEvidenceKind::ProtocolModelId),
             }),
             ..SessionBridgeReport::default()
         };
@@ -4640,7 +4954,7 @@ mod tests {
         assert_eq!(
             render_identity(&report).map(|identity| identity.to_string()),
             Some(
-                "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true".to_owned()
+                "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true protocol_model_id=true".to_owned()
             )
         );
     }
@@ -4796,6 +5110,7 @@ mod tests {
                 ReadProbe::Telemetry,
                 ReadProbe::Battery,
                 ReadProbe::Diagnostics,
+                ReadProbe::FaultHistory,
             ]),
             vec![
                 DeviceCommand::RequestIdentity,
@@ -4803,6 +5118,7 @@ mod tests {
                 DeviceCommand::RequestTelemetry,
                 DeviceCommand::RequestBatteryInfo,
                 DeviceCommand::RequestDiagnostics,
+                DeviceCommand::RequestFaultHistory,
             ]
         );
     }
@@ -4815,18 +5131,16 @@ mod tests {
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
         };
-        let settings = SettingsReadback {
-            entries: [
-                Some(entry(0x0014, 0)),
-                Some(entry(0x0016, 0)),
-                Some(entry(0x0018, 550)),
-                Some(entry(0x001a, 540)),
-            ],
-        };
-        let more_settings = SettingsReadback {
-            entries: [Some(entry(0x001e, 1_920)), None, None, None],
-        };
-        let rendered = render_settings_readbacks(&[settings, more_settings])
+        let settings = SettingsReadback::available([
+            Some(entry(0x0014, 0)),
+            Some(entry(0x0016, 0)),
+            Some(entry(0x0018, 550)),
+            Some(entry(0x001a, 540)),
+        ]);
+        let more_settings =
+            SettingsReadback::available([Some(entry(0x001e, 1_920)), None, None, None]);
+        let unsupported_settings = SettingsReadback::unsupported();
+        let rendered = render_settings_readbacks(&[settings, more_settings, unsupported_settings])
             .map(|line| line.to_string())
             .collect::<Vec<_>>();
 
@@ -4835,6 +5149,7 @@ mod tests {
             vec![
                 "settings raw_0014=0 raw_0016=0 raw_0018=550 raw_001a=540",
                 "settings raw_001e=1920",
+                "settings availability=unsupported",
             ]
         );
     }
@@ -4867,47 +5182,28 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_dashboard_runner_starts_live_updates_before_terminal() {
-        let (order_tx, order_rx) = mpsc::channel();
         let (log_tx, log_rx) = mpsc::channel();
 
         let result = run_live_dashboard_with(
             DashboardState::empty(),
             log_tx,
             log_rx,
-            {
-                let order_tx = order_tx.clone();
-                move |tx| async move {
-                    tx.send(DashboardUpdate::Log {
-                        level: "debug".to_owned(),
-                        message: "live entered".to_owned(),
-                    })
-                    .expect("terminal receiver stays open");
-                    order_tx
-                        .send("live")
-                        .expect("terminal should not close ordering receiver");
-                }
+            move |tx| async move {
+                tx.send(DashboardUpdate::Log {
+                    level: "debug".to_owned(),
+                    message: "live entered".to_owned(),
+                })
+                .expect("terminal receiver stays open");
             },
             move |_state, rx| {
                 let _update = rx
                     .recv_timeout(Duration::from_secs(1))
                     .expect("terminal should receive first live update before reporting ready");
-                order_tx
-                    .send("terminal")
-                    .expect("test waits for terminal ordering event");
                 Ok(())
             },
         );
 
         result.expect("dashboard runner exits after terminal exits");
-        let observed = [
-            order_rx
-                .recv_timeout(Duration::from_secs(1))
-                .expect("live ordering event should be sent"),
-            order_rx
-                .recv_timeout(Duration::from_secs(1))
-                .expect("terminal ordering event should be sent"),
-        ];
-        assert_eq!(observed, ["live", "terminal"]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

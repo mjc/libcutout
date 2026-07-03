@@ -3,6 +3,7 @@
 - Use `nix develop` when a flake exists.
 - If no flake exists, check `~/cfg/devshells` before falling back to the pinned Rust toolchain in `rust-toolchain.toml`.
 - Keep the workspace naming on the `cutout-*` line used by the Cargo workspace.
+- For Swift/SourceKit/Serena diagnostics, first run `nix develop --command ./scripts/prepare-swift-sourcekit-workspace.sh`, then activate Serena on `swift/CutoutMobile`. The repo-root Serena project is for Rust; SourceKit needs the SwiftPM package root to see generated UniFFI types.
 - Treat the repository as dual-licensed MIT OR Apache-2.0. Keep source provenance explicit. Do not copy GPL implementation code; when porting permissive code or using captures/docs as references, preserve attribution and separate observed behavior from implementation.
 - Keep the protocol engine synchronous, bounded, and transport-independent.
 - Keep async runtimes and BLE stacks in adapter crates only.

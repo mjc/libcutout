@@ -3,7 +3,7 @@ use core::ops::RangeInclusive;
 use cutout_core::{
     BatteryCurrent, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
     DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicTimestamp,
-    ParallelCount, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
+    ParallelCount, PhaseCurrent, Power, ProtocolTag, RawFieldValue, ReadOnlyResponse, SeriesCount,
     SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
     VerificationStatus, Voltage, WireVoltage,
 };
@@ -12,6 +12,7 @@ use thiserror::Error;
 use crate::{
     BegodeFrame,
     parser::{ParserCursor, ParserOffset},
+    util::u64_to_i64_saturating,
 };
 
 const SERIES_CELLS_20: SeriesCount = SeriesCount::new(20);
@@ -1034,35 +1035,28 @@ impl BegodeLiveBTelemetry {
     /// Converts decoded Live B settings into a generic read-only response.
     #[must_use]
     pub fn to_settings_response_with_units(self) -> ReadOnlyResponse {
-        ReadOnlyResponse::Settings(SettingsReadback {
-            entries: [
-                Some(settings_entry(
-                    BEGODE_FIELD_SETTINGS_BITS,
-                    i64::from(self.settings_bits.get()),
-                )),
-                Some(settings_entry(
-                    BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
-                    i64::try_from(self.power_off_timer.as_minutes()).unwrap_or(i64::MAX),
-                )),
-                Some(settings_entry(
-                    BEGODE_FIELD_TILTBACK_SPEED_KMH,
-                    i64::from(
-                        u16::try_from(
-                            self.tiltback_speed
-                                .as_kmh_rounded()
-                                .clamp(0, i32::from(u16::MAX)),
-                        )
-                        .unwrap_or(u16::MAX),
-                    ),
-                )),
-                Some(settings_entry(
-                    BEGODE_FIELD_LED_AND_LIGHT_MODE,
-                    i64::from(
-                        (u16::from(self.led_mode.get()) << 8) | u16::from(self.light_mode.get()),
-                    ),
-                )),
-            ],
-        })
+        ReadOnlyResponse::Settings(SettingsReadback::available([
+            Some(settings_entry(
+                BEGODE_FIELD_SETTINGS_BITS,
+                i64::from(self.settings_bits.get()),
+            )),
+            Some(settings_entry(
+                BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
+                u64_to_i64_saturating(self.power_off_timer.as_minutes()),
+            )),
+            Some(settings_entry(
+                BEGODE_FIELD_TILTBACK_SPEED_KMH,
+                i64::from(
+                    self.tiltback_speed
+                        .as_kmh_rounded()
+                        .clamp(0, i32::from(u16::MAX)),
+                ),
+            )),
+            Some(settings_entry(
+                BEGODE_FIELD_LED_AND_LIGHT_MODE,
+                i64::from((u16::from(self.led_mode.get()) << 8) | u16::from(self.light_mode.get())),
+            )),
+        ]))
     }
 
     /// Returns the unit mode encoded by Live B settings bit 0.
@@ -1200,7 +1194,7 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
     } else {
         Err(BegodeTelemetryError::UnexpectedFrameTag {
             expected,
-            actual: u8::try_from(actual.get()).unwrap_or_default(),
+            actual: tag_byte(actual),
         })
     }
 }
@@ -1242,19 +1236,23 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
 }
 
 fn byte(cursor: ParserCursor<'_>, offset: ParserOffset) -> u8 {
-    cursor.byte(offset).unwrap_or_default()
+    cursor.byte(offset).unwrap_or(0)
 }
 
 fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
-    cursor.be_u16(offset).unwrap_or_default()
+    cursor.be_u16(offset).unwrap_or(0)
 }
 
 fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
-    cursor.be_i16(offset).unwrap_or_default()
+    cursor.be_i16(offset).unwrap_or(0)
 }
 
 fn be_u32(cursor: ParserCursor<'_>, offset: ParserOffset) -> u32 {
-    cursor.be_u32(offset).unwrap_or_default()
+    cursor.be_u32(offset).unwrap_or(0)
+}
+
+fn tag_byte(tag: ProtocolTag) -> u8 {
+    u8::try_from(tag.get()).unwrap_or(u8::MAX)
 }
 
 #[cfg(test)]
@@ -1356,6 +1354,7 @@ mod tests {
                 )),
                 voltage: Some(source_reported(Voltage::from_millivolts(90_075))),
                 battery_current: None,
+                charge_mode: None,
                 motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
                     -11_800,
                 ))),
@@ -1397,7 +1396,7 @@ mod tests {
         };
 
         assert_eq!(
-            settings.entries,
+            settings.entries(),
             [
                 Some(settings_entry(BEGODE_FIELD_SETTINGS_BITS, 0)),
                 Some(settings_entry(BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15)),
@@ -1482,7 +1481,7 @@ mod tests {
         };
 
         assert_eq!(
-            settings.entries[2],
+            settings.entries()[2],
             Some(settings_entry(BEGODE_FIELD_TILTBACK_SPEED_KMH, 80))
         );
     }

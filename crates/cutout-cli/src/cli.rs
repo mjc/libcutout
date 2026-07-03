@@ -391,6 +391,7 @@ pub(crate) enum ReadProbe {
     Telemetry,
     Battery,
     Diagnostics,
+    FaultHistory,
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]

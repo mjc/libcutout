@@ -12,9 +12,9 @@ use cutout_core::{
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics,
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection,
     PevcapResolvedIdentity, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
-    ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput,
-    SettingsEntry, SettingsReadback, SignalStrength, TelemetryDelta, TransportAction, ValueQuality,
-    ValueSource, VerificationStatus, VerifiedValue, WriteMode,
+    ReadOnlyResponse, ReservedPayloadEvidence, RetainedNotificationPayload, SemanticEventCount,
+    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, SignalStrength, TelemetryDelta,
+    TransportAction, ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WriteMode,
 };
 use futures_util::{StreamExt, stream};
 use smallvec::smallvec;
@@ -124,16 +124,14 @@ fn battery_level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
     Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
 }
 
-fn decode_outcome_evidence(
-    outcome: crate::bridge::NotificationDecodeOutcome,
-) -> cutout_core::NotificationEvidence {
+fn decode_outcome_len(outcome: &crate::bridge::NotificationDecodeOutcome) -> NotificationByteLen {
     match outcome {
-        crate::bridge::NotificationDecodeOutcome::Ignored(evidence)
-        | crate::bridge::NotificationDecodeOutcome::BufferedFragment(evidence)
+        crate::bridge::NotificationDecodeOutcome::Ignored { evidence, .. } => evidence.len,
+        crate::bridge::NotificationDecodeOutcome::BufferedFragment(evidence)
         | crate::bridge::NotificationDecodeOutcome::ParserGap(evidence)
         | crate::bridge::NotificationDecodeOutcome::KnownReserved(evidence)
         | crate::bridge::NotificationDecodeOutcome::ParserDiagnostic(evidence)
-        | crate::bridge::NotificationDecodeOutcome::SemanticEvents(evidence) => evidence,
+        | crate::bridge::NotificationDecodeOutcome::SemanticEvents(evidence) => evidence.len,
     }
 }
 
@@ -352,6 +350,47 @@ async fn targeted_scan_wait_returns_non_match_errors_immediately() {
     assert!(matches!(result, Err(crate::BtleError::Bridge(_))));
     assert_eq!(attempts, 1);
     assert!(started.elapsed() < Duration::from_millis(100));
+}
+
+#[test]
+fn scan_finish_returns_success_when_cleanup_succeeds() {
+    let result = crate::scan::finish_scan(Ok("observed"), Ok(()))
+        .expect("successful scan with successful cleanup");
+
+    assert_eq!(result, "observed");
+}
+
+#[test]
+fn scan_finish_returns_cleanup_failure_after_successful_scan() {
+    let result = crate::scan::finish_scan::<()>(Ok(()), Err(crate::BtleError::NoAdapterAvailable));
+
+    assert!(matches!(
+        result,
+        Err(crate::BtleError::ScanCleanupFailed { cleanup })
+            if matches!(*cleanup, crate::BtleError::NoAdapterAvailable)
+    ));
+}
+
+#[test]
+fn scan_finish_preserves_primary_failure_when_cleanup_succeeds() {
+    let result = crate::scan::finish_scan::<()>(Err(crate::BtleError::NoPeripheralMatched), Ok(()));
+
+    assert!(matches!(result, Err(crate::BtleError::NoPeripheralMatched)));
+}
+
+#[test]
+fn scan_finish_keeps_primary_and_cleanup_failures() {
+    let result = crate::scan::finish_scan::<()>(
+        Err(crate::BtleError::NoPeripheralMatched),
+        Err(crate::BtleError::NoAdapterAvailable),
+    );
+
+    assert!(matches!(
+        result,
+        Err(crate::BtleError::ScanFailedWithCleanup { primary, cleanup })
+            if matches!(*primary, crate::BtleError::NoPeripheralMatched)
+                && matches!(*cleanup, crate::BtleError::NoAdapterAvailable)
+    ));
 }
 
 #[test]
@@ -1193,7 +1232,11 @@ async fn drive_session_relays_notifications_back_into_session() {
         Some(Measured::reported(43))
     );
     assert_eq!(
-        report.settings.first().expect("settings response").entries[0]
+        report
+            .settings
+            .first()
+            .expect("settings response")
+            .entries()[0]
             .expect("settings entry")
             .field,
         RawFieldValue::new(0x0014, 30)
@@ -1248,7 +1291,7 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
             response: ReadOnlyResponse::Settings(settings),
-        } if *monotonic_ms == crate::MonotonicMs::new(2) && settings.entries[0].is_some()
+        } if *monotonic_ms == crate::MonotonicMs::new(2) && settings.entries()[0].is_some()
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
@@ -1259,6 +1302,54 @@ async fn drive_session_relays_notifications_back_into_session() {
             && error.kind == cutout_core::DiagnosticErrorKind::MalformedFrame
     )));
     assert_eq!(*session.notification_count.lock().expect("count"), 1);
+}
+
+#[test]
+fn report_settings_summary_keeps_only_available_settings_readbacks() {
+    let unavailable = SettingsReadback::unavailable();
+    let unsupported = SettingsReadback::unsupported();
+    let available = SettingsReadback::available([
+        Some(SettingsEntry {
+            field: RawFieldValue::new(0x0014, 30),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }),
+        None,
+        None,
+        None,
+    ]);
+    let mut report = crate::SessionBridgeReport::default();
+
+    [unavailable, unsupported, available]
+        .into_iter()
+        .enumerate()
+        .for_each(|(offset, settings)| {
+            crate::report::process_device_event(
+                &mut report,
+                DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(settings)),
+                crate::MonotonicMs::new(2 + offset as u64),
+            );
+        });
+
+    assert_eq!(report.read_only_responses, read_only_responses(3));
+    assert_eq!(
+        report.read_only_response_events,
+        vec![
+            ReadOnlyResponse::Settings(unavailable),
+            ReadOnlyResponse::Settings(unsupported),
+            ReadOnlyResponse::Settings(available),
+        ]
+    );
+    assert_eq!(report.settings, vec![available]);
+    assert!(report.events.iter().any(|event| matches!(
+        event,
+        crate::SessionBridgeEvent::ReadOnlyResponse {
+            monotonic_ms,
+            response: ReadOnlyResponse::Settings(settings),
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && *settings == unavailable
+    )));
 }
 
 #[test]
@@ -1280,14 +1371,14 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
         crate::bridge::NotificationDecodeKind::SemanticEvents
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(77)
     );
 }
 
 #[test]
 fn notification_decode_outcome_is_bounded_typed_evidence() {
-    assert!(size_of::<crate::bridge::NotificationDecodeOutcome>() <= 64);
+    assert!(size_of::<crate::bridge::NotificationDecodeOutcome>() <= 88);
     assert_eq!(
         size_of::<crate::bridge::NotificationDecodeKind>(),
         size_of::<u8>()
@@ -1312,7 +1403,7 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
         crate::bridge::NotificationDecodeKind::BufferedFragment
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(20)
     );
 }
@@ -1334,7 +1425,7 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
         crate::bridge::NotificationDecodeKind::Ignored
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(20)
     );
 }
@@ -1351,7 +1442,7 @@ fn drive_session_reports_fragment_notifications_as_typed_ingest_events() {
 
     crate::report::process_notification_ingest_outcome(
         &mut report,
-        outcome,
+        outcome.clone(),
         crate::MonotonicMs::new(3),
     );
 
@@ -1387,7 +1478,7 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
         crate::bridge::NotificationDecodeKind::SemanticEvents
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(77)
     );
 }
@@ -1404,6 +1495,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             ReservedPayloadEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::from_bytes(24),
+                retained_payload: RetainedNotificationPayload::from_bytes(&[0x08]),
                 verification: VerificationStatus::HardwareVerified,
             },
         ),
@@ -1417,6 +1509,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             ParserGapEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                 body_len: PayloadBodyLen::from_bytes(26),
+                retained_payload: RetainedNotificationPayload::from_bytes(&[0x09]),
             },
         ),
     )];
@@ -1437,14 +1530,14 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         crate::bridge::NotificationDecodeKind::KnownReserved
     );
     assert_eq!(
-        decode_outcome_evidence(reserved).len,
+        decode_outcome_len(&reserved),
         NotificationByteLen::from_bytes(75)
     );
 
     let gap = crate::bridge::notification_decode_outcome(&gap).expect("gap outcome present");
     assert_eq!(gap.kind(), crate::bridge::NotificationDecodeKind::ParserGap);
     assert_eq!(
-        decode_outcome_evidence(gap).len,
+        decode_outcome_len(&gap),
         NotificationByteLen::from_bytes(77)
     );
 
@@ -1455,7 +1548,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         crate::bridge::NotificationDecodeKind::ParserDiagnostic
     );
     assert_eq!(
-        decode_outcome_evidence(diagnostic).len,
+        decode_outcome_len(&diagnostic),
         NotificationByteLen::from_bytes(77)
     );
 }
@@ -2273,19 +2366,17 @@ impl ProtocolSession for BridgeSession {
                     }),
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Settings(SettingsReadback {
-                        entries: [
-                            Some(SettingsEntry {
-                                field: RawFieldValue::new(0x0014, 30),
-                                source: ValueSource::Reported,
-                                quality: ValueQuality::Known,
-                                verification: VerificationStatus::HardwareVerified,
-                            }),
-                            None,
-                            None,
-                            None,
-                        ],
-                    }),
+                    ReadOnlyResponse::Settings(SettingsReadback::available([
+                        Some(SettingsEntry {
+                            field: RawFieldValue::new(0x0014, 30),
+                            source: ValueSource::Reported,
+                            quality: ValueQuality::Known,
+                            verification: VerificationStatus::HardwareVerified,
+                        }),
+                        None,
+                        None,
+                        None,
+                    ])),
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::DiagnosticError(
                     DiagnosticError::from_parser_error(ParserError::MalformedFrame),

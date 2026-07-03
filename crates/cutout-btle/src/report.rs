@@ -1,6 +1,7 @@
 use cutout_core::{
     DeviceEvent, DiagnosticError, FirmwareInfo, NotificationByteLen, NotificationIngestOutcome,
-    ParserDiagnostics, ReadOnlyResponse, SettingsReadback, TelemetryDelta, TelemetrySnapshot,
+    ParserDiagnostics, ReadOnlyResponse, SettingsReadback, SettingsReadbackAvailability,
+    TelemetryDelta, TelemetrySnapshot,
 };
 
 use crate::{
@@ -45,7 +46,7 @@ pub struct SessionBridgeReport {
     /// Latest firmware readback emitted by the session.
     pub firmware: Option<FirmwareInfo>,
 
-    /// Settings readbacks emitted by the session.
+    /// Available settings readbacks emitted by the session.
     pub settings: Vec<SettingsReadback>,
 
     /// Parser diagnostics events emitted by the session.
@@ -196,20 +197,23 @@ pub(crate) fn process_device_event(
         }
         DeviceEvent::ReadOnlyResponse(response) => {
             report.read_only_responses = report.read_only_responses.increment();
-            report.read_only_response_events.push(response);
+            report.read_only_response_events.push(response.clone());
             report.events.push(SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms,
-                response,
+                response: response.clone(),
             });
             match response {
                 ReadOnlyResponse::Firmware(firmware) => {
                     report.firmware = Some(firmware);
                 }
                 ReadOnlyResponse::Settings(settings) => {
-                    report.settings.push(settings);
+                    if settings.availability() == SettingsReadbackAvailability::Available {
+                        report.settings.push(settings);
+                    }
                 }
                 ReadOnlyResponse::Battery(_)
                 | ReadOnlyResponse::Diagnostics(_)
+                | ReadOnlyResponse::FaultHistory(_)
                 | ReadOnlyResponse::RawTelemetry(_) => {}
             }
         }

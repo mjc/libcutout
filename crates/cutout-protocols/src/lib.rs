@@ -53,8 +53,9 @@ pub use fixture::*;
 mod identification;
 pub use identification::{
     IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, IdentityParser,
-    ParsedModelBanner, StagedIdentityInput, StagedIdentityOutcome, StagedIdentityResolution,
-    identify_known_model, identify_model, parse_model_banner,
+    ParsedModelBanner, ProtocolModelIdentity, ProtocolModelIdentityEvidence, StagedIdentityInput,
+    StagedIdentityOutcome, StagedIdentityResolution, identify_known_model, identify_model,
+    parse_model_banner,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
@@ -68,6 +69,7 @@ pub use registry::{
 };
 mod request_encoder;
 mod session;
+mod util;
 mod vesc_codec;
 mod veteran_bms;
 mod veteran_frame;
@@ -84,8 +86,8 @@ pub use session::{
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
     SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
-    SupportsSettingsWrites, VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
-    VESC_RAW_FAULT_CODE_FIELD_ID, VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
+    SupportsSettingsWrites, VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID,
+    VESC_RAW_ERPM_FIELD_ID, VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
     VESC_RAW_STATS_CURRENT_AVG_FIELD_ID, VESC_RAW_STATS_POWER_AVG_FIELD_ID,
     VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel,
     VescNotificationDecoder, VeteranNotificationDecoder,
@@ -156,7 +158,7 @@ mod tests {
                 CommandKind::RequestFirmwareInfo,
                 CommandKind::RequestTelemetry,
                 CommandKind::RequestBatteryInfo,
-                CommandKind::RequestDiagnostics,
+                CommandKind::RequestSettings,
             ])
         );
     }

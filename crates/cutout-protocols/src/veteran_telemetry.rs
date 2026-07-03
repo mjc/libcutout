@@ -9,8 +9,9 @@ use cutout_core::{
 use thiserror::Error;
 
 use crate::{
-    BatteryVoltageProfile, SAMSUNG_50S_PROFILE, VeteranFrame,
+    BatteryVoltageProfile, ProtocolModelIdentityEvidence, SAMSUNG_50S_PROFILE, VeteranFrame,
     parser::{ParserCursor, ParserOffset},
+    util::u64_to_i64_saturating,
 };
 use crate::{VETERAN_BMS_CELL_VALUES_PER_PAGE, classify_veteran_bms_selector};
 
@@ -606,6 +607,7 @@ impl VeteranTelemetry {
             ))),
             voltage: Some(Measured::reported(self.voltage)),
             battery_current: Some(Measured::reported(self.battery_current)),
+            charge_mode: Some(Measured::reported(self.charge_mode)),
             power: Some(Measured::calculated(power)),
             controller_temperature: Some(Measured::reported(self.mosfet_temperature)),
             pwm: Some(Measured::reported(self.hardware_pwm)),
@@ -637,38 +639,33 @@ impl VeteranTelemetry {
     #[must_use]
     pub fn to_settings_responses(self) -> [ReadOnlyResponse; 2] {
         [
-            ReadOnlyResponse::Settings(SettingsReadback {
-                entries: [
-                    Some(settings_entry(
-                        VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-                        i64::try_from(self.auto_shutdown_time_remaining.as_seconds())
-                            .unwrap_or(i64::MAX),
-                    )),
-                    Some(settings_entry(
-                        VETERAN_FIELD_CHARGE_MODE,
-                        i64::from(veteran_charge_mode_field(self.charge_mode)),
-                    )),
-                    Some(settings_entry(
-                        VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-                        i64::from(self.speed_alert.as_deci_kmh_rounded()),
-                    )),
-                    Some(settings_entry(
-                        VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-                        i64::from(self.speed_tiltback.as_deci_kmh_rounded()),
-                    )),
-                ],
-            }),
-            ReadOnlyResponse::Settings(SettingsReadback {
-                entries: [
-                    Some(settings_entry(
-                        VETERAN_FIELD_PEDALS_MODE,
-                        i64::from(self.pedals_mode.get()),
-                    )),
-                    None,
-                    None,
-                    None,
-                ],
-            }),
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(settings_entry(
+                    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+                    u64_to_i64_saturating(self.auto_shutdown_time_remaining.as_seconds()),
+                )),
+                Some(settings_entry(
+                    VETERAN_FIELD_CHARGE_MODE,
+                    i64::from(veteran_charge_mode_field(self.charge_mode)),
+                )),
+                Some(settings_entry(
+                    VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+                    i64::from(self.speed_alert.as_deci_kmh_rounded()),
+                )),
+                Some(settings_entry(
+                    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                    i64::from(self.speed_tiltback.as_deci_kmh_rounded()),
+                )),
+            ])),
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(settings_entry(
+                    VETERAN_FIELD_PEDALS_MODE,
+                    i64::from(self.pedals_mode.get()),
+                )),
+                None,
+                None,
+                None,
+            ])),
         ]
     }
 }
@@ -734,6 +731,15 @@ impl VeteranFirmwareVersion {
             revision: raw_version % 100,
         }
     }
+
+    /// Returns Rust-owned protocol identity evidence decoded from this firmware word.
+    #[must_use]
+    pub const fn protocol_model_identity(self) -> ProtocolModelIdentityEvidence {
+        ProtocolModelIdentityEvidence::model_id(
+            cutout_core::ProtocolFamily::VeteranLeaperkimNosfet,
+            self.model_id.get(),
+        )
+    }
 }
 
 /// Estimates Aero battery percent from its model's Samsung 50S battery profile.
@@ -766,6 +772,11 @@ mod tests {
     }
 
     use super::*;
+    use crate::{
+        IdentityBannerEvidence, IdentityConfidence, NOSFET_AERO_REGISTRY_ENTRY,
+        ProtocolFamilyClassification, StagedIdentityInput, StagedIdentityOutcome,
+        identify_known_model,
+    };
 
     const fn pct(value: u8) -> BatteryLevel {
         BatteryLevel::from_percent(value)
@@ -861,6 +872,24 @@ mod tests {
             telemetry.battery_level_estimated,
             BatteryLevel::from_percent(47)
         );
+    }
+
+    #[test]
+    fn veteran_firmware_model_id_resolves_live_aero_identity() {
+        let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
+
+        let resolution = identify_known_model(&StagedIdentityInput {
+            advertised_name: Some("NF2557"),
+            gatt: core::iter::empty::<cutout_core::GattFingerprint>(),
+            stream_family: ProtocolFamilyClassification::Pending,
+            banner_model: IdentityBannerEvidence::Missing,
+            protocol_model: telemetry.firmware.protocol_model_identity(),
+        });
+
+        assert_eq!(resolution.confidence, IdentityConfidence::Model);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Matched);
+        assert_eq!(resolution.model, Some(&NOSFET_AERO_REGISTRY_ENTRY));
+        assert!(resolution.evidence.has_protocol_model_id());
     }
 
     #[test]
@@ -1383,6 +1412,10 @@ mod tests {
             delta.battery_level_estimated,
             Some(Measured::estimated(BatteryLevel::from_percent(47)))
         );
+        assert_eq!(
+            delta.charge_mode,
+            Some(Measured::reported(ChargeMode::NotCharging))
+        );
     }
 
     #[test]
@@ -1411,7 +1444,7 @@ mod tests {
         let present: Vec<_> = responses
             .into_iter()
             .flat_map(|response| match response {
-                ReadOnlyResponse::Settings(settings) => settings.entries,
+                ReadOnlyResponse::Settings(settings) => settings.entries(),
                 _ => [None, None, None, None],
             })
             .flatten()

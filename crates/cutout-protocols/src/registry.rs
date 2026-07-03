@@ -202,6 +202,16 @@ mod tests {
     }
 
     #[test]
+    fn catalog_does_not_advertise_unproven_fault_history() {
+        assert!(MODEL_CATALOG.iter().all(|entry| {
+            !entry
+                .registry
+                .capabilities
+                .supports_command_kind(CommandKind::RequestFaultHistory)
+        }));
+    }
+
+    #[test]
     fn session_registration_constructs_model_sessions_by_typed_key() {
         let aero = find_session_registration(NOSFET_AERO_SESSION_KEY)
             .expect("Aero session registration exists");
@@ -382,6 +392,18 @@ mod tests {
     }
 
     #[test]
+    fn nosfet_aero_registry_entry_does_not_advertise_unproven_fault_history() {
+        let capabilities = NOSFET_AERO_REGISTRY_ENTRY.capabilities;
+
+        assert!(capabilities.supports_command_kind(CommandKind::RequestIdentity));
+        assert!(capabilities.supports_command_kind(CommandKind::RequestFirmwareInfo));
+        assert!(capabilities.supports_command_kind(CommandKind::RequestTelemetry));
+        assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
+        assert!(capabilities.supports_command_kind(CommandKind::RequestSettings));
+        assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
+    }
+
+    #[test]
     fn begode_falcon_registry_entry_does_not_select_battery_from_model_name() {
         assert_eq!(BEGODE_FALCON_REGISTRY_ENTRY.battery, None);
         assert_eq!(
@@ -443,6 +465,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestTelemetry));
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestDiagnostics));
+        assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
         assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
     }
 

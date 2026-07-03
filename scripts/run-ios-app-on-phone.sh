@@ -15,7 +15,7 @@ export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Conte
 unset SDKROOT
 
 device_udid="${CUTOUT_IOS_DEVICE_UDID:-$(cutout_connected_ios_device_udid)}"
-product="${CUTOUT_IOS_DEVICE_PRODUCT:-$(CUTOUT_IOS_DEVICE_UDID="$device_udid" cutout_build_ios_device_speed_app_bundle)}"
+product="${CUTOUT_IOS_DEVICE_PRODUCT:-$(CUTOUT_IOS_DEVICE_UDID="$device_udid" cutout_build_ios_device_app_bundle)}"
 bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-$(cutout_ios_app_bundle_identifier "$product")}"
 
 xcrun devicectl --quiet device install app --device "$device_udid" "$product"
@@ -23,4 +23,4 @@ xcrun devicectl --quiet device process launch --device "$device_udid" --terminat
 
 echo "ios_device_udid=$device_udid"
 echo "ios_app_bundle_id=$bundle_id"
-echo "ios_speed_app_product=$product"
+echo "ios_app_product=$product"

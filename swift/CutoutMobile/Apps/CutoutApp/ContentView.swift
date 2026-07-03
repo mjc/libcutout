@@ -3,13 +3,13 @@ import CutoutMobile
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject var model: LiveSpeedModel
+    @ObservedObject var model: CutoutAppModel
     @State private var selectedScreenID: MockupScreenID
     @State private var pairedDestinationScreenID: MockupScreenID?
 
     private let catalog = MockupScreenCatalog.v2
 
-    init(model: LiveSpeedModel) {
+    init(model: CutoutAppModel) {
         self.model = model
         _selectedScreenID = State(initialValue: Self.initialScreenID())
     }
@@ -28,6 +28,9 @@ struct ContentView: View {
                             ? nil
                             : model.rideState,
                         rideTitle: model.selectedRideTitle,
+                        settingsReadback: model.settingsReadback,
+                        faultHistoryReadback: model.faultHistoryReadback,
+                        bmsSnapshot: model.bmsSnapshot,
                         disconnect: {
                             model.disconnectAndSearch()
                             pairedDestinationScreenID = nil
@@ -40,7 +43,7 @@ struct ContentView: View {
                     .tag(screen.id)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            .cutoutAppTabPager()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -57,7 +60,7 @@ struct ContentView: View {
         selectedScreenID = screenID
     }
 
-    private func openRideScreen(ifNeededFor phase: LiveSpeedConnectionPhase) {
+    private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
         guard phase.opensRideScreen else { return }
         selectedScreenID = pairedDestinationScreenID ?? .eucRide
     }
@@ -83,11 +86,25 @@ struct ContentView: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func cutoutAppTabPager() -> some View {
+        #if os(macOS)
+        self
+        #else
+        tabViewStyle(.page(indexDisplayMode: .never))
+        #endif
+    }
+}
+
 private struct MockupScreenContainer: View {
     let screen: MockupScreen
     let devicePickerScanState: DevicePickerScanState?
     let rideState: EucRideScreenState?
     let rideTitle: String?
+    let settingsReadback: SettingsReadback?
+    let faultHistoryReadback: FaultHistoryReadback?
+    let bmsSnapshot: BmsSnapshot?
     let disconnect: () -> Void
     let pair: (MockupPickerRow) -> Void
     let selectScreen: (MockupScreenID) -> Void
@@ -97,11 +114,16 @@ private struct MockupScreenContainer: View {
         case .devicePicker:
             DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
-            EucRideMockupView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
+            EucRideScreenView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             BmsMockupView(screen: screen, selectScreen: selectScreen)
         case .eucGarage:
-            EucGarageMockupView(screen: screen)
+            EucGarageMockupView(
+                screen: screen,
+                settingsReadback: settingsReadback,
+                faultHistoryReadback: faultHistoryReadback,
+                bmsSnapshot: bmsSnapshot
+            )
         case .vescOnewheelRide:
             VescOnewheelRideMockupView(screen: screen)
         case .vescDebug:
@@ -112,6 +134,29 @@ private struct MockupScreenContainer: View {
 
 private struct EucGarageMockupView: View {
     let screen: MockupScreen
+    let settingsReadback: SettingsReadback?
+    let faultHistoryReadback: FaultHistoryReadback?
+    let bmsSnapshot: BmsSnapshot?
+
+    private var dashboardTiles: [MockupDashboardTile] {
+        guard let settingsReadback else {
+            return screen.dashboardTiles
+        }
+
+        let settings = settingsReadback.eucGarageSettings
+        return screen.dashboardTiles.map { tile in
+            switch tile.kind {
+            case .beepMargin:
+                return settingsSpeedTile(tile: tile, readback: settings.beepMargin)
+            case .tiltback:
+                return settingsSpeedTile(tile: tile, readback: settings.tiltback)
+            case .pedalMode:
+                return settingsPedalTile(tile: tile, readback: settings.pedalMode)
+            case .metric:
+                return tile
+            }
+        }
+    }
 
     var body: some View {
         MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
@@ -132,7 +177,7 @@ private struct EucGarageMockupView: View {
             }
 
             LazyVGrid(columns: columns, spacing: 16 * scale) {
-                ForEach(screen.dashboardTiles) { tile in
+                ForEach(dashboardTiles) { tile in
                     EucDashboardTile(tile: tile, scale: scale)
                 }
             }
@@ -149,6 +194,33 @@ private struct EucGarageMockupView: View {
                 EucSummaryRows(rows: screen.summaryRows, scale: scale)
             }
 
+            if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
+                Text("Read-only pack health")
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 12 * scale)
+
+                BmsReadbackRows(snapshot: bmsSnapshot, scale: scale)
+            }
+
+            if let settingsReadback, settingsReadback.shouldRender {
+                Text("Read-only settings")
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 12 * scale)
+
+                SettingsReadbackRows(readback: settingsReadback, scale: scale)
+            }
+
+            if let faultHistoryReadback, faultHistoryReadback.shouldRender {
+                Text("Read-only fault history")
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 12 * scale)
+
+                FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: scale)
+            }
+
             if let faultCard = screen.faultCard {
                 Text(faultCard.title)
                     .font(.system(size: 16 * scale, weight: .black))
@@ -157,6 +229,313 @@ private struct EucGarageMockupView: View {
 
                 EucFaultStatusCard(card: faultCard, scale: scale)
             }
+        }
+    }
+
+    private func settingsSpeedTile(
+        tile: MockupDashboardTile,
+        readback: ReadbackValue<Speed>
+    ) -> MockupDashboardTile {
+        guard let speed = readback.value else {
+            return unavailableTile(tile, availability: readback.availability)
+        }
+
+        let readout = SpeedReadout(millimetersPerSecond: speed.value)
+        return MockupDashboardTile(
+            label: tile.label,
+            value: readout.displayValue,
+            unit: readout.displayUnit,
+            detail: "read-only setting",
+            accent: tile.accent
+        )
+    }
+
+    private func settingsPedalTile(
+        tile: MockupDashboardTile,
+        readback: ReadbackValue<PedalMode>
+    ) -> MockupDashboardTile {
+        guard let mode = readback.value else {
+            return unavailableTile(tile, availability: readback.availability)
+        }
+
+        let value: String
+        let unit: String
+        switch mode.value {
+        case let .hardnessPercent(percent):
+            value = "\(percent)"
+            unit = "%"
+        case let .rawMode(rawMode):
+            value = "\(rawMode)"
+            unit = "raw"
+        }
+
+        return MockupDashboardTile(
+            label: tile.label,
+            value: value,
+            unit: unit,
+            detail: "read-only setting",
+            accent: tile.accent
+        )
+    }
+
+    private func unavailableTile(
+        _ tile: MockupDashboardTile,
+        availability: ReadbackAvailability
+    ) -> MockupDashboardTile {
+        MockupDashboardTile(
+            label: tile.label,
+            value: "--",
+            unit: tile.unit,
+            detail: availability.displayText,
+            accent: tile.accent
+        )
+    }
+}
+
+private extension SettingsReadback {
+    var shouldRender: Bool {
+        availability != .available || !entries.isEmpty
+    }
+}
+
+private extension FaultHistoryReadback {
+    var shouldRender: Bool {
+        availability != .available || lastFault != nil || sinceDistance != nil
+    }
+}
+
+private extension BmsSnapshot {
+    var shouldRenderReadback: Bool {
+        availability != .available || energyPercent != nil || voltage != nil || current != nil || highestTemperature != nil
+    }
+}
+
+private struct BmsReadbackRows: View {
+    let snapshot: BmsSnapshot
+    let scale: CGFloat
+
+    private var rows: [SessionDebugRow] {
+        [
+            SessionDebugRow(label: "availability", value: snapshot.availability.displayText),
+            SessionDebugRow(label: "charge", value: percentText(snapshot.energyPercent)),
+            SessionDebugRow(label: "voltage", value: voltageText(snapshot.voltage)),
+            SessionDebugRow(label: "current", value: currentText(snapshot.current)),
+            SessionDebugRow(label: "high group", value: groupVoltageText(highGroupVoltage)),
+            SessionDebugRow(label: "low group", value: groupVoltageText(lowGroupVoltage)),
+            SessionDebugRow(label: "delta", value: millivoltsText(snapshot.cellDelta)),
+            SessionDebugRow(label: "lowest group", value: lowestGroupText),
+            SessionDebugRow(label: "temperature", value: temperatureText(snapshot.highestTemperature)),
+            SessionDebugRow(label: "topology", value: snapshot.topology.layoutLabel),
+        ]
+    }
+
+    private var groupVoltages: [Voltage] {
+        snapshot.groups.compactMap(\.voltage)
+    }
+
+    private var highGroupVoltage: Voltage? {
+        groupVoltages.max { left, right in
+            left.value < right.value
+        }
+    }
+
+    private var lowGroupVoltage: Voltage? {
+        groupVoltages.min { left, right in
+            left.value < right.value
+        }
+    }
+
+    private var lowestGroupText: String {
+        snapshot.lowestGroupIndex.map(String.init) ?? "unavailable"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { offset, row in
+                HStack {
+                    Text(row.label)
+                        .font(.system(size: 14 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                    Spacer()
+                    Text(row.value)
+                        .font(.system(size: 15 * scale, weight: .black))
+                        .monospacedDigit()
+                        .foregroundStyle(MockupColors.primaryText)
+                }
+                .frame(height: 31 * scale)
+
+                if offset != rows.indices.last {
+                    Rectangle()
+                        .fill(MockupColors.cardStroke)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 6 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
+private struct SettingsReadbackRows: View {
+    let readback: SettingsReadback
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if readback.entries.isEmpty {
+                HStack {
+                    Text("settings")
+                        .font(.system(size: 14 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                    Spacer()
+                    Text(readback.availability.displayText)
+                        .font(.system(size: 15 * scale, weight: .black))
+                        .foregroundStyle(MockupColors.primaryText)
+                }
+                .frame(height: 31 * scale)
+            } else {
+                ForEach(Array(readback.entries.enumerated()), id: \.offset) { offset, entry in
+                    VStack(alignment: .leading, spacing: 5 * scale) {
+                        HStack {
+                            Text("setting \(entry.field.id)")
+                                .font(.system(size: 14 * scale, weight: .bold))
+                                .foregroundStyle(MockupColors.muted)
+                            Spacer()
+                            Text("\(entry.field.value)")
+                                .font(.system(size: 15 * scale, weight: .black))
+                                .monospacedDigit()
+                                .foregroundStyle(MockupColors.primaryText)
+                        }
+
+                        Text(entry.provenanceText)
+                            .font(.system(size: 12 * scale, weight: .semibold))
+                            .foregroundStyle(MockupColors.muted)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 10 * scale)
+
+                    if offset != readback.entries.indices.last {
+                        Rectangle()
+                            .fill(MockupColors.cardStroke)
+                            .frame(height: 1)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 6 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
+private struct FaultHistoryReadbackRows: View {
+    let readback: FaultHistoryReadback
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5 * scale) {
+            HStack {
+                Text("fault")
+                    .font(.system(size: 14 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                Spacer()
+                Text(readback.valueText)
+                    .font(.system(size: 15 * scale, weight: .black))
+                    .monospacedDigit()
+                    .foregroundStyle(MockupColors.primaryText)
+            }
+
+            Text(readback.detailText)
+                .font(.system(size: 12 * scale, weight: .semibold))
+                .foregroundStyle(MockupColors.muted)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 16 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
+private extension ReadbackAvailability {
+    var displayText: String {
+        switch self {
+        case .available:
+            "available"
+        case .unavailable:
+            "unavailable"
+        case .unsupported:
+            "unsupported"
+        }
+    }
+}
+
+private extension FaultHistoryReadback {
+    var valueText: String {
+        lastFault.map { "\($0.code.raw.id)=\($0.code.raw.value)" } ?? availability.displayText
+    }
+
+    var detailText: String {
+        [
+            lastFault.map(\.provenanceText),
+            sinceDistance.map { "since \($0.value) mm" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
+    }
+}
+
+private extension FaultHistoryEntry {
+    var provenanceText: String {
+        "\(source.displayText), \(quality.displayText), \(verification.displayText)"
+    }
+}
+
+private extension SettingsReadbackEntry {
+    var provenanceText: String {
+        "\(source.displayText), \(quality.displayText), \(verification.displayText)"
+    }
+}
+
+private extension ReadbackSource {
+    var displayText: String {
+        switch self {
+        case .reported:
+            "reported"
+        case .calculated:
+            "calculated"
+        case .estimated:
+            "estimated"
+        }
+    }
+}
+
+private extension ReadbackQuality {
+    var displayText: String {
+        switch self {
+        case .known:
+            "known"
+        case .inferred:
+            "inferred"
+        }
+    }
+}
+
+private extension VerificationState {
+    var displayText: String {
+        switch self {
+        case .unverified:
+            "unverified"
+        case .inferred:
+            "inferred"
+        case .sourceVerified:
+            "source verified"
+        case .hardwareVerified:
+            "hardware verified"
+        case .sourceAndHardwareVerified:
+            "source + hardware verified"
         }
     }
 }
@@ -508,7 +887,7 @@ private struct VescPushbackWarningCard: View {
     }
 }
 
-private struct EucRideMockupView: View {
+private struct EucRideScreenView: View {
     let screen: MockupScreen
     let rideState: EucRideScreenState?
     let rideTitle: String?
@@ -523,7 +902,7 @@ private struct EucRideMockupView: View {
     }
 
     private var phaseText: String {
-        rideState?.phaseText ?? screen.displaySubtitle
+        rideState?.statusText ?? screen.displaySubtitle
     }
 
     private var titleText: String {
@@ -531,16 +910,30 @@ private struct EucRideMockupView: View {
     }
 
     private var warningCard: MockupWarningCard? {
-        if let rideState {
-            return liveWarningCard(for: rideState)
+        if let warningState {
+            return MockupWarningCard(title: warningState.title, detail: warningState.detail)
         }
         return screen.warningCard
     }
 
+    private var warningSeverity: EucRideWarningSeverity {
+        warningState?.severity ?? .reduceAcceleration
+    }
+
+    private var warningState: EucRideWarningState? {
+        guard let rideState else {
+            return nil
+        }
+        guard let now = rideState.displayState.lastUpdate else {
+            return rideState.warningState
+        }
+        return rideState.warningState(at: now, staleAfter: MonotonicMilliseconds(2_000))
+    }
+
     private var safetyBars: [MockupSafetyBar] {
         if let rideState {
-            if let telemetry = rideState.telemetry {
-                return liveSafetyBars(from: telemetry)
+            if rideState.telemetry != nil {
+                return liveSafetyBars(for: rideState)
             }
             return unavailableSafetyBars(from: screen.safetyBars)
         }
@@ -550,7 +943,7 @@ private struct EucRideMockupView: View {
     private var dashboardTiles: [MockupDashboardTile] {
         if let rideState {
             if let telemetry = rideState.telemetry {
-                return liveDashboardTiles(from: telemetry)
+                return liveDashboardTiles(from: rideState, telemetry: telemetry)
             }
             return unavailableDashboardTiles(from: screen.dashboardTiles)
         }
@@ -613,7 +1006,7 @@ private struct EucRideMockupView: View {
             }
 
             if let warningCard {
-                EucWarningCard(card: warningCard, scale: scale)
+                EucWarningCard(card: warningCard, severity: warningSeverity, scale: scale)
                     .padding(.top, 14 * scale)
             }
 
@@ -679,13 +1072,27 @@ private struct EucSafetyBar: View {
 
 private struct EucWarningCard: View {
     let card: MockupWarningCard
+    let severity: EucRideWarningSeverity
     let scale: CGFloat
+
+    private var accent: Color {
+        switch severity {
+        case .normal:
+            MockupColors.green
+        case .caution, .reduceAcceleration:
+            MockupColors.orange
+        case .limpHome, .failed:
+            MockupColors.red
+        case .unavailable:
+            MockupColors.muted
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5 * scale) {
             Text(card.title)
                 .font(.system(size: 20 * scale, weight: .black))
-                .foregroundStyle(MockupColors.orange)
+                .foregroundStyle(accent)
             Text(card.detail)
                 .font(.system(size: 13 * scale, weight: .black))
                 .foregroundStyle(MockupColors.warningText)
@@ -1252,6 +1659,7 @@ private enum MockupColors {
     static let cyan = Color(red: 0.278, green: 0.824, blue: 0.933)
     static let green = Color(red: 0.376, green: 0.906, blue: 0.553)
     static let orange = Color(red: 1.0, green: 0.486, blue: 0.188)
+    static let red = Color(red: 1.0, green: 0.243, blue: 0.243)
     static let warningText = Color(red: 1.0, green: 0.667, blue: 0.345)
     static let warningFill = Color(red: 0.173, green: 0.087, blue: 0.040)
     static let warningStroke = Color(red: 0.443, green: 0.216, blue: 0.102)
@@ -1291,55 +1699,35 @@ private extension MockupPickerRowState {
     }
 }
 
-private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard {
-    switch state.phase {
-    case .failed(let failure):
-        MockupWarningCard(title: "Connection failed", detail: failure.displayText)
-    case .live where state.telemetry != nil:
-        MockupWarningCard(
-            title: "Telemetry live",
-            detail: state.telemetry?.speed?.provenanceText ?? "Live telemetry from typed Rust/FFI state"
-        )
-    case .live:
-        MockupWarningCard(title: "Telemetry unavailable", detail: "No live snapshot yet")
-    case .connecting, .discoveringServices, .subscribing:
-        MockupWarningCard(title: state.phaseText, detail: "Waiting for live telemetry")
-    case .starting, .bluetoothUnavailable, .scanning:
-        MockupWarningCard(title: state.phaseText, detail: "Ride screen is not active yet")
-    }
-}
-
-private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyBar] {
+private func liveSafetyBars(for state: EucRideScreenState) -> [MockupSafetyBar] {
     [
-        telemetry.pwm.map { pwm in
-            let usedPermille = min(1_000, abs(Int(pwm.value.permille)))
-            let headroomPermille = max(0, 1_000 - usedPermille)
+        state.pwmHeadroomPermille.map { headroomPermille in
             return MockupSafetyBar(
                 label: "PWM headroom",
                 value: percentageString(fromPermille: headroomPermille),
                 progress: Double(headroomPermille) / 1_000.0,
                 accent: .yellow
             )
-        } ?? MockupSafetyBar(label: "PWM headroom", value: "Unavailable", progress: 0, accent: .yellow),
-        telemetry.batteryLevelEstimated.map { batteryLevel in
-            MockupSafetyBar(
-                label: "estimated energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value)),
-                progress: Double(batteryLevel.value) / 100.0,
-                accent: .cyan
-            )
-        } ?? MockupSafetyBar(label: "estimated energy", value: "Unavailable", progress: 0, accent: .cyan),
+        } ?? MockupSafetyBar(
+            label: "PWM headroom",
+            value: state.pwmHeadroomApplicability == .notApplicable ? "Not applicable" : "Unavailable",
+            progress: 0,
+            accent: .yellow
+        ),
+        MockupSafetyBar(label: "sag-adjusted energy", value: "Unavailable", progress: 0, accent: .cyan),
     ]
 }
 
-private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDashboardTile] {
+private func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [MockupDashboardTile] {
     [
         telemetry.voltage.map { voltage in
             MockupDashboardTile(
                 label: "pack",
                 value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
-                detail: voltage.provenanceText,
+                detail: state.voltageSag.map {
+                    decimalString(fromMillivolts: $0.value, fractionDigits: 1) + " V sag"
+                } ?? "sag unavailable",
                 accent: .cyan
             )
         } ?? MockupDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
@@ -1353,15 +1741,15 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
                 accent: .green
             )
             : MockupDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
-        telemetry.batteryLevelEstimated.map { batteryLevel in
+        state.limpHomeRange.map { range in
             MockupDashboardTile(
-                label: "energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value)),
-                unit: "%",
-                detail: batteryLevel.provenanceText,
+                label: "limp-home",
+                value: decimalString(fromMillimetres: range.value, fractionDigits: 1),
+                unit: "mi",
+                detail: "typed range estimate",
                 accent: .cyan
             )
-        } ?? MockupDashboardTile(label: "energy", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
+        } ?? MockupDashboardTile(label: "limp-home", value: "--", unit: "mi", detail: "unavailable", accent: .cyan),
     ]
 }
 
@@ -1377,7 +1765,7 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
                 fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
             ),
             unit: "kW",
-            detail: "calculated from pack current",
+            detail: powerFlowDetail(telemetry.powerFlow, fallback: "calculated from pack current"),
             accent: .yellow
         )
     }
@@ -1390,12 +1778,29 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
                 fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
             ),
             unit: "kW",
-            detail: power.provenanceText,
+            detail: powerFlowDetail(telemetry.powerFlow, fallback: "live telemetry"),
             accent: .yellow
         )
     }
 
     return MockupDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
+}
+
+private func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> String {
+    switch direction {
+    case .discharge:
+        fallback
+    case .zero:
+        "zero signed pack flow"
+    case .charging:
+        "charging input"
+    case .regeneration:
+        "regeneration"
+    case .negativeUnknown:
+        "negative signed flow; charge/regen unverified"
+    case nil:
+        fallback
+    }
 }
 
 private func unavailableSafetyBars(from bars: [MockupSafetyBar]) -> [MockupSafetyBar] {
@@ -1452,13 +1857,17 @@ private func decimalString<T: BinaryInteger>(fromMillicelsius value: T, fraction
     decimalString(Double(value) / 1_000.0, fractionDigits: fractionDigits)
 }
 
+private func decimalString<T: BinaryInteger>(fromMillimetres value: T, fractionDigits: Int) -> String {
+    decimalString(Double(value) / 1_609_344.0, fractionDigits: fractionDigits)
+}
+
 private func decimalString(_ value: Double, fractionDigits: Int) -> String {
     String(format: "%.\(fractionDigits)f", value)
 }
 
 private struct GenericMockupView: View {
     let screen: MockupScreen
-    let liveSpeed: String
+    let speedText: String
 
     var body: some View {
         ScrollView {
@@ -1494,7 +1903,7 @@ private struct GenericMockupView: View {
                 HStack {
                     Text("Live speed").foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(liveSpeed) mph").monospacedDigit()
+                    Text("\(speedText) mph").monospacedDigit()
                 }
             }
             .padding(24)
@@ -1657,7 +2066,7 @@ private struct BmsOverviewLayout: View {
                 )
                 BmsMetricCard(
                     title: "cell delta",
-                    value: millivoltsText(snapshot.cellDeltaMillivolts),
+                    value: millivoltsText(snapshot.cellDelta),
                     unit: "mV",
                     detail: "balanced enough",
                     accent: .green,
@@ -1872,7 +2281,7 @@ private struct BmsDetailLayout: View {
                         )
                         BmsMetricCard(
                             title: "IR est.",
-                            value: selectedGroup.resistanceMilliohms.map(String.init) ?? "--",
+                            value: selectedGroup.resistance.map { String($0.value) } ?? "--",
                             unit: "mΩ",
                             detail: "",
                             accent: .green,
@@ -2195,17 +2604,17 @@ private struct BmsNoDataLayout: View {
             .foregroundStyle(MockupColors.muted)
     }
 
-    private func percentValueText(_ reading: TelemetryReading<UInt8>?) -> String {
-        guard let reading else { return "--" }
-        return String(reading.value)
+    private func percentValueText(_ value: BatteryLevel?) -> String {
+        guard let value else { return "--" }
+        return String(value.value)
     }
 
-    private func currentText(_ reading: TelemetryReading<Int32>?) -> String? {
-        reading.map { decimalString(Double($0.value) / 1_000.0, fractionDigits: 0) }
+    private func currentText(_ value: BatteryCurrent?) -> String? {
+        value.map { decimalString(Double($0.value) / 1_000.0, fractionDigits: 0) }
     }
 
-    private func currentUnitText(_ reading: TelemetryReading<Int32>?) -> String? {
-        reading.map { _ in "A" }
+    private func currentUnitText(_ value: BatteryCurrent?) -> String? {
+        value.map { _ in "A" }
     }
 
     private func metricUnitText(_ metric: MockupMetric) -> String {
@@ -2557,21 +2966,25 @@ private enum BmsCardBorder {
     }
 }
 
-private func percentText(_ reading: TelemetryReading<UInt8>?) -> String {
-    guard let reading else { return "--" }
-    return "\(reading.value)%"
+private func percentText(_ value: BatteryLevel?) -> String {
+    guard let value else { return "--" }
+    return "\(value.value)%"
 }
 
-private func voltageText(_ reading: TelemetryReading<Int32>?) -> String {
-    reading.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+private func voltageText(_ value: Voltage?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
 
-private func millivoltsText(_ reading: TelemetryReading<Int32>?) -> String {
-    reading.map { String($0.value) } ?? "--"
+private func currentText(_ value: BatteryCurrent?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
 
-private func temperatureText(_ reading: TelemetryReading<Int32>?) -> String {
-    reading.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+private func millivoltsText(_ value: VoltageDelta?) -> String {
+    value.map { String($0.value) } ?? "--"
+}
+
+private func temperatureText(_ value: Temperature?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
 
 private func groupVoltageText(_ snapshot: BmsSnapshot, index: Int?) -> String {
@@ -2581,6 +2994,11 @@ private func groupVoltageText(_ snapshot: BmsSnapshot, index: Int?) -> String {
 
 private func groupVoltageText(_ group: BmsGroupSnapshot?) -> String {
     guard let value = group?.voltage?.value else { return "--" }
+    return String(format: "%.3f", Double(value) / 1_000.0)
+}
+
+private func groupVoltageText(_ voltage: Voltage?) -> String {
+    guard let value = voltage?.value else { return "--" }
     return String(format: "%.3f", Double(value) / 1_000.0)
 }
 
@@ -2611,7 +3029,7 @@ private extension MockupScreen {
     }
 }
 
-private extension LiveSpeedConnectionPhase {
+private extension SessionConnectionPhase {
     var opensRideScreen: Bool {
         switch self {
         case .connecting, .discoveringServices, .subscribing, .live:

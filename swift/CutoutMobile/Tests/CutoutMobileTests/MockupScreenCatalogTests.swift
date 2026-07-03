@@ -221,6 +221,16 @@ extension MockupScreenCatalogTests {
                     advertisedServiceUuids: [.bluetooth16(0xFFE0)]
                 ),
                 CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-gotway"),
+                    localName: "GotWay_002441",
+                    advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+                ),
+                CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-nf"),
+                    localName: "NF2557",
+                    advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+                ),
+                CoreBluetoothAdvertisement(
                     peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
                     localName: "Little FOCer",
                     advertisedServiceUuids: [.bluetooth16(0xFFF0)]
@@ -234,9 +244,9 @@ extension MockupScreenCatalogTests {
         )
 
         XCTAssertEqual(state.statusText, "Scanning Bluetooth")
-        XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
-        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, nil])
-        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero"])
+        XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
+        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, nil])
+        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557"])
         XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
         XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Not yet supported"))
         XCTAssertNil(state.sections.manual)
@@ -280,9 +290,9 @@ extension MockupScreenCatalogTests {
         )
         XCTAssertEqual(garage.dashboardTiles, [
             MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
-            MockupDashboardTile(label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
-            MockupDashboardTile(label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
-            MockupDashboardTile(label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+            MockupDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+            MockupDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+            MockupDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
         ])
         XCTAssertEqual(garage.summaryTitle, "Cell / BMS summary")
         XCTAssertEqual(garage.summaryRows, [
@@ -290,7 +300,40 @@ extension MockupScreenCatalogTests {
             MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
             MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
         ])
+        XCTAssertEqual(
+            garage.eucGarageSnapshot,
+            EucGarageSnapshot(
+                pack: EucPackHealthSnapshot(
+                    energyPercent: BatteryLevel(value: 85),
+                    voltage: Voltage(value: 115_800),
+                    highGroupVoltage: Voltage(value: 4_180),
+                    lowGroupVoltage: Voltage(value: 4_130),
+                    cellDelta: VoltageDelta(value: 50)
+                ),
+                settings: EucGarageSettingsSnapshot(
+                    beepMargin: .available(Speed(value: 5_186)),
+                    tiltback: .available(Speed(value: 18_776)),
+                    pedalMode: .available(PedalMode(hardnessPercent: 72))
+                ),
+                faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
+            )
+        )
         XCTAssertEqual(garage.faultCard, MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green))
+    }
+
+    func testEucFaultHistoryCanRepresentStructuredUnknownFault() {
+        let fault = EucFaultHistoryState.fault(
+            code: FaultCode.unknown(id: 0x0040, value: 1),
+            sinceDistance: Distance(value: 61_456_941)
+        )
+
+        XCTAssertEqual(
+            fault,
+            .fault(
+                code: FaultCode.unknown(id: 0x0040, value: 1),
+                sinceDistance: Distance(value: 61_456_941)
+            )
+        )
     }
 
     func testVescOnewheelRideFixtureCarriesRideCriticalStructureFromMockup() throws {
@@ -390,9 +433,9 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(snapshot.topology.parallelCount, 4)
         XCTAssertEqual(snapshot.topology.packCount, 2)
         XCTAssertEqual(snapshot.topology.bmsCount, 2)
-        XCTAssertEqual(snapshot.energyPercent?.value, 72)
-        XCTAssertEqual(snapshot.voltage?.value, 81_600)
-        XCTAssertEqual(snapshot.cellDeltaMillivolts?.value, 18)
+        XCTAssertEqual(snapshot.energyPercent, BatteryLevel(value: 72))
+        XCTAssertEqual(snapshot.voltage, Voltage(value: 81_600))
+        XCTAssertEqual(snapshot.cellDelta, VoltageDelta(value: 18))
         XCTAssertEqual(snapshot.lowestGroupIndex, 17)
         XCTAssertEqual(snapshot.balancingSummary, "idle • top groups only")
         XCTAssertEqual(snapshot.faultSummary, "no active faults")
@@ -408,9 +451,10 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(scrollable.highlightedGroupIndices, [17, 18, 19, 31])
 
         let detail = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellDetail)?.bmsContent)
+        let selectedGroup = detail.snapshot.groups.first { $0.index == 17 }
         XCTAssertEqual(detail.selectedGroupIndex, 17)
-        XCTAssertEqual(detail.snapshot.groups.first(where: { $0.index == 17 })?.voltage?.value, 4_071)
-        XCTAssertEqual(detail.snapshot.groups.first(where: { $0.index == 17 })?.resistanceMilliohms, 21)
+        XCTAssertEqual(selectedGroup?.voltage, Voltage(value: 4_071))
+        XCTAssertEqual(selectedGroup?.resistance, Resistance(value: 21))
     }
 
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
@@ -430,12 +474,9 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(snapshot.topology.layoutLabel, "non-smart BMS")
         XCTAssertEqual(snapshot.topology.confidence, .inferred)
-        XCTAssertEqual(snapshot.energyPercent?.value, 71)
-        XCTAssertEqual(snapshot.energyPercent?.source, .estimated)
-        XCTAssertEqual(snapshot.energyPercent?.quality, .inferred)
-        XCTAssertEqual(snapshot.energyPercent?.verification, .inferred)
-        XCTAssertEqual(snapshot.voltage?.value, 117_600)
-        XCTAssertEqual(snapshot.current?.value, 38_000)
+        XCTAssertEqual(snapshot.energyPercent, BatteryLevel(value: 71))
+        XCTAssertEqual(snapshot.voltage, Voltage(value: 117_600))
+        XCTAssertEqual(snapshot.current, BatteryCurrent(value: 38_000))
         XCTAssertEqual(snapshot.captureActionState, "limited data")
     }
 }

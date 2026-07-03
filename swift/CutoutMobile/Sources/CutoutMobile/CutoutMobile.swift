@@ -30,6 +30,9 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
     case event
     case disconnect
     case notificationIngest
+    case settingsReadback
+    case faultHistoryReadback
+    case bmsSnapshot
 
     fileprivate init(_ dto: MobileSessionOutputKindDto) {
         switch dto {
@@ -43,6 +46,12 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
             self = .disconnect
         case .notificationIngest:
             self = .notificationIngest
+        case .settingsReadback:
+            self = .settingsReadback
+        case .faultHistoryReadback:
+            self = .faultHistoryReadback
+        case .bmsSnapshot:
+            self = .bmsSnapshot
         }
     }
 }
@@ -51,64 +60,128 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let kind: SessionActionKind
     public let channel: Data
     public let bytes: Data
+    public let settingsReadback: SettingsReadback?
+    public let faultHistoryReadback: FaultHistoryReadback?
+    public let bmsSnapshot: BmsSnapshot?
+    public let veteranProtocolModelId: UInt16?
 
-    public init(kind: SessionActionKind, channel: Data, bytes: Data) {
+    private init(
+        kind: SessionActionKind,
+        channel: Data,
+        bytes: Data,
+        settingsReadback: SettingsReadback? = nil,
+        faultHistoryReadback: FaultHistoryReadback? = nil,
+        bmsSnapshot: BmsSnapshot? = nil,
+        veteranProtocolModelId: UInt16? = nil
+    ) {
         self.kind = kind
         self.channel = channel
         self.bytes = bytes
+        self.settingsReadback = settingsReadback
+        self.faultHistoryReadback = faultHistoryReadback
+        self.bmsSnapshot = bmsSnapshot
+        self.veteranProtocolModelId = veteranProtocolModelId
+    }
+
+    public static func subscribe(channel: Data) -> Self {
+        Self(kind: .subscribe, channel: channel, bytes: Data())
+    }
+
+    public static func write(channel: Data, bytes: Data) -> Self {
+        Self(kind: .write, channel: channel, bytes: bytes)
+    }
+
+    public static func event(channel: Data = Data(), bytes: Data = Data()) -> Self {
+        Self(kind: .event, channel: channel, bytes: bytes)
+    }
+
+    public static func protocolIdentity(veteranModelId: UInt16) -> Self {
+        Self(
+            kind: .event,
+            channel: Data(),
+            bytes: Data(),
+            veteranProtocolModelId: veteranModelId
+        )
+    }
+
+    public static func disconnect() -> Self {
+        Self(kind: .disconnect, channel: Data(), bytes: Data())
+    }
+
+    public static func notificationIngest() -> Self {
+        Self(kind: .notificationIngest, channel: Data(), bytes: Data())
+    }
+
+    public static func withSettingsReadback(_ readback: SettingsReadback) -> Self {
+        Self(
+            kind: .settingsReadback,
+            channel: Data(),
+            bytes: Data(),
+            settingsReadback: readback
+        )
+    }
+
+    public static func withFaultHistoryReadback(_ readback: FaultHistoryReadback) -> Self {
+        Self(
+            kind: .faultHistoryReadback,
+            channel: Data(),
+            bytes: Data(),
+            faultHistoryReadback: readback
+        )
+    }
+
+    public static func withBmsSnapshot(_ snapshot: BmsSnapshot) -> Self {
+        Self(
+            kind: .bmsSnapshot,
+            channel: Data(),
+            bytes: Data(),
+            bmsSnapshot: snapshot
+        )
     }
 
     fileprivate init(_ dto: MobileSessionOutputDto) {
         self.kind = SessionActionKind(dto.kind)
         self.channel = dto.channel
         self.bytes = dto.bytes
+        self.settingsReadback = dto.settingsReadback.map(SettingsReadback.init)
+        self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
+        self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
+        self.veteranProtocolModelId = dto.veteranProtocolModelId
     }
 }
 
-public enum DeviceCommand: Equatable, Hashable, Sendable {
-    case requestIdentity
-    case requestTelemetry
-    case requestFirmwareInfo
-    case requestBatteryInfo
-    case requestDiagnostics
-    case soundHorn
+public struct RawSettingField: Equatable, Hashable, Sendable {
+    public let id: UInt16
+    public let value: Int64
 
-    fileprivate init(_ dto: MobileCommandDto) {
-        switch dto {
-        case .requestIdentity:
-            self = .requestIdentity
-        case .requestTelemetry:
-            self = .requestTelemetry
-        case .requestFirmwareInfo:
-            self = .requestFirmwareInfo
-        case .requestBatteryInfo:
-            self = .requestBatteryInfo
-        case .requestDiagnostics:
-            self = .requestDiagnostics
-        case .soundHorn:
-            self = .soundHorn
-        }
+    public init(id: UInt16, value: Int64) {
+        self.id = id
+        self.value = value
     }
 
-    fileprivate var dto: MobileCommandDto {
-        switch self {
-        case .requestIdentity:
-            .requestIdentity
-        case .requestTelemetry:
-            .requestTelemetry
-        case .requestFirmwareInfo:
-            .requestFirmwareInfo
-        case .requestBatteryInfo:
-            .requestBatteryInfo
-        case .requestDiagnostics:
-            .requestDiagnostics
-        case .soundHorn:
-            .soundHorn
-        }
+    fileprivate init(_ dto: MobileRawFieldValueDto) {
+        self.id = dto.id
+        self.value = dto.value
     }
 }
 
-public enum TelemetryValueSource: Equatable, Hashable, Sendable {
+public struct FaultCode: Equatable, Hashable, Sendable {
+    public let raw: RawSettingField
+
+    public static func unknown(id: UInt16, value: Int64) -> Self {
+        Self(raw: RawSettingField(id: id, value: value))
+    }
+
+    public init(raw: RawSettingField) {
+        self.raw = raw
+    }
+
+    fileprivate init(_ dto: MobileFaultCodeDto) {
+        self.raw = RawSettingField(dto.raw)
+    }
+}
+
+public enum ReadbackSource: Equatable, Hashable, Sendable {
     case reported
     case calculated
     case estimated
@@ -123,20 +196,9 @@ public enum TelemetryValueSource: Equatable, Hashable, Sendable {
             self = .estimated
         }
     }
-
-    public var displayText: String {
-        switch self {
-        case .reported:
-            "reported"
-        case .calculated:
-            "calculated"
-        case .estimated:
-            "estimated"
-        }
-    }
 }
 
-public enum TelemetryValueQuality: Equatable, Hashable, Sendable {
+public enum ReadbackQuality: Equatable, Hashable, Sendable {
     case known
     case inferred
 
@@ -148,18 +210,9 @@ public enum TelemetryValueQuality: Equatable, Hashable, Sendable {
             self = .inferred
         }
     }
-
-    public var displayText: String {
-        switch self {
-        case .known:
-            "known"
-        case .inferred:
-            "inferred"
-        }
-    }
 }
 
-public enum TelemetryVerificationStatus: Equatable, Hashable, Sendable {
+public enum VerificationState: Equatable, Hashable, Sendable {
     case unverified
     case inferred
     case sourceVerified
@@ -180,150 +233,282 @@ public enum TelemetryVerificationStatus: Equatable, Hashable, Sendable {
             self = .sourceAndHardwareVerified
         }
     }
-
-    public var displayText: String {
-        switch self {
-        case .unverified:
-            "unverified"
-        case .inferred:
-            "inferred"
-        case .sourceVerified:
-            "source verified"
-        case .hardwareVerified:
-            "hardware verified"
-        case .sourceAndHardwareVerified:
-            "source + hardware verified"
-        }
-    }
 }
 
-public struct DutyCycle: Equatable, Hashable, Sendable {
-    public let permille: Int16
-
-    public init(permille: Int16) {
-        self.permille = permille
-    }
-}
-
-public struct TelemetryReading<Value: Equatable & Hashable & Sendable>: Equatable, Hashable, Sendable {
-    public let value: Value
-    public let source: TelemetryValueSource
-    public let quality: TelemetryValueQuality
-    public let verification: TelemetryVerificationStatus
+public struct SettingsReadbackEntry: Equatable, Hashable, Sendable {
+    public let field: RawSettingField
+    public let source: ReadbackSource
+    public let quality: ReadbackQuality
+    public let verification: VerificationState
 
     public init(
-        value: Value,
-        source: TelemetryValueSource,
-        quality: TelemetryValueQuality,
-        verification: TelemetryVerificationStatus
+        field: RawSettingField,
+        source: ReadbackSource,
+        quality: ReadbackQuality,
+        verification: VerificationState
     ) {
-        self.value = value
+        self.field = field
         self.source = source
         self.quality = quality
         self.verification = verification
     }
 
-    fileprivate init(_ dto: MobileMeasuredI32Dto) where Value == Int32 {
+    fileprivate init(_ dto: MobileSettingsEntryDto) {
+        self.field = RawSettingField(dto.field)
+        self.source = ReadbackSource(dto.source)
+        self.quality = ReadbackQuality(dto.quality)
+        self.verification = VerificationState(dto.verification)
+    }
+}
+
+public struct SettingsReadback: Equatable, Hashable, Sendable {
+    public let entries: [SettingsReadbackEntry]
+    public let availability: ReadbackAvailability
+    public let eucGarageSettings: EucGarageSettingsSnapshot
+
+    public init(
+        entries: [SettingsReadbackEntry],
+        availability: ReadbackAvailability = .available,
+        eucGarageSettings: EucGarageSettingsSnapshot? = nil
+    ) {
+        self.availability = availability
+        self.entries = availability == .available ? entries : []
+        self.eucGarageSettings = switch availability {
+        case .available:
+            eucGarageSettings ?? Self.missingGarageSettings(for: availability)
+        case .unavailable, .unsupported:
+            Self.missingGarageSettings(for: availability)
+        }
+    }
+
+    fileprivate init(_ dto: MobileSettingsReadbackDto) {
         self.init(
-            value: dto.value,
-            source: TelemetryValueSource(dto.source),
-            quality: TelemetryValueQuality(dto.quality),
-            verification: TelemetryVerificationStatus(dto.verification)
+            entries: dto.entries.map(SettingsReadbackEntry.init),
+            availability: ReadbackAvailability(dto.availability),
+            eucGarageSettings: EucGarageSettingsSnapshot(dto.eucGarage)
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredI64Dto) where Value == Int64 {
-        self.init(
-            value: dto.value,
-            source: TelemetryValueSource(dto.source),
-            quality: TelemetryValueQuality(dto.quality),
-            verification: TelemetryVerificationStatus(dto.verification)
+    private static func missingGarageSettings(
+        for availability: ReadbackAvailability
+    ) -> EucGarageSettingsSnapshot {
+        EucGarageSettingsSnapshot(
+            beepMargin: Self.missingReadback(for: availability),
+            tiltback: Self.missingReadback(for: availability),
+            pedalMode: Self.missingReadback(for: availability)
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredI16Dto) where Value == Int16 {
-        self.init(
-            value: dto.value,
-            source: TelemetryValueSource(dto.source),
-            quality: TelemetryValueQuality(dto.quality),
-            verification: TelemetryVerificationStatus(dto.verification)
+    private static func missingReadback<Value>(
+        for availability: ReadbackAvailability
+    ) -> ReadbackValue<Value> {
+        switch availability {
+        case .available:
+            .unavailable
+        case .unavailable:
+            .unavailable
+        case .unsupported:
+            .unsupported
+        }
+    }
+}
+
+public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
+    public let code: FaultCode
+    public let source: ReadbackSource
+    public let quality: ReadbackQuality
+    public let verification: VerificationState
+
+    public init(
+        code: FaultCode,
+        source: ReadbackSource,
+        quality: ReadbackQuality,
+        verification: VerificationState
+    ) {
+        self.code = code
+        self.source = source
+        self.quality = quality
+        self.verification = verification
+    }
+
+    fileprivate init(_ dto: MobileFaultHistoryEntryDto) {
+        self.code = FaultCode(dto.code)
+        self.source = ReadbackSource(dto.source)
+        self.quality = ReadbackQuality(dto.quality)
+        self.verification = VerificationState(dto.verification)
+    }
+}
+
+public struct FaultHistoryReadback: Equatable, Hashable, Sendable {
+    public let availability: ReadbackAvailability
+    public let lastFault: FaultHistoryEntry?
+    public let sinceDistance: Distance?
+
+    private init(
+        availability: ReadbackAvailability,
+        lastFault: FaultHistoryEntry?,
+        sinceDistance: Distance?
+    ) {
+        self.availability = availability
+        self.lastFault = lastFault
+        self.sinceDistance = sinceDistance
+    }
+
+    public static func unavailable() -> Self {
+        Self(availability: .unavailable, lastFault: nil, sinceDistance: nil)
+    }
+
+    public static func unsupported() -> Self {
+        Self(availability: .unsupported, lastFault: nil, sinceDistance: nil)
+    }
+
+    public static func noFaultSince(_ sinceDistance: Distance) -> Self {
+        Self(availability: .available, lastFault: nil, sinceDistance: sinceDistance)
+    }
+
+    public static func faultSince(
+        _ lastFault: FaultHistoryEntry,
+        sinceDistance: Distance? = nil
+    ) -> Self {
+        Self(
+            availability: .available,
+            lastFault: lastFault,
+            sinceDistance: sinceDistance
         )
     }
 
-    fileprivate init(_ dto: MobileMeasuredI16Dto) where Value == DutyCycle {
-        self.init(
-            value: DutyCycle(permille: dto.value),
-            source: TelemetryValueSource(dto.source),
-            quality: TelemetryValueQuality(dto.quality),
-            verification: TelemetryVerificationStatus(dto.verification)
-        )
+    init(_ dto: MobileFaultHistoryReadbackDto) {
+        let availability = ReadbackAvailability(dto.availability)
+        let lastFault = dto.lastFault.map(FaultHistoryEntry.init)
+        let sinceDistance = dto.sinceDistance?.value
+
+        switch availability {
+        case .available where lastFault == nil && sinceDistance == nil:
+            self = .unavailable()
+        case .available:
+            self.init(
+                availability: availability,
+                lastFault: lastFault,
+                sinceDistance: sinceDistance
+            )
+        case .unavailable:
+            self = .unavailable()
+        case .unsupported:
+            self = .unsupported()
+        }
+    }
+}
+
+public enum DeviceCommand: Equatable, Hashable, Sendable {
+    case requestIdentity
+    case requestTelemetry
+    case requestFirmwareInfo
+    case requestBatteryInfo
+    case requestDiagnostics
+    case requestFaultHistory
+    case requestSettings
+    case soundHorn
+
+    fileprivate init(_ dto: MobileCommandDto) {
+        switch dto {
+        case .requestIdentity:
+            self = .requestIdentity
+        case .requestTelemetry:
+            self = .requestTelemetry
+        case .requestFirmwareInfo:
+            self = .requestFirmwareInfo
+        case .requestBatteryInfo:
+            self = .requestBatteryInfo
+        case .requestDiagnostics:
+            self = .requestDiagnostics
+        case .requestFaultHistory:
+            self = .requestFaultHistory
+        case .requestSettings:
+            self = .requestSettings
+        case .soundHorn:
+            self = .soundHorn
+        }
     }
 
-    fileprivate init(_ dto: MobileMeasuredU64Dto) where Value == UInt64 {
-        self.init(
-            value: dto.value,
-            source: TelemetryValueSource(dto.source),
-            quality: TelemetryValueQuality(dto.quality),
-            verification: TelemetryVerificationStatus(dto.verification)
-        )
-    }
-
-    fileprivate init(_ dto: MobileMeasuredU8Dto) where Value == UInt8 {
-        self.init(
-            value: dto.value,
-            source: TelemetryValueSource(dto.source),
-            quality: TelemetryValueQuality(dto.quality),
-            verification: TelemetryVerificationStatus(dto.verification)
-        )
-    }
-
-    public var provenanceText: String {
-        "\(source.displayText) · \(quality.displayText) · \(verification.displayText)"
+    fileprivate var dto: MobileCommandDto {
+        switch self {
+        case .requestIdentity:
+            .requestIdentity
+        case .requestTelemetry:
+            .requestTelemetry
+        case .requestFirmwareInfo:
+            .requestFirmwareInfo
+        case .requestBatteryInfo:
+            .requestBatteryInfo
+        case .requestDiagnostics:
+            .requestDiagnostics
+        case .requestFaultHistory:
+            .requestFaultHistory
+        case .requestSettings:
+            .requestSettings
+        case .soundHorn:
+            .soundHorn
+        }
     }
 }
 
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
-    public let speed: TelemetryReading<Int32>?
-    public let voltage: TelemetryReading<Int32>?
-    public let batteryCurrent: TelemetryReading<Int32>?
-    public let motorCurrent: TelemetryReading<Int32>?
-    public let power: TelemetryReading<Int64>?
-    public let controllerTemperature: TelemetryReading<Int32>?
-    public let motorTemperature: TelemetryReading<Int32>?
-    public let batteryTemperature: TelemetryReading<Int32>?
-    public let pwm: TelemetryReading<DutyCycle>?
-    public let distance: TelemetryReading<UInt64>?
-    public let pitch: TelemetryReading<Int32>?
-    public let roll: TelemetryReading<Int32>?
-    public let batteryLevelReported: TelemetryReading<UInt8>?
-    public let batteryLevelEstimated: TelemetryReading<UInt8>?
+    public let at: MonotonicMilliseconds?
+    public let speed: Speed?
+    public let operatingState: RideOperatingState
+    public let voltage: Voltage?
+    public let batteryCurrent: BatteryCurrent?
+    public let motorCurrent: PhaseCurrent?
+    public let power: Power?
+    public let powerFlow: PowerFlowDirection?
+    public let voltageSag: VoltageDelta?
+    public let controllerTemperature: Temperature?
+    public let motorTemperature: Temperature?
+    public let batteryTemperature: Temperature?
+    public let pwm: DutyCycle?
+    public let distance: Distance?
+    public let limpHomeRange: Distance?
+    public let pitch: Angle?
+    public let roll: Angle?
+    public let batteryLevelReported: BatteryLevel?
+    public let batteryLevelEstimated: BatteryLevel?
 
     public init(
-        speed: TelemetryReading<Int32>? = nil,
-        voltage: TelemetryReading<Int32>? = nil,
-        batteryCurrent: TelemetryReading<Int32>? = nil,
-        motorCurrent: TelemetryReading<Int32>? = nil,
-        power: TelemetryReading<Int64>? = nil,
-        controllerTemperature: TelemetryReading<Int32>? = nil,
-        motorTemperature: TelemetryReading<Int32>? = nil,
-        batteryTemperature: TelemetryReading<Int32>? = nil,
-        pwm: TelemetryReading<DutyCycle>? = nil,
-        distance: TelemetryReading<UInt64>? = nil,
-        pitch: TelemetryReading<Int32>? = nil,
-        roll: TelemetryReading<Int32>? = nil,
-        batteryLevelReported: TelemetryReading<UInt8>? = nil,
-        batteryLevelEstimated: TelemetryReading<UInt8>? = nil
+        at: MonotonicMilliseconds? = nil,
+        speed: Speed? = nil,
+        operatingState: RideOperatingState = .unknown,
+        voltage: Voltage? = nil,
+        batteryCurrent: BatteryCurrent? = nil,
+        motorCurrent: PhaseCurrent? = nil,
+        power: Power? = nil,
+        powerFlow: PowerFlowDirection? = nil,
+        voltageSag: VoltageDelta? = nil,
+        controllerTemperature: Temperature? = nil,
+        motorTemperature: Temperature? = nil,
+        batteryTemperature: Temperature? = nil,
+        pwm: DutyCycle? = nil,
+        distance: Distance? = nil,
+        limpHomeRange: Distance? = nil,
+        pitch: Angle? = nil,
+        roll: Angle? = nil,
+        batteryLevelReported: BatteryLevel? = nil,
+        batteryLevelEstimated: BatteryLevel? = nil
     ) {
+        self.at = at
         self.speed = speed
+        self.operatingState = operatingState
         self.voltage = voltage
         self.batteryCurrent = batteryCurrent
         self.motorCurrent = motorCurrent
         self.power = power
+        self.powerFlow = powerFlow
+        self.voltageSag = voltageSag
         self.controllerTemperature = controllerTemperature
         self.motorTemperature = motorTemperature
         self.batteryTemperature = batteryTemperature
         self.pwm = pwm
         self.distance = distance
+        self.limpHomeRange = limpHomeRange
         self.pitch = pitch
         self.roll = roll
         self.batteryLevelReported = batteryLevelReported
@@ -332,21 +517,191 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
 
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
         self.init(
-            speed: dto.speed.map { TelemetryReading<Int32>($0) },
-            voltage: dto.voltage.map { TelemetryReading<Int32>($0) },
-            batteryCurrent: dto.batteryCurrent.map { TelemetryReading<Int32>($0) },
-            motorCurrent: dto.motorCurrent.map { TelemetryReading<Int32>($0) },
-            power: dto.power.map { TelemetryReading<Int64>($0) },
-            controllerTemperature: dto.controllerTemperature.map { TelemetryReading<Int32>($0) },
-            motorTemperature: dto.motorTemperature.map { TelemetryReading<Int32>($0) },
-            batteryTemperature: dto.batteryTemperature.map { TelemetryReading<Int32>($0) },
-            pwm: dto.pwm.map { TelemetryReading<DutyCycle>($0) },
-            distance: dto.distance.map { TelemetryReading<UInt64>($0) },
-            pitch: dto.pitch.map { TelemetryReading<Int32>($0) },
-            roll: dto.roll.map { TelemetryReading<Int32>($0) },
-            batteryLevelReported: dto.batteryLevelReported.map { TelemetryReading<UInt8>($0) },
-            batteryLevelEstimated: dto.batteryLevelEstimated.map { TelemetryReading<UInt8>($0) }
+            at: dto.atMs.map { MonotonicMilliseconds($0.milliseconds) },
+            speed: dto.speed?.value,
+            operatingState: dto.operatingState,
+            voltage: dto.voltage?.value,
+            batteryCurrent: dto.batteryCurrent?.value,
+            motorCurrent: dto.motorCurrent?.value,
+            power: dto.power?.value,
+            powerFlow: dto.powerFlow,
+            voltageSag: dto.voltageSag?.value,
+            controllerTemperature: dto.controllerTemperature?.value,
+            motorTemperature: dto.motorTemperature?.value,
+            batteryTemperature: dto.batteryTemperature?.value,
+            pwm: dto.pwm,
+            distance: dto.distance?.value,
+            limpHomeRange: dto.limpHomeRange?.value,
+            pitch: dto.pitch?.value,
+            roll: dto.roll?.value,
+            batteryLevelReported: dto.batteryLevelReported?.value,
+            batteryLevelEstimated: dto.batteryLevelEstimated?.value
         )
+    }
+}
+
+public enum ReadbackAvailability: Equatable, Hashable, Sendable {
+    case available
+    case unavailable
+    case unsupported
+
+    fileprivate init(_ dto: MobileReadbackAvailabilityDto) {
+        switch dto {
+        case .available:
+            self = .available
+        case .unavailable:
+            self = .unavailable
+        case .unsupported:
+            self = .unsupported
+        }
+    }
+}
+
+public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, Hashable, Sendable {
+    public let value: Value?
+    public let availability: ReadbackAvailability
+
+    private init(value: Value?, availability: ReadbackAvailability) {
+        self.value = value
+        self.availability = availability
+    }
+
+    public static func available(_ value: Value) -> Self {
+        Self(value: value, availability: .available)
+    }
+
+    public static var unavailable: Self {
+        Self(value: nil, availability: .unavailable)
+    }
+
+    public static var unsupported: Self {
+        Self(value: nil, availability: .unsupported)
+    }
+}
+
+public struct PedalMode: Equatable, Hashable, Sendable {
+    public enum Value: Equatable, Hashable, Sendable {
+        case hardnessPercent(UInt8)
+        case rawMode(UInt16)
+    }
+
+    public let value: Value
+
+    public var percent: UInt8? {
+        guard case let .hardnessPercent(percent) = value else {
+            return nil
+        }
+        return percent
+    }
+
+    public var rawMode: UInt16? {
+        guard case let .rawMode(rawMode) = value else {
+            return nil
+        }
+        return rawMode
+    }
+
+    public init(hardnessPercent: UInt8) {
+        self.value = .hardnessPercent(hardnessPercent)
+    }
+
+    public static func rawMode(_ value: UInt16) -> Self {
+        Self(value: .rawMode(value))
+    }
+
+    private init(value: Value) {
+        self.value = value
+    }
+}
+
+public struct EucPackHealthSnapshot: Equatable, Hashable, Sendable {
+    public let energyPercent: BatteryLevel?
+    public let voltage: Voltage?
+    public let highGroupVoltage: Voltage?
+    public let lowGroupVoltage: Voltage?
+    public let cellDelta: VoltageDelta?
+
+    public init(
+        energyPercent: BatteryLevel? = nil,
+        voltage: Voltage? = nil,
+        highGroupVoltage: Voltage? = nil,
+        lowGroupVoltage: Voltage? = nil,
+        cellDelta: VoltageDelta? = nil
+    ) {
+        self.energyPercent = energyPercent
+        self.voltage = voltage
+        self.highGroupVoltage = highGroupVoltage
+        self.lowGroupVoltage = lowGroupVoltage
+        self.cellDelta = cellDelta
+    }
+}
+
+public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
+    public let beepMargin: ReadbackValue<Speed>
+    public let tiltback: ReadbackValue<Speed>
+    public let pedalMode: ReadbackValue<PedalMode>
+
+    public init(
+        beepMargin: ReadbackValue<Speed> = .unavailable,
+        tiltback: ReadbackValue<Speed> = .unavailable,
+        pedalMode: ReadbackValue<PedalMode> = .unavailable
+    ) {
+        self.beepMargin = beepMargin
+        self.tiltback = tiltback
+        self.pedalMode = pedalMode
+    }
+
+    fileprivate init(_ dto: MobileEucGarageSettingsDto) {
+        let availability = ReadbackAvailability(dto.availability)
+        self.init(
+            beepMargin: Self.readback(dto.beepMargin?.value, availability: availability),
+            tiltback: Self.readback(dto.tiltback?.value, availability: availability),
+            pedalMode: Self.readback(
+                dto.pedalMode.flatMap(PedalMode.init),
+                availability: availability
+            )
+        )
+    }
+
+    private static func readback<Value>(
+        _ value: Value?,
+        availability: ReadbackAvailability
+    ) -> ReadbackValue<Value> {
+        if let value {
+            return .available(value)
+        }
+
+        return availability == .unsupported ? .unsupported : .unavailable
+    }
+}
+
+private extension PedalMode {
+    init?(_ dto: MobilePedalModeDto) {
+        guard let rawMode = dto.rawMode else {
+            return nil
+        }
+        self = .rawMode(rawMode)
+    }
+}
+
+public enum EucFaultHistoryState: Equatable, Hashable, Sendable {
+    case none(sinceDistance: Distance)
+    case fault(code: FaultCode, sinceDistance: Distance?)
+}
+
+public struct EucGarageSnapshot: Equatable, Hashable, Sendable {
+    public let pack: EucPackHealthSnapshot
+    public let settings: EucGarageSettingsSnapshot
+    public let faultHistory: EucFaultHistoryState
+
+    public init(
+        pack: EucPackHealthSnapshot,
+        settings: EucGarageSettingsSnapshot,
+        faultHistory: EucFaultHistoryState
+    ) {
+        self.pack = pack
+        self.settings = settings
+        self.faultHistory = faultHistory
     }
 }
 
@@ -454,9 +809,9 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
 
     public let index: Int
     public let label: String?
-    public let voltage: TelemetryReading<Int32>?
-    public let temperature: TelemetryReading<Int32>?
-    public let resistanceMilliohms: Int?
+    public let voltage: Voltage?
+    public let temperature: Temperature?
+    public let resistance: Resistance?
     public let isBalancing: Bool?
     public let alertLevel: BmsAlertLevel
     public let detail: String?
@@ -464,9 +819,9 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
     public init(
         index: Int,
         label: String? = nil,
-        voltage: TelemetryReading<Int32>? = nil,
-        temperature: TelemetryReading<Int32>? = nil,
-        resistanceMilliohms: Int? = nil,
+        voltage: Voltage? = nil,
+        temperature: Temperature? = nil,
+        resistance: Resistance? = nil,
         isBalancing: Bool? = nil,
         alertLevel: BmsAlertLevel = .nominal,
         detail: String? = nil
@@ -475,7 +830,7 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
         self.label = label
         self.voltage = voltage
         self.temperature = temperature
-        self.resistanceMilliohms = resistanceMilliohms
+        self.resistance = resistance
         self.isBalancing = isBalancing
         self.alertLevel = alertLevel
         self.detail = detail
@@ -485,9 +840,9 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
         self.init(
             index: Int(dto.index),
             label: dto.label,
-            voltage: dto.voltage.map(TelemetryReading.init),
-            temperature: dto.temperature.map(TelemetryReading.init),
-            resistanceMilliohms: dto.resistanceMilliohms.map(Int.init),
+            voltage: dto.voltage?.value,
+            temperature: dto.temperature?.value,
+            resistance: dto.resistance,
             isBalancing: dto.isBalancing,
             alertLevel: BmsAlertLevel(dto.alertLevel),
             detail: dto.detail
@@ -514,13 +869,14 @@ public struct BmsFault: Equatable, Hashable, Sendable, Identifiable {
 }
 
 public struct BmsSnapshot: Equatable, Hashable, Sendable {
+    public let availability: ReadbackAvailability
     public let topology: BmsTopology
-    public let energyPercent: TelemetryReading<UInt8>?
-    public let voltage: TelemetryReading<Int32>?
-    public let current: TelemetryReading<Int32>?
-    public let cellDeltaMillivolts: TelemetryReading<Int32>?
+    public let energyPercent: BatteryLevel?
+    public let voltage: Voltage?
+    public let current: BatteryCurrent?
+    public let cellDelta: VoltageDelta?
     public let lowestGroupIndex: Int?
-    public let highestTemperature: TelemetryReading<Int32>?
+    public let highestTemperature: Temperature?
     public let highestTemperatureLabel: String?
     public let balancingSummary: String?
     public let balancingDetail: String?
@@ -532,13 +888,14 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let captureActionState: String?
 
     public init(
+        availability: ReadbackAvailability = .available,
         topology: BmsTopology,
-        energyPercent: TelemetryReading<UInt8>? = nil,
-        voltage: TelemetryReading<Int32>? = nil,
-        current: TelemetryReading<Int32>? = nil,
-        cellDeltaMillivolts: TelemetryReading<Int32>? = nil,
+        energyPercent: BatteryLevel? = nil,
+        voltage: Voltage? = nil,
+        current: BatteryCurrent? = nil,
+        cellDelta: VoltageDelta? = nil,
         lowestGroupIndex: Int? = nil,
-        highestTemperature: TelemetryReading<Int32>? = nil,
+        highestTemperature: Temperature? = nil,
         highestTemperatureLabel: String? = nil,
         balancingSummary: String? = nil,
         balancingDetail: String? = nil,
@@ -549,33 +906,36 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         captureActionTitle: String? = nil,
         captureActionState: String? = nil
     ) {
+        let hasReadbackData = availability == .available
+        self.availability = availability
         self.topology = topology
-        self.energyPercent = energyPercent
-        self.voltage = voltage
-        self.current = current
-        self.cellDeltaMillivolts = cellDeltaMillivolts
-        self.lowestGroupIndex = lowestGroupIndex
-        self.highestTemperature = highestTemperature
-        self.highestTemperatureLabel = highestTemperatureLabel
-        self.balancingSummary = balancingSummary
-        self.balancingDetail = balancingDetail
-        self.faultSummary = faultSummary
-        self.faultDetail = faultDetail
-        self.groups = groups
-        self.faults = faults
-        self.captureActionTitle = captureActionTitle
-        self.captureActionState = captureActionState
+        self.energyPercent = hasReadbackData ? energyPercent : nil
+        self.voltage = hasReadbackData ? voltage : nil
+        self.current = hasReadbackData ? current : nil
+        self.cellDelta = hasReadbackData ? cellDelta : nil
+        self.lowestGroupIndex = hasReadbackData ? lowestGroupIndex : nil
+        self.highestTemperature = hasReadbackData ? highestTemperature : nil
+        self.highestTemperatureLabel = hasReadbackData ? highestTemperatureLabel : nil
+        self.balancingSummary = hasReadbackData ? balancingSummary : nil
+        self.balancingDetail = hasReadbackData ? balancingDetail : nil
+        self.faultSummary = hasReadbackData ? faultSummary : nil
+        self.faultDetail = hasReadbackData ? faultDetail : nil
+        self.groups = hasReadbackData ? groups : []
+        self.faults = hasReadbackData ? faults : []
+        self.captureActionTitle = hasReadbackData ? captureActionTitle : nil
+        self.captureActionState = hasReadbackData ? captureActionState : nil
     }
 
     fileprivate init(_ dto: MobileBmsSnapshotDto) {
         self.init(
+            availability: ReadbackAvailability(dto.availability),
             topology: BmsTopology(dto.topology),
-            energyPercent: dto.energyPercent.map(TelemetryReading.init),
-            voltage: dto.voltage.map(TelemetryReading.init),
-            current: dto.current.map(TelemetryReading.init),
-            cellDeltaMillivolts: dto.cellDeltaMillivolts.map(TelemetryReading.init),
+            energyPercent: dto.energyPercent?.value,
+            voltage: dto.voltage?.value,
+            current: dto.current?.value,
+            cellDelta: dto.cellDelta?.value,
             lowestGroupIndex: dto.lowestGroupIndex.map(Int.init),
-            highestTemperature: dto.highestTemperature.map(TelemetryReading.init),
+            highestTemperature: dto.highestTemperature?.value,
             highestTemperatureLabel: dto.highestTemperatureLabel,
             balancingSummary: dto.balancingSummary,
             balancingDetail: dto.balancingDetail,
@@ -589,7 +949,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     }
 }
 
-public struct LiveSpeedDebugRow: Equatable, Hashable, Sendable {
+public struct SessionDebugRow: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
 
@@ -599,7 +959,7 @@ public struct LiveSpeedDebugRow: Equatable, Hashable, Sendable {
     }
 }
 
-public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
+public struct RideDisplayState: Equatable, Hashable, Sendable {
     public let speed: SpeedReadout
     public let telemetry: TelemetrySnapshot?
     public let notificationCount: UInt64
@@ -617,19 +977,20 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
         self.lastUpdate = lastUpdate
     }
 
-    public var debugRows: [LiveSpeedDebugRow] {
+    public var debugRows: [SessionDebugRow] {
         [
-            LiveSpeedDebugRow(label: "Notifications", value: "\(notificationCount)"),
-            LiveSpeedDebugRow(label: "Last update", value: lastUpdateText),
+            SessionDebugRow(label: "Notifications", value: "\(notificationCount)"),
+            SessionDebugRow(label: "Last update", value: lastUpdateText),
         ]
     }
 
     public func reducing(
         _ step: CoreBluetoothSessionStep,
         receivedAt: MonotonicMilliseconds
-    ) -> LiveSpeedDisplayState {
-        let nextSpeed = step.snapshot?.speed.map { SpeedReadout(millimetersPerSecond: $0.value) } ?? speed
-        return LiveSpeedDisplayState(
+    ) -> RideDisplayState {
+        let nextSpeed =
+            step.snapshot?.speed.map { SpeedReadout(millimetersPerSecond: $0.value) } ?? speed
+        return RideDisplayState(
             speed: nextSpeed,
             telemetry: step.snapshot ?? telemetry,
             notificationCount: notificationCount + 1,
@@ -642,11 +1003,107 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
     }
 }
 
-public struct EucRideScreenState: Equatable, Hashable, Sendable {
-    public let phase: LiveSpeedConnectionPhase
-    public let displayState: LiveSpeedDisplayState
+public enum EucRideMetricApplicability: Equatable, Hashable, Sendable {
+    case available
+    case unavailable
+    case notApplicable
+}
 
-    public init(phase: LiveSpeedConnectionPhase, displayState: LiveSpeedDisplayState) {
+public enum EucRideTelemetryAvailability: Equatable, Hashable, Sendable {
+    case unavailable
+    case waitingForValues
+    case populated
+}
+
+public enum EucRideUpdateFreshness: Equatable, Hashable, Sendable {
+    case unavailable
+    case fresh
+    case stale
+}
+
+public struct EucRideUpdateAge: Equatable, Hashable, Sendable {
+    public let elapsed: MonotonicMilliseconds?
+    public let freshness: EucRideUpdateFreshness
+
+    public init(elapsed: MonotonicMilliseconds?, freshness: EucRideUpdateFreshness) {
+        self.elapsed = elapsed
+        self.freshness = freshness
+    }
+}
+
+public enum EucRideWarningSeverity: Equatable, Hashable, Sendable {
+    case normal
+    case caution
+    case reduceAcceleration
+    case limpHome
+    case unavailable
+    case failed
+}
+
+public struct EucRideWarningState: Equatable, Hashable, Sendable {
+    public let severity: EucRideWarningSeverity
+    public let title: String
+    public let detail: String
+
+    public init(severity: EucRideWarningSeverity, title: String, detail: String) {
+        self.severity = severity
+        self.title = title
+        self.detail = detail
+    }
+}
+
+public enum EucRideVisibleField: Equatable, Hashable, Sendable {
+    case status
+    case speed
+    case updateAge
+    case pwmHeadroom
+    case sagAdjustedEnergy
+    case packVoltage
+    case power
+    case thermal
+    case warningState
+    case voltageSag
+    case regenPower
+    case limpHomeRange
+    case tabs
+}
+
+public enum EucRideVisibleFieldSource: Equatable, Hashable, Sendable {
+    case sessionState
+    case liveTelemetry
+    case derivedTelemetry
+    case explicitlyUnavailable
+    case notApplicable
+    case staticNavigation
+}
+
+public struct EucRideVisibleFieldCoverage: Equatable, Hashable, Sendable {
+    public let field: EucRideVisibleField
+    public let source: EucRideVisibleFieldSource
+
+    public init(field: EucRideVisibleField, source: EucRideVisibleFieldSource) {
+        self.field = field
+        self.source = source
+    }
+}
+
+public enum EucRideLiveValidationField: String, Equatable, Hashable, Sendable {
+    case livePhase
+    case updateAge
+    case speed
+    case packVoltage
+    case power
+    case pwm
+    case thermal
+}
+
+public struct EucRideScreenState: Equatable, Hashable, Sendable {
+    private static let reduceAccelerationPwmHeadroomThreshold = 250
+
+    public let phase: SessionConnectionPhase
+    public let displayState: RideDisplayState
+
+    public init(phase: SessionConnectionPhase, displayState: RideDisplayState) {
         self.phase = phase
         self.displayState = displayState
     }
@@ -655,8 +1112,135 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         displayState.telemetry
     }
 
+    public var operatingState: RideOperatingState {
+        telemetry?.operatingState ?? .unknown
+    }
+
+    public var telemetryAvailability: EucRideTelemetryAvailability {
+        guard let telemetry else {
+            return .unavailable
+        }
+
+        return telemetry.hasVisibleRideValues ? .populated : .waitingForValues
+    }
+
+    public var pwmHeadroomApplicability: EucRideMetricApplicability {
+        guard telemetry?.pwm != nil else {
+            return .unavailable
+        }
+
+        return operatingState == .riding ? .available : .notApplicable
+    }
+
+    public var pwmHeadroomPermille: Int? {
+        guard pwmHeadroomApplicability == .available, let pwm = telemetry?.pwm else {
+            return nil
+        }
+
+        let usedPermille = min(1_000, abs(Int(pwm.permille)))
+        return max(0, 1_000 - usedPermille)
+    }
+
+    public var regenerationPower: Power? {
+        guard telemetry?.powerFlow == .regeneration else {
+            return nil
+        }
+
+        return telemetry?.displayPower
+    }
+
+    public var voltageSag: VoltageDelta? {
+        telemetry?.voltageSag
+    }
+
+    public var limpHomeRange: Distance? {
+        telemetry?.limpHomeRange
+    }
+
+    public func updateAge(
+        at now: MonotonicMilliseconds,
+        staleAfter staleThreshold: MonotonicMilliseconds
+    ) -> EucRideUpdateAge {
+        guard let updatedAt = telemetry?.at ?? displayState.lastUpdate else {
+            return EucRideUpdateAge(elapsed: nil, freshness: .unavailable)
+        }
+
+        let elapsed = now.rawValue >= updatedAt.rawValue ? now.rawValue - updatedAt.rawValue : 0
+        let freshness: EucRideUpdateFreshness = elapsed > staleThreshold.rawValue ? .stale : .fresh
+        return EucRideUpdateAge(elapsed: MonotonicMilliseconds(elapsed), freshness: freshness)
+    }
+
+    public var warningState: EucRideWarningState {
+        switch phase {
+        case .failed(let failure):
+            return EucRideWarningState(severity: .failed, title: "Connection failed", detail: failure.displayText)
+        case .live where telemetryAvailability == .populated:
+            if shouldReduceAcceleration {
+                return EucRideWarningState(
+                    severity: .reduceAcceleration,
+                    title: "Reduce acceleration",
+                    detail: "PWM headroom is low while riding"
+                )
+            }
+
+            return EucRideWarningState(
+                severity: .normal,
+                title: "Telemetry live",
+                detail: telemetry?.speed == nil ? "Waiting for speed telemetry" : "Live telemetry from typed Rust/FFI state"
+            )
+        case .live where telemetryAvailability == .waitingForValues:
+            return EucRideWarningState(
+                severity: .caution,
+                title: "Waiting for telemetry",
+                detail: "Subscribed; no ride values yet"
+            )
+        case .live:
+            return EucRideWarningState(
+                severity: .unavailable,
+                title: "Telemetry unavailable",
+                detail: "No live snapshot yet"
+            )
+        case .connecting, .discoveringServices, .subscribing:
+            return EucRideWarningState(severity: .caution, title: phaseText, detail: "Waiting for live telemetry")
+        case .starting, .bluetoothUnavailable, .scanning:
+            return EucRideWarningState(severity: .unavailable, title: phaseText, detail: "Ride screen is not active yet")
+        }
+    }
+
+    public func warningState(
+        at now: MonotonicMilliseconds,
+        staleAfter staleThreshold: MonotonicMilliseconds
+    ) -> EucRideWarningState {
+        let age = updateAge(at: now, staleAfter: staleThreshold)
+        if phase == .live, age.freshness == .stale, let elapsed = age.elapsed {
+            return EucRideWarningState(
+                severity: .caution,
+                title: "Telemetry stale",
+                detail: "Last update \(elapsed.rawValue) ms ago"
+            )
+        }
+        return warningState
+    }
+
     public var phaseText: String {
         phase.displayText
+    }
+
+    public var statusText: String {
+        guard phase == .live else {
+            return phaseText
+        }
+
+        switch operatingState {
+        case .parked:
+            return "Parked"
+        case .riding:
+            return "Riding"
+        case .charging:
+            return "Charging"
+        case .unknown:
+            return "Live"
+        }
     }
 
     public var speedText: String {
@@ -666,9 +1250,153 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     public var speedUnit: String {
         displayState.speed.displayUnit
     }
+
+    public var visibleFieldCoverage: [EucRideVisibleFieldCoverage] {
+        [
+            EucRideVisibleFieldCoverage(field: .status, source: .sessionState),
+            EucRideVisibleFieldCoverage(field: .speed, source: speedCoverage),
+            EucRideVisibleFieldCoverage(field: .updateAge, source: updateAgeCoverage),
+            EucRideVisibleFieldCoverage(field: .pwmHeadroom, source: pwmHeadroomCoverage),
+            EucRideVisibleFieldCoverage(field: .sagAdjustedEnergy, source: .explicitlyUnavailable),
+            EucRideVisibleFieldCoverage(
+                field: .packVoltage,
+                source: telemetry?.voltage == nil ? .explicitlyUnavailable : .liveTelemetry
+            ),
+            EucRideVisibleFieldCoverage(field: .power, source: powerCoverage),
+            EucRideVisibleFieldCoverage(field: .thermal, source: thermalCoverage),
+            EucRideVisibleFieldCoverage(field: .warningState, source: .sessionState),
+            EucRideVisibleFieldCoverage(field: .voltageSag, source: voltageSagCoverage),
+            EucRideVisibleFieldCoverage(field: .regenPower, source: regenerationPowerCoverage),
+            EucRideVisibleFieldCoverage(field: .limpHomeRange, source: limpHomeRangeCoverage),
+            EucRideVisibleFieldCoverage(field: .tabs, source: .staticNavigation),
+        ]
+    }
+
+    public var liveValidationMissingFields: [EucRideLiveValidationField] {
+        var missing: [EucRideLiveValidationField] = []
+
+        if phase != .live {
+            missing.append(.livePhase)
+        }
+        if telemetry?.at == nil && displayState.lastUpdate == nil {
+            missing.append(.updateAge)
+        }
+        if telemetry?.speed == nil {
+            missing.append(.speed)
+        }
+        if telemetry?.voltage == nil {
+            missing.append(.packVoltage)
+        }
+        if telemetry?.displayPower == nil {
+            missing.append(.power)
+        }
+        if telemetry?.pwm == nil {
+            missing.append(.pwm)
+        }
+        if telemetry?.hasTemperature != true {
+            missing.append(.thermal)
+        }
+
+        return missing
+    }
+
+    public var isLiveValidationReady: Bool {
+        liveValidationMissingFields.isEmpty
+    }
+
+    private var speedCoverage: EucRideVisibleFieldSource {
+        displayState.speed.millimetersPerSecond == nil ? .explicitlyUnavailable : .liveTelemetry
+    }
+
+    private var updateAgeCoverage: EucRideVisibleFieldSource {
+        telemetry?.at == nil && displayState.lastUpdate == nil ? .explicitlyUnavailable : .liveTelemetry
+    }
+
+    private var shouldReduceAcceleration: Bool {
+        guard let pwmHeadroomPermille else {
+            return false
+        }
+
+        return pwmHeadroomPermille <= Self.reduceAccelerationPwmHeadroomThreshold
+    }
+
+    private var pwmHeadroomCoverage: EucRideVisibleFieldSource {
+        switch pwmHeadroomApplicability {
+        case .available:
+            .derivedTelemetry
+        case .unavailable:
+            .explicitlyUnavailable
+        case .notApplicable:
+            .notApplicable
+        }
+    }
+
+    private var powerCoverage: EucRideVisibleFieldSource {
+        guard let telemetry else {
+            return .explicitlyUnavailable
+        }
+        if telemetry.derivedPackPower != nil {
+            return .derivedTelemetry
+        }
+        if telemetry.power != nil {
+            return .liveTelemetry
+        }
+        return .explicitlyUnavailable
+    }
+
+    private var regenerationPowerCoverage: EucRideVisibleFieldSource {
+        regenerationPower == nil ? .explicitlyUnavailable : .derivedTelemetry
+    }
+
+    private var voltageSagCoverage: EucRideVisibleFieldSource {
+        voltageSag == nil ? .explicitlyUnavailable : .derivedTelemetry
+    }
+
+    private var limpHomeRangeCoverage: EucRideVisibleFieldSource {
+        limpHomeRange == nil ? .explicitlyUnavailable : .derivedTelemetry
+    }
+
+    private var thermalCoverage: EucRideVisibleFieldSource {
+        guard let telemetry else {
+            return .explicitlyUnavailable
+        }
+        return telemetry.hasTemperature ? .liveTelemetry : .explicitlyUnavailable
+    }
 }
 
-public enum LiveSpeedConnectionFailure: Equatable, Hashable, Sendable {
+private extension TelemetrySnapshot {
+    var displayPower: Power? {
+        derivedPackPower ?? power
+    }
+
+    var derivedPackPower: Power? {
+        guard let voltage, let batteryCurrent, batteryCurrent.value != 0 else {
+            return nil
+        }
+
+        return Power(value: Int64(voltage.value) * Int64(batteryCurrent.value) / 1_000)
+    }
+
+    var hasVisibleRideValues: Bool {
+        speed != nil
+            || voltage != nil
+            || batteryCurrent != nil
+            || motorCurrent != nil
+            || power != nil
+            || controllerTemperature != nil
+            || motorTemperature != nil
+            || batteryTemperature != nil
+            || pwm != nil
+            || batteryLevelReported != nil
+            || batteryLevelEstimated != nil
+    }
+
+    var hasTemperature: Bool {
+        controllerTemperature != nil || motorTemperature != nil || batteryTemperature != nil
+    }
+}
+
+public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
     case missingNotifyChannel
     case sessionFailed(String)
     case connectFailed(String)
@@ -700,15 +1428,15 @@ public enum LiveSpeedConnectionFailure: Equatable, Hashable, Sendable {
     }
 }
 
-public enum LiveSpeedConnectionPhase: Equatable, Hashable, Sendable {
+public enum SessionConnectionPhase: Equatable, Hashable, Sendable {
     case starting
     case bluetoothUnavailable(rawState: Int)
-    case scanning(model: ElectricUnicycleModel)
+    case scanning
     case connecting(model: ElectricUnicycleModel)
     case discoveringServices
     case subscribing
     case live
-    case failed(LiveSpeedConnectionFailure)
+    case failed(SessionConnectionFailure)
 
     public var displayText: String {
         switch self {
@@ -716,8 +1444,8 @@ public enum LiveSpeedConnectionPhase: Equatable, Hashable, Sendable {
             "Starting Bluetooth..."
         case .bluetoothUnavailable(let rawState):
             "Bluetooth unavailable: state \(rawState)"
-        case .scanning(let model):
-            "Scanning for \(model.displayName)..."
+        case .scanning:
+            "Scanning for rides..."
         case .connecting(let model):
             "Connecting to \(model.displayName)..."
         case .discoveringServices:
@@ -841,8 +1569,16 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         channel: Data,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> TelemetrySnapshot {
-        _ = try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
+        _ = try ingestNotificationActions(bytes, channel: channel, at: monotonicMilliseconds)
         return currentSnapshot
+    }
+
+    public func ingestNotificationActions(
+        _ bytes: Data,
+        channel: Data,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
     }
 
     public func perform(
@@ -969,10 +1705,15 @@ public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
 
     public var modelHint: CutoutModelHint {
         let normalizedName = localName?.lowercased() ?? ""
-        if normalizedName.contains("falcon") {
+        if normalizedName.contains("falcon")
+            || normalizedName.contains("begode")
+            || normalizedName.contains("gotway") {
             return .falcon
         }
-        if normalizedName.contains("aero") || normalizedName.contains("nosfet") {
+        if normalizedName.contains("aero")
+            || normalizedName.contains("nosfet")
+            || normalizedName.contains("veteran")
+            || normalizedName.hasPrefix("nf") {
             return .aero
         }
         return .unknown
@@ -993,19 +1734,22 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
     }
 
     public func plan(action: SessionAction) -> [CoreBluetoothPlannedOperation] {
-        guard let channel = BluetoothUuid(action.channel) else {
-            return []
-        }
         switch action.kind {
         case .subscribe:
+            guard let channel = BluetoothUuid(action.channel) else {
+                return []
+            }
             return [.subscribe(channel: channel)]
         case .write:
+            guard let channel = BluetoothUuid(action.channel) else {
+                return []
+            }
             return chunked(action.bytes, by: Int(writeLimit.rawValue)).map {
                 .writeWithoutResponse(channel: channel, bytes: $0)
             }
         case .disconnect:
             return [.disconnect]
-        case .event, .notificationIngest:
+        case .event, .notificationIngest, .settingsReadback, .faultHistoryReadback, .bmsSnapshot:
             return []
         }
     }
@@ -1048,10 +1792,10 @@ public enum CoreBluetoothSession: Sendable {
         _ bytes: Data,
         channel: BluetoothUuid,
         at monotonicMilliseconds: MonotonicMilliseconds
-    ) throws -> TelemetrySnapshot {
+    ) throws -> [SessionAction] {
         switch self {
         case .electricUnicycle(let session):
-            try session.ingestNotification(bytes, channel: channel.bytes, at: monotonicMilliseconds)
+            try session.ingestNotificationActions(bytes, channel: channel.bytes, at: monotonicMilliseconds)
         }
     }
 }
@@ -1065,15 +1809,18 @@ public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
 public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
+    public let actions: [SessionAction]
     public let captureContext: CoreBluetoothCaptureContext?
 
     public init(
         operations: [CoreBluetoothPlannedOperation],
         snapshot: TelemetrySnapshot?,
+        actions: [SessionAction] = [],
         captureContext: CoreBluetoothCaptureContext? = nil
     ) {
         self.operations = operations
         self.snapshot = snapshot
+        self.actions = actions
         self.captureContext = captureContext
     }
 }
@@ -1107,14 +1854,15 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
             )
 
         case .notification(let bytes, let channel, let monotonicMilliseconds):
-            let snapshot = try session.ingestNotification(
+            let actions = try session.ingestNotification(
                 bytes,
                 channel: channel,
                 at: monotonicMilliseconds
             )
             return CoreBluetoothSessionStep(
-                operations: [],
-                snapshot: snapshot,
+                operations: actions.flatMap(planner.plan(action:)),
+                snapshot: session.currentSnapshot,
+                actions: actions,
                 captureContext: captureContext
             )
 

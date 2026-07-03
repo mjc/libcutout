@@ -22,15 +22,17 @@ struct CutoutMobilePackageSmoke {
             channel: linkActions.firstSubscribeChannel!,
             at: MonotonicMilliseconds(2)
         )
-        precondition(telemetry.voltage?.value == 108_760)
-        precondition(telemetry.speed?.value == 0)
+        precondition(telemetry.voltage == Voltage(value: 108_760))
+        precondition(telemetry.speed == Speed(value: 0))
+        precondition(telemetry.operatingState == .parked)
+        precondition(telemetry.powerFlow != nil)
         precondition(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
         precondition(SpeedReadout(millimetersPerSecond: nil).displayValue == "--")
-        precondition(LiveSpeedConnectionPhase.starting.displayText == "Starting Bluetooth...")
-        precondition(LiveSpeedConnectionPhase.scanning(model: .aero).displayText == "Scanning for Aero...")
-        precondition(LiveSpeedConnectionPhase.live.displayText == "Live")
-        precondition(LiveSpeedConnectionPhase.bluetoothUnavailable(rawState: 4).displayText == "Bluetooth unavailable: state 4")
-        precondition(LiveSpeedConnectionPhase.failed(.missingNotifyChannel).displayText == "Missing notify channel")
+        precondition(SessionConnectionPhase.starting.displayText == "Starting Bluetooth...")
+        precondition(SessionConnectionPhase.scanning.displayText == "Scanning for rides...")
+        precondition(SessionConnectionPhase.live.displayText == "Live")
+        precondition(SessionConnectionPhase.bluetoothUnavailable(rawState: 4).displayText == "Bluetooth unavailable: state 4")
+        precondition(SessionConnectionPhase.failed(.missingNotifyChannel).displayText == "Missing notify channel")
         precondition(aero.diagnostics.malformedFrames == 0)
 
         let falcon = try ElectricUnicycleSession(model: .falcon)
@@ -102,8 +104,7 @@ struct CutoutMobilePackageSmoke {
             ),
         ])
 
-        let writeAction = SessionAction(
-            kind: .write,
+        let writeAction = SessionAction.write(
             channel: BluetoothUuid.bluetooth16(0xffe1).bytes,
             bytes: Data([0x01, 0x02, 0x03, 0x04, 0x05])
         )
@@ -143,8 +144,10 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(21)
         ))
-        precondition(runnerTelemetry.snapshot?.voltage?.value == 108_760)
-        precondition(runnerTelemetry.snapshot?.speed?.value == 0)
+        precondition(runnerTelemetry.snapshot?.voltage == Voltage(value: 108_760))
+        precondition(runnerTelemetry.snapshot?.speed == Speed(value: 0))
+        precondition(runnerTelemetry.snapshot?.operatingState == .parked)
+        precondition(runnerTelemetry.snapshot?.powerFlow != nil)
 
         let liveSink = RecordingCoreBluetoothOperationSink()
         let liveOwner = CoreBluetoothLiveSessionOwner(
@@ -176,9 +179,11 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(31)
         )
-        precondition(liveTelemetry.snapshot?.voltage?.value == 108_760)
-        precondition(liveTelemetry.snapshot?.speed?.value == 0)
-        let initialSpeedState = LiveSpeedDisplayState()
+        precondition(liveTelemetry.snapshot?.voltage == Voltage(value: 108_760))
+        precondition(liveTelemetry.snapshot?.speed == Speed(value: 0))
+        precondition(liveTelemetry.snapshot?.operatingState == .parked)
+        precondition(liveTelemetry.snapshot?.powerFlow != nil)
+        let initialSpeedState = RideDisplayState()
         precondition(initialSpeedState.speed.displayValue == "--")
         precondition(initialSpeedState.notificationCount == 0)
         let zeroSpeedState = initialSpeedState.reducing(
@@ -192,12 +197,7 @@ struct CutoutMobilePackageSmoke {
         let nonzeroSpeedStep = CoreBluetoothSessionStep(
             operations: [],
             snapshot: TelemetrySnapshot(
-                speed: TelemetryReading<Int32>(
-                    value: 1_000,
-                    source: .reported,
-                    quality: .known,
-                    verification: .sourceVerified
-                )
+                speed: Speed(value: 1_000)
             )
         )
         let nonzeroSpeedState = zeroSpeedState.reducing(

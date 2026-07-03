@@ -1,17 +1,25 @@
 import CoreBluetooth
 import Foundation
 
-public final class LiveSpeedSessionCore: NSObject {
-    public private(set) var displayState = LiveSpeedDisplayState()
-    public private(set) var phase = LiveSpeedConnectionPhase.starting
+public final class CutoutSessionCore: NSObject {
+    public private(set) var displayState = RideDisplayState()
+    public private(set) var phase = SessionConnectionPhase.starting
     public private(set) var records: [String] = []
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
+    public private(set) var settingsReadback: SettingsReadback?
+    public private(set) var faultHistoryReadback: FaultHistoryReadback?
+    public private(set) var bmsSnapshot: BmsSnapshot?
+    public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
-    public var onDisplayStateChange: ((LiveSpeedDisplayState) -> Void)?
-    public var onPhaseChange: ((LiveSpeedConnectionPhase) -> Void)?
+    public var onDisplayStateChange: ((RideDisplayState) -> Void)?
+    public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
+    public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
+    public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
+    public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
     private let clock = MonotonicClock()
     private var central: CBCentralManager?
@@ -55,14 +63,31 @@ public final class LiveSpeedSessionCore: NSObject {
         return true
     }
 
+    @discardableResult
+    public func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
+        let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
+        guard
+            let peripheral = discoveredPeripherals[identifier],
+            let advertisement = discoveredAdvertisements.last(where: { $0.peripheralIdentifier == identifier })
+        else {
+            return false
+        }
+        connect(to: peripheral, using: advertisement, model: model)
+        return true
+    }
+
     public func disconnectAndScan() {
         suppressReconnect = true
         selectedModel = nil
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
-        displayState = LiveSpeedDisplayState()
+        displayState = RideDisplayState()
         hasObservedSpeedSnapshot = false
+        clearSettingsReadback()
+        clearFaultHistoryReadback()
+        clearBmsSnapshot()
+        clearProtocolIdentityCandidate()
         onDisplayStateChange?(displayState)
 
         if let peripheral {
@@ -73,7 +98,7 @@ public final class LiveSpeedSessionCore: NSObject {
 
         scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
         onScanStateChange?(scanState)
-        setPhase(.scanning(model: .aero))
+        setPhase(.scanning)
         central?.scanForPeripherals(withServices: nil)
     }
 
@@ -86,13 +111,78 @@ public final class LiveSpeedSessionCore: NSObject {
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
+        step.actions.forEach(applySessionAction)
         displayState = displayState.reducing(step, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speed?.value != nil
         onDisplayStateChange?(displayState)
         setPhase(.live)
     }
 
-    private func setPhase(_ phase: LiveSpeedConnectionPhase) {
+    private func applySessionAction(_ action: SessionAction) {
+        switch action.kind {
+        case .settingsReadback:
+            settingsReadback = action.settingsReadback
+            onSettingsReadbackChange?(settingsReadback)
+        case .faultHistoryReadback:
+            faultHistoryReadback = action.faultHistoryReadback
+            onFaultHistoryReadbackChange?(faultHistoryReadback)
+        case .bmsSnapshot:
+            bmsSnapshot = action.bmsSnapshot
+            onBmsSnapshotChange?(bmsSnapshot)
+        case .event:
+            applyProtocolIdentityModelId(action.veteranProtocolModelId)
+        case .subscribe, .write, .disconnect, .notificationIngest:
+            break
+        }
+    }
+
+    private func applyProtocolIdentityModelId(_ modelId: UInt16?) {
+        guard let modelId, let advertisement = advertisement ?? discoveredAdvertisements.last else {
+            return
+        }
+        let candidate = mobileDiscoveryCandidateFromVeteranProtocolIdentity(
+            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+            displayName: advertisement.localName ?? "Veteran/NOSFET device",
+            modelId: modelId
+        )
+        protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+        onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
+        record("protocol_identity=\(candidate.detail)")
+    }
+
+    private func clearSettingsReadback() {
+        guard settingsReadback != nil else {
+            return
+        }
+        settingsReadback = nil
+        onSettingsReadbackChange?(nil)
+    }
+
+    private func clearFaultHistoryReadback() {
+        guard faultHistoryReadback != nil else {
+            return
+        }
+        faultHistoryReadback = nil
+        onFaultHistoryReadbackChange?(nil)
+    }
+
+    private func clearBmsSnapshot() {
+        guard bmsSnapshot != nil else {
+            return
+        }
+        bmsSnapshot = nil
+        onBmsSnapshotChange?(nil)
+    }
+
+    private func clearProtocolIdentityCandidate() {
+        guard protocolIdentityCandidate != nil else {
+            return
+        }
+        protocolIdentityCandidate = nil
+        onProtocolIdentityCandidateChange?(nil)
+    }
+
+    private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
         onPhaseChange?(phase)
     }
@@ -106,6 +196,10 @@ public final class LiveSpeedSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = model
+        clearSettingsReadback()
+        clearFaultHistoryReadback()
+        clearBmsSnapshot()
+        clearProtocolIdentityCandidate()
         peripheral.delegate = self
         setPhase(.connecting(model: model))
         central?.stopScan()
@@ -131,7 +225,7 @@ public final class LiveSpeedSessionCore: NSObject {
                 applyLinkUpStep(step)
             }
         } catch {
-            setPhase(.failed(.sessionFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.sessionFailed(error.sessionMessage)))
         }
     }
 
@@ -150,7 +244,7 @@ public final class LiveSpeedSessionCore: NSObject {
         }
 
         guard let selectedModel else {
-            setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.connectFailed(error.sessionMessage)))
             return
         }
 
@@ -164,14 +258,14 @@ public final class LiveSpeedSessionCore: NSObject {
     }
 }
 
-extension LiveSpeedSessionCore: CBCentralManagerDelegate {
+extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         record("central_state=\(central.state.rawValue)")
         guard central.state == .poweredOn else {
             setPhase(.bluetoothUnavailable(rawState: central.state.rawValue))
             return
         }
-        setPhase(.scanning(model: .aero))
+        setPhase(.scanning)
         let services = CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
         record("scan_supported_services=\(services.map(\.uuidString).joined(separator: ","))")
         central.scanForPeripherals(withServices: nil)
@@ -187,8 +281,8 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
             peripheral: peripheral,
             advertisementData: advertisementData
         )
-        observeAdvertisement(advertisement)
         discoveredPeripherals[advertisement.peripheralIdentifier] = peripheral
+        observeAdvertisement(advertisement)
         let advertisedServices = advertisement.advertisedServiceUuids.map(String.init(describing:)).joined(separator: ",")
         let candidate = [
             "candidate=\(advertisement.peripheralIdentifier.rawValue)",
@@ -208,7 +302,7 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
-        setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+        setPhase(.failed(.connectFailed(error.sessionMessage)))
     }
 
     public func centralManager(
@@ -220,10 +314,10 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
     }
 }
 
-extension LiveSpeedSessionCore: CBPeripheralDelegate {
+extension CutoutSessionCore: CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error {
-            setPhase(.failed(.serviceDiscoveryFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.serviceDiscoveryFailed(error.sessionMessage)))
             return
         }
         let services = peripheral.services ?? []
@@ -240,7 +334,7 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.characteristicDiscoveryFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.characteristicDiscoveryFailed(error.sessionMessage)))
             return
         }
         service.characteristics?.forEach { characteristic in
@@ -260,7 +354,7 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.notificationFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.notificationFailed(error.sessionMessage)))
             return
         }
         guard
@@ -278,19 +372,19 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
                 at: receivedAt
             )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
-            record("speed_mm_s=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
-            record("voltage_mv=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
+            record("speed=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
+            record("voltage=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
             record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value) } ?? "nil")")
             record("live_records=\(liveOwner.records.count)")
             applyNotificationStep(step, receivedAt: receivedAt)
         } catch {
             record("notification_ingest_error=\(error)")
-            setPhase(.failed(.notificationIngestFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
         }
     }
 }
 
-extension LiveSpeedSessionCore: CoreBluetoothOperationSink {
+extension CutoutSessionCore: CoreBluetoothOperationSink {
     public func subscribe(channel: BluetoothUuid) {
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingNotifyChannel))
@@ -320,13 +414,13 @@ private struct MonotonicClock {
 }
 
 private extension Optional where Wrapped == Error {
-    var liveSpeedMessage: String {
+    var sessionMessage: String {
         map(String.init(describing:)) ?? "unknown error"
     }
 }
 
 private extension Error {
-    var liveSpeedMessage: String {
+    var sessionMessage: String {
         String(describing: self)
     }
 }

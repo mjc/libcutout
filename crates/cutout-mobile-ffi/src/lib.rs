@@ -3,21 +3,31 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
+    BatteryInfoDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, ChargeModeDto,
+    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultCode, FaultCodeDto,
+    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
+    FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
+    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredChargeModeDto,
+    MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
     MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
     NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
     ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
     PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto,
-    SemanticEventCountDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
-    TransportActionDto, TransportWriteLimit, TransportWriteLimitDto, ValueQualityDto,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    WallClockUnixTimestamp,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue, RawFieldValueDto,
+    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto,
+    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
+    Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
 };
 use cutout_protocols::{
-    ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
-    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, new_nosfet_aero_read_only_session,
+    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
+    ConcreteFalconReadOnlySession, ConcreteSessionErrorDto, ConcreteSessionStepResultDto,
+    IdentityBannerEvidence, ProtocolFamilyClassification, ProtocolModelIdentityEvidence,
+    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
+    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+    identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 
@@ -151,14 +161,89 @@ pub fn mobile_discovery_candidate_from_advertisement(
     }
 }
 
+/// Build a mobile discovery candidate from Veteran/NOSFET protocol identity.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
+    platform_identifier: String,
+    display_name: String,
+    model_id: u16,
+) -> MobileDiscoveryCandidateDto {
+    let resolution = identify_known_model(&StagedIdentityInput {
+        advertised_name: None,
+        gatt: &[] as &[GattFingerprint],
+        stream_family: ProtocolFamilyClassification::Pending,
+        banner_model: IdentityBannerEvidence::Missing,
+        protocol_model: ProtocolModelIdentityEvidence::model_id(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            model_id,
+        ),
+    });
+
+    let Some(model) = resolution.model else {
+        return MobileDiscoveryCandidateDto {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "Veteran protocol model id".to_owned(),
+            detail: format!("Unknown Veteran/NOSFET model id {model_id}"),
+            is_picker_candidate: true,
+            support: MobileDiscoveryCandidateSupportDto::Unsupported,
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Model not supported".to_owned()),
+        };
+    };
+
+    let electric_unicycle_model = match (
+        model.protocol_family,
+        model.wire_model_id.map(|wire_model_id| wire_model_id.value),
+    ) {
+        (ProtocolFamily::VeteranLeaperkimNosfet, Some(43)) => {
+            Some(MobileElectricUnicycleModelDto::Aero)
+        }
+        _ => None,
+    };
+    let supported = electric_unicycle_model.is_some();
+
+    MobileDiscoveryCandidateDto {
+        platform_identifier,
+        display_name,
+        product_category: "Electric unicycle".to_owned(),
+        evidence: "Veteran protocol model id".to_owned(),
+        detail: match resolution.outcome {
+            StagedIdentityOutcome::Matched => {
+                format!("{} confirmed by model id {model_id}", model.model)
+            }
+            _ => format!("Veteran/NOSFET model id {model_id} confirmed"),
+        },
+        is_picker_candidate: true,
+        support: if supported {
+            MobileDiscoveryCandidateSupportDto::Supported
+        } else {
+            MobileDiscoveryCandidateSupportDto::Unsupported
+        },
+        connection_route: supported.then(|| "electric_unicycle".to_owned()),
+        electric_unicycle_model,
+        disabled_reason: (!supported).then(|| "Model not supported".to_owned()),
+    }
+}
+
 fn mobile_electric_unicycle_model_from_name(
     lower_name: &str,
 ) -> Option<MobileElectricUnicycleModelDto> {
-    if lower_name.contains("falcon") {
+    if lower_name.contains("falcon")
+        || lower_name.contains("begode")
+        || lower_name.contains("gotway")
+    {
         return Some(MobileElectricUnicycleModelDto::Falcon);
     }
 
-    if lower_name.contains("aero") || lower_name.contains("nosfet") {
+    if lower_name.contains("aero")
+        || lower_name.contains("nosfet")
+        || lower_name.contains("veteran")
+        || lower_name.starts_with("nf")
+    {
         return Some(MobileElectricUnicycleModelDto::Aero);
     }
 
@@ -182,6 +267,12 @@ pub enum MobileCommandDto {
 
     /// Request diagnostics.
     RequestDiagnostics,
+
+    /// Request historical fault information.
+    RequestFaultHistory,
+
+    /// Request current settings without changing device state.
+    RequestSettings,
 
     /// Sound a horn or alert.
     SoundHorn,
@@ -373,6 +464,15 @@ pub enum MobileSessionOutputKindDto {
 
     /// Typed protocol notification ingest outcome.
     NotificationIngest,
+
+    /// Read-only settings response.
+    SettingsReadback,
+
+    /// Read-only fault-history response.
+    FaultHistoryReadback,
+
+    /// Read-only BMS or pack-health response.
+    BmsSnapshot,
 }
 
 /// Mobile output DTO.
@@ -389,6 +489,18 @@ pub struct MobileSessionOutputDto {
 
     /// Typed parser-first ingest outcome.
     pub ingest: Option<MobileNotificationIngestOutcomeDto>,
+
+    /// Typed read-only settings response.
+    pub settings_readback: Option<MobileSettingsReadbackDto>,
+
+    /// Typed read-only fault-history response.
+    pub fault_history_readback: Option<MobileFaultHistoryReadbackDto>,
+
+    /// Typed read-only BMS or pack-health response.
+    pub bms_snapshot: Option<MobileBmsSnapshotDto>,
+
+    /// Veteran/NOSFET protocol model id when an Aero-family session decoded it.
+    pub veteran_protocol_model_id: Option<u16>,
 }
 
 /// Mobile notification ingest outcome kind.
@@ -411,6 +523,28 @@ pub enum MobileNotificationIngestOutcomeKindDto {
 
     /// Notification was intentionally ignored.
     Ignored,
+}
+
+/// Mobile ignored notification reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileIgnoredNotificationReasonDto {
+    /// Notification arrived on a channel the selected protocol does not consume.
+    WrongChannel,
+
+    /// Notification could not be associated with a supported protocol family.
+    UnsupportedFamily,
+
+    /// Notification was classified to a family but not to a supported channel.
+    UnsupportedChannel,
+
+    /// Notification was accepted by a known family but no semantic mapping exists yet.
+    AcceptedButUnmapped,
+
+    /// Notification advanced frame-boundary search without completing a frame.
+    SeekingFrameBoundary,
+
+    /// Notification was classified and intentionally dropped by policy.
+    IntentionallyDropped,
 }
 
 /// Mobile parser error kind.
@@ -470,6 +604,9 @@ pub struct MobileReservedPayloadEvidenceDto {
     /// Reserved payload body length.
     pub body_len: MobilePayloadBodyLenDto,
 
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
+
     /// Evidence verification status.
     pub verification: MobileVerificationStatusDto,
 }
@@ -485,13 +622,16 @@ pub struct MobileParserGapEvidenceDto {
 
     /// Unparsed body length.
     pub body_len: MobilePayloadBodyLenDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
 }
 
 /// Mobile notification evidence DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNotificationEvidenceDto {
     /// Protocol family that accepted or classified the notification.
-    pub family: Option<MobileProtocolFamilyDto>,
+    pub family: MobileProtocolFamilyDto,
 
     /// GATT channel UUID bytes.
     pub channel: Vec<u8>,
@@ -503,14 +643,33 @@ pub struct MobileNotificationEvidenceDto {
     pub monotonic_ms: MobileMonotonicMillisDto,
 }
 
+/// Mobile ignored notification evidence DTO.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileIgnoredNotificationEvidenceDto {
+    /// Protocol family when classification got that far.
+    pub family: Option<MobileProtocolFamilyDto>,
+
+    /// GATT channel UUID bytes.
+    pub channel: Vec<u8>,
+
+    /// Notification payload length without retaining payload bytes.
+    pub len: MobileNotificationByteLenDto,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: MobileMonotonicMillisDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
+}
+
 /// Mobile parser-first notification ingest outcome DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNotificationIngestOutcomeDto {
     /// Outcome kind.
     pub kind: MobileNotificationIngestOutcomeKindDto,
 
-    /// Shared notification evidence without raw payload bytes.
-    pub notification: MobileNotificationEvidenceDto,
+    /// Accepted notification evidence without raw payload bytes.
+    pub notification: Option<MobileNotificationEvidenceDto>,
 
     /// Number of semantic events emitted from this notification.
     pub event_count: Option<MobileSemanticEventCountDto>,
@@ -523,6 +682,12 @@ pub struct MobileNotificationIngestOutcomeDto {
 
     /// Parser gap evidence for parser-gap outcomes.
     pub gap: Option<MobileParserGapEvidenceDto>,
+
+    /// Ignored notification evidence.
+    pub ignored: Option<MobileIgnoredNotificationEvidenceDto>,
+
+    /// Reason an ignored notification did not enter a decoder path.
+    pub ignored_reason: Option<MobileIgnoredNotificationReasonDto>,
 }
 
 /// Mobile step-error kind.
@@ -564,47 +729,59 @@ pub struct MobileTelemetrySnapshotDto {
     /// Snapshot timestamp.
     pub at_ms: Option<MobileMonotonicMillisDto>,
 
-    /// Reported or calculated speed in millimeters per second.
-    pub speed: Option<MobileMeasuredI32Dto>,
+    /// Reported or calculated speed.
+    pub speed: Option<SpeedReading>,
 
-    /// Reported voltage in millivolts.
-    pub voltage: Option<MobileMeasuredI32Dto>,
+    /// Conservative operating state inferred from currently available telemetry.
+    pub operating_state: RideOperatingState,
 
-    /// Reported battery current in milliamps.
-    pub battery_current: Option<MobileMeasuredI32Dto>,
+    /// Reported voltage.
+    pub voltage: Option<VoltageReading>,
 
-    /// Reported motor current in milliamps.
-    pub motor_current: Option<MobileMeasuredI32Dto>,
+    /// Reported battery current.
+    pub battery_current: Option<BatteryCurrentReading>,
 
-    /// Reported power in milliwatts.
-    pub power: Option<MobileMeasuredI64Dto>,
+    /// Reported motor current.
+    pub motor_current: Option<PhaseCurrentReading>,
 
-    /// Reported controller temperature in millicelsius.
-    pub controller_temperature: Option<MobileMeasuredI32Dto>,
+    /// Reported power.
+    pub power: Option<PowerReading>,
 
-    /// Reported motor temperature in millicelsius.
-    pub motor_temperature: Option<MobileMeasuredI32Dto>,
+    /// Signed power/current flow direction when known enough for conservative UI labels.
+    pub power_flow: Option<PowerFlowDirection>,
 
-    /// Reported battery temperature in millicelsius.
-    pub battery_temperature: Option<MobileMeasuredI32Dto>,
+    /// Voltage sag/loaded-pack delta when modeled by the product contract.
+    pub voltage_sag: Option<VoltageDeltaReading>,
+
+    /// Reported controller temperature.
+    pub controller_temperature: Option<TemperatureReading>,
+
+    /// Reported motor temperature.
+    pub motor_temperature: Option<TemperatureReading>,
+
+    /// Reported battery temperature.
+    pub battery_temperature: Option<TemperatureReading>,
 
     /// Reported PWM duty in permille.
-    pub pwm: Option<MobileMeasuredI16Dto>,
+    pub pwm: Option<DutyCycle>,
 
-    /// Reported distance in millimeters.
-    pub distance: Option<MobileMeasuredU64Dto>,
+    /// Reported distance.
+    pub distance: Option<DistanceReading>,
 
-    /// Reported pitch in millidegrees.
-    pub pitch: Option<MobileMeasuredI32Dto>,
+    /// Limp-home/range estimate when modeled by the product contract.
+    pub limp_home_range: Option<DistanceReading>,
 
-    /// Reported roll in millidegrees.
-    pub roll: Option<MobileMeasuredI32Dto>,
+    /// Reported pitch.
+    pub pitch: Option<AngleReading>,
+
+    /// Reported roll.
+    pub roll: Option<AngleReading>,
 
     /// Reported battery level.
-    pub battery_level_reported: Option<MobileMeasuredU8Dto>,
+    pub battery_level_reported: Option<BatteryLevelReading>,
 
     /// Estimated battery percent.
-    pub battery_level_estimated: Option<MobileMeasuredU8Dto>,
+    pub battery_level_estimated: Option<BatteryLevelReading>,
 }
 
 /// Confidence level for BMS topology mapping.
@@ -667,14 +844,14 @@ pub struct MobileBmsGroupSnapshotDto {
     /// Optional explicit label such as `left pack`.
     pub label: Option<String>,
 
-    /// Group voltage in millivolts.
-    pub voltage: Option<MobileMeasuredI32Dto>,
+    /// Group voltage.
+    pub voltage: Option<VoltageReading>,
 
-    /// Group temperature in millicelsius.
-    pub temperature: Option<MobileMeasuredI32Dto>,
+    /// Group temperature.
+    pub temperature: Option<TemperatureReading>,
 
-    /// Estimated internal resistance in milliohms.
-    pub resistance_milliohms: Option<u16>,
+    /// Estimated internal resistance.
+    pub resistance: Option<Resistance>,
 
     /// Whether balancing is active for this group when known.
     pub is_balancing: Option<bool>,
@@ -702,26 +879,29 @@ pub struct MobileBmsFaultDto {
 /// Typed BMS snapshot for mobile pack and cells screens.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBmsSnapshotDto {
+    /// Whether BMS or pack-health data is available for display.
+    pub availability: MobileReadbackAvailabilityDto,
+
     /// Topology summary for this reading.
     pub topology: MobileBmsTopologyDto,
 
     /// State of charge or usable energy percent when known.
-    pub energy_percent: Option<MobileMeasuredU8Dto>,
+    pub energy_percent: Option<BatteryLevelReading>,
 
-    /// Pack voltage in millivolts.
-    pub voltage: Option<MobileMeasuredI32Dto>,
+    /// Pack voltage.
+    pub voltage: Option<VoltageReading>,
 
-    /// Pack current in milliamps.
-    pub current: Option<MobileMeasuredI32Dto>,
+    /// Pack current.
+    pub current: Option<BatteryCurrentReading>,
 
-    /// Cell-group delta in millivolts.
-    pub cell_delta_millivolts: Option<MobileMeasuredI32Dto>,
+    /// Cell-group voltage delta.
+    pub cell_delta: Option<VoltageDeltaReading>,
 
     /// One-based index of the lowest group when known.
     pub lowest_group_index: Option<u16>,
 
-    /// Highest observed temperature in millicelsius.
-    pub highest_temperature: Option<MobileMeasuredI32Dto>,
+    /// Highest observed temperature.
+    pub highest_temperature: Option<TemperatureReading>,
 
     /// Human-readable label for the hottest area.
     pub highest_temperature_label: Option<String>,
@@ -751,84 +931,267 @@ pub struct MobileBmsSnapshotDto {
     pub capture_action_state: Option<String>,
 }
 
-/// Mobile measured i32 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredI32Dto {
-    /// Fixed-unit value.
-    pub value: i32,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
+impl From<BatteryInfoDto> for MobileBmsSnapshotDto {
+    fn from(battery: BatteryInfoDto) -> Self {
+        Self::from_page(MobileReadbackAvailabilityDto::Available, battery)
+    }
 }
 
-/// Mobile measured i64 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredI64Dto {
-    /// Fixed-unit value.
-    pub value: i64,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
+impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
+    fn from(readback: BatteryReadbackDto) -> Self {
+        let availability = readback.availability.into();
+        match (availability, readback.page) {
+            (MobileReadbackAvailabilityDto::Available, Some(page)) => {
+                Self::from_page(availability, page)
+            }
+            _ => Self::empty_readback(availability),
+        }
+    }
 }
 
-/// Mobile measured i16 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredI16Dto {
-    /// Fixed-unit value.
-    pub value: i16,
+impl MobileBmsSnapshotDto {
+    fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
+        let groups = bms_groups_from_cell_voltages(&battery.cell_voltages);
+        Self {
+            availability,
+            topology: MobileBmsTopologyDto::unknown_readback(),
+            energy_percent: battery
+                .level_reported
+                .or(battery.level_estimated)
+                .map(Into::into),
+            voltage: battery.voltage.map(Into::into),
+            current: battery.current.map(Into::into),
+            cell_delta: cell_voltage_delta(&battery.cell_voltages),
+            lowest_group_index: lowest_cell_voltage_group_index(&battery.cell_voltages),
+            highest_temperature: highest_battery_temperature(
+                battery.temperature,
+                battery.temperatures,
+            ),
+            highest_temperature_label: None,
+            balancing_summary: None,
+            balancing_detail: None,
+            fault_summary: None,
+            fault_detail: None,
+            groups,
+            faults: Vec::new(),
+            capture_action_title: None,
+            capture_action_state: None,
+        }
+    }
 
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
+    fn empty_readback(availability: MobileReadbackAvailabilityDto) -> Self {
+        Self {
+            availability,
+            topology: MobileBmsTopologyDto::unknown_readback(),
+            energy_percent: None,
+            voltage: None,
+            current: None,
+            cell_delta: None,
+            lowest_group_index: None,
+            highest_temperature: None,
+            highest_temperature_label: None,
+            balancing_summary: None,
+            balancing_detail: None,
+            fault_summary: None,
+            fault_detail: None,
+            groups: Vec::new(),
+            faults: Vec::new(),
+            capture_action_title: None,
+            capture_action_state: None,
+        }
+    }
 }
 
-/// Mobile measured u8 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredU8Dto {
-    /// Fixed-unit value.
-    pub value: u8,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
+fn bms_groups_from_cell_voltages(
+    cell_voltages: &[MeasuredI32Dto],
+) -> Vec<MobileBmsGroupSnapshotDto> {
+    cell_voltages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, voltage)| {
+            let group_index = one_based_group_index(index)?;
+            Some(MobileBmsGroupSnapshotDto {
+                index: group_index,
+                label: Some(format!("group {group_index}")),
+                voltage: Some((*voltage).into()),
+                temperature: None,
+                resistance: None,
+                is_balancing: None,
+                alert_level: MobileBmsAlertLevelDto::Nominal,
+                detail: None,
+            })
+        })
+        .collect()
 }
 
-/// Mobile measured u64 value.
+fn one_based_group_index(index: usize) -> Option<u16> {
+    index
+        .checked_add(1)
+        .and_then(|index| u16::try_from(index).ok())
+}
+
+fn cell_voltage_delta(cell_voltages: &[MeasuredI32Dto]) -> Option<VoltageDeltaReading> {
+    let min = cell_voltages.iter().map(|voltage| voltage.value).min()?;
+    let max = cell_voltages.iter().map(|voltage| voltage.value).max()?;
+    let first = cell_voltages.first()?;
+    Some(VoltageDeltaReading {
+        value: VoltageDelta {
+            value: max.saturating_sub(min),
+        },
+        source: MobileValueSourceDto::Calculated,
+        quality: MobileValueQualityDto::Known,
+        verification: first.verification.into(),
+    })
+}
+
+fn lowest_cell_voltage_group_index(cell_voltages: &[MeasuredI32Dto]) -> Option<u16> {
+    cell_voltages
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, voltage)| voltage.value)
+        .and_then(|(index, _)| one_based_group_index(index))
+}
+
+impl MobileBmsTopologyDto {
+    fn unknown_readback() -> Self {
+        Self {
+            layout_label: "unknown BMS topology".to_owned(),
+            series_group_count: None,
+            parallel_count: None,
+            pack_count: 0,
+            bms_count: 0,
+            confidence: MobileBmsTopologyConfidenceDto::Unverified,
+        }
+    }
+}
+
+/// Conservative signed power/current flow direction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum PowerFlowDirection {
+    /// Positive discharge from pack to controller/motor.
+    Discharge,
+
+    /// No measurable signed pack flow.
+    Zero,
+
+    /// Negative signed pack flow while explicit protocol charge state says charging.
+    Charging,
+
+    /// Negative signed pack flow while the wheel is moving.
+    Regeneration,
+
+    /// Negative signed flow without enough motion or plug context to label charge or regen.
+    NegativeUnknown,
+}
+
+/// Conservative EUC ride operating state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum RideOperatingState {
+    /// No live evidence has established whether the EUC is parked, riding, or charging.
+    Unknown,
+
+    /// Telemetry indicates the EUC is stationary.
+    Parked,
+
+    /// Telemetry indicates the EUC is moving under ride context.
+    Riding,
+
+    /// Explicit charge/plug evidence indicates the EUC is charging.
+    Charging,
+}
+
+macro_rules! mobile_quantity {
+    ($quantity:ident, $reading:ident, $raw:ty, $quantity_doc:literal, $reading_doc:literal) => {
+        #[doc = $quantity_doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        pub struct $quantity {
+            /// Fixed-unit value owned by this quantity type.
+            pub value: $raw,
+        }
+
+        #[doc = $reading_doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        pub struct $reading {
+            /// Semantic quantity value.
+            pub value: $quantity,
+
+            /// Value source.
+            pub source: MobileValueSourceDto,
+
+            /// Value quality.
+            pub quality: MobileValueQualityDto,
+
+            /// Value verification status.
+            pub verification: MobileVerificationStatusDto,
+        }
+    };
+}
+
+mobile_quantity!(Speed, SpeedReading, i32, "Speed.", "Measured speed.");
+mobile_quantity!(
+    Voltage,
+    VoltageReading,
+    i32,
+    "Voltage.",
+    "Measured voltage."
+);
+mobile_quantity!(
+    BatteryCurrent,
+    BatteryCurrentReading,
+    i32,
+    "Battery current.",
+    "Measured battery current."
+);
+mobile_quantity!(
+    PhaseCurrent,
+    PhaseCurrentReading,
+    i32,
+    "Phase current.",
+    "Measured phase current."
+);
+mobile_quantity!(Power, PowerReading, i64, "Power.", "Measured power.");
+mobile_quantity!(
+    Temperature,
+    TemperatureReading,
+    i32,
+    "Temperature.",
+    "Measured temperature."
+);
+mobile_quantity!(
+    Distance,
+    DistanceReading,
+    u64,
+    "Distance.",
+    "Measured distance."
+);
+mobile_quantity!(Angle, AngleReading, i32, "Angle.", "Measured angle.");
+mobile_quantity!(
+    BatteryLevel,
+    BatteryLevelReading,
+    u8,
+    "Battery level.",
+    "Measured battery level."
+);
+mobile_quantity!(
+    VoltageDelta,
+    VoltageDeltaReading,
+    i32,
+    "Voltage delta.",
+    "Measured voltage delta."
+);
+
+/// Electrical resistance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredU64Dto {
-    /// Fixed-unit value.
-    pub value: u64,
+pub struct Resistance {
+    /// Fixed-unit resistance value.
+    pub value: u16,
+}
 
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
+/// PWM duty cycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DutyCycle {
+    /// Permille duty cycle.
+    pub permille: i16,
 }
 
 /// Mobile parser diagnostics DTO.
@@ -929,6 +1292,117 @@ pub enum MobileVerificationStatusDto {
 
     /// Verified against source-attributed documentation and hardware.
     SourceAndHardwareVerified,
+}
+
+/// Availability of a read-only response for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileReadbackAvailabilityDto {
+    /// The device reported the requested readback.
+    Available,
+
+    /// The readback is expected for this device/profile but was not available.
+    Unavailable,
+
+    /// The readback is not supported for this device/profile.
+    Unsupported,
+}
+
+/// Raw numeric field from a read-only settings response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRawFieldValueDto {
+    /// Protocol-family field identifier.
+    pub id: u16,
+
+    /// Sign-extended value exactly as reported by the protocol layer.
+    pub value: i64,
+}
+
+/// Generic read-only settings entry for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSettingsEntryDto {
+    /// Raw field value with protocol identity preserved.
+    pub field: MobileRawFieldValueDto,
+
+    /// Source of the settings value.
+    pub source: MobileValueSourceDto,
+
+    /// Confidence in the settings value.
+    pub quality: MobileValueQualityDto,
+
+    /// Verification state for the settings value.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Product-shaped EUC garage settings projection for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileEucGarageSettingsDto {
+    /// Whether this projected settings readback is available.
+    pub availability: MobileReadbackAvailabilityDto,
+
+    /// Beep margin speed setting, when understood.
+    pub beep_margin: Option<SpeedReading>,
+
+    /// Tiltback speed setting, when understood.
+    pub tiltback: Option<SpeedReading>,
+
+    /// Pedal mode setting, when understood.
+    pub pedal_mode: Option<MobilePedalModeDto>,
+}
+
+/// Read-only pedal mode projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePedalModeDto {
+    /// Unnormalized raw Veteran pedal mode value.
+    pub raw_mode: Option<u16>,
+}
+
+/// Bounded read-only settings response for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSettingsReadbackDto {
+    /// Whether the requested settings readback is available for display.
+    pub availability: MobileReadbackAvailabilityDto,
+
+    /// Product-shaped EUC garage settings projection.
+    pub euc_garage: MobileEucGarageSettingsDto,
+
+    /// Present settings entries.
+    pub entries: Vec<MobileSettingsEntryDto>,
+}
+
+/// Last reported fault for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileFaultHistoryEntryDto {
+    /// Protocol-specific fault code without proven semantic mapping.
+    pub code: MobileFaultCodeDto,
+
+    /// Source of the fault code.
+    pub source: MobileValueSourceDto,
+
+    /// Confidence in the fault-code interpretation.
+    pub quality: MobileValueQualityDto,
+
+    /// Verification state for the fault-code interpretation.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Protocol-specific fault code for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileFaultCodeDto {
+    /// Raw protocol field/value pair for an unknown fault code.
+    pub raw: MobileRawFieldValueDto,
+}
+
+/// Read-only last-fault history for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileFaultHistoryReadbackDto {
+    /// Whether fault history is available for display.
+    pub availability: MobileReadbackAvailabilityDto,
+
+    /// Last reported fault, if any.
+    pub last_fault: Option<MobileFaultHistoryEntryDto>,
+
+    /// Distance since the last fault, if reported separately.
+    pub since_distance: Option<DistanceReading>,
 }
 
 /// Mobile GATT characteristic role.
@@ -1208,11 +1682,30 @@ impl From<ValueSourceDto> for MobileValueSourceDto {
     }
 }
 
+impl From<ValueSource> for MobileValueSourceDto {
+    fn from(source: ValueSource) -> Self {
+        match source {
+            ValueSource::Reported => Self::Reported,
+            ValueSource::Calculated => Self::Calculated,
+            ValueSource::Estimated => Self::Estimated,
+        }
+    }
+}
+
 impl From<ValueQualityDto> for MobileValueQualityDto {
     fn from(quality: ValueQualityDto) -> Self {
         match quality {
             ValueQualityDto::Known => Self::Known,
             ValueQualityDto::Inferred => Self::Inferred,
+        }
+    }
+}
+
+impl From<ValueQuality> for MobileValueQualityDto {
+    fn from(quality: ValueQuality) -> Self {
+        match quality {
+            ValueQuality::Known => Self::Known,
+            ValueQuality::Inferred => Self::Inferred,
         }
     }
 }
@@ -1229,6 +1722,18 @@ impl From<VerificationStatusDto> for MobileVerificationStatusDto {
     }
 }
 
+impl From<VerificationStatus> for MobileVerificationStatusDto {
+    fn from(status: VerificationStatus) -> Self {
+        match status {
+            VerificationStatus::Unverified => Self::Unverified,
+            VerificationStatus::Inferred => Self::Inferred,
+            VerificationStatus::SourceVerified => Self::SourceVerified,
+            VerificationStatus::HardwareVerified => Self::HardwareVerified,
+            VerificationStatus::SourceAndHardwareVerified => Self::SourceAndHardwareVerified,
+        }
+    }
+}
+
 impl From<MobileVerificationStatusDto> for VerificationStatus {
     fn from(status: MobileVerificationStatusDto) -> Self {
         match status {
@@ -1239,6 +1744,287 @@ impl From<MobileVerificationStatusDto> for VerificationStatus {
             MobileVerificationStatusDto::SourceAndHardwareVerified => {
                 Self::SourceAndHardwareVerified
             }
+        }
+    }
+}
+
+impl From<RawFieldValue> for MobileRawFieldValueDto {
+    fn from(field: RawFieldValue) -> Self {
+        Self {
+            id: field.id,
+            value: field.value,
+        }
+    }
+}
+
+impl From<RawFieldValueDto> for MobileRawFieldValueDto {
+    fn from(field: RawFieldValueDto) -> Self {
+        Self {
+            id: field.id,
+            value: field.value,
+        }
+    }
+}
+
+impl From<SettingsEntry> for MobileSettingsEntryDto {
+    fn from(entry: SettingsEntry) -> Self {
+        Self {
+            field: entry.field.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<SettingsEntryDto> for MobileSettingsEntryDto {
+    fn from(entry: SettingsEntryDto) -> Self {
+        Self {
+            field: entry.field.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl MobileEucGarageSettingsDto {
+    fn from_entries(
+        availability: MobileReadbackAvailabilityDto,
+        entries: &[MobileSettingsEntryDto],
+    ) -> Self {
+        if availability != MobileReadbackAvailabilityDto::Available {
+            return Self {
+                availability,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            };
+        }
+
+        Self {
+            availability,
+            beep_margin: settings_speed(
+                entries,
+                VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+                speed_from_deci_kmh,
+            ),
+            tiltback: settings_speed(
+                entries,
+                VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                speed_from_deci_kmh,
+            )
+            .or_else(|| settings_speed(entries, BEGODE_FIELD_TILTBACK_SPEED_KMH, speed_from_kmh)),
+            pedal_mode: settings_entry(entries, VETERAN_FIELD_PEDALS_MODE)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(|raw_mode| MobilePedalModeDto {
+                    raw_mode: Some(raw_mode),
+                }),
+        }
+    }
+}
+
+fn settings_entry(
+    entries: &[MobileSettingsEntryDto],
+    field_id: u16,
+) -> Option<MobileSettingsEntryDto> {
+    entries
+        .iter()
+        .copied()
+        .find(|entry| entry.field.id == field_id)
+}
+
+fn settings_speed(
+    entries: &[MobileSettingsEntryDto],
+    field_id: u16,
+    convert: fn(i64) -> Option<CoreSpeed>,
+) -> Option<SpeedReading> {
+    settings_entry(entries, field_id).and_then(|entry| {
+        convert(entry.field.value).map(|speed| SpeedReading {
+            value: Speed {
+                value: speed.as_millimetres_per_second(),
+            },
+            source: entry.source,
+            quality: entry.quality,
+            verification: entry.verification,
+        })
+    })
+}
+
+fn speed_from_deci_kmh(value: i64) -> Option<CoreSpeed> {
+    speed_from_milli_kmh(value.checked_mul(100)?)
+}
+
+fn speed_from_kmh(value: i64) -> Option<CoreSpeed> {
+    speed_from_milli_kmh(value.checked_mul(1_000)?)
+}
+
+fn speed_from_milli_kmh(value: i64) -> Option<CoreSpeed> {
+    (value >= 0)
+        .then_some(value)?
+        .checked_mul(5)?
+        .checked_div(18)?
+        .try_into()
+        .ok()
+        .map(CoreSpeed::from_millimetres_per_second)
+}
+
+impl From<SettingsReadback> for MobileSettingsReadbackDto {
+    fn from(readback: SettingsReadback) -> Self {
+        let availability = readback.availability().into();
+        let entries: Vec<_> = readback
+            .entries()
+            .into_iter()
+            .flatten()
+            .map(Into::into)
+            .collect();
+        let euc_garage = MobileEucGarageSettingsDto::from_entries(availability, &entries);
+
+        Self {
+            availability,
+            euc_garage,
+            entries,
+        }
+    }
+}
+
+impl From<SettingsReadbackDto> for MobileSettingsReadbackDto {
+    fn from(readback: SettingsReadbackDto) -> Self {
+        let availability = readback.availability.into();
+        let entries: Vec<_> = (availability == MobileReadbackAvailabilityDto::Available)
+            .then_some(readback.entries)
+            .into_iter()
+            .flatten()
+            .map(Into::into)
+            .collect();
+        let euc_garage = MobileEucGarageSettingsDto::from_entries(availability, &entries);
+
+        Self {
+            availability,
+            euc_garage,
+            entries,
+        }
+    }
+}
+
+impl From<SettingsReadbackAvailability> for MobileReadbackAvailabilityDto {
+    fn from(availability: SettingsReadbackAvailability) -> Self {
+        match availability {
+            SettingsReadbackAvailability::Available => Self::Available,
+            SettingsReadbackAvailability::Unavailable => Self::Unavailable,
+            SettingsReadbackAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<SettingsReadbackAvailabilityDto> for MobileReadbackAvailabilityDto {
+    fn from(availability: SettingsReadbackAvailabilityDto) -> Self {
+        match availability {
+            SettingsReadbackAvailabilityDto::Available => Self::Available,
+            SettingsReadbackAvailabilityDto::Unavailable => Self::Unavailable,
+            SettingsReadbackAvailabilityDto::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<FaultHistoryAvailability> for MobileReadbackAvailabilityDto {
+    fn from(availability: FaultHistoryAvailability) -> Self {
+        match availability {
+            FaultHistoryAvailability::Available => Self::Available,
+            FaultHistoryAvailability::Unavailable => Self::Unavailable,
+            FaultHistoryAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<FaultHistoryAvailabilityDto> for MobileReadbackAvailabilityDto {
+    fn from(availability: FaultHistoryAvailabilityDto) -> Self {
+        match availability {
+            FaultHistoryAvailabilityDto::Available => Self::Available,
+            FaultHistoryAvailabilityDto::Unavailable => Self::Unavailable,
+            FaultHistoryAvailabilityDto::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<BatteryReadbackAvailabilityDto> for MobileReadbackAvailabilityDto {
+    fn from(availability: BatteryReadbackAvailabilityDto) -> Self {
+        match availability {
+            BatteryReadbackAvailabilityDto::Available => Self::Available,
+            BatteryReadbackAvailabilityDto::Unavailable => Self::Unavailable,
+            BatteryReadbackAvailabilityDto::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<FaultHistoryEntry> for MobileFaultHistoryEntryDto {
+    fn from(entry: FaultHistoryEntry) -> Self {
+        Self {
+            code: entry.code.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<FaultHistoryEntryDto> for MobileFaultHistoryEntryDto {
+    fn from(entry: FaultHistoryEntryDto) -> Self {
+        Self {
+            code: entry.code.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<FaultCodeDto> for MobileFaultCodeDto {
+    fn from(code: FaultCodeDto) -> Self {
+        Self {
+            raw: code.raw.into(),
+        }
+    }
+}
+
+impl From<FaultCode> for MobileFaultCodeDto {
+    fn from(code: FaultCode) -> Self {
+        Self {
+            raw: code.raw.into(),
+        }
+    }
+}
+
+impl From<FaultHistoryReadback> for MobileFaultHistoryReadbackDto {
+    fn from(readback: FaultHistoryReadback) -> Self {
+        Self {
+            availability: readback.availability().into(),
+            last_fault: readback.last_fault().map(Into::into),
+            since_distance: readback
+                .since_distance()
+                .map(MeasuredU64Dto::from)
+                .map(Into::into),
+        }
+    }
+}
+
+impl From<FaultHistoryReadbackDto> for MobileFaultHistoryReadbackDto {
+    fn from(readback: FaultHistoryReadbackDto) -> Self {
+        let availability = readback.availability.into();
+        let (last_fault, since_distance) =
+            if availability == MobileReadbackAvailabilityDto::Available {
+                (
+                    readback.last_fault.map(Into::into),
+                    readback.since_distance.map(Into::into),
+                )
+            } else {
+                (None, None)
+            };
+
+        Self {
+            availability,
+            last_fault,
+            since_distance,
         }
     }
 }
@@ -1330,7 +2116,7 @@ impl AeroReadOnlySession {
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let input = SessionInputDto::from(input);
-        MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
+        mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input))
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -1338,7 +2124,7 @@ impl AeroReadOnlySession {
         self.lock_inner()
             .drain_outputs()
             .into_iter()
-            .map(Into::into)
+            .map(mobile_aero_session_output)
             .collect()
     }
 
@@ -1410,24 +2196,24 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             MobileCommandDto::RequestBatteryInfo => Self::RequestBatteryInfo,
             MobileCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
+            MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
+            MobileCommandDto::RequestSettings => Self::RequestSettings,
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
 }
 
-impl From<CommandKindDto> for MobileCommandDto {
-    fn from(command: CommandKindDto) -> Self {
-        match command {
-            CommandKindDto::RequestIdentity => Self::RequestIdentity,
-            CommandKindDto::RequestTelemetry => Self::RequestTelemetry,
-            CommandKindDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
-            CommandKindDto::RequestBatteryInfo => Self::RequestBatteryInfo,
-            CommandKindDto::RequestDiagnostics
-            | CommandKindDto::RequestSettings
-            | CommandKindDto::SetLights
-            | CommandKindDto::SetRawMotorCurrent => Self::RequestDiagnostics,
-            CommandKindDto::SoundHorn => Self::SoundHorn,
-        }
+fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCommandDto> {
+    match command {
+        CommandKindDto::RequestIdentity => Some(MobileCommandDto::RequestIdentity),
+        CommandKindDto::RequestTelemetry => Some(MobileCommandDto::RequestTelemetry),
+        CommandKindDto::RequestFirmwareInfo => Some(MobileCommandDto::RequestFirmwareInfo),
+        CommandKindDto::RequestBatteryInfo => Some(MobileCommandDto::RequestBatteryInfo),
+        CommandKindDto::RequestDiagnostics => Some(MobileCommandDto::RequestDiagnostics),
+        CommandKindDto::RequestFaultHistory => Some(MobileCommandDto::RequestFaultHistory),
+        CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
+        CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
+        CommandKindDto::SetLights | CommandKindDto::SetRawMotorCurrent => None,
     }
 }
 
@@ -1439,35 +2225,98 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 channel: channel.to_vec(),
                 bytes: Vec::new(),
                 ingest: None,
+                settings_readback: None,
+                fault_history_readback: None,
+                bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
                 kind: MobileSessionOutputKindDto::Write,
                 channel: channel.to_vec(),
                 bytes,
                 ingest: None,
+                settings_readback: None,
+                fault_history_readback: None,
+                bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
                 kind: MobileSessionOutputKindDto::Disconnect,
                 channel: Vec::new(),
                 bytes: Vec::new(),
                 ingest: None,
+                settings_readback: None,
+                fault_history_readback: None,
+                bms_snapshot: None,
+                veteran_protocol_model_id: None,
+            },
+            SessionOutputDto::ReadOnly(response) => match response.payload {
+                ReadOnlyOutputPayload::Settings(settings) => Self {
+                    kind: MobileSessionOutputKindDto::SettingsReadback,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: Some(settings.into()),
+                    fault_history_readback: None,
+                    bms_snapshot: None,
+                    veteran_protocol_model_id: None,
+                },
+                ReadOnlyOutputPayload::FaultHistory(fault_history) => Self {
+                    kind: MobileSessionOutputKindDto::FaultHistoryReadback,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: None,
+                    fault_history_readback: Some(fault_history.into()),
+                    bms_snapshot: None,
+                    veteran_protocol_model_id: None,
+                },
+                ReadOnlyOutputPayload::Battery(battery) => Self {
+                    kind: MobileSessionOutputKindDto::BmsSnapshot,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: None,
+                    fault_history_readback: None,
+                    bms_snapshot: Some(battery.into()),
+                    veteran_protocol_model_id: None,
+                },
+                ReadOnlyOutputPayload::Firmware(_)
+                | ReadOnlyOutputPayload::Diagnostics(_)
+                | ReadOnlyOutputPayload::RawTelemetry(_) => Self {
+                    kind: MobileSessionOutputKindDto::Event,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: None,
+                    fault_history_readback: None,
+                    bms_snapshot: None,
+                    veteran_protocol_model_id: None,
+                },
             },
             SessionOutputDto::Event(_) => Self {
                 kind: MobileSessionOutputKindDto::Event,
                 channel: Vec::new(),
                 bytes: Vec::new(),
                 ingest: None,
+                settings_readback: None,
+                fault_history_readback: None,
+                bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
             SessionOutputDto::NotificationIngest(outcome) => Self {
                 kind: MobileSessionOutputKindDto::NotificationIngest,
                 channel: Vec::new(),
                 bytes: Vec::new(),
                 ingest: Some(outcome.into()),
+                settings_readback: None,
+                fault_history_readback: None,
+                bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
         }
     }
 }
-
 impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
     fn from(outcome: NotificationIngestOutcomeDto) -> Self {
         match outcome {
@@ -1476,124 +2325,184 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
                 event_count,
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::SemanticEvents,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: Some(event_count.into()),
                 parser_error: None,
                 reserved: None,
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::BufferedFragment(notification) => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::BufferedFragment,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: None,
                 reserved: None,
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::ParserDiagnostic {
                 notification,
                 error,
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::ParserDiagnostic,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: Some(error.into()),
                 reserved: None,
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::KnownReserved {
                 notification,
                 payload,
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::KnownReserved,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: None,
                 reserved: Some(payload.into()),
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::ParserGap { notification, gap } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::ParserGap,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: None,
                 reserved: None,
                 gap: Some(gap.into()),
+                ignored: None,
+                ignored_reason: None,
             },
-            NotificationIngestOutcomeDto::Ignored(notification) => Self {
+            NotificationIngestOutcomeDto::Ignored { evidence, reason } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::Ignored,
-                notification: notification.into(),
+                notification: None,
                 event_count: None,
                 parser_error: None,
                 reserved: None,
                 gap: None,
+                ignored: Some(evidence.into()),
+                ignored_reason: Some(reason.into()),
             },
         }
     }
 }
 
-impl From<MeasuredI32Dto> for MobileMeasuredI32Dto {
-    fn from(measured: MeasuredI32Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-impl From<MeasuredI64Dto> for MobileMeasuredI64Dto {
-    fn from(measured: MeasuredI64Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-impl From<MeasuredI16Dto> for MobileMeasuredI16Dto {
+impl From<MeasuredI16Dto> for DutyCycle {
     fn from(measured: MeasuredI16Dto) -> Self {
         Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
+            permille: measured.value,
         }
     }
 }
 
-impl From<MeasuredU8Dto> for MobileMeasuredU8Dto {
-    fn from(measured: MeasuredU8Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
+macro_rules! mobile_quantity_from_measured {
+    ($measured:ty, $quantity:ident, $reading:ident) => {
+        impl From<$measured> for $reading {
+            fn from(measured: $measured) -> Self {
+                Self {
+                    value: $quantity {
+                        value: measured.value,
+                    },
+                    source: measured.source.into(),
+                    quality: measured.quality.into(),
+                    verification: measured.verification.into(),
+                }
+            }
         }
+    };
+}
+
+mobile_quantity_from_measured!(MeasuredI32Dto, Speed, SpeedReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, Voltage, VoltageReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, BatteryCurrent, BatteryCurrentReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, PhaseCurrent, PhaseCurrentReading);
+mobile_quantity_from_measured!(MeasuredI64Dto, Power, PowerReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, Temperature, TemperatureReading);
+mobile_quantity_from_measured!(MeasuredU64Dto, Distance, DistanceReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, Angle, AngleReading);
+mobile_quantity_from_measured!(MeasuredU8Dto, BatteryLevel, BatteryLevelReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, VoltageDelta, VoltageDeltaReading);
+
+fn highest_battery_temperature(
+    temperature: Option<MeasuredI32Dto>,
+    temperatures: Vec<Option<MeasuredI32Dto>>,
+) -> Option<TemperatureReading> {
+    temperature
+        .into_iter()
+        .chain(temperatures.into_iter().flatten())
+        .max_by_key(|reading| reading.value)
+        .map(Into::into)
+}
+
+fn power_flow_from_signed_current(
+    current: MeasuredI32Dto,
+    operating_state: RideOperatingState,
+) -> PowerFlowDirection {
+    match current.value.cmp(&0) {
+        std::cmp::Ordering::Greater => PowerFlowDirection::Discharge,
+        std::cmp::Ordering::Equal => PowerFlowDirection::Zero,
+        std::cmp::Ordering::Less => match operating_state {
+            RideOperatingState::Charging => PowerFlowDirection::Charging,
+            RideOperatingState::Riding => PowerFlowDirection::Regeneration,
+            RideOperatingState::Parked | RideOperatingState::Unknown => {
+                PowerFlowDirection::NegativeUnknown
+            }
+        },
     }
 }
 
-impl From<MeasuredU64Dto> for MobileMeasuredU64Dto {
-    fn from(measured: MeasuredU64Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
+fn ride_operating_state(
+    charge_mode: Option<MeasuredChargeModeDto>,
+    speed: Option<MeasuredI32Dto>,
+) -> RideOperatingState {
+    match charge_mode.map(|mode| mode.value) {
+        Some(ChargeModeDto::Charging) => RideOperatingState::Charging,
+        Some(ChargeModeDto::NotCharging) | None => match speed.map(|speed| speed.value.cmp(&0)) {
+            Some(std::cmp::Ordering::Equal) => RideOperatingState::Parked,
+            Some(_) => RideOperatingState::Riding,
+            None => RideOperatingState::Unknown,
+        },
     }
 }
 
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
+            family: evidence.family.into(),
+            channel: evidence.channel.to_vec(),
+            len: evidence.len.into(),
+            monotonic_ms: MobileMonotonicMillisDto::from_core_ffi_timestamp(evidence.monotonic_ms),
+        }
+    }
+}
+
+impl From<IgnoredNotificationEvidenceDto> for MobileIgnoredNotificationEvidenceDto {
+    fn from(evidence: IgnoredNotificationEvidenceDto) -> Self {
+        Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.to_vec(),
             len: evidence.len.into(),
             monotonic_ms: MobileMonotonicMillisDto::from_core_ffi_timestamp(evidence.monotonic_ms),
+            retained_payload: evidence.retained_payload,
+        }
+    }
+}
+
+impl From<IgnoredNotificationReasonDto> for MobileIgnoredNotificationReasonDto {
+    fn from(reason: IgnoredNotificationReasonDto) -> Self {
+        match reason {
+            IgnoredNotificationReasonDto::WrongChannel => Self::WrongChannel,
+            IgnoredNotificationReasonDto::UnsupportedFamily => Self::UnsupportedFamily,
+            IgnoredNotificationReasonDto::UnsupportedChannel => Self::UnsupportedChannel,
+            IgnoredNotificationReasonDto::AcceptedButUnmapped => Self::AcceptedButUnmapped,
+            IgnoredNotificationReasonDto::SeekingFrameBoundary => Self::SeekingFrameBoundary,
+            IgnoredNotificationReasonDto::IntentionallyDropped => Self::IntentionallyDropped,
         }
     }
 }
@@ -1661,6 +2570,7 @@ impl From<ReservedPayloadEvidenceDto> for MobileReservedPayloadEvidenceDto {
             selector: evidence.selector,
             tag: evidence.tag,
             body_len: evidence.body_len.into(),
+            retained_payload: evidence.retained_payload,
             verification: evidence.verification.into(),
         }
     }
@@ -1672,6 +2582,7 @@ impl From<ParserGapEvidenceDto> for MobileParserGapEvidenceDto {
             selector: evidence.selector,
             tag: evidence.tag,
             body_len: evidence.body_len.into(),
+            retained_payload: evidence.retained_payload,
         }
     }
 }
@@ -1685,12 +2596,42 @@ impl From<ConcreteSessionStepResultDto> for MobileSessionStepResultDto {
     }
 }
 
+fn mobile_aero_session_step_result(
+    result: ConcreteSessionStepResultDto,
+) -> MobileSessionStepResultDto {
+    MobileSessionStepResultDto {
+        outputs: result
+            .outputs
+            .into_iter()
+            .map(mobile_aero_session_output)
+            .collect(),
+        error: result.error.map(Into::into),
+    }
+}
+
+fn mobile_aero_session_output(output: SessionOutputDto) -> MobileSessionOutputDto {
+    let veteran_protocol_model_id = match &output {
+        SessionOutputDto::ReadOnly(response) => match &response.payload {
+            ReadOnlyOutputPayload::Firmware(firmware) => {
+                firmware.firmware_major.map(|major| major.value)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+
+    MobileSessionOutputDto {
+        veteran_protocol_model_id,
+        ..MobileSessionOutputDto::from(output)
+    }
+}
+
 impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
     fn from(error: ConcreteSessionErrorDto) -> Self {
         match error {
             ConcreteSessionErrorDto::CommandRefused { refusal } => Self {
                 kind: MobileSessionStepErrorKindDto::CommandRefused,
-                command: Some(refusal.command.into()),
+                command: mobile_command_from_command_kind(refusal.command),
                 reason: Some(control_refusal_reason_text(refusal.reason).to_owned()),
             },
             ConcreteSessionErrorDto::UnsupportedFalconProfile { .. } => Self {
@@ -1704,20 +2645,27 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
 
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
+        let operating_state = ride_operating_state(snapshot.charge_mode, snapshot.speed);
         Self {
             at_ms: snapshot
                 .at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
+            operating_state,
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
+            power_flow: snapshot
+                .battery_current
+                .map(|current| power_flow_from_signed_current(current, operating_state)),
+            voltage_sag: None,
             controller_temperature: snapshot.controller_temperature.map(Into::into),
             motor_temperature: snapshot.motor_temperature.map(Into::into),
             battery_temperature: snapshot.battery_temperature.map(Into::into),
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
+            limp_home_range: None,
             pitch: snapshot.pitch.map(Into::into),
             roll: snapshot.roll.map(Into::into),
             battery_level_reported: snapshot.battery_level_reported.map(Into::into),
@@ -1894,7 +2842,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_keeps_generic_brand_name_unconfirmed() {
+    fn mobile_discovery_candidate_routes_generic_gotway_name_for_testing() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-begode".to_owned(),
             Some("GotWay_002441".to_owned()),
@@ -1904,19 +2852,99 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
+            MobileDiscoveryCandidateSupportDto::Supported
+        );
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Falcon)
+        );
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_routes_nf_name_for_testing() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-aero".to_owned(),
+            Some("NF2557".to_owned()),
+            vec![0xffe0],
+        );
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Supported
+        );
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_routes_veteran_protocol_model_id_to_aero() {
+        let candidate = mobile_discovery_candidate_from_veteran_protocol_identity(
+            "ios-local-aero".to_owned(),
+            "NF2557".to_owned(),
+            43,
+        );
+
+        assert_eq!(candidate.platform_identifier, "ios-local-aero");
+        assert_eq!(candidate.display_name, "NF2557");
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(candidate.evidence, "Veteran protocol model id");
+        assert_eq!(candidate.detail, "NOSFET Aero confirmed by model id 43");
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Supported
+        );
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_keeps_unknown_veteran_model_id_unrouteable() {
+        let candidate = mobile_discovery_candidate_from_veteran_protocol_identity(
+            "ios-local-veteran".to_owned(),
+            "Veteran stream".to_owned(),
+            99,
+        );
+
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(candidate.evidence, "Veteran protocol model id");
+        assert_eq!(candidate.detail, "Unknown Veteran/NOSFET model id 99");
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
             MobileDiscoveryCandidateSupportDto::Unsupported
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason.as_deref(),
-            Some("Model not confirmed")
+            Some("Model not supported")
         );
     }
 
-    #[test]
-    fn mobile_bms_snapshot_dto_preserves_topology_and_group_detail() {
-        let snapshot = MobileBmsSnapshotDto {
+    fn bms_snapshot_fixture() -> MobileBmsSnapshotDto {
+        MobileBmsSnapshotDto {
+            availability: MobileReadbackAvailabilityDto::Available,
             topology: MobileBmsTopologyDto {
                 layout_label: "20S4P split pack".to_owned(),
                 series_group_count: Some(20),
@@ -1925,28 +2953,28 @@ mod tests {
                 bms_count: 2,
                 confidence: MobileBmsTopologyConfidenceDto::Verified,
             },
-            energy_percent: Some(MobileMeasuredU8Dto {
-                value: 72,
+            energy_percent: Some(BatteryLevelReading {
+                value: BatteryLevel { value: 72 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
-            voltage: Some(MobileMeasuredI32Dto {
-                value: 81_600,
+            voltage: Some(VoltageReading {
+                value: Voltage { value: 81_600 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
             current: None,
-            cell_delta_millivolts: Some(MobileMeasuredI32Dto {
-                value: 18,
+            cell_delta: Some(VoltageDeltaReading {
+                value: VoltageDelta { value: 18 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
             lowest_group_index: Some(17),
-            highest_temperature: Some(MobileMeasuredI32Dto {
-                value: 37_800,
+            highest_temperature: Some(TemperatureReading {
+                value: Temperature { value: 37_800 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
@@ -1959,19 +2987,19 @@ mod tests {
             groups: vec![MobileBmsGroupSnapshotDto {
                 index: 17,
                 label: Some("group 17".to_owned()),
-                voltage: Some(MobileMeasuredI32Dto {
-                    value: 4_071,
+                voltage: Some(VoltageReading {
+                    value: Voltage { value: 4_071 },
                     source: MobileValueSourceDto::Reported,
                     quality: MobileValueQualityDto::Known,
                     verification: MobileVerificationStatusDto::HardwareVerified,
                 }),
-                temperature: Some(MobileMeasuredI32Dto {
-                    value: 34_900,
+                temperature: Some(TemperatureReading {
+                    value: Temperature { value: 34_900 },
                     source: MobileValueSourceDto::Reported,
                     quality: MobileValueQualityDto::Known,
                     verification: MobileVerificationStatusDto::HardwareVerified,
                 }),
-                resistance_milliohms: Some(21),
+                resistance: Some(Resistance { value: 21 }),
                 is_balancing: Some(true),
                 alert_level: MobileBmsAlertLevelDto::Warning,
                 detail: Some("drops first during acceleration".to_owned()),
@@ -1983,7 +3011,12 @@ mod tests {
             }],
             capture_action_title: Some("record unsupported pack".to_owned()),
             capture_action_state: Some("disabled for launch".to_owned()),
-        };
+        }
+    }
+
+    #[test]
+    fn mobile_bms_snapshot_dto_preserves_topology_and_group_detail() {
+        let snapshot = bms_snapshot_fixture();
 
         assert_eq!(snapshot.topology.series_group_count, Some(20));
         assert_eq!(snapshot.topology.pack_count, 2);
@@ -2008,8 +3041,9 @@ mod tests {
             snapshot
                 .groups
                 .first()
-                .map(|group| group.resistance_milliohms),
-            Some(Some(21))
+                .and_then(|group| group.resistance)
+                .map(|resistance| resistance.value),
+            Some(21)
         );
         assert_eq!(
             snapshot.faults.first().map(|fault| fault.code.as_str()),
@@ -2019,6 +3053,655 @@ mod tests {
             snapshot.capture_action_title.as_deref(),
             Some("record unsupported pack")
         );
+    }
+
+    #[test]
+    fn mobile_settings_readback_preserves_present_fields_and_metadata() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0102, -17),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0203, 42),
+                source: ValueSource::Estimated,
+                quality: ValueQuality::Inferred,
+                verification: VerificationStatus::Inferred,
+            }),
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Available
+        );
+        assert_eq!(
+            mobile.entries,
+            vec![
+                MobileSettingsEntryDto {
+                    field: MobileRawFieldValueDto {
+                        id: 0x0102,
+                        value: -17,
+                    },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                },
+                MobileSettingsEntryDto {
+                    field: MobileRawFieldValueDto {
+                        id: 0x0203,
+                        value: 42,
+                    },
+                    source: MobileValueSourceDto::Estimated,
+                    quality: MobileValueQualityDto::Inferred,
+                    verification: MobileVerificationStatusDto::Inferred,
+                },
+            ]
+        );
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_known_euc_garage_settings() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_ALERT_DECI_KMH, 116),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceAndHardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 420),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_PEDALS_MODE, 1_920),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: Some(SpeedReading {
+                    value: Speed { value: 3_222 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+                }),
+                tiltback: Some(SpeedReading {
+                    value: Speed { value: 11_666 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }),
+                pedal_mode: Some(MobilePedalModeDto {
+                    raw_mode: Some(1_920),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_begode_tiltback_fallback() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_TILTBACK_SPEED_KMH, 50),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: None,
+                tiltback: Some(SpeedReading {
+                    value: Speed { value: 13_888 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceVerified,
+                }),
+                pedal_mode: None,
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_rejects_unrepresentable_euc_garage_speeds() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_ALERT_DECI_KMH, -1),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceAndHardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, i64::MAX),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_TILTBACK_SPEED_KMH, i64::MAX),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            }
+        );
+        assert_eq!(mobile.entries.len(), 3);
+    }
+
+    #[test]
+    fn mobile_settings_readback_preserves_unsupported_availability() {
+        let mobile = MobileSettingsReadbackDto::from(SettingsReadback::unsupported());
+
+        assert_eq!(
+            mobile,
+            MobileSettingsReadbackDto {
+                availability: MobileReadbackAvailabilityDto::Unsupported,
+                euc_garage: MobileEucGarageSettingsDto {
+                    availability: MobileReadbackAvailabilityDto::Unsupported,
+                    beep_margin: None,
+                    tiltback: None,
+                    pedal_mode: None,
+                },
+                entries: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_dto_strips_entries_when_not_available() {
+        let mobile = MobileSettingsReadbackDto::from(SettingsReadbackDto {
+            availability: SettingsReadbackAvailabilityDto::Unsupported,
+            entries: vec![SettingsEntryDto {
+                field: RawFieldValueDto {
+                    id: VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                    value: 420,
+                },
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }],
+        });
+
+        assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Unsupported
+        );
+        assert!(mobile.entries.is_empty());
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Unsupported,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_fault_history_preserves_unknown_fault_code_and_since_distance() {
+        let mobile = MobileFaultHistoryReadbackDto::from(FaultHistoryReadbackDto {
+            availability: FaultHistoryAvailabilityDto::Available,
+            last_fault: Some(FaultHistoryEntryDto {
+                code: FaultCodeDto {
+                    raw: RawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
+                },
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+            since_distance: Some(MeasuredU64Dto {
+                value: 61_456_941,
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+        });
+
+        assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Available
+        );
+        assert_eq!(
+            mobile.last_fault.expect("fault"),
+            MobileFaultHistoryEntryDto {
+                code: MobileFaultCodeDto {
+                    raw: MobileRawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
+                },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            }
+        );
+        assert_eq!(
+            mobile.since_distance.expect("distance").value,
+            Distance { value: 61_456_941 }
+        );
+    }
+
+    #[test]
+    fn mobile_fault_history_dto_strips_payload_when_not_available() {
+        let mobile = MobileFaultHistoryReadbackDto::from(FaultHistoryReadbackDto {
+            availability: FaultHistoryAvailabilityDto::Unavailable,
+            last_fault: Some(FaultHistoryEntryDto {
+                code: FaultCodeDto {
+                    raw: RawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
+                },
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+            since_distance: Some(MeasuredU64Dto {
+                value: 61_456_941,
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+        });
+
+        assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Unavailable
+        );
+        assert_eq!(mobile.last_fault, None);
+        assert_eq!(mobile.since_distance, None);
+    }
+
+    #[test]
+    fn generic_firmware_output_does_not_invent_veteran_protocol_model_id() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestFirmwareInfo,
+            payload: ReadOnlyOutputPayload::Firmware(cutout_core::FirmwareInfoDto {
+                protocol_version: None,
+                firmware_major: Some(cutout_core::MeasuredU16Dto {
+                    value: 43,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                firmware_minor: None,
+                firmware_patch: None,
+                build_id: None,
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::Event);
+        assert_eq!(mobile.veteran_protocol_model_id, None);
+    }
+
+    #[test]
+    fn aero_firmware_output_carries_veteran_protocol_model_id() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestFirmwareInfo,
+            payload: ReadOnlyOutputPayload::Firmware(cutout_core::FirmwareInfoDto {
+                protocol_version: None,
+                firmware_major: Some(cutout_core::MeasuredU16Dto {
+                    value: 43,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                firmware_minor: None,
+                firmware_patch: None,
+                build_id: None,
+            }),
+        });
+
+        let mobile = mobile_aero_session_output(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::Event);
+        assert_eq!(mobile.veteran_protocol_model_id, Some(43));
+    }
+
+    #[test]
+    fn mobile_session_output_preserves_settings_readback_event() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestSettings,
+            payload: ReadOnlyOutputPayload::Settings(SettingsReadbackDto {
+                availability: SettingsReadbackAvailabilityDto::Available,
+                entries: vec![SettingsEntryDto {
+                    field: RawFieldValueDto {
+                        id: 0x0102,
+                        value: -17,
+                    },
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }],
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::SettingsReadback);
+        assert!(mobile.channel.is_empty());
+        assert!(mobile.bytes.is_empty());
+        assert_eq!(mobile.ingest, None);
+        assert_eq!(
+            mobile.settings_readback,
+            Some(MobileSettingsReadbackDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                euc_garage: MobileEucGarageSettingsDto {
+                    availability: MobileReadbackAvailabilityDto::Available,
+                    beep_margin: None,
+                    tiltback: None,
+                    pedal_mode: None,
+                },
+                entries: vec![MobileSettingsEntryDto {
+                    field: MobileRawFieldValueDto {
+                        id: 0x0102,
+                        value: -17,
+                    },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }],
+            })
+        );
+        assert_eq!(mobile.fault_history_readback, None);
+        assert_eq!(mobile.bms_snapshot, None);
+    }
+
+    #[test]
+    fn mobile_session_output_preserves_fault_history_readback_event() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestFaultHistory,
+            payload: ReadOnlyOutputPayload::FaultHistory(FaultHistoryReadbackDto {
+                availability: FaultHistoryAvailabilityDto::Available,
+                last_fault: Some(FaultHistoryEntryDto {
+                    code: FaultCodeDto {
+                        raw: RawFieldValueDto {
+                            id: 0x0040,
+                            value: 1,
+                        },
+                    },
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                since_distance: None,
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(
+            mobile.kind,
+            MobileSessionOutputKindDto::FaultHistoryReadback
+        );
+        assert!(mobile.channel.is_empty());
+        assert!(mobile.bytes.is_empty());
+        assert_eq!(mobile.ingest, None);
+        assert_eq!(mobile.settings_readback, None);
+        assert_eq!(mobile.bms_snapshot, None);
+        assert_eq!(
+            mobile.fault_history_readback,
+            Some(MobileFaultHistoryReadbackDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                last_fault: Some(MobileFaultHistoryEntryDto {
+                    code: MobileFaultCodeDto {
+                        raw: MobileRawFieldValueDto {
+                            id: 0x0040,
+                            value: 1,
+                        },
+                    },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }),
+                since_distance: None,
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_command_mapping_keeps_readback_commands_distinct() {
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::RequestDiagnostics),
+            Some(MobileCommandDto::RequestDiagnostics)
+        );
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::RequestFaultHistory),
+            Some(MobileCommandDto::RequestFaultHistory)
+        );
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::RequestSettings),
+            Some(MobileCommandDto::RequestSettings)
+        );
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::SetRawMotorCurrent),
+            None
+        );
+    }
+
+    #[test]
+    fn mobile_session_output_maps_battery_readback_to_bms_snapshot() {
+        let reported = |value| MeasuredI32Dto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::HardwareVerified,
+        };
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestBatteryInfo,
+            payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
+                availability: BatteryReadbackAvailabilityDto::Available,
+                page: Some(BatteryInfoDto {
+                    page: cutout_core::BatteryPageMetadataDto {
+                        selector: 3,
+                        kind: cutout_core::BatteryPageKindDto::Temperature,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    },
+                    voltage: Some(reported(81_600)),
+                    current: Some(reported(-1_250)),
+                    bms_pack_current_0: None,
+                    bms_pack_current_1: None,
+                    level_reported: Some(MeasuredU8Dto {
+                        value: 72,
+                        source: ValueSourceDto::Reported,
+                        quality: ValueQualityDto::Known,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    }),
+                    level_estimated: None,
+                    temperature: Some(reported(31_000)),
+                    temperatures: vec![None, Some(reported(37_800)), Some(reported(35_200))],
+                    cell_voltages: vec![reported(3_633), reported(3_626), reported(3_634)],
+                    raw_state: None,
+                }),
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::BmsSnapshot);
+        assert!(mobile.channel.is_empty());
+        assert!(mobile.bytes.is_empty());
+        assert_eq!(mobile.ingest, None);
+        assert_eq!(mobile.settings_readback, None);
+        assert_eq!(mobile.fault_history_readback, None);
+        let snapshot = mobile.bms_snapshot.expect("BMS snapshot");
+        assert_eq!(
+            snapshot.availability,
+            MobileReadbackAvailabilityDto::Available
+        );
+        assert_eq!(snapshot.topology.layout_label, "unknown BMS topology");
+        assert_eq!(
+            snapshot.topology.confidence,
+            MobileBmsTopologyConfidenceDto::Unverified
+        );
+        assert_eq!(snapshot.groups.len(), 3);
+        assert_eq!(snapshot.groups[0].index, 1);
+        assert_eq!(snapshot.groups[0].label.as_deref(), Some("group 1"));
+        assert_eq!(
+            snapshot.groups[0]
+                .voltage
+                .as_ref()
+                .map(|voltage| voltage.value),
+            Some(Voltage { value: 3_633 })
+        );
+        assert_eq!(snapshot.lowest_group_index, Some(2));
+        assert_eq!(
+            snapshot.cell_delta.expect("cell delta").value,
+            VoltageDelta { value: 8 }
+        );
+        assert_eq!(
+            snapshot.energy_percent.expect("reported level").value,
+            BatteryLevel { value: 72 }
+        );
+        assert_eq!(
+            snapshot.voltage.expect("pack voltage").value,
+            Voltage { value: 81_600 }
+        );
+        assert_eq!(
+            snapshot.current.expect("pack current").value,
+            BatteryCurrent { value: -1_250 }
+        );
+        assert_eq!(
+            snapshot
+                .highest_temperature
+                .expect("highest temperature")
+                .value,
+            Temperature { value: 37_800 }
+        );
+    }
+
+    #[test]
+    fn mobile_session_output_preserves_unsupported_battery_readback() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestBatteryInfo,
+            payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
+                availability: BatteryReadbackAvailabilityDto::Unsupported,
+                page: None,
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::BmsSnapshot);
+        let snapshot = mobile.bms_snapshot.expect("BMS snapshot");
+        assert_eq!(
+            snapshot.availability,
+            MobileReadbackAvailabilityDto::Unsupported
+        );
+        assert_eq!(snapshot.energy_percent, None);
+        assert_eq!(snapshot.voltage, None);
+        assert_eq!(snapshot.current, None);
+        assert!(snapshot.groups.is_empty());
+    }
+
+    #[test]
+    fn mobile_battery_readback_dto_strips_page_when_not_available() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestBatteryInfo,
+            payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
+                availability: BatteryReadbackAvailabilityDto::Unsupported,
+                page: Some(BatteryInfoDto {
+                    page: cutout_core::BatteryPageMetadataDto {
+                        selector: 3,
+                        kind: cutout_core::BatteryPageKindDto::Temperature,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    },
+                    voltage: Some(measured_i32(81_600)),
+                    current: Some(measured_i32(-1_250)),
+                    bms_pack_current_0: None,
+                    bms_pack_current_1: None,
+                    level_reported: Some(MeasuredU8Dto {
+                        value: 72,
+                        source: ValueSourceDto::Reported,
+                        quality: ValueQualityDto::Known,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    }),
+                    level_estimated: None,
+                    temperature: Some(measured_i32(31_000)),
+                    temperatures: vec![Some(measured_i32(37_800))],
+                    cell_voltages: vec![measured_i32(3_633)],
+                    raw_state: None,
+                }),
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::BmsSnapshot);
+        let snapshot = mobile.bms_snapshot.expect("BMS snapshot");
+        assert_eq!(
+            snapshot.availability,
+            MobileReadbackAvailabilityDto::Unsupported
+        );
+        assert_eq!(snapshot.energy_percent, None);
+        assert_eq!(snapshot.voltage, None);
+        assert_eq!(snapshot.current, None);
+        assert_eq!(snapshot.cell_delta, None);
+        assert_eq!(snapshot.highest_temperature, None);
+        assert!(snapshot.groups.is_empty());
+    }
+
+    #[test]
+    fn bms_group_projection_skips_unrepresentable_group_indices() {
+        let mut cell_voltages = vec![measured_i32(3_600); usize::from(u16::MAX) + 1];
+        cell_voltages[usize::from(u16::MAX)] = measured_i32(3_500);
+
+        let groups = bms_groups_from_cell_voltages(&cell_voltages);
+
+        assert_eq!(groups.len(), usize::from(u16::MAX));
+        assert_eq!(groups.last().map(|group| group.index), Some(u16::MAX));
+        assert_eq!(lowest_cell_voltage_group_index(&cell_voltages), None);
     }
 
     #[test]
@@ -2075,6 +3758,66 @@ mod tests {
         assert!(!candidate.is_picker_candidate);
     }
 
+    #[test]
+    fn power_flow_direction_uses_motion_and_charge_context_for_negative_current() {
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(2_000), RideOperatingState::Riding),
+            PowerFlowDirection::Discharge
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(0), RideOperatingState::Riding),
+            PowerFlowDirection::Zero
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Unknown),
+            PowerFlowDirection::NegativeUnknown
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Parked),
+            PowerFlowDirection::NegativeUnknown
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Riding),
+            PowerFlowDirection::Regeneration
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Charging),
+            PowerFlowDirection::Charging
+        );
+    }
+
+    #[test]
+    fn ride_operating_state_uses_charge_mode_before_speed() {
+        assert_eq!(
+            ride_operating_state(None, None),
+            RideOperatingState::Unknown
+        );
+        assert_eq!(
+            ride_operating_state(None, Some(measured_i32(0))),
+            RideOperatingState::Parked
+        );
+        assert_eq!(
+            ride_operating_state(None, Some(measured_i32(1_000))),
+            RideOperatingState::Riding
+        );
+        assert_eq!(
+            ride_operating_state(None, Some(measured_i32(-1_000))),
+            RideOperatingState::Riding
+        );
+        assert_eq!(
+            ride_operating_state(
+                Some(MeasuredChargeModeDto {
+                    value: ChargeModeDto::Charging,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                Some(measured_i32(0)),
+            ),
+            RideOperatingState::Charging
+        );
+    }
+
     const fn ms(value: u64) -> MobileMonotonicMillisDto {
         MobileMonotonicMillisDto {
             milliseconds: value,
@@ -2084,6 +3827,15 @@ mod tests {
     const fn wc(value: u64) -> MobileWallClockUnixMillisDto {
         MobileWallClockUnixMillisDto {
             milliseconds: value,
+        }
+    }
+
+    const fn measured_i32(value: i32) -> MeasuredI32Dto {
+        MeasuredI32Dto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::SourceVerified,
         }
     }
 
@@ -2129,10 +3881,20 @@ mod tests {
 
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
-            family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
+            family: ProtocolFamilyDto::VeteranLeaperkimNosfet,
             channel: [0x7a; 16],
             len: notification_len(17),
             monotonic_ms: MonotonicMillisDto { milliseconds: 42 },
+        }
+    }
+
+    fn ignored_notification_fixture() -> IgnoredNotificationEvidenceDto {
+        IgnoredNotificationEvidenceDto {
+            family: None,
+            channel: [0x7b; 16],
+            len: notification_len(19),
+            monotonic_ms: MonotonicMillisDto { milliseconds: 43 },
+            retained_payload: vec![0xde, 0xad, 0xbe, 0xef],
         }
     }
 
@@ -2145,6 +3907,25 @@ mod tests {
         mobile.ingest.expect("ingest output carries typed outcome")
     }
 
+    fn assert_ignored_notification_outcome(ignored: &MobileNotificationIngestOutcomeDto) {
+        assert_eq!(
+            ignored.kind,
+            MobileNotificationIngestOutcomeKindDto::Ignored
+        );
+        assert_eq!(ignored.notification, None);
+        assert_eq!(
+            ignored.ignored_reason,
+            Some(MobileIgnoredNotificationReasonDto::WrongChannel)
+        );
+        let evidence = ignored
+            .ignored
+            .as_ref()
+            .expect("ignored outcome carries ignored evidence");
+        assert_eq!(evidence.family, None);
+        assert_eq!(evidence.retained_payload, vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(ignored.event_count, None);
+    }
+
     #[test]
     fn mobile_notification_ingest_dto_preserves_each_typed_outcome_class() {
         let semantic = mobile_ingest(NotificationIngestOutcomeDto::SemanticEvents {
@@ -2155,12 +3936,16 @@ mod tests {
             semantic.kind,
             MobileNotificationIngestOutcomeKindDto::SemanticEvents
         );
+        let semantic_notification = semantic
+            .notification
+            .as_ref()
+            .expect("semantic outcome carries accepted notification evidence");
         assert_eq!(
-            semantic.notification.family,
-            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+            semantic_notification.family,
+            MobileProtocolFamilyDto::VeteranLeaperkimNosfet
         );
-        assert_eq!(semantic.notification.channel, vec![0x7a; 16]);
-        assert_eq!(semantic.notification.len, mobile_notification_len(17));
+        assert_eq!(semantic_notification.channel, vec![0x7a; 16]);
+        assert_eq!(semantic_notification.len, mobile_notification_len(17));
         assert_eq!(semantic.event_count, Some(mobile_event_count(3)));
         assert_eq!(semantic.parser_error, None);
 
@@ -2197,6 +3982,7 @@ mod tests {
                 selector: Some(8),
                 tag: Some(0x5a5c),
                 body_len: body_len(84),
+                retained_payload: vec![0x08, 0xaa],
                 verification: VerificationStatusDto::SourceVerified,
             },
         });
@@ -2206,6 +3992,7 @@ mod tests {
                 selector: Some(8),
                 tag: Some(0x5a5c),
                 body_len: mobile_body_len(84),
+                retained_payload: vec![0x08, 0xaa],
                 verification: MobileVerificationStatusDto::SourceVerified,
             })
         );
@@ -2216,6 +4003,7 @@ mod tests {
                 selector: Some(9),
                 tag: None,
                 body_len: body_len(11),
+                retained_payload: vec![0x09, 0xbb],
             },
         });
         assert_eq!(
@@ -2224,15 +4012,15 @@ mod tests {
                 selector: Some(9),
                 tag: None,
                 body_len: mobile_body_len(11),
+                retained_payload: vec![0x09, 0xbb],
             })
         );
 
-        let ignored = mobile_ingest(NotificationIngestOutcomeDto::Ignored(notification_fixture()));
-        assert_eq!(
-            ignored.kind,
-            MobileNotificationIngestOutcomeKindDto::Ignored
-        );
-        assert_eq!(ignored.event_count, None);
+        let ignored = mobile_ingest(NotificationIngestOutcomeDto::Ignored {
+            evidence: ignored_notification_fixture(),
+            reason: IgnoredNotificationReasonDto::WrongChannel,
+        });
+        assert_ignored_notification_outcome(&ignored);
     }
 
     #[test]
@@ -2319,12 +4107,16 @@ mod tests {
             ingest.kind,
             MobileNotificationIngestOutcomeKindDto::SemanticEvents
         );
+        let notification = ingest
+            .notification
+            .as_ref()
+            .expect("semantic ingest carries accepted notification evidence");
         assert_eq!(
-            ingest.notification.family,
-            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+            notification.family,
+            MobileProtocolFamilyDto::VeteranLeaperkimNosfet
         );
-        assert_eq!(ingest.notification.len, mobile_notification_len(87));
-        assert_eq!(ingest.notification.monotonic_ms, ms(2));
+        assert_eq!(notification.len, mobile_notification_len(87));
+        assert_eq!(notification.monotonic_ms, ms(2));
         assert_eq!(ingest.event_count, Some(mobile_event_count(5)));
         assert_eq!(ingest.parser_error, None);
         assert_eq!(ingest.reserved, None);
@@ -2333,15 +4125,29 @@ mod tests {
         let snapshot = session.current_snapshot();
         assert_eq!(
             snapshot.voltage,
-            Some(MobileMeasuredI32Dto {
-                value: 108_760,
+            Some(VoltageReading {
+                value: Voltage { value: 108_760 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             })
         );
-        assert!(snapshot.battery_current.is_some());
-        assert!(snapshot.power.is_some());
+        assert_eq!(snapshot.operating_state, RideOperatingState::Parked);
+        assert!(matches!(
+            snapshot.battery_current,
+            Some(BatteryCurrentReading {
+                value: BatteryCurrent { .. },
+                ..
+            })
+        ));
+        assert!(matches!(
+            snapshot.power,
+            Some(PowerReading {
+                value: Power { .. },
+                ..
+            })
+        ));
+        assert!(snapshot.power_flow.is_some());
         assert!(snapshot.controller_temperature.is_some() || snapshot.motor_temperature.is_some());
         assert!(snapshot.pwm.is_some());
         assert!(snapshot.battery_level_estimated.is_some());

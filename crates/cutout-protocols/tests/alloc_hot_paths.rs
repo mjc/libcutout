@@ -100,7 +100,7 @@ where
     ReadOnlySession<M, false>: ProtocolSession,
 {
     let mut session = ReadOnlySession::<M, false>::default();
-    let mut output = Vec::with_capacity(8);
+    let mut output = Vec::with_capacity(16);
     session.handle(
         SessionInput::LinkUp(LinkInfo {
             monotonic_ms: ms(1),

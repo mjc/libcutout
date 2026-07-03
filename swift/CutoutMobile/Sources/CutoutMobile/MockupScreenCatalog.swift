@@ -84,16 +84,32 @@ public struct MockupWarningCard: Equatable, Hashable, Sendable {
     }
 }
 
+public enum MockupDashboardTileKind: Equatable, Hashable, Sendable {
+    case metric
+    case beepMargin
+    case tiltback
+    case pedalMode
+}
+
 public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { label }
 
+    public let kind: MockupDashboardTileKind
     public let label: String
     public let value: String
     public let unit: String
     public let detail: String
     public let accent: MockupAccent
 
-    public init(label: String, value: String, unit: String, detail: String, accent: MockupAccent) {
+    public init(
+        kind: MockupDashboardTileKind = .metric,
+        label: String,
+        value: String,
+        unit: String,
+        detail: String,
+        accent: MockupAccent
+    ) {
+        self.kind = kind
         self.label = label
         self.value = value
         self.unit = unit
@@ -433,6 +449,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let faultCard: MockupFaultCard?
     public let tabs: [MockupScreenTab]
     public let bmsContent: MockupBmsContent?
+    public let eucGarageSnapshot: EucGarageSnapshot?
     public let isFixtureOnly: Bool
 
     public init(
@@ -454,6 +471,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         faultCard: MockupFaultCard? = nil,
         tabs: [MockupScreenTab] = [],
         bmsContent: MockupBmsContent? = nil,
+        eucGarageSnapshot: EucGarageSnapshot? = nil,
         isFixtureOnly: Bool = true
     ) {
         self.id = id
@@ -474,6 +492,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.faultCard = faultCard
         self.tabs = tabs
         self.bmsContent = bmsContent
+        self.eucGarageSnapshot = eucGarageSnapshot
         self.isFixtureOnly = isFixtureOnly
     }
 }
@@ -537,20 +556,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 2,
             confidence: .verified
         ),
-        energyPercent: .fixture(value: 72),
-        voltage: .fixture(value: 81_600),
-        cellDeltaMillivolts: .fixture(value: 18),
+        energyPercent: BatteryLevel(value: 72),
+        voltage: Voltage(value: 81_600),
+        cellDelta: VoltageDelta(value: 18),
         lowestGroupIndex: 17,
-        highestTemperature: .fixture(value: 37_800),
+        highestTemperature: Temperature(value: 37_800),
         highestTemperatureLabel: "right pack",
         balancingSummary: "idle • top groups only",
         balancingDetail: "3 groups bleeding: 03, 11, 19",
         faultSummary: "no active faults",
         faultDetail: "last: under-voltage warning · 3 days ago",
         groups: (1...20).map { index in
-            BmsGroupSnapshot(
+            let voltage = Voltage(value: 4_089 - Int32(index % 5) * 4)
+            return BmsGroupSnapshot(
                 index: index,
-                voltage: .fixture(value: 4_089 - Int32(index % 5) * 4),
+                voltage: voltage,
                 alertLevel: index == 17 ? .warning : .nominal
             )
         }
@@ -565,14 +585,14 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 12),
+        cellDelta: VoltageDelta(value: 12),
         groups: [
-            BmsGroupSnapshot(index: 1, voltage: .fixture(value: 4_104), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 2, voltage: .fixture(value: 4_101), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 3, voltage: .fixture(value: 4_096), alertLevel: .warning),
-            BmsGroupSnapshot(index: 4, voltage: .fixture(value: 4_099), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 5, voltage: .fixture(value: 4_103), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 6, voltage: .fixture(value: 4_092), alertLevel: .warning),
+            BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_104), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_101), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 3, voltage: Voltage(value: 4_096), alertLevel: .warning),
+            BmsGroupSnapshot(index: 4, voltage: Voltage(value: 4_099), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 5, voltage: Voltage(value: 4_103), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 6, voltage: Voltage(value: 4_092), alertLevel: .warning),
         ]
     )
 
@@ -585,14 +605,14 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 18),
-        highestTemperature: .fixture(value: 31_000),
+        cellDelta: VoltageDelta(value: 18),
+        highestTemperature: Temperature(value: 31_000),
         highestTemperatureLabel: "group 31",
         groups: (1...40).map { index in
             let alertLevel: BmsAlertLevel = [17, 18, 19].contains(index) ? .warning : index == 31 ? .critical : .nominal
             let base = 4_080 + Int32(index % 3) * 6
             let value = [17, 18, 19].contains(index) ? 4_080 : (index == 31 ? 4_072 : base)
-            return BmsGroupSnapshot(index: index, voltage: .fixture(value: value), alertLevel: alertLevel)
+            return BmsGroupSnapshot(index: index, voltage: Voltage(value: value), alertLevel: alertLevel)
         },
         faults: [
             BmsFault(code: "temp-sensor", label: "31 has temp sensor mismatch", level: .warning)
@@ -608,13 +628,16 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 2,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 18),
+        cellDelta: VoltageDelta(value: 18),
         groups: (1...20).map { index in
-            BmsGroupSnapshot(
+            let voltage = Voltage(value: index == 17 ? 4_071 : 4_086)
+            let temperature = Temperature(value: index == 17 ? 34_900 : 33_000)
+            let resistance = Resistance(value: index == 17 ? 21 : 18)
+            return BmsGroupSnapshot(
                 index: index,
-                voltage: .fixture(value: index == 17 ? 4_071 : 4_086),
-                temperature: .fixture(value: index == 17 ? 34_900 : 33_000),
-                resistanceMilliohms: index == 17 ? 21 : 18,
+                voltage: voltage,
+                temperature: temperature,
+                resistance: resistance,
                 alertLevel: index == 17 ? .warning : .nominal,
                 detail: index == 17 ? "drops first during acceleration" : nil
             )
@@ -630,7 +653,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .unverified
         ),
-        voltage: .fixture(value: 75_900),
+        voltage: Voltage(value: 75_900),
         faultSummary: "BMS found, map unknown",
         faultDetail: "show raw-safe info until topology is confirmed",
         faults: [
@@ -649,9 +672,9 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 0,
             confidence: .inferred
         ),
-        energyPercent: .estimatedFixture(value: 71),
-        voltage: .fixture(value: 117_600),
-        current: .fixture(value: 38_000),
+        energyPercent: BatteryLevel(value: 71),
+        voltage: Voltage(value: 117_600),
+        current: BatteryCurrent(value: 38_000),
         captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
         captureActionState: "limited data"
     )
@@ -869,9 +892,9 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             ),
             dashboardTiles: [
                 MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
-                MockupDashboardTile(label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
-                MockupDashboardTile(label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
-                MockupDashboardTile(label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+                MockupDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+                MockupDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+                MockupDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
             ],
             summaryTitle: "Cell / BMS summary",
             summaryRows: [
@@ -879,7 +902,22 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
                 MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
             ],
-            faultCard: MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green)
+            faultCard: MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green),
+            eucGarageSnapshot: EucGarageSnapshot(
+                pack: EucPackHealthSnapshot(
+                    energyPercent: BatteryLevel(value: 85),
+                    voltage: Voltage(value: 115_800),
+                    highGroupVoltage: Voltage(value: 4_180),
+                    lowGroupVoltage: Voltage(value: 4_130),
+                    cellDelta: VoltageDelta(value: 50)
+                ),
+                settings: EucGarageSettingsSnapshot(
+                    beepMargin: .available(Speed(value: 5_186)),
+                    tiltback: .available(Speed(value: 18_776)),
+                    pedalMode: .available(PedalMode(hardnessPercent: 72))
+                ),
+                faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
+            )
         ),
         MockupScreen(
             id: .vescOnewheelRide,
@@ -955,24 +993,4 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             )
         ),
     ])
-}
-
-extension TelemetryReading {
-    static func fixture(value: Value) -> Self {
-        Self(
-            value: value,
-            source: .reported,
-            quality: .known,
-            verification: .hardwareVerified
-        )
-    }
-
-    static func estimatedFixture(value: Value) -> Self {
-        Self(
-            value: value,
-            source: .estimated,
-            quality: .inferred,
-            verification: .inferred
-        )
-    }
 }

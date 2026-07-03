@@ -86,24 +86,95 @@ continue to come from the Rust crate.
 ## Swift SourceKit Workspace
 
 The checked-in Swift package depends on generated UniFFI bindings, so tools that
-expect a complete SwiftPM workspace should use a generated workspace under
-`target/`:
+expect a complete SwiftPM workspace should prepare the local package before
+asking SourceKit for diagnostics:
 
 ```console
 ./scripts/prepare-swift-sourcekit-workspace.sh
 ```
 
-The script builds `cutout-mobile-ffi`, generates Swift UniFFI bindings, lays out
-the `cutout_mobile_ffiFFI` system-library target, and verifies the staged package
-with `swift package describe`. On Darwin it clears `SDKROOT` and `DEVELOPER_DIR`
-for the Swift command so Xcode's Swift toolchain does not accidentally pair with
-a Nix Apple SDK.
+The script builds `cutout-mobile-ffi`, generates ignored Swift UniFFI bindings
+under `swift/CutoutMobile/Sources/CutoutMobile/Generated`, lays out the ignored
+`cutout_mobile_ffiFFI` system-library target, and verifies the package with
+`swift package describe`. On Darwin it clears `SDKROOT` and `DEVELOPER_DIR` for
+the Swift command so Xcode's Swift toolchain does not accidentally pair with a
+Nix Apple SDK.
 
-By default the workspace is written to:
+By default this prepares the checked-in Swift package in place:
 
 ```text
-target/swift-sourcekit/CutoutMobile
+swift/CutoutMobile
 ```
 
-Set `CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR` to choose a different generated
-workspace path. Do not check in the generated bindings, header, or module map.
+Set `CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR` to choose a separate generated
+workspace path, for example `target/swift-sourcekit/CutoutMobile`. Do not check
+in the generated bindings, header, or module map.
+
+For Serena/SourceKit diagnostics, activate Serena on the Swift package root
+after running the preparation script:
+
+```text
+swift/CutoutMobile
+```
+
+The repository root remains the right Serena project for Rust work, but
+SourceKit needs the SwiftPM package root to resolve generated UniFFI types such
+as `RideOperatingState` and `Power`.
+
+## App Commands
+
+Use these commands for the native Cutout app workflow. They all assume the
+repository dev shell:
+
+```console
+nix develop -c ./scripts/test-swift-package.sh
+nix develop -c ./scripts/run-cutout-app.sh --launch-smoke
+nix develop -c ./scripts/smoke-ios-app-metadata.sh
+nix develop -c ./scripts/run-ios-app-on-mac.sh
+CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-app-on-phone.sh
+```
+
+`scripts/test-swift-package.sh` runs the generated Swift package tests with the
+Darwin-safe Swift environment and UniFFI linker flags. Pass `--filter NAME` for
+a focused XCTest filter while keeping the same generated workspace path.
+
+`scripts/run-cutout-app.sh --launch-smoke` builds and launches the native macOS
+SwiftUI `CutoutApp` executable from a generated SwiftPM workspace, exits from
+the app launch delegate, and prints `cutout_app_launch=ok`. Omit
+`--launch-smoke` to keep the Mac app running interactively.
+
+`scripts/smoke-ios-app-metadata.sh` builds the iPhone app bundle and checks the
+bundle metadata that previously drifted, including portrait orientation and
+Bluetooth usage text.
+
+`scripts/run-ios-app-on-mac.sh` builds the real iPhoneOS app bundle for
+Apple Silicon Mac and prints its product path. Set `CUTOUT_IOS_ON_MAC_DESTINATION`
+to override the Xcode destination. The product is still an unsigned
+`Debug-iphoneos` bundle, so this command is bundle-build proof; local Mac launch
+proof comes from `scripts/run-cutout-app.sh --launch-smoke`.
+
+`scripts/run-ios-app-on-phone.sh` builds, installs, and launches the app
+on a connected booted iOS device. Signing stays local: provide
+`CUTOUT_IOS_DEVELOPMENT_TEAM`, and optionally `CUTOUT_IOS_APP_BUNDLE_ID`, in
+your shell or a private env file. The Xcode project intentionally does not
+commit a personal `DEVELOPMENT_TEAM`. The build helper deletes the expected
+device product before invoking `xcodebuild`, then deletes it again on failure,
+so a failed fresh build cannot silently install an older product from
+`target/xcode-device-signed`.
+
+### Current Xcode Beta Warning Noise
+
+The app command surface is clean for project-owned warnings, but Xcode beta still
+emits two tooling-owned warning classes that should not be hidden by filtering
+stderr:
+
+- `warning: unhandled Platform key FamilyPlatforms` /
+  `warning: unhandled Platform key FamilyDisplayName` appear while SwiftPM/Xcode
+  tooling reads the Xcode beta platform metadata. Reproduce with
+  `nix develop -c ./scripts/smoke-swift-package.sh` or any iOS bundle command.
+  Owner: Xcode beta / Nix Apple SDK tooling boundary.
+- `appintentsmetadataprocessor` and `appintentsnltrainingprocessor` still run
+  during iOS app builds even though the app has no AppIntents dependency, and
+  report no extracted app shortcuts. Reproduce with
+  `nix develop -c ./scripts/smoke-ios-app-metadata.sh`. Owner: Xcode beta iOS
+  app build pipeline.

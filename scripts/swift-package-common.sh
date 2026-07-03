@@ -28,6 +28,11 @@ cutout_macosx_sdk_path() {
   xcrun --sdk macosx --show-sdk-path
 }
 
+cutout_use_xcode_developer_dir() {
+  export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+  unset SDKROOT
+}
+
 cutout_prepare_swift_package_workspace() {
   local root package_dir
   root="$(cutout_repo_root)"
@@ -45,6 +50,8 @@ cutout_iphoneos_clang_path() {
 
 cutout_connected_ios_device_udid() {
   local device_json
+  cutout_use_xcode_developer_dir
+
   device_json="$(mktemp "${TMPDIR:-/tmp}/cutout-devicectl.XXXXXX.json")"
   trap 'rm -f "$device_json"' RETURN
 
@@ -77,19 +84,18 @@ raise SystemExit("no connected booted iOS device found")
 PY
 }
 
-cutout_build_ios_speed_app_bundle() {
+cutout_build_ios_app_bundle() {
   local root package_dir project scheme destination derived_data rust_lib product
   root="$(cutout_repo_root)"
-  package_dir="${CUTOUT_IOS_SPEED_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
-  project="${CUTOUT_IOS_SPEED_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
-  scheme="${CUTOUT_IOS_SPEED_SCHEME:-CutoutApp}"
-  destination="${CUTOUT_IOS_SPEED_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
-  derived_data="${CUTOUT_IOS_SPEED_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}"
+  package_dir="${CUTOUT_IOS_APP_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
+  project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
+  scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
+  destination="${CUTOUT_IOS_APP_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
+  derived_data="${CUTOUT_IOS_APP_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}"
   rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
 
-  export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
-  unset SDKROOT
+  cutout_use_xcode_developer_dir
 
   cutout_prepare_swift_package_workspace "$package_dir"
 
@@ -125,13 +131,13 @@ cutout_build_ios_speed_app_bundle() {
   printf '%s\n' "$product"
 }
 
-cutout_build_ios_device_speed_app_bundle() {
+cutout_build_ios_device_app_bundle() {
   local root package_dir project scheme device_udid destination derived_data rust_lib product
   local development_team bundle_id
   root="$(cutout_repo_root)"
-  package_dir="${CUTOUT_IOS_SPEED_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
-  project="${CUTOUT_IOS_SPEED_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
-  scheme="${CUTOUT_IOS_SPEED_SCHEME:-CutoutApp}"
+  package_dir="${CUTOUT_IOS_APP_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
+  project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
+  scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   device_udid="${CUTOUT_IOS_DEVICE_UDID:-$(cutout_connected_ios_device_udid)}"
   destination="${CUTOUT_IOS_DEVICE_DESTINATION:-id=$device_udid}"
   derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-signed}"
@@ -140,9 +146,11 @@ cutout_build_ios_device_speed_app_bundle() {
   development_team="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
+  cutout_use_xcode_developer_dir
+
   if [[ -z "$development_team" ]]; then
     echo "CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone signing" >&2
-    echo "Set CUTOUT_IOS_DEVELOPMENT_TEAM and optionally CUTOUT_IOS_APP_BUNDLE_ID, then rerun scripts/run-ios-speed-app-on-phone.sh" >&2
+    echo "Set CUTOUT_IOS_DEVELOPMENT_TEAM and optionally CUTOUT_IOS_APP_BUNDLE_ID, then rerun scripts/run-ios-app-on-phone.sh" >&2
     return 1
   fi
 

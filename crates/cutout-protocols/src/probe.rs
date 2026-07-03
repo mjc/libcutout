@@ -17,8 +17,11 @@ pub enum AeroProbe {
     /// Request battery or BMS information.
     BatteryInfo,
 
-    /// Request diagnostic information.
-    Diagnostics,
+    /// Request historical fault information.
+    FaultHistory,
+
+    /// Request current settings information.
+    Settings,
 }
 
 impl AeroProbe {
@@ -30,8 +33,9 @@ impl AeroProbe {
             CommandKind::RequestFirmwareInfo => Some(Self::FirmwareInfo),
             CommandKind::RequestTelemetry => Some(Self::Telemetry),
             CommandKind::RequestBatteryInfo => Some(Self::BatteryInfo),
-            CommandKind::RequestDiagnostics => Some(Self::Diagnostics),
-            CommandKind::RequestSettings
+            CommandKind::RequestFaultHistory => Some(Self::FaultHistory),
+            CommandKind::RequestSettings => Some(Self::Settings),
+            CommandKind::RequestDiagnostics
             | CommandKind::SetLights
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,
@@ -46,7 +50,8 @@ impl AeroProbe {
             Self::FirmwareInfo => CommandKind::RequestFirmwareInfo,
             Self::Telemetry => CommandKind::RequestTelemetry,
             Self::BatteryInfo => CommandKind::RequestBatteryInfo,
-            Self::Diagnostics => CommandKind::RequestDiagnostics,
+            Self::FaultHistory => CommandKind::RequestFaultHistory,
+            Self::Settings => CommandKind::RequestSettings,
         }
     }
 }
@@ -77,6 +82,7 @@ impl FalconProbe {
             CommandKind::RequestTelemetry => Some(Self::Telemetry),
             CommandKind::RequestBatteryInfo => Some(Self::BatteryInfo),
             CommandKind::RequestDiagnostics
+            | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::SetLights
             | CommandKind::SoundHorn

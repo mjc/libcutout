@@ -7,7 +7,7 @@ use cutout_btle::{MonotonicMs, SessionBridgeEvent, SessionBridgeReport};
 use cutout_core::{
     GattChannel, MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome,
     PayloadBodyLen, PayloadClassifier, ProtocolFamily, ProtocolSelector, ReservedPayloadEvidence,
-    VerificationStatus,
+    RetainedNotificationPayload, VerificationStatus,
 };
 
 const fn ms(value: u64) -> MonotonicTimestamp {
@@ -74,6 +74,7 @@ fn btle_report_records_typed_ingest_outcomes_without_allocating_after_setup() {
         ReservedPayloadEvidence {
             classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
             body_len: PayloadBodyLen::from_bytes(24),
+            retained_payload: RetainedNotificationPayload::from_bytes(&[0x08]),
             verification: VerificationStatus::HardwareVerified,
         },
     );
@@ -87,11 +88,18 @@ fn btle_report_records_typed_ingest_outcomes_without_allocating_after_setup() {
     report.record_notification_ingest(outcome, MonotonicMs::new(4));
 
     assert_no_allocations("btle report typed ingest recording");
-    assert_eq!(
-        report.events.as_slice(),
-        &[SessionBridgeEvent::NotificationIngest {
-            monotonic_ms: MonotonicMs::new(4),
+    let [
+        SessionBridgeEvent::NotificationIngest {
+            monotonic_ms,
             outcome,
-        }]
-    );
+        },
+    ] = report.events.as_slice()
+    else {
+        panic!("expected one notification ingest event");
+    };
+    assert_eq!(*monotonic_ms, MonotonicMs::new(4));
+    assert!(matches!(
+        outcome,
+        NotificationIngestOutcome::KnownReserved { .. }
+    ));
 }

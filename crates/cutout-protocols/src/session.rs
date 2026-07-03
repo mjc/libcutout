@@ -7,9 +7,9 @@ use cutout_core::{
     MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, ProtocolFamily,
     ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SeriesCount,
-    SessionInput, SessionOutput, Temperature, TransportAction, Unit, ValueQuality,
-    VerificationStatus, VerifiedValue, Voltage, WritePayload,
+    ReadOnlyResponse, ReservedPayloadEvidence, RetainedNotificationPayload, SafetyClass,
+    SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature, TransportAction,
+    Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WritePayload,
 };
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
     VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence,
     VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
     VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
-    begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    begode_falcon_target_voltage_profile, decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -35,8 +35,8 @@ pub const VESC_RAW_TACHOMETER_FIELD_ID: u16 = 0x8002;
 /// Raw VESC controller id telemetry field id.
 pub const VESC_RAW_CONTROLLER_ID_FIELD_ID: u16 = 0x8003;
 
-/// Raw VESC fault-code telemetry field id.
-pub const VESC_RAW_FAULT_CODE_FIELD_ID: u16 = 0x8004;
+/// Raw VESC current fault-code telemetry field id.
+pub const VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID: u16 = 0x8004;
 
 /// Raw VESC average speed statistics field id.
 pub const VESC_RAW_STATS_SPEED_AVG_FIELD_ID: u16 = 0x8101;
@@ -157,6 +157,7 @@ pub trait ReadOnlyNotificationDecoder {
     /// Handles an accepted notification payload.
     fn handle_notification(
         &mut self,
+        family: ProtocolFamily,
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
@@ -173,15 +174,17 @@ impl ReadOnlyNotificationDecoder for NoopNotificationDecoder {
 
     fn handle_notification(
         &mut self,
+        family: ProtocolFamily,
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
         output.push(SessionOutput::NotificationIngest(
-            NotificationIngestOutcome::ignored_wrong_channel(
+            NotificationIngestOutcome::accepted_but_unmapped_bytes(
+                family,
                 channel,
-                NotificationByteLen::from_bytes(bytes.len()),
+                bytes,
                 monotonic_ms,
             ),
         ));
@@ -210,6 +213,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
 
     fn handle_notification(
         &mut self,
+        family: ProtocolFamily,
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
@@ -225,6 +229,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     let event_count = push_veteran_frame(&frame, monotonic_ms, output);
                     push_veteran_ingest_outcome_for_frame(
                         &frame,
+                        family,
                         channel,
                         monotonic_ms,
                         event_count,
@@ -241,7 +246,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     push_parser_error(ParserError::BadChecksum, output);
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
-                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            family,
                             channel,
                             NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
@@ -255,7 +260,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     push_parser_error(error, output);
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
-                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            family,
                             channel,
                             NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
@@ -268,7 +273,7 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
                     push_parser_error(ParserError::MalformedFrame, output);
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
-                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            family,
                             channel,
                             NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
@@ -283,15 +288,16 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
         if completed_frames.has_no_events() {
             output.push(SessionOutput::NotificationIngest(if buffered {
                 NotificationIngestOutcome::buffered_fragment(
-                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    family,
                     channel,
                     NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
                 )
             } else {
-                NotificationIngestOutcome::ignored_wrong_channel(
+                NotificationIngestOutcome::seeking_frame_boundary(
+                    family,
                     channel,
-                    NotificationByteLen::from_bytes(bytes.len()),
+                    bytes,
                     monotonic_ms,
                 )
             }));
@@ -301,25 +307,51 @@ impl ReadOnlyNotificationDecoder for VeteranNotificationDecoder {
 
 fn push_veteran_ingest_outcome_for_frame(
     frame: &VeteranFrame,
+    family: ProtocolFamily,
     channel: GattChannel,
     monotonic_ms: MonotonicTimestamp,
     event_count: SemanticEventCount,
     output: &mut Vec<SessionOutput>,
 ) {
     let frame_len = NotificationByteLen::from_bytes(frame.as_slice().len());
-    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
-        && evidence.kind == BatteryPageKind::Raw
-    {
+    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
+        if evidence.kind != BatteryPageKind::Raw {
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::semantic_events(
+                    family,
+                    channel,
+                    frame_len,
+                    monotonic_ms,
+                    event_count,
+                ),
+            ));
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::parser_gap(
+                    family,
+                    channel,
+                    frame_len,
+                    monotonic_ms,
+                    ParserGapEvidence {
+                        classifier: PayloadClassifier::selector(evidence.selector),
+                        body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
+                        retained_payload: RetainedNotificationPayload::from_bytes(evidence.body),
+                    },
+                ),
+            ));
+            return;
+        }
+
         if evidence.selector == ProtocolSelector::new(8) {
             output.push(SessionOutput::NotificationIngest(
                 NotificationIngestOutcome::known_reserved(
-                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    family,
                     channel,
                     frame_len,
                     monotonic_ms,
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
                         body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
+                        retained_payload: RetainedNotificationPayload::from_bytes(evidence.body),
                         verification: VerificationStatus::HardwareVerified,
                     },
                 ),
@@ -327,13 +359,14 @@ fn push_veteran_ingest_outcome_for_frame(
         } else {
             output.push(SessionOutput::NotificationIngest(
                 NotificationIngestOutcome::parser_gap(
-                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    family,
                     channel,
                     frame_len,
                     monotonic_ms,
                     ParserGapEvidence {
                         classifier: PayloadClassifier::selector(evidence.selector),
                         body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
+                        retained_payload: RetainedNotificationPayload::from_bytes(evidence.body),
                     },
                 ),
             ));
@@ -343,7 +376,7 @@ fn push_veteran_ingest_outcome_for_frame(
 
     output.push(SessionOutput::NotificationIngest(
         NotificationIngestOutcome::semantic_events(
-            ProtocolFamily::VeteranLeaperkimNosfet,
+            family,
             channel,
             frame_len,
             monotonic_ms,
@@ -392,6 +425,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 
     fn handle_notification(
         &mut self,
+        family: ProtocolFamily,
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
@@ -402,6 +436,8 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
             match self.reassembler.feed_byte_result_at(*byte, monotonic_ms) {
                 Ok(BegodeFrameParseResult::Complete(frame)) => {
                     event_count = event_count.saturating_add(push_begode_frame(
+                        family,
+                        channel,
                         &mut self.context,
                         self.pack_voltage_profile,
                         &frame,
@@ -414,7 +450,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                     push_parser_error(ParserError::MalformedFrame, output);
                     output.push(SessionOutput::NotificationIngest(
                         NotificationIngestOutcome::parser_diagnostic(
-                            ProtocolFamily::BegodeGotway,
+                            family,
                             channel,
                             NotificationByteLen::from_bytes(bytes.len()),
                             monotonic_ms,
@@ -429,7 +465,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
         output.push(SessionOutput::NotificationIngest(
             if event_count.as_events() > 0 {
                 NotificationIngestOutcome::semantic_events(
-                    ProtocolFamily::BegodeGotway,
+                    family,
                     channel,
                     NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
@@ -437,7 +473,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
                 )
             } else {
                 NotificationIngestOutcome::buffered_fragment(
-                    ProtocolFamily::BegodeGotway,
+                    family,
                     channel,
                     NotificationByteLen::from_bytes(bytes.len()),
                     monotonic_ms,
@@ -472,6 +508,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
 
     fn handle_notification(
         &mut self,
+        family: ProtocolFamily,
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
@@ -489,7 +526,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 }
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
-                        ProtocolFamily::Vesc,
+                        family,
                         channel,
                         NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
@@ -501,7 +538,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 push_parser_error(ParserError::UnmatchedReply, output);
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
-                        ProtocolFamily::Vesc,
+                        family,
                         channel,
                         NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
@@ -517,7 +554,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 push_parser_error(ParserError::MalformedFrame, output);
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::parser_diagnostic(
-                        ProtocolFamily::Vesc,
+                        family,
                         channel,
                         NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
@@ -528,7 +565,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
             Ok(VescReadOnlyStreamResult::Buffered) => {
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::buffered_fragment(
-                        ProtocolFamily::Vesc,
+                        family,
                         channel,
                         NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
@@ -616,7 +653,7 @@ fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryRead
                 i64::from(values.controller_id.get()),
             )),
             Some(RawFieldValue::new(
-                VESC_RAW_FAULT_CODE_FIELD_ID,
+                VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID,
                 i64::from(vesc_fault_code_raw(values.fault_code)),
             )),
         ],
@@ -648,7 +685,7 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-                i64::try_from(stats.count_time.as_milliseconds()).unwrap_or(i64::MAX),
+                u64_to_i64_saturating(stats.count_time.as_milliseconds()),
             )),
         ],
     }
@@ -664,18 +701,36 @@ const fn vesc_diagnostic_detail(id: u16, value: i64) -> DiagnosticDetail {
 }
 
 fn push_begode_frame(
+    family: ProtocolFamily,
+    channel: GattChannel,
     context: &mut BegodeTelemetryContext,
     pack_voltage_profile: BegodePackVoltageProfile,
     frame: &BegodeFrame,
     monotonic_ms: MonotonicTimestamp,
     output: &mut Vec<SessionOutput>,
 ) -> SemanticEventCount {
+    let retain_known_frame = |output: &mut Vec<SessionOutput>| {
+        output.push(SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::parser_gap(
+                family,
+                channel,
+                NotificationByteLen::from_bytes(frame.as_slice().len()),
+                monotonic_ms,
+                ParserGapEvidence {
+                    classifier: PayloadClassifier::tag(frame.tag()),
+                    body_len: PayloadBodyLen::from_bytes(frame.as_slice().len()),
+                    retained_payload: RetainedNotificationPayload::from_bytes(frame.as_slice()),
+                },
+            ),
+        ));
+    };
     match frame.tag().get() {
         0x00 => match BegodeLiveATelemetry::decode(frame, pack_voltage_profile) {
             Ok(telemetry) => {
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
@@ -688,6 +743,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     summary.to_battery_response(),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(2)
             }
             Err(error) => push_begode_bms_error(error, output),
@@ -697,6 +753,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     page.to_battery_response(),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_bms_error(error, output),
@@ -713,6 +770,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     telemetry.to_diagnostics_response(),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(3)
             }
             Err(error) => push_begode_telemetry_error(error, output),
@@ -722,6 +780,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     telemetry.to_delta(monotonic_ms),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
@@ -778,13 +837,15 @@ fn push_veteran_frame(
                 )));
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
-                if evidence.kind != BatteryPageKind::Raw
-                    && let Some(payload) = veteran_bms_payload(evidence)
-                {
-                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                        ReadOnlyResponse::Battery(payload),
-                    )));
-                    return SemanticEventCount::from_events(3).saturating_add(settings_count);
+                if evidence.kind != BatteryPageKind::Raw {
+                    if let Some(payload) = veteran_bms_payload(evidence) {
+                        output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                            ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(
+                                payload,
+                            )),
+                        )));
+                        return SemanticEventCount::from_events(3).saturating_add(settings_count);
+                    }
                 }
             }
             SemanticEventCount::from_events(2).saturating_add(settings_count)
@@ -808,13 +869,16 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
             .map(veteran_bms_metadata_payload);
     }
 
-    let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
-        .map_or(0, |page| {
-            u8::try_from(page.cell_voltage.len()).unwrap_or_default()
-        });
+    VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
+        .ok()
+        .and_then(veteran_bms_cell_payload)
+}
+
+fn veteran_bms_cell_payload(page: VeteranBmsCellPage) -> Option<BatteryPagePayload> {
+    let cell_voltages = page.cell_voltage.into_iter().collect();
     decode_veteran_bms_page(
-        evidence.selector,
-        observed_cell_values,
+        page.selector,
+        cell_voltages,
         BatteryInfo::default(),
         VerificationStatus::HardwareVerified,
     )
@@ -966,7 +1030,7 @@ impl SupportsReadRequests for NosfetAeroModel {
         CommandKind::RequestFirmwareInfo,
         CommandKind::RequestTelemetry,
         CommandKind::RequestBatteryInfo,
-        CommandKind::RequestDiagnostics,
+        CommandKind::RequestSettings,
     ]);
     const WRITE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
     const SUBSCRIBE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
@@ -1084,27 +1148,85 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
             bytes,
             monotonic_ms,
         } => {
-            if *connected && (ACCEPT_ANY_NOTIFICATION || channel == M::SUBSCRIBE_CHANNEL) {
-                decoder.handle_notification(channel, bytes, monotonic_ms, output);
+            if *connected {
+                if ACCEPT_ANY_NOTIFICATION || channel == M::SUBSCRIBE_CHANNEL {
+                    decoder.handle_notification(M::PROTOCOL, channel, bytes, monotonic_ms, output);
+                } else {
+                    output.push(SessionOutput::NotificationIngest(
+                        NotificationIngestOutcome::wrong_channel_for_family_bytes(
+                            M::PROTOCOL,
+                            channel,
+                            bytes,
+                            monotonic_ms,
+                        ),
+                    ));
+                }
             }
         }
-        SessionInput::Command(command) => {
-            if let ReadOnlyCommandGate::SupportedRead(kind) = gate_read_only_command::<M>(command) {
-                push_read_request::<M>(kind, output);
+        SessionInput::Command(command) => match gate_read_only_command::<M>(command) {
+            ReadOnlyCommandGate::SupportedRead(kind) => push_read_request::<M>(kind, output),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings) => {
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported()),
+                )));
             }
-        }
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory) => {
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported()),
+                )));
+            }
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestBatteryInfo) => {
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported()),
+                )));
+            }
+            ReadOnlyCommandGate::Unsupported(_) => {}
+        },
+    }
+}
+
+fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> {
+    match kind {
+        CommandKind::RequestBatteryInfo => Some(ReadOnlyResponse::Battery(
+            cutout_core::BatteryReadback::unavailable(),
+        )),
+        CommandKind::RequestFaultHistory => Some(ReadOnlyResponse::FaultHistory(
+            cutout_core::FaultHistoryReadback::unavailable(),
+        )),
+        CommandKind::RequestSettings => Some(ReadOnlyResponse::Settings(
+            cutout_core::SettingsReadback::unavailable(),
+        )),
+        CommandKind::RequestIdentity
+        | CommandKind::RequestFirmwareInfo
+        | CommandKind::RequestTelemetry
+        | CommandKind::RequestDiagnostics
+        | CommandKind::SetLights
+        | CommandKind::SoundHorn
+        | CommandKind::SetRawMotorCurrent => None,
     }
 }
 
 fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Vec<SessionOutput>) {
-    if let Some(RequestDisposition::Write(request)) = M::encode_read_command(kind)
-        && let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice())
-    {
-        output.push(SessionOutput::Transport(TransportAction::Write {
-            channel: M::WRITE_CHANNEL,
-            bytes,
-            mode: request.mode,
-        }));
+    match M::encode_read_command(kind) {
+        Some(RequestDisposition::Write(request)) => {
+            if let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice()) {
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: M::WRITE_CHANNEL,
+                    bytes,
+                    mode: request.mode,
+                }));
+            }
+        }
+        Some(RequestDisposition::Passive { command, .. }) => output.extend(
+            unavailable_readback_response(command)
+                .map(DeviceEvent::ReadOnlyResponse)
+                .map(SessionOutput::Event),
+        ),
+        None => output.extend(
+            unavailable_readback_response(kind)
+                .map(DeviceEvent::ReadOnlyResponse)
+                .map(SessionOutput::Event),
+        ),
     }
 }
 
@@ -1279,8 +1401,8 @@ mod tests {
     use crate::{GearRatioDenominator, MotorPolePairs};
     use core::mem::size_of;
     use cutout_core::{
-        BatteryPageKind, LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
-        TransportAction, VerificationStatus, WriteMode,
+        BatteryPageKind, LinkInfo, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse,
+        TelemetryDelta, TransportAction, VerificationStatus, WriteMode,
     };
     use proptest::prelude::*;
 
@@ -1305,6 +1427,31 @@ mod tests {
 
         fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
             AeroRequestEncoder::encode_command(kind)
+        }
+    }
+
+    struct SilentSemanticReadbackModel;
+
+    impl ProtocolModelSpec for SilentSemanticReadbackModel {
+        const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
+        const MODEL: &'static str = "silent-semantic-readback";
+        const PROTOCOL: ProtocolFamily = ProtocolFamily::VeteranLeaperkimNosfet;
+    }
+
+    impl SupportsReadRequests for SilentSemanticReadbackModel {
+        type Probe = AeroProbe;
+
+        const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+            CommandKind::RequestBatteryInfo,
+            CommandKind::RequestFaultHistory,
+            CommandKind::RequestSettings,
+        ]);
+        const WRITE_CHANNEL: GattChannel = TEST_CHANNEL;
+        const SUBSCRIBE_CHANNEL: GattChannel = TEST_CHANNEL;
+        type NotificationDecoder = NoopNotificationDecoder;
+
+        fn encode_read_command(_kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
+            None
         }
     }
 
@@ -1373,6 +1520,18 @@ mod tests {
         hex_literal::hex!("55aa000000320001000f003200030502000004185a5a5a5a")
     }
 
+    fn live_begode_bms_summary_frame() -> [u8; 24] {
+        hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a")
+    }
+
+    fn live_begode_bms_cell_page_frame() -> [u8; 24] {
+        hex_literal::hex!("55aa0fa00fa10fa20fa30fa40fa50fa60fa702025a5a5a5a")
+    }
+
+    fn live_begode_extra_frame() -> [u8; 24] {
+        hex_literal::hex!("55aaff9c0000002affd8000000000000000007185a5a5a5a")
+    }
+
     fn vesc_selective_values_frame() -> [u8; 28] {
         [
             2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43,
@@ -1402,10 +1561,19 @@ mod tests {
         output
             .iter()
             .filter_map(|item| match item {
-                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => Some(*response),
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
+                    Some(response.clone())
+                }
                 _ => None,
             })
             .collect()
+    }
+
+    fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
+        match response {
+            ReadOnlyResponse::Battery(readback) => readback.page().cloned(),
+            _ => None,
+        }
     }
 
     fn diagnostic_error_events(output: &[SessionOutput]) -> Vec<cutout_core::DiagnosticError> {
@@ -1432,10 +1600,48 @@ mod tests {
         output
             .iter()
             .filter_map(|item| match item {
-                SessionOutput::NotificationIngest(outcome) => Some(*outcome),
+                SessionOutput::NotificationIngest(outcome) => Some(outcome.clone()),
                 _ => None,
             })
             .collect()
+    }
+
+    fn aero_bms_body_gap(
+        frame: &[u8],
+        selector: u8,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> NotificationIngestOutcome {
+        NotificationIngestOutcome::parser_gap(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            VETERAN_DATA_CHANNEL,
+            NotificationByteLen::from_bytes(frame.len()),
+            monotonic_ms,
+            ParserGapEvidence {
+                classifier: PayloadClassifier::selector(ProtocolSelector::new(selector)),
+                body_len: PayloadBodyLen::from_bytes(frame[47..frame.len() - 4].len()),
+                retained_payload: RetainedNotificationPayload::from_bytes(
+                    &frame[47..frame.len() - 4],
+                ),
+            },
+        )
+    }
+
+    fn begode_frame_gap(
+        frame: &[u8],
+        tag: u16,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> NotificationIngestOutcome {
+        NotificationIngestOutcome::parser_gap(
+            ProtocolFamily::BegodeGotway,
+            BEGODE_DATA_CHANNEL,
+            NotificationByteLen::from_bytes(frame.len()),
+            monotonic_ms,
+            ParserGapEvidence {
+                classifier: PayloadClassifier::tag(ProtocolTag::new(tag)),
+                body_len: PayloadBodyLen::from_bytes(frame.len()),
+                retained_payload: RetainedNotificationPayload::from_bytes(frame),
+            },
+        )
     }
 
     fn aero_output_for_notification(bytes: &[u8]) -> Vec<SessionOutput> {
@@ -1490,7 +1696,7 @@ mod tests {
         output
     }
 
-    fn falcon_telemetry_for_notifications(notifications: &[&[u8]]) -> Vec<TelemetryDelta> {
+    fn falcon_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
@@ -1501,7 +1707,7 @@ mod tests {
             }),
             &mut output,
         );
-        for (index, bytes) in notifications.iter().enumerate() {
+        for (index, bytes) in chunks.iter().enumerate() {
             session.handle(
                 SessionInput::Notification {
                     channel: BEGODE_DATA_CHANNEL,
@@ -1512,7 +1718,59 @@ mod tests {
             );
         }
 
+        output
+    }
+
+    fn vesc_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
+            }),
+            &mut output,
+        );
+
+        for (index, bytes) in chunks.iter().enumerate() {
+            session.handle(
+                SessionInput::Notification {
+                    channel: VESC_NOTIFY_CHANNEL,
+                    bytes,
+                    monotonic_ms: ms(42 + u64::try_from(index).expect("chunk index fits")),
+                },
+                &mut output,
+            );
+        }
+
+        output
+    }
+
+    fn assert_vesc_fragmented_read_only_responses_match(frame: &[u8]) {
+        let chunks: Vec<_> = frame.chunks(1).collect();
+        let whole_responses =
+            read_only_response_events(&vesc_output_for_notification_chunks(&[frame]));
+        let fragmented_responses =
+            read_only_response_events(&vesc_output_for_notification_chunks(&chunks));
+
+        assert_eq!(fragmented_responses, whole_responses);
+    }
+
+    fn falcon_telemetry_for_notifications(notifications: &[&[u8]]) -> Vec<TelemetryDelta> {
+        let output = falcon_output_for_notification_chunks(notifications);
+
         telemetry_events(&output)
+    }
+
+    fn assert_falcon_fragmented_read_only_responses_match(frame: &[u8]) {
+        let chunks: Vec<_> = frame.chunks(1).collect();
+        let whole_responses =
+            read_only_response_events(&falcon_output_for_notification_chunks(&[frame]));
+        let fragmented_responses =
+            read_only_response_events(&falcon_output_for_notification_chunks(&chunks));
+
+        assert_eq!(fragmented_responses, whole_responses);
     }
 
     fn read_only_responses_for_notification(bytes: &[u8]) -> Vec<ReadOnlyResponse> {
@@ -1643,11 +1901,43 @@ mod tests {
 
         assert!(output.iter().any(|item| matches!(
             item,
-            SessionOutput::NotificationIngest(NotificationIngestOutcome::Ignored(evidence))
-                if evidence.channel == TEST_CHANNEL
+            SessionOutput::NotificationIngest(NotificationIngestOutcome::Ignored {
+                evidence,
+                reason: cutout_core::IgnoredNotificationReason::AcceptedButUnmapped,
+            }) if evidence.family == Some(TestModel::PROTOCOL)
+                    && evidence.channel == TEST_CHANNEL
                     && evidence.monotonic_ms == ms(11)
                     && evidence.len == NotificationByteLen::from_bytes(3)
         )));
+    }
+
+    #[test]
+    fn shared_read_only_session_reports_wrong_channel_with_model_family() {
+        let mut connected = true;
+        let mut decoder = NoopNotificationDecoder;
+        let mut output = Vec::new();
+        let wrong_channel = GattChannel::from_bytes([0xDD; 16]);
+
+        handle_read_only_session::<TestModel, false>(
+            &mut connected,
+            &mut decoder,
+            SessionInput::Notification {
+                channel: wrong_channel,
+                bytes: &[0x01, 0x02, 0x03, 0x04],
+                monotonic_ms: ms(12),
+            },
+            &mut output,
+        );
+
+        assert_eq!(
+            notification_ingest_outcomes(&output),
+            vec![NotificationIngestOutcome::wrong_channel_for_family_bytes(
+                TestModel::PROTOCOL,
+                wrong_channel,
+                &[0x01, 0x02, 0x03, 0x04],
+                ms(12),
+            )]
+        );
     }
 
     #[test]
@@ -1694,6 +1984,28 @@ mod tests {
             telemetry[0].distance.map(|value| value.value.get()),
             Some(750_000)
         );
+    }
+
+    #[test]
+    fn begode_falcon_live_a_retains_complete_frame_evidence() {
+        let live_a = live_begode_a_frame();
+        let output = falcon_output_for_notification_chunks(&[live_a.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(live_a.as_slice(), 0x00, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(live_a.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(1),
+                ),
+            ]
+        );
+        assert_eq!(telemetry_events(&output).len(), 1);
     }
 
     #[test]
@@ -1826,26 +2138,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_emits_values_telemetry_and_preserves_raw_readback() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
-        let mut output = Vec::new();
-
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        for chunk in vesc_selective_values_frame().chunks(5) {
-            session.handle(
-                SessionInput::Notification {
-                    channel: VESC_NOTIFY_CHANNEL,
-                    bytes: chunk,
-                    monotonic_ms: ms(42),
-                },
-                &mut output,
-            );
-        }
+        let output = vesc_output_for_notification_chunks(&[&vesc_selective_values_frame()]);
 
         let telemetry = telemetry_events(&output);
         let delta = telemetry.last().expect("VESC values telemetry");
@@ -1880,7 +2173,47 @@ mod tests {
         );
         assert_eq!(
             raw.fields[3].expect("fault"),
-            RawFieldValue::new(VESC_RAW_FAULT_CODE_FIELD_ID, 0)
+            RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
+        );
+    }
+
+    #[test]
+    fn generic_vesc_fragmented_values_preserves_read_only_responses() {
+        assert_vesc_fragmented_read_only_responses_match(&vesc_selective_values_frame());
+    }
+
+    #[test]
+    fn generic_vesc_current_fault_code_stays_raw_telemetry_not_fault_history() {
+        let mut output = Vec::new();
+        push_vesc_reply(
+            &VescReadOnlyReply::Values(VescValuesTelemetry {
+                rpm: cutout_core::RotationalSpeed::from_erpm(0),
+                voltage: Voltage::from_millivolts(0),
+                input_current: BatteryCurrent::from_milliamps(0),
+                tachometer: cutout_core::TachometerReading::from_counts(0),
+                controller_id: cutout_core::VescControllerId::new(7),
+                fault_code: VescFaultCode::AbsOverCurrent,
+            }),
+            ms(42),
+            None,
+            &mut output,
+        );
+
+        let responses = read_only_response_events(&output);
+        assert!(
+            responses
+                .iter()
+                .all(|response| !matches!(response, ReadOnlyResponse::FaultHistory(_)))
+        );
+        let Some(raw) = responses.iter().find_map(|response| match response {
+            ReadOnlyResponse::RawTelemetry(raw) => Some(raw),
+            _ => None,
+        }) else {
+            panic!("expected VESC raw telemetry response");
+        };
+        assert_eq!(
+            raw.fields[3].expect("current fault code"),
+            RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 1)
         );
     }
 
@@ -1933,24 +2266,7 @@ mod tests {
 
     #[test]
     fn generic_vesc_session_maps_stats_to_diagnostics_readback() {
-        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
-        let mut output = Vec::new();
-
-        session.handle(
-            SessionInput::LinkUp(LinkInfo {
-                monotonic_ms: ms(1),
-                max_write_len: Some(write_len(185)),
-            }),
-            &mut output,
-        );
-        session.handle(
-            SessionInput::Notification {
-                channel: VESC_NOTIFY_CHANNEL,
-                bytes: &vesc_stats_frame(),
-                monotonic_ms: ms(43),
-            },
-            &mut output,
-        );
+        let output = vesc_output_for_notification_chunks(&[&vesc_stats_frame()]);
 
         let responses = read_only_response_events(&output);
         let ReadOnlyResponse::Diagnostics(diagnostics) =
@@ -1977,6 +2293,11 @@ mod tests {
     }
 
     #[test]
+    fn generic_vesc_fragmented_stats_preserves_read_only_responses() {
+        assert_vesc_fragmented_read_only_responses_match(&vesc_stats_frame());
+    }
+
+    #[test]
     fn begode_falcon_session_keeps_metric_live_b_values_metric() {
         let live_b = live_begode_b_frame();
         let telemetry = falcon_telemetry_for_notifications(&[&live_b]);
@@ -1986,6 +2307,116 @@ mod tests {
             telemetry[0].distance.map(|value| value.value.get()),
             Some(50_000)
         );
+    }
+
+    #[test]
+    fn begode_falcon_fragmented_live_b_preserves_read_only_responses() {
+        let live_b = live_begode_b_frame();
+
+        assert_falcon_fragmented_read_only_responses_match(live_b.as_slice());
+    }
+
+    #[test]
+    fn begode_falcon_live_b_retains_complete_frame_evidence() {
+        let live_b = live_begode_b_frame();
+        let output = falcon_output_for_notification_chunks(&[live_b.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(live_b.as_slice(), 0x04, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(live_b.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(3),
+                ),
+            ]
+        );
+        assert_eq!(telemetry_events(&output).len(), 1);
+        assert_eq!(read_only_response_events(&output).len(), 2);
+    }
+
+    #[test]
+    fn begode_falcon_extra_telemetry_retains_complete_frame_evidence() {
+        let extra = live_begode_extra_frame();
+        let output = falcon_output_for_notification_chunks(&[extra.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(extra.as_slice(), 0x07, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(extra.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(1),
+                ),
+            ]
+        );
+        assert_eq!(telemetry_events(&output).len(), 1);
+    }
+
+    #[test]
+    fn begode_falcon_fragmented_bms_summary_preserves_read_only_responses() {
+        let summary = live_begode_bms_summary_frame();
+
+        assert_falcon_fragmented_read_only_responses_match(summary.as_slice());
+    }
+
+    #[test]
+    fn begode_falcon_bms_summary_retains_complete_frame_evidence() {
+        let summary = live_begode_bms_summary_frame();
+        let output = falcon_output_for_notification_chunks(&[summary.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(summary.as_slice(), 0x01, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(summary.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(2),
+                ),
+            ]
+        );
+        assert!(!read_only_response_events(&output).is_empty());
+    }
+
+    #[test]
+    fn begode_falcon_fragmented_bms_cell_page_preserves_read_only_responses() {
+        let cell_page = live_begode_bms_cell_page_frame();
+
+        assert_falcon_fragmented_read_only_responses_match(cell_page.as_slice());
+    }
+
+    #[test]
+    fn begode_falcon_bms_cell_page_retains_complete_frame_evidence() {
+        let cell_page = live_begode_bms_cell_page_frame();
+        let output = falcon_output_for_notification_chunks(&[cell_page.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(cell_page.as_slice(), 0x02, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(cell_page.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(1),
+                ),
+            ]
+        );
+        assert!(!read_only_response_events(&output).is_empty());
     }
 
     #[test]
@@ -2106,9 +2537,7 @@ mod tests {
         );
         assert_eq!(
             telemetry.pwm,
-            Some(Measured::reported(cutout_core::DutyCycle::from_permille(
-                -1_000
-            )))
+            Some(Measured::reported(cutout_core::DutyCycle::from_permille(0)))
         );
         assert_eq!(
             telemetry.distance,
@@ -2158,78 +2587,92 @@ mod tests {
         let fields: Vec<_> = responses[1..]
             .iter()
             .flat_map(|response| match response {
-                ReadOnlyResponse::Settings(settings) => settings.entries,
+                ReadOnlyResponse::Settings(settings) => settings.entries(),
                 _ => [None, None, None, None],
             })
             .flatten()
             .map(|entry| entry.field)
             .collect();
         assert!(fields.contains(&RawFieldValue::new(crate::VETERAN_FIELD_PEDALS_MODE, 1_920,)));
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(2)
-                    && payload.page().kind == BatteryPageKind::CellVoltage
-        )));
+        assert!(
+            responses
+                .iter()
+                .any(
+                    |response| available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(2)
+                        && payload.page().kind == BatteryPageKind::CellVoltage)
+                )
+        );
     }
 
     #[test]
     fn nosfet_aero_session_emits_typed_bms_temperature_page_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_3_frame());
 
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(3)
-                    && payload.page().kind == BatteryPageKind::Temperature
-                    && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload
-                        .battery()
-                        .temperature
-                        .expect("representative temperature")
-                        .value
-                        .get()
-                        == 16_730
-                    && payload
-                        .temperatures()[5]
-                        .expect("sixth temperature")
-                        .value
-                        == 17_830
-        )));
+        assert!(
+            responses
+                .iter()
+                .any(
+                    |response| available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(3)
+                        && payload.page().kind == BatteryPageKind::Temperature
+                        && payload.page().verification == VerificationStatus::HardwareVerified
+                        && payload
+                            .battery()
+                            .temperature
+                            .is_some_and(|temperature| temperature.value.get() == 16_730)
+                        && payload.temperatures()[5]
+                            .is_some_and(|temperature| temperature.value == 17_830))
+                )
+        );
     }
 
     #[test]
     fn nosfet_aero_session_emits_typed_bms_cell_page_response() {
         let responses = read_only_responses_for_notification(&live_aero_frame());
 
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(2)
-                    && payload.page().kind == BatteryPageKind::CellVoltage
-                    && payload.page().verification == VerificationStatus::HardwareVerified
-        )));
+        let Some(BatteryPagePayload::CellVoltage(page)) = responses
+            .iter()
+            .find_map(available_battery_page)
+            .filter(|payload| payload.page().selector == ProtocolSelector::new(2))
+        else {
+            panic!("expected selector 2 cell-voltage page");
+        };
+
+        assert_eq!(page.page.kind, BatteryPageKind::CellVoltage);
+        assert_eq!(page.page.verification, VerificationStatus::HardwareVerified);
+        assert_eq!(page.cell_voltages.len(), 15);
+        assert_eq!(page.cell_voltages[0], Voltage::from_millivolts(3633));
+        assert_eq!(page.cell_voltages[14], Voltage::from_millivolts(3630));
     }
 
     #[test]
     fn nosfet_aero_session_emits_metadata_bms_current_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_0_frame());
 
-        assert!(responses.iter().any(|response| matches!(
-            response,
-            ReadOnlyResponse::Battery(payload)
-                if payload.page().selector == ProtocolSelector::new(0)
-                    && payload.page().kind == BatteryPageKind::Metadata
-                    && payload.page().verification == VerificationStatus::HardwareVerified
-                    && payload.battery().current == Some(Measured::reported(
-                        BatteryCurrent::from_milliamps(20)
-                    ))
-                    && payload.bms_pack_currents()
-                        == Some(cutout_core::BmsPackCurrents::reported(
-                            BatteryCurrent::from_milliamps(20),
-                            BatteryCurrent::from_milliamps(20)
-                        ))
-        )));
+        assert!(
+            responses
+                .iter()
+                .any(
+                    |response| available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(0)
+                        && payload.page().kind == BatteryPageKind::Metadata
+                        && payload.page().verification == VerificationStatus::HardwareVerified
+                        && payload.battery().current
+                            == Some(Measured::reported(BatteryCurrent::from_milliamps(20)))
+                        && payload.bms_pack_currents()
+                            == Some(cutout_core::BmsPackCurrents::reported(
+                                BatteryCurrent::from_milliamps(20),
+                                BatteryCurrent::from_milliamps(20)
+                            )))
+                )
+        );
     }
 
     #[test]
@@ -2261,14 +2704,17 @@ mod tests {
     fn nosfet_aero_session_does_not_emit_reserved_bms_page_as_raw_response() {
         let responses = read_only_responses_for_notification(&live_aero_selector_8_frame());
 
-        assert!(responses.iter().all(|response| {
-            !matches!(
-                response,
-                ReadOnlyResponse::Battery(payload)
-                    if payload.page().selector == ProtocolSelector::new(8)
-                        && payload.page().kind == BatteryPageKind::Raw
-            )
-        }));
+        assert!(
+            responses
+                .iter()
+                .all(
+                    |response| !available_battery_page(response).is_some_and(|payload| payload
+                        .page()
+                        .selector
+                        == ProtocolSelector::new(8)
+                        && payload.page().kind == BatteryPageKind::Raw)
+                )
+        );
     }
 
     #[test]
@@ -2298,13 +2744,16 @@ mod tests {
 
         assert_eq!(
             outcomes,
-            vec![NotificationIngestOutcome::semantic_events(
-                ProtocolFamily::VeteranLeaperkimNosfet,
-                VETERAN_DATA_CHANNEL,
-                NotificationByteLen::from_bytes(frame.len()),
-                ms(42),
-                SemanticEventCount::from_events(5),
-            )]
+            vec![
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    VETERAN_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(frame.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(5),
+                ),
+                aero_bms_body_gap(&frame, 0, ms(42)),
+            ]
         );
         assert!(!telemetry_events(&output).is_empty());
         assert!(!read_only_response_events(&output).is_empty());
@@ -2326,6 +2775,9 @@ mod tests {
                 ReservedPayloadEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::from_bytes(24),
+                    retained_payload: RetainedNotificationPayload::from_bytes(
+                        &frame[47..frame.len() - 4],
+                    ),
                     verification: VerificationStatus::HardwareVerified,
                 },
             )]
@@ -2349,16 +2801,17 @@ mod tests {
                 ParserGapEvidence {
                     classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                     body_len: PayloadBodyLen::from_bytes(26),
+                    retained_payload: RetainedNotificationPayload::from_bytes(
+                        &frame[47..frame.len() - 4],
+                    ),
                 },
             )]
         );
         assert!(read_only_response_events(&output).iter().all(|response| {
-            !matches!(
-                response,
-                ReadOnlyResponse::Battery(payload)
-                    if payload.page().selector == ProtocolSelector::new(9)
-                        && payload.page().kind == BatteryPageKind::Raw
-            )
+            !available_battery_page(response).is_some_and(|payload| {
+                payload.page().selector == ProtocolSelector::new(9)
+                    && payload.page().kind == BatteryPageKind::Raw
+            })
         }));
     }
 
@@ -2395,7 +2848,13 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        decoder.handle_notification(VETERAN_DATA_CHANNEL, &[0x80], ms(42), &mut output);
+        decoder.handle_notification(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            VETERAN_DATA_CHANNEL,
+            &[0x80],
+            ms(42),
+            &mut output,
+        );
 
         let error = ParserError::OversizedFrame {
             claimed: cutout_core::ParserFrameLen::from_bytes(crate::MAX_VETERAN_FRAME_LEN + 1),
@@ -2419,39 +2878,74 @@ mod tests {
     }
 
     #[test]
+    fn nosfet_aero_decoder_reports_seeking_bytes_for_investigation() {
+        let output = aero_output_for_notification(&[0x00]);
+
+        assert_eq!(
+            notification_ingest_outcomes(&output),
+            vec![NotificationIngestOutcome::seeking_frame_boundary(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                VETERAN_DATA_CHANNEL,
+                &[0x00],
+                ms(42),
+            )]
+        );
+    }
+
+    #[test]
     fn nosfet_aero_session_reports_one_byte_fragments_as_buffered_until_complete() {
         let frame = live_aero_selector_0_frame();
         let chunks: Vec<_> = frame.chunks(1).collect();
         let output = aero_output_for_notification_chunks(&chunks);
         let outcomes = notification_ingest_outcomes(&output);
 
-        assert_eq!(outcomes.len(), frame.len());
+        assert_eq!(outcomes.len(), frame.len() + 1);
         assert!(
-            outcomes[..outcomes.len() - 1]
+            outcomes[..outcomes.len() - 2]
                 .iter()
                 .all(|outcome| matches!(outcome, NotificationIngestOutcome::BufferedFragment(_)))
         );
+        let completed_at = ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1);
         assert_eq!(
-            outcomes.last().copied(),
-            Some(NotificationIngestOutcome::semantic_events(
+            outcomes[outcomes.len() - 2],
+            NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::from_bytes(frame.len()),
-                ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1),
+                completed_at,
                 SemanticEventCount::from_events(5),
-            ))
+            )
+        );
+        assert_eq!(
+            outcomes.last().cloned(),
+            Some(aero_bms_body_gap(&frame, 0, completed_at))
         );
     }
 
     #[test]
-    fn nosfet_aero_session_reports_bms_selectors_zero_through_eight_without_parser_gaps() {
+    fn nosfet_aero_fragmented_replay_preserves_read_only_responses() {
+        let frame = live_aero_selector_0_frame();
+        let chunks: Vec<_> = frame.chunks(1).collect();
+        let whole_responses = read_only_response_events(&aero_output_for_notification(&frame));
+        let fragmented_responses =
+            read_only_response_events(&aero_output_for_notification_chunks(&chunks));
+
+        assert_eq!(fragmented_responses, whole_responses);
+    }
+
+    #[test]
+    fn nosfet_aero_session_retains_bms_bodies_for_selectors_zero_through_eight() {
         for selector in 0..=8 {
             let frame = live_aero_selector_0_frame_with_selector(selector);
             let output = aero_output_for_notification(&frame);
             let outcomes = notification_ingest_outcomes(&output);
 
-            assert_eq!(outcomes.len(), 1, "selector {selector}");
-            match (selector, outcomes[0]) {
+            if selector == 8 {
+                assert_eq!(outcomes.len(), 1, "selector {selector}");
+            } else {
+                assert_eq!(outcomes.len(), 2, "selector {selector}");
+            }
+            match (selector, outcomes[0].clone()) {
                 (
                     8,
                     NotificationIngestOutcome::KnownReserved {
@@ -2459,10 +2953,7 @@ mod tests {
                         notification,
                     },
                 ) => {
-                    assert_eq!(
-                        notification.family,
-                        Some(ProtocolFamily::VeteranLeaperkimNosfet)
-                    );
+                    assert_eq!(notification.family, ProtocolFamily::VeteranLeaperkimNosfet);
                     assert_eq!(
                         payload.classifier,
                         PayloadClassifier::selector(ProtocolSelector::new(8))
@@ -2471,14 +2962,14 @@ mod tests {
                     assert_eq!(payload.verification, VerificationStatus::HardwareVerified);
                 }
                 (0..=7, NotificationIngestOutcome::SemanticEvents { notification, .. }) => {
-                    assert_eq!(
-                        notification.family,
-                        Some(ProtocolFamily::VeteranLeaperkimNosfet)
-                    );
+                    assert_eq!(notification.family, ProtocolFamily::VeteranLeaperkimNosfet);
                 }
                 (_, outcome) => {
                     panic!("selector {selector} produced unexpected outcome {outcome:?}")
                 }
+            }
+            if selector != 8 {
+                assert_eq!(outcomes[1], aero_bms_body_gap(&frame, selector, ms(42)));
             }
         }
     }
@@ -2504,6 +2995,7 @@ mod tests {
                     ms(42),
                     SemanticEventCount::from_events(5),
                 ),
+                aero_bms_body_gap(&semantic_frame, 0, ms(42)),
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
@@ -2512,6 +3004,9 @@ mod tests {
                     ReservedPayloadEvidence {
                         classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                         body_len: PayloadBodyLen::from_bytes(24),
+                        retained_payload: RetainedNotificationPayload::from_bytes(
+                            &reserved_frame[47..reserved_frame.len() - 4],
+                        ),
                         verification: VerificationStatus::HardwareVerified,
                     },
                 ),
@@ -2540,19 +3035,28 @@ mod tests {
             let output = aero_output_for_notification_chunks(&chunks);
             let outcomes = notification_ingest_outcomes(&output);
 
-            prop_assert_eq!(outcomes.len(), chunks.len());
-            prop_assert!(outcomes[..outcomes.len() - 1]
+            prop_assert_eq!(outcomes.len(), chunks.len() + 1);
+            prop_assert!(outcomes[..outcomes.len() - 2]
                 .iter()
                 .all(|outcome| matches!(outcome, NotificationIngestOutcome::BufferedFragment(_))));
+            let completed_at = ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1);
             prop_assert_eq!(
-                outcomes.last().copied(),
-                Some(NotificationIngestOutcome::semantic_events(
+                outcomes[outcomes.len() - 2].clone(),
+                NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
                     NotificationByteLen::from_bytes(frame.len()),
-                    ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
+                    completed_at,
                     SemanticEventCount::from_events(5),
-                ))
+                )
+            );
+            prop_assert_eq!(
+                outcomes.last().cloned(),
+                Some(aero_bms_body_gap(&frame, 0, completed_at))
+            );
+            prop_assert_eq!(
+                read_only_response_events(&output),
+                read_only_response_events(&aero_output_for_notification(&frame))
             );
         }
     }
@@ -2637,8 +3141,8 @@ mod tests {
     #[test]
     fn read_only_gate_accepts_supported_read_commands() {
         assert_eq!(
-            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestDiagnostics),
-            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestDiagnostics)
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestSettings),
+            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestSettings)
         );
         assert_eq!(
             gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestIdentity),
@@ -2649,17 +3153,17 @@ mod tests {
     #[test]
     fn read_only_gate_rejects_unsupported_read_commands() {
         assert_eq!(
-            gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestDiagnostics),
-            ReadOnlyCommandGate::Unsupported(CommandKind::RequestDiagnostics)
+            gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestFaultHistory),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory)
+        );
+        assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestFaultHistory),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory)
         );
     }
 
     #[test]
     fn read_only_gate_rejects_write_control_and_actuation_commands() {
-        assert_eq!(
-            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestSettings),
-            ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings)
-        );
         assert_eq!(
             gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SetLights(
                 cutout_core::LightState::On
@@ -2732,20 +3236,171 @@ mod tests {
             &mut output,
         );
 
-        assert!(output.is_empty());
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
+            ))]
+        );
     }
 
     #[test]
-    fn falcon_read_only_session_rejects_unsupported_diagnostics_without_writes() {
+    fn generic_vesc_session_reports_unsupported_battery_readback_without_writes() {
+        let mut session = ReadOnlySession::<VescGenericModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unsupported())
+            ))]
+        );
+    }
+
+    #[test]
+    fn falcon_read_only_session_reports_unsupported_fault_history_without_writes() {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            SessionInput::Command(DeviceCommand::RequestFaultHistory),
             &mut output,
         );
 
-        assert!(output.is_empty());
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported())
+            ))]
+        );
+    }
+
+    #[test]
+    fn aero_passive_fault_history_reports_unsupported_fault_history_without_writes() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestFaultHistory),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported())
+            ))]
+        );
+    }
+
+    #[test]
+    fn read_only_session_reports_unavailable_semantic_readbacks_when_encoder_has_no_request() {
+        let mut session = ReadOnlySession::<SilentSemanticReadbackModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestFaultHistory),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestSettings),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Battery(
+                    cutout_core::BatteryReadback::unavailable()
+                ))),
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
+                )),
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(
+                    cutout_core::SettingsReadback::unavailable()
+                ))),
+            ]
+        );
+    }
+
+    #[test]
+    fn aero_passive_settings_reports_unavailable_settings_without_writes() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestSettings),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unavailable())
+            ))]
+        );
+    }
+
+    #[test]
+    fn aero_passive_battery_reports_unavailable_battery_without_writes() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
+            ))]
+        );
     }
 
     #[test]
