@@ -104,8 +104,7 @@ struct CutoutMobilePackageSmoke {
             ),
         ])
 
-        let writeAction = SessionAction(
-            kind: .write,
+        let writeAction = SessionAction.write(
             channel: BluetoothUuid.bluetooth16(0xffe1).bytes,
             bytes: Data([0x01, 0x02, 0x03, 0x04, 0x05])
         )

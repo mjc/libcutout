@@ -163,12 +163,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         var observedReadbacks: [SettingsReadback?] = []
         core.onSettingsReadbackChange = { observedReadbacks.append($0) }
 
-        let action = SessionAction(
-            kind: .settingsReadback,
-            channel: Data(),
-            bytes: Data(),
-            settingsReadback: readback
-        )
+        let action = SessionAction.withSettingsReadback(readback)
         core.applyNotificationStep(
             CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [action]),
             receivedAt: MonotonicMilliseconds(42)
@@ -262,12 +257,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         var observedReadbacks: [FaultHistoryReadback?] = []
         core.onFaultHistoryReadbackChange = { observedReadbacks.append($0) }
 
-        let action = SessionAction(
-            kind: .faultHistoryReadback,
-            channel: Data(),
-            bytes: Data(),
-            faultHistoryReadback: readback
-        )
+        let action = SessionAction.withFaultHistoryReadback(readback)
         core.applyNotificationStep(
             CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [action]),
             receivedAt: MonotonicMilliseconds(42)
@@ -319,12 +309,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         var observedSnapshots: [BmsSnapshot?] = []
         core.onBmsSnapshotChange = { observedSnapshots.append($0) }
 
-        let action = SessionAction(
-            kind: .bmsSnapshot,
-            channel: Data(),
-            bytes: Data(),
-            bmsSnapshot: snapshot
-        )
+        let action = SessionAction.withBmsSnapshot(snapshot)
         core.applyNotificationStep(
             CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [action]),
             receivedAt: MonotonicMilliseconds(42)

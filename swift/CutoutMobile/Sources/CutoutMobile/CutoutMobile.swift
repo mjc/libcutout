@@ -64,7 +64,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
 
-    public init(
+    private init(
         kind: SessionActionKind,
         channel: Data,
         bytes: Data,
@@ -78,6 +78,53 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.settingsReadback = settingsReadback
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
+    }
+
+    public static func subscribe(channel: Data) -> Self {
+        Self(kind: .subscribe, channel: channel, bytes: Data())
+    }
+
+    public static func write(channel: Data, bytes: Data) -> Self {
+        Self(kind: .write, channel: channel, bytes: bytes)
+    }
+
+    public static func event(channel: Data = Data(), bytes: Data = Data()) -> Self {
+        Self(kind: .event, channel: channel, bytes: bytes)
+    }
+
+    public static func disconnect() -> Self {
+        Self(kind: .disconnect, channel: Data(), bytes: Data())
+    }
+
+    public static func notificationIngest() -> Self {
+        Self(kind: .notificationIngest, channel: Data(), bytes: Data())
+    }
+
+    public static func withSettingsReadback(_ readback: SettingsReadback) -> Self {
+        Self(
+            kind: .settingsReadback,
+            channel: Data(),
+            bytes: Data(),
+            settingsReadback: readback
+        )
+    }
+
+    public static func withFaultHistoryReadback(_ readback: FaultHistoryReadback) -> Self {
+        Self(
+            kind: .faultHistoryReadback,
+            channel: Data(),
+            bytes: Data(),
+            faultHistoryReadback: readback
+        )
+    }
+
+    public static func withBmsSnapshot(_ snapshot: BmsSnapshot) -> Self {
+        Self(
+            kind: .bmsSnapshot,
+            channel: Data(),
+            bytes: Data(),
+            bmsSnapshot: snapshot
+        )
     }
 
     fileprivate init(_ dto: MobileSessionOutputDto) {
