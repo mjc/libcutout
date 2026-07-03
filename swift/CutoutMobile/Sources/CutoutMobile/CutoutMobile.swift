@@ -63,6 +63,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let settingsReadback: SettingsReadback?
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
+    public let veteranProtocolModelId: UInt16?
 
     private init(
         kind: SessionActionKind,
@@ -70,7 +71,8 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         bytes: Data,
         settingsReadback: SettingsReadback? = nil,
         faultHistoryReadback: FaultHistoryReadback? = nil,
-        bmsSnapshot: BmsSnapshot? = nil
+        bmsSnapshot: BmsSnapshot? = nil,
+        veteranProtocolModelId: UInt16? = nil
     ) {
         self.kind = kind
         self.channel = channel
@@ -78,6 +80,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.settingsReadback = settingsReadback
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
+        self.veteranProtocolModelId = veteranProtocolModelId
     }
 
     public static func subscribe(channel: Data) -> Self {
@@ -90,6 +93,15 @@ public struct SessionAction: Equatable, Hashable, Sendable {
 
     public static func event(channel: Data = Data(), bytes: Data = Data()) -> Self {
         Self(kind: .event, channel: channel, bytes: bytes)
+    }
+
+    public static func protocolIdentity(veteranModelId: UInt16) -> Self {
+        Self(
+            kind: .event,
+            channel: Data(),
+            bytes: Data(),
+            veteranProtocolModelId: veteranModelId
+        )
     }
 
     public static func disconnect() -> Self {
@@ -134,6 +146,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.settingsReadback = dto.settingsReadback.map(SettingsReadback.init)
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
         self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
+        self.veteranProtocolModelId = dto.veteranProtocolModelId
     }
 }
 

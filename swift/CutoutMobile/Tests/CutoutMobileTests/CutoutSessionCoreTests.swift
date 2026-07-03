@@ -402,6 +402,66 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedSnapshots, [snapshot, nil])
     }
 
+    func testProtocolIdentityCandidateUpdatesFromVeteranModelId() {
+        let core = CutoutSessionCore()
+        var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
+        core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
+                localName: "NF2557",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: nil,
+                actions: [.protocolIdentity(veteranModelId: 43)]
+            ),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "NF2557")
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "NOSFET Aero confirmed by model id 43")
+        XCTAssertEqual(core.protocolIdentityCandidate?.support.electricUnicycleModel, .aero)
+        XCTAssertEqual(
+            observedCandidates.compactMap { $0?.detail },
+            ["NOSFET Aero confirmed by model id 43"]
+        )
+        XCTAssertEqual(core.records.last, "protocol_identity=NOSFET Aero confirmed by model id 43")
+    }
+
+    func testDisconnectAndScanClearsProtocolIdentityCandidate() {
+        let core = CutoutSessionCore()
+        var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
+        core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
+                localName: "NF2557",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: nil,
+                actions: [.protocolIdentity(veteranModelId: 43)]
+            ),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        core.disconnectAndScan()
+
+        XCTAssertEqual(core.protocolIdentityCandidate, nil)
+        XCTAssertEqual(
+            observedCandidates.map { $0?.detail },
+            ["NOSFET Aero confirmed by model id 43", nil]
+        )
+    }
+
     func testDisconnectAndScanClearsRideStateAndReturnsPickerToScanning() {
         let core = CutoutSessionCore()
         core.observeAdvertisement(

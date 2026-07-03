@@ -491,6 +491,9 @@ pub struct MobileSessionOutputDto {
 
     /// Typed read-only BMS or pack-health response.
     pub bms_snapshot: Option<MobileBmsSnapshotDto>,
+
+    /// Veteran/NOSFET protocol model id when an Aero-family session decoded it.
+    pub veteran_protocol_model_id: Option<u16>,
 }
 
 /// Mobile notification ingest outcome kind.
@@ -2094,7 +2097,7 @@ impl AeroReadOnlySession {
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let input = SessionInputDto::from(input);
-        MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
+        mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input))
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -2102,7 +2105,7 @@ impl AeroReadOnlySession {
         self.lock_inner()
             .drain_outputs()
             .into_iter()
-            .map(Into::into)
+            .map(mobile_aero_session_output)
             .collect()
     }
 
@@ -2206,6 +2209,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
                 kind: MobileSessionOutputKindDto::Write,
@@ -2215,6 +2219,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
                 kind: MobileSessionOutputKindDto::Disconnect,
@@ -2224,6 +2229,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
             SessionOutputDto::ReadOnly(response) => match response.payload {
                 ReadOnlyOutputPayload::Settings(settings) => Self {
@@ -2234,6 +2240,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: Some(settings.into()),
                     fault_history_readback: None,
                     bms_snapshot: None,
+                    veteran_protocol_model_id: None,
                 },
                 ReadOnlyOutputPayload::FaultHistory(fault_history) => Self {
                     kind: MobileSessionOutputKindDto::FaultHistoryReadback,
@@ -2243,6 +2250,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: None,
                     fault_history_readback: Some(fault_history.into()),
                     bms_snapshot: None,
+                    veteran_protocol_model_id: None,
                 },
                 ReadOnlyOutputPayload::Battery(battery) => Self {
                     kind: MobileSessionOutputKindDto::BmsSnapshot,
@@ -2252,6 +2260,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: None,
                     fault_history_readback: None,
                     bms_snapshot: Some(battery.into()),
+                    veteran_protocol_model_id: None,
                 },
                 ReadOnlyOutputPayload::Firmware(_)
                 | ReadOnlyOutputPayload::Diagnostics(_)
@@ -2263,6 +2272,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: None,
                     fault_history_readback: None,
                     bms_snapshot: None,
+                    veteran_protocol_model_id: None,
                 },
             },
             SessionOutputDto::Event(_) => Self {
@@ -2273,6 +2283,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
             SessionOutputDto::NotificationIngest(outcome) => Self {
                 kind: MobileSessionOutputKindDto::NotificationIngest,
@@ -2282,6 +2293,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                veteran_protocol_model_id: None,
             },
         }
     }
@@ -2553,6 +2565,36 @@ impl From<ConcreteSessionStepResultDto> for MobileSessionStepResultDto {
             outputs: result.outputs.into_iter().map(Into::into).collect(),
             error: result.error.map(Into::into),
         }
+    }
+}
+
+fn mobile_aero_session_step_result(
+    result: ConcreteSessionStepResultDto,
+) -> MobileSessionStepResultDto {
+    MobileSessionStepResultDto {
+        outputs: result
+            .outputs
+            .into_iter()
+            .map(mobile_aero_session_output)
+            .collect(),
+        error: result.error.map(Into::into),
+    }
+}
+
+fn mobile_aero_session_output(output: SessionOutputDto) -> MobileSessionOutputDto {
+    let veteran_protocol_model_id = match &output {
+        SessionOutputDto::ReadOnly(response) => match &response.payload {
+            ReadOnlyOutputPayload::Firmware(firmware) => {
+                firmware.firmware_major.map(|major| major.value)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+
+    MobileSessionOutputDto {
+        veteran_protocol_model_id,
+        ..MobileSessionOutputDto::from(output)
     }
 }
 
@@ -3257,6 +3299,54 @@ mod tests {
         );
         assert_eq!(mobile.last_fault, None);
         assert_eq!(mobile.since_distance, None);
+    }
+
+    #[test]
+    fn generic_firmware_output_does_not_invent_veteran_protocol_model_id() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestFirmwareInfo,
+            payload: ReadOnlyOutputPayload::Firmware(cutout_core::FirmwareInfoDto {
+                protocol_version: None,
+                firmware_major: Some(cutout_core::MeasuredU16Dto {
+                    value: 43,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                firmware_minor: None,
+                firmware_patch: None,
+                build_id: None,
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::Event);
+        assert_eq!(mobile.veteran_protocol_model_id, None);
+    }
+
+    #[test]
+    fn aero_firmware_output_carries_veteran_protocol_model_id() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestFirmwareInfo,
+            payload: ReadOnlyOutputPayload::Firmware(cutout_core::FirmwareInfoDto {
+                protocol_version: None,
+                firmware_major: Some(cutout_core::MeasuredU16Dto {
+                    value: 43,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                firmware_minor: None,
+                firmware_patch: None,
+                build_id: None,
+            }),
+        });
+
+        let mobile = mobile_aero_session_output(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::Event);
+        assert_eq!(mobile.veteran_protocol_model_id, Some(43));
     }
 
     #[test]

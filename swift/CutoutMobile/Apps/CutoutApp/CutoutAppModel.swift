@@ -39,6 +39,10 @@ final class CutoutAppModel: ObservableObject {
         core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
             self?.bmsSnapshot = bmsSnapshot
         }
+        core.onProtocolIdentityCandidateChange = { [weak self] candidate in
+            guard case .supported = candidate?.support else { return }
+            self?.selectedRideTitle = candidate?.detail
+        }
     }
 
     func start() {

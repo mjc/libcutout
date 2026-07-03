@@ -10,6 +10,7 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var settingsReadback: SettingsReadback?
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
+    public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -18,6 +19,7 @@ public final class CutoutSessionCore: NSObject {
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
+    public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
     private let clock = MonotonicClock()
     private var central: CBCentralManager?
@@ -72,6 +74,7 @@ public final class CutoutSessionCore: NSObject {
         clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
+        clearProtocolIdentityCandidate()
         onDisplayStateChange?(displayState)
 
         if let peripheral {
@@ -113,9 +116,25 @@ public final class CutoutSessionCore: NSObject {
         case .bmsSnapshot:
             bmsSnapshot = action.bmsSnapshot
             onBmsSnapshotChange?(bmsSnapshot)
-        case .subscribe, .write, .event, .disconnect, .notificationIngest:
+        case .event:
+            applyProtocolIdentityModelId(action.veteranProtocolModelId)
+        case .subscribe, .write, .disconnect, .notificationIngest:
             break
         }
+    }
+
+    private func applyProtocolIdentityModelId(_ modelId: UInt16?) {
+        guard let modelId, let advertisement = advertisement ?? discoveredAdvertisements.last else {
+            return
+        }
+        let candidate = mobileDiscoveryCandidateFromVeteranProtocolIdentity(
+            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+            displayName: advertisement.localName ?? "Veteran/NOSFET device",
+            modelId: modelId
+        )
+        protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+        onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
+        record("protocol_identity=\(candidate.detail)")
     }
 
     private func clearSettingsReadback() {
@@ -142,6 +161,14 @@ public final class CutoutSessionCore: NSObject {
         onBmsSnapshotChange?(nil)
     }
 
+    private func clearProtocolIdentityCandidate() {
+        guard protocolIdentityCandidate != nil else {
+            return
+        }
+        protocolIdentityCandidate = nil
+        onProtocolIdentityCandidateChange?(nil)
+    }
+
     private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
         onPhaseChange?(phase)
@@ -159,6 +186,7 @@ public final class CutoutSessionCore: NSObject {
         clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
+        clearProtocolIdentityCandidate()
         peripheral.delegate = self
         setPhase(.connecting(model: model))
         central?.stopScan()
