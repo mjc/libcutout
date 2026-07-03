@@ -971,6 +971,22 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         ]
     }
 
+    public var averageGroupVoltage: Voltage? {
+        guard !groupVoltages.isEmpty else {
+            return nil
+        }
+
+        let total = groupVoltages.reduce(0) { partial, voltage in
+            partial + Int64(voltage.value)
+        }
+        let count = Int64(groupVoltages.count)
+        return Voltage(value: Int32(total / count))
+    }
+
+    public var lowestGroupLabel: String? {
+        lowestGroupIndex.map { "group \($0)" }
+    }
+
     private var groupVoltages: [Voltage] {
         groups.compactMap(\.voltage)
     }

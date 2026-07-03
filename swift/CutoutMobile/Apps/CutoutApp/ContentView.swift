@@ -2018,8 +2018,8 @@ private struct BmsOverviewLayout: View {
             BmsHeroCard(
                 eyebrow: "usable energy",
                 title: percentText(snapshot.energyPercent),
-                trailing: "sag adjusted",
-                detail: "15.8 mi confident · 21.4 mi gentle",
+                trailing: snapshot.availability.displayText,
+                detail: snapshot.topology.layoutLabel,
                 accent: .yellow,
                 scale: scale
             )
@@ -2029,7 +2029,7 @@ private struct BmsOverviewLayout: View {
                     title: "pack voltage",
                     value: voltageText(snapshot.voltage),
                     unit: "V",
-                    detail: "4.08 V avg",
+                    detail: averageGroupVoltageDetail,
                     accent: .green,
                     scale: scale
                 )
@@ -2037,7 +2037,7 @@ private struct BmsOverviewLayout: View {
                     title: "cell delta",
                     value: millivoltsText(snapshot.cellDelta),
                     unit: "mV",
-                    detail: "balanced enough",
+                    detail: snapshot.balancingSummary ?? snapshot.availability.displayText,
                     accent: .green,
                     scale: scale
                 )
@@ -2048,7 +2048,7 @@ private struct BmsOverviewLayout: View {
                     title: "lowest group",
                     value: groupVoltageText(snapshot, index: snapshot.lowestGroupIndex),
                     unit: "V",
-                    detail: "group 17",
+                    detail: snapshot.lowestGroupLabel ?? snapshot.topology.layoutLabel,
                     accent: .orange,
                     scale: scale
                 )
@@ -2080,6 +2080,13 @@ private struct BmsOverviewLayout: View {
                 scale: scale
             )
         }
+    }
+
+    private var averageGroupVoltageDetail: String {
+        guard let averageGroupVoltage = snapshot.averageGroupVoltage else {
+            return snapshot.topology.layoutLabel
+        }
+        return "\(groupVoltageText(averageGroupVoltage)) V avg"
     }
 }
 

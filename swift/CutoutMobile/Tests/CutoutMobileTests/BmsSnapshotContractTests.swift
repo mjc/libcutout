@@ -172,4 +172,26 @@ final class BmsSnapshotContractTests: XCTestCase {
             ]
         )
     }
+
+    func testSnapshotExposesOverviewHelpersForLivePackData() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "20S4P split pack",
+                seriesGroupCount: 20,
+                parallelCount: 4,
+                packCount: 2,
+                bmsCount: 2,
+                confidence: .verified
+            ),
+            cellDelta: VoltageDelta(value: 18),
+            lowestGroupIndex: 17,
+            groups: [
+                BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), alertLevel: .warning),
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+            ]
+        )
+
+        XCTAssertEqual(snapshot.averageGroupVoltage, Voltage(value: 4_080))
+        XCTAssertEqual(snapshot.lowestGroupLabel, "group 17")
+    }
 }
