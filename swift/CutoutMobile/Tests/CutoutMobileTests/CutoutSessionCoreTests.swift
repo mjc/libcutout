@@ -320,6 +320,32 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(unsupported.sinceDistance)
     }
 
+    func testFaultHistoryGeneratedReadbackStripsPayloadWhenUnavailable() {
+        let distance = DistanceReading(
+            value: Distance(value: 61_456_941),
+            source: .reported,
+            quality: .known,
+            verification: .sourceVerified
+        )
+        let unavailable = FaultHistoryReadback(
+            MobileFaultHistoryReadbackDto(
+                availability: .unavailable,
+                lastFault: nil,
+                sinceDistance: distance
+            )
+        )
+        let unsupported = FaultHistoryReadback(
+            MobileFaultHistoryReadbackDto(
+                availability: .unsupported,
+                lastFault: nil,
+                sinceDistance: distance
+            )
+        )
+
+        XCTAssertEqual(unavailable, FaultHistoryReadback.unavailable())
+        XCTAssertEqual(unsupported, FaultHistoryReadback.unsupported())
+    }
+
     func testBmsSnapshotUpdatesCurrentSessionStateUntilDisconnect() {
         let core = CutoutSessionCore()
         let snapshot = BmsSnapshot(

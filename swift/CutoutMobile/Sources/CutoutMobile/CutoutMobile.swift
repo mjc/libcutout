@@ -353,19 +353,24 @@ public struct FaultHistoryReadback: Equatable, Hashable, Sendable {
         )
     }
 
-    fileprivate init(_ dto: MobileFaultHistoryReadbackDto) {
+    init(_ dto: MobileFaultHistoryReadbackDto) {
         let availability = ReadbackAvailability(dto.availability)
         let lastFault = dto.lastFault.map(FaultHistoryEntry.init)
         let sinceDistance = dto.sinceDistance?.value
 
-        if availability == .available, lastFault == nil, sinceDistance == nil {
+        switch availability {
+        case .available where lastFault == nil && sinceDistance == nil:
             self = .unavailable()
-        } else {
+        case .available:
             self.init(
                 availability: availability,
                 lastFault: lastFault,
                 sinceDistance: sinceDistance
             )
+        case .unavailable:
+            self = .unavailable()
+        case .unsupported:
+            self = .unsupported()
         }
     }
 }
