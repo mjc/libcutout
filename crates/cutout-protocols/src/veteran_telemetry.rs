@@ -507,6 +507,10 @@ const fn veteran_charge_mode_field(mode: ChargeMode) -> u16 {
     if mode.is_active() { 1 } else { 0 }
 }
 
+fn u64_to_i64_saturating(value: u64) -> i64 {
+    i64::try_from(value).map_or(i64::MAX, |value| value)
+}
+
 impl VeteranTelemetry {
     /// Decodes the verified fixed telemetry header from a complete Veteran frame.
     ///
@@ -640,8 +644,7 @@ impl VeteranTelemetry {
             ReadOnlyResponse::Settings(SettingsReadback::available([
                 Some(settings_entry(
                     VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-                    i64::try_from(self.auto_shutdown_time_remaining.as_seconds())
-                        .unwrap_or(i64::MAX),
+                    u64_to_i64_saturating(self.auto_shutdown_time_remaining.as_seconds()),
                 )),
                 Some(settings_entry(
                     VETERAN_FIELD_CHARGE_MODE,

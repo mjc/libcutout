@@ -659,10 +659,14 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
             )),
             Some(vesc_diagnostic_detail(
                 VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-                i64::try_from(stats.count_time.as_milliseconds()).unwrap_or(i64::MAX),
+                u64_to_i64_saturating(stats.count_time.as_milliseconds()),
             )),
         ],
     }
+}
+
+fn u64_to_i64_saturating(value: u64) -> i64 {
+    i64::try_from(value).map_or(i64::MAX, |value| value)
 }
 
 const fn vesc_diagnostic_detail(id: u16, value: i64) -> DiagnosticDetail {

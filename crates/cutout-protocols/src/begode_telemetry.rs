@@ -1041,17 +1041,14 @@ impl BegodeLiveBTelemetry {
             )),
             Some(settings_entry(
                 BEGODE_FIELD_POWER_OFF_TIMER_MINUTES,
-                i64::try_from(self.power_off_timer.as_minutes()).unwrap_or(i64::MAX),
+                u64_to_i64_saturating(self.power_off_timer.as_minutes()),
             )),
             Some(settings_entry(
                 BEGODE_FIELD_TILTBACK_SPEED_KMH,
                 i64::from(
-                    u16::try_from(
-                        self.tiltback_speed
-                            .as_kmh_rounded()
-                            .clamp(0, i32::from(u16::MAX)),
-                    )
-                    .unwrap_or(u16::MAX),
+                    self.tiltback_speed
+                        .as_kmh_rounded()
+                        .clamp(0, i32::from(u16::MAX)),
                 ),
             )),
             Some(settings_entry(
@@ -1235,6 +1232,10 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
         quality: ValueQuality::Known,
         verification: VerificationStatus::SourceVerified,
     }
+}
+
+fn u64_to_i64_saturating(value: u64) -> i64 {
+    i64::try_from(value).map_or(i64::MAX, |value| value)
 }
 
 fn byte(cursor: ParserCursor<'_>, offset: ParserOffset) -> u8 {
