@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use cutout_btle::{
     BridgeIdentityResolution, BtleError, BtleplugReconnectHost, ConnectedPeripheral,
     ConnectionTarget, DiagnosticEventCount, DisconnectCount, MonotonicMs, NotificationCount,
@@ -405,12 +405,25 @@ where
     let mut host = HostSession::new(session);
     let mut outputs = Vec::with_capacity(capture.replay_input_count());
     capture.replay_into_host(&mut host, &mut outputs);
+
+    let replay_records = ReplayRecordCount::new(capture.replay_input_count());
     let arbitrary_chunks = capture.arbitrary_notification_chunk_lengths();
-    let comparison =
-        capture.compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks)?;
+    let arbitrary_chunk_plan_len = ReplayChunkPlanLen::new(arbitrary_chunks.len());
+    let comparison = capture
+        .compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks)
+        .with_context(|| {
+            format!(
+                "PEVCAP replay chunk comparison failed \
+                 replay_records={} arbitrary_chunk_plan_len={}; \
+                 inspect capture chunking and decoder output retention",
+                replay_records.get(),
+                arbitrary_chunk_plan_len.get()
+            )
+        })?;
+
     Ok(summarize_pevcap_replay(
-        ReplayRecordCount::new(capture.replay_input_count()),
-        ReplayChunkPlanLen::new(arbitrary_chunks.len()),
+        replay_records,
+        arbitrary_chunk_plan_len,
         &outputs,
         comparison,
     ))
@@ -2701,6 +2714,25 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct OverflowingReplaySession;
+
+    impl cutout_core::ProtocolSession for OverflowingReplaySession {
+        fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+            let SessionInput::Notification { .. } = input else {
+                return;
+            };
+
+            output.extend(
+                (0..=cutout_core::DEFAULT_REPLAY_OUTPUT_LIMIT.as_outputs()).map(|offset_ms| {
+                    SessionOutput::Event(DeviceEvent::Tick {
+                        monotonic_ms: ms(offset_ms as u64),
+                    })
+                }),
+            );
+        }
+    }
+
     fn dashboard_args(demo: bool, device: Option<&str>) -> DashboardArgs {
         DashboardArgs {
             demo,
@@ -3452,6 +3484,35 @@ mod tests {
     }
 
     #[test]
+    fn pevcap_replay_reports_output_overflow_with_capture_context() {
+        let capture = sample_pevcap_capture();
+        let expected_records = capture.replay_input_count();
+        let expected_chunk_plan_len = capture.arbitrary_notification_chunk_lengths().len();
+        let error = replay_pevcap_with_session(&capture, OverflowingReplaySession)
+            .expect_err("overflowing replay should fail");
+        let message = format!("{error:#}");
+
+        assert!(
+            message.contains("PEVCAP replay chunk comparison failed"),
+            "missing replay context: {message}"
+        );
+        assert!(
+            message.contains(&format!("replay_records={expected_records}")),
+            "missing capture record count: {message}"
+        );
+        assert!(
+            message.contains(&format!(
+                "arbitrary_chunk_plan_len={expected_chunk_plan_len}"
+            )),
+            "missing arbitrary chunk plan length: {message}"
+        );
+        assert!(
+            message.contains("session output count"),
+            "missing overflow source: {message}"
+        );
+    }
+
+    #[test]
     fn diagnostic_snapshot_jsonl_uses_stable_snake_case_fields() {
         let line = render_diagnostic_snapshot_jsonl(
             JsonSequence::new(7),
@@ -3472,6 +3533,10 @@ mod tests {
         assert_eq!(value["type"], "diagnostic_snapshot");
         assert_eq!(value["sequence"], 7);
         assert_eq!(value["dropped_bytes"], 11);
+        assert!(
+            value.get("dropped").is_none(),
+            "byte counts must keep unit-bearing field names: {value}"
+        );
         assert_eq!(value["resyncs"], 2);
         assert_eq!(value["bad_checksums"], 3);
         assert_eq!(value["timeouts"], 5);
@@ -3860,6 +3925,14 @@ mod tests {
         assert_eq!(value["max_len"], serde_json::Value::Null);
         assert_eq!(value["elapsed_ms"], 1_234);
         assert_eq!(value["timeout_ms"], 5_000);
+        assert!(
+            value.get("elapsed").is_none(),
+            "durations must keep unit-bearing field names: {value}"
+        );
+        assert!(
+            value.get("timeout").is_none(),
+            "durations must keep unit-bearing field names: {value}"
+        );
     }
 
     #[test]
