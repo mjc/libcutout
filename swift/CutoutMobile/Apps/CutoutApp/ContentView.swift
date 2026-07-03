@@ -138,6 +138,26 @@ private struct EucGarageMockupView: View {
     let faultHistoryReadback: FaultHistoryReadback?
     let bmsSnapshot: BmsSnapshot?
 
+    private var dashboardTiles: [MockupDashboardTile] {
+        guard let settingsReadback else {
+            return screen.dashboardTiles
+        }
+
+        let settings = settingsReadback.eucGarageSettings
+        return screen.dashboardTiles.map { tile in
+            switch tile.label {
+            case "beep margin":
+                return settingsSpeedTile(tile: tile, readback: settings.beepMargin)
+            case "tiltback":
+                return settingsSpeedTile(tile: tile, readback: settings.tiltback)
+            case "pedal mode":
+                return settingsPedalTile(tile: tile, readback: settings.pedalHardness)
+            default:
+                return tile
+            }
+        }
+    }
+
     var body: some View {
         MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
             VStack(alignment: .leading, spacing: 8 * scale) {
@@ -157,7 +177,7 @@ private struct EucGarageMockupView: View {
             }
 
             LazyVGrid(columns: columns, spacing: 16 * scale) {
-                ForEach(screen.dashboardTiles) { tile in
+                ForEach(dashboardTiles) { tile in
                     EucDashboardTile(tile: tile, scale: scale)
                 }
             }
@@ -210,6 +230,54 @@ private struct EucGarageMockupView: View {
                 EucFaultStatusCard(card: faultCard, scale: scale)
             }
         }
+    }
+
+    private func settingsSpeedTile(
+        tile: MockupDashboardTile,
+        readback: ReadbackValue<Speed>
+    ) -> MockupDashboardTile {
+        guard let speed = readback.value else {
+            return unavailableTile(tile, availability: readback.availability)
+        }
+
+        let readout = SpeedReadout(millimetersPerSecond: speed.value)
+        return MockupDashboardTile(
+            label: tile.label,
+            value: readout.displayValue,
+            unit: readout.displayUnit,
+            detail: "read-only setting",
+            accent: tile.accent
+        )
+    }
+
+    private func settingsPedalTile(
+        tile: MockupDashboardTile,
+        readback: ReadbackValue<PedalHardness>
+    ) -> MockupDashboardTile {
+        guard let hardness = readback.value else {
+            return unavailableTile(tile, availability: readback.availability)
+        }
+
+        return MockupDashboardTile(
+            label: tile.label,
+            value: "\(hardness.percent)",
+            unit: "%",
+            detail: "read-only setting",
+            accent: tile.accent
+        )
+    }
+
+    private func unavailableTile(
+        _ tile: MockupDashboardTile,
+        availability: ReadbackAvailability
+    ) -> MockupDashboardTile {
+        MockupDashboardTile(
+            label: tile.label,
+            value: "--",
+            unit: tile.unit,
+            detail: availability.displayText,
+            accent: tile.accent
+        )
     }
 }
 

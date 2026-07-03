@@ -203,6 +203,48 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
     }
 }
 
+public extension SettingsReadback {
+    var eucGarageSettings: EucGarageSettingsSnapshot {
+        EucGarageSettingsSnapshot(
+            beepMargin: speedReadback(for: VeteranSettingsField.speedAlertDeciKmh),
+            tiltback: speedReadback(for: VeteranSettingsField.speedTiltbackDeciKmh),
+            pedalHardness: missingReadback()
+        )
+    }
+
+    private func speedReadback(for fieldID: UInt16) -> ReadbackValue<Speed> {
+        entries
+            .first { $0.field.id == fieldID }
+            .flatMap { speedFromDeciKmh($0.field.value) }
+            .map(ReadbackValue.available)
+            ?? missingReadback()
+    }
+
+    private func speedFromDeciKmh(_ value: Int64) -> Speed? {
+        guard value >= 0 else {
+            return nil
+        }
+        let millimetersPerSecond = value * 100 * 5 / 18
+        return Int32(exactly: millimetersPerSecond).map(Speed.init(value:))
+    }
+
+    private func missingReadback<Value>() -> ReadbackValue<Value> {
+        switch availability {
+        case .available:
+            .unavailable
+        case .unavailable:
+            .unavailable
+        case .unsupported:
+            .unsupported
+        }
+    }
+}
+
+private enum VeteranSettingsField {
+    static let speedAlertDeciKmh: UInt16 = 0x0005
+    static let speedTiltbackDeciKmh: UInt16 = 0x0006
+}
+
 public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
     public let code: RawSettingField
     public let source: ReadbackSource
