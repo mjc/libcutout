@@ -889,6 +889,9 @@ pub struct BatteryInfoDto {
     /// Page-specific BMS temperature values in millicelsius.
     pub temperatures: Vec<Option<MeasuredI32Dto>>,
 
+    /// Page-specific cell or cell-group voltage values in millivolts.
+    pub cell_voltages: Vec<MeasuredI32Dto>,
+
     /// Raw battery or BMS state field.
     pub raw_state: Option<RawFieldValueDto>,
 }
@@ -901,11 +904,22 @@ impl From<BatteryPagePayload> for BatteryInfoDto {
             .into_iter()
             .map(|measured| measured.map(Into::into))
             .collect();
+        let cell_voltages = match &payload {
+            BatteryPagePayload::CellVoltage(page) => page
+                .cell_voltages
+                .iter()
+                .copied()
+                .map(Measured::reported)
+                .map(Into::into)
+                .collect(),
+            BatteryPagePayload::Temperature(_) | BatteryPagePayload::Raw(_) => Vec::new(),
+        };
         Self::from_payload_parts(
             payload.page(),
             battery,
             payload.bms_pack_currents(),
             temperatures,
+            cell_voltages,
         )
     }
 }
@@ -916,6 +930,7 @@ impl BatteryInfoDto {
         battery: BatteryInfo,
         bms_pack_currents: Option<BmsPackCurrents>,
         temperatures: Vec<Option<MeasuredI32Dto>>,
+        cell_voltages: Vec<MeasuredI32Dto>,
     ) -> Self {
         Self {
             page: page.into(),
@@ -931,6 +946,7 @@ impl BatteryInfoDto {
             level_estimated: battery.level_estimated.map(Into::into),
             temperature: battery.temperature.map(Into::into),
             temperatures,
+            cell_voltages,
             raw_state: battery.raw_state.map(Into::into),
         }
     }
@@ -1292,8 +1308,8 @@ impl From<SessionOutput> for SessionOutputDto {
                 Self::ReadOnly(response.into())
             }
             SessionOutput::Event(event) => match SessionEventDto::from_event(event) {
-                Ok(event) => Self::Event(event),
-                Err(response) => Self::ReadOnly(response.into()),
+                SessionEventProjection::Event(event) => Self::Event(event),
+                SessionEventProjection::ReadOnly(response) => Self::ReadOnly(response.into()),
             },
             SessionOutput::NotificationIngest(outcome) => Self::NotificationIngest(outcome.into()),
         }
@@ -1721,23 +1737,36 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
+enum SessionEventProjection {
+    Event(SessionEventDto),
+    ReadOnly(ReadOnlyResponse),
+}
+
 impl SessionEventDto {
-    fn from_event(event: DeviceEvent) -> Result<Self, ReadOnlyResponse> {
-        Ok(match event {
-            DeviceEvent::LinkUp(link) => Self::LinkUp {
+    fn from_event(event: DeviceEvent) -> SessionEventProjection {
+        match event {
+            DeviceEvent::LinkUp(link) => SessionEventProjection::Event(Self::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
                 max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
-            },
-            DeviceEvent::LinkDown => Self::LinkDown,
-            DeviceEvent::Tick { monotonic_ms } => Self::Tick {
+            }),
+            DeviceEvent::LinkDown => SessionEventProjection::Event(Self::LinkDown),
+            DeviceEvent::Tick { monotonic_ms } => SessionEventProjection::Event(Self::Tick {
                 monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
-            },
-            DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
-            DeviceEvent::ControlRefusal(refusal) => Self::ControlRefusal(refusal.into()),
-            DeviceEvent::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics.into()),
-            DeviceEvent::DiagnosticError(error) => Self::DiagnosticError(error.into()),
-            DeviceEvent::ReadOnlyResponse(response) => return Err(response),
-        })
+            }),
+            DeviceEvent::Telemetry(delta) => {
+                SessionEventProjection::Event(Self::Telemetry(delta.into()))
+            }
+            DeviceEvent::ControlRefusal(refusal) => {
+                SessionEventProjection::Event(Self::ControlRefusal(refusal.into()))
+            }
+            DeviceEvent::Diagnostics(diagnostics) => {
+                SessionEventProjection::Event(Self::Diagnostics(diagnostics.into()))
+            }
+            DeviceEvent::DiagnosticError(error) => {
+                SessionEventProjection::Event(Self::DiagnosticError(error.into()))
+            }
+            DeviceEvent::ReadOnlyResponse(response) => SessionEventProjection::ReadOnly(response),
+        }
     }
 }
 

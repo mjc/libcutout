@@ -1,10 +1,18 @@
+use arrayvec::ArrayVec;
+
 use crate::{
     BatteryInfo, BmsPackCurrents, BmsTemperatureValuesPerPage, Measured, ProtocolSelector,
-    Temperature, VerificationStatus,
+    Temperature, VerificationStatus, Voltage,
 };
+
+/// Maximum number of cell or cell-group voltage values carried by one typed BMS page.
+pub const BATTERY_CELL_VOLTAGE_VALUES_MAX: usize = 15;
 
 /// Fixed number of temperature values carried by typed BMS temperature pages.
 pub const BATTERY_TEMPERATURE_VALUES_PER_PAGE: usize = 6;
+
+/// Bounded cell or cell-group voltage values decoded from one BMS page.
+pub type BatteryCellVoltages = ArrayVec<Voltage, BATTERY_CELL_VOLTAGE_VALUES_MAX>;
 
 /// Battery/BMS page classification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,20 +87,31 @@ impl BatteryPageMetadata {
 }
 
 /// Page-specific payload for a typed battery cell-voltage page.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatteryCellVoltagePage {
     /// Page metadata for this payload.
     pub page: BatteryPageMetadata,
 
     /// Generic battery measurements decoded from this page.
     pub battery: BatteryInfo,
+
+    /// Cell or cell-group voltage values decoded from this page.
+    pub cell_voltages: BatteryCellVoltages,
 }
 
 impl BatteryCellVoltagePage {
     /// Creates a typed cell-voltage payload.
     #[must_use]
-    pub const fn new(page: BatteryPageMetadata, battery: BatteryInfo) -> Self {
-        Self { page, battery }
+    pub fn new(
+        page: BatteryPageMetadata,
+        battery: BatteryInfo,
+        cell_voltages: BatteryCellVoltages,
+    ) -> Self {
+        Self {
+            page,
+            battery,
+            cell_voltages,
+        }
     }
 }
 
@@ -184,7 +203,7 @@ impl BatteryRawPage {
 }
 
 /// Explicit page payload returned by a battery/BMS decoder.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BatteryPagePayload {
     /// Typed cell-voltage page payload.
     CellVoltage(BatteryCellVoltagePage),
@@ -201,9 +220,10 @@ impl BatteryPagePayload {
     #[must_use]
     pub const fn from_page(page: BatteryPageMetadata, battery: BatteryInfo) -> Self {
         match page.kind {
-            BatteryPageKind::CellVoltage => {
-                Self::CellVoltage(BatteryCellVoltagePage::new(page, battery))
-            }
+            BatteryPageKind::CellVoltage => Self::Raw(BatteryRawPage::new(
+                BatteryPageMetadata::raw(page.selector, page.verification),
+                battery,
+            )),
             BatteryPageKind::Temperature => {
                 Self::Temperature(BatteryTemperaturePage::new(page, battery))
             }
@@ -215,8 +235,12 @@ impl BatteryPagePayload {
 
     /// Builds a payload for a typed cell-voltage page.
     #[must_use]
-    pub const fn cell_voltage(page: BatteryPageMetadata, battery: BatteryInfo) -> Self {
-        Self::CellVoltage(BatteryCellVoltagePage::new(page, battery))
+    pub fn cell_voltage(
+        page: BatteryPageMetadata,
+        battery: BatteryInfo,
+        cell_voltages: BatteryCellVoltages,
+    ) -> Self {
+        Self::CellVoltage(BatteryCellVoltagePage::new(page, battery, cell_voltages))
     }
 
     /// Builds a payload for a typed temperature/status page.
@@ -241,9 +265,7 @@ impl BatteryPagePayload {
 
     /// Returns page-specific temperature values when present.
     #[must_use]
-    pub const fn temperatures(
-        self,
-    ) -> [Option<Measured<i32>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
+    pub fn temperatures(&self) -> [Option<Measured<i32>>; BATTERY_TEMPERATURE_VALUES_PER_PAGE] {
         match self {
             Self::Temperature(page) => {
                 let mut temperatures = [None; BATTERY_TEMPERATURE_VALUES_PER_PAGE];
@@ -268,7 +290,7 @@ impl BatteryPagePayload {
 
     /// Adds paired BMS pack-current values to a raw/metadata page payload.
     #[must_use]
-    pub const fn with_bms_pack_currents(self, currents: BmsPackCurrents) -> Self {
+    pub fn with_bms_pack_currents(self, currents: BmsPackCurrents) -> Self {
         match self {
             Self::Raw(page) => Self::Raw(page.with_bms_pack_currents(currents)),
             Self::CellVoltage(page) => Self::CellVoltage(page),
@@ -278,7 +300,7 @@ impl BatteryPagePayload {
 
     /// Returns the page metadata for this payload.
     #[must_use]
-    pub const fn page(self) -> BatteryPageMetadata {
+    pub fn page(&self) -> BatteryPageMetadata {
         match self {
             Self::CellVoltage(page) => page.page,
             Self::Temperature(page) => page.page,
@@ -288,7 +310,7 @@ impl BatteryPagePayload {
 
     /// Returns the decoded battery values for this payload.
     #[must_use]
-    pub const fn battery(self) -> BatteryInfo {
+    pub fn battery(&self) -> BatteryInfo {
         match self {
             Self::CellVoltage(page) => page.battery,
             Self::Temperature(page) => page.battery,
@@ -298,7 +320,7 @@ impl BatteryPagePayload {
 
     /// Returns paired BMS pack-current values when present.
     #[must_use]
-    pub const fn bms_pack_currents(self) -> Option<BmsPackCurrents> {
+    pub fn bms_pack_currents(&self) -> Option<BmsPackCurrents> {
         match self {
             Self::Raw(page) => page.bms_pack_currents,
             Self::CellVoltage(_) | Self::Temperature(_) => None,
@@ -358,10 +380,20 @@ mod tests {
             raw_state: None,
         };
         let page = BatteryPageMetadata::cell_voltage(sel(3), VerificationStatus::HardwareVerified);
-        let payload = BatteryPagePayload::CellVoltage(BatteryCellVoltagePage::new(page, battery));
+        let cell_voltages = [
+            Voltage::from_millivolts(3_701),
+            Voltage::from_millivolts(3_699),
+        ]
+        .into_iter()
+        .collect();
+        let payload = BatteryPagePayload::cell_voltage(page, battery, cell_voltages);
 
         assert_eq!(payload.page(), page);
         assert_eq!(payload.battery(), battery);
+        if let BatteryPagePayload::CellVoltage(cell_page) = payload {
+            assert_eq!(cell_page.cell_voltages.len(), 2);
+            assert_eq!(cell_page.cell_voltages[0], Voltage::from_millivolts(3_701));
+        }
     }
 
     #[test]
@@ -408,13 +440,15 @@ mod tests {
     }
 
     #[test]
-    fn payload_conversion_chooses_typed_variant_for_cell_pages() {
+    fn payload_conversion_does_not_invent_empty_typed_cell_pages() {
         let battery = BatteryInfo::default();
         let page = BatteryPageMetadata::cell_voltage(sel(3), VerificationStatus::HardwareVerified);
         let payload = BatteryPagePayload::from_page(page, battery);
 
-        assert!(matches!(payload, BatteryPagePayload::CellVoltage(_)));
-        assert_eq!(payload.page(), page);
+        assert!(matches!(payload, BatteryPagePayload::Raw(_)));
+        assert_eq!(payload.page().kind, BatteryPageKind::Raw);
+        assert_eq!(payload.page().selector, page.selector);
+        assert_eq!(payload.page().verification, page.verification);
     }
 
     #[test]

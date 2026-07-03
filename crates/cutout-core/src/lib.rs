@@ -2294,10 +2294,10 @@ impl DiagnosticSnapshot {
 
     /// Creates a diagnostic snapshot when the event carries diagnostics.
     #[must_use]
-    pub const fn from_device_event(event: DeviceEvent) -> Option<Self> {
+    pub const fn from_device_event(event: &DeviceEvent) -> Option<Self> {
         match event {
             DeviceEvent::Diagnostics(diagnostics) => {
-                Some(Self::from_parser_diagnostics(diagnostics))
+                Some(Self::from_parser_diagnostics(*diagnostics))
             }
             DeviceEvent::LinkUp(_)
             | DeviceEvent::LinkDown
@@ -5917,7 +5917,7 @@ pub enum BatteryReadbackAvailability {
 }
 
 /// Read-only battery or BMS page readback.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BatteryReadback {
     /// Whether battery or BMS data is available for display.
     pub availability: BatteryReadbackAvailability,
@@ -6169,7 +6169,7 @@ impl FaultHistoryReadback {
 }
 
 /// Generic read-only response payload.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadOnlyResponse {
     /// Firmware or protocol version response.
     Firmware(FirmwareInfo),
@@ -6193,7 +6193,7 @@ pub enum ReadOnlyResponse {
 impl ReadOnlyResponse {
     /// Returns the command kind that requested this response.
     #[must_use]
-    pub const fn command_kind(self) -> CommandKind {
+    pub const fn command_kind(&self) -> CommandKind {
         match self {
             Self::Firmware(_) => CommandKind::RequestFirmwareInfo,
             Self::Battery(_) => CommandKind::RequestBatteryInfo,
@@ -6518,7 +6518,7 @@ pub enum TransportAction {
 }
 
 /// Semantic event emitted by a protocol session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceEvent {
     /// Link-up event accepted by the session.
     LinkUp(LinkInfo),
@@ -7437,8 +7437,8 @@ mod tests {
         assert!(size_of::<crate::BatteryInfo>() <= 64);
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
         assert!(size_of::<crate::RawTelemetryReadback>() <= 96);
-        assert!(size_of::<crate::ReadOnlyResponse>() <= 104);
-        assert_eq!(size_of::<SessionOutput>(), 128);
+        assert!(size_of::<crate::ReadOnlyResponse>() <= 136);
+        assert_eq!(size_of::<SessionOutput>(), 136);
         assert_eq!(size_of::<TransportAction>(), 64);
     }
 
@@ -7448,7 +7448,7 @@ mod tests {
         assert_eq!(crate::MAX_INLINE_TRANSPORT_WRITE_LEN, 32);
         assert_eq!(size_of::<WritePayload>(), 40);
         assert_eq!(size_of::<TransportAction>(), 64);
-        assert_eq!(size_of::<SessionOutput>(), 128);
+        assert_eq!(size_of::<SessionOutput>(), 136);
     }
 
     #[test]
@@ -9710,14 +9710,14 @@ mod tests {
         };
 
         assert_eq!(
-            crate::DiagnosticSnapshot::from_device_event(DeviceEvent::Diagnostics(diagnostics)),
+            crate::DiagnosticSnapshot::from_device_event(&DeviceEvent::Diagnostics(diagnostics)),
             Some(crate::DiagnosticSnapshot {
                 bad_checksums: diag_count(2),
                 ..crate::DiagnosticSnapshot::default()
             })
         );
         assert_eq!(
-            crate::DiagnosticSnapshot::from_device_event(DeviceEvent::LinkDown),
+            crate::DiagnosticSnapshot::from_device_event(&DeviceEvent::LinkDown),
             None
         );
     }

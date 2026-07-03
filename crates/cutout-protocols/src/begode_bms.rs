@@ -179,6 +179,7 @@ impl BegodeBmsCellPage {
                     VerificationStatus::SourceVerified,
                 ),
                 BatteryInfo::default(),
+                self.cell_voltage.clone().into_iter().collect(),
             ),
         ))
     }

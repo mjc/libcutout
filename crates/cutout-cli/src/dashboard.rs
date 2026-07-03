@@ -920,8 +920,8 @@ impl ReadOnlyDashboardState {
                     ) {
                         self.unknown_raw_pages = self.unknown_raw_pages.increment();
                     }
-                    if BmsTemperatureValues(payload).has_values() {
-                        self.latest_bms_temperature = Some(payload);
+                    if BmsTemperatureValues(&payload).has_values() {
+                        self.latest_bms_temperature = Some(payload.clone());
                     }
                     push_bounded(&mut self.bms_pages, payload);
                 }
@@ -1316,7 +1316,7 @@ impl DashboardState {
             self.telemetry.apply_snapshot(snapshot);
         }
         for response in &report.read_only_response_events {
-            self.read_only.apply_response(*response);
+            self.read_only.apply_response(response.clone());
         }
         if report.read_only_responses.has_events() {
             self.push_log(
@@ -1759,10 +1759,10 @@ const fn battery_page_kind_name(kind: cutout_core::BatteryPageKind) -> &'static 
     }
 }
 
-struct BmsTemperatureValues(BatteryPagePayload);
+struct BmsTemperatureValues<'a>(&'a BatteryPagePayload);
 
-impl BmsTemperatureValues {
-    fn has_values(self) -> bool {
+impl BmsTemperatureValues<'_> {
+    fn has_values(&self) -> bool {
         matches!(self.0, BatteryPagePayload::Temperature(_))
             && self
                 .0
@@ -1772,7 +1772,7 @@ impl BmsTemperatureValues {
     }
 }
 
-impl fmt::Display for BmsTemperatureValues {
+impl fmt::Display for BmsTemperatureValues<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut wrote = false;
         for temperature in self.0.temperatures().into_iter().flatten() {
@@ -1795,9 +1795,9 @@ impl fmt::Display for BmsTemperatureValues {
     }
 }
 
-struct BmsCurrentSummary(BatteryPagePayload);
+struct BmsCurrentSummary<'a>(&'a BatteryPagePayload);
 
-impl fmt::Display for BmsCurrentSummary {
+impl fmt::Display for BmsCurrentSummary<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let battery = self.0.battery();
         if let Some(current) = battery.current {
@@ -1820,9 +1820,9 @@ impl fmt::Display for BmsCurrentSummary {
 }
 
 #[allow(dead_code)]
-struct BmsPageSummary(BatteryPagePayload);
+struct BmsPageSummary<'a>(&'a BatteryPagePayload);
 
-impl fmt::Display for BmsPageSummary {
+impl fmt::Display for BmsPageSummary<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let page = self.0.page();
         write!(
@@ -1850,7 +1850,7 @@ impl fmt::Display for LatestBmsTemperatureSummary {
             page.selector,
             battery_page_side_suffix(page.kind, page.selector.get()),
             verification_name(page.verification),
-            BmsTemperatureValues(self.0)
+            BmsTemperatureValues(&self.0)
         )
     }
 }
@@ -2232,7 +2232,7 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
             "info",
             format!(
                 "t={monotonic_ms}ms {}",
-                format_read_only_response(*response)
+                format_read_only_response(response.clone())
             ),
         ),
         SessionBridgeEvent::Diagnostics {
@@ -2445,8 +2445,8 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
                 let _ = write!(
                     summary,
                     "{}{}",
-                    BmsTemperatureValues(payload),
-                    BmsCurrentSummary(payload)
+                    BmsTemperatureValues(&payload),
+                    BmsCurrentSummary(&payload)
                 );
                 summary
             },
@@ -4145,8 +4145,8 @@ mod tests {
         SubscribeCount, TelemetryEventCount, TransportWriteCount,
     };
     use cutout_core::{
-        BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload, BatteryReadback,
-        CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
+        BatteryCellVoltages, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
+        BatteryReadback, CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
         DiagnosticDetail, DiagnosticSeverity, FirmwareInfo, GattChannel, Measured,
         MonotonicTimestamp, NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount,
         ParserError, ParserGapEvidence, PayloadBodyLen, PevcapHeader, ProtocolFamily,
@@ -4424,6 +4424,7 @@ mod tests {
             battery_response(BatteryPagePayload::cell_voltage(
                 BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
+                BatteryCellVoltages::default(),
             )),
             battery_response(BatteryPagePayload::temperature_values(
                 BatteryPageMetadata::temperature(sel(3), VerificationStatus::HardwareVerified),
@@ -5375,7 +5376,7 @@ mod tests {
 
         assert_display_preserves_capacity(
             BmsPageSummary(
-                BatteryPagePayload::raw(
+                &BatteryPagePayload::raw(
                     BatteryPageMetadata::metadata(sel(0), VerificationStatus::HardwareVerified),
                     BatteryInfo {
                         current: Some(battery_current(2_010)),
@@ -5504,7 +5505,7 @@ mod tests {
         ));
         let report = SessionBridgeReport {
             read_only_responses: read_only_responses(1),
-            read_only_response_events: vec![read_only_response],
+            read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
@@ -5551,7 +5552,7 @@ mod tests {
         );
         let report = SessionBridgeReport {
             read_only_responses: read_only_responses(1),
-            read_only_response_events: vec![read_only_response],
+            read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
@@ -5673,7 +5674,7 @@ mod tests {
             BatteryPageKind::Temperature
         );
         assert_eq!(
-            BmsPageSummary(state.read_only.bms_pages[1]).to_string(),
+            BmsPageSummary(&state.read_only.bms_pages[1]).to_string(),
             "selector=3 side=left kind=temperature verification=hardware_verified temps_c=16,17,18,17,17,19"
         );
         assert_eq!(
@@ -5717,7 +5718,7 @@ mod tests {
         let report = SessionBridgeReport {
             telemetry: telemetry_events(0),
             read_only_responses: read_only_responses(1),
-            read_only_response_events: vec![read_only_response],
+            read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
                 response: read_only_response,
@@ -5775,6 +5776,7 @@ mod tests {
                 battery_response(BatteryPagePayload::cell_voltage(
                     BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
+                    BatteryCellVoltages::default(),
                 )),
                 battery_response(BatteryPagePayload::raw(
                     BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),
@@ -5928,6 +5930,7 @@ mod tests {
                 battery_response(BatteryPagePayload::cell_voltage(
                     BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),
+                    BatteryCellVoltages::default(),
                 )),
             ],
             ..empty_session_bridge_report()
@@ -6310,6 +6313,7 @@ mod tests {
             .push_back(BatteryPagePayload::cell_voltage(
                 BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
+                BatteryCellVoltages::default(),
             ));
         state.read_only.bms_pages.push_back(BatteryPagePayload::raw(
             BatteryPageMetadata::raw(sel(8), VerificationStatus::HardwareVerified),

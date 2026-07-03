@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata, BatteryPagePayload,
-    BmsPackCurrents, Information, ProtocolSelector, Quantity, Temperature, Unit,
-    VerificationStatus, Voltage,
+    BatteryCellVoltages, BatteryCurrent, BatteryInfo, BatteryPageKind, BatteryPageMetadata,
+    BatteryPagePayload, BmsPackCurrents, Information, ProtocolSelector, Quantity, Temperature,
+    Unit, VerificationStatus, Voltage,
 };
 use thiserror::Error;
 
@@ -332,21 +332,27 @@ pub enum VeteranBmsPageError {
 ///
 /// Returns [`VeteranBmsPageError::InvalidCellCount`] when a selector classified
 /// as a typed cell-voltage page does not carry the observed fixed count.
-pub const fn decode_veteran_bms_page(
+pub fn decode_veteran_bms_page(
     selector: ProtocolSelector,
-    observed_cell_values: u8,
+    cell_voltages: BatteryCellVoltages,
     battery: BatteryInfo,
     verification: VerificationStatus,
 ) -> Result<BatteryPagePayload, VeteranBmsPageError> {
     let kind = classify_veteran_bms_selector(selector);
-    if matches!(kind, BatteryPageKind::CellVoltage)
-        && observed_cell_values != VETERAN_BMS_CELL_VALUES_PER_PAGE
-    {
-        return Err(VeteranBmsPageError::InvalidCellCount {
-            selector: selector.get(),
-            observed: observed_cell_values,
-            expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
-        });
+    if matches!(kind, BatteryPageKind::CellVoltage) {
+        let observed = u8::try_from(cell_voltages.len()).unwrap_or(u8::MAX);
+        if observed != VETERAN_BMS_CELL_VALUES_PER_PAGE {
+            return Err(VeteranBmsPageError::InvalidCellCount {
+                selector: selector.get(),
+                observed,
+                expected: VETERAN_BMS_CELL_VALUES_PER_PAGE,
+            });
+        }
+        return Ok(BatteryPagePayload::cell_voltage(
+            BatteryPageMetadata::cell_voltage(selector, verification),
+            battery,
+            cell_voltages,
+        ));
     }
 
     Ok(BatteryPagePayload::from_page(
@@ -366,6 +372,12 @@ mod tests {
 
     const fn sel(value: u8) -> ProtocolSelector {
         ProtocolSelector::new(value)
+    }
+
+    fn cell_voltages(count: u8) -> BatteryCellVoltages {
+        (0..count)
+            .map(|index| Voltage::from_millivolts(3_600 + i32::from(index)))
+            .collect()
     }
 
     fn fixture_bytes(input: &str) -> Vec<u8> {
@@ -634,7 +646,7 @@ mod tests {
     fn typed_cell_pages_require_fifteen_cell_values() {
         let decoded = decode_veteran_bms_page(
             sel(1),
-            VETERAN_BMS_CELL_VALUES_PER_PAGE,
+            cell_voltages(VETERAN_BMS_CELL_VALUES_PER_PAGE),
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
         )
@@ -653,7 +665,7 @@ mod tests {
         assert_eq!(
             decode_veteran_bms_page(
                 sel(2),
-                VETERAN_BMS_CELL_VALUES_PER_PAGE - 1,
+                cell_voltages(VETERAN_BMS_CELL_VALUES_PER_PAGE - 1),
                 BatteryInfo::default(),
                 VerificationStatus::HardwareVerified,
             ),
@@ -669,21 +681,21 @@ mod tests {
     fn raw_metadata_and_temperature_pages_do_not_claim_cell_voltage_typing() {
         let raw = decode_veteran_bms_page(
             sel(8),
-            0,
+            cell_voltages(0),
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
         )
         .expect("raw pages should preserve evidence without typing");
         let metadata = decode_veteran_bms_page(
             sel(0),
-            0,
+            cell_voltages(0),
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
         )
         .expect("metadata pages should preserve evidence without cell typing");
         let temperature = decode_veteran_bms_page(
             sel(3),
-            0,
+            cell_voltages(0),
             BatteryInfo::default(),
             VerificationStatus::HardwareVerified,
         )
@@ -705,7 +717,7 @@ mod tests {
 
             let decoded = decode_veteran_bms_page(
                 selector,
-                VETERAN_BMS_CELL_VALUES_PER_PAGE,
+                cell_voltages(VETERAN_BMS_CELL_VALUES_PER_PAGE),
                 BatteryInfo::default(),
                 VerificationStatus::HardwareVerified,
             )
@@ -716,11 +728,11 @@ mod tests {
         }
 
         #[test]
-        fn cell_page_selectors_only_accept_exact_cell_count(selector in prop_oneof![Just(1u8), Just(2), Just(5), Just(6)], count in 0u8..32) {
+        fn cell_page_selectors_only_accept_exact_cell_count(selector in prop_oneof![Just(1u8), Just(2), Just(5), Just(6)], count in 0u8..=VETERAN_BMS_CELL_VALUES_PER_PAGE) {
             let selector = sel(selector);
             let decoded = decode_veteran_bms_page(
                 selector,
-                count,
+                cell_voltages(count),
                 BatteryInfo::default(),
                 VerificationStatus::HardwareVerified,
             );
@@ -742,11 +754,11 @@ mod tests {
         }
 
         #[test]
-        fn raw_metadata_and_temperature_selectors_preserve_evidence_for_any_count(selector in prop_oneof![Just(0u8), Just(3), Just(4), Just(7), Just(8)], count in 0u8..32) {
+        fn raw_metadata_and_temperature_selectors_preserve_evidence_for_any_count(selector in prop_oneof![Just(0u8), Just(3), Just(4), Just(7), Just(8)], count in 0u8..=VETERAN_BMS_CELL_VALUES_PER_PAGE) {
             let selector = sel(selector);
             let decoded = decode_veteran_bms_page(
                 selector,
-                count,
+                cell_voltages(count),
                 BatteryInfo::default(),
                 VerificationStatus::HardwareVerified,
             )

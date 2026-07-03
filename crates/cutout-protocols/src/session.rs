@@ -819,19 +819,20 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
             .map(veteran_bms_metadata_payload);
     }
 
-    let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
-        .map_or(0, |page| bounded_cell_value_count(page.cell_voltage.len()));
+    VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
+        .ok()
+        .and_then(veteran_bms_cell_payload)
+}
+
+fn veteran_bms_cell_payload(page: VeteranBmsCellPage) -> Option<BatteryPagePayload> {
+    let cell_voltages = page.cell_voltage.into_iter().collect();
     decode_veteran_bms_page(
-        evidence.selector,
-        observed_cell_values,
+        page.selector,
+        cell_voltages,
         BatteryInfo::default(),
         VerificationStatus::HardwareVerified,
     )
     .ok()
-}
-
-fn bounded_cell_value_count(count: usize) -> u8 {
-    u8::try_from(count).unwrap_or(u8::MAX)
 }
 
 fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPagePayload {
@@ -1451,7 +1452,9 @@ mod tests {
         output
             .iter()
             .filter_map(|item| match item {
-                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => Some(*response),
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
+                    Some(response.clone())
+                }
                 _ => None,
             })
             .collect()
@@ -1459,7 +1462,7 @@ mod tests {
 
     fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
         match response {
-            ReadOnlyResponse::Battery(readback) => readback.page,
+            ReadOnlyResponse::Battery(readback) => readback.page.clone(),
             _ => None,
         }
     }
@@ -2292,18 +2295,19 @@ mod tests {
     fn nosfet_aero_session_emits_typed_bms_cell_page_response() {
         let responses = read_only_responses_for_notification(&live_aero_frame());
 
-        assert!(
-            responses
-                .iter()
-                .any(
-                    |response| available_battery_page(response).is_some_and(|payload| payload
-                        .page()
-                        .selector
-                        == ProtocolSelector::new(2)
-                        && payload.page().kind == BatteryPageKind::CellVoltage
-                        && payload.page().verification == VerificationStatus::HardwareVerified)
-                )
-        );
+        let Some(BatteryPagePayload::CellVoltage(page)) = responses
+            .iter()
+            .find_map(available_battery_page)
+            .filter(|payload| payload.page().selector == ProtocolSelector::new(2))
+        else {
+            panic!("expected selector 2 cell-voltage page");
+        };
+
+        assert_eq!(page.page.kind, BatteryPageKind::CellVoltage);
+        assert_eq!(page.page.verification, VerificationStatus::HardwareVerified);
+        assert_eq!(page.cell_voltages.len(), 15);
+        assert_eq!(page.cell_voltages[0], Voltage::from_millivolts(3633));
+        assert_eq!(page.cell_voltages[14], Voltage::from_millivolts(3630));
     }
 
     #[test]

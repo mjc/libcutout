@@ -464,7 +464,7 @@ fn summarize_pevcap_replay(
             }
             SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
                 report.read_only_responses = report.read_only_responses.increment();
-                report.read_only_response_events.push(*response);
+                report.read_only_response_events.push(response.clone());
                 if let ReadOnlyResponse::Firmware(firmware) = response {
                     report.firmware = Some(*firmware);
                 }
@@ -2159,13 +2159,13 @@ fn render_read_only_responses_jsonl(
     responses: &[ReadOnlyResponse],
 ) -> impl Iterator<Item = Result<String, serde_json::Error>> + '_ {
     responses.iter().enumerate().map(|(sequence, response)| {
-        render_read_only_response_jsonl(JsonSequence::new(sequence), *response)
+        render_read_only_response_jsonl(JsonSequence::new(sequence), response)
     })
 }
 
 fn render_read_only_response_jsonl(
     sequence: JsonSequence,
-    response: ReadOnlyResponse,
+    response: &ReadOnlyResponse,
 ) -> Result<String, serde_json::Error> {
     match response {
         ReadOnlyResponse::Battery(payload) => render_battery_response_jsonl(sequence, payload),
@@ -2186,7 +2186,7 @@ fn render_read_only_response_jsonl(
             "command_kind": command_kind_name(response.command_kind()),
             "response": "settings",
             "availability": settings_readback_availability_name(settings.availability),
-            "entries": settings.entries.into_iter().flatten().map(settings_entry_json).collect::<Vec<_>>(),
+            "entries": settings.entries.iter().flatten().copied().map(settings_entry_json).collect::<Vec<_>>(),
         })),
         ReadOnlyResponse::FaultHistory(fault_history) => {
             serde_json::to_string(&serde_json::json!({
@@ -2204,21 +2204,21 @@ fn render_read_only_response_jsonl(
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "diagnostics",
-            "details": diagnostics.details.into_iter().flatten().map(diagnostic_detail_json).collect::<Vec<_>>(),
+            "details": diagnostics.details.iter().flatten().copied().map(diagnostic_detail_json).collect::<Vec<_>>(),
         })),
         ReadOnlyResponse::RawTelemetry(raw) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "raw_telemetry",
-            "fields": raw.fields.into_iter().flatten().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
+            "fields": raw.fields.iter().flatten().copied().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
         })),
     }
 }
 
 fn render_battery_response_jsonl(
     sequence: JsonSequence,
-    readback: BatteryReadback,
+    readback: &BatteryReadback,
 ) -> Result<String, serde_json::Error> {
     serde_json::to_string(&serde_json::json!({
         "type": "read_only_response",
@@ -2226,11 +2226,11 @@ fn render_battery_response_jsonl(
         "command_kind": command_kind_name(CommandKind::RequestBatteryInfo),
         "response": "battery",
         "availability": battery_readback_availability_name(readback.availability),
-        "page": readback.page.map(battery_page_json),
+        "page": readback.page.as_ref().map(battery_page_json),
     }))
 }
 
-fn battery_page_json(payload: BatteryPagePayload) -> serde_json::Value {
+fn battery_page_json(payload: &BatteryPagePayload) -> serde_json::Value {
     let page = payload.page();
     serde_json::json!({
         "selector": page.selector.get(),
@@ -2242,7 +2242,7 @@ fn battery_page_json(payload: BatteryPagePayload) -> serde_json::Value {
     })
 }
 
-fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::Value {
+fn battery_temperature_values_json(payload: &BatteryPagePayload) -> serde_json::Value {
     match payload {
         BatteryPagePayload::Temperature(_) => serde_json::json!(
             payload
@@ -2255,7 +2255,7 @@ fn battery_temperature_values_json(payload: BatteryPagePayload) -> serde_json::V
     }
 }
 
-fn battery_info_json(payload: BatteryPagePayload) -> serde_json::Value {
+fn battery_info_json(payload: &BatteryPagePayload) -> serde_json::Value {
     let battery = payload.battery();
     serde_json::json!({
         "voltage": measured_i32_json(battery.voltage.map(|measured| {
@@ -2742,7 +2742,7 @@ mod tests {
 
     fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
         match response {
-            ReadOnlyResponse::Battery(readback) => readback.page,
+            ReadOnlyResponse::Battery(readback) => readback.page.clone(),
             _ => None,
         }
     }
@@ -3644,7 +3644,7 @@ mod tests {
             )),
         );
 
-        let line = render_read_only_response_jsonl(JsonSequence::new(2), response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(2), &response)
             .expect("read-only battery response serializes");
 
         let value: serde_json::Value =
@@ -3708,7 +3708,7 @@ mod tests {
             temperatures,
         ));
 
-        let line = render_read_only_response_jsonl(JsonSequence::new(3), response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(3), &response)
             .expect("read-only temperature battery response serializes");
 
         let value: serde_json::Value =
@@ -3747,7 +3747,7 @@ mod tests {
             temperatures,
         ));
 
-        let line = render_read_only_response_jsonl(JsonSequence::new(4), response)
+        let line = render_read_only_response_jsonl(JsonSequence::new(4), &response)
             .expect("read-only temperature battery response serializes");
 
         let value: serde_json::Value =
@@ -3768,7 +3768,7 @@ mod tests {
             cutout_core::BatteryInfo::default(),
         ));
         let outputs = [SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-            response,
+            response.clone(),
         ))];
 
         let report = summarize_pevcap_replay(

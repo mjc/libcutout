@@ -309,9 +309,33 @@ private struct BmsReadbackRows: View {
             SessionDebugRow(label: "charge", value: percentText(snapshot.energyPercent)),
             SessionDebugRow(label: "voltage", value: voltageText(snapshot.voltage)),
             SessionDebugRow(label: "current", value: currentText(snapshot.current)),
+            SessionDebugRow(label: "high group", value: groupVoltageText(highGroupVoltage)),
+            SessionDebugRow(label: "low group", value: groupVoltageText(lowGroupVoltage)),
+            SessionDebugRow(label: "delta", value: millivoltsText(snapshot.cellDelta)),
+            SessionDebugRow(label: "lowest group", value: lowestGroupText),
             SessionDebugRow(label: "temperature", value: temperatureText(snapshot.highestTemperature)),
             SessionDebugRow(label: "topology", value: snapshot.topology.layoutLabel),
         ]
+    }
+
+    private var groupVoltages: [Voltage] {
+        snapshot.groups.compactMap(\.voltage)
+    }
+
+    private var highGroupVoltage: Voltage? {
+        groupVoltages.max { left, right in
+            left.value < right.value
+        }
+    }
+
+    private var lowGroupVoltage: Voltage? {
+        groupVoltages.min { left, right in
+            left.value < right.value
+        }
+    }
+
+    private var lowestGroupText: String {
+        snapshot.lowestGroupIndex.map(String.init) ?? "unavailable"
     }
 
     var body: some View {
@@ -2942,6 +2966,11 @@ private func groupVoltageText(_ snapshot: BmsSnapshot, index: Int?) -> String {
 
 private func groupVoltageText(_ group: BmsGroupSnapshot?) -> String {
     guard let value = group?.voltage?.value else { return "--" }
+    return String(format: "%.3f", Double(value) / 1_000.0)
+}
+
+private func groupVoltageText(_ voltage: Voltage?) -> String {
+    guard let value = voltage?.value else { return "--" }
     return String(format: "%.3f", Double(value) / 1_000.0)
 }
 

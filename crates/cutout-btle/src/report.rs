@@ -196,10 +196,10 @@ pub(crate) fn process_device_event(
         }
         DeviceEvent::ReadOnlyResponse(response) => {
             report.read_only_responses = report.read_only_responses.increment();
-            report.read_only_response_events.push(response);
+            report.read_only_response_events.push(response.clone());
             report.events.push(SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms,
-                response,
+                response: response.clone(),
             });
             match response {
                 ReadOnlyResponse::Firmware(firmware) => {

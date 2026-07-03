@@ -853,6 +853,7 @@ impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
 
 impl MobileBmsSnapshotDto {
     fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
+        let groups = bms_groups_from_cell_voltages(&battery.cell_voltages);
         Self {
             availability,
             topology: MobileBmsTopologyDto::unknown_readback(),
@@ -862,8 +863,8 @@ impl MobileBmsSnapshotDto {
                 .map(Into::into),
             voltage: battery.voltage.map(Into::into),
             current: battery.current.map(Into::into),
-            cell_delta: None,
-            lowest_group_index: None,
+            cell_delta: cell_voltage_delta(&battery.cell_voltages),
+            lowest_group_index: lowest_cell_voltage_group_index(&battery.cell_voltages),
             highest_temperature: highest_battery_temperature(
                 battery.temperature,
                 battery.temperatures,
@@ -873,7 +874,7 @@ impl MobileBmsSnapshotDto {
             balancing_detail: None,
             fault_summary: None,
             fault_detail: None,
-            groups: Vec::new(),
+            groups,
             faults: Vec::new(),
             capture_action_title: None,
             capture_action_state: None,
@@ -901,6 +902,47 @@ impl MobileBmsSnapshotDto {
             capture_action_state: None,
         }
     }
+}
+
+fn bms_groups_from_cell_voltages(
+    cell_voltages: &[MeasuredI32Dto],
+) -> Vec<MobileBmsGroupSnapshotDto> {
+    cell_voltages
+        .iter()
+        .enumerate()
+        .map(|(index, voltage)| MobileBmsGroupSnapshotDto {
+            index: u16::try_from(index.saturating_add(1)).unwrap_or(u16::MAX),
+            label: Some(format!("group {}", index.saturating_add(1))),
+            voltage: Some((*voltage).into()),
+            temperature: None,
+            resistance: None,
+            is_balancing: None,
+            alert_level: MobileBmsAlertLevelDto::Nominal,
+            detail: None,
+        })
+        .collect()
+}
+
+fn cell_voltage_delta(cell_voltages: &[MeasuredI32Dto]) -> Option<VoltageDeltaReading> {
+    let min = cell_voltages.iter().map(|voltage| voltage.value).min()?;
+    let max = cell_voltages.iter().map(|voltage| voltage.value).max()?;
+    let first = cell_voltages.first()?;
+    Some(VoltageDeltaReading {
+        value: VoltageDelta {
+            value: max.saturating_sub(min),
+        },
+        source: MobileValueSourceDto::Calculated,
+        quality: MobileValueQualityDto::Known,
+        verification: first.verification.into(),
+    })
+}
+
+fn lowest_cell_voltage_group_index(cell_voltages: &[MeasuredI32Dto]) -> Option<u16> {
+    cell_voltages
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, voltage)| voltage.value)
+        .and_then(|(index, _)| u16::try_from(index.saturating_add(1)).ok())
 }
 
 impl MobileBmsTopologyDto {
@@ -2833,6 +2875,7 @@ mod tests {
                     level_estimated: None,
                     temperature: Some(reported(31_000)),
                     temperatures: vec![None, Some(reported(37_800)), Some(reported(35_200))],
+                    cell_voltages: vec![reported(3_633), reported(3_626), reported(3_634)],
                     raw_state: None,
                 }),
             }),
@@ -2856,7 +2899,21 @@ mod tests {
             snapshot.topology.confidence,
             MobileBmsTopologyConfidenceDto::Unverified
         );
-        assert!(snapshot.groups.is_empty());
+        assert_eq!(snapshot.groups.len(), 3);
+        assert_eq!(snapshot.groups[0].index, 1);
+        assert_eq!(snapshot.groups[0].label.as_deref(), Some("group 1"));
+        assert_eq!(
+            snapshot.groups[0]
+                .voltage
+                .as_ref()
+                .map(|voltage| voltage.value),
+            Some(Voltage { value: 3_633 })
+        );
+        assert_eq!(snapshot.lowest_group_index, Some(2));
+        assert_eq!(
+            snapshot.cell_delta.expect("cell delta").value,
+            VoltageDelta { value: 8 }
+        );
         assert_eq!(
             snapshot.energy_percent.expect("reported level").value,
             BatteryLevel { value: 72 }
