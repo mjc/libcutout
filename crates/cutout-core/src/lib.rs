@@ -1797,9 +1797,9 @@ impl RegistryHashBuilder {
 
     fn write_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
-            for (lane_index, lane) in self.lanes.iter_mut().enumerate() {
-                let lane_index_u64 = u64::try_from(lane_index).unwrap_or_default();
-                let lane_index_u32 = u32::try_from(lane_index).unwrap_or_default();
+            for ((lane_index_u64, lane_index_u32), lane) in
+                (0_u64..).zip(0_u32..).zip(self.lanes.iter_mut())
+            {
                 *lane ^= u64::from(*byte).wrapping_add(lane_index_u64 << 8);
                 *lane = lane.wrapping_mul(0x0000_0100_0000_01b3 + lane_index_u64);
                 *lane ^= lane.rotate_left(17 + lane_index_u32);
@@ -6887,7 +6887,7 @@ pub fn replay_arbitrary_chunk_lengths(records: &[CaptureRecord]) -> Vec<Notifica
             | CaptureRecord::TargetedCommand { .. } => None,
         })
         .max()
-        .unwrap_or_default();
+        .unwrap_or(0);
 
     let mut lengths = Vec::new();
     let mut covered = 0usize;

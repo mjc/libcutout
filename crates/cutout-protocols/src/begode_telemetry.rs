@@ -3,7 +3,7 @@ use core::ops::RangeInclusive;
 use cutout_core::{
     BatteryCurrent, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
     DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicTimestamp,
-    ParallelCount, PhaseCurrent, Power, RawFieldValue, ReadOnlyResponse, SeriesCount,
+    ParallelCount, PhaseCurrent, Power, ProtocolTag, RawFieldValue, ReadOnlyResponse, SeriesCount,
     SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
     VerificationStatus, Voltage, WireVoltage,
 };
@@ -1200,7 +1200,7 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeTelemetryE
     } else {
         Err(BegodeTelemetryError::UnexpectedFrameTag {
             expected,
-            actual: u8::try_from(actual.get()).unwrap_or_default(),
+            actual: tag_byte(actual),
         })
     }
 }
@@ -1242,19 +1242,23 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
 }
 
 fn byte(cursor: ParserCursor<'_>, offset: ParserOffset) -> u8 {
-    cursor.byte(offset).unwrap_or_default()
+    cursor.byte(offset).unwrap_or(0)
 }
 
 fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
-    cursor.be_u16(offset).unwrap_or_default()
+    cursor.be_u16(offset).unwrap_or(0)
 }
 
 fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
-    cursor.be_i16(offset).unwrap_or_default()
+    cursor.be_i16(offset).unwrap_or(0)
 }
 
 fn be_u32(cursor: ParserCursor<'_>, offset: ParserOffset) -> u32 {
-    cursor.be_u32(offset).unwrap_or_default()
+    cursor.be_u32(offset).unwrap_or(0)
+}
+
+fn tag_byte(tag: ProtocolTag) -> u8 {
+    u8::try_from(tag.get()).unwrap_or(u8::MAX)
 }
 
 #[cfg(test)]

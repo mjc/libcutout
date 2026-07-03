@@ -44,13 +44,13 @@ impl BegodeFrame {
     /// Returns the Begode frame tag at offset 18.
     #[must_use]
     pub fn tag(&self) -> ProtocolTag {
-        ProtocolTag::new(u16::from(self.bytes.get(18).copied().unwrap_or_default()))
+        ProtocolTag::new(u16::from(self.bytes.get(18).copied().unwrap_or(0)))
     }
 
     /// Returns the Begode sub-index byte at offset 19.
     #[must_use]
     pub fn sub_index(&self) -> ProtocolSelector {
-        ProtocolSelector::new(self.bytes.get(19).copied().unwrap_or_default())
+        ProtocolSelector::new(self.bytes.get(19).copied().unwrap_or(0))
     }
 }
 

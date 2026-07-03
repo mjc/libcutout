@@ -158,9 +158,7 @@ impl BegodeBmsCellPage {
 
         Ok(Self {
             tag,
-            bms_index: BmsPackIndex::new(
-                u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or_default(),
-            ),
+            bms_index: BmsPackIndex::new(bms_index_from_tag(tag)),
             page_index,
             first_cell_index: BmsCellIndex::new(
                 u16::from(page_index.get()) * BEGODE_BMS_CELL_VALUES_PER_PAGE_U16,
@@ -206,15 +204,19 @@ fn require_tag(frame: &BegodeFrame, expected: u8) -> Result<(), BegodeBmsPageErr
 }
 
 fn tag_byte(tag: ProtocolTag) -> u8 {
-    u8::try_from(tag.get()).unwrap_or_default()
+    u8::try_from(tag.get()).unwrap_or(u8::MAX)
+}
+
+fn bms_index_from_tag(tag: ProtocolTag) -> u8 {
+    u8::try_from(tag.get().saturating_sub(0x02)).unwrap_or(u8::MAX)
 }
 
 fn be_u16(cursor: ParserCursor<'_>, offset: ParserOffset) -> u16 {
-    cursor.be_u16(offset).unwrap_or_default()
+    cursor.be_u16(offset).unwrap_or(0)
 }
 
 fn be_i16(cursor: ParserCursor<'_>, offset: ParserOffset) -> i16 {
-    cursor.be_i16(offset).unwrap_or_default()
+    cursor.be_i16(offset).unwrap_or(0)
 }
 
 const fn source_reported<T>(value: T) -> Measured<T> {

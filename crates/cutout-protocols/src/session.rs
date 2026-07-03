@@ -820,9 +820,7 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
     }
 
     let observed_cell_values = VeteranBmsCellPage::from_body(evidence.selector, evidence.body)
-        .map_or(0, |page| {
-            u8::try_from(page.cell_voltage.len()).unwrap_or_default()
-        });
+        .map_or(0, |page| bounded_cell_value_count(page.cell_voltage.len()));
     decode_veteran_bms_page(
         evidence.selector,
         observed_cell_values,
@@ -830,6 +828,10 @@ fn veteran_bms_payload(evidence: VeteranBmsPageEvidence<'_>) -> Option<BatteryPa
         VerificationStatus::HardwareVerified,
     )
     .ok()
+}
+
+fn bounded_cell_value_count(count: usize) -> u8 {
+    u8::try_from(count).unwrap_or(u8::MAX)
 }
 
 fn veteran_bms_temperature_payload(page: VeteranBmsTemperaturePage) -> BatteryPagePayload {

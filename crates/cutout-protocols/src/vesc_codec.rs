@@ -419,8 +419,8 @@ fn map_command_reply(reply: vesc::CommandReply) -> Result<VescReadOnlyReply, Ves
             major: info.major,
             minor: info.minor,
             test_version_number: info.test_version_number,
-            commit_hash: bounded_string(info.commit_hash().unwrap_or_default()),
-            user_commit_hash: bounded_string(info.user_commit_hash().unwrap_or_default()),
+            commit_hash: bounded_string(info.commit_hash().unwrap_or("")),
+            user_commit_hash: bounded_string(info.user_commit_hash().unwrap_or("")),
         }),
         vesc::CommandReply::GetValues(values) | vesc::CommandReply::GetValuesSelective(values) => {
             Ok(VescReadOnlyReply::Values(values.into()))

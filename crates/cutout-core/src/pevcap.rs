@@ -685,7 +685,7 @@ impl PevcapCapture {
                 (record.direction == PevcapDirection::Inbound).then_some(record.bytes.len())
             })
             .max()
-            .unwrap_or_default();
+            .unwrap_or(0);
 
         let mut lengths = Vec::new();
         let mut covered = 0usize;
