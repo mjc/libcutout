@@ -1079,6 +1079,14 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         return max(0, 1_000 - usedPermille)
     }
 
+    public var regenerationPower: Power? {
+        guard telemetry?.powerFlow == .regeneration else {
+            return nil
+        }
+
+        return telemetry?.displayPower
+    }
+
     public var phaseText: String {
         phase.displayText
     }
@@ -1122,7 +1130,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
             EucRideVisibleFieldCoverage(field: .thermal, source: thermalCoverage),
             EucRideVisibleFieldCoverage(field: .warningState, source: .sessionState),
             EucRideVisibleFieldCoverage(field: .voltageSag, source: .explicitlyUnavailable),
-            EucRideVisibleFieldCoverage(field: .regenPower, source: .explicitlyUnavailable),
+            EucRideVisibleFieldCoverage(field: .regenPower, source: regenerationPowerCoverage),
             EucRideVisibleFieldCoverage(field: .limpHomeRange, source: .explicitlyUnavailable),
             EucRideVisibleFieldCoverage(field: .tabs, source: .staticNavigation),
         ]
@@ -1151,13 +1159,17 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         guard let telemetry else {
             return .explicitlyUnavailable
         }
-        if telemetry.voltage != nil, let current = telemetry.batteryCurrent, current.value != 0 {
+        if telemetry.derivedPackPower != nil {
             return .derivedTelemetry
         }
         if telemetry.power != nil {
             return .liveTelemetry
         }
         return .explicitlyUnavailable
+    }
+
+    private var regenerationPowerCoverage: EucRideVisibleFieldSource {
+        regenerationPower == nil ? .explicitlyUnavailable : .derivedTelemetry
     }
 
     private var thermalCoverage: EucRideVisibleFieldSource {
@@ -1169,6 +1181,18 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 }
 
 private extension TelemetrySnapshot {
+    var displayPower: Power? {
+        derivedPackPower ?? power
+    }
+
+    var derivedPackPower: Power? {
+        guard let voltage, let batteryCurrent, batteryCurrent.value != 0 else {
+            return nil
+        }
+
+        return Power(value: Int64(voltage.value) * Int64(batteryCurrent.value) / 1_000)
+    }
+
     var hasVisibleRideValues: Bool {
         speed != nil
             || voltage != nil

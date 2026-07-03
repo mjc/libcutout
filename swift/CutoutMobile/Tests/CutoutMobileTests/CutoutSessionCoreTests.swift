@@ -621,6 +621,52 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .tabs), .staticNavigation)
     }
 
+    func testRideStateAccountsForRegenerationPowerOnlyWhenFlowIsRegeneration() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    operatingState: .riding,
+                    voltage: voltageValue(96_700),
+                    batteryCurrent: batteryCurrentValue(-800),
+                    powerFlow: .regeneration
+                )
+            )
+        )
+
+        XCTAssertEqual(rideState.regenerationPower, powerValue(-77_360))
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .derivedTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .regenPower), .derivedTelemetry)
+    }
+
+    func testRideStateDoesNotAccountForUnverifiedNegativePowerAsRegeneration() {
+        let unknownFlowState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(96_700),
+                    batteryCurrent: batteryCurrentValue(-800),
+                    powerFlow: .negativeUnknown
+                )
+            )
+        )
+        let chargingState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(118_000),
+                    batteryCurrent: batteryCurrentValue(-2_000),
+                    powerFlow: .charging
+                )
+            )
+        )
+
+        XCTAssertNil(unknownFlowState.regenerationPower)
+        XCTAssertEqual(unknownFlowState.visibleFieldCoverage.source(for: .regenPower), .explicitlyUnavailable)
+        XCTAssertNil(chargingState.regenerationPower)
+        XCTAssertEqual(chargingState.visibleFieldCoverage.source(for: .regenPower), .explicitlyUnavailable)
+    }
+
     func testRideStateAccountsForParkedPwmAsNotApplicable() {
         let rideState = EucRideScreenState(
             phase: .live,
@@ -686,6 +732,10 @@ private func voltageValue(_ value: Int32) -> Voltage {
 
 private func batteryCurrentValue(_ value: Int32) -> BatteryCurrent {
     BatteryCurrent(value: value)
+}
+
+private func powerValue(_ value: Int64) -> Power {
+    Power(value: value)
 }
 
 private func temperatureValue(_ value: Int32) -> Temperature {
