@@ -3,12 +3,13 @@ use crate::{
     BatteryPagePayload, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
     ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
     DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
-    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
-    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
-    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
-    ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
+    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
+    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
+    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
+    ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, RawFieldValue,
+    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
+    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
+    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
     ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
@@ -1141,7 +1142,7 @@ impl From<SessionOutput> for SessionOutputDto {
 }
 
 /// UniFFI-ready notification ingest outcome.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NotificationIngestOutcomeDto {
     /// Notification produced semantic protocol events.
     SemanticEvents {
@@ -1182,8 +1183,14 @@ pub enum NotificationIngestOutcomeDto {
         gap: ParserGapEvidenceDto,
     },
 
-    /// Notification was intentionally ignored.
-    Ignored(NotificationEvidenceDto),
+    /// Notification was explicitly ignored.
+    Ignored {
+        /// Ignored-notification evidence.
+        evidence: IgnoredNotificationEvidenceDto,
+
+        /// Reason the notification was ignored.
+        reason: IgnoredNotificationReasonDto,
+    },
 }
 
 impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
@@ -1217,7 +1224,10 @@ impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
                 notification: notification.into(),
                 gap: gap.into(),
             },
-            NotificationIngestOutcome::Ignored(notification) => Self::Ignored(notification.into()),
+            NotificationIngestOutcome::Ignored { evidence, reason } => Self::Ignored {
+                evidence: evidence.into(),
+                reason: reason.into(),
+            },
         }
     }
 }
@@ -1225,8 +1235,8 @@ impl From<NotificationIngestOutcome> for NotificationIngestOutcomeDto {
 /// UniFFI-ready notification evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NotificationEvidenceDto {
-    /// Protocol family if known.
-    pub family: Option<ProtocolFamilyDto>,
+    /// Protocol family that accepted or classified the notification.
+    pub family: ProtocolFamilyDto,
 
     /// GATT channel UUID bytes.
     pub channel: [u8; 16],
@@ -1241,10 +1251,76 @@ pub struct NotificationEvidenceDto {
 impl From<NotificationEvidence> for NotificationEvidenceDto {
     fn from(evidence: NotificationEvidence) -> Self {
         Self {
+            family: evidence.family.into(),
+            channel: evidence.channel.as_bytes(),
+            len: NotificationByteLenDto::from_core(evidence.len),
+            monotonic_ms: MonotonicMillisDto::from_core(evidence.monotonic_ms),
+        }
+    }
+}
+
+/// UniFFI-ready ignored notification evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IgnoredNotificationEvidenceDto {
+    /// Protocol family when classification got that far.
+    pub family: Option<ProtocolFamilyDto>,
+
+    /// GATT channel UUID bytes.
+    pub channel: [u8; 16],
+
+    /// Notification payload length.
+    pub len: NotificationByteLenDto,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: MonotonicMillisDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
+}
+
+impl From<IgnoredNotificationEvidence> for IgnoredNotificationEvidenceDto {
+    fn from(evidence: IgnoredNotificationEvidence) -> Self {
+        Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.as_bytes(),
             len: NotificationByteLenDto::from_core(evidence.len),
             monotonic_ms: MonotonicMillisDto::from_core(evidence.monotonic_ms),
+            retained_payload: evidence.retained_payload.as_slice().to_vec(),
+        }
+    }
+}
+
+/// UniFFI-ready ignored notification reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IgnoredNotificationReasonDto {
+    /// Notification arrived on a channel the selected protocol does not consume.
+    WrongChannel,
+
+    /// Notification could not be associated with a supported protocol family.
+    UnsupportedFamily,
+
+    /// Notification was classified to a family but not to a supported channel.
+    UnsupportedChannel,
+
+    /// Notification was accepted by a known family but no semantic mapping exists yet.
+    AcceptedButUnmapped,
+
+    /// Notification advanced frame-boundary search without completing a frame.
+    SeekingFrameBoundary,
+
+    /// Notification was classified and intentionally dropped by policy.
+    IntentionallyDropped,
+}
+
+impl From<IgnoredNotificationReason> for IgnoredNotificationReasonDto {
+    fn from(reason: IgnoredNotificationReason) -> Self {
+        match reason {
+            IgnoredNotificationReason::WrongChannel => Self::WrongChannel,
+            IgnoredNotificationReason::UnsupportedFamily => Self::UnsupportedFamily,
+            IgnoredNotificationReason::UnsupportedChannel => Self::UnsupportedChannel,
+            IgnoredNotificationReason::AcceptedButUnmapped => Self::AcceptedButUnmapped,
+            IgnoredNotificationReason::SeekingFrameBoundary => Self::SeekingFrameBoundary,
+            IgnoredNotificationReason::IntentionallyDropped => Self::IntentionallyDropped,
         }
     }
 }
@@ -1325,7 +1401,7 @@ impl From<ParserError> for ParserErrorDto {
 }
 
 /// UniFFI-ready reserved payload evidence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReservedPayloadEvidenceDto {
     /// Selector byte when the family has one.
     pub selector: Option<u8>,
@@ -1335,6 +1411,9 @@ pub struct ReservedPayloadEvidenceDto {
 
     /// Reserved payload body length.
     pub body_len: PayloadBodyLenDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
 
     /// Evidence verification status.
     pub verification: VerificationStatusDto,
@@ -1349,13 +1428,14 @@ impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: PayloadBodyLenDto::from_core(evidence.body_len),
+            retained_payload: evidence.retained_payload.as_slice().to_vec(),
             verification: evidence.verification.into(),
         }
     }
 }
 
 /// UniFFI-ready parser gap evidence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParserGapEvidenceDto {
     /// Selector byte when the family has one.
     pub selector: Option<u8>,
@@ -1365,6 +1445,9 @@ pub struct ParserGapEvidenceDto {
 
     /// Unparsed body length.
     pub body_len: PayloadBodyLenDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
 }
 
 impl From<ParserGapEvidence> for ParserGapEvidenceDto {
@@ -1376,6 +1459,7 @@ impl From<ParserGapEvidence> for ParserGapEvidenceDto {
                 .map(super::ProtocolSelector::get),
             tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
             body_len: PayloadBodyLenDto::from_core(evidence.body_len),
+            retained_payload: evidence.retained_payload.as_slice().to_vec(),
         }
     }
 }

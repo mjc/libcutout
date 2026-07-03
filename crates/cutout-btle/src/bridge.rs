@@ -1,8 +1,8 @@
 use btleplug::api::Characteristic;
 use cutout_core::{
-    DeviceCommand, GattChannel, LinkInfo, NotificationEvidence, NotificationIngestOutcome,
-    ProtocolSession, SessionInput, SessionOutput, TransportAction, TransportWriteLimit, WriteMode,
-    WritePayload,
+    DeviceCommand, GattChannel, IgnoredNotificationEvidence, IgnoredNotificationReason, LinkInfo,
+    NotificationEvidence, NotificationIngestOutcome, ProtocolSession, SessionInput, SessionOutput,
+    TransportAction, TransportWriteLimit, WriteMode, WritePayload,
 };
 use futures_util::StreamExt;
 use tracing::{debug, info};
@@ -469,7 +469,11 @@ where
                     *monotonic_ms,
                 )
                 .await?;
-                log_notification_decode_outcome(decode_outcome, &notification, context.channel);
+                log_notification_decode_outcome(
+                    decode_outcome.as_ref(),
+                    &notification,
+                    context.channel,
+                );
                 context.report.notifications = context.report.notifications.increment();
                 let notification_len = notification.len();
                 context.report.notification_bytes =
@@ -601,9 +605,12 @@ where
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NotificationDecodeOutcome {
-    Ignored(NotificationEvidence),
+    Ignored {
+        evidence: IgnoredNotificationEvidence,
+        reason: IgnoredNotificationReason,
+    },
     BufferedFragment(NotificationEvidence),
     ParserGap(NotificationEvidence),
     KnownReserved(NotificationEvidence),
@@ -631,7 +638,7 @@ pub(crate) fn notification_decode_outcome(
             SessionOutput::Transport(_) | SessionOutput::Event(_) => None,
         })
         .map(NotificationDecodeOutcome::from)
-        .max_by_key(|outcome| outcome.kind())
+        .max_by_key(NotificationDecodeOutcome::kind)
 }
 
 impl From<&NotificationIngestOutcome> for NotificationDecodeOutcome {
@@ -652,17 +659,20 @@ impl From<&NotificationIngestOutcome> for NotificationDecodeOutcome {
             NotificationIngestOutcome::BufferedFragment(notification) => {
                 NotificationDecodeOutcome::BufferedFragment(*notification)
             }
-            NotificationIngestOutcome::Ignored(notification) => {
-                NotificationDecodeOutcome::Ignored(*notification)
+            NotificationIngestOutcome::Ignored { evidence, reason } => {
+                NotificationDecodeOutcome::Ignored {
+                    evidence: evidence.clone(),
+                    reason: *reason,
+                }
             }
         }
     }
 }
 
 impl NotificationDecodeOutcome {
-    pub(crate) const fn kind(self) -> NotificationDecodeKind {
+    pub(crate) const fn kind(&self) -> NotificationDecodeKind {
         match self {
-            Self::Ignored(_) => NotificationDecodeKind::Ignored,
+            Self::Ignored { .. } => NotificationDecodeKind::Ignored,
             Self::BufferedFragment(_) => NotificationDecodeKind::BufferedFragment,
             Self::ParserGap(_) => NotificationDecodeKind::ParserGap,
             Self::KnownReserved(_) => NotificationDecodeKind::KnownReserved,
@@ -673,7 +683,7 @@ impl NotificationDecodeOutcome {
 }
 
 fn log_notification_decode_outcome(
-    outcome: Option<NotificationDecodeOutcome>,
+    outcome: Option<&NotificationDecodeOutcome>,
     notification: &BtleNotification,
     channel: GattChannel,
 ) {
@@ -707,7 +717,17 @@ fn log_notification_decode_outcome(
                 "session notification produced parser gap evidence"
             );
         }
-        Some(NotificationDecodeOutcome::Ignored(_)) | None => {
+        Some(NotificationDecodeOutcome::Ignored { reason, .. }) => {
+            debug!(
+                uuid = %notification.characteristic,
+                service = %notification.service,
+                len = notification.len().as_bytes(),
+                channel = ?channel,
+                reason = ?reason,
+                "session notification ignored by protocol session"
+            );
+        }
+        None => {
             debug!(
                 uuid = %notification.characteristic,
                 service = %notification.service,

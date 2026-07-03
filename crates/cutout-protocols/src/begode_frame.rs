@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn reassembler_resyncs_after_garbage_before_magic() {
+    fn reassembler_resyncs_after_noise_before_magic() {
         let mut reassembler = BegodeFrameReassembler::default();
         let mut stream = [0x00, 0x01, 0x02].to_vec();
         stream.extend_from_slice(&LIVE_A);

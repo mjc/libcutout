@@ -1329,7 +1329,7 @@ impl DashboardState {
                 outcome,
             } = event
             {
-                self.push_notification_ingest_log(*monotonic_ms, *outcome);
+                self.push_notification_ingest_log(*monotonic_ms, outcome.clone());
             } else {
                 let (level, message) = format_bridge_event(event);
                 self.push_log(level, &message);
@@ -2257,28 +2257,28 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NotificationIngestLog {
     monotonic_ms: u64,
     outcome: NotificationIngestOutcome,
 }
 
 impl NotificationIngestLog {
-    const fn level(self) -> &'static str {
-        match self.outcome {
+    fn level(&self) -> &'static str {
+        match &self.outcome {
             NotificationIngestOutcome::SemanticEvents { .. }
             | NotificationIngestOutcome::KnownReserved { .. } => "info",
             NotificationIngestOutcome::ParserDiagnostic { .. }
             | NotificationIngestOutcome::ParserGap { .. } => "warn",
             NotificationIngestOutcome::BufferedFragment(_)
-            | NotificationIngestOutcome::Ignored(_) => "trace",
+            | NotificationIngestOutcome::Ignored { .. } => "trace",
         }
     }
 }
 
 impl fmt::Display for NotificationIngestLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.outcome {
+        match &self.outcome {
             NotificationIngestOutcome::SemanticEvents {
                 notification,
                 event_count,
@@ -2312,7 +2312,7 @@ impl fmt::Display for NotificationIngestLog {
                 payload,
             } => write!(
                 f,
-                "t={}ms protocol known reserved family={} selector={} tag={} body_len={} verification={} len={}",
+                "t={}ms protocol known reserved family={} selector={} tag={} body_len={} retained_bytes={} verification={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
                 OptionalU8(
@@ -2328,12 +2328,13 @@ impl fmt::Display for NotificationIngestLog {
                         .map(cutout_core::ProtocolTag::get)
                 ),
                 payload.body_len.as_bytes(),
+                payload.retained_payload.len(),
                 verification_name(payload.verification),
                 notification.len.as_bytes()
             ),
             NotificationIngestOutcome::ParserGap { notification, gap } => write!(
                 f,
-                "t={}ms protocol parser gap family={} selector={} tag={} body_len={} len={}",
+                "t={}ms protocol parser gap family={} selector={} tag={} body_len={} retained_bytes={} len={}",
                 self.monotonic_ms,
                 family_name(notification.family),
                 OptionalU8(
@@ -2347,14 +2348,17 @@ impl fmt::Display for NotificationIngestLog {
                         .map(cutout_core::ProtocolTag::get)
                 ),
                 gap.body_len.as_bytes(),
+                gap.retained_payload.len(),
                 notification.len.as_bytes()
             ),
-            NotificationIngestOutcome::Ignored(notification) => write!(
+            NotificationIngestOutcome::Ignored { evidence, reason } => write!(
                 f,
-                "t={}ms protocol ignored notification family={} len={}",
+                "t={}ms protocol ignored notification reason={} family={} len={} retained_bytes={}",
                 self.monotonic_ms,
-                family_name(notification.family),
-                notification.len.as_bytes()
+                ignored_reason_name(*reason),
+                optional_family_name(evidence.family),
+                evidence.len.as_bytes(),
+                evidence.retained_payload.len()
             ),
         }
     }
@@ -2382,12 +2386,29 @@ impl fmt::Display for OptionalU16 {
     }
 }
 
-fn family_name(family: Option<ProtocolFamily>) -> &'static str {
+fn family_name(family: ProtocolFamily) -> &'static str {
     match family {
-        Some(ProtocolFamily::VeteranLeaperkimNosfet) => "VeteranLeaperkimNosfet",
-        Some(ProtocolFamily::BegodeGotway) => "BegodeGotway",
-        Some(ProtocolFamily::Vesc) => "Vesc",
+        ProtocolFamily::VeteranLeaperkimNosfet => "VeteranLeaperkimNosfet",
+        ProtocolFamily::BegodeGotway => "BegodeGotway",
+        ProtocolFamily::Vesc => "Vesc",
+    }
+}
+
+fn optional_family_name(family: Option<ProtocolFamily>) -> &'static str {
+    match family {
+        Some(family) => family_name(family),
         None => "unknown",
+    }
+}
+
+fn ignored_reason_name(reason: cutout_core::IgnoredNotificationReason) -> &'static str {
+    match reason {
+        cutout_core::IgnoredNotificationReason::WrongChannel => "wrong_channel",
+        cutout_core::IgnoredNotificationReason::UnsupportedFamily => "unsupported_family",
+        cutout_core::IgnoredNotificationReason::UnsupportedChannel => "unsupported_channel",
+        cutout_core::IgnoredNotificationReason::AcceptedButUnmapped => "accepted_but_unmapped",
+        cutout_core::IgnoredNotificationReason::SeekingFrameBoundary => "seeking_frame_boundary",
+        cutout_core::IgnoredNotificationReason::IntentionallyDropped => "intentionally_dropped",
     }
 }
 
@@ -4199,6 +4220,18 @@ mod tests {
     }
 
     fn estimated_battery_report() -> SessionBridgeReport {
+        let delta = TelemetryDelta {
+            speed: Some(speed(0)),
+            voltage: Some(voltage(108_760)),
+            battery_current: Some(battery_current(0)),
+            controller_temperature: Some(temperature(33_270)),
+            pwm: Some(duty_cycle_permille(-1_000)),
+            distance: Some(distance(1_551_169_000)),
+            pitch: Some(angle_mdeg(69_060)),
+            battery_level_estimated: Some(level_estimated(47)),
+            ..TelemetryDelta::empty(ms(42))
+        };
+
         SessionBridgeReport {
             protocol_writes: protocol_writes(0),
             writes: writes(0),
@@ -4207,7 +4240,7 @@ mod tests {
             notification_bytes: NotificationPayloadTotal::from_bytes(20),
             latest_notification_len: Some(NotificationByteLen::from_bytes(20)),
             telemetry: telemetry_events(1),
-            telemetry_snapshot: live_aero_telemetry_snapshot(),
+            telemetry_snapshot: snapshot_from_delta(delta),
             read_only_responses: read_only_responses(0),
             read_only_response_events: Vec::new(),
             firmware: None,
@@ -4218,17 +4251,7 @@ mod tests {
             identity: None,
             events: vec![SessionBridgeEvent::ProcessedTelemetry {
                 monotonic_ms: cutout_btle::MonotonicMs::new(42),
-                delta: TelemetryDelta {
-                    speed: Some(speed(0)),
-                    voltage: Some(voltage(108_760)),
-                    motor_current: Some(phase_current(0)),
-                    controller_temperature: Some(temperature(33_270)),
-                    pwm: Some(duty_cycle_permille(-1_000)),
-                    distance: Some(distance(1_551_169_000)),
-                    pitch: Some(angle_mdeg(69_060)),
-                    battery_level_estimated: Some(level_estimated(47)),
-                    ..TelemetryDelta::empty(ms(42))
-                },
+                delta,
             }],
             disconnects: disconnects(0),
         }
@@ -5068,6 +5091,7 @@ mod tests {
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                     body_len: PayloadBodyLen::from_bytes(24),
+                    retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
                     verification: VerificationStatus::HardwareVerified,
                 },
             ),
@@ -5076,7 +5100,7 @@ mod tests {
         assert_eq!(log.level(), "info");
         assert_eq!(
             log.to_string(),
-            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75"
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 retained_bytes=1 verification=hardware_verified len=75"
         );
     }
 
@@ -5216,13 +5240,14 @@ mod tests {
                 ReservedPayloadEvidence {
                     classifier: cutout_core::PayloadClassifier::selector(sel(8)),
                     body_len: PayloadBodyLen::from_bytes(24),
+                    retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
                     verification: VerificationStatus::HardwareVerified,
                 },
             ),
         };
         assert_display_preserves_capacity(
             ingest,
-            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 verification=hardware_verified len=75",
+            "t=4ms protocol known reserved family=VeteranLeaperkimNosfet selector=8 tag=none body_len=24 retained_bytes=1 verification=hardware_verified len=75",
         );
         let parser_gap = NotificationIngestLog {
             monotonic_ms: 9,
@@ -5236,12 +5261,15 @@ mod tests {
                         0x1234,
                     )),
                     body_len: PayloadBodyLen::from_bytes(12),
+                    retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[
+                        0x12, 0x34,
+                    ]),
                 },
             ),
         };
         assert_display_preserves_capacity(
             parser_gap,
-            "t=9ms protocol parser gap family=VeteranLeaperkimNosfet selector=none tag=4660 body_len=12 len=75",
+            "t=9ms protocol parser gap family=VeteranLeaperkimNosfet selector=none tag=4660 body_len=12 retained_bytes=2 len=75",
         );
 
         assert_display_preserves_capacity(
@@ -5282,72 +5310,77 @@ mod tests {
     fn ingest_outcome_events_render_each_typed_protocol_category() {
         let mut state = DashboardState::empty();
         let channel = GattChannel::from_bytes([0xA1; 16]);
-        let report = SessionBridgeReport {
-            notifications: notifications(5),
-            notification_bytes: NotificationPayloadTotal::from_bytes(269),
-            latest_notification_len: Some(NotificationByteLen::from_bytes(77)),
-            events: vec![
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(3),
-                    outcome: NotificationIngestOutcome::buffered_fragment(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(20),
-                        ms(3),
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(4),
-                    outcome: NotificationIngestOutcome::known_reserved(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(75),
-                        ms(4),
-                        ReservedPayloadEvidence {
-                            classifier: cutout_core::PayloadClassifier::selector(
-                                ProtocolSelector::new(8),
-                            ),
-                            body_len: PayloadBodyLen::from_bytes(24),
-                            verification: VerificationStatus::HardwareVerified,
-                        },
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(5),
-                    outcome: NotificationIngestOutcome::parser_gap(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(77),
-                        ms(5),
-                        ParserGapEvidence {
-                            classifier: cutout_core::PayloadClassifier::selector(
-                                ProtocolSelector::new(9),
-                            ),
-                            body_len: PayloadBodyLen::from_bytes(26),
-                        },
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(6),
-                    outcome: NotificationIngestOutcome::parser_diagnostic(
-                        ProtocolFamily::VeteranLeaperkimNosfet,
-                        channel,
-                        NotificationByteLen::from_bytes(77),
-                        ms(6),
-                        ParserError::BadChecksum,
-                    ),
-                },
-                SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                    outcome: NotificationIngestOutcome::ignored_wrong_channel(
-                        channel,
-                        NotificationByteLen::from_bytes(20),
-                        ms(7),
-                    ),
-                },
-            ],
-            ..empty_session_bridge_report()
-        };
+        let report =
+            SessionBridgeReport {
+                notifications: notifications(5),
+                notification_bytes: NotificationPayloadTotal::from_bytes(269),
+                latest_notification_len: Some(NotificationByteLen::from_bytes(77)),
+                events: vec![
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(3),
+                        outcome: NotificationIngestOutcome::buffered_fragment(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(20),
+                            ms(3),
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(4),
+                        outcome: NotificationIngestOutcome::known_reserved(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(75),
+                            ms(4),
+                            ReservedPayloadEvidence {
+                                classifier: cutout_core::PayloadClassifier::selector(
+                                    ProtocolSelector::new(8),
+                                ),
+                                body_len: PayloadBodyLen::from_bytes(24),
+                                retained_payload:
+                                    cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
+                                verification: VerificationStatus::HardwareVerified,
+                            },
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(5),
+                        outcome: NotificationIngestOutcome::parser_gap(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(77),
+                            ms(5),
+                            ParserGapEvidence {
+                                classifier: cutout_core::PayloadClassifier::selector(
+                                    ProtocolSelector::new(9),
+                                ),
+                                body_len: PayloadBodyLen::from_bytes(26),
+                                retained_payload:
+                                    cutout_core::RetainedNotificationPayload::from_bytes(&[0x09]),
+                            },
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(6),
+                        outcome: NotificationIngestOutcome::parser_diagnostic(
+                            ProtocolFamily::VeteranLeaperkimNosfet,
+                            channel,
+                            NotificationByteLen::from_bytes(77),
+                            ms(6),
+                            ParserError::BadChecksum,
+                        ),
+                    },
+                    SessionBridgeEvent::NotificationIngest {
+                        monotonic_ms: cutout_btle::MonotonicMs::new(7),
+                        outcome: NotificationIngestOutcome::ignored_wrong_channel(
+                            channel,
+                            NotificationByteLen::from_bytes(20),
+                            ms(7),
+                        ),
+                    },
+                ],
+                ..empty_session_bridge_report()
+            };
 
         state.apply_session_report(&report);
         state.active_tab = DashboardTab::new(3);

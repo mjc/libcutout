@@ -291,9 +291,9 @@ fn replay_pevcap_capture(
     profile: SelectedSessionProfile,
 ) -> Result<PevcapReplayReport> {
     let mut report = if profile.is_falcon() {
-        replay_pevcap_with_session(capture, falcon_replay_session(capture)?)
+        replay_pevcap_with_session(capture, falcon_replay_session(capture)?)?
     } else {
-        replay_pevcap_with_session(capture, profile.session_registration()?.construct())
+        replay_pevcap_with_session(capture, profile.session_registration()?.construct())?
     };
     report.capacity =
         select_begode_pack_capacity_from_annotations(capture.header.annotations.iter());
@@ -397,7 +397,7 @@ fn falcon_bms_voltage_evidence_from_records<'a>(
     evidence
 }
 
-fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> PevcapReplayReport
+fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> Result<PevcapReplayReport>
 where
     S: Clone + cutout_core::ProtocolSession,
 {
@@ -407,13 +407,13 @@ where
     capture.replay_into_host(&mut host, &mut outputs);
     let arbitrary_chunks = capture.arbitrary_notification_chunk_lengths();
     let comparison =
-        capture.compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks);
-    summarize_pevcap_replay(
+        capture.compare_replay_chunks(|| comparison_session.clone(), &arbitrary_chunks)?;
+    Ok(summarize_pevcap_replay(
         ReplayRecordCount::new(capture.replay_input_count()),
         ReplayChunkPlanLen::new(arbitrary_chunks.len()),
         &outputs,
         comparison,
-    )
+    ))
 }
 
 fn summarize_pevcap_replay(
@@ -466,8 +466,8 @@ fn summarize_pevcap_replay(
             }
             SessionOutput::NotificationIngest(outcome) => {
                 report.events.push(SessionBridgeEvent::NotificationIngest {
-                    monotonic_ms: notification_ingest_monotonic_ms(*outcome),
-                    outcome: *outcome,
+                    monotonic_ms: notification_ingest_monotonic_ms(outcome),
+                    outcome: outcome.clone(),
                 });
             }
             SessionOutput::Transport(_)
@@ -483,17 +483,19 @@ fn summarize_pevcap_replay(
     report
 }
 
-const fn notification_ingest_monotonic_ms(
-    outcome: cutout_core::NotificationIngestOutcome,
+fn notification_ingest_monotonic_ms(
+    outcome: &cutout_core::NotificationIngestOutcome,
 ) -> MonotonicMs {
     MonotonicMs::new(match outcome {
         cutout_core::NotificationIngestOutcome::SemanticEvents { notification, .. }
         | cutout_core::NotificationIngestOutcome::ParserDiagnostic { notification, .. }
         | cutout_core::NotificationIngestOutcome::KnownReserved { notification, .. }
         | cutout_core::NotificationIngestOutcome::ParserGap { notification, .. }
-        | cutout_core::NotificationIngestOutcome::BufferedFragment(notification)
-        | cutout_core::NotificationIngestOutcome::Ignored(notification) => {
+        | cutout_core::NotificationIngestOutcome::BufferedFragment(notification) => {
             notification.monotonic_ms.get()
+        }
+        cutout_core::NotificationIngestOutcome::Ignored { evidence, .. } => {
+            evidence.monotonic_ms.get()
         }
     })
 }
@@ -3407,9 +3409,12 @@ mod tests {
                 if link.monotonic_ms == ms(0) && link.max_write_len == Some(write_len(185))
         ));
         assert!(matches!(
-            replay[1],
+            &replay[1],
             SessionOutput::NotificationIngest(
-                cutout_core::NotificationIngestOutcome::Ignored(evidence)
+                cutout_core::NotificationIngestOutcome::Ignored {
+                    evidence,
+                    reason: cutout_core::IgnoredNotificationReason::WrongChannel,
+                }
             ) if evidence.monotonic_ms == ms(7) && evidence.len == NotificationByteLen::from_bytes(4)
         ));
         assert!(matches!(
@@ -3640,10 +3645,11 @@ mod tests {
             cutout_core::ReservedPayloadEvidence {
                 classifier: cutout_core::PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::from_bytes(24),
+                retained_payload: cutout_core::RetainedNotificationPayload::from_bytes(&[0x08]),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
-        let outputs = [SessionOutput::NotificationIngest(outcome)];
+        let outputs = [SessionOutput::NotificationIngest(outcome.clone())];
 
         let report = summarize_pevcap_replay(
             ReplayRecordCount::new(1),

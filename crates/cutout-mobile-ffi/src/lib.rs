@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
-    MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
+    GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredI16Dto,
+    MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto, MonotonicMillisDto,
+    MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
     NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
     ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
     PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
@@ -413,6 +414,28 @@ pub enum MobileNotificationIngestOutcomeKindDto {
     Ignored,
 }
 
+/// Mobile ignored notification reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileIgnoredNotificationReasonDto {
+    /// Notification arrived on a channel the selected protocol does not consume.
+    WrongChannel,
+
+    /// Notification could not be associated with a supported protocol family.
+    UnsupportedFamily,
+
+    /// Notification was classified to a family but not to a supported channel.
+    UnsupportedChannel,
+
+    /// Notification was accepted by a known family but no semantic mapping exists yet.
+    AcceptedButUnmapped,
+
+    /// Notification advanced frame-boundary search without completing a frame.
+    SeekingFrameBoundary,
+
+    /// Notification was classified and intentionally dropped by policy.
+    IntentionallyDropped,
+}
+
 /// Mobile parser error kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileParserErrorKindDto {
@@ -470,6 +493,9 @@ pub struct MobileReservedPayloadEvidenceDto {
     /// Reserved payload body length.
     pub body_len: MobilePayloadBodyLenDto,
 
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
+
     /// Evidence verification status.
     pub verification: MobileVerificationStatusDto,
 }
@@ -485,13 +511,16 @@ pub struct MobileParserGapEvidenceDto {
 
     /// Unparsed body length.
     pub body_len: MobilePayloadBodyLenDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
 }
 
 /// Mobile notification evidence DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNotificationEvidenceDto {
     /// Protocol family that accepted or classified the notification.
-    pub family: Option<MobileProtocolFamilyDto>,
+    pub family: MobileProtocolFamilyDto,
 
     /// GATT channel UUID bytes.
     pub channel: Vec<u8>,
@@ -503,14 +532,33 @@ pub struct MobileNotificationEvidenceDto {
     pub monotonic_ms: MobileMonotonicMillisDto,
 }
 
+/// Mobile ignored notification evidence DTO.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileIgnoredNotificationEvidenceDto {
+    /// Protocol family when classification got that far.
+    pub family: Option<MobileProtocolFamilyDto>,
+
+    /// GATT channel UUID bytes.
+    pub channel: Vec<u8>,
+
+    /// Notification payload length without retaining payload bytes.
+    pub len: MobileNotificationByteLenDto,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: MobileMonotonicMillisDto,
+
+    /// Bounded raw payload retained for capture correlation.
+    pub retained_payload: Vec<u8>,
+}
+
 /// Mobile parser-first notification ingest outcome DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileNotificationIngestOutcomeDto {
     /// Outcome kind.
     pub kind: MobileNotificationIngestOutcomeKindDto,
 
-    /// Shared notification evidence without raw payload bytes.
-    pub notification: MobileNotificationEvidenceDto,
+    /// Accepted notification evidence without raw payload bytes.
+    pub notification: Option<MobileNotificationEvidenceDto>,
 
     /// Number of semantic events emitted from this notification.
     pub event_count: Option<MobileSemanticEventCountDto>,
@@ -523,6 +571,12 @@ pub struct MobileNotificationIngestOutcomeDto {
 
     /// Parser gap evidence for parser-gap outcomes.
     pub gap: Option<MobileParserGapEvidenceDto>,
+
+    /// Ignored notification evidence.
+    pub ignored: Option<MobileIgnoredNotificationEvidenceDto>,
+
+    /// Reason an ignored notification did not enter a decoder path.
+    pub ignored_reason: Option<MobileIgnoredNotificationReasonDto>,
 }
 
 /// Mobile step-error kind.
@@ -1476,57 +1530,69 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
                 event_count,
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::SemanticEvents,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: Some(event_count.into()),
                 parser_error: None,
                 reserved: None,
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::BufferedFragment(notification) => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::BufferedFragment,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: None,
                 reserved: None,
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::ParserDiagnostic {
                 notification,
                 error,
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::ParserDiagnostic,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: Some(error.into()),
                 reserved: None,
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::KnownReserved {
                 notification,
                 payload,
             } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::KnownReserved,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: None,
                 reserved: Some(payload.into()),
                 gap: None,
+                ignored: None,
+                ignored_reason: None,
             },
             NotificationIngestOutcomeDto::ParserGap { notification, gap } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::ParserGap,
-                notification: notification.into(),
+                notification: Some(notification.into()),
                 event_count: None,
                 parser_error: None,
                 reserved: None,
                 gap: Some(gap.into()),
+                ignored: None,
+                ignored_reason: None,
             },
-            NotificationIngestOutcomeDto::Ignored(notification) => Self {
+            NotificationIngestOutcomeDto::Ignored { evidence, reason } => Self {
                 kind: MobileNotificationIngestOutcomeKindDto::Ignored,
-                notification: notification.into(),
+                notification: None,
                 event_count: None,
                 parser_error: None,
                 reserved: None,
                 gap: None,
+                ignored: Some(evidence.into()),
+                ignored_reason: Some(reason.into()),
             },
         }
     }
@@ -1590,10 +1656,35 @@ impl From<MeasuredU64Dto> for MobileMeasuredU64Dto {
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
+            family: evidence.family.into(),
+            channel: evidence.channel.to_vec(),
+            len: evidence.len.into(),
+            monotonic_ms: MobileMonotonicMillisDto::from_core_ffi_timestamp(evidence.monotonic_ms),
+        }
+    }
+}
+
+impl From<IgnoredNotificationEvidenceDto> for MobileIgnoredNotificationEvidenceDto {
+    fn from(evidence: IgnoredNotificationEvidenceDto) -> Self {
+        Self {
             family: evidence.family.map(Into::into),
             channel: evidence.channel.to_vec(),
             len: evidence.len.into(),
             monotonic_ms: MobileMonotonicMillisDto::from_core_ffi_timestamp(evidence.monotonic_ms),
+            retained_payload: evidence.retained_payload,
+        }
+    }
+}
+
+impl From<IgnoredNotificationReasonDto> for MobileIgnoredNotificationReasonDto {
+    fn from(reason: IgnoredNotificationReasonDto) -> Self {
+        match reason {
+            IgnoredNotificationReasonDto::WrongChannel => Self::WrongChannel,
+            IgnoredNotificationReasonDto::UnsupportedFamily => Self::UnsupportedFamily,
+            IgnoredNotificationReasonDto::UnsupportedChannel => Self::UnsupportedChannel,
+            IgnoredNotificationReasonDto::AcceptedButUnmapped => Self::AcceptedButUnmapped,
+            IgnoredNotificationReasonDto::SeekingFrameBoundary => Self::SeekingFrameBoundary,
+            IgnoredNotificationReasonDto::IntentionallyDropped => Self::IntentionallyDropped,
         }
     }
 }
@@ -1661,6 +1752,7 @@ impl From<ReservedPayloadEvidenceDto> for MobileReservedPayloadEvidenceDto {
             selector: evidence.selector,
             tag: evidence.tag,
             body_len: evidence.body_len.into(),
+            retained_payload: evidence.retained_payload,
             verification: evidence.verification.into(),
         }
     }
@@ -1672,6 +1764,7 @@ impl From<ParserGapEvidenceDto> for MobileParserGapEvidenceDto {
             selector: evidence.selector,
             tag: evidence.tag,
             body_len: evidence.body_len.into(),
+            retained_payload: evidence.retained_payload,
         }
     }
 }
@@ -1914,9 +2007,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mobile_bms_snapshot_dto_preserves_topology_and_group_detail() {
-        let snapshot = MobileBmsSnapshotDto {
+    fn bms_snapshot_fixture() -> MobileBmsSnapshotDto {
+        MobileBmsSnapshotDto {
             topology: MobileBmsTopologyDto {
                 layout_label: "20S4P split pack".to_owned(),
                 series_group_count: Some(20),
@@ -1983,7 +2075,12 @@ mod tests {
             }],
             capture_action_title: Some("record unsupported pack".to_owned()),
             capture_action_state: Some("disabled for launch".to_owned()),
-        };
+        }
+    }
+
+    #[test]
+    fn mobile_bms_snapshot_dto_preserves_topology_and_group_detail() {
+        let snapshot = bms_snapshot_fixture();
 
         assert_eq!(snapshot.topology.series_group_count, Some(20));
         assert_eq!(snapshot.topology.pack_count, 2);
@@ -2129,10 +2226,20 @@ mod tests {
 
     fn notification_fixture() -> NotificationEvidenceDto {
         NotificationEvidenceDto {
-            family: Some(ProtocolFamilyDto::VeteranLeaperkimNosfet),
+            family: ProtocolFamilyDto::VeteranLeaperkimNosfet,
             channel: [0x7a; 16],
             len: notification_len(17),
             monotonic_ms: MonotonicMillisDto { milliseconds: 42 },
+        }
+    }
+
+    fn ignored_notification_fixture() -> IgnoredNotificationEvidenceDto {
+        IgnoredNotificationEvidenceDto {
+            family: None,
+            channel: [0x7b; 16],
+            len: notification_len(19),
+            monotonic_ms: MonotonicMillisDto { milliseconds: 43 },
+            retained_payload: vec![0xde, 0xad, 0xbe, 0xef],
         }
     }
 
@@ -2145,6 +2252,25 @@ mod tests {
         mobile.ingest.expect("ingest output carries typed outcome")
     }
 
+    fn assert_ignored_notification_outcome(ignored: &MobileNotificationIngestOutcomeDto) {
+        assert_eq!(
+            ignored.kind,
+            MobileNotificationIngestOutcomeKindDto::Ignored
+        );
+        assert_eq!(ignored.notification, None);
+        assert_eq!(
+            ignored.ignored_reason,
+            Some(MobileIgnoredNotificationReasonDto::WrongChannel)
+        );
+        let evidence = ignored
+            .ignored
+            .as_ref()
+            .expect("ignored outcome carries ignored evidence");
+        assert_eq!(evidence.family, None);
+        assert_eq!(evidence.retained_payload, vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(ignored.event_count, None);
+    }
+
     #[test]
     fn mobile_notification_ingest_dto_preserves_each_typed_outcome_class() {
         let semantic = mobile_ingest(NotificationIngestOutcomeDto::SemanticEvents {
@@ -2155,12 +2281,16 @@ mod tests {
             semantic.kind,
             MobileNotificationIngestOutcomeKindDto::SemanticEvents
         );
+        let semantic_notification = semantic
+            .notification
+            .as_ref()
+            .expect("semantic outcome carries accepted notification evidence");
         assert_eq!(
-            semantic.notification.family,
-            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+            semantic_notification.family,
+            MobileProtocolFamilyDto::VeteranLeaperkimNosfet
         );
-        assert_eq!(semantic.notification.channel, vec![0x7a; 16]);
-        assert_eq!(semantic.notification.len, mobile_notification_len(17));
+        assert_eq!(semantic_notification.channel, vec![0x7a; 16]);
+        assert_eq!(semantic_notification.len, mobile_notification_len(17));
         assert_eq!(semantic.event_count, Some(mobile_event_count(3)));
         assert_eq!(semantic.parser_error, None);
 
@@ -2197,6 +2327,7 @@ mod tests {
                 selector: Some(8),
                 tag: Some(0x5a5c),
                 body_len: body_len(84),
+                retained_payload: vec![0x08, 0xaa],
                 verification: VerificationStatusDto::SourceVerified,
             },
         });
@@ -2206,6 +2337,7 @@ mod tests {
                 selector: Some(8),
                 tag: Some(0x5a5c),
                 body_len: mobile_body_len(84),
+                retained_payload: vec![0x08, 0xaa],
                 verification: MobileVerificationStatusDto::SourceVerified,
             })
         );
@@ -2216,6 +2348,7 @@ mod tests {
                 selector: Some(9),
                 tag: None,
                 body_len: body_len(11),
+                retained_payload: vec![0x09, 0xbb],
             },
         });
         assert_eq!(
@@ -2224,15 +2357,15 @@ mod tests {
                 selector: Some(9),
                 tag: None,
                 body_len: mobile_body_len(11),
+                retained_payload: vec![0x09, 0xbb],
             })
         );
 
-        let ignored = mobile_ingest(NotificationIngestOutcomeDto::Ignored(notification_fixture()));
-        assert_eq!(
-            ignored.kind,
-            MobileNotificationIngestOutcomeKindDto::Ignored
-        );
-        assert_eq!(ignored.event_count, None);
+        let ignored = mobile_ingest(NotificationIngestOutcomeDto::Ignored {
+            evidence: ignored_notification_fixture(),
+            reason: IgnoredNotificationReasonDto::WrongChannel,
+        });
+        assert_ignored_notification_outcome(&ignored);
     }
 
     #[test]
@@ -2319,12 +2452,16 @@ mod tests {
             ingest.kind,
             MobileNotificationIngestOutcomeKindDto::SemanticEvents
         );
+        let notification = ingest
+            .notification
+            .as_ref()
+            .expect("semantic ingest carries accepted notification evidence");
         assert_eq!(
-            ingest.notification.family,
-            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+            notification.family,
+            MobileProtocolFamilyDto::VeteranLeaperkimNosfet
         );
-        assert_eq!(ingest.notification.len, mobile_notification_len(87));
-        assert_eq!(ingest.notification.monotonic_ms, ms(2));
+        assert_eq!(notification.len, mobile_notification_len(87));
+        assert_eq!(notification.monotonic_ms, ms(2));
         assert_eq!(ingest.event_count, Some(mobile_event_count(5)));
         assert_eq!(ingest.parser_error, None);
         assert_eq!(ingest.reserved, None);

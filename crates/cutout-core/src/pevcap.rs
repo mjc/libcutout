@@ -11,10 +11,11 @@ use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
 use crate::VescControllerId;
 use crate::{
-    DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo, MonotonicTimestamp,
-    NotificationChunkLen, ProtocolFamily, ProtocolSession, ReplayChunkComparison, RequestTarget,
-    SemanticEventCount, SessionInput, SessionOutput, TransportWriteLimit, VerifiedValue,
-    WallClockUnixTimestamp, WriteMode,
+    DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
+    MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
+    ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput, SessionOutput,
+    SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp, WriteMode,
+    drain_semantic_events_checked,
 };
 
 /// PEVCAP file format magic bytes.
@@ -703,51 +704,97 @@ impl PevcapCapture {
     /// Compares whole-notification PEVCAP replay against one-byte and
     /// arbitrary notification chunk replay without materializing owned replay
     /// records.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError`] when replay produces more queued outputs
+    /// than the session is configured to retain.
     pub fn compare_replay_chunks<S, F>(
         &self,
         mut make_session: F,
         arbitrary_lengths: &[NotificationChunkLen],
-    ) -> ReplayChunkComparison
+    ) -> Result<ReplayChunkComparison, SessionOutputError>
     where
         S: ProtocolSession,
         F: FnMut() -> S,
     {
         let whole =
-            self.replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::Whole);
+            self.replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::Whole)?;
         let one_byte = self
-            .replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::OneByte);
+            .replay_semantic_events(HostSession::new(make_session()), PevcapReplayMode::OneByte)?;
         let arbitrary = self.replay_semantic_events(
             HostSession::new(make_session()),
             PevcapReplayMode::Lengths(arbitrary_lengths),
-        );
+        )?;
 
-        ReplayChunkComparison {
+        Ok(ReplayChunkComparison {
             whole_semantic_events: SemanticEventCount::from_events(whole.len()),
             one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
             arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
             one_byte_matches: one_byte == whole,
             arbitrary_matches: arbitrary == whole,
-        }
+        })
     }
 
     fn replay_semantic_events<S>(
         &self,
         mut host: HostSession<S>,
         mode: PevcapReplayMode<'_>,
-    ) -> Vec<DeviceEvent>
+    ) -> Result<Vec<DeviceEvent>, SessionOutputError>
     where
         S: ProtocolSession,
     {
         let mut outputs = Vec::new();
-        self.replay_mode_into_host(mode, &mut host, &mut outputs);
-        outputs
-            .into_iter()
-            .filter_map(|output| match output {
-                SessionOutput::Event(event) => Some(event),
-                SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
-            })
-            .collect()
+        let mut events = Vec::new();
+
+        if !self
+            .records
+            .iter()
+            .any(|record| record.direction == PevcapDirection::LinkUp)
+        {
+            host.ingest_link_up(LinkInfo {
+                monotonic_ms: MonotonicTimestamp::new(0),
+                max_write_len: self.header.write_limit,
+            });
+            drain_semantic_events_checked(
+                &mut host,
+                &mut outputs,
+                &mut events,
+                DEFAULT_REPLAY_OUTPUT_LIMIT,
+            )?;
+        }
+
+        for record in &self.records {
+            match record.direction {
+                PevcapDirection::LinkUp => {
+                    host.ingest_link_up(LinkInfo {
+                        monotonic_ms: record.monotonic_ms,
+                        max_write_len: record.link_max_write_len,
+                    });
+                }
+                PevcapDirection::LinkDown => host.ingest_link_down(),
+                PevcapDirection::Inbound => {
+                    replay_pevcap_notification_semantic_checked(
+                        record,
+                        mode,
+                        &mut host,
+                        &mut outputs,
+                        &mut events,
+                        DEFAULT_REPLAY_OUTPUT_LIMIT,
+                    )?;
+                    continue;
+                }
+                PevcapDirection::Outbound => {}
+            }
+            drain_semantic_events_checked(
+                &mut host,
+                &mut outputs,
+                &mut events,
+                DEFAULT_REPLAY_OUTPUT_LIMIT,
+            )?;
+        }
+
+        Ok(events)
     }
 
     fn replay_mode_into_host<S>(
@@ -1076,6 +1123,66 @@ fn replay_pevcap_notification<S>(
             }
         }
     }
+}
+
+fn replay_pevcap_notification_semantic_checked<S>(
+    record: &PevcapRecord,
+    mode: PevcapReplayMode<'_>,
+    host: &mut HostSession<S>,
+    outputs: &mut Vec<SessionOutput>,
+    events: &mut Vec<DeviceEvent>,
+    output_limit: crate::ParserQueuedOutputCount,
+) -> Result<(), SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    match mode {
+        PevcapReplayMode::Whole => {
+            host.ingest(SessionInput::Notification {
+                channel: record.characteristic,
+                bytes: record.bytes.as_ref(),
+                monotonic_ms: record.monotonic_ms,
+            });
+            drain_semantic_events_checked(host, outputs, events, output_limit)?;
+        }
+        PevcapReplayMode::OneByte => {
+            for chunk in record.bytes.as_ref().chunks(1) {
+                host.ingest(SessionInput::Notification {
+                    channel: record.characteristic,
+                    bytes: chunk,
+                    monotonic_ms: record.monotonic_ms,
+                });
+                drain_semantic_events_checked(host, outputs, events, output_limit)?;
+            }
+        }
+        PevcapReplayMode::Lengths(lengths) => {
+            let mut offset = 0usize;
+            for length in lengths.iter().copied().filter(|length| !length.is_whole()) {
+                if offset >= record.bytes.len() {
+                    break;
+                }
+                let end = offset
+                    .saturating_add(length.as_bytes())
+                    .min(record.bytes.len());
+                host.ingest(SessionInput::Notification {
+                    channel: record.characteristic,
+                    bytes: &record.bytes[offset..end],
+                    monotonic_ms: record.monotonic_ms,
+                });
+                drain_semantic_events_checked(host, outputs, events, output_limit)?;
+                offset = end;
+            }
+            if offset < record.bytes.len() {
+                host.ingest(SessionInput::Notification {
+                    channel: record.characteristic,
+                    bytes: &record.bytes[offset..],
+                    monotonic_ms: record.monotonic_ms,
+                });
+                drain_semantic_events_checked(host, outputs, events, output_limit)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// JSONL PEVCAP import/export error.
@@ -2293,14 +2400,18 @@ mod tests {
             })) if monotonic_ms == ms(0) && max_write_len == write_len(23)
         ));
         assert!(matches!(
-            outputs[1],
-            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
-                if evidence.monotonic_ms == ms(9)
+            &outputs[1],
+            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored {
+                evidence,
+                reason: crate::IgnoredNotificationReason::WrongChannel,
+            }) if evidence.monotonic_ms == ms(9)
         ));
         assert!(matches!(
-            outputs[2],
-            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
-                if evidence.monotonic_ms == ms(11)
+            &outputs[2],
+            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored {
+                evidence,
+                reason: crate::IgnoredNotificationReason::WrongChannel,
+            }) if evidence.monotonic_ms == ms(11)
         ));
         assert_eq!(
             replayed_bytes(&capture, PevcapReplayMode::Whole),
@@ -2442,7 +2553,10 @@ mod tests {
             matches!(
                 output,
                 SessionOutput::NotificationIngest(
-                    crate::NotificationIngestOutcome::Ignored(evidence)
+                    crate::NotificationIngestOutcome::Ignored {
+                        evidence,
+                        reason: crate::IgnoredNotificationReason::WrongChannel,
+                    }
                 ) if evidence.len == NotificationByteLen::from_bytes(1)
             )
         }));
@@ -2485,9 +2599,11 @@ mod tests {
             b"abcd"
         );
         assert!(matches!(
-            outputs[1],
-            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored(evidence))
-                if evidence.len == NotificationByteLen::from_bytes(2)
+            &outputs[1],
+            SessionOutput::NotificationIngest(crate::NotificationIngestOutcome::Ignored {
+                evidence,
+                reason: crate::IgnoredNotificationReason::WrongChannel,
+            }) if evidence.len == NotificationByteLen::from_bytes(2)
         ));
     }
 

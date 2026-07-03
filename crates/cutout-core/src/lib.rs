@@ -2101,6 +2101,10 @@ pub type ParserBufferedLen = Quantity<Information, ParserBufferByte, usize>;
 /// Maximum queued parser output count.
 pub type ParserQueuedOutputCount = Quantity<Count, ParserQueuedOutput, usize>;
 
+/// Default maximum outputs retained by whole-capture replay helpers.
+pub const DEFAULT_REPLAY_OUTPUT_LIMIT: ParserQueuedOutputCount =
+    ParserQueuedOutputCount::from_outputs(16_384);
+
 impl ParserQueuedOutputCount {
     /// Creates a parser queued-output count from output count.
     #[must_use]
@@ -2435,8 +2439,8 @@ typed_protocol_value!(
 /// Bounded notification evidence shared by protocol ingest outcomes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NotificationEvidence {
-    /// Protocol family that accepted or classified the bytes, when known.
-    pub family: Option<ProtocolFamily>,
+    /// Protocol family that accepted or classified the bytes.
+    pub family: ProtocolFamily,
 
     /// Logical protocol channel used for session ingest.
     pub channel: GattChannel,
@@ -2449,9 +2453,134 @@ pub struct NotificationEvidence {
 }
 
 impl NotificationEvidence {
-    /// Creates bounded notification evidence without retaining raw bytes.
+    /// Creates notification evidence for outcomes whose semantic variant owns
+    /// any retained payload separately.
     #[must_use]
     pub const fn new(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self {
+            family,
+            channel,
+            monotonic_ms,
+            len,
+        }
+    }
+}
+
+/// Maximum raw notification bytes retained for unknown or partially understood
+/// protocol evidence.
+pub const MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES: usize = 4_096;
+
+/// Bounded raw payload retained when protocol bytes are not fully understood.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RetainedNotificationPayload {
+    /// No raw payload was available to retain.
+    Empty,
+
+    /// Bounded raw payload retained for later investigation.
+    Bytes(Box<ArrayVec<u8, MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES>>),
+}
+
+impl RetainedNotificationPayload {
+    /// Creates an empty retained payload.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::Empty
+    }
+
+    /// Copies bounded raw payload bytes for later protocol investigation.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        if bytes.is_empty() {
+            return Self::Empty;
+        }
+
+        let retained = bytes
+            .iter()
+            .copied()
+            .take(MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES)
+            .collect();
+        Self::Bytes(Box::new(retained))
+    }
+
+    /// Returns the retained payload bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Empty => &[],
+            Self::Bytes(bytes) => bytes.as_slice(),
+        }
+    }
+
+    /// Returns the number of raw bytes retained.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    /// Returns whether no raw bytes were retained.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+}
+
+impl Default for RetainedNotificationPayload {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+/// Reason a notification did not enter a family-owned decoder path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IgnoredNotificationReason {
+    /// Notification arrived on a channel the selected protocol does not consume.
+    WrongChannel,
+
+    /// Notification could not be associated with a supported protocol family.
+    UnsupportedFamily,
+
+    /// Notification was classified to a family but not to a supported channel.
+    UnsupportedChannel,
+
+    /// Notification was accepted by a known family but no semantic mapping exists yet.
+    AcceptedButUnmapped,
+
+    /// Notification advanced frame-boundary search without completing a frame.
+    SeekingFrameBoundary,
+
+    /// Notification was classified and intentionally dropped by policy.
+    IntentionallyDropped,
+}
+
+/// Bounded evidence for notifications that were explicitly ignored.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IgnoredNotificationEvidence {
+    /// Protocol family when classification got that far.
+    pub family: Option<ProtocolFamily>,
+
+    /// Logical protocol channel used for session ingest.
+    pub channel: GattChannel,
+
+    /// Host monotonic receive timestamp.
+    pub monotonic_ms: MonotonicTimestamp,
+
+    /// Number of notification bytes observed.
+    pub len: NotificationByteLen,
+
+    /// Bounded raw payload retained to identify ignored bytes in captures.
+    pub retained_payload: RetainedNotificationPayload,
+}
+
+impl IgnoredNotificationEvidence {
+    /// Creates ignored-notification evidence when the caller only has a
+    /// previously measured byte length.
+    #[must_use]
+    pub fn new(
         family: Option<ProtocolFamily>,
         channel: GattChannel,
         len: NotificationByteLen,
@@ -2462,6 +2591,24 @@ impl NotificationEvidence {
             channel,
             monotonic_ms,
             len,
+            retained_payload: RetainedNotificationPayload::empty(),
+        }
+    }
+
+    /// Creates bounded ignored-notification evidence with retained raw bytes.
+    #[must_use]
+    pub fn with_retained_payload(
+        family: Option<ProtocolFamily>,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self {
+            family,
+            channel,
+            monotonic_ms,
+            len: NotificationByteLen::from_bytes(bytes.len()),
+            retained_payload: RetainedNotificationPayload::from_bytes(bytes),
         }
     }
 }
@@ -2511,13 +2658,16 @@ impl PayloadClassifier {
 
 /// Bounded evidence for protocol payloads that are known but intentionally not
 /// decoded as stable telemetry yet.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReservedPayloadEvidence {
     /// Typed payload classifier for the family.
     pub classifier: PayloadClassifier,
 
-    /// Length of the classified body, without retaining raw bytes.
+    /// Length of the classified body.
     pub body_len: PayloadBodyLen,
+
+    /// Bounded raw payload bytes retained for later semantic mapping.
+    pub retained_payload: RetainedNotificationPayload,
 
     /// Verification status for this reserved-payload classification.
     pub verification: VerificationStatus,
@@ -2525,17 +2675,20 @@ pub struct ReservedPayloadEvidence {
 
 /// Bounded evidence for a known-family payload that still has no stable parser
 /// mapping.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParserGapEvidence {
     /// Typed payload classifier for the family.
     pub classifier: PayloadClassifier,
 
-    /// Length of the unparsed body, without retaining raw bytes.
+    /// Length of the unparsed body.
     pub body_len: PayloadBodyLen,
+
+    /// Bounded raw payload bytes retained for later semantic mapping.
+    pub retained_payload: RetainedNotificationPayload,
 }
 
 /// Typed result of feeding one transport notification into a protocol decoder.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NotificationIngestOutcome {
     /// The notification produced one or more semantic session events.
     SemanticEvents {
@@ -2564,7 +2717,7 @@ pub enum NotificationIngestOutcome {
         /// Bounded notification evidence.
         notification: NotificationEvidence,
 
-        /// Reserved payload evidence without raw bytes.
+        /// Reserved payload evidence with any retained bytes needed for later mapping.
         payload: ReservedPayloadEvidence,
     },
 
@@ -2574,13 +2727,18 @@ pub enum NotificationIngestOutcome {
         /// Bounded notification evidence.
         notification: NotificationEvidence,
 
-        /// Parser-gap evidence without raw bytes.
+        /// Parser-gap evidence with retained bytes needed for later mapping.
         gap: ParserGapEvidence,
     },
 
-    /// The session ignored the notification, usually because it arrived on the
-    /// wrong logical channel for the selected protocol model.
-    Ignored(NotificationEvidence),
+    /// The session explicitly ignored the notification.
+    Ignored {
+        /// Bounded ignored-notification evidence.
+        evidence: IgnoredNotificationEvidence,
+
+        /// Reason the notification did not enter a decoder path.
+        reason: IgnoredNotificationReason,
+    },
 }
 
 impl NotificationIngestOutcome {
@@ -2594,7 +2752,7 @@ impl NotificationIngestOutcome {
         event_count: SemanticEventCount,
     ) -> Self {
         Self::SemanticEvents {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             event_count,
         }
     }
@@ -2608,7 +2766,7 @@ impl NotificationIngestOutcome {
         monotonic_ms: MonotonicTimestamp,
     ) -> Self {
         Self::BufferedFragment(NotificationEvidence::new(
-            Some(family),
+            family,
             channel,
             len,
             monotonic_ms,
@@ -2625,7 +2783,7 @@ impl NotificationIngestOutcome {
         error: ParserError,
     ) -> Self {
         Self::ParserDiagnostic {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             error,
         }
     }
@@ -2640,7 +2798,7 @@ impl NotificationIngestOutcome {
         payload: ReservedPayloadEvidence,
     ) -> Self {
         Self::KnownReserved {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             payload,
         }
     }
@@ -2655,19 +2813,148 @@ impl NotificationIngestOutcome {
         gap: ParserGapEvidence,
     ) -> Self {
         Self::ParserGap {
-            notification: NotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            notification: NotificationEvidence::new(family, channel, len, monotonic_ms),
             gap,
         }
     }
 
-    /// Creates an ignored wrong-channel/unsupported notification outcome.
+    /// Creates an ignored wrong-channel notification outcome.
     #[must_use]
-    pub const fn ignored_wrong_channel(
+    pub fn ignored_wrong_channel(
         channel: GattChannel,
         len: NotificationByteLen,
         monotonic_ms: MonotonicTimestamp,
     ) -> Self {
-        Self::Ignored(NotificationEvidence::new(None, channel, len, monotonic_ms))
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(None, channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::WrongChannel,
+        }
+    }
+
+    /// Creates an ignored wrong-channel notification outcome for a known family.
+    #[must_use]
+    pub fn wrong_channel_for_family(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::WrongChannel,
+        }
+    }
+
+    /// Creates a known-family wrong-channel outcome with retained raw bytes.
+    #[must_use]
+    pub fn wrong_channel_for_family_bytes(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                Some(family),
+                channel,
+                bytes,
+                monotonic_ms,
+            ),
+            reason: IgnoredNotificationReason::WrongChannel,
+        }
+    }
+
+    /// Creates an ignored unsupported-family notification outcome.
+    #[must_use]
+    pub fn unsupported_family(
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(None, channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::UnsupportedFamily,
+        }
+    }
+
+    /// Creates an ignored unsupported-channel notification outcome.
+    #[must_use]
+    pub fn unsupported_channel(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::UnsupportedChannel,
+        }
+    }
+
+    /// Creates an accepted-but-unmapped notification outcome.
+    #[must_use]
+    pub fn accepted_but_unmapped(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::AcceptedButUnmapped,
+        }
+    }
+
+    /// Creates an accepted-but-unmapped outcome with retained raw bytes.
+    #[must_use]
+    pub fn accepted_but_unmapped_bytes(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                Some(family),
+                channel,
+                bytes,
+                monotonic_ms,
+            ),
+            reason: IgnoredNotificationReason::AcceptedButUnmapped,
+        }
+    }
+
+    /// Creates a frame-boundary-search outcome with retained raw bytes.
+    #[must_use]
+    pub fn seeking_frame_boundary(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::with_retained_payload(
+                Some(family),
+                channel,
+                bytes,
+                monotonic_ms,
+            ),
+            reason: IgnoredNotificationReason::SeekingFrameBoundary,
+        }
+    }
+
+    /// Creates an intentionally dropped notification outcome.
+    #[must_use]
+    pub fn intentionally_dropped(
+        family: ProtocolFamily,
+        channel: GattChannel,
+        len: NotificationByteLen,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Self {
+        Self::Ignored {
+            evidence: IgnoredNotificationEvidence::new(Some(family), channel, len, monotonic_ms),
+            reason: IgnoredNotificationReason::IntentionallyDropped,
+        }
     }
 }
 
@@ -6039,6 +6326,21 @@ pub enum SessionOutput {
     NotificationIngest(NotificationIngestOutcome),
 }
 
+/// Error emitted when a session produces more outputs than a checked replay
+/// path is willing to retain.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum SessionOutputError {
+    /// The session produced more outputs than the configured replay limit.
+    #[error("session output count {actual:?} exceeds checked replay limit {limit:?}")]
+    OutputOverflow {
+        /// Configured output limit.
+        limit: ParserQueuedOutputCount,
+
+        /// Outputs that would be retained.
+        actual: ParserQueuedOutputCount,
+    },
+}
+
 /// Synchronous protocol reactor.
 pub trait ProtocolSession {
     /// Handles one input and appends any resulting outputs.
@@ -6134,6 +6436,29 @@ where
     /// Moves accumulated session outputs into an existing buffer.
     pub fn drain_outputs_into(&mut self, output: &mut Vec<SessionOutput>) {
         output.append(&mut self.output);
+    }
+
+    /// Moves accumulated outputs into an existing buffer while enforcing a
+    /// typed replay output limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionOutputError::OutputOverflow`] when retaining this drain
+    /// would exceed `limit`.
+    pub fn drain_outputs_checked_into(
+        &mut self,
+        output: &mut Vec<SessionOutput>,
+        limit: ParserQueuedOutputCount,
+    ) -> Result<(), SessionOutputError> {
+        let actual = output.len().saturating_add(self.output.len());
+        if actual > limit.as_outputs() {
+            return Err(SessionOutputError::OutputOverflow {
+                limit,
+                actual: ParserQueuedOutputCount::from_outputs(actual),
+            });
+        }
+        self.drain_outputs_into(output);
+        Ok(())
     }
 
     /// Returns the latest telemetry snapshot.
@@ -6313,6 +6638,26 @@ where
     outputs
 }
 
+/// Replays captured host inputs through a host session and returns outputs,
+/// enforcing a typed retained-output limit.
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::OutputOverflow`] when the replay would retain
+/// more outputs than `output_limit`.
+pub fn replay_capture_checked<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+    output_limit: ParserQueuedOutputCount,
+) -> Result<Vec<SessionOutput>, SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    let mut outputs = Vec::new();
+    replay_capture_checked_into(host, records, &mut outputs, output_limit)?;
+    Ok(outputs)
+}
+
 /// Replays captured host inputs through a host session into an existing buffer.
 pub fn replay_capture_into<S>(
     host: &mut HostSession<S>,
@@ -6341,6 +6686,62 @@ pub fn replay_capture_into<S>(
         }
         host.drain_outputs_into(outputs);
     }
+}
+
+/// Replays captured host inputs through a host session into an existing buffer,
+/// enforcing a typed retained-output limit.
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError::OutputOverflow`] when a drain would exceed
+/// `output_limit`.
+pub fn replay_capture_checked_into<S>(
+    host: &mut HostSession<S>,
+    records: &[CaptureRecord],
+    outputs: &mut Vec<SessionOutput>,
+    output_limit: ParserQueuedOutputCount,
+) -> Result<(), SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    for record in records {
+        match record {
+            CaptureRecord::LinkUp(link) => host.ingest_link_up(*link),
+            CaptureRecord::LinkDown => host.ingest_link_down(),
+            CaptureRecord::Notification {
+                channel,
+                bytes,
+                monotonic_ms,
+            } => host.ingest(SessionInput::Notification {
+                channel: *channel,
+                bytes,
+                monotonic_ms: *monotonic_ms,
+            }),
+            CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
+            CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
+                host.issue_command(*command);
+            }
+        }
+        host.drain_outputs_checked_into(outputs, output_limit)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn drain_semantic_events_checked<S>(
+    host: &mut HostSession<S>,
+    outputs: &mut Vec<SessionOutput>,
+    events: &mut Vec<DeviceEvent>,
+    output_limit: ParserQueuedOutputCount,
+) -> Result<(), SessionOutputError>
+where
+    S: ProtocolSession,
+{
+    host.drain_outputs_checked_into(outputs, output_limit)?;
+    events.extend(outputs.drain(..).filter_map(|output| match output {
+        SessionOutput::Event(event) => Some(event),
+        SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
+    }));
+    Ok(())
 }
 
 /// Summary of deterministic replay equivalence across notification chunking
@@ -6391,51 +6792,80 @@ pub struct NotificationImpairmentReplayCase {
 /// Typed ingest outcomes are intentionally excluded because notification
 /// boundaries differ between chunking modes even when decoded protocol behavior
 /// is equivalent.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError`] when replay produces more outputs than the
+/// default replay retention limit.
 pub fn replay_capture_semantic_events<S>(
     host: &mut HostSession<S>,
     records: &[CaptureRecord],
-) -> Vec<DeviceEvent>
+) -> Result<Vec<DeviceEvent>, SessionOutputError>
 where
     S: ProtocolSession,
 {
-    replay_capture(host, records)
-        .into_iter()
-        .filter_map(|output| match output {
-            SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => None,
-            SessionOutput::Event(event) => Some(event),
-        })
-        .collect()
+    let mut outputs = Vec::new();
+    let mut events = Vec::new();
+    for record in records {
+        match record {
+            CaptureRecord::LinkUp(link) => host.ingest_link_up(*link),
+            CaptureRecord::LinkDown => host.ingest_link_down(),
+            CaptureRecord::Notification {
+                channel,
+                bytes,
+                monotonic_ms,
+            } => host.ingest(SessionInput::Notification {
+                channel: *channel,
+                bytes,
+                monotonic_ms: *monotonic_ms,
+            }),
+            CaptureRecord::Tick { monotonic_ms } => host.tick(*monotonic_ms),
+            CaptureRecord::Command(command) | CaptureRecord::TargetedCommand { command, .. } => {
+                host.issue_command(*command);
+            }
+        }
+        drain_semantic_events_checked(
+            host,
+            &mut outputs,
+            &mut events,
+            DEFAULT_REPLAY_OUTPUT_LIMIT,
+        )?;
+    }
+    Ok(events)
 }
 
 /// Compares whole-notification replay against one-byte and arbitrary
 /// notification chunk replay.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns [`SessionOutputError`] when any replay mode produces more outputs
+/// than the default replay retention limit.
 pub fn compare_replay_capture_chunks<S, F>(
     mut make_session: F,
     records: &[CaptureRecord],
     arbitrary_lengths: &[NotificationChunkLen],
-) -> ReplayChunkComparison
+) -> Result<ReplayChunkComparison, SessionOutputError>
 where
     S: ProtocolSession,
     F: FnMut() -> S,
 {
-    let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records);
+    let whole = replay_capture_semantic_events(&mut HostSession::new(make_session()), records)?;
     let one_byte_records =
         split_capture_notifications_by_len(records, NotificationChunkLen::from_bytes(1));
     let one_byte =
-        replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records);
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &one_byte_records)?;
     let arbitrary_records = split_capture_notifications_by_lengths(records, arbitrary_lengths);
     let arbitrary =
-        replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records);
+        replay_capture_semantic_events(&mut HostSession::new(make_session()), &arbitrary_records)?;
 
-    ReplayChunkComparison {
+    Ok(ReplayChunkComparison {
         whole_semantic_events: SemanticEventCount::from_events(whole.len()),
         one_byte_semantic_events: SemanticEventCount::from_events(one_byte.len()),
         arbitrary_semantic_events: SemanticEventCount::from_events(arbitrary.len()),
         one_byte_matches: one_byte == whole,
         arbitrary_matches: arbitrary == whole,
-    }
+    })
 }
 
 /// Builds a deterministic arbitrary notification chunk plan from replay
@@ -6517,7 +6947,7 @@ pub fn notification_boundary_replay_cases(
 /// Builds reusable replay cases for parser tests that exercise malformed
 /// streams.
 ///
-/// The returned cases include garbage before a valid frame, duplicate first
+/// The returned cases include noise bytes before a valid frame, duplicate first
 /// chunks, missing final bytes, and a timeout tick after a partial frame.
 /// Parser tests should state the expected behavior for each named case because
 /// some protocols recover while others intentionally reject or wait.
@@ -6526,15 +6956,15 @@ pub fn notification_impairment_replay_cases(
     channel: GattChannel,
     frame: &[u8],
     monotonic_ms: MonotonicTimestamp,
-    garbage_prefix: &[u8],
+    noise_prefix: &[u8],
     timeout_ms: MonotonicTimestamp,
 ) -> Vec<NotificationImpairmentReplayCase> {
     vec![
         NotificationImpairmentReplayCase {
-            name: "garbage-prefix",
+            name: "noise-prefix",
             records: vec![CaptureRecord::notification(
                 channel,
-                prefixed_bytes(garbage_prefix, frame),
+                prefixed_bytes(noise_prefix, frame),
                 monotonic_ms,
             )],
         },
@@ -6894,22 +7324,68 @@ mod tests {
             crate::NotificationByteLen::from_bytes(20),
             ms(7),
         );
+        let wrong_channel = crate::NotificationIngestOutcome::wrong_channel_for_family(
+            crate::ProtocolFamily::VeteranLeaperkimNosfet,
+            TEST_CHANNEL,
+            crate::NotificationByteLen::from_bytes(9),
+            ms(8),
+        );
+        let unmapped = crate::NotificationIngestOutcome::accepted_but_unmapped(
+            crate::ProtocolFamily::Vesc,
+            TEST_CHANNEL,
+            crate::NotificationByteLen::from_bytes(10),
+            ms(9),
+        );
+        let dropped = crate::NotificationIngestOutcome::intentionally_dropped(
+            crate::ProtocolFamily::BegodeGotway,
+            TEST_CHANNEL,
+            crate::NotificationByteLen::from_bytes(12),
+            ms(10),
+        );
 
         assert!(matches!(
             buffered,
             crate::NotificationIngestOutcome::BufferedFragment(evidence)
-                if evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                if evidence.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                     && evidence.channel == TEST_CHANNEL
                     && evidence.len == crate::NotificationByteLen::from_bytes(20)
                     && evidence.monotonic_ms == ms(7)
         ));
         assert!(matches!(
             ignored,
-            crate::NotificationIngestOutcome::Ignored(evidence)
-                if evidence.family.is_none()
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::WrongChannel
+                    && evidence.family.is_none()
                     && evidence.channel == TEST_CHANNEL
                     && evidence.len == crate::NotificationByteLen::from_bytes(20)
                     && evidence.monotonic_ms == ms(7)
+        ));
+        assert!(matches!(
+            wrong_channel,
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::WrongChannel
+                    && evidence.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == crate::NotificationByteLen::from_bytes(9)
+                    && evidence.monotonic_ms == ms(8)
+        ));
+        assert!(matches!(
+            unmapped,
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::AcceptedButUnmapped
+                    && evidence.family == Some(crate::ProtocolFamily::Vesc)
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == crate::NotificationByteLen::from_bytes(10)
+                    && evidence.monotonic_ms == ms(9)
+        ));
+        assert!(matches!(
+            dropped,
+            crate::NotificationIngestOutcome::Ignored { evidence, reason }
+                if reason == crate::IgnoredNotificationReason::IntentionallyDropped
+                    && evidence.family == Some(crate::ProtocolFamily::BegodeGotway)
+                    && evidence.channel == TEST_CHANNEL
+                    && evidence.len == crate::NotificationByteLen::from_bytes(12)
+                    && evidence.monotonic_ms == ms(10)
         ));
     }
 
@@ -6923,6 +7399,7 @@ mod tests {
             crate::ReservedPayloadEvidence {
                 classifier: crate::PayloadClassifier::selector(crate::ProtocolSelector::new(8)),
                 body_len: crate::PayloadBodyLen::from_bytes(68),
+                retained_payload: crate::RetainedNotificationPayload::from_bytes(&[0x08, 0xaa]),
                 verification: VerificationStatus::HardwareVerified,
             },
         );
@@ -6932,13 +7409,14 @@ mod tests {
             crate::NotificationIngestOutcome::KnownReserved {
                 notification,
                 payload,
-            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+            } if notification.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::from_bytes(75)
                 && notification.monotonic_ms == ms(12)
                 && payload.classifier.selector_value() == Some(crate::ProtocolSelector::new(8))
                 && payload.classifier.tag_value().is_none()
                 && payload.body_len == crate::PayloadBodyLen::from_bytes(68)
+                && payload.retained_payload.as_slice() == [0x08, 0xaa]
                 && payload.verification == VerificationStatus::HardwareVerified
         ));
     }
@@ -6958,7 +7436,7 @@ mod tests {
             crate::NotificationIngestOutcome::SemanticEvents {
                 notification,
                 event_count,
-            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+            } if notification.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                 && notification.channel == TEST_CHANNEL
                 && notification.len == crate::NotificationByteLen::from_bytes(77)
                 && notification.monotonic_ms == ms(21)
@@ -6981,13 +7459,13 @@ mod tests {
             crate::NotificationIngestOutcome::ParserDiagnostic {
                 notification,
                 error: crate::ParserError::BadChecksum,
-            } if notification.family == Some(crate::ProtocolFamily::VeteranLeaperkimNosfet)
+            } if notification.family == crate::ProtocolFamily::VeteranLeaperkimNosfet
                 && notification.channel == TEST_CHANNEL
         ));
     }
 
     #[test]
-    fn notification_ingest_debug_redacts_raw_bytes() {
+    fn notification_ingest_debug_keeps_retained_payload_evidence() {
         let outcome = crate::NotificationIngestOutcome::parser_gap(
             crate::ProtocolFamily::VeteranLeaperkimNosfet,
             TEST_CHANNEL,
@@ -6996,6 +7474,9 @@ mod tests {
             crate::ParserGapEvidence {
                 classifier: crate::PayloadClassifier::tag(crate::ProtocolTag::new(0x5c)),
                 body_len: crate::PayloadBodyLen::from_bytes(70),
+                retained_payload: crate::RetainedNotificationPayload::from_bytes(&[
+                    0x5c, 0xde, 0xad, 0xbe, 0xef,
+                ]),
             },
         );
         let debug = format!("{outcome:?}");
@@ -7003,8 +7484,8 @@ mod tests {
         assert!(debug.contains("ParserGap"));
         assert!(debug.contains("body_len"));
         assert!(debug.contains("value: 70"));
-        assert!(!debug.contains("dc5a5c"));
-        assert!(!debug.contains("bytes"));
+        assert!(debug.contains("retained_payload"));
+        assert!(debug.contains("222"));
     }
 
     #[derive(Default)]
@@ -10131,7 +10612,8 @@ mod tests {
                 crate::NotificationChunkLen::from_bytes(2),
                 crate::NotificationChunkLen::from_bytes(1),
             ],
-        );
+        )
+        .expect("bounded replay comparison should fit");
 
         assert_eq!(
             comparison,
@@ -10186,10 +10668,49 @@ mod tests {
                 crate::NotificationChunkLen::from_bytes(2),
                 crate::NotificationChunkLen::from_bytes(2),
             ],
-        );
+        )
+        .expect("bounded replay comparison should fit");
 
         assert!(!comparison.one_byte_matches);
         assert!(!comparison.arbitrary_matches);
+    }
+
+    #[test]
+    fn replay_chunk_comparison_reports_output_overflow() {
+        #[derive(Default)]
+        struct NoisySession;
+
+        impl ProtocolSession for NoisySession {
+            fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+                let SessionInput::Notification { monotonic_ms, .. } = input else {
+                    return;
+                };
+
+                output.extend((0..=128).map(|offset| {
+                    SessionOutput::Event(DeviceEvent::Tick {
+                        monotonic_ms: ms(monotonic_ms.get().saturating_add(offset)),
+                    })
+                }));
+            }
+        }
+
+        let channel = GattChannel::from_bytes([0x79; 16]);
+        let records = [crate::CaptureRecord::notification(channel, vec![1], ms(10))];
+
+        let error = crate::replay_capture_checked(
+            &mut crate::HostSession::new(NoisySession),
+            &records,
+            crate::ParserLimits::default().max_queued_outputs,
+        )
+        .expect_err("overflow must not be collapsed into an empty replay");
+
+        assert_eq!(
+            error,
+            crate::SessionOutputError::OutputOverflow {
+                limit: crate::ParserLimits::default().max_queued_outputs,
+                actual: crate::ParserQueuedOutputCount::from_outputs(129),
+            }
+        );
     }
 
     #[test]
@@ -10266,7 +10787,7 @@ mod tests {
         assert_eq!(
             cases.iter().map(|case| case.name).collect::<Vec<_>>(),
             vec![
-                "garbage-prefix",
+                "noise-prefix",
                 "duplicate-first-chunk",
                 "missing-final-byte",
                 "timeout-after-partial",

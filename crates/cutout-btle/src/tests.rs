@@ -12,9 +12,9 @@ use cutout_core::{
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics,
     ParserError, ParserGapEvidence, PayloadBodyLen, PayloadClassifier, PevcapDirection,
     PevcapResolvedIdentity, ProtocolFamily, ProtocolSelector, ProtocolSession, RawFieldValue,
-    ReadOnlyResponse, ReservedPayloadEvidence, SemanticEventCount, SessionInput, SessionOutput,
-    SettingsEntry, SettingsReadback, SignalStrength, TelemetryDelta, TransportAction, ValueQuality,
-    ValueSource, VerificationStatus, VerifiedValue, WriteMode,
+    ReadOnlyResponse, ReservedPayloadEvidence, RetainedNotificationPayload, SemanticEventCount,
+    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, SignalStrength, TelemetryDelta,
+    TransportAction, ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WriteMode,
 };
 use futures_util::{StreamExt, stream};
 use smallvec::smallvec;
@@ -124,16 +124,14 @@ fn battery_level_estimated(value: u8) -> Measured<cutout_core::BatteryLevel> {
     Measured::estimated(cutout_core::BatteryLevel::from_percent(value))
 }
 
-fn decode_outcome_evidence(
-    outcome: crate::bridge::NotificationDecodeOutcome,
-) -> cutout_core::NotificationEvidence {
+fn decode_outcome_len(outcome: &crate::bridge::NotificationDecodeOutcome) -> NotificationByteLen {
     match outcome {
-        crate::bridge::NotificationDecodeOutcome::Ignored(evidence)
-        | crate::bridge::NotificationDecodeOutcome::BufferedFragment(evidence)
+        crate::bridge::NotificationDecodeOutcome::Ignored { evidence, .. } => evidence.len,
+        crate::bridge::NotificationDecodeOutcome::BufferedFragment(evidence)
         | crate::bridge::NotificationDecodeOutcome::ParserGap(evidence)
         | crate::bridge::NotificationDecodeOutcome::KnownReserved(evidence)
         | crate::bridge::NotificationDecodeOutcome::ParserDiagnostic(evidence)
-        | crate::bridge::NotificationDecodeOutcome::SemanticEvents(evidence) => evidence,
+        | crate::bridge::NotificationDecodeOutcome::SemanticEvents(evidence) => evidence.len,
     }
 }
 
@@ -1280,7 +1278,7 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
         crate::bridge::NotificationDecodeKind::SemanticEvents
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(77)
     );
 }
@@ -1312,7 +1310,7 @@ fn accepted_fragment_notifications_are_reported_as_buffered_decoder_input() {
         crate::bridge::NotificationDecodeKind::BufferedFragment
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(20)
     );
 }
@@ -1334,7 +1332,7 @@ fn ignored_notifications_remain_eligible_for_debug_transport_logging() {
         crate::bridge::NotificationDecodeKind::Ignored
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(20)
     );
 }
@@ -1351,7 +1349,7 @@ fn drive_session_reports_fragment_notifications_as_typed_ingest_events() {
 
     crate::report::process_notification_ingest_outcome(
         &mut report,
-        outcome,
+        outcome.clone(),
         crate::MonotonicMs::new(3),
     );
 
@@ -1387,7 +1385,7 @@ fn semantic_notifications_suppress_transport_logging_without_raw_notification_ev
         crate::bridge::NotificationDecodeKind::SemanticEvents
     );
     assert_eq!(
-        decode_outcome_evidence(outcome).len,
+        decode_outcome_len(&outcome),
         NotificationByteLen::from_bytes(77)
     );
 }
@@ -1404,6 +1402,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             ReservedPayloadEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(8)),
                 body_len: PayloadBodyLen::from_bytes(24),
+                retained_payload: RetainedNotificationPayload::from_bytes(&[0x08]),
                 verification: VerificationStatus::HardwareVerified,
             },
         ),
@@ -1417,6 +1416,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
             ParserGapEvidence {
                 classifier: PayloadClassifier::selector(ProtocolSelector::new(9)),
                 body_len: PayloadBodyLen::from_bytes(26),
+                retained_payload: RetainedNotificationPayload::from_bytes(&[0x09]),
             },
         ),
     )];
@@ -1437,14 +1437,14 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         crate::bridge::NotificationDecodeKind::KnownReserved
     );
     assert_eq!(
-        decode_outcome_evidence(reserved).len,
+        decode_outcome_len(&reserved),
         NotificationByteLen::from_bytes(75)
     );
 
     let gap = crate::bridge::notification_decode_outcome(&gap).expect("gap outcome present");
     assert_eq!(gap.kind(), crate::bridge::NotificationDecodeKind::ParserGap);
     assert_eq!(
-        decode_outcome_evidence(gap).len,
+        decode_outcome_len(&gap),
         NotificationByteLen::from_bytes(77)
     );
 
@@ -1455,7 +1455,7 @@ fn known_reserved_and_parser_gap_notifications_have_distinct_decode_outcomes() {
         crate::bridge::NotificationDecodeKind::ParserDiagnostic
     );
     assert_eq!(
-        decode_outcome_evidence(diagnostic).len,
+        decode_outcome_len(&diagnostic),
         NotificationByteLen::from_bytes(77)
     );
 }
