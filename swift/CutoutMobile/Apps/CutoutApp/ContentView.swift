@@ -910,14 +910,24 @@ private struct EucRideScreenView: View {
     }
 
     private var warningCard: MockupWarningCard? {
-        if let rideState {
-            return liveWarningCard(for: rideState)
+        if let warningState {
+            return MockupWarningCard(title: warningState.title, detail: warningState.detail)
         }
         return screen.warningCard
     }
 
     private var warningSeverity: EucRideWarningSeverity {
-        rideState?.warningState.severity ?? .reduceAcceleration
+        warningState?.severity ?? .reduceAcceleration
+    }
+
+    private var warningState: EucRideWarningState? {
+        guard let rideState else {
+            return nil
+        }
+        guard let now = rideState.displayState.lastUpdate else {
+            return rideState.warningState
+        }
+        return rideState.warningState(at: now, staleAfter: MonotonicMilliseconds(2_000))
     }
 
     private var safetyBars: [MockupSafetyBar] {
@@ -1687,10 +1697,6 @@ private extension MockupPickerRowState {
     var isSupported: Bool {
         if case .supported = self { true } else { false }
     }
-}
-
-private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard {
-    MockupWarningCard(title: state.warningState.title, detail: state.warningState.detail)
 }
 
 private func liveSafetyBars(for state: EucRideScreenState) -> [MockupSafetyBar] {

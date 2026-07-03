@@ -778,6 +778,32 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(fresh.visibleFieldCoverage.source(for: .updateAge), .liveTelemetry)
     }
 
+    func testRideStateUsesTypedStaleWarningWhenTelemetryIsOld() {
+        let stale = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(at: MonotonicMilliseconds(1_000), voltage: voltageValue(118_000)),
+                lastUpdate: MonotonicMilliseconds(4_000)
+            )
+        )
+        let fresh = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(at: MonotonicMilliseconds(3_900), voltage: voltageValue(118_000)),
+                lastUpdate: MonotonicMilliseconds(4_000)
+            )
+        )
+
+        XCTAssertEqual(
+            stale.warningState(at: MonotonicMilliseconds(4_000), staleAfter: MonotonicMilliseconds(2_000)),
+            EucRideWarningState(severity: .caution, title: "Telemetry stale", detail: "Last update 3000 ms ago")
+        )
+        XCTAssertEqual(
+            fresh.warningState(at: MonotonicMilliseconds(4_000), staleAfter: MonotonicMilliseconds(2_000)).severity,
+            .normal
+        )
+    }
+
     func testRideStateDoesNotClaimDerivedPowerForZeroCurrent() {
         let rideState = EucRideScreenState(
             phase: .live,

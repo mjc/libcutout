@@ -1187,6 +1187,21 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         }
     }
 
+    public func warningState(
+        at now: MonotonicMilliseconds,
+        staleAfter staleThreshold: MonotonicMilliseconds
+    ) -> EucRideWarningState {
+        let age = updateAge(at: now, staleAfter: staleThreshold)
+        if phase == .live, age.freshness == .stale, let elapsed = age.elapsed {
+            return EucRideWarningState(
+                severity: .caution,
+                title: "Telemetry stale",
+                detail: "Last update \(elapsed.rawValue) ms ago"
+            )
+        }
+        return warningState
+    }
+
     public var phaseText: String {
         phase.displayText
     }
