@@ -1135,14 +1135,25 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
 }
 
 fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Vec<SessionOutput>) {
-    if let Some(RequestDisposition::Write(request)) = M::encode_read_command(kind)
-        && let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice())
-    {
-        output.push(SessionOutput::Transport(TransportAction::Write {
-            channel: M::WRITE_CHANNEL,
-            bytes,
-            mode: request.mode,
-        }));
+    match M::encode_read_command(kind) {
+        Some(RequestDisposition::Write(request)) => {
+            if let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice()) {
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: M::WRITE_CHANNEL,
+                    bytes,
+                    mode: request.mode,
+                }));
+            }
+        }
+        Some(RequestDisposition::Passive {
+            command: CommandKind::RequestDiagnostics,
+            ..
+        }) => {
+            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable()),
+            )));
+        }
+        Some(RequestDisposition::Passive { .. }) | None => {}
     }
 }
 
@@ -2890,6 +2901,29 @@ mod tests {
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported())
+            ))]
+        );
+    }
+
+    #[test]
+    fn aero_passive_diagnostics_reports_unavailable_fault_history_without_writes() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
             ))]
         );
     }
