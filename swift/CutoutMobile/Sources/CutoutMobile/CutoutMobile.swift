@@ -260,11 +260,12 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
     ) {
         self.availability = availability
         self.entries = availability == .available ? entries : []
-        self.eucGarageSettings = eucGarageSettings ?? EucGarageSettingsSnapshot(
-            beepMargin: Self.missingReadback(for: availability),
-            tiltback: Self.missingReadback(for: availability),
-            pedalMode: Self.missingReadback(for: availability)
-        )
+        self.eucGarageSettings = switch availability {
+        case .available:
+            eucGarageSettings ?? Self.missingGarageSettings(for: availability)
+        case .unavailable, .unsupported:
+            Self.missingGarageSettings(for: availability)
+        }
     }
 
     fileprivate init(_ dto: MobileSettingsReadbackDto) {
@@ -272,6 +273,16 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
             entries: dto.entries.map(SettingsReadbackEntry.init),
             availability: ReadbackAvailability(dto.availability),
             eucGarageSettings: EucGarageSettingsSnapshot(dto.eucGarage)
+        )
+    }
+
+    private static func missingGarageSettings(
+        for availability: ReadbackAvailability
+    ) -> EucGarageSettingsSnapshot {
+        EucGarageSettingsSnapshot(
+            beepMargin: Self.missingReadback(for: availability),
+            tiltback: Self.missingReadback(for: availability),
+            pedalMode: Self.missingReadback(for: availability)
         )
     }
 

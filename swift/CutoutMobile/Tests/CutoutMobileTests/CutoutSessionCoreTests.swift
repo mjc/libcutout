@@ -201,6 +201,27 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testNonAvailableSettingsReadbackDoesNotCarryGarageProjection() {
+        let readback = SettingsReadback(
+            entries: [],
+            availability: .unsupported,
+            eucGarageSettings: EucGarageSettingsSnapshot(
+                beepMargin: .available(Speed(value: 3_222)),
+                tiltback: .available(Speed(value: 11_666)),
+                pedalMode: .available(PedalMode.rawMode(1_920))
+            )
+        )
+
+        XCTAssertEqual(
+            readback.eucGarageSettings,
+            EucGarageSettingsSnapshot(
+                beepMargin: .unsupported,
+                tiltback: .unsupported,
+                pedalMode: .unsupported
+            )
+        )
+    }
+
     func testSettingsReadbackCarriesProjectedVeteranGarageSettings() {
         let readback = SettingsReadback(entries: [
             SettingsReadbackEntry(
