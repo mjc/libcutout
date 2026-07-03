@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111318"/>
+      <stop offset="1" stop-color="#050609"/>
+    </linearGradient>
+    <linearGradient id="warn" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F2C94C"/>
+      <stop offset="1" stop-color="#FF8A3D"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <style>
+      .title { font: 700 24px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; fill: #F6F7FB; }
+      .subtitle { font: 500 13px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif; fill: #9DA3AF; }
+      .label { font: 650 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif; fill: #AEB5C2; letter-spacing: .05em; }
+      .small { font: 500 12px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif; fill: #98A0AE; }
+      .body { font: 540 14px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif; fill: #DDE1EA; }
+      .big { font: 800 64px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; fill: #FFFFFF; }
+      .unit { font: 700 18px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif; fill: #AEB5C2; }
+      .value { font: 800 28px -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; fill: #FFFFFF; }
+      .warntext { font: 760 15px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif; fill: #FFD66B; }
+      .muted { fill: #151922; stroke: #252C39; stroke-width: 1.2; }
+      .card { fill: #10141D; stroke: #252C39; stroke-width: 1.2; filter:url(#shadow); }
+      .chip { fill: #1B202C; stroke: #343B4B; stroke-width: 1; }
+      .danger { fill: #25181A; stroke: #513035; stroke-width: 1.2; }
+      .unknown { fill: #161820; stroke: #3A3F4B; stroke-dasharray: 5 5; stroke-width: 1.2; }
+    </style>
+  </defs>
+  <rect width="390" height="844" rx="38" fill="url(#bg)"/>
+
+  <g transform="translate(24 48)">
+    <text class="title" x="0" y="0">Battery</text>
+    <text class="subtitle" x="0" y="24">EX30 · non-smart BMS · controller-only estimate</text>
+    <rect class="chip" x="245" y="-19" width="96" height="32" rx="16"/>
+    <circle cx="264" cy="-3" r="5" fill="#F2C94C"/>
+    <text class="small" x="276" y="1">limited data</text>
+  </g>
+
+  <g transform="translate(24 104)">
+    <rect class="danger" width="342" height="98" rx="22"/>
+    <path d="M30 28 L47 60 L13 60 Z" fill="none" stroke="#FFD66B" stroke-width="3" stroke-linejoin="round"/>
+    <text x="30" y="53" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif" font-size="23" font-weight="800" fill="#FFD66B">!</text>
+    <text class="warntext" x="66" y="35">No cell-level BMS data</text>
+    <text class="body" x="66" y="59">CutOut can’t see cell balance, weak groups,</text>
+    <text class="body" x="66" y="79">BMS faults, or pack temperature from this wheel.</text>
+  </g>
+
+  <g transform="translate(24 222)">
+    <rect class="card" width="342" height="154" rx="28"/>
+    <text class="label" x="22" y="32">PACK ESTIMATE</text>
+    <text class="big" x="22" y="98">71</text>
+    <text class="unit" x="111" y="83">%</text>
+    <text class="small" x="22" y="124">derived from voltage curve + recent sag</text>
+    <g transform="translate(190 34)">
+      <rect class="unknown" width="126" height="92" rx="18"/>
+      <text class="label" x="16" y="28">CONFIDENCE</text>
+      <text class="value" x="16" y="66">medium</text>
+      <text class="small" x="16" y="84">not cell-safe</text>
+    </g>
+  </g>
+
+  <g transform="translate(24 392)">
+    <rect class="card" width="342" height="118" rx="24"/>
+    <text class="label" x="20" y="30">WHAT WE CAN SEE</text>
+    <g transform="translate(20 47)">
+      <text class="value" x="0" y="28">117.6</text><text class="unit" x="76" y="27">V</text>
+      <text class="small" x="0" y="52">pack voltage</text>
+    </g>
+    <g transform="translate(140 47)">
+      <text class="value" x="0" y="28">4.8</text><text class="unit" x="49" y="27">V</text>
+      <text class="small" x="0" y="52">ride sag</text>
+    </g>
+    <g transform="translate(240 47)">
+      <text class="value" x="0" y="28">38</text><text class="unit" x="42" y="27">A</text>
+      <text class="small" x="0" y="52">load now</text>
+    </g>
+  </g>
+
+  <g transform="translate(24 526)">
+    <rect class="card" width="342" height="160" rx="24"/>
+    <text class="label" x="20" y="30">WHAT IS UNKNOWN</text>
+    <g transform="translate(20 48)">
+      <rect class="unknown" width="302" height="30" rx="10"/>
+      <text class="body" x="12" y="20">individual cell/group voltages</text>
+    </g>
+    <g transform="translate(20 84)">
+      <rect class="unknown" width="302" height="30" rx="10"/>
+      <text class="body" x="12" y="20">cell balance / weak parallel group</text>
+    </g>
+    <g transform="translate(20 120)">
+      <rect class="unknown" width="302" height="30" rx="10"/>
+      <text class="body" x="12" y="20">BMS temperature, faults, and cutout reason</text>
+    </g>
+  </g>
+
+  <g transform="translate(24 702)">
+    <rect class="card" width="342" height="82" rx="24"/>
+    <text class="label" x="20" y="30">RIDING RULE</text>
+    <text class="body" x="20" y="54">Trust sag, alarms, and headroom more than percent.</text>
+    <rect x="20" y="64" width="302" height="6" rx="3" fill="#242A36"/>
+    <rect x="20" y="64" width="186" height="6" rx="3" fill="url(#warn)"/>
+  </g>
+
+  <g transform="translate(24 802)">
+    <text class="small" x="0" y="0">Later: record unsupported BMS/device samples for CutOut support.</text>
+  </g>
+</svg>
