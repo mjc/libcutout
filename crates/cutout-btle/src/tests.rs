@@ -1305,6 +1305,54 @@ async fn drive_session_relays_notifications_back_into_session() {
 }
 
 #[test]
+fn report_settings_summary_keeps_only_available_settings_readbacks() {
+    let unavailable = SettingsReadback::unavailable();
+    let unsupported = SettingsReadback::unsupported();
+    let available = SettingsReadback::available([
+        Some(SettingsEntry {
+            field: RawFieldValue::new(0x0014, 30),
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }),
+        None,
+        None,
+        None,
+    ]);
+    let mut report = crate::SessionBridgeReport::default();
+
+    [unavailable, unsupported, available]
+        .into_iter()
+        .enumerate()
+        .for_each(|(offset, settings)| {
+            crate::report::process_device_event(
+                &mut report,
+                DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(settings)),
+                crate::MonotonicMs::new(2 + offset as u64),
+            );
+        });
+
+    assert_eq!(report.read_only_responses, read_only_responses(3));
+    assert_eq!(
+        report.read_only_response_events,
+        vec![
+            ReadOnlyResponse::Settings(unavailable),
+            ReadOnlyResponse::Settings(unsupported),
+            ReadOnlyResponse::Settings(available),
+        ]
+    );
+    assert_eq!(report.settings, vec![available]);
+    assert!(report.events.iter().any(|event| matches!(
+        event,
+        crate::SessionBridgeEvent::ReadOnlyResponse {
+            monotonic_ms,
+            response: ReadOnlyResponse::Settings(settings),
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && *settings == unavailable
+    )));
+}
+
+#[test]
 fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
     let outputs = [SessionOutput::NotificationIngest(
         NotificationIngestOutcome::semantic_events(
