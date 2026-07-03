@@ -2566,10 +2566,10 @@ impl RetainedNotificationPayload {
             return Self::Empty;
         }
 
-        if bytes.len() <= INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES
-            && let Some(retained) = InlineRetainedNotificationPayload::from_bytes(bytes)
-        {
-            return Self::Inline(retained);
+        if bytes.len() <= INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES {
+            if let Some(retained) = InlineRetainedNotificationPayload::from_bytes(bytes) {
+                return Self::Inline(retained);
+            }
         }
 
         Self::Bytes(Box::new(

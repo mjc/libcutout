@@ -1,3 +1,5 @@
+use core::convert::Infallible;
+
 use arrayvec::ArrayVec;
 use bytes::Bytes;
 #[cfg(feature = "serde")]
@@ -746,53 +748,22 @@ impl PevcapCapture {
     {
         let mut outputs = Vec::new();
         let mut events = Vec::new();
-
-        if !self
-            .records
-            .iter()
-            .any(|record| record.direction == PevcapDirection::LinkUp)
-        {
-            host.ingest_link_up(LinkInfo {
-                monotonic_ms: MonotonicTimestamp::new(0),
-                max_write_len: self.header.write_limit,
-            });
-            drain_semantic_events_checked(
-                &mut host,
+        replay_pevcap_capture(self, &mut host, |step, host| match step {
+            PevcapReplayStep::Drain => drain_semantic_events_checked(
+                host,
                 &mut outputs,
                 &mut events,
                 DEFAULT_REPLAY_OUTPUT_LIMIT,
-            )?;
-        }
-
-        for record in &self.records {
-            match record.direction {
-                PevcapDirection::LinkUp => {
-                    host.ingest_link_up(LinkInfo {
-                        monotonic_ms: record.monotonic_ms,
-                        max_write_len: record.link_max_write_len,
-                    });
-                }
-                PevcapDirection::LinkDown => host.ingest_link_down(),
-                PevcapDirection::Inbound => {
-                    replay_pevcap_notification_semantic_checked(
-                        record,
-                        mode,
-                        &mut host,
-                        &mut outputs,
-                        &mut events,
-                        DEFAULT_REPLAY_OUTPUT_LIMIT,
-                    )?;
-                    continue;
-                }
-                PevcapDirection::Outbound => {}
-            }
-            drain_semantic_events_checked(
-                &mut host,
+            ),
+            PevcapReplayStep::Notification(record) => replay_pevcap_notification_semantic_checked(
+                record,
+                mode,
+                host,
                 &mut outputs,
                 &mut events,
                 DEFAULT_REPLAY_OUTPUT_LIMIT,
-            )?;
-        }
+            ),
+        })?;
 
         Ok(events)
     }
@@ -805,34 +776,18 @@ impl PevcapCapture {
     ) where
         S: ProtocolSession,
     {
-        if !self
-            .records
-            .iter()
-            .any(|record| record.direction == PevcapDirection::LinkUp)
-        {
-            host.ingest_link_up(LinkInfo {
-                monotonic_ms: MonotonicTimestamp::new(0),
-                max_write_len: self.header.write_limit,
-            });
-            host.drain_outputs_into(outputs);
-        }
-
-        for record in &self.records {
-            match record.direction {
-                PevcapDirection::LinkUp => {
-                    host.ingest_link_up(LinkInfo {
-                        monotonic_ms: record.monotonic_ms,
-                        max_write_len: record.link_max_write_len,
-                    });
-                }
-                PevcapDirection::LinkDown => host.ingest_link_down(),
-                PevcapDirection::Inbound => {
+        let result: Result<(), Infallible> = replay_pevcap_capture(self, host, |step, host| {
+            match step {
+                PevcapReplayStep::Drain => host.drain_outputs_into(outputs),
+                PevcapReplayStep::Notification(record) => {
                     replay_pevcap_notification(record, mode, host, outputs);
-                    continue;
                 }
-                PevcapDirection::Outbound => {}
             }
-            host.drain_outputs_into(outputs);
+            Ok(())
+        });
+        match result {
+            Ok(()) => {}
+            Err(error) => match error {},
         }
     }
 
@@ -1069,31 +1024,62 @@ enum PevcapReplayMode<'a> {
     Lengths(&'a [NotificationChunkLen]),
 }
 
-fn replay_pevcap_notification<S>(
-    record: &PevcapRecord,
-    mode: PevcapReplayMode<'_>,
+enum PevcapReplayStep<'a> {
+    Drain,
+    Notification(&'a PevcapRecord),
+}
+
+fn replay_pevcap_capture<S, E>(
+    capture: &PevcapCapture,
     host: &mut HostSession<S>,
-    outputs: &mut Vec<SessionOutput>,
-) where
+    mut handle_step: impl FnMut(PevcapReplayStep<'_>, &mut HostSession<S>) -> Result<(), E>,
+) -> Result<(), E>
+where
     S: ProtocolSession,
 {
-    match mode {
-        PevcapReplayMode::Whole => {
-            host.ingest(SessionInput::Notification {
-                channel: record.characteristic,
-                bytes: record.bytes.as_ref(),
-                monotonic_ms: record.monotonic_ms,
-            });
-            host.drain_outputs_into(outputs);
+    if !capture
+        .records
+        .iter()
+        .any(|record| record.direction == PevcapDirection::LinkUp)
+    {
+        host.ingest_link_up(LinkInfo {
+            monotonic_ms: MonotonicTimestamp::new(0),
+            max_write_len: capture.header.write_limit,
+        });
+        handle_step(PevcapReplayStep::Drain, host)?;
+    }
+
+    for record in &capture.records {
+        match record.direction {
+            PevcapDirection::LinkUp => {
+                host.ingest_link_up(LinkInfo {
+                    monotonic_ms: record.monotonic_ms,
+                    max_write_len: record.link_max_write_len,
+                });
+            }
+            PevcapDirection::LinkDown => host.ingest_link_down(),
+            PevcapDirection::Inbound => {
+                handle_step(PevcapReplayStep::Notification(record), host)?;
+                continue;
+            }
+            PevcapDirection::Outbound => {}
         }
+        handle_step(PevcapReplayStep::Drain, host)?;
+    }
+
+    Ok(())
+}
+
+fn replay_pevcap_notification_chunks<E>(
+    record: &PevcapRecord,
+    mode: PevcapReplayMode<'_>,
+    mut replay_chunk: impl FnMut(&[u8]) -> Result<(), E>,
+) -> Result<(), E> {
+    match mode {
+        PevcapReplayMode::Whole => replay_chunk(record.bytes.as_ref())?,
         PevcapReplayMode::OneByte => {
             for chunk in record.bytes.as_ref().chunks(1) {
-                host.ingest(SessionInput::Notification {
-                    channel: record.characteristic,
-                    bytes: chunk,
-                    monotonic_ms: record.monotonic_ms,
-                });
-                host.drain_outputs_into(outputs);
+                replay_chunk(chunk)?;
             }
         }
         PevcapReplayMode::Lengths(lengths) => {
@@ -1105,23 +1091,37 @@ fn replay_pevcap_notification<S>(
                 let end = offset
                     .saturating_add(length.as_bytes())
                     .min(record.bytes.len());
-                host.ingest(SessionInput::Notification {
-                    channel: record.characteristic,
-                    bytes: &record.bytes[offset..end],
-                    monotonic_ms: record.monotonic_ms,
-                });
-                host.drain_outputs_into(outputs);
+                replay_chunk(&record.bytes[offset..end])?;
                 offset = end;
             }
             if offset < record.bytes.len() {
-                host.ingest(SessionInput::Notification {
-                    channel: record.characteristic,
-                    bytes: &record.bytes[offset..],
-                    monotonic_ms: record.monotonic_ms,
-                });
-                host.drain_outputs_into(outputs);
+                replay_chunk(&record.bytes[offset..])?;
             }
         }
+    }
+    Ok(())
+}
+
+fn replay_pevcap_notification<S>(
+    record: &PevcapRecord,
+    mode: PevcapReplayMode<'_>,
+    host: &mut HostSession<S>,
+    outputs: &mut Vec<SessionOutput>,
+) where
+    S: ProtocolSession,
+{
+    let result: Result<(), Infallible> = replay_pevcap_notification_chunks(record, mode, |bytes| {
+        host.ingest(SessionInput::Notification {
+            channel: record.characteristic,
+            bytes,
+            monotonic_ms: record.monotonic_ms,
+        });
+        host.drain_outputs_into(outputs);
+        Ok(())
+    });
+    match result {
+        Ok(()) => {}
+        Err(error) => match error {},
     }
 }
 
@@ -1136,53 +1136,14 @@ fn replay_pevcap_notification_semantic_checked<S>(
 where
     S: ProtocolSession,
 {
-    match mode {
-        PevcapReplayMode::Whole => {
-            host.ingest(SessionInput::Notification {
-                channel: record.characteristic,
-                bytes: record.bytes.as_ref(),
-                monotonic_ms: record.monotonic_ms,
-            });
-            drain_semantic_events_checked(host, outputs, events, output_limit)?;
-        }
-        PevcapReplayMode::OneByte => {
-            for chunk in record.bytes.as_ref().chunks(1) {
-                host.ingest(SessionInput::Notification {
-                    channel: record.characteristic,
-                    bytes: chunk,
-                    monotonic_ms: record.monotonic_ms,
-                });
-                drain_semantic_events_checked(host, outputs, events, output_limit)?;
-            }
-        }
-        PevcapReplayMode::Lengths(lengths) => {
-            let mut offset = 0usize;
-            for length in lengths.iter().copied().filter(|length| !length.is_whole()) {
-                if offset >= record.bytes.len() {
-                    break;
-                }
-                let end = offset
-                    .saturating_add(length.as_bytes())
-                    .min(record.bytes.len());
-                host.ingest(SessionInput::Notification {
-                    channel: record.characteristic,
-                    bytes: &record.bytes[offset..end],
-                    monotonic_ms: record.monotonic_ms,
-                });
-                drain_semantic_events_checked(host, outputs, events, output_limit)?;
-                offset = end;
-            }
-            if offset < record.bytes.len() {
-                host.ingest(SessionInput::Notification {
-                    channel: record.characteristic,
-                    bytes: &record.bytes[offset..],
-                    monotonic_ms: record.monotonic_ms,
-                });
-                drain_semantic_events_checked(host, outputs, events, output_limit)?;
-            }
-        }
-    }
-    Ok(())
+    replay_pevcap_notification_chunks(record, mode, |bytes| {
+        host.ingest(SessionInput::Notification {
+            channel: record.characteristic,
+            bytes,
+            monotonic_ms: record.monotonic_ms,
+        });
+        drain_semantic_events_checked(host, outputs, events, output_limit)
+    })
 }
 
 /// JSONL PEVCAP import/export error.

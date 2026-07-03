@@ -6,9 +6,11 @@ use std::process::ExitCode;
 async fn main() -> ExitCode {
     let dashboard_mode = dashboard_mode_requested();
     let _log_guard = init_logging(dashboard_mode);
-    if dashboard_mode && let Err(error) = install_dashboard_signal_restore() {
-        eprintln!("failed to install dashboard signal restore: {error}");
-        return ExitCode::FAILURE;
+    if dashboard_mode {
+        if let Err(error) = install_dashboard_signal_restore() {
+            eprintln!("failed to install dashboard signal restore: {error}");
+            return ExitCode::FAILURE;
+        }
     }
     let cli = Cli::parse();
 

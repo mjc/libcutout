@@ -3819,12 +3819,14 @@ fn speed_sparkline_data(state: &DashboardState) -> ([u64; HISTORY_LIMIT], usize)
 }
 
 fn dashboard_voltage_range(state: &DashboardState) -> Option<RangeInclusive<Voltage>> {
-    if ModelCatalog::new(&MODEL_CATALOG)
+    let is_nosfet_aero = ModelCatalog::new(&MODEL_CATALOG)
         .find_model_names(&state.device.make, &state.device.model)
-        .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY))
-        && let Some(profile) = VeteranModelProfile::from_model_id(VeteranModelId::new(43))
-    {
-        return Some(profile.voltage_range);
+        .is_some_and(|entry| entry.registration.session == Some(NOSFET_AERO_SESSION_KEY));
+
+    if is_nosfet_aero {
+        if let Some(profile) = VeteranModelProfile::from_model_id(VeteranModelId::new(43)) {
+            return Some(profile.voltage_range);
+        }
     }
 
     None
