@@ -1378,7 +1378,7 @@ fn parsed_notifications_are_not_eligible_for_raw_transport_logging() {
 
 #[test]
 fn notification_decode_outcome_is_bounded_typed_evidence() {
-    assert!(size_of::<crate::bridge::NotificationDecodeOutcome>() <= 64);
+    assert!(size_of::<crate::bridge::NotificationDecodeOutcome>() <= 88);
     assert_eq!(
         size_of::<crate::bridge::NotificationDecodeKind>(),
         size_of::<u8>()

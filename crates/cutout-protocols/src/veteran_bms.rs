@@ -558,9 +558,9 @@ mod tests {
     }
 
     #[test]
-    fn documented_cell_page_decoder_rejects_fourteen_and_sixteen_value_bodies() {
+    fn documented_cell_page_decoder_requires_enough_bytes_and_reads_full_body() {
         let fourteen_value_body = [0_u8; body_offset(VETERAN_BMS_CELL_VALUES_OFFSET) + 14 * 2];
-        let sixteen_value_body = [0_u8; body_offset(VETERAN_BMS_CELL_VALUES_OFFSET) + 16 * 2];
+        let full_page_body = [0_u8; body_offset(VETERAN_BMS_CELL_VALUES_OFFSET) + 16 * 2];
 
         assert_eq!(
             VeteranBmsCellPage::from_body(sel(2), &fourteen_value_body),
@@ -572,8 +572,8 @@ mod tests {
             })
         );
         assert_eq!(
-            VeteranBmsCellPage::from_body(sel(2), &sixteen_value_body)
-                .expect("extra trailing data after 15 documented values is ignored")
+            VeteranBmsCellPage::from_body(sel(2), &full_page_body)
+                .expect("full page body contains the documented cell values")
                 .cell_voltage
                 .len(),
             15

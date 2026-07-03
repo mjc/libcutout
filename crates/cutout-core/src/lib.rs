@@ -2515,11 +2515,38 @@ impl NotificationEvidence {
 /// protocol evidence.
 pub const MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES: usize = 4_096;
 
+const INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES: usize = 36;
+
+/// Small retained payload storage for parser paths that should not allocate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InlineRetainedNotificationPayload {
+    len: u8,
+    bytes: [u8; INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES],
+}
+
+impl InlineRetainedNotificationPayload {
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let mut retained = Self {
+            len: u8::try_from(bytes.len()).ok()?,
+            bytes: [0; INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES],
+        };
+        retained.bytes[..bytes.len()].copy_from_slice(bytes);
+        Some(retained)
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..usize::from(self.len)]
+    }
+}
+
 /// Bounded raw payload retained when protocol bytes are not fully understood.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RetainedNotificationPayload {
     /// No raw payload was available to retain.
     Empty,
+
+    /// Small bounded raw payload retained inline on hot parser paths.
+    Inline(InlineRetainedNotificationPayload),
 
     /// Bounded raw payload retained for later investigation.
     Bytes(Box<ArrayVec<u8, MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES>>),
@@ -2539,12 +2566,19 @@ impl RetainedNotificationPayload {
             return Self::Empty;
         }
 
-        let retained = bytes
-            .iter()
-            .copied()
-            .take(MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES)
-            .collect();
-        Self::Bytes(Box::new(retained))
+        if bytes.len() <= INLINE_RETAINED_NOTIFICATION_PAYLOAD_BYTES
+            && let Some(retained) = InlineRetainedNotificationPayload::from_bytes(bytes)
+        {
+            return Self::Inline(retained);
+        }
+
+        Self::Bytes(Box::new(
+            bytes
+                .iter()
+                .copied()
+                .take(MAX_RETAINED_NOTIFICATION_PAYLOAD_BYTES)
+                .collect(),
+        ))
     }
 
     /// Returns the retained payload bytes.
@@ -2552,6 +2586,7 @@ impl RetainedNotificationPayload {
     pub fn as_slice(&self) -> &[u8] {
         match self {
             Self::Empty => &[],
+            Self::Inline(bytes) => bytes.as_slice(),
             Self::Bytes(bytes) => bytes.as_slice(),
         }
     }

@@ -315,6 +315,34 @@ fn push_veteran_ingest_outcome_for_frame(
 ) {
     let frame_len = NotificationByteLen::from_bytes(frame.as_slice().len());
     if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
+        && evidence.kind != BatteryPageKind::Raw
+    {
+        output.push(SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::semantic_events(
+                family,
+                channel,
+                frame_len,
+                monotonic_ms,
+                event_count,
+            ),
+        ));
+        output.push(SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::parser_gap(
+                family,
+                channel,
+                frame_len,
+                monotonic_ms,
+                ParserGapEvidence {
+                    classifier: PayloadClassifier::selector(evidence.selector),
+                    body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
+                    retained_payload: RetainedNotificationPayload::from_bytes(evidence.body),
+                },
+            ),
+        ));
+        return;
+    }
+
+    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
         && evidence.kind == BatteryPageKind::Raw
     {
         if evidence.selector == ProtocolSelector::new(8) {
@@ -1556,6 +1584,26 @@ mod tests {
             .collect()
     }
 
+    fn aero_bms_body_gap(
+        frame: &[u8],
+        selector: u8,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> NotificationIngestOutcome {
+        NotificationIngestOutcome::parser_gap(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            VETERAN_DATA_CHANNEL,
+            NotificationByteLen::from_bytes(frame.len()),
+            monotonic_ms,
+            ParserGapEvidence {
+                classifier: PayloadClassifier::selector(ProtocolSelector::new(selector)),
+                body_len: PayloadBodyLen::from_bytes(frame[47..frame.len() - 4].len()),
+                retained_payload: RetainedNotificationPayload::from_bytes(
+                    &frame[47..frame.len() - 4],
+                ),
+            },
+        )
+    }
+
     fn aero_output_for_notification(bytes: &[u8]) -> Vec<SessionOutput> {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
@@ -2545,13 +2593,16 @@ mod tests {
 
         assert_eq!(
             outcomes,
-            vec![NotificationIngestOutcome::semantic_events(
-                ProtocolFamily::VeteranLeaperkimNosfet,
-                VETERAN_DATA_CHANNEL,
-                NotificationByteLen::from_bytes(frame.len()),
-                ms(42),
-                SemanticEventCount::from_events(5),
-            )]
+            vec![
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::VeteranLeaperkimNosfet,
+                    VETERAN_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(frame.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(5),
+                ),
+                aero_bms_body_gap(&frame, 0, ms(42)),
+            ]
         );
         assert!(!telemetry_events(&output).is_empty());
         assert!(!read_only_response_events(&output).is_empty());
@@ -2697,21 +2748,26 @@ mod tests {
         let output = aero_output_for_notification_chunks(&chunks);
         let outcomes = notification_ingest_outcomes(&output);
 
-        assert_eq!(outcomes.len(), frame.len());
+        assert_eq!(outcomes.len(), frame.len() + 1);
         assert!(
-            outcomes[..outcomes.len() - 1]
+            outcomes[..outcomes.len() - 2]
                 .iter()
                 .all(|outcome| matches!(outcome, NotificationIngestOutcome::BufferedFragment(_)))
         );
+        let completed_at = ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1);
         assert_eq!(
-            outcomes.last().cloned(),
-            Some(NotificationIngestOutcome::semantic_events(
+            outcomes[outcomes.len() - 2],
+            NotificationIngestOutcome::semantic_events(
                 ProtocolFamily::VeteranLeaperkimNosfet,
                 VETERAN_DATA_CHANNEL,
                 NotificationByteLen::from_bytes(frame.len()),
-                ms(42 + u64::try_from(frame.len()).expect("fixture length fits") - 1),
+                completed_at,
                 SemanticEventCount::from_events(5),
-            ))
+            )
+        );
+        assert_eq!(
+            outcomes.last().cloned(),
+            Some(aero_bms_body_gap(&frame, 0, completed_at))
         );
     }
 
@@ -2727,13 +2783,17 @@ mod tests {
     }
 
     #[test]
-    fn nosfet_aero_session_reports_bms_selectors_zero_through_eight_without_parser_gaps() {
+    fn nosfet_aero_session_retains_bms_bodies_for_selectors_zero_through_eight() {
         for selector in 0..=8 {
             let frame = live_aero_selector_0_frame_with_selector(selector);
             let output = aero_output_for_notification(&frame);
             let outcomes = notification_ingest_outcomes(&output);
 
-            assert_eq!(outcomes.len(), 1, "selector {selector}");
+            if selector == 8 {
+                assert_eq!(outcomes.len(), 1, "selector {selector}");
+            } else {
+                assert_eq!(outcomes.len(), 2, "selector {selector}");
+            }
             match (selector, outcomes[0].clone()) {
                 (
                     8,
@@ -2756,6 +2816,9 @@ mod tests {
                 (_, outcome) => {
                     panic!("selector {selector} produced unexpected outcome {outcome:?}")
                 }
+            }
+            if selector != 8 {
+                assert_eq!(outcomes[1], aero_bms_body_gap(&frame, selector, ms(42)));
             }
         }
     }
@@ -2781,6 +2844,7 @@ mod tests {
                     ms(42),
                     SemanticEventCount::from_events(5),
                 ),
+                aero_bms_body_gap(&semantic_frame, 0, ms(42)),
                 NotificationIngestOutcome::known_reserved(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
@@ -2820,19 +2884,24 @@ mod tests {
             let output = aero_output_for_notification_chunks(&chunks);
             let outcomes = notification_ingest_outcomes(&output);
 
-            prop_assert_eq!(outcomes.len(), chunks.len());
-            prop_assert!(outcomes[..outcomes.len() - 1]
+            prop_assert_eq!(outcomes.len(), chunks.len() + 1);
+            prop_assert!(outcomes[..outcomes.len() - 2]
                 .iter()
                 .all(|outcome| matches!(outcome, NotificationIngestOutcome::BufferedFragment(_))));
+            let completed_at = ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1);
             prop_assert_eq!(
-                outcomes.last().cloned(),
-                Some(NotificationIngestOutcome::semantic_events(
+                outcomes[outcomes.len() - 2].clone(),
+                NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::VeteranLeaperkimNosfet,
                     VETERAN_DATA_CHANNEL,
                     NotificationByteLen::from_bytes(frame.len()),
-                    ms(42 + u64::try_from(chunks.len()).expect("chunk count fits") - 1),
+                    completed_at,
                     SemanticEventCount::from_events(5),
-                ))
+                )
+            );
+            prop_assert_eq!(
+                outcomes.last().cloned(),
+                Some(aero_bms_body_gap(&frame, 0, completed_at))
             );
             prop_assert_eq!(
                 read_only_response_events(&output),
