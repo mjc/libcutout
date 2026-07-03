@@ -20,10 +20,10 @@ use cutout_btle::{
 use cutout_core::{
     Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, CaptureDistribution, CaptureEvidence,
     CapturePrivacy, CaptureSessionLabel, CatalogModelResolution, Count, Current,
-    DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
-    NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PercentQuantity,
-    PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity, QuantityDisplayValue,
-    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+    DiagnosticReadback, Distance, DutyCycle, FaultHistoryReadback, FirmwareInfo, Measured,
+    ModelCatalog, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
+    PercentQuantity, PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity,
+    QuantityDisplayValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
     SettingsReadbackAvailability, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot,
     Temperature, Unit, Voltage,
 };
@@ -927,6 +927,7 @@ impl ReadOnlyDashboardState {
             ReadOnlyResponse::Diagnostics(_) => {
                 self.diagnostics = self.diagnostics.increment();
             }
+            ReadOnlyResponse::FaultHistory(_) => {}
             ReadOnlyResponse::RawTelemetry(_) => {
                 self.raw_telemetry = self.raw_telemetry.increment();
             }
@@ -2419,6 +2420,9 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
             format!("read-only firmware {}", FirmwareSummary(firmware))
         }
         ReadOnlyResponse::Settings(settings) => SettingsReadbackLog(settings).to_string(),
+        ReadOnlyResponse::FaultHistory(fault_history) => {
+            FaultHistoryReadbackLog(fault_history).to_string()
+        }
         ReadOnlyResponse::Battery(payload) => {
             let page = payload.page();
             let mut summary = format!(
@@ -2486,6 +2490,43 @@ fn settings_readback_availability_name(availability: SettingsReadbackAvailabilit
         SettingsReadbackAvailability::Available => "none observed",
         SettingsReadbackAvailability::Unavailable => "unavailable",
         SettingsReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
+struct FaultHistoryReadbackLog(FaultHistoryReadback);
+
+impl fmt::Display for FaultHistoryReadbackLog {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(entry) = self.0.last_fault else {
+            return write!(
+                f,
+                "read-only fault-history {}",
+                fault_history_availability_name(self.0.availability)
+            );
+        };
+
+        write!(
+            f,
+            "read-only fault-history code={} value={} quality={} verification={}",
+            entry.code.id,
+            entry.code.value,
+            quality_name(entry.quality),
+            verification_name(entry.verification)
+        )?;
+        if let Some(distance) = self.0.since_distance {
+            write!(f, " since_mm={}", distance.value.as_millimetres())?;
+        }
+        Ok(())
+    }
+}
+
+fn fault_history_availability_name(
+    availability: cutout_core::FaultHistoryAvailability,
+) -> &'static str {
+    match availability {
+        cutout_core::FaultHistoryAvailability::Available => "none observed",
+        cutout_core::FaultHistoryAvailability::Unavailable => "unavailable",
+        cutout_core::FaultHistoryAvailability::Unsupported => "unsupported",
     }
 }
 

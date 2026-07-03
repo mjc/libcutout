@@ -172,6 +172,9 @@ pub enum ReadOnlyOutputPayload {
     /// Settings readback response.
     Settings(SettingsReadbackDto),
 
+    /// Fault-history readback response.
+    FaultHistory(FaultHistoryReadbackDto),
+
     /// Diagnostic readback response.
     Diagnostics(DiagnosticReadbackDto),
 
@@ -185,6 +188,9 @@ impl From<ReadOnlyResponse> for ReadOnlyOutputPayload {
             ReadOnlyResponse::Firmware(firmware) => Self::Firmware(firmware.into()),
             ReadOnlyResponse::Battery(battery) => Self::Battery(battery.into()),
             ReadOnlyResponse::Settings(settings) => Self::Settings(settings.into()),
+            ReadOnlyResponse::FaultHistory(fault_history) => {
+                Self::FaultHistory(fault_history.into())
+            }
             ReadOnlyResponse::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics.into()),
             ReadOnlyResponse::RawTelemetry(raw) => Self::RawTelemetry(raw.into()),
         }
@@ -2153,8 +2159,12 @@ mod tests {
             Some(Measured::reported(Distance::from_millimetres(61_456_941))),
         );
 
-        let dto = FaultHistoryReadbackDto::from(readback);
+        let output = ReadOnlyOutput::from(ReadOnlyResponse::FaultHistory(readback));
 
+        assert_eq!(output.command_kind, CommandKindDto::RequestDiagnostics);
+        let ReadOnlyOutputPayload::FaultHistory(dto) = output.payload else {
+            panic!("expected fault-history DTO");
+        };
         assert_eq!(dto.availability, FaultHistoryAvailabilityDto::Available);
         assert_eq!(
             dto.last_fault.expect("fault").code,

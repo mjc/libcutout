@@ -380,6 +380,9 @@ pub enum MobileSessionOutputKindDto {
 
     /// Read-only settings response.
     SettingsReadback,
+
+    /// Read-only fault-history response.
+    FaultHistoryReadback,
 }
 
 /// Mobile output DTO.
@@ -399,6 +402,9 @@ pub struct MobileSessionOutputDto {
 
     /// Typed read-only settings response.
     pub settings_readback: Option<MobileSettingsReadbackDto>,
+
+    /// Typed read-only fault-history response.
+    pub fault_history_readback: Option<MobileFaultHistoryReadbackDto>,
 }
 
 /// Mobile notification ingest outcome kind.
@@ -1809,6 +1815,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 bytes: Vec::new(),
                 ingest: None,
                 settings_readback: None,
+                fault_history_readback: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
                 kind: MobileSessionOutputKindDto::Write,
@@ -1816,6 +1823,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 bytes,
                 ingest: None,
                 settings_readback: None,
+                fault_history_readback: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
                 kind: MobileSessionOutputKindDto::Disconnect,
@@ -1823,6 +1831,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 bytes: Vec::new(),
                 ingest: None,
                 settings_readback: None,
+                fault_history_readback: None,
             },
             SessionOutputDto::ReadOnly(response) => match response.payload {
                 ReadOnlyOutputPayload::Settings(settings) => Self {
@@ -1831,6 +1840,15 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     bytes: Vec::new(),
                     ingest: None,
                     settings_readback: Some(settings.into()),
+                    fault_history_readback: None,
+                },
+                ReadOnlyOutputPayload::FaultHistory(fault_history) => Self {
+                    kind: MobileSessionOutputKindDto::FaultHistoryReadback,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: None,
+                    fault_history_readback: Some(fault_history.into()),
                 },
                 ReadOnlyOutputPayload::Firmware(_)
                 | ReadOnlyOutputPayload::Battery(_)
@@ -1841,6 +1859,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     bytes: Vec::new(),
                     ingest: None,
                     settings_readback: None,
+                    fault_history_readback: None,
                 },
             },
             SessionOutputDto::Event(_) => Self {
@@ -1849,6 +1868,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 bytes: Vec::new(),
                 ingest: None,
                 settings_readback: None,
+                fault_history_readback: None,
             },
             SessionOutputDto::NotificationIngest(outcome) => Self {
                 kind: MobileSessionOutputKindDto::NotificationIngest,
@@ -1856,6 +1876,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 bytes: Vec::new(),
                 ingest: Some(outcome.into()),
                 settings_readback: None,
+                fault_history_readback: None,
             },
         }
     }
@@ -2599,6 +2620,53 @@ mod tests {
                     quality: MobileValueQualityDto::Known,
                     verification: MobileVerificationStatusDto::HardwareVerified,
                 }],
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_session_output_preserves_fault_history_readback_event() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestDiagnostics,
+            payload: ReadOnlyOutputPayload::FaultHistory(FaultHistoryReadbackDto {
+                availability: FaultHistoryAvailabilityDto::Available,
+                last_fault: Some(FaultHistoryEntryDto {
+                    code: RawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                since_distance: None,
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(
+            mobile.kind,
+            MobileSessionOutputKindDto::FaultHistoryReadback
+        );
+        assert!(mobile.channel.is_empty());
+        assert!(mobile.bytes.is_empty());
+        assert_eq!(mobile.ingest, None);
+        assert_eq!(mobile.settings_readback, None);
+        assert_eq!(
+            mobile.fault_history_readback,
+            Some(MobileFaultHistoryReadbackDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                last_fault: Some(MobileFaultHistoryEntryDto {
+                    code: MobileRawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }),
+                since_distance: None,
             })
         );
     }

@@ -8,12 +8,14 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
     public private(set) var settingsReadback: SettingsReadback?
+    public private(set) var faultHistoryReadback: FaultHistoryReadback?
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
+    public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
 
     private let clock = MonotonicClock()
     private var central: CBCentralManager?
@@ -66,6 +68,7 @@ public final class CutoutSessionCore: NSObject {
         displayState = RideDisplayState()
         hasObservedSpeedSnapshot = false
         clearSettingsReadback()
+        clearFaultHistoryReadback()
         onDisplayStateChange?(displayState)
 
         if let peripheral {
@@ -97,11 +100,16 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func applySessionAction(_ action: SessionAction) {
-        guard action.kind == .settingsReadback else {
-            return
+        switch action.kind {
+        case .settingsReadback:
+            settingsReadback = action.settingsReadback
+            onSettingsReadbackChange?(settingsReadback)
+        case .faultHistoryReadback:
+            faultHistoryReadback = action.faultHistoryReadback
+            onFaultHistoryReadbackChange?(faultHistoryReadback)
+        case .subscribe, .write, .event, .disconnect, .notificationIngest:
+            break
         }
-        settingsReadback = action.settingsReadback
-        onSettingsReadbackChange?(settingsReadback)
     }
 
     private func clearSettingsReadback() {
@@ -110,6 +118,14 @@ public final class CutoutSessionCore: NSObject {
         }
         settingsReadback = nil
         onSettingsReadbackChange?(nil)
+    }
+
+    private func clearFaultHistoryReadback() {
+        guard faultHistoryReadback != nil else {
+            return
+        }
+        faultHistoryReadback = nil
+        onFaultHistoryReadbackChange?(nil)
     }
 
     private func setPhase(_ phase: SessionConnectionPhase) {
@@ -127,6 +143,7 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = model
         clearSettingsReadback()
+        clearFaultHistoryReadback()
         peripheral.delegate = self
         setPhase(.connecting(model: model))
         central?.stopScan()

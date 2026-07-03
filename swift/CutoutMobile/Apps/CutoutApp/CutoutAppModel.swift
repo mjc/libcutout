@@ -7,6 +7,7 @@ final class CutoutAppModel: ObservableObject {
     @Published private(set) var devicePickerScanState: DevicePickerScanState?
     @Published private(set) var selectedRideTitle: String?
     @Published private(set) var settingsReadback: SettingsReadback?
+    @Published private(set) var faultHistoryReadback: FaultHistoryReadback?
 
     var speed: SpeedReadout {
         displayState.speed
@@ -30,6 +31,9 @@ final class CutoutAppModel: ObservableObject {
         }
         core.onSettingsReadbackChange = { [weak self] settingsReadback in
             self?.settingsReadback = settingsReadback
+        }
+        core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
+            self?.faultHistoryReadback = faultHistoryReadback
         }
     }
 

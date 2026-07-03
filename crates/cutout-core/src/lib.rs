@@ -6132,6 +6132,9 @@ pub enum ReadOnlyResponse {
 
     /// Settings readback response.
     Settings(SettingsReadback),
+
+    /// Fault-history readback response.
+    FaultHistory(FaultHistoryReadback),
 }
 
 impl ReadOnlyResponse {
@@ -6141,7 +6144,7 @@ impl ReadOnlyResponse {
         match self {
             Self::Firmware(_) => CommandKind::RequestFirmwareInfo,
             Self::Battery(_) => CommandKind::RequestBatteryInfo,
-            Self::Diagnostics(_) => CommandKind::RequestDiagnostics,
+            Self::Diagnostics(_) | Self::FaultHistory(_) => CommandKind::RequestDiagnostics,
             Self::RawTelemetry(_) => CommandKind::RequestTelemetry,
             Self::Settings(_) => CommandKind::RequestSettings,
         }
@@ -9144,6 +9147,8 @@ mod tests {
         });
         let settings =
             crate::ReadOnlyResponse::Settings(crate::SettingsReadback::available([None; 4]));
+        let fault_history =
+            crate::ReadOnlyResponse::FaultHistory(crate::FaultHistoryReadback::unavailable());
 
         assert_eq!(
             firmware.command_kind(),
@@ -9158,6 +9163,10 @@ mod tests {
             crate::CommandKind::RequestDiagnostics
         );
         assert_eq!(settings.command_kind(), crate::CommandKind::RequestSettings);
+        assert_eq!(
+            fault_history.command_kind(),
+            crate::CommandKind::RequestDiagnostics
+        );
     }
 
     #[test]

@@ -2187,6 +2187,17 @@ fn render_read_only_response_jsonl(
             "availability": settings_readback_availability_name(settings.availability),
             "entries": settings.entries.into_iter().flatten().map(settings_entry_json).collect::<Vec<_>>(),
         })),
+        ReadOnlyResponse::FaultHistory(fault_history) => {
+            serde_json::to_string(&serde_json::json!({
+                "type": "read_only_response",
+                "sequence": sequence.get(),
+                "command_kind": command_kind_name(response.command_kind()),
+                "response": "fault_history",
+                "availability": fault_history_availability_name(fault_history.availability),
+                "last_fault": fault_history.last_fault.map(fault_history_entry_json),
+                "since_distance_mm": fault_history.since_distance.map(|distance| distance.value.as_millimetres()),
+            }))
+        }
         ReadOnlyResponse::Diagnostics(diagnostics) => serde_json::to_string(&serde_json::json!({
             "type": "read_only_response",
             "sequence": sequence.get(),
@@ -2344,6 +2355,15 @@ fn raw_field_json(field: Option<cutout_core::RawFieldValue>) -> serde_json::Valu
 fn settings_entry_json(entry: cutout_core::SettingsEntry) -> serde_json::Value {
     serde_json::json!({
         "field": raw_field_json(Some(entry.field)),
+        "source": value_source_name(entry.source),
+        "quality": value_quality_name(entry.quality),
+        "verification": verification_status_name(entry.verification),
+    })
+}
+
+fn fault_history_entry_json(entry: cutout_core::FaultHistoryEntry) -> serde_json::Value {
+    serde_json::json!({
+        "code": raw_field_json(Some(entry.code)),
         "source": value_source_name(entry.source),
         "quality": value_quality_name(entry.quality),
         "verification": verification_status_name(entry.verification),
@@ -2573,6 +2593,16 @@ fn settings_readback_availability_name(availability: SettingsReadbackAvailabilit
         SettingsReadbackAvailability::Available => "available",
         SettingsReadbackAvailability::Unavailable => "unavailable",
         SettingsReadbackAvailability::Unsupported => "unsupported",
+    }
+}
+
+fn fault_history_availability_name(
+    availability: cutout_core::FaultHistoryAvailability,
+) -> &'static str {
+    match availability {
+        cutout_core::FaultHistoryAvailability::Available => "available",
+        cutout_core::FaultHistoryAvailability::Unavailable => "unavailable",
+        cutout_core::FaultHistoryAvailability::Unsupported => "unsupported",
     }
 }
 

@@ -184,6 +184,42 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedReadbacks, [readback, nil])
     }
 
+    func testFaultHistoryReadbackUpdatesCurrentSessionStateUntilDisconnect() {
+        let core = CutoutSessionCore()
+        let readback = FaultHistoryReadback(
+            availability: .available,
+            lastFault: FaultHistoryEntry(
+                code: RawSettingField(id: 0x0040, value: 1),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            sinceDistance: Distance(value: 61_456_941)
+        )
+        var observedReadbacks: [FaultHistoryReadback?] = []
+        core.onFaultHistoryReadbackChange = { observedReadbacks.append($0) }
+
+        let action = SessionAction(
+            kind: .faultHistoryReadback,
+            channel: Data(),
+            bytes: Data(),
+            faultHistoryReadback: readback
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [action]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(core.faultHistoryReadback, readback)
+        XCTAssertEqual(core.faultHistoryReadback?.availability, .available)
+        XCTAssertEqual(observedReadbacks, [readback])
+
+        core.disconnectAndScan()
+
+        XCTAssertNil(core.faultHistoryReadback)
+        XCTAssertEqual(observedReadbacks, [readback, nil])
+    }
+
     func testDisconnectAndScanClearsRideStateAndReturnsPickerToScanning() {
         let core = CutoutSessionCore()
         core.observeAdvertisement(

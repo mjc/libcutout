@@ -29,6 +29,7 @@ struct ContentView: View {
                             : model.rideState,
                         rideTitle: model.selectedRideTitle,
                         settingsReadback: model.settingsReadback,
+                        faultHistoryReadback: model.faultHistoryReadback,
                         disconnect: {
                             model.disconnectAndSearch()
                             pairedDestinationScreenID = nil
@@ -101,6 +102,7 @@ private struct MockupScreenContainer: View {
     let rideState: EucRideScreenState?
     let rideTitle: String?
     let settingsReadback: SettingsReadback?
+    let faultHistoryReadback: FaultHistoryReadback?
     let disconnect: () -> Void
     let pair: (MockupPickerRow) -> Void
     let selectScreen: (MockupScreenID) -> Void
@@ -114,7 +116,11 @@ private struct MockupScreenContainer: View {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             BmsMockupView(screen: screen, selectScreen: selectScreen)
         case .eucGarage:
-            EucGarageMockupView(screen: screen, settingsReadback: settingsReadback)
+            EucGarageMockupView(
+                screen: screen,
+                settingsReadback: settingsReadback,
+                faultHistoryReadback: faultHistoryReadback
+            )
         case .vescOnewheelRide:
             VescOnewheelRideMockupView(screen: screen)
         case .vescDebug:
@@ -126,6 +132,7 @@ private struct MockupScreenContainer: View {
 private struct EucGarageMockupView: View {
     let screen: MockupScreen
     let settingsReadback: SettingsReadback?
+    let faultHistoryReadback: FaultHistoryReadback?
 
     var body: some View {
         MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
@@ -172,6 +179,15 @@ private struct EucGarageMockupView: View {
                 SettingsReadbackRows(readback: settingsReadback, scale: scale)
             }
 
+            if let faultHistoryReadback, faultHistoryReadback.shouldRender {
+                Text("Read-only fault history")
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 12 * scale)
+
+                FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: scale)
+            }
+
             if let faultCard = screen.faultCard {
                 Text(faultCard.title)
                     .font(.system(size: 16 * scale, weight: .black))
@@ -187,6 +203,12 @@ private struct EucGarageMockupView: View {
 private extension SettingsReadback {
     var shouldRender: Bool {
         availability != .available || !entries.isEmpty
+    }
+}
+
+private extension FaultHistoryReadback {
+    var shouldRender: Bool {
+        availability != .available || lastFault != nil || sinceDistance != nil
     }
 }
 
@@ -243,6 +265,35 @@ private struct SettingsReadbackRows: View {
     }
 }
 
+private struct FaultHistoryReadbackRows: View {
+    let readback: FaultHistoryReadback
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5 * scale) {
+            HStack {
+                Text("fault")
+                    .font(.system(size: 14 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+                Spacer()
+                Text(readback.valueText)
+                    .font(.system(size: 15 * scale, weight: .black))
+                    .monospacedDigit()
+                    .foregroundStyle(MockupColors.primaryText)
+            }
+
+            Text(readback.detailText)
+                .font(.system(size: 12 * scale, weight: .semibold))
+                .foregroundStyle(MockupColors.muted)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 16 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
 private extension ReadbackAvailability {
     var displayText: String {
         switch self {
@@ -253,6 +304,27 @@ private extension ReadbackAvailability {
         case .unsupported:
             "unsupported"
         }
+    }
+}
+
+private extension FaultHistoryReadback {
+    var valueText: String {
+        lastFault.map { "\($0.code.id)=\($0.code.value)" } ?? availability.displayText
+    }
+
+    var detailText: String {
+        [
+            lastFault.map(\.provenanceText),
+            sinceDistance.map { "since \($0.value) mm" },
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
+    }
+}
+
+private extension FaultHistoryEntry {
+    var provenanceText: String {
+        "\(source.displayText), \(quality.displayText), \(verification.displayText)"
     }
 }
 

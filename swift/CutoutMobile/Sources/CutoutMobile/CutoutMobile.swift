@@ -31,6 +31,7 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
     case disconnect
     case notificationIngest
     case settingsReadback
+    case faultHistoryReadback
 
     fileprivate init(_ dto: MobileSessionOutputKindDto) {
         switch dto {
@@ -46,6 +47,8 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
             self = .notificationIngest
         case .settingsReadback:
             self = .settingsReadback
+        case .faultHistoryReadback:
+            self = .faultHistoryReadback
         }
     }
 }
@@ -55,17 +58,20 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let channel: Data
     public let bytes: Data
     public let settingsReadback: SettingsReadback?
+    public let faultHistoryReadback: FaultHistoryReadback?
 
     public init(
         kind: SessionActionKind,
         channel: Data,
         bytes: Data,
-        settingsReadback: SettingsReadback? = nil
+        settingsReadback: SettingsReadback? = nil,
+        faultHistoryReadback: FaultHistoryReadback? = nil
     ) {
         self.kind = kind
         self.channel = channel
         self.bytes = bytes
         self.settingsReadback = settingsReadback
+        self.faultHistoryReadback = faultHistoryReadback
     }
 
     fileprivate init(_ dto: MobileSessionOutputDto) {
@@ -73,6 +79,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.channel = dto.channel
         self.bytes = dto.bytes
         self.settingsReadback = dto.settingsReadback.map(SettingsReadback.init)
+        self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
     }
 }
 
@@ -186,6 +193,54 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
     fileprivate init(_ dto: MobileSettingsReadbackDto) {
         self.entries = dto.entries.map(SettingsReadbackEntry.init)
         self.availability = ReadbackAvailability(dto.availability)
+    }
+}
+
+public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
+    public let code: RawSettingField
+    public let source: ReadbackSource
+    public let quality: ReadbackQuality
+    public let verification: VerificationState
+
+    public init(
+        code: RawSettingField,
+        source: ReadbackSource,
+        quality: ReadbackQuality,
+        verification: VerificationState
+    ) {
+        self.code = code
+        self.source = source
+        self.quality = quality
+        self.verification = verification
+    }
+
+    fileprivate init(_ dto: MobileFaultHistoryEntryDto) {
+        self.code = RawSettingField(dto.code)
+        self.source = ReadbackSource(dto.source)
+        self.quality = ReadbackQuality(dto.quality)
+        self.verification = VerificationState(dto.verification)
+    }
+}
+
+public struct FaultHistoryReadback: Equatable, Hashable, Sendable {
+    public let availability: ReadbackAvailability
+    public let lastFault: FaultHistoryEntry?
+    public let sinceDistance: Distance?
+
+    public init(
+        availability: ReadbackAvailability,
+        lastFault: FaultHistoryEntry? = nil,
+        sinceDistance: Distance? = nil
+    ) {
+        self.availability = availability
+        self.lastFault = lastFault
+        self.sinceDistance = sinceDistance
+    }
+
+    fileprivate init(_ dto: MobileFaultHistoryReadbackDto) {
+        self.availability = ReadbackAvailability(dto.availability)
+        self.lastFault = dto.lastFault.map(FaultHistoryEntry.init)
+        self.sinceDistance = dto.sinceDistance?.value
     }
 }
 
@@ -1085,7 +1140,7 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
             }
         case .disconnect:
             return [.disconnect]
-        case .event, .notificationIngest, .settingsReadback:
+        case .event, .notificationIngest, .settingsReadback, .faultHistoryReadback:
             return []
         }
     }

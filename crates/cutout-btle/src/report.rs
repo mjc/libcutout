@@ -210,6 +210,7 @@ pub(crate) fn process_device_event(
                 }
                 ReadOnlyResponse::Battery(_)
                 | ReadOnlyResponse::Diagnostics(_)
+                | ReadOnlyResponse::FaultHistory(_)
                 | ReadOnlyResponse::RawTelemetry(_) => {}
             }
         }
