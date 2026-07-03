@@ -1119,6 +1119,11 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                     ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported()),
                 )));
             }
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestDiagnostics) => {
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported()),
+                )));
+            }
             ReadOnlyCommandGate::Unsupported(_) => {}
         },
     }
@@ -2818,7 +2823,7 @@ mod tests {
     }
 
     #[test]
-    fn falcon_read_only_session_rejects_unsupported_diagnostics_without_writes() {
+    fn falcon_read_only_session_reports_unsupported_fault_history_without_writes() {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
@@ -2827,7 +2832,17 @@ mod tests {
             &mut output,
         );
 
-        assert!(output.is_empty());
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported())
+            ))]
+        );
     }
 
     #[test]
