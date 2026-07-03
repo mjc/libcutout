@@ -184,6 +184,101 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 }
 
+public enum ReadbackAvailability: Equatable, Hashable, Sendable {
+    case available
+    case unavailable
+    case unsupported
+}
+
+public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, Hashable, Sendable {
+    public let value: Value?
+    public let availability: ReadbackAvailability
+
+    public init(value: Value?, availability: ReadbackAvailability) {
+        self.value = value
+        self.availability = availability
+    }
+
+    public static func available(_ value: Value) -> Self {
+        Self(value: value, availability: .available)
+    }
+
+    public static var unavailable: Self {
+        Self(value: nil, availability: .unavailable)
+    }
+
+    public static var unsupported: Self {
+        Self(value: nil, availability: .unsupported)
+    }
+}
+
+public struct PedalHardness: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init(percent: UInt8) {
+        self.percent = percent
+    }
+}
+
+public struct EucPackHealthSnapshot: Equatable, Hashable, Sendable {
+    public let energyPercent: BatteryLevel?
+    public let voltage: Voltage?
+    public let highGroupVoltage: Voltage?
+    public let lowGroupVoltage: Voltage?
+    public let cellDelta: VoltageDelta?
+
+    public init(
+        energyPercent: BatteryLevel? = nil,
+        voltage: Voltage? = nil,
+        highGroupVoltage: Voltage? = nil,
+        lowGroupVoltage: Voltage? = nil,
+        cellDelta: VoltageDelta? = nil
+    ) {
+        self.energyPercent = energyPercent
+        self.voltage = voltage
+        self.highGroupVoltage = highGroupVoltage
+        self.lowGroupVoltage = lowGroupVoltage
+        self.cellDelta = cellDelta
+    }
+}
+
+public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
+    public let beepMargin: ReadbackValue<Speed>
+    public let tiltback: ReadbackValue<Speed>
+    public let pedalHardness: ReadbackValue<PedalHardness>
+
+    public init(
+        beepMargin: ReadbackValue<Speed> = .unavailable,
+        tiltback: ReadbackValue<Speed> = .unavailable,
+        pedalHardness: ReadbackValue<PedalHardness> = .unavailable
+    ) {
+        self.beepMargin = beepMargin
+        self.tiltback = tiltback
+        self.pedalHardness = pedalHardness
+    }
+}
+
+public enum EucFaultHistoryState: Equatable, Hashable, Sendable {
+    case none(sinceDistance: Distance?)
+    case fault(code: String, label: String?, sinceDistance: Distance?)
+}
+
+public struct EucGarageSnapshot: Equatable, Hashable, Sendable {
+    public let pack: EucPackHealthSnapshot
+    public let settings: EucGarageSettingsSnapshot
+    public let faultHistory: EucFaultHistoryState
+
+    public init(
+        pack: EucPackHealthSnapshot,
+        settings: EucGarageSettingsSnapshot,
+        faultHistory: EucFaultHistoryState
+    ) {
+        self.pack = pack
+        self.settings = settings
+        self.faultHistory = faultHistory
+    }
+}
+
 public struct SpeedReadout: Equatable, Hashable, Sendable {
     private static let milesPerHourPerMillimeterPerSecond = 0.002_236_936_292_054_4
 

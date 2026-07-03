@@ -290,6 +290,24 @@ extension MockupScreenCatalogTests {
             MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
             MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
         ])
+        XCTAssertEqual(
+            garage.eucGarageSnapshot,
+            EucGarageSnapshot(
+                pack: EucPackHealthSnapshot(
+                    energyPercent: BatteryLevel(value: 85),
+                    voltage: Voltage(value: 115_800),
+                    highGroupVoltage: Voltage(value: 4_180),
+                    lowGroupVoltage: Voltage(value: 4_130),
+                    cellDelta: VoltageDelta(value: 50)
+                ),
+                settings: EucGarageSettingsSnapshot(
+                    beepMargin: .available(Speed(value: 5_186)),
+                    tiltback: .available(Speed(value: 18_776)),
+                    pedalHardness: .available(PedalHardness(percent: 72))
+                ),
+                faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
+            )
+        )
         XCTAssertEqual(garage.faultCard, MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green))
     }
 

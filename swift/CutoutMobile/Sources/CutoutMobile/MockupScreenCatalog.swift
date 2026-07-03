@@ -433,6 +433,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let faultCard: MockupFaultCard?
     public let tabs: [MockupScreenTab]
     public let bmsContent: MockupBmsContent?
+    public let eucGarageSnapshot: EucGarageSnapshot?
     public let isFixtureOnly: Bool
 
     public init(
@@ -454,6 +455,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         faultCard: MockupFaultCard? = nil,
         tabs: [MockupScreenTab] = [],
         bmsContent: MockupBmsContent? = nil,
+        eucGarageSnapshot: EucGarageSnapshot? = nil,
         isFixtureOnly: Bool = true
     ) {
         self.id = id
@@ -474,6 +476,7 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.faultCard = faultCard
         self.tabs = tabs
         self.bmsContent = bmsContent
+        self.eucGarageSnapshot = eucGarageSnapshot
         self.isFixtureOnly = isFixtureOnly
     }
 }
@@ -883,7 +886,22 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
                 MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
             ],
-            faultCard: MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green)
+            faultCard: MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green),
+            eucGarageSnapshot: EucGarageSnapshot(
+                pack: EucPackHealthSnapshot(
+                    energyPercent: BatteryLevel(value: 85),
+                    voltage: Voltage(value: 115_800),
+                    highGroupVoltage: Voltage(value: 4_180),
+                    lowGroupVoltage: Voltage(value: 4_130),
+                    cellDelta: VoltageDelta(value: 50)
+                ),
+                settings: EucGarageSettingsSnapshot(
+                    beepMargin: .available(Speed(value: 5_186)),
+                    tiltback: .available(Speed(value: 18_776)),
+                    pedalHardness: .available(PedalHardness(percent: 72))
+                ),
+                faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
+            )
         ),
         MockupScreen(
             id: .vescOnewheelRide,
