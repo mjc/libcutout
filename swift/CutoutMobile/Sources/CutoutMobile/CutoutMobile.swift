@@ -251,79 +251,33 @@ public struct SettingsReadbackEntry: Equatable, Hashable, Sendable {
 public struct SettingsReadback: Equatable, Hashable, Sendable {
     public let entries: [SettingsReadbackEntry]
     public let availability: ReadbackAvailability
+    public let eucGarageSettings: EucGarageSettingsSnapshot
 
     public init(
         entries: [SettingsReadbackEntry],
-        availability: ReadbackAvailability = .available
+        availability: ReadbackAvailability = .available,
+        eucGarageSettings: EucGarageSettingsSnapshot? = nil
     ) {
         self.availability = availability
         self.entries = availability == .available ? entries : []
+        self.eucGarageSettings = eucGarageSettings ?? EucGarageSettingsSnapshot(
+            beepMargin: Self.missingReadback(for: availability),
+            tiltback: Self.missingReadback(for: availability),
+            pedalMode: Self.missingReadback(for: availability)
+        )
     }
 
     fileprivate init(_ dto: MobileSettingsReadbackDto) {
         self.init(
             entries: dto.entries.map(SettingsReadbackEntry.init),
-            availability: ReadbackAvailability(dto.availability)
-        )
-    }
-}
-
-public extension SettingsReadback {
-    var eucGarageSettings: EucGarageSettingsSnapshot {
-        EucGarageSettingsSnapshot(
-            beepMargin: speedReadback(for: VeteranSettingsField.speedAlertDeciKmh),
-            tiltback: tiltbackReadback(),
-            pedalMode: pedalModeReadback()
+            availability: ReadbackAvailability(dto.availability),
+            eucGarageSettings: EucGarageSettingsSnapshot(dto.eucGarage)
         )
     }
 
-    private func speedReadback(for fieldID: UInt16) -> ReadbackValue<Speed> {
-        entries
-            .first { $0.field.id == fieldID }
-            .flatMap { speedFromDeciKmh($0.field.value) }
-            .map(ReadbackValue.available)
-            ?? missingReadback()
-    }
-
-    private func tiltbackReadback() -> ReadbackValue<Speed> {
-        if let veteranTiltback = speedReadback(
-            for: VeteranSettingsField.speedTiltbackDeciKmh
-        ).value {
-            return .available(veteranTiltback)
-        }
-
-        return entries
-            .first { $0.field.id == BegodeSettingsField.tiltbackSpeedKmh }
-            .flatMap { speedFromKmh($0.field.value) }
-            .map(ReadbackValue.available)
-            ?? missingReadback()
-    }
-
-    private func pedalModeReadback() -> ReadbackValue<PedalMode> {
-        entries
-            .first { $0.field.id == VeteranSettingsField.pedalsMode }
-            .flatMap { UInt16(exactly: $0.field.value) }
-            .map { ReadbackValue.available(.rawMode($0)) }
-            ?? missingReadback()
-    }
-
-    private func speedFromDeciKmh(_ value: Int64) -> Speed? {
-        guard value >= 0 else {
-            return nil
-        }
-        let millimetersPerSecond = value * 100 * 5 / 18
-        return Int32(exactly: millimetersPerSecond).map(Speed.init(value:))
-    }
-
-    private func speedFromKmh(_ value: Int64) -> Speed? {
-        guard value >= 0 else {
-            return nil
-        }
-        let millimetersPerSecond = value * 1_000 * 5 / 18
-        return Int32(exactly: millimetersPerSecond).map(Speed.init(value:))
-    }
-
-    private func missingReadback<Value>() -> ReadbackValue<Value> {
+    private static func missingReadback<Value>(
+        for availability: ReadbackAvailability
+    ) -> ReadbackValue<Value> {
         switch availability {
         case .available:
             .unavailable
@@ -333,16 +287,6 @@ public extension SettingsReadback {
             .unsupported
         }
     }
-}
-
-private enum VeteranSettingsField {
-    static let speedAlertDeciKmh: UInt16 = 0x0005
-    static let speedTiltbackDeciKmh: UInt16 = 0x0006
-    static let pedalsMode: UInt16 = 0x001e
-}
-
-private enum BegodeSettingsField {
-    static let tiltbackSpeedKmh: UInt16 = 0x040a
 }
 
 public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
@@ -664,6 +608,38 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
         self.beepMargin = beepMargin
         self.tiltback = tiltback
         self.pedalMode = pedalMode
+    }
+
+    fileprivate init(_ dto: MobileEucGarageSettingsDto) {
+        let availability = ReadbackAvailability(dto.availability)
+        self.init(
+            beepMargin: Self.readback(dto.beepMargin?.value, availability: availability),
+            tiltback: Self.readback(dto.tiltback?.value, availability: availability),
+            pedalMode: Self.readback(
+                dto.pedalMode.flatMap(PedalMode.init),
+                availability: availability
+            )
+        )
+    }
+
+    private static func readback<Value>(
+        _ value: Value?,
+        availability: ReadbackAvailability
+    ) -> ReadbackValue<Value> {
+        if let value {
+            return .available(value)
+        }
+
+        return availability == .unsupported ? .unsupported : .unavailable
+    }
+}
+
+private extension PedalMode {
+    init?(_ dto: MobilePedalModeDto) {
+        guard let rawMode = dto.rawMode else {
+            return nil
+        }
+        self = .rawMode(rawMode)
     }
 }
 

@@ -16,13 +16,16 @@ use cutout_core::{
     RawFieldValue, RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
     SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto,
     SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
-    SettingsReadbackDto, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
+    SettingsReadbackDto, Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    WallClockUnixTimestamp,
 };
 use cutout_protocols::{
-    ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
-    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, new_nosfet_aero_read_only_session,
+    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
+    ConcreteFalconReadOnlySession, ConcreteSessionErrorDto, ConcreteSessionStepResultDto,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 
@@ -1226,11 +1229,37 @@ pub struct MobileSettingsEntryDto {
     pub verification: MobileVerificationStatusDto,
 }
 
+/// Product-shaped EUC garage settings projection for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileEucGarageSettingsDto {
+    /// Whether this projected settings readback is available.
+    pub availability: MobileReadbackAvailabilityDto,
+
+    /// Beep margin speed setting, when understood.
+    pub beep_margin: Option<SpeedReading>,
+
+    /// Tiltback speed setting, when understood.
+    pub tiltback: Option<SpeedReading>,
+
+    /// Pedal mode setting, when understood.
+    pub pedal_mode: Option<MobilePedalModeDto>,
+}
+
+/// Read-only pedal mode projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePedalModeDto {
+    /// Unnormalized raw Veteran pedal mode value.
+    pub raw_mode: Option<u16>,
+}
+
 /// Bounded read-only settings response for mobile UI.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileSettingsReadbackDto {
     /// Whether the requested settings readback is available for display.
     pub availability: MobileReadbackAvailabilityDto,
+
+    /// Product-shaped EUC garage settings projection.
+    pub euc_garage: MobileEucGarageSettingsDto,
 
     /// Present settings entries.
     pub entries: Vec<MobileSettingsEntryDto>,
@@ -1655,25 +1684,108 @@ impl From<SettingsEntryDto> for MobileSettingsEntryDto {
     }
 }
 
+impl MobileEucGarageSettingsDto {
+    fn from_entries(
+        availability: MobileReadbackAvailabilityDto,
+        entries: &[MobileSettingsEntryDto],
+    ) -> Self {
+        if availability != MobileReadbackAvailabilityDto::Available {
+            return Self {
+                availability,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            };
+        }
+
+        Self {
+            availability,
+            beep_margin: settings_speed(
+                entries,
+                VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+                speed_from_deci_kmh,
+            ),
+            tiltback: settings_speed(
+                entries,
+                VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                speed_from_deci_kmh,
+            )
+            .or_else(|| settings_speed(entries, BEGODE_FIELD_TILTBACK_SPEED_KMH, speed_from_kmh)),
+            pedal_mode: settings_entry(entries, VETERAN_FIELD_PEDALS_MODE)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(|raw_mode| MobilePedalModeDto {
+                    raw_mode: Some(raw_mode),
+                }),
+        }
+    }
+}
+
+fn settings_entry(
+    entries: &[MobileSettingsEntryDto],
+    field_id: u16,
+) -> Option<MobileSettingsEntryDto> {
+    entries
+        .iter()
+        .copied()
+        .find(|entry| entry.field.id == field_id)
+}
+
+fn settings_speed(
+    entries: &[MobileSettingsEntryDto],
+    field_id: u16,
+    convert: fn(i64) -> Option<CoreSpeed>,
+) -> Option<SpeedReading> {
+    settings_entry(entries, field_id).and_then(|entry| {
+        convert(entry.field.value).map(|speed| SpeedReading {
+            value: Speed {
+                value: speed.as_millimetres_per_second(),
+            },
+            source: entry.source,
+            quality: entry.quality,
+            verification: entry.verification,
+        })
+    })
+}
+
+fn speed_from_deci_kmh(value: i64) -> Option<CoreSpeed> {
+    i32::try_from(value)
+        .ok()
+        .and_then(|value| (value >= 0).then(|| CoreSpeed::from_deci_kmh(value)))
+}
+
+fn speed_from_kmh(value: i64) -> Option<CoreSpeed> {
+    u64::try_from(value).ok().map(CoreSpeed::from_kmh)
+}
+
 impl From<SettingsReadback> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadback) -> Self {
+        let availability = readback.availability.into();
+        let entries: Vec<_> = readback
+            .entries
+            .into_iter()
+            .flatten()
+            .map(Into::into)
+            .collect();
+        let euc_garage = MobileEucGarageSettingsDto::from_entries(availability, &entries);
+
         Self {
-            availability: readback.availability.into(),
-            entries: readback
-                .entries
-                .into_iter()
-                .flatten()
-                .map(Into::into)
-                .collect(),
+            availability,
+            euc_garage,
+            entries,
         }
     }
 }
 
 impl From<SettingsReadbackDto> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadbackDto) -> Self {
+        let availability = readback.availability.into();
+        let entries: Vec<_> = readback.entries.into_iter().map(Into::into).collect();
+        let euc_garage = MobileEucGarageSettingsDto::from_entries(availability, &entries);
+
         Self {
-            availability: readback.availability.into(),
-            entries: readback.entries.into_iter().map(Into::into).collect(),
+            availability,
+            euc_garage,
+            entries,
         }
     }
 }
@@ -2724,6 +2836,96 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_known_euc_garage_settings() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_ALERT_DECI_KMH, 116),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceAndHardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 420),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_PEDALS_MODE, 1_920),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: Some(SpeedReading {
+                    value: Speed { value: 3_222 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+                }),
+                tiltback: Some(SpeedReading {
+                    value: Speed { value: 11_666 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }),
+                pedal_mode: Some(MobilePedalModeDto {
+                    raw_mode: Some(1_920),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_begode_tiltback_fallback() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_TILTBACK_SPEED_KMH, 50),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: None,
+                tiltback: Some(SpeedReading {
+                    value: Speed { value: 13_888 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceVerified,
+                }),
+                pedal_mode: None,
+            }
+        );
     }
 
     #[test]
@@ -2734,6 +2936,12 @@ mod tests {
             mobile,
             MobileSettingsReadbackDto {
                 availability: MobileReadbackAvailabilityDto::Unsupported,
+                euc_garage: MobileEucGarageSettingsDto {
+                    availability: MobileReadbackAvailabilityDto::Unsupported,
+                    beep_margin: None,
+                    tiltback: None,
+                    pedal_mode: None,
+                },
                 entries: Vec::new(),
             }
         );
@@ -2814,6 +3022,12 @@ mod tests {
             mobile.settings_readback,
             Some(MobileSettingsReadbackDto {
                 availability: MobileReadbackAvailabilityDto::Available,
+                euc_garage: MobileEucGarageSettingsDto {
+                    availability: MobileReadbackAvailabilityDto::Available,
+                    beep_margin: None,
+                    tiltback: None,
+                    pedal_mode: None,
+                },
                 entries: vec![MobileSettingsEntryDto {
                     field: MobileRawFieldValueDto {
                         id: 0x0102,

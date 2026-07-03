@@ -201,7 +201,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-    func testSettingsReadbackProjectsKnownVeteranGarageSettings() {
+    func testSettingsReadbackCarriesProjectedVeteranGarageSettings() {
         let readback = SettingsReadback(entries: [
             SettingsReadbackEntry(
                 field: RawSettingField(id: 0x0005, value: 116),
@@ -227,7 +227,11 @@ final class CutoutSessionCoreTests: XCTestCase {
                 quality: .known,
                 verification: .sourceVerified
             ),
-        ])
+        ], eucGarageSettings: EucGarageSettingsSnapshot(
+            beepMargin: .available(Speed(value: 3_222)),
+            tiltback: .available(Speed(value: 11_666)),
+            pedalMode: .available(PedalMode.rawMode(1_920))
+        ))
 
         XCTAssertEqual(
             readback.eucGarageSettings,
@@ -239,7 +243,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-    func testSettingsReadbackProjectsKnownBegodeGarageSettings() {
+    func testSettingsReadbackCarriesProjectedBegodeGarageSettings() {
         let readback = SettingsReadback(entries: [
             SettingsReadbackEntry(
                 field: RawSettingField(id: 0x040a, value: 50),
@@ -253,7 +257,11 @@ final class CutoutSessionCoreTests: XCTestCase {
                 quality: .known,
                 verification: .sourceVerified
             ),
-        ])
+        ], eucGarageSettings: EucGarageSettingsSnapshot(
+            beepMargin: .unavailable,
+            tiltback: .available(Speed(value: 13_888)),
+            pedalMode: .unavailable
+        ))
 
         XCTAssertEqual(
             readback.eucGarageSettings,

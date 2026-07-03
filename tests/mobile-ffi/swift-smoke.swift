@@ -33,7 +33,7 @@ struct MobileFfiSmoke {
             command: nil
         )
         precondition(aero.ingestChecked(input: aeroNotification).error == nil)
-        precondition(aero.currentSnapshot().voltage?.value == 108_760)
+        precondition(aero.currentSnapshot().voltage?.value.value == 108_760)
         precondition(aero.diagnostics().malformedFrames.count == 0)
 
         let falcon = try FalconReadOnlySession()

@@ -52,7 +52,7 @@ fun main() {
             command = null,
         )
         check(aero.ingestChecked(notification).error == null)
-        check(aero.currentSnapshot().voltage?.value == 108_760)
+        check(aero.currentSnapshot().voltage?.value?.value == 108_760)
         check(aero.diagnostics().malformedFrames.count == 0UL)
     }
 
