@@ -1474,6 +1474,14 @@ mod tests {
         hex_literal::hex!("55aa000000320001000f003200030502000004185a5a5a5a")
     }
 
+    fn live_begode_bms_summary_frame() -> [u8; 24] {
+        hex_literal::hex!("55aa271000000320ff9c0019001a0190000001035a5a5a5a")
+    }
+
+    fn live_begode_bms_cell_page_frame() -> [u8; 24] {
+        hex_literal::hex!("55aa0fa00fa10fa20fa30fa40fa50fa60fa702025a5a5a5a")
+    }
+
     fn vesc_selective_values_frame() -> [u8; 28] {
         [
             2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43,
@@ -1629,6 +1637,16 @@ mod tests {
         let output = falcon_output_for_notification_chunks(notifications);
 
         telemetry_events(&output)
+    }
+
+    fn assert_falcon_fragmented_read_only_responses_match(frame: &[u8]) {
+        let chunks: Vec<_> = frame.chunks(1).collect();
+        let whole_responses =
+            read_only_response_events(&falcon_output_for_notification_chunks(&[frame]));
+        let fragmented_responses =
+            read_only_response_events(&falcon_output_for_notification_chunks(&chunks));
+
+        assert_eq!(fragmented_responses, whole_responses);
     }
 
     fn read_only_responses_for_notification(bytes: &[u8]) -> Vec<ReadOnlyResponse> {
@@ -2174,13 +2192,22 @@ mod tests {
     #[test]
     fn begode_falcon_fragmented_live_b_preserves_read_only_responses() {
         let live_b = live_begode_b_frame();
-        let chunks: Vec<_> = live_b.chunks(1).collect();
-        let whole_responses =
-            read_only_response_events(&falcon_output_for_notification_chunks(&[live_b.as_slice()]));
-        let fragmented_responses =
-            read_only_response_events(&falcon_output_for_notification_chunks(&chunks));
 
-        assert_eq!(fragmented_responses, whole_responses);
+        assert_falcon_fragmented_read_only_responses_match(live_b.as_slice());
+    }
+
+    #[test]
+    fn begode_falcon_fragmented_bms_summary_preserves_read_only_responses() {
+        let summary = live_begode_bms_summary_frame();
+
+        assert_falcon_fragmented_read_only_responses_match(summary.as_slice());
+    }
+
+    #[test]
+    fn begode_falcon_fragmented_bms_cell_page_preserves_read_only_responses() {
+        let cell_page = live_begode_bms_cell_page_frame();
+
+        assert_falcon_fragmented_read_only_responses_match(cell_page.as_slice());
     }
 
     #[test]
