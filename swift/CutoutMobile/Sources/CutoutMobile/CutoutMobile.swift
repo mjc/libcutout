@@ -365,6 +365,7 @@ public struct TelemetryReading<Value: Equatable & Hashable & Sendable>: Equatabl
 
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let speed: TelemetryReading<Speed>?
+    public let operatingState: RideOperatingState
     public let voltage: TelemetryReading<Voltage>?
     public let batteryCurrent: TelemetryReading<BatteryCurrent>?
     public let motorCurrent: TelemetryReading<PhaseCurrent>?
@@ -382,6 +383,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
 
     public init(
         speed: TelemetryReading<Speed>? = nil,
+        operatingState: RideOperatingState = .unknown,
         voltage: TelemetryReading<Voltage>? = nil,
         batteryCurrent: TelemetryReading<BatteryCurrent>? = nil,
         motorCurrent: TelemetryReading<PhaseCurrent>? = nil,
@@ -398,6 +400,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         batteryLevelEstimated: TelemetryReading<BatteryLevel>? = nil
     ) {
         self.speed = speed
+        self.operatingState = operatingState
         self.voltage = voltage
         self.batteryCurrent = batteryCurrent
         self.motorCurrent = motorCurrent
@@ -417,6 +420,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
         self.init(
             speed: dto.speed.map { TelemetryReading<Speed>($0) },
+            operatingState: dto.operatingState,
             voltage: dto.voltage.map { TelemetryReading<Voltage>($0) },
             batteryCurrent: dto.batteryCurrent.map { TelemetryReading<BatteryCurrent>($0) },
             motorCurrent: dto.motorCurrent.map { TelemetryReading<PhaseCurrent>($0) },
@@ -739,6 +743,10 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     public var telemetry: TelemetrySnapshot? {
         displayState.telemetry
+    }
+
+    public var operatingState: RideOperatingState {
+        telemetry?.operatingState ?? .unknown
     }
 
     public var phaseText: String {

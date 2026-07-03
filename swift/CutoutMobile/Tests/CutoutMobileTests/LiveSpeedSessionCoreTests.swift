@@ -75,6 +75,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         let core = LiveSpeedSessionCore()
         let snapshot = TelemetrySnapshot(
             speed: telemetryReading(1_234),
+            operatingState: .riding,
             voltage: voltageReading(117_000),
             powerFlow: .negativeUnknown,
             batteryLevelEstimated: batteryLevelReading(77)
@@ -87,6 +88,10 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phase, .live)
         XCTAssertTrue(core.hasObservedSpeedSnapshot)
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
+        XCTAssertEqual(
+            EucRideScreenState(phase: core.phase, displayState: core.displayState).operatingState,
+            .riding
+        )
         XCTAssertEqual(core.displayState.telemetry?.speed?.value, Speed(value: 1_234))
         XCTAssertEqual(core.displayState.telemetry?.powerFlow, .negativeUnknown)
         XCTAssertEqual(core.displayState.notificationCount, 1)
@@ -174,7 +179,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     func testRideStateCarriesPhaseAndTelemetrySnapshot() {
         let displayState = LiveSpeedDisplayState(
             speed: SpeedReadout(millimetersPerSecond: 1_234),
-            telemetry: TelemetrySnapshot(speed: telemetryReading(1_234)),
+            telemetry: TelemetrySnapshot(speed: telemetryReading(1_234), operatingState: .riding),
             notificationCount: 7,
             lastUpdate: MonotonicMilliseconds(9_876)
         )
@@ -183,6 +188,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.phaseText, "Subscribing...")
         XCTAssertEqual(rideState.speedText, "2.8")
         XCTAssertEqual(rideState.speedUnit, "mph")
+        XCTAssertEqual(rideState.operatingState, .riding)
         XCTAssertEqual(rideState.telemetry?.speed?.value, Speed(value: 1_234))
     }
 

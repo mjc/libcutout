@@ -621,6 +621,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Reported or calculated speed.
     pub speed: Option<SpeedReading>,
 
+    /// Conservative operating state inferred from currently available telemetry.
+    pub operating_state: RideOperatingState,
+
     /// Reported voltage.
     pub voltage: Option<VoltageReading>,
 
@@ -819,6 +822,22 @@ pub enum PowerFlowDirection {
 
     /// Negative signed flow without enough motion or plug context to label charge or regen.
     NegativeUnknown,
+}
+
+/// Conservative EUC ride operating state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum RideOperatingState {
+    /// No live evidence has established whether the EUC is parked, riding, or charging.
+    Unknown,
+
+    /// Telemetry indicates the EUC is stationary.
+    Parked,
+
+    /// Telemetry indicates the EUC is moving under ride context.
+    Riding,
+
+    /// Explicit charge/plug evidence indicates the EUC is charging.
+    Charging,
 }
 
 macro_rules! mobile_quantity {
@@ -1777,6 +1796,14 @@ fn power_flow_from_signed_current(current: MeasuredI32Dto) -> PowerFlowDirection
     }
 }
 
+fn ride_operating_state_from_speed(speed: Option<MeasuredI32Dto>) -> RideOperatingState {
+    match speed.map(|speed| speed.value.cmp(&0)) {
+        Some(std::cmp::Ordering::Equal) => RideOperatingState::Parked,
+        Some(_) => RideOperatingState::Riding,
+        None => RideOperatingState::Unknown,
+    }
+}
+
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
@@ -1926,6 +1953,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
+            operating_state: ride_operating_state_from_speed(snapshot.speed),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
@@ -2300,16 +2328,36 @@ mod tests {
     #[test]
     fn power_flow_direction_does_not_invent_charge_or_regen_from_negative_current() {
         assert_eq!(
-            power_flow_from_signed_current(measured_current(2_000)),
+            power_flow_from_signed_current(measured_i32(2_000)),
             PowerFlowDirection::Discharge
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_current(0)),
+            power_flow_from_signed_current(measured_i32(0)),
             PowerFlowDirection::Zero
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_current(-2_000)),
+            power_flow_from_signed_current(measured_i32(-2_000)),
             PowerFlowDirection::NegativeUnknown
+        );
+    }
+
+    #[test]
+    fn ride_operating_state_uses_speed_without_inventing_charging() {
+        assert_eq!(
+            ride_operating_state_from_speed(None),
+            RideOperatingState::Unknown
+        );
+        assert_eq!(
+            ride_operating_state_from_speed(Some(measured_i32(0))),
+            RideOperatingState::Parked
+        );
+        assert_eq!(
+            ride_operating_state_from_speed(Some(measured_i32(1_000))),
+            RideOperatingState::Riding
+        );
+        assert_eq!(
+            ride_operating_state_from_speed(Some(measured_i32(-1_000))),
+            RideOperatingState::Riding
         );
     }
 
@@ -2325,7 +2373,7 @@ mod tests {
         }
     }
 
-    const fn measured_current(value: i32) -> MeasuredI32Dto {
+    const fn measured_i32(value: i32) -> MeasuredI32Dto {
         MeasuredI32Dto {
             value,
             source: ValueSourceDto::Reported,
@@ -2627,6 +2675,7 @@ mod tests {
                 verification: MobileVerificationStatusDto::HardwareVerified,
             })
         );
+        assert_eq!(snapshot.operating_state, RideOperatingState::Parked);
         assert!(matches!(
             snapshot.battery_current,
             Some(BatteryCurrentReading {
