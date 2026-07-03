@@ -1168,23 +1168,11 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
                 }));
             }
         }
-        Some(RequestDisposition::Passive {
-            command: CommandKind::RequestFaultHistory,
-            ..
-        }) => {
-            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable()),
-            )));
-        }
-        Some(RequestDisposition::Passive {
-            command: CommandKind::RequestSettings,
-            ..
-        }) => {
-            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unavailable()),
-            )));
-        }
-        Some(RequestDisposition::Passive { .. }) => {}
+        Some(RequestDisposition::Passive { command, .. }) => output.extend(
+            unavailable_readback_response(command)
+                .map(DeviceEvent::ReadOnlyResponse)
+                .map(SessionOutput::Event),
+        ),
         None => output.extend(
             unavailable_readback_response(kind)
                 .map(DeviceEvent::ReadOnlyResponse)
@@ -2970,7 +2958,17 @@ mod tests {
             &mut output,
         );
 
-        assert!(output.is_empty());
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
+            ))]
+        );
     }
 
     #[test]
@@ -3100,6 +3098,29 @@ mod tests {
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unavailable())
+            ))]
+        );
+    }
+
+    #[test]
+    fn aero_passive_battery_reports_unavailable_battery_without_writes() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Battery(cutout_core::BatteryReadback::unavailable())
             ))]
         );
     }
