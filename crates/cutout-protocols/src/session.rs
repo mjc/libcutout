@@ -1135,6 +1135,26 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
     }
 }
 
+fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> {
+    match kind {
+        CommandKind::RequestBatteryInfo => Some(ReadOnlyResponse::Battery(
+            cutout_core::BatteryReadback::unavailable(),
+        )),
+        CommandKind::RequestDiagnostics => Some(ReadOnlyResponse::FaultHistory(
+            cutout_core::FaultHistoryReadback::unavailable(),
+        )),
+        CommandKind::RequestSettings => Some(ReadOnlyResponse::Settings(
+            cutout_core::SettingsReadback::unavailable(),
+        )),
+        CommandKind::RequestIdentity
+        | CommandKind::RequestFirmwareInfo
+        | CommandKind::RequestTelemetry
+        | CommandKind::SetLights
+        | CommandKind::SoundHorn
+        | CommandKind::SetRawMotorCurrent => None,
+    }
+}
+
 fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Vec<SessionOutput>) {
     match M::encode_read_command(kind) {
         Some(RequestDisposition::Write(request)) => {
@@ -1154,7 +1174,12 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
                 ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable()),
             )));
         }
-        Some(RequestDisposition::Passive { .. }) | None => {}
+        Some(RequestDisposition::Passive { .. }) => {}
+        None => output.extend(
+            unavailable_readback_response(kind)
+                .map(DeviceEvent::ReadOnlyResponse)
+                .map(SessionOutput::Event),
+        ),
     }
 }
 
@@ -1355,6 +1380,31 @@ mod tests {
 
         fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
             AeroRequestEncoder::encode_command(kind)
+        }
+    }
+
+    struct SilentSemanticReadbackModel;
+
+    impl ProtocolModelSpec for SilentSemanticReadbackModel {
+        const MANUFACTURER: Manufacturer = Manufacturer::Nosfet;
+        const MODEL: &'static str = "silent-semantic-readback";
+        const PROTOCOL: ProtocolFamily = ProtocolFamily::VeteranLeaperkimNosfet;
+    }
+
+    impl SupportsReadRequests for SilentSemanticReadbackModel {
+        type Probe = AeroProbe;
+
+        const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+            CommandKind::RequestBatteryInfo,
+            CommandKind::RequestDiagnostics,
+            CommandKind::RequestSettings,
+        ]);
+        const WRITE_CHANNEL: GattChannel = TEST_CHANNEL;
+        const SUBSCRIBE_CHANNEL: GattChannel = TEST_CHANNEL;
+        type NotificationDecoder = NoopNotificationDecoder;
+
+        fn encode_read_command(_kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
+            None
         }
     }
 
@@ -2929,6 +2979,45 @@ mod tests {
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
             ))]
+        );
+    }
+
+    #[test]
+    fn read_only_session_reports_unavailable_semantic_readbacks_when_encoder_has_no_request() {
+        let mut session = ReadOnlySession::<SilentSemanticReadbackModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestBatteryInfo),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestSettings),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Battery(
+                    cutout_core::BatteryReadback::unavailable()
+                ))),
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
+                )),
+                SessionOutput::Event(DeviceEvent::ReadOnlyResponse(ReadOnlyResponse::Settings(
+                    cutout_core::SettingsReadback::unavailable()
+                ))),
+            ]
         );
     }
 
