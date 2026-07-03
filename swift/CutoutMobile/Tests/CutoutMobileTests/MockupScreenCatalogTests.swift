@@ -303,7 +303,7 @@ extension MockupScreenCatalogTests {
                 settings: EucGarageSettingsSnapshot(
                     beepMargin: .available(Speed(value: 5_186)),
                     tiltback: .available(Speed(value: 18_776)),
-                    pedalHardness: .available(PedalHardness(percent: 72))
+                    pedalMode: .available(PedalMode(hardnessPercent: 72))
                 ),
                 faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
             )

@@ -224,7 +224,7 @@ public extension SettingsReadback {
         EucGarageSettingsSnapshot(
             beepMargin: speedReadback(for: VeteranSettingsField.speedAlertDeciKmh),
             tiltback: speedReadback(for: VeteranSettingsField.speedTiltbackDeciKmh),
-            pedalHardness: pedalHardnessReadback()
+            pedalMode: pedalModeReadback()
         )
     }
 
@@ -236,7 +236,7 @@ public extension SettingsReadback {
             ?? missingReadback()
     }
 
-    private func pedalHardnessReadback() -> ReadbackValue<PedalHardness> {
+    private func pedalModeReadback() -> ReadbackValue<PedalMode> {
         entries
             .first { $0.field.id == VeteranSettingsField.pedalsMode }
             .flatMap { UInt16(exactly: $0.field.value) }
@@ -476,16 +476,16 @@ public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, 
     }
 }
 
-public struct PedalHardness: Equatable, Hashable, Sendable {
+public struct PedalMode: Equatable, Hashable, Sendable {
     public enum Value: Equatable, Hashable, Sendable {
-        case percent(UInt8)
+        case hardnessPercent(UInt8)
         case rawMode(UInt16)
     }
 
     public let value: Value
 
     public var percent: UInt8? {
-        guard case let .percent(percent) = value else {
+        guard case let .hardnessPercent(percent) = value else {
             return nil
         }
         return percent
@@ -498,8 +498,8 @@ public struct PedalHardness: Equatable, Hashable, Sendable {
         return rawMode
     }
 
-    public init(percent: UInt8) {
-        self.value = .percent(percent)
+    public init(hardnessPercent: UInt8) {
+        self.value = .hardnessPercent(hardnessPercent)
     }
 
     public static func rawMode(_ value: UInt16) -> Self {
@@ -536,16 +536,16 @@ public struct EucPackHealthSnapshot: Equatable, Hashable, Sendable {
 public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
     public let beepMargin: ReadbackValue<Speed>
     public let tiltback: ReadbackValue<Speed>
-    public let pedalHardness: ReadbackValue<PedalHardness>
+    public let pedalMode: ReadbackValue<PedalMode>
 
     public init(
         beepMargin: ReadbackValue<Speed> = .unavailable,
         tiltback: ReadbackValue<Speed> = .unavailable,
-        pedalHardness: ReadbackValue<PedalHardness> = .unavailable
+        pedalMode: ReadbackValue<PedalMode> = .unavailable
     ) {
         self.beepMargin = beepMargin
         self.tiltback = tiltback
-        self.pedalHardness = pedalHardness
+        self.pedalMode = pedalMode
     }
 }
 

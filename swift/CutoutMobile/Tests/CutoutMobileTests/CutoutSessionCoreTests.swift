@@ -217,7 +217,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             EucGarageSettingsSnapshot(
                 beepMargin: .available(Speed(value: 3_222)),
                 tiltback: .available(Speed(value: 11_666)),
-                pedalHardness: .available(PedalHardness.rawMode(1_920))
+                pedalMode: .available(PedalMode.rawMode(1_920))
             )
         )
     }

@@ -151,7 +151,7 @@ private struct EucGarageMockupView: View {
             case "tiltback":
                 return settingsSpeedTile(tile: tile, readback: settings.tiltback)
             case "pedal mode":
-                return settingsPedalTile(tile: tile, readback: settings.pedalHardness)
+                return settingsPedalTile(tile: tile, readback: settings.pedalMode)
             default:
                 return tile
             }
@@ -252,16 +252,16 @@ private struct EucGarageMockupView: View {
 
     private func settingsPedalTile(
         tile: MockupDashboardTile,
-        readback: ReadbackValue<PedalHardness>
+        readback: ReadbackValue<PedalMode>
     ) -> MockupDashboardTile {
-        guard let hardness = readback.value else {
+        guard let mode = readback.value else {
             return unavailableTile(tile, availability: readback.availability)
         }
 
         let value: String
         let unit: String
-        switch hardness.value {
-        case let .percent(percent):
+        switch mode.value {
+        case let .hardnessPercent(percent):
             value = "\(percent)"
             unit = "%"
         case let .rawMode(rawMode):
