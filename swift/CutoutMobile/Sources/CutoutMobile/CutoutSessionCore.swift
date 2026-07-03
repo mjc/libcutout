@@ -63,6 +63,19 @@ public final class CutoutSessionCore: NSObject {
         return true
     }
 
+    @discardableResult
+    public func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
+        let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
+        guard
+            let peripheral = discoveredPeripherals[identifier],
+            let advertisement = discoveredAdvertisements.last(where: { $0.peripheralIdentifier == identifier })
+        else {
+            return false
+        }
+        connect(to: peripheral, using: advertisement, model: model)
+        return true
+    }
+
     public func disconnectAndScan() {
         suppressReconnect = true
         selectedModel = nil
@@ -268,8 +281,8 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             peripheral: peripheral,
             advertisementData: advertisementData
         )
-        observeAdvertisement(advertisement)
         discoveredPeripherals[advertisement.peripheralIdentifier] = peripheral
+        observeAdvertisement(advertisement)
         let advertisedServices = advertisement.advertisedServiceUuids.map(String.init(describing:)).joined(separator: ",")
         let candidate = [
             "candidate=\(advertisement.peripheralIdentifier.rawValue)",

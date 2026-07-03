@@ -71,13 +71,24 @@ private final class CutoutLiveValidator {
     }
 
     private func pairFirstSupportedCandidate(from state: DevicePickerScanState) {
-        guard !didRequestPairing, let row = state.rows.first(where: \.isSupported) else {
+        guard !didRequestPairing else {
+            return
+        }
+
+        if let row = state.rows.first(where: \.isSupported) {
+            didRequestPairing = true
+            let didPair = core.pair(platformIdentifier: row.id)
+            records.append("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
+            return
+        }
+
+        guard let row = state.rows.first(where: \.isAeroProbeCandidate) else {
             return
         }
 
         didRequestPairing = true
-        let didPair = core.pair(platformIdentifier: row.id)
-        records.append("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
+        let didPair = core.pair(platformIdentifier: row.id, model: .aero)
+        records.append("auto_pair_probe_aero=\(didPair) id=\(row.id) title=\(row.title)")
     }
 
     private func appendRecord(_ record: String) {
@@ -92,5 +103,15 @@ private final class CutoutLiveValidator {
     private func printRecords() {
         print("candidate_records_seen=\(candidateRecordCount)")
         records.forEach { print($0) }
+    }
+}
+
+private extension MockupPickerRow {
+    var isAeroProbeCandidate: Bool {
+        let normalizedTitle = title.lowercased()
+        return subtitle.hasPrefix("Electric unicycle")
+            && (normalizedTitle.contains("aero")
+                || normalizedTitle.contains("nosfet")
+                || normalizedTitle.hasPrefix("nf"))
     }
 }
