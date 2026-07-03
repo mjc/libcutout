@@ -313,14 +313,14 @@ extension MockupScreenCatalogTests {
 
     func testEucFaultHistoryCanRepresentStructuredUnknownFault() {
         let fault = EucFaultHistoryState.fault(
-            code: RawSettingField(id: 0x0040, value: 1),
+            code: FaultCode.unknown(id: 0x0040, value: 1),
             sinceDistance: Distance(value: 61_456_941)
         )
 
         XCTAssertEqual(
             fault,
             .fault(
-                code: RawSettingField(id: 0x0040, value: 1),
+                code: FaultCode.unknown(id: 0x0040, value: 1),
                 sinceDistance: Distance(value: 61_456_941)
             )
         )

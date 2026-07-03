@@ -463,7 +463,7 @@ private extension ReadbackAvailability {
 
 private extension FaultHistoryReadback {
     var valueText: String {
-        lastFault.map { "\($0.code.id)=\($0.code.value)" } ?? availability.displayText
+        lastFault.map { "\($0.code.raw.id)=\($0.code.raw.value)" } ?? availability.displayText
     }
 
     var detailText: String {

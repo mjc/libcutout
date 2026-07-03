@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
     BatteryInfoDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, CommandKindDto,
-    ControlRefusalReasonDto, DeviceCommandDto, FaultHistoryAvailability,
+    ControlRefusalReasonDto, DeviceCommandDto, FaultCode, FaultCodeDto, FaultHistoryAvailability,
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
     IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredI16Dto, MeasuredI32Dto,
@@ -1234,7 +1234,7 @@ pub struct MobileSettingsReadbackDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileFaultHistoryEntryDto {
     /// Protocol-specific fault code without proven semantic mapping.
-    pub code: MobileRawFieldValueDto,
+    pub code: MobileFaultCodeDto,
 
     /// Source of the fault code.
     pub source: MobileValueSourceDto,
@@ -1244,6 +1244,13 @@ pub struct MobileFaultHistoryEntryDto {
 
     /// Verification state for the fault-code interpretation.
     pub verification: MobileVerificationStatusDto,
+}
+
+/// Protocol-specific fault code for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileFaultCodeDto {
+    /// Raw protocol field/value pair for an unknown fault code.
+    pub raw: MobileRawFieldValueDto,
 }
 
 /// Read-only last-fault history for mobile UI.
@@ -1733,6 +1740,22 @@ impl From<FaultHistoryEntryDto> for MobileFaultHistoryEntryDto {
             source: entry.source.into(),
             quality: entry.quality.into(),
             verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<FaultCodeDto> for MobileFaultCodeDto {
+    fn from(code: FaultCodeDto) -> Self {
+        Self {
+            raw: code.raw.into(),
+        }
+    }
+}
+
+impl From<FaultCode> for MobileFaultCodeDto {
+    fn from(code: FaultCode) -> Self {
+        Self {
+            raw: code.raw.into(),
         }
     }
 }
@@ -2715,9 +2738,11 @@ mod tests {
         let mobile = MobileFaultHistoryReadbackDto::from(FaultHistoryReadbackDto {
             availability: FaultHistoryAvailabilityDto::Available,
             last_fault: Some(FaultHistoryEntryDto {
-                code: RawFieldValueDto {
-                    id: 0x0040,
-                    value: 1,
+                code: FaultCodeDto {
+                    raw: RawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
                 },
                 source: ValueSourceDto::Reported,
                 quality: ValueQualityDto::Known,
@@ -2738,9 +2763,11 @@ mod tests {
         assert_eq!(
             mobile.last_fault.expect("fault"),
             MobileFaultHistoryEntryDto {
-                code: MobileRawFieldValueDto {
-                    id: 0x0040,
-                    value: 1,
+                code: MobileFaultCodeDto {
+                    raw: MobileRawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
                 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
@@ -2803,9 +2830,11 @@ mod tests {
             payload: ReadOnlyOutputPayload::FaultHistory(FaultHistoryReadbackDto {
                 availability: FaultHistoryAvailabilityDto::Available,
                 last_fault: Some(FaultHistoryEntryDto {
-                    code: RawFieldValueDto {
-                        id: 0x0040,
-                        value: 1,
+                    code: FaultCodeDto {
+                        raw: RawFieldValueDto {
+                            id: 0x0040,
+                            value: 1,
+                        },
                     },
                     source: ValueSourceDto::Reported,
                     quality: ValueQualityDto::Known,
@@ -2831,9 +2860,11 @@ mod tests {
             Some(MobileFaultHistoryReadbackDto {
                 availability: MobileReadbackAvailabilityDto::Available,
                 last_fault: Some(MobileFaultHistoryEntryDto {
-                    code: MobileRawFieldValueDto {
-                        id: 0x0040,
-                        value: 1,
+                    code: MobileFaultCodeDto {
+                        raw: MobileRawFieldValueDto {
+                            id: 0x0040,
+                            value: 1,
+                        },
                     },
                     source: MobileValueSourceDto::Reported,
                     quality: MobileValueQualityDto::Known,

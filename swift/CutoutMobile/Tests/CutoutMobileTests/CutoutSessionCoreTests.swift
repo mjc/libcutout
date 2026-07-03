@@ -227,7 +227,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let readback = FaultHistoryReadback(
             availability: .available,
             lastFault: FaultHistoryEntry(
-                code: RawSettingField(id: 0x0040, value: 1),
+                code: FaultCode.unknown(id: 0x0040, value: 1),
                 source: .reported,
                 quality: .known,
                 verification: .hardwareVerified

@@ -2527,8 +2527,8 @@ impl fmt::Display for FaultHistoryReadbackLog {
         write!(
             f,
             "read-only fault-history code={} value={} quality={} verification={}",
-            entry.code.id,
-            entry.code.value,
+            entry.code.raw.id,
+            entry.code.raw.value,
             quality_name(entry.quality),
             verification_name(entry.verification)
         )?;

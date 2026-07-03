@@ -2369,7 +2369,7 @@ fn settings_entry_json(entry: cutout_core::SettingsEntry) -> serde_json::Value {
 
 fn fault_history_entry_json(entry: cutout_core::FaultHistoryEntry) -> serde_json::Value {
     serde_json::json!({
-        "code": raw_field_json(Some(entry.code)),
+        "code": raw_field_json(Some(entry.code.raw)),
         "source": value_source_name(entry.source),
         "quality": value_quality_name(entry.quality),
         "verification": verification_status_name(entry.verification),

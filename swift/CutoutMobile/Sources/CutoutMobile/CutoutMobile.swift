@@ -105,6 +105,22 @@ public struct RawSettingField: Equatable, Hashable, Sendable {
     }
 }
 
+public struct FaultCode: Equatable, Hashable, Sendable {
+    public let raw: RawSettingField
+
+    public static func unknown(id: UInt16, value: Int64) -> Self {
+        Self(raw: RawSettingField(id: id, value: value))
+    }
+
+    public init(raw: RawSettingField) {
+        self.raw = raw
+    }
+
+    fileprivate init(_ dto: MobileFaultCodeDto) {
+        self.raw = RawSettingField(dto.raw)
+    }
+}
+
 public enum ReadbackSource: Equatable, Hashable, Sendable {
     case reported
     case calculated
@@ -246,13 +262,13 @@ private enum VeteranSettingsField {
 }
 
 public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
-    public let code: RawSettingField
+    public let code: FaultCode
     public let source: ReadbackSource
     public let quality: ReadbackQuality
     public let verification: VerificationState
 
     public init(
-        code: RawSettingField,
+        code: FaultCode,
         source: ReadbackSource,
         quality: ReadbackQuality,
         verification: VerificationState
@@ -264,7 +280,7 @@ public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
     }
 
     fileprivate init(_ dto: MobileFaultHistoryEntryDto) {
-        self.code = RawSettingField(dto.code)
+        self.code = FaultCode(dto.code)
         self.source = ReadbackSource(dto.source)
         self.quality = ReadbackQuality(dto.quality)
         self.verification = VerificationState(dto.verification)
@@ -499,7 +515,7 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
 
 public enum EucFaultHistoryState: Equatable, Hashable, Sendable {
     case none(sinceDistance: Distance?)
-    case fault(code: RawSettingField, sinceDistance: Distance?)
+    case fault(code: FaultCode, sinceDistance: Distance?)
 }
 
 public struct EucGarageSnapshot: Equatable, Hashable, Sendable {

@@ -3,13 +3,13 @@ use crate::{
     BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BmsPackCurrents, ChargeMode,
     CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
     DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    Distance, DutyCycle, FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback,
-    FirmwareInfo, IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
-    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
-    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, RawFieldValue,
-    RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
+    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
+    FaultHistoryReadback, FirmwareInfo, IgnoredNotificationEvidence, IgnoredNotificationReason,
+    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
+    ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
+    SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
     SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
     TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
     WriteMode,
@@ -1080,7 +1080,7 @@ impl From<FaultHistoryAvailability> for FaultHistoryAvailabilityDto {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FaultHistoryEntryDto {
     /// Protocol-specific fault code without proven semantic mapping.
-    pub code: RawFieldValueDto,
+    pub code: FaultCodeDto,
 
     /// Value source.
     pub source: ValueSourceDto,
@@ -1099,6 +1099,21 @@ impl From<FaultHistoryEntry> for FaultHistoryEntryDto {
             source: entry.source.into(),
             quality: entry.quality.into(),
             verification: entry.verification.into(),
+        }
+    }
+}
+
+/// UniFFI-ready protocol-specific fault code.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultCodeDto {
+    /// Raw protocol field/value pair for an unknown fault code.
+    pub raw: RawFieldValueDto,
+}
+
+impl From<FaultCode> for FaultCodeDto {
+    fn from(code: FaultCode) -> Self {
+        Self {
+            raw: code.raw.into(),
         }
     }
 }
@@ -2247,7 +2262,7 @@ mod tests {
     #[test]
     fn fault_history_output_preserves_structured_unknown_code_and_distance() {
         let readback = FaultHistoryReadback::fault_since(
-            FaultHistoryEntry::reported_unknown(RawFieldValue::new(0x0040, 1)),
+            FaultHistoryEntry::reported_unknown(FaultCode::unknown(RawFieldValue::new(0x0040, 1))),
             Some(Measured::reported(Distance::from_millimetres(61_456_941))),
         );
 
@@ -2260,9 +2275,11 @@ mod tests {
         assert_eq!(dto.availability, FaultHistoryAvailabilityDto::Available);
         assert_eq!(
             dto.last_fault.expect("fault").code,
-            RawFieldValueDto {
-                id: 0x0040,
-                value: 1
+            FaultCodeDto {
+                raw: RawFieldValueDto {
+                    id: 0x0040,
+                    value: 1
+                }
             }
         );
         assert_eq!(dto.since_distance.expect("distance").value, 61_456_941);

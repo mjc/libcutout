@@ -6081,11 +6081,26 @@ pub enum FaultHistoryAvailability {
     Unsupported,
 }
 
-/// Last reported fault, preserving raw identity separately from provenance.
+/// Protocol-specific fault code without proven semantic mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultCode {
+    /// Raw protocol field/value pair for an unknown fault code.
+    pub raw: RawFieldValue,
+}
+
+impl FaultCode {
+    /// Creates a structured unknown fault code from a raw protocol field/value pair.
+    #[must_use]
+    pub const fn unknown(raw: RawFieldValue) -> Self {
+        Self { raw }
+    }
+}
+
+/// Last reported fault, preserving fault identity separately from provenance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FaultHistoryEntry {
     /// Protocol-specific fault code without proven semantic mapping.
-    pub code: RawFieldValue,
+    pub code: FaultCode,
 
     /// Source of the fault code.
     pub source: ValueSource,
@@ -6100,9 +6115,9 @@ pub struct FaultHistoryEntry {
 impl FaultHistoryEntry {
     /// Creates a structured unknown fault code reported directly by the device.
     #[must_use]
-    pub const fn reported_unknown(field: RawFieldValue) -> Self {
+    pub const fn reported_unknown(code: FaultCode) -> Self {
         Self {
-            code: field,
+            code,
             source: ValueSource::Reported,
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
@@ -8343,8 +8358,8 @@ mod tests {
 
     #[test]
     fn fault_history_readback_separates_unknown_code_from_since_distance() {
-        let last_fault =
-            crate::FaultHistoryEntry::reported_unknown(crate::RawFieldValue::new(0x0040, 1));
+        let code = crate::FaultCode::unknown(crate::RawFieldValue::new(0x0040, 1));
+        let last_fault = crate::FaultHistoryEntry::reported_unknown(code);
         let distance = Measured::reported(Distance::from_millimetres(61_456_941));
         let readback = crate::FaultHistoryReadback::fault_since(last_fault, Some(distance));
 
@@ -8353,6 +8368,7 @@ mod tests {
             crate::FaultHistoryAvailability::Available
         );
         assert_eq!(readback.last_fault, Some(last_fault));
+        assert_eq!(readback.last_fault.expect("fault").code, code);
         assert_eq!(readback.since_distance, Some(distance));
         assert_eq!(
             crate::FaultHistoryReadback::none_since(Some(distance)).last_fault,
