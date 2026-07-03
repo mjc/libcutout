@@ -162,6 +162,17 @@ device product before invoking `xcodebuild`, then deletes it again on failure,
 so a failed fresh build cannot silently install an older product from
 `target/xcode-device-signed`.
 
+`scripts/export-ios-ad-hoc.sh` archives the iPhone app and exports an ad hoc
+IPA. Xcode 27 names this export method `release-testing`, which replaces the
+ older `ad-hoc` label; the script keeps the repo surface named "ad hoc" while
+ emitting the current export method underneath. This path still depends on local
+ Apple signing state: set `CUTOUT_IOS_DEVELOPMENT_TEAM`, optionally
+ `CUTOUT_IOS_APP_BUNDLE_ID`, and either have a logged-in Xcode account with an
+ eligible profile or provide App Store Connect API key env vars
+ (`CUTOUT_APPSTORE_AUTH_KEY_PATH`, `CUTOUT_APPSTORE_AUTH_KEY_ID`,
+ `CUTOUT_APPSTORE_AUTH_KEY_ISSUER_ID`). The script prints the archive path,
+ export directory, and final `.ipa` path when export succeeds.
+
 ### Current Xcode Beta Warning Noise
 
 The app command surface is clean for project-owned warnings, but Xcode beta still
