@@ -8,9 +8,10 @@ use crate::{
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, RawFieldValue,
     RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback, Speed,
-    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
+    SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
+    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -920,13 +921,40 @@ impl From<FirmwareInfo> for FirmwareInfoDto {
 /// UniFFI-ready settings readback response.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SettingsReadbackDto {
+    /// Whether the requested settings readback is available for display.
+    pub availability: SettingsReadbackAvailabilityDto,
+
     /// Present settings entries.
     pub entries: Vec<SettingsEntryDto>,
+}
+
+/// UniFFI-ready settings readback availability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettingsReadbackAvailabilityDto {
+    /// Settings were reported by the device.
+    Available,
+
+    /// Settings are expected for this device/profile but were not reported.
+    Unavailable,
+
+    /// Settings are not supported for this device/profile.
+    Unsupported,
+}
+
+impl From<SettingsReadbackAvailability> for SettingsReadbackAvailabilityDto {
+    fn from(availability: SettingsReadbackAvailability) -> Self {
+        match availability {
+            SettingsReadbackAvailability::Available => Self::Available,
+            SettingsReadbackAvailability::Unavailable => Self::Unavailable,
+            SettingsReadbackAvailability::Unsupported => Self::Unsupported,
+        }
+    }
 }
 
 impl From<SettingsReadback> for SettingsReadbackDto {
     fn from(settings: SettingsReadback) -> Self {
         Self {
+            availability: settings.availability.into(),
             entries: settings
                 .entries
                 .into_iter()
@@ -2010,24 +2038,22 @@ mod tests {
 
     #[test]
     fn read_only_settings_output_owns_present_entries_only() {
-        let response = ReadOnlyResponse::Settings(SettingsReadback {
-            entries: [
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0014, 30),
-                    source: ValueSource::Reported,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0018, 45),
-                    source: ValueSource::Estimated,
-                    quality: ValueQuality::Inferred,
-                    verification: VerificationStatus::Inferred,
-                }),
-                None,
-            ],
-        });
+        let response = ReadOnlyResponse::Settings(SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0014, 30),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0018, 45),
+                source: ValueSource::Estimated,
+                quality: ValueQuality::Inferred,
+                verification: VerificationStatus::Inferred,
+            }),
+            None,
+        ]));
 
         let output = ReadOnlyOutput::from(response);
 
@@ -2035,6 +2061,10 @@ mod tests {
         let ReadOnlyOutputPayload::Settings(settings) = output.payload else {
             panic!("expected settings DTO");
         };
+        assert_eq!(
+            settings.availability,
+            SettingsReadbackAvailabilityDto::Available
+        );
         assert_eq!(settings.entries.len(), 2);
         assert_eq!(settings.entries[0].field.id, 0x0014);
         assert_eq!(settings.entries[0].source, ValueSourceDto::Reported);
@@ -2171,19 +2201,17 @@ mod tests {
             max_write_len: Some(write_len(182)),
         })));
         let readback = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-            ReadOnlyResponse::Settings(SettingsReadback {
-                entries: [
-                    Some(SettingsEntry {
-                        field: RawFieldValue::new(0x0014, 30),
-                        source: ValueSource::Reported,
-                        quality: ValueQuality::Known,
-                        verification: VerificationStatus::HardwareVerified,
-                    }),
-                    None,
-                    None,
-                    None,
-                ],
-            }),
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x0014, 30),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                None,
+                None,
+            ])),
         )));
 
         assert_eq!(
@@ -2208,6 +2236,10 @@ mod tests {
         let ReadOnlyOutputPayload::Settings(settings) = response.payload else {
             panic!("expected settings readback");
         };
+        assert_eq!(
+            settings.availability,
+            SettingsReadbackAvailabilityDto::Available
+        );
         assert_eq!(settings.entries[0].field.id, 0x0014);
         assert_eq!(settings.entries[0].field.value, 30);
     }

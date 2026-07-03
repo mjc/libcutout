@@ -23,8 +23,9 @@ use cutout_core::{
     DiagnosticReadback, Distance, DutyCycle, FirmwareInfo, Measured, ModelCatalog,
     NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics, PercentQuantity,
     PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity, QuantityDisplayValue,
-    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback, SignalStrength, Speed,
-    TelemetryDelta, TelemetrySnapshot, Temperature, Unit, Voltage,
+    RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+    SettingsReadbackAvailability, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot,
+    Temperature, Unit, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelId,
@@ -2471,8 +2472,20 @@ impl fmt::Display for SettingsReadbackLog {
         if wrote {
             Ok(())
         } else {
-            write!(f, "read-only settings none observed")
+            write!(
+                f,
+                "read-only settings {}",
+                settings_readback_availability_name(self.0.availability)
+            )
         }
+    }
+}
+
+fn settings_readback_availability_name(availability: SettingsReadbackAvailability) -> &'static str {
+    match availability {
+        SettingsReadbackAvailability::Available => "none observed",
+        SettingsReadbackAvailability::Unavailable => "unavailable",
+        SettingsReadbackAvailability::Unsupported => "unsupported",
     }
 }
 
@@ -4338,9 +4351,12 @@ mod tests {
     fn sample_aero_read_only_responses() -> Vec<ReadOnlyResponse> {
         vec![
             ReadOnlyResponse::Firmware(firmware_43_2_54()),
-            ReadOnlyResponse::Settings(SettingsReadback {
-                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
-            }),
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(hardware_setting(0x20, 540)),
+                None,
+                None,
+                None,
+            ])),
             ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
                 BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                 BatteryInfo::default(),
@@ -5132,24 +5148,22 @@ mod tests {
 
     #[test]
     fn settings_readback_log_streams_bounded_entries_at_render_edge() {
-        let settings = SettingsReadback {
-            entries: [
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x20, 540),
-                    source: ValueSource::Reported,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x21, -12),
-                    source: ValueSource::Estimated,
-                    quality: ValueQuality::Inferred,
-                    verification: VerificationStatus::Inferred,
-                }),
-                None,
-            ],
-        };
+        let settings = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x20, 540),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x21, -12),
+                source: ValueSource::Estimated,
+                quality: ValueQuality::Inferred,
+                verification: VerificationStatus::Inferred,
+            }),
+            None,
+        ]);
 
         assert_eq!(
             SettingsReadbackLog(settings).to_string(),
@@ -5157,7 +5171,11 @@ mod tests {
         );
         assert_eq!(
             SettingsReadbackLog(SettingsReadback::default()).to_string(),
-            "read-only settings none observed"
+            "read-only settings unavailable"
+        );
+        assert_eq!(
+            SettingsReadbackLog(SettingsReadback::unsupported()).to_string(),
+            "read-only settings unsupported"
         );
     }
 
@@ -5282,9 +5300,12 @@ mod tests {
         );
 
         assert_display_preserves_capacity(
-            SettingsReadbackLog(SettingsReadback {
-                entries: [Some(hardware_setting(0x20, 540)), None, None, None],
-            }),
+            SettingsReadbackLog(SettingsReadback::available([
+                Some(hardware_setting(0x20, 540)),
+                None,
+                None,
+                None,
+            ])),
             "read-only settings field=32 value=540 quality=known verification=hardware_verified",
         );
 
@@ -5676,19 +5697,17 @@ mod tests {
                     firmware_patch: Some(Measured::reported(54)),
                     ..FirmwareInfo::default()
                 }),
-                ReadOnlyResponse::Settings(SettingsReadback {
-                    entries: [
-                        Some(SettingsEntry {
-                            field: RawFieldValue::new(0x24, 1_920),
-                            source: ValueSource::Reported,
-                            quality: ValueQuality::Known,
-                            verification: VerificationStatus::HardwareVerified,
-                        }),
-                        None,
-                        None,
-                        None,
-                    ],
-                }),
+                ReadOnlyResponse::Settings(SettingsReadback::available([
+                    Some(SettingsEntry {
+                        field: RawFieldValue::new(0x24, 1_920),
+                        source: ValueSource::Reported,
+                        quality: ValueQuality::Known,
+                        verification: VerificationStatus::HardwareVerified,
+                    }),
+                    None,
+                    None,
+                    None,
+                ])),
                 ReadOnlyResponse::Battery(BatteryPagePayload::cell_voltage(
                     BatteryPageMetadata::cell_voltage(sel(2), VerificationStatus::HardwareVerified),
                     BatteryInfo::default(),

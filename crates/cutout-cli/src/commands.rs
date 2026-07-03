@@ -26,8 +26,8 @@ use cutout_core::{
     ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
     ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
-    SettingsReadback, TelemetrySnapshot, TransportWriteLimit, ValueQuality, ValueSource,
-    VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
+    SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot, TransportWriteLimit,
+    ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -2184,6 +2184,7 @@ fn render_read_only_response_jsonl(
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "settings",
+            "availability": settings_readback_availability_name(settings.availability),
             "entries": settings.entries.into_iter().flatten().map(settings_entry_json).collect::<Vec<_>>(),
         })),
         ReadOnlyResponse::Diagnostics(diagnostics) => serde_json::to_string(&serde_json::json!({
@@ -2546,17 +2547,32 @@ struct SettingsLine(SettingsReadback);
 
 impl SettingsLine {
     fn has_fields(self) -> bool {
-        self.0.entries.into_iter().any(|entry| entry.is_some())
+        self.0.availability != SettingsReadbackAvailability::Available
+            || self.0.entries.into_iter().any(|entry| entry.is_some())
     }
 }
 
 impl fmt::Display for SettingsLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut fields = CommandFieldWriter::new(f, "settings");
+        if self.0.availability != SettingsReadbackAvailability::Available {
+            fields.write_str_field(
+                "availability",
+                settings_readback_availability_name(self.0.availability),
+            )?;
+        }
         for entry in self.0.entries.into_iter().flatten() {
             fields.write_raw_field(entry.field)?;
         }
         Ok(())
+    }
+}
+
+fn settings_readback_availability_name(availability: SettingsReadbackAvailability) -> &'static str {
+    match availability {
+        SettingsReadbackAvailability::Available => "available",
+        SettingsReadbackAvailability::Unavailable => "unavailable",
+        SettingsReadbackAvailability::Unsupported => "unsupported",
     }
 }
 
@@ -2595,6 +2611,11 @@ impl<'formatter, 'output> CommandFieldWriter<'formatter, 'output> {
         }
         self.fields = self.fields.increment();
         write!(self.output, "raw_{:04x}={}", field.id, field.value)
+    }
+
+    fn write_str_field(&mut self, name: &'static str, value: &'static str) -> fmt::Result {
+        self.write_field_name(name)?;
+        write!(self.output, "{value}")
     }
 
     fn write_field_name(&mut self, name: &'static str) -> fmt::Result {
@@ -4894,18 +4915,16 @@ mod tests {
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
         };
-        let settings = SettingsReadback {
-            entries: [
-                Some(entry(0x0014, 0)),
-                Some(entry(0x0016, 0)),
-                Some(entry(0x0018, 550)),
-                Some(entry(0x001a, 540)),
-            ],
-        };
-        let more_settings = SettingsReadback {
-            entries: [Some(entry(0x001e, 1_920)), None, None, None],
-        };
-        let rendered = render_settings_readbacks(&[settings, more_settings])
+        let settings = SettingsReadback::available([
+            Some(entry(0x0014, 0)),
+            Some(entry(0x0016, 0)),
+            Some(entry(0x0018, 550)),
+            Some(entry(0x001a, 540)),
+        ]);
+        let more_settings =
+            SettingsReadback::available([Some(entry(0x001e, 1_920)), None, None, None]);
+        let unsupported_settings = SettingsReadback::unsupported();
+        let rendered = render_settings_readbacks(&[settings, more_settings, unsupported_settings])
             .map(|line| line.to_string())
             .collect::<Vec<_>>();
 
@@ -4914,6 +4933,7 @@ mod tests {
             vec![
                 "settings raw_0014=0 raw_0016=0 raw_0018=550 raw_001a=540",
                 "settings raw_001e=1920",
+                "settings availability=unsupported",
             ]
         );
     }

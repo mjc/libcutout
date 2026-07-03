@@ -5961,11 +5961,57 @@ pub struct SettingsEntry {
     pub verification: VerificationStatus,
 }
 
+/// Availability of a read-only settings response.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SettingsReadbackAvailability {
+    /// Settings were reported by the device.
+    Available,
+
+    /// Settings are expected for this device/profile but were not reported.
+    #[default]
+    Unavailable,
+
+    /// Settings are not supported for this device/profile.
+    Unsupported,
+}
+
 /// Bounded settings readback response.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettingsReadback {
+    /// Whether settings are available for display.
+    pub availability: SettingsReadbackAvailability,
+
     /// Settings entries.
     pub entries: [Option<SettingsEntry>; 4],
+}
+
+impl SettingsReadback {
+    /// Creates an available settings readback.
+    #[must_use]
+    pub const fn available(entries: [Option<SettingsEntry>; 4]) -> Self {
+        Self {
+            availability: SettingsReadbackAvailability::Available,
+            entries,
+        }
+    }
+
+    /// Creates an unavailable settings readback.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            availability: SettingsReadbackAvailability::Unavailable,
+            entries: [None, None, None, None],
+        }
+    }
+
+    /// Creates an unsupported settings readback.
+    #[must_use]
+    pub const fn unsupported() -> Self {
+        Self {
+            availability: SettingsReadbackAvailability::Unsupported,
+            entries: [None, None, None, None],
+        }
+    }
 }
 
 /// Generic read-only response payload.
@@ -8124,10 +8170,12 @@ mod tests {
             quality: ValueQuality::Known,
             verification: VerificationStatus::HardwareVerified,
         };
-        let response = crate::SettingsReadback {
-            entries: [Some(entry), None, None, None],
-        };
+        let response = crate::SettingsReadback::available([Some(entry), None, None, None]);
 
+        assert_eq!(
+            response.availability,
+            crate::SettingsReadbackAvailability::Available
+        );
         assert_eq!(response.entries[0], Some(entry));
         assert_eq!(response.entries[1], None);
         assert_eq!(
@@ -8966,9 +9014,8 @@ mod tests {
         let diagnostics = crate::ReadOnlyResponse::Diagnostics(crate::DiagnosticReadback {
             details: [None, None, None, None],
         });
-        let settings = crate::ReadOnlyResponse::Settings(crate::SettingsReadback {
-            entries: [None, None, None, None],
-        });
+        let settings =
+            crate::ReadOnlyResponse::Settings(crate::SettingsReadback::available([None; 4]));
 
         assert_eq!(
             firmware.command_kind(),

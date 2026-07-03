@@ -637,38 +637,34 @@ impl VeteranTelemetry {
     #[must_use]
     pub fn to_settings_responses(self) -> [ReadOnlyResponse; 2] {
         [
-            ReadOnlyResponse::Settings(SettingsReadback {
-                entries: [
-                    Some(settings_entry(
-                        VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
-                        i64::try_from(self.auto_shutdown_time_remaining.as_seconds())
-                            .unwrap_or(i64::MAX),
-                    )),
-                    Some(settings_entry(
-                        VETERAN_FIELD_CHARGE_MODE,
-                        i64::from(veteran_charge_mode_field(self.charge_mode)),
-                    )),
-                    Some(settings_entry(
-                        VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-                        i64::from(self.speed_alert.as_deci_kmh_rounded()),
-                    )),
-                    Some(settings_entry(
-                        VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-                        i64::from(self.speed_tiltback.as_deci_kmh_rounded()),
-                    )),
-                ],
-            }),
-            ReadOnlyResponse::Settings(SettingsReadback {
-                entries: [
-                    Some(settings_entry(
-                        VETERAN_FIELD_PEDALS_MODE,
-                        i64::from(self.pedals_mode.get()),
-                    )),
-                    None,
-                    None,
-                    None,
-                ],
-            }),
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(settings_entry(
+                    VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+                    i64::try_from(self.auto_shutdown_time_remaining.as_seconds())
+                        .unwrap_or(i64::MAX),
+                )),
+                Some(settings_entry(
+                    VETERAN_FIELD_CHARGE_MODE,
+                    i64::from(veteran_charge_mode_field(self.charge_mode)),
+                )),
+                Some(settings_entry(
+                    VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+                    i64::from(self.speed_alert.as_deci_kmh_rounded()),
+                )),
+                Some(settings_entry(
+                    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                    i64::from(self.speed_tiltback.as_deci_kmh_rounded()),
+                )),
+            ])),
+            ReadOnlyResponse::Settings(SettingsReadback::available([
+                Some(settings_entry(
+                    VETERAN_FIELD_PEDALS_MODE,
+                    i64::from(self.pedals_mode.get()),
+                )),
+                None,
+                None,
+                None,
+            ])),
         ]
     }
 }

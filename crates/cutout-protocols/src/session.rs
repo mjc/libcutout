@@ -1112,11 +1112,15 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                 }
             }
         }
-        SessionInput::Command(command) => {
-            if let ReadOnlyCommandGate::SupportedRead(kind) = gate_read_only_command::<M>(command) {
-                push_read_request::<M>(kind, output);
+        SessionInput::Command(command) => match gate_read_only_command::<M>(command) {
+            ReadOnlyCommandGate::SupportedRead(kind) => push_read_request::<M>(kind, output),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings) => {
+                output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                    ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported()),
+                )));
             }
-        }
+            ReadOnlyCommandGate::Unsupported(_) => {}
+        },
     }
 }
 
@@ -2824,6 +2828,29 @@ mod tests {
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn read_only_session_reports_unsupported_settings_without_writes() {
+        let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::RequestSettings),
+            &mut output,
+        );
+
+        assert!(
+            output
+                .iter()
+                .all(|item| !matches!(item, SessionOutput::Transport(_)))
+        );
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported())
+            ))]
+        );
     }
 
     #[test]

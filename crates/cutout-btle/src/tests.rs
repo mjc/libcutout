@@ -2314,19 +2314,17 @@ impl ProtocolSession for BridgeSession {
                     }),
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                    ReadOnlyResponse::Settings(SettingsReadback {
-                        entries: [
-                            Some(SettingsEntry {
-                                field: RawFieldValue::new(0x0014, 30),
-                                source: ValueSource::Reported,
-                                quality: ValueQuality::Known,
-                                verification: VerificationStatus::HardwareVerified,
-                            }),
-                            None,
-                            None,
-                            None,
-                        ],
-                    }),
+                    ReadOnlyResponse::Settings(SettingsReadback::available([
+                        Some(SettingsEntry {
+                            field: RawFieldValue::new(0x0014, 30),
+                            source: ValueSource::Reported,
+                            quality: ValueQuality::Known,
+                            verification: VerificationStatus::HardwareVerified,
+                        }),
+                        None,
+                        None,
+                        None,
+                    ])),
                 )));
                 output.push(SessionOutput::Event(DeviceEvent::DiagnosticError(
                     DiagnosticError::from_parser_error(ParserError::MalformedFrame),

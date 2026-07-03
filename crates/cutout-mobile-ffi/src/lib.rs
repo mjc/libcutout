@@ -12,7 +12,8 @@ use cutout_core::{
     PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
     PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue, RawFieldValueDto,
     ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback, SettingsReadbackDto,
+    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
     TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
     ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto, VerificationStatus,
     VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
@@ -1476,7 +1477,7 @@ impl From<SettingsEntryDto> for MobileSettingsEntryDto {
 impl From<SettingsReadback> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadback) -> Self {
         Self {
-            availability: MobileReadbackAvailabilityDto::Available,
+            availability: readback.availability.into(),
             entries: readback
                 .entries
                 .into_iter()
@@ -1490,8 +1491,28 @@ impl From<SettingsReadback> for MobileSettingsReadbackDto {
 impl From<SettingsReadbackDto> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadbackDto) -> Self {
         Self {
-            availability: MobileReadbackAvailabilityDto::Available,
+            availability: readback.availability.into(),
             entries: readback.entries.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<SettingsReadbackAvailability> for MobileReadbackAvailabilityDto {
+    fn from(availability: SettingsReadbackAvailability) -> Self {
+        match availability {
+            SettingsReadbackAvailability::Available => Self::Available,
+            SettingsReadbackAvailability::Unavailable => Self::Unavailable,
+            SettingsReadbackAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<SettingsReadbackAvailabilityDto> for MobileReadbackAvailabilityDto {
+    fn from(availability: SettingsReadbackAvailabilityDto) -> Self {
+        match availability {
+            SettingsReadbackAvailabilityDto::Available => Self::Available,
+            SettingsReadbackAvailabilityDto::Unavailable => Self::Unavailable,
+            SettingsReadbackAvailabilityDto::Unsupported => Self::Unsupported,
         }
     }
 }
@@ -2342,24 +2363,22 @@ mod tests {
 
     #[test]
     fn mobile_settings_readback_preserves_present_fields_and_metadata() {
-        let readback = SettingsReadback {
-            entries: [
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0102, -17),
-                    source: ValueSource::Reported,
-                    quality: ValueQuality::Known,
-                    verification: VerificationStatus::HardwareVerified,
-                }),
-                None,
-                Some(SettingsEntry {
-                    field: RawFieldValue::new(0x0203, 42),
-                    source: ValueSource::Estimated,
-                    quality: ValueQuality::Inferred,
-                    verification: VerificationStatus::Inferred,
-                }),
-                None,
-            ],
-        };
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0102, -17),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            Some(SettingsEntry {
+                field: RawFieldValue::new(0x0203, 42),
+                source: ValueSource::Estimated,
+                quality: ValueQuality::Inferred,
+                verification: VerificationStatus::Inferred,
+            }),
+            None,
+        ]);
 
         let mobile = MobileSettingsReadbackDto::from(readback);
 
@@ -2393,10 +2412,24 @@ mod tests {
     }
 
     #[test]
+    fn mobile_settings_readback_preserves_unsupported_availability() {
+        let mobile = MobileSettingsReadbackDto::from(SettingsReadback::unsupported());
+
+        assert_eq!(
+            mobile,
+            MobileSettingsReadbackDto {
+                availability: MobileReadbackAvailabilityDto::Unsupported,
+                entries: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
     fn mobile_session_output_preserves_settings_readback_event() {
         let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
             command_kind: CommandKindDto::RequestSettings,
             payload: ReadOnlyOutputPayload::Settings(SettingsReadbackDto {
+                availability: SettingsReadbackAvailabilityDto::Available,
                 entries: vec![SettingsEntryDto {
                     field: RawFieldValueDto {
                         id: 0x0102,
