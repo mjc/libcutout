@@ -19,6 +19,9 @@ pub enum AeroProbe {
 
     /// Request diagnostic information.
     Diagnostics,
+
+    /// Request current settings information.
+    Settings,
 }
 
 impl AeroProbe {
@@ -31,10 +34,10 @@ impl AeroProbe {
             CommandKind::RequestTelemetry => Some(Self::Telemetry),
             CommandKind::RequestBatteryInfo => Some(Self::BatteryInfo),
             CommandKind::RequestDiagnostics => Some(Self::Diagnostics),
-            CommandKind::RequestSettings
-            | CommandKind::SetLights
-            | CommandKind::SoundHorn
-            | CommandKind::SetRawMotorCurrent => None,
+            CommandKind::RequestSettings => Some(Self::Settings),
+            CommandKind::SetLights | CommandKind::SoundHorn | CommandKind::SetRawMotorCurrent => {
+                None
+            }
         }
     }
 
@@ -47,6 +50,7 @@ impl AeroProbe {
             Self::Telemetry => CommandKind::RequestTelemetry,
             Self::BatteryInfo => CommandKind::RequestBatteryInfo,
             Self::Diagnostics => CommandKind::RequestDiagnostics,
+            Self::Settings => CommandKind::RequestSettings,
         }
     }
 }

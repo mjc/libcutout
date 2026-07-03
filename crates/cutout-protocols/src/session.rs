@@ -981,6 +981,7 @@ impl SupportsReadRequests for NosfetAeroModel {
         CommandKind::RequestTelemetry,
         CommandKind::RequestBatteryInfo,
         CommandKind::RequestDiagnostics,
+        CommandKind::RequestSettings,
     ]);
     const WRITE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
     const SUBSCRIBE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
@@ -1172,6 +1173,14 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
         }) => {
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                 ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable()),
+            )));
+        }
+        Some(RequestDisposition::Passive {
+            command: CommandKind::RequestSettings,
+            ..
+        }) => {
+            output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unavailable()),
             )));
         }
         Some(RequestDisposition::Passive { .. }) => {}
@@ -2819,6 +2828,10 @@ mod tests {
             ReadOnlyCommandGate::SupportedRead(CommandKind::RequestDiagnostics)
         );
         assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestSettings),
+            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestSettings)
+        );
+        assert_eq!(
             gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestIdentity),
             ReadOnlyCommandGate::SupportedRead(CommandKind::RequestIdentity)
         );
@@ -2834,10 +2847,6 @@ mod tests {
 
     #[test]
     fn read_only_gate_rejects_write_control_and_actuation_commands() {
-        assert_eq!(
-            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestSettings),
-            ReadOnlyCommandGate::Unsupported(CommandKind::RequestSettings)
-        );
         assert_eq!(
             gate_read_only_command::<NosfetAeroModel>(DeviceCommand::SetLights(
                 cutout_core::LightState::On
@@ -3022,7 +3031,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_session_reports_unsupported_settings_without_writes() {
+    fn aero_passive_settings_reports_unavailable_settings_without_writes() {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
@@ -3039,7 +3048,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported())
+                ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unavailable())
             ))]
         );
     }

@@ -157,6 +157,7 @@ mod tests {
                 CommandKind::RequestTelemetry,
                 CommandKind::RequestBatteryInfo,
                 CommandKind::RequestDiagnostics,
+                CommandKind::RequestSettings,
             ])
         );
     }
