@@ -902,7 +902,7 @@ private struct EucRideMockupView: View {
     }
 
     private var phaseText: String {
-        rideState?.phaseText ?? screen.displaySubtitle
+        rideState?.statusText ?? screen.displaySubtitle
     }
 
     private var titleText: String {
@@ -919,7 +919,7 @@ private struct EucRideMockupView: View {
     private var safetyBars: [MockupSafetyBar] {
         if let rideState {
             if let telemetry = rideState.telemetry {
-                return liveSafetyBars(from: telemetry)
+                return liveSafetyBars(for: rideState, telemetry: telemetry)
             }
             return unavailableSafetyBars(from: screen.safetyBars)
         }
@@ -1688,18 +1688,21 @@ private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard
     }
 }
 
-private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyBar] {
+private func liveSafetyBars(for state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [MockupSafetyBar] {
     [
-        telemetry.pwm.map { pwm in
-            let usedPermille = min(1_000, abs(Int(pwm.permille)))
-            let headroomPermille = max(0, 1_000 - usedPermille)
+        state.pwmHeadroomPermille.map { headroomPermille in
             return MockupSafetyBar(
                 label: "PWM headroom",
                 value: percentageString(fromPermille: headroomPermille),
                 progress: Double(headroomPermille) / 1_000.0,
                 accent: .yellow
             )
-        } ?? MockupSafetyBar(label: "PWM headroom", value: "Unavailable", progress: 0, accent: .yellow),
+        } ?? MockupSafetyBar(
+            label: "PWM headroom",
+            value: state.pwmHeadroomApplicability == .notApplicable ? "Not applicable" : "Unavailable",
+            progress: 0,
+            accent: .yellow
+        ),
         telemetry.batteryLevelEstimated.map { batteryLevel in
             MockupSafetyBar(
                 label: "estimated energy",

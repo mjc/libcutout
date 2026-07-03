@@ -444,6 +444,67 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.telemetry?.speed, Speed(value: 1_234))
     }
 
+    func testRideStateExposesPwmHeadroomOnlyWhileRiding() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(230))
+            )
+        )
+
+        XCTAssertEqual(rideState.pwmHeadroomApplicability, .available)
+        XCTAssertEqual(rideState.pwmHeadroomPermille, 770)
+    }
+
+    func testRideStateStatusUsesOperatingStateWhenLive() {
+        let parked = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .parked)
+            )
+        )
+        let riding = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .riding)
+            )
+        )
+        let charging = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .charging)
+            )
+        )
+
+        XCTAssertEqual(parked.statusText, "Parked")
+        XCTAssertEqual(riding.statusText, "Riding")
+        XCTAssertEqual(charging.statusText, "Charging")
+    }
+
+    func testRideStateTreatsParkedPwmHeadroomAsNotApplicable() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .parked, pwm: dutyCycle(0))
+            )
+        )
+
+        XCTAssertEqual(rideState.pwmHeadroomApplicability, .notApplicable)
+        XCTAssertNil(rideState.pwmHeadroomPermille)
+    }
+
+    func testRideStateTreatsMissingPwmHeadroomAsUnavailable() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .riding)
+            )
+        )
+
+        XCTAssertEqual(rideState.pwmHeadroomApplicability, .unavailable)
+        XCTAssertNil(rideState.pwmHeadroomPermille)
+    }
+
     func testDisplayStateProvidesDebugRowsForLiveValidation() {
         let displayState = RideDisplayState(
             speed: SpeedReadout(millimetersPerSecond: 1_234),
@@ -471,4 +532,8 @@ private func voltageValue(_ value: Int32) -> Voltage {
 
 private func batteryLevelValue(_ value: UInt8) -> BatteryLevel {
     BatteryLevel(value: value)
+}
+
+private func dutyCycle(_ permille: Int16) -> DutyCycle {
+    DutyCycle(permille: permille)
 }

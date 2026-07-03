@@ -1809,6 +1809,9 @@ pub struct TelemetryDeltaDto {
     /// Battery/input current in milliamps.
     pub battery_current: Option<MeasuredI32Dto>,
 
+    /// Device charging state decoded from protocol-specific status fields.
+    pub charge_mode: Option<MeasuredChargeModeDto>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<MeasuredI32Dto>,
 
@@ -1850,6 +1853,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             speed: delta.speed.map(Into::into),
             voltage: delta.voltage.map(Into::into),
             battery_current: delta.battery_current.map(Into::into),
+            charge_mode: delta.charge_mode.map(Into::into),
             motor_current: delta.motor_current.map(Into::into),
             power: delta.power.map(Into::into),
             controller_temperature: delta.controller_temperature.map(Into::into),
@@ -1879,6 +1883,9 @@ pub struct TelemetrySnapshotDto {
 
     /// Battery/input current in milliamps.
     pub battery_current: Option<MeasuredI32Dto>,
+
+    /// Device charging state decoded from protocol-specific status fields.
+    pub charge_mode: Option<MeasuredChargeModeDto>,
 
     /// Motor/phase current in milliamps.
     pub motor_current: Option<MeasuredI32Dto>,
@@ -1921,6 +1928,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             speed: snapshot.speed.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
+            charge_mode: snapshot.charge_mode.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
             controller_temperature: snapshot.controller_temperature.map(Into::into),
@@ -2475,6 +2483,7 @@ mod tests {
             ))),
             voltage: Some(Measured::reported(Voltage::from_millivolts(84_000))),
             battery_current: None,
+            charge_mode: Some(Measured::reported(ChargeMode::Charging)),
             motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(-1_500))),
             power: None,
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
@@ -2496,6 +2505,10 @@ mod tests {
         assert_eq!(dto.speed.expect("speed").value, 1_200);
         assert_eq!(dto.voltage.expect("voltage").value, 84_000);
         assert_eq!(dto.battery_current, None);
+        assert_eq!(
+            dto.charge_mode.expect("charge mode").value,
+            ChargeModeDto::Charging
+        );
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
         assert_eq!(dto.battery_level_estimated.expect("level").value, 80);
     }

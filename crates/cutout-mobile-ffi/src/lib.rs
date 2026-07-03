@@ -3,23 +3,23 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    BatteryInfoDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, CommandKindDto,
-    ControlRefusalReasonDto, DeviceCommandDto, FaultCode, FaultCodeDto, FaultHistoryAvailability,
-    FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
-    FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
-    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredI16Dto, MeasuredI32Dto,
-    MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto, MonotonicMillisDto, MonotonicTimestamp,
-    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
-    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
-    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
-    PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
-    RawFieldValue, RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto,
-    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
-    SettingsReadbackDto, Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto,
-    TransportWriteLimit, TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    WallClockUnixTimestamp,
+    BatteryInfoDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, ChargeModeDto,
+    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultCode, FaultCodeDto,
+    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
+    FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
+    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredChargeModeDto,
+    MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
+    MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
+    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue, RawFieldValueDto,
+    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto,
+    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
+    Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
@@ -2347,11 +2347,17 @@ fn power_flow_from_signed_current(current: MeasuredI32Dto) -> PowerFlowDirection
     }
 }
 
-fn ride_operating_state_from_speed(speed: Option<MeasuredI32Dto>) -> RideOperatingState {
-    match speed.map(|speed| speed.value.cmp(&0)) {
-        Some(std::cmp::Ordering::Equal) => RideOperatingState::Parked,
-        Some(_) => RideOperatingState::Riding,
-        None => RideOperatingState::Unknown,
+fn ride_operating_state(
+    charge_mode: Option<MeasuredChargeModeDto>,
+    speed: Option<MeasuredI32Dto>,
+) -> RideOperatingState {
+    match charge_mode.map(|mode| mode.value) {
+        Some(ChargeModeDto::Charging) => RideOperatingState::Charging,
+        Some(ChargeModeDto::NotCharging) | None => match speed.map(|speed| speed.value.cmp(&0)) {
+            Some(std::cmp::Ordering::Equal) => RideOperatingState::Parked,
+            Some(_) => RideOperatingState::Riding,
+            None => RideOperatingState::Unknown,
+        },
     }
 }
 
@@ -2504,7 +2510,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
-            operating_state: ride_operating_state_from_speed(snapshot.speed),
+            operating_state: ride_operating_state(snapshot.charge_mode, snapshot.speed),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
@@ -3496,22 +3502,34 @@ mod tests {
     }
 
     #[test]
-    fn ride_operating_state_uses_speed_without_inventing_charging() {
+    fn ride_operating_state_uses_charge_mode_before_speed() {
         assert_eq!(
-            ride_operating_state_from_speed(None),
+            ride_operating_state(None, None),
             RideOperatingState::Unknown
         );
         assert_eq!(
-            ride_operating_state_from_speed(Some(measured_i32(0))),
+            ride_operating_state(None, Some(measured_i32(0))),
             RideOperatingState::Parked
         );
         assert_eq!(
-            ride_operating_state_from_speed(Some(measured_i32(1_000))),
+            ride_operating_state(None, Some(measured_i32(1_000))),
             RideOperatingState::Riding
         );
         assert_eq!(
-            ride_operating_state_from_speed(Some(measured_i32(-1_000))),
+            ride_operating_state(None, Some(measured_i32(-1_000))),
             RideOperatingState::Riding
+        );
+        assert_eq!(
+            ride_operating_state(
+                Some(MeasuredChargeModeDto {
+                    value: ChargeModeDto::Charging,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                Some(measured_i32(0)),
+            ),
+            RideOperatingState::Charging
         );
     }
 

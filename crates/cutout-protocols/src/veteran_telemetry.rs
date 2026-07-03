@@ -610,6 +610,7 @@ impl VeteranTelemetry {
             ))),
             voltage: Some(Measured::reported(self.voltage)),
             battery_current: Some(Measured::reported(self.battery_current)),
+            charge_mode: Some(Measured::reported(self.charge_mode)),
             power: Some(Measured::calculated(power)),
             controller_temperature: Some(Measured::reported(self.mosfet_temperature)),
             pwm: Some(Measured::reported(self.hardware_pwm)),
@@ -1381,6 +1382,10 @@ mod tests {
         assert_eq!(
             delta.battery_level_estimated,
             Some(Measured::estimated(BatteryLevel::from_percent(47)))
+        );
+        assert_eq!(
+            delta.charge_mode,
+            Some(Measured::reported(ChargeMode::NotCharging))
         );
     }
 

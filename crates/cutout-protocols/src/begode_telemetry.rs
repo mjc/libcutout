@@ -1357,6 +1357,7 @@ mod tests {
                 )),
                 voltage: Some(source_reported(Voltage::from_millivolts(90_075))),
                 battery_current: None,
+                charge_mode: None,
                 motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
                     -11_800,
                 ))),

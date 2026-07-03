@@ -6321,6 +6321,9 @@ pub struct TelemetryDelta {
     /// Battery/input current in milliamps.
     pub battery_current: Option<Measured<BatteryCurrent>>,
 
+    /// Device charging state decoded from protocol-specific status fields.
+    pub charge_mode: Option<Measured<ChargeMode>>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
 
@@ -6364,6 +6367,7 @@ impl TelemetryDelta {
             speed: None,
             voltage: None,
             battery_current: None,
+            charge_mode: None,
             motor_current: None,
             power: None,
             controller_temperature: None,
@@ -6393,6 +6397,9 @@ pub struct TelemetrySnapshot {
 
     /// Latest known battery/input current in milliamps.
     pub battery_current: Option<Measured<BatteryCurrent>>,
+
+    /// Latest known device charging state.
+    pub charge_mode: Option<Measured<ChargeMode>>,
 
     /// Latest known motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
@@ -6441,6 +6448,9 @@ impl TelemetrySnapshot {
         }
         if delta.battery_current.is_some() {
             self.battery_current = delta.battery_current;
+        }
+        if delta.charge_mode.is_some() {
+            self.charge_mode = delta.charge_mode;
         }
         if delta.motor_current.is_some() {
             self.motor_current = delta.motor_current;
@@ -6708,6 +6718,7 @@ where
                 speed: None,
                 voltage: None,
                 battery_current: None,
+                charge_mode: None,
                 motor_current: None,
                 power: None,
                 controller_temperature: None,
@@ -7540,7 +7551,7 @@ mod tests {
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
         assert!(size_of::<crate::RawTelemetryReadback>() <= 96);
         assert!(size_of::<crate::ReadOnlyResponse>() <= 136);
-        assert_eq!(size_of::<SessionOutput>(), 136);
+        assert_eq!(size_of::<SessionOutput>(), 144);
         assert_eq!(size_of::<TransportAction>(), 64);
     }
 
@@ -7550,7 +7561,7 @@ mod tests {
         assert_eq!(crate::MAX_INLINE_TRANSPORT_WRITE_LEN, 32);
         assert_eq!(size_of::<WritePayload>(), 40);
         assert_eq!(size_of::<TransportAction>(), 64);
-        assert_eq!(size_of::<SessionOutput>(), 136);
+        assert_eq!(size_of::<SessionOutput>(), 144);
     }
 
     #[test]

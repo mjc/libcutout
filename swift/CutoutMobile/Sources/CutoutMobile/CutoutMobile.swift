@@ -978,6 +978,12 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
     }
 }
 
+public enum EucRideMetricApplicability: Equatable, Hashable, Sendable {
+    case available
+    case unavailable
+    case notApplicable
+}
+
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
     public let phase: SessionConnectionPhase
     public let displayState: RideDisplayState
@@ -995,8 +1001,42 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         telemetry?.operatingState ?? .unknown
     }
 
+    public var pwmHeadroomApplicability: EucRideMetricApplicability {
+        guard telemetry?.pwm != nil else {
+            return .unavailable
+        }
+
+        return operatingState == .riding ? .available : .notApplicable
+    }
+
+    public var pwmHeadroomPermille: Int? {
+        guard pwmHeadroomApplicability == .available, let pwm = telemetry?.pwm else {
+            return nil
+        }
+
+        let usedPermille = min(1_000, abs(Int(pwm.permille)))
+        return max(0, 1_000 - usedPermille)
+    }
+
     public var phaseText: String {
         phase.displayText
+    }
+
+    public var statusText: String {
+        guard phase == .live else {
+            return phaseText
+        }
+
+        switch operatingState {
+        case .parked:
+            return "Parked"
+        case .riding:
+            return "Riding"
+        case .charging:
+            return "Charging"
+        case .unknown:
+            return "Live"
+        }
     }
 
     public var speedText: String {
