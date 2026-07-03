@@ -115,6 +115,7 @@ repository dev shell:
 
 ```console
 nix develop -c ./scripts/test-swift-package.sh
+nix develop -c ./scripts/run-cutout-app.sh --launch-smoke
 nix develop -c ./scripts/smoke-ios-app-metadata.sh
 nix develop -c ./scripts/run-ios-app-on-mac.sh
 CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-app-on-phone.sh
@@ -124,16 +125,20 @@ CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-app-on-pho
 Darwin-safe Swift environment and UniFFI linker flags. Pass `--filter NAME` for
 a focused XCTest filter while keeping the same generated workspace path.
 
+`scripts/run-cutout-app.sh --launch-smoke` builds and launches the native macOS
+SwiftUI `CutoutApp` executable from a generated SwiftPM workspace, exits from
+the app launch delegate, and prints `cutout_app_launch=ok`. Omit
+`--launch-smoke` to keep the Mac app running interactively.
+
 `scripts/smoke-ios-app-metadata.sh` builds the iPhone app bundle and checks the
 bundle metadata that previously drifted, including portrait orientation and
 Bluetooth usage text.
 
 `scripts/run-ios-app-on-mac.sh` builds the real iPhoneOS app bundle for
 Apple Silicon Mac and prints its product path. Set `CUTOUT_IOS_ON_MAC_DESTINATION`
-to override the Xcode destination. Raw `open` of this `Debug-iphoneos` bundle
-currently fails with an incorrect-executable-format error, so Mac launch proof is
-still tracked by the app workflow cleanup ticket rather than hidden behind a
-flaky command.
+to override the Xcode destination. The product is still an unsigned
+`Debug-iphoneos` bundle, so this command is bundle-build proof; local Mac launch
+proof comes from `scripts/run-cutout-app.sh --launch-smoke`.
 
 `scripts/run-ios-app-on-phone.sh` builds, installs, and launches the app
 on a connected booted iOS device. Signing stays local: provide

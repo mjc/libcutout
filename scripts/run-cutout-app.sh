@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
+
+root="$(cutout_repo_root)"
 cd "$root"
 
 if [[ "$(uname -s)" != Darwin ]]; then
@@ -9,10 +11,10 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 
-./scripts/smoke-swift-package.sh
+package_dir="${CUTOUT_SWIFT_APP_PACKAGE_DIR:-target/swift-package-app/CutoutMobile}"
+cutout_prepare_swift_package_workspace "$package_dir"
 
-package_dir="target/swift-package-smoke/CutoutMobile"
-swift_cmd=(env -u SDKROOT -u DEVELOPER_DIR swift)
+swift_cmd=($(cutout_swift_runtime_command))
 export DYLD_LIBRARY_PATH="$root/target/debug:${DYLD_LIBRARY_PATH:-}"
 exec "${swift_cmd[@]}" run \
   --package-path "$package_dir" \

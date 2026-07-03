@@ -24,4 +24,4 @@ product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(CUTOUT_IOS_APP_BUILD_DESTINATION="$desti
 
 echo "ios_app_product=$product"
 echo "ios_app_destination=$destination"
-echo "ios_app_note=real iPhoneOS app bundle built; raw macOS open currently fails with incorrect executable format"
+echo "ios_app_note=real iPhoneOS app bundle built; use scripts/run-cutout-app.sh --launch-smoke for local Mac launch proof"

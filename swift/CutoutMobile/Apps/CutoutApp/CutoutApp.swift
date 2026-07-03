@@ -42,6 +42,10 @@ final class CutoutAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        if CommandLine.arguments.contains("--launch-smoke") {
+            print("cutout_app_launch=ok")
+            Foundation.exit(EXIT_SUCCESS)
+        }
     }
 }
 #endif
