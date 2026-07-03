@@ -10,11 +10,12 @@ use cutout_core::{
     NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
     ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
     PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue,
-    ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
-    SettingsEntry, SettingsReadback, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue, RawFieldValueDto,
+    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto,
+    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback, SettingsReadbackDto,
+    TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
+    ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto, VerificationStatus,
+    VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -374,6 +375,9 @@ pub enum MobileSessionOutputKindDto {
 
     /// Typed protocol notification ingest outcome.
     NotificationIngest,
+
+    /// Read-only settings response.
+    SettingsReadback,
 }
 
 /// Mobile output DTO.
@@ -390,6 +394,9 @@ pub struct MobileSessionOutputDto {
 
     /// Typed parser-first ingest outcome.
     pub ingest: Option<MobileNotificationIngestOutcomeDto>,
+
+    /// Typed read-only settings response.
+    pub settings_readback: Option<MobileSettingsReadbackDto>,
 }
 
 /// Mobile notification ingest outcome kind.
@@ -1419,8 +1426,28 @@ impl From<RawFieldValue> for MobileRawFieldValueDto {
     }
 }
 
+impl From<RawFieldValueDto> for MobileRawFieldValueDto {
+    fn from(field: RawFieldValueDto) -> Self {
+        Self {
+            id: field.id,
+            value: field.value,
+        }
+    }
+}
+
 impl From<SettingsEntry> for MobileSettingsEntryDto {
     fn from(entry: SettingsEntry) -> Self {
+        Self {
+            field: entry.field.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<SettingsEntryDto> for MobileSettingsEntryDto {
+    fn from(entry: SettingsEntryDto) -> Self {
         Self {
             field: entry.field.into(),
             source: entry.source.into(),
@@ -1439,6 +1466,14 @@ impl From<SettingsReadback> for MobileSettingsReadbackDto {
                 .flatten()
                 .map(Into::into)
                 .collect(),
+        }
+    }
+}
+
+impl From<SettingsReadbackDto> for MobileSettingsReadbackDto {
+    fn from(readback: SettingsReadbackDto) -> Self {
+        Self {
+            entries: readback.entries.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -1639,35 +1674,58 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 channel: channel.to_vec(),
                 bytes: Vec::new(),
                 ingest: None,
+                settings_readback: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
                 kind: MobileSessionOutputKindDto::Write,
                 channel: channel.to_vec(),
                 bytes,
                 ingest: None,
+                settings_readback: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
                 kind: MobileSessionOutputKindDto::Disconnect,
                 channel: Vec::new(),
                 bytes: Vec::new(),
                 ingest: None,
+                settings_readback: None,
+            },
+            SessionOutputDto::ReadOnly(response) => match response.payload {
+                ReadOnlyOutputPayload::Settings(settings) => Self {
+                    kind: MobileSessionOutputKindDto::SettingsReadback,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: Some(settings.into()),
+                },
+                ReadOnlyOutputPayload::Firmware(_)
+                | ReadOnlyOutputPayload::Battery(_)
+                | ReadOnlyOutputPayload::Diagnostics(_)
+                | ReadOnlyOutputPayload::RawTelemetry(_) => Self {
+                    kind: MobileSessionOutputKindDto::Event,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: None,
+                },
             },
             SessionOutputDto::Event(_) => Self {
                 kind: MobileSessionOutputKindDto::Event,
                 channel: Vec::new(),
                 bytes: Vec::new(),
                 ingest: None,
+                settings_readback: None,
             },
             SessionOutputDto::NotificationIngest(outcome) => Self {
                 kind: MobileSessionOutputKindDto::NotificationIngest,
                 channel: Vec::new(),
                 bytes: Vec::new(),
                 ingest: Some(outcome.into()),
+                settings_readback: None,
             },
         }
     }
 }
-
 impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
     fn from(outcome: NotificationIngestOutcomeDto) -> Self {
         match outcome {
@@ -2309,6 +2367,45 @@ mod tests {
                     verification: MobileVerificationStatusDto::Inferred,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn mobile_session_output_preserves_settings_readback_event() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestSettings,
+            payload: ReadOnlyOutputPayload::Settings(SettingsReadbackDto {
+                entries: vec![SettingsEntryDto {
+                    field: RawFieldValueDto {
+                        id: 0x0102,
+                        value: -17,
+                    },
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }],
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::SettingsReadback);
+        assert!(mobile.channel.is_empty());
+        assert!(mobile.bytes.is_empty());
+        assert_eq!(mobile.ingest, None);
+        assert_eq!(
+            mobile.settings_readback,
+            Some(MobileSettingsReadbackDto {
+                entries: vec![MobileSettingsEntryDto {
+                    field: MobileRawFieldValueDto {
+                        id: 0x0102,
+                        value: -17,
+                    },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                }],
+            })
         );
     }
 

@@ -30,6 +30,7 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
     case event
     case disconnect
     case notificationIngest
+    case settingsReadback
 
     fileprivate init(_ dto: MobileSessionOutputKindDto) {
         switch dto {
@@ -43,6 +44,8 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
             self = .disconnect
         case .notificationIngest:
             self = .notificationIngest
+        case .settingsReadback:
+            self = .settingsReadback
         }
     }
 }
@@ -51,17 +54,132 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let kind: SessionActionKind
     public let channel: Data
     public let bytes: Data
+    public let settingsReadback: SettingsReadback?
 
-    public init(kind: SessionActionKind, channel: Data, bytes: Data) {
+    public init(
+        kind: SessionActionKind,
+        channel: Data,
+        bytes: Data,
+        settingsReadback: SettingsReadback? = nil
+    ) {
         self.kind = kind
         self.channel = channel
         self.bytes = bytes
+        self.settingsReadback = settingsReadback
     }
 
     fileprivate init(_ dto: MobileSessionOutputDto) {
         self.kind = SessionActionKind(dto.kind)
         self.channel = dto.channel
         self.bytes = dto.bytes
+        self.settingsReadback = dto.settingsReadback.map(SettingsReadback.init)
+    }
+}
+
+public struct RawSettingField: Equatable, Hashable, Sendable {
+    public let id: UInt16
+    public let value: Int64
+
+    public init(id: UInt16, value: Int64) {
+        self.id = id
+        self.value = value
+    }
+
+    fileprivate init(_ dto: MobileRawFieldValueDto) {
+        self.id = dto.id
+        self.value = dto.value
+    }
+}
+
+public enum ReadbackSource: Equatable, Hashable, Sendable {
+    case reported
+    case calculated
+    case estimated
+
+    fileprivate init(_ dto: MobileValueSourceDto) {
+        switch dto {
+        case .reported:
+            self = .reported
+        case .calculated:
+            self = .calculated
+        case .estimated:
+            self = .estimated
+        }
+    }
+}
+
+public enum ReadbackQuality: Equatable, Hashable, Sendable {
+    case known
+    case inferred
+
+    fileprivate init(_ dto: MobileValueQualityDto) {
+        switch dto {
+        case .known:
+            self = .known
+        case .inferred:
+            self = .inferred
+        }
+    }
+}
+
+public enum VerificationState: Equatable, Hashable, Sendable {
+    case unverified
+    case inferred
+    case sourceVerified
+    case hardwareVerified
+    case sourceAndHardwareVerified
+
+    fileprivate init(_ dto: MobileVerificationStatusDto) {
+        switch dto {
+        case .unverified:
+            self = .unverified
+        case .inferred:
+            self = .inferred
+        case .sourceVerified:
+            self = .sourceVerified
+        case .hardwareVerified:
+            self = .hardwareVerified
+        case .sourceAndHardwareVerified:
+            self = .sourceAndHardwareVerified
+        }
+    }
+}
+
+public struct SettingsReadbackEntry: Equatable, Hashable, Sendable {
+    public let field: RawSettingField
+    public let source: ReadbackSource
+    public let quality: ReadbackQuality
+    public let verification: VerificationState
+
+    public init(
+        field: RawSettingField,
+        source: ReadbackSource,
+        quality: ReadbackQuality,
+        verification: VerificationState
+    ) {
+        self.field = field
+        self.source = source
+        self.quality = quality
+        self.verification = verification
+    }
+
+    fileprivate init(_ dto: MobileSettingsEntryDto) {
+        self.field = RawSettingField(dto.field)
+        self.source = ReadbackSource(dto.source)
+        self.quality = ReadbackQuality(dto.quality)
+        self.verification = VerificationState(dto.verification)
+    }
+}
+
+public struct SettingsReadback: Equatable, Hashable, Sendable {
+    public let entries: [SettingsReadbackEntry]
+
+    public init(entries: [SettingsReadbackEntry]) {
+        self.entries = entries
+    }
+
+    fileprivate init(_ dto: MobileSettingsReadbackDto) {
+        self.entries = dto.entries.map(SettingsReadbackEntry.init)
     }
 }
 
@@ -927,19 +1045,22 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
     }
 
     public func plan(action: SessionAction) -> [CoreBluetoothPlannedOperation] {
-        guard let channel = BluetoothUuid(action.channel) else {
-            return []
-        }
         switch action.kind {
         case .subscribe:
+            guard let channel = BluetoothUuid(action.channel) else {
+                return []
+            }
             return [.subscribe(channel: channel)]
         case .write:
+            guard let channel = BluetoothUuid(action.channel) else {
+                return []
+            }
             return chunked(action.bytes, by: Int(writeLimit.rawValue)).map {
                 .writeWithoutResponse(channel: channel, bytes: $0)
             }
         case .disconnect:
             return [.disconnect]
-        case .event, .notificationIngest:
+        case .event, .notificationIngest, .settingsReadback:
             return []
         }
     }

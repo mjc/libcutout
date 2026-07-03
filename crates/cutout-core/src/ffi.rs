@@ -13,17 +13,17 @@ use crate::{
     ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
-/// UniFFI-ready owned read-only response DTO.
+/// UniFFI-ready owned read-only output.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReadOnlyResponseDto {
+pub struct ReadOnlyOutput {
     /// Command kind associated with this response.
     pub command_kind: CommandKindDto,
 
     /// Owned response payload.
-    pub payload: ReadOnlyResponsePayloadDto,
+    pub payload: ReadOnlyOutputPayload,
 }
 
-impl From<ReadOnlyResponse> for ReadOnlyResponseDto {
+impl From<ReadOnlyResponse> for ReadOnlyOutput {
     fn from(response: ReadOnlyResponse) -> Self {
         Self {
             command_kind: response.command_kind().into(),
@@ -158,9 +158,9 @@ impl ParserFrameLenDto {
     }
 }
 
-/// UniFFI-ready owned read-only response payload.
+/// UniFFI-ready owned read-only output payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReadOnlyResponsePayloadDto {
+pub enum ReadOnlyOutputPayload {
     /// Firmware or protocol version response.
     Firmware(FirmwareInfoDto),
 
@@ -177,7 +177,7 @@ pub enum ReadOnlyResponsePayloadDto {
     RawTelemetry(RawTelemetryReadbackDto),
 }
 
-impl From<ReadOnlyResponse> for ReadOnlyResponsePayloadDto {
+impl From<ReadOnlyResponse> for ReadOnlyOutputPayload {
     fn from(response: ReadOnlyResponse) -> Self {
         match response {
             ReadOnlyResponse::Firmware(firmware) => Self::Firmware(firmware.into()),
@@ -1124,6 +1124,9 @@ pub enum SessionOutputDto {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportActionDto),
 
+    /// Read-only response emitted by a protocol session.
+    ReadOnly(ReadOnlyOutput),
+
     /// Semantic event to report to the application.
     Event(SessionEventDto),
 
@@ -1135,7 +1138,13 @@ impl From<SessionOutput> for SessionOutputDto {
     fn from(output: SessionOutput) -> Self {
         match output {
             SessionOutput::Transport(action) => Self::Transport(action.into()),
-            SessionOutput::Event(event) => Self::Event(event.into()),
+            SessionOutput::Event(DeviceEvent::ReadOnlyResponse(response)) => {
+                Self::ReadOnly(response.into())
+            }
+            SessionOutput::Event(event) => match SessionEventDto::from_event(event) {
+                Ok(event) => Self::Event(event),
+                Err(response) => Self::ReadOnly(response.into()),
+            },
             SessionOutput::NotificationIngest(outcome) => Self::NotificationIngest(outcome.into()),
         }
     }
@@ -1552,9 +1561,6 @@ pub enum SessionEventDto {
     /// Telemetry update emitted by a protocol session.
     Telemetry(TelemetryDeltaDto),
 
-    /// Read-only response emitted by a protocol session.
-    ReadOnlyResponse(ReadOnlyResponseDto),
-
     /// Control command refused before transport writes.
     ControlRefusal(ControlRefusalDto),
 
@@ -1565,9 +1571,9 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
-impl From<DeviceEvent> for SessionEventDto {
-    fn from(event: DeviceEvent) -> Self {
-        match event {
+impl SessionEventDto {
+    fn from_event(event: DeviceEvent) -> Result<Self, ReadOnlyResponse> {
+        Ok(match event {
             DeviceEvent::LinkUp(link) => Self::LinkUp {
                 monotonic_ms: MonotonicMillisDto::from_core(link.monotonic_ms),
                 max_write_len: link.max_write_len.map(TransportWriteLimitDto::from_core),
@@ -1577,11 +1583,11 @@ impl From<DeviceEvent> for SessionEventDto {
                 monotonic_ms: MonotonicMillisDto::from_core(monotonic_ms),
             },
             DeviceEvent::Telemetry(delta) => Self::Telemetry(delta.into()),
-            DeviceEvent::ReadOnlyResponse(response) => Self::ReadOnlyResponse(response.into()),
             DeviceEvent::ControlRefusal(refusal) => Self::ControlRefusal(refusal.into()),
             DeviceEvent::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics.into()),
             DeviceEvent::DiagnosticError(error) => Self::DiagnosticError(error.into()),
-        }
+            DeviceEvent::ReadOnlyResponse(response) => return Err(response),
+        })
     }
 }
 
@@ -1914,7 +1920,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_battery_dto_preserves_page_and_unknown_values() {
+    fn read_only_battery_output_preserves_page_and_unknown_values() {
         let response = ReadOnlyResponse::Battery(
             BatteryPagePayload::raw(
                 BatteryPageMetadata::raw(
@@ -1936,10 +1942,10 @@ mod tests {
             )),
         );
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestBatteryInfo);
-        let ReadOnlyResponsePayloadDto::Battery(battery) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestBatteryInfo);
+        let ReadOnlyOutputPayload::Battery(battery) = output.payload else {
             panic!("expected battery DTO");
         };
         assert_eq!(battery.page.selector, 8);
@@ -1974,7 +1980,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_firmware_dto_preserves_optional_fields() {
+    fn read_only_firmware_output_preserves_optional_fields() {
         let response = ReadOnlyResponse::Firmware(FirmwareInfo {
             protocol_version: Some(Measured::reported(2)),
             firmware_major: Some(Measured::reported(43)),
@@ -1983,10 +1989,10 @@ mod tests {
             build_id: Some(RawFieldValue::new(0x002a, 99)),
         });
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestFirmwareInfo);
-        let ReadOnlyResponsePayloadDto::Firmware(firmware) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestFirmwareInfo);
+        let ReadOnlyOutputPayload::Firmware(firmware) = output.payload else {
             panic!("expected firmware DTO");
         };
         assert_eq!(firmware.protocol_version.expect("protocol").value, 2);
@@ -2003,7 +2009,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_settings_dto_owns_present_entries_only() {
+    fn read_only_settings_output_owns_present_entries_only() {
         let response = ReadOnlyResponse::Settings(SettingsReadback {
             entries: [
                 Some(SettingsEntry {
@@ -2023,10 +2029,10 @@ mod tests {
             ],
         });
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestSettings);
-        let ReadOnlyResponsePayloadDto::Settings(settings) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestSettings);
+        let ReadOnlyOutputPayload::Settings(settings) = output.payload else {
             panic!("expected settings DTO");
         };
         assert_eq!(settings.entries.len(), 2);
@@ -2037,7 +2043,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_diagnostics_dto_owns_present_details_only() {
+    fn read_only_diagnostics_output_owns_present_details_only() {
         let response = ReadOnlyResponse::Diagnostics(DiagnosticReadback {
             details: [
                 Some(DiagnosticDetail {
@@ -2052,10 +2058,10 @@ mod tests {
             ],
         });
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestDiagnostics);
-        let ReadOnlyResponsePayloadDto::Diagnostics(diagnostics) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestDiagnostics);
+        let ReadOnlyOutputPayload::Diagnostics(diagnostics) = output.payload else {
             panic!("expected diagnostics DTO");
         };
         assert_eq!(diagnostics.details.len(), 1);
@@ -2070,7 +2076,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_raw_telemetry_dto_owns_present_fields_only() {
+    fn read_only_raw_telemetry_output_owns_present_fields_only() {
         let response = ReadOnlyResponse::RawTelemetry(RawTelemetryReadback {
             fields: [
                 Some(RawFieldValue::new(0x8001, 989)),
@@ -2080,10 +2086,10 @@ mod tests {
             ],
         });
 
-        let dto = ReadOnlyResponseDto::from(response);
+        let output = ReadOnlyOutput::from(response);
 
-        assert_eq!(dto.command_kind, CommandKindDto::RequestTelemetry);
-        let ReadOnlyResponsePayloadDto::RawTelemetry(raw) = dto.payload else {
+        assert_eq!(output.command_kind, CommandKindDto::RequestTelemetry);
+        let ReadOnlyOutputPayload::RawTelemetry(raw) = output.payload else {
             panic!("expected raw telemetry DTO");
         };
         assert_eq!(raw.fields.len(), 2);
@@ -2154,7 +2160,7 @@ mod tests {
     }
 
     #[test]
-    fn session_output_dto_owns_transport_write_bytes_and_events() {
+    fn session_output_owns_transport_write_bytes_and_events() {
         let write = SessionOutputDto::from(SessionOutput::Transport(TransportAction::Write {
             channel: GattChannel::from_bytes([0xB2; 16]),
             bytes: WritePayload::try_from_slice(&[1, 2, 3]).expect("payload fits"),
@@ -2164,6 +2170,21 @@ mod tests {
             monotonic_ms: MonotonicTimestamp::new(7),
             max_write_len: Some(write_len(182)),
         })));
+        let readback = SessionOutputDto::from(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+            ReadOnlyResponse::Settings(SettingsReadback {
+                entries: [
+                    Some(SettingsEntry {
+                        field: RawFieldValue::new(0x0014, 30),
+                        source: ValueSource::Reported,
+                        quality: ValueQuality::Known,
+                        verification: VerificationStatus::HardwareVerified,
+                    }),
+                    None,
+                    None,
+                    None,
+                ],
+            }),
+        )));
 
         assert_eq!(
             write,
@@ -2180,6 +2201,15 @@ mod tests {
                 max_write_len: Some(write_len_dto(182)),
             })
         );
+        let SessionOutputDto::ReadOnly(response) = readback else {
+            panic!("read-only responses must not be nested under event outputs");
+        };
+        assert_eq!(response.command_kind, CommandKindDto::RequestSettings);
+        let ReadOnlyOutputPayload::Settings(settings) = response.payload else {
+            panic!("expected settings readback");
+        };
+        assert_eq!(settings.entries[0].field.id, 0x0014);
+        assert_eq!(settings.entries[0].field.value, 30);
     }
 
     #[test]

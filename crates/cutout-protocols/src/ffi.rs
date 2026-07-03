@@ -232,6 +232,7 @@ fn output_error(output: &SessionOutputDto) -> Option<ConcreteSessionErrorDto> {
             Some(ConcreteSessionErrorDto::CommandRefused { refusal: *refusal })
         }
         SessionOutputDto::Transport(_)
+        | SessionOutputDto::ReadOnly(_)
         | SessionOutputDto::Event(_)
         | SessionOutputDto::NotificationIngest(_) => None,
     }
