@@ -148,3 +148,20 @@ commit a personal `DEVELOPMENT_TEAM`. The build helper deletes the expected
 device product before invoking `xcodebuild`, then deletes it again on failure,
 so a failed fresh build cannot silently install an older product from
 `target/xcode-device-signed`.
+
+### Current Xcode Beta Warning Noise
+
+The app command surface is clean for project-owned warnings, but Xcode beta still
+emits two tooling-owned warning classes that should not be hidden by filtering
+stderr:
+
+- `warning: unhandled Platform key FamilyPlatforms` /
+  `warning: unhandled Platform key FamilyDisplayName` appear while SwiftPM/Xcode
+  tooling reads the Xcode beta platform metadata. Reproduce with
+  `nix develop -c ./scripts/smoke-swift-package.sh` or any iOS bundle command.
+  Owner: Xcode beta / Nix Apple SDK tooling boundary.
+- `appintentsmetadataprocessor` and `appintentsnltrainingprocessor` still run
+  during iOS app builds even though the app has no AppIntents dependency, and
+  report no extracted app shortcuts. Reproduce with
+  `nix develop -c ./scripts/smoke-ios-app-metadata.sh`. Owner: Xcode beta iOS
+  app build pipeline.
