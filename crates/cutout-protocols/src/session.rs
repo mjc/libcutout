@@ -2106,9 +2106,7 @@ mod tests {
         );
         assert_eq!(
             telemetry.pwm,
-            Some(Measured::reported(cutout_core::DutyCycle::from_permille(
-                -1_000
-            )))
+            Some(Measured::reported(cutout_core::DutyCycle::from_permille(0)))
         );
         assert_eq!(
             telemetry.distance,

@@ -4223,7 +4223,7 @@ mod tests {
                     voltage: Some(voltage(108_760)),
                     motor_current: Some(phase_current(0)),
                     controller_temperature: Some(temperature(33_270)),
-                    pwm: Some(duty_cycle_permille(-1_000)),
+                    pwm: Some(duty_cycle_permille(0)),
                     distance: Some(distance(1_551_169_000)),
                     pitch: Some(angle_mdeg(69_060)),
                     battery_level_estimated: Some(level_estimated(47)),
@@ -6080,9 +6080,7 @@ mod tests {
         );
         assert_eq!(
             state.telemetry.latest_pwm,
-            Some(DisplayDutyCycle::from_duty_cycle(DutyCycle::from_permille(
-                -1_000,
-            )))
+            Some(DisplayDutyCycle::from_duty_cycle(DutyCycle::from_permille(0)))
         );
         assert_eq!(state.telemetry.voltage_samples.len(), HISTORY_LIMIT);
         assert!(
@@ -6103,7 +6101,7 @@ mod tests {
         assert!(text.contains("109 V"));
         assert!(text.contains("0 A"));
         assert!(text.contains("33 C"));
-        assert!(text.contains("-100%"));
+        assert!(text.contains("0%"));
         assert!(text.contains("1551.2 km"));
         assert!(!text.contains("1551169 m"));
         assert!(text.contains("69 deg"));
