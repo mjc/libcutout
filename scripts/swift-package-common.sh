@@ -28,6 +28,11 @@ cutout_macosx_sdk_path() {
   xcrun --sdk macosx --show-sdk-path
 }
 
+cutout_use_xcode_developer_dir() {
+  export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+  unset SDKROOT
+}
+
 cutout_prepare_swift_package_workspace() {
   local root package_dir
   root="$(cutout_repo_root)"
@@ -45,6 +50,8 @@ cutout_iphoneos_clang_path() {
 
 cutout_connected_ios_device_udid() {
   local device_json
+  cutout_use_xcode_developer_dir
+
   device_json="$(mktemp "${TMPDIR:-/tmp}/cutout-devicectl.XXXXXX.json")"
   trap 'rm -f "$device_json"' RETURN
 
@@ -88,8 +95,7 @@ cutout_build_ios_speed_app_bundle() {
   rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
 
-  export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
-  unset SDKROOT
+  cutout_use_xcode_developer_dir
 
   cutout_prepare_swift_package_workspace "$package_dir"
 
@@ -139,6 +145,8 @@ cutout_build_ios_device_speed_app_bundle() {
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
   development_team="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
+
+  cutout_use_xcode_developer_dir
 
   if [[ -z "$development_team" ]]; then
     echo "CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone signing" >&2

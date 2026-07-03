@@ -107,3 +107,39 @@ target/swift-sourcekit/CutoutMobile
 
 Set `CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR` to choose a different generated
 workspace path. Do not check in the generated bindings, header, or module map.
+
+## App Commands
+
+Use these commands for the native Cutout app workflow. They all assume the
+repository dev shell:
+
+```console
+nix develop -c ./scripts/test-swift-package.sh
+nix develop -c ./scripts/smoke-ios-app-metadata.sh
+nix develop -c ./scripts/run-ios-speed-app-on-mac.sh
+CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-speed-app-on-phone.sh
+```
+
+`scripts/test-swift-package.sh` runs the generated Swift package tests with the
+Darwin-safe Swift environment and UniFFI linker flags. Pass `--filter NAME` for
+a focused XCTest filter while keeping the same generated workspace path.
+
+`scripts/smoke-ios-app-metadata.sh` builds the iPhone app bundle and checks the
+bundle metadata that previously drifted, including portrait orientation and
+Bluetooth usage text.
+
+`scripts/run-ios-speed-app-on-mac.sh` builds the real iPhoneOS app bundle for
+Apple Silicon Mac and prints its product path. Set `CUTOUT_IOS_ON_MAC_DESTINATION`
+to override the Xcode destination. Raw `open` of this `Debug-iphoneos` bundle
+currently fails with an incorrect-executable-format error, so Mac launch proof is
+still tracked by the app workflow cleanup ticket rather than hidden behind a
+flaky command.
+
+`scripts/run-ios-speed-app-on-phone.sh` builds, installs, and launches the app
+on a connected booted iOS device. Signing stays local: provide
+`CUTOUT_IOS_DEVELOPMENT_TEAM`, and optionally `CUTOUT_IOS_APP_BUNDLE_ID`, in
+your shell or a private env file. The Xcode project intentionally does not
+commit a personal `DEVELOPMENT_TEAM`. The build helper deletes the expected
+device product before invoking `xcodebuild`, then deletes it again on failure,
+so a failed fresh build cannot silently install an older product from
+`target/xcode-device-signed`.
