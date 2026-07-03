@@ -6014,6 +6014,107 @@ impl SettingsReadback {
     }
 }
 
+/// Availability of read-only fault-history data.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FaultHistoryAvailability {
+    /// Fault history was reported by the device.
+    Available,
+
+    /// Fault history is expected for this device/profile but was not reported.
+    #[default]
+    Unavailable,
+
+    /// Fault history is not supported for this device/profile.
+    Unsupported,
+}
+
+/// Last reported fault, preserving raw identity separately from provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultHistoryEntry {
+    /// Protocol-specific fault code without proven semantic mapping.
+    pub code: RawFieldValue,
+
+    /// Source of the fault code.
+    pub source: ValueSource,
+
+    /// Confidence in the fault-code interpretation.
+    pub quality: ValueQuality,
+
+    /// Verification state for the fault-code interpretation.
+    pub verification: VerificationStatus,
+}
+
+impl FaultHistoryEntry {
+    /// Creates a structured unknown fault code reported directly by the device.
+    #[must_use]
+    pub const fn reported_unknown(field: RawFieldValue) -> Self {
+        Self {
+            code: field,
+            source: ValueSource::Reported,
+            quality: ValueQuality::Known,
+            verification: VerificationStatus::HardwareVerified,
+        }
+    }
+}
+
+/// Read-only last-fault history.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FaultHistoryReadback {
+    /// Whether fault history is available for display.
+    pub availability: FaultHistoryAvailability,
+
+    /// Last reported fault, if the device reports one.
+    pub last_fault: Option<FaultHistoryEntry>,
+
+    /// Distance since the last fault, if reported separately.
+    pub since_distance: Option<Measured<Distance>>,
+}
+
+impl FaultHistoryReadback {
+    /// Creates an unavailable fault-history readback.
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Unavailable,
+            last_fault: None,
+            since_distance: None,
+        }
+    }
+
+    /// Creates an unsupported fault-history readback.
+    #[must_use]
+    pub const fn unsupported() -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Unsupported,
+            last_fault: None,
+            since_distance: None,
+        }
+    }
+
+    /// Creates an available fault-history readback with no reported fault.
+    #[must_use]
+    pub const fn none_since(since_distance: Option<Measured<Distance>>) -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Available,
+            last_fault: None,
+            since_distance,
+        }
+    }
+
+    /// Creates an available fault-history readback with a last-fault code.
+    #[must_use]
+    pub const fn fault_since(
+        last_fault: FaultHistoryEntry,
+        since_distance: Option<Measured<Distance>>,
+    ) -> Self {
+        Self {
+            availability: FaultHistoryAvailability::Available,
+            last_fault: Some(last_fault),
+            since_distance,
+        }
+    }
+}
+
 /// Generic read-only response payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadOnlyResponse {
@@ -8181,6 +8282,33 @@ mod tests {
         assert_eq!(
             response.entries[0].map(|entry| entry.verification),
             Some(VerificationStatus::HardwareVerified)
+        );
+    }
+
+    #[test]
+    fn fault_history_readback_separates_unknown_code_from_since_distance() {
+        let last_fault =
+            crate::FaultHistoryEntry::reported_unknown(crate::RawFieldValue::new(0x0040, 1));
+        let distance = Measured::reported(Distance::from_millimetres(61_456_941));
+        let readback = crate::FaultHistoryReadback::fault_since(last_fault, Some(distance));
+
+        assert_eq!(
+            readback.availability,
+            crate::FaultHistoryAvailability::Available
+        );
+        assert_eq!(readback.last_fault, Some(last_fault));
+        assert_eq!(readback.since_distance, Some(distance));
+        assert_eq!(
+            crate::FaultHistoryReadback::none_since(Some(distance)).last_fault,
+            None
+        );
+        assert_eq!(
+            crate::FaultHistoryReadback::unavailable().availability,
+            crate::FaultHistoryAvailability::Unavailable
+        );
+        assert_eq!(
+            crate::FaultHistoryReadback::unsupported().availability,
+            crate::FaultHistoryAvailability::Unsupported
         );
     }
 

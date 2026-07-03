@@ -311,6 +311,21 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(garage.faultCard, MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green))
     }
 
+    func testEucFaultHistoryCanRepresentStructuredUnknownFault() {
+        let fault = EucFaultHistoryState.fault(
+            code: RawSettingField(id: 0x0040, value: 1),
+            sinceDistance: Distance(value: 61_456_941)
+        )
+
+        XCTAssertEqual(
+            fault,
+            .fault(
+                code: RawSettingField(id: 0x0040, value: 1),
+                sinceDistance: Distance(value: 61_456_941)
+            )
+        )
+    }
+
     func testVescOnewheelRideFixtureCarriesRideCriticalStructureFromMockup() throws {
         let ride = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .vescOnewheelRide))
 

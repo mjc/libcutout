@@ -395,7 +395,7 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
 
 public enum EucFaultHistoryState: Equatable, Hashable, Sendable {
     case none(sinceDistance: Distance?)
-    case fault(code: String, label: String?, sinceDistance: Distance?)
+    case fault(code: RawSettingField, sinceDistance: Distance?)
 }
 
 public struct EucGarageSnapshot: Equatable, Hashable, Sendable {

@@ -2,7 +2,8 @@ use crate::{
     Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
     BatteryPagePayload, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
     ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
-    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FirmwareInfo,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle,
+    FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo,
     IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
@@ -961,6 +962,79 @@ impl From<SettingsReadback> for SettingsReadbackDto {
                 .flatten()
                 .map(Into::into)
                 .collect(),
+        }
+    }
+}
+
+/// UniFFI-ready fault-history readback.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FaultHistoryReadbackDto {
+    /// Whether the requested fault-history readback is available for display.
+    pub availability: FaultHistoryAvailabilityDto,
+
+    /// Last reported fault, if any.
+    pub last_fault: Option<FaultHistoryEntryDto>,
+
+    /// Distance since the last fault, if reported separately.
+    pub since_distance: Option<MeasuredU64Dto>,
+}
+
+impl From<FaultHistoryReadback> for FaultHistoryReadbackDto {
+    fn from(readback: FaultHistoryReadback) -> Self {
+        Self {
+            availability: readback.availability.into(),
+            last_fault: readback.last_fault.map(Into::into),
+            since_distance: readback.since_distance.map(Into::into),
+        }
+    }
+}
+
+/// UniFFI-ready fault-history availability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FaultHistoryAvailabilityDto {
+    /// Fault history was reported by the device.
+    Available,
+
+    /// Fault history is expected for this device/profile but was not reported.
+    Unavailable,
+
+    /// Fault history is not supported for this device/profile.
+    Unsupported,
+}
+
+impl From<FaultHistoryAvailability> for FaultHistoryAvailabilityDto {
+    fn from(availability: FaultHistoryAvailability) -> Self {
+        match availability {
+            FaultHistoryAvailability::Available => Self::Available,
+            FaultHistoryAvailability::Unavailable => Self::Unavailable,
+            FaultHistoryAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+/// UniFFI-ready last-fault entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FaultHistoryEntryDto {
+    /// Protocol-specific fault code without proven semantic mapping.
+    pub code: RawFieldValueDto,
+
+    /// Value source.
+    pub source: ValueSourceDto,
+
+    /// Value quality.
+    pub quality: ValueQualityDto,
+
+    /// Value verification status.
+    pub verification: VerificationStatusDto,
+}
+
+impl From<FaultHistoryEntry> for FaultHistoryEntryDto {
+    fn from(entry: FaultHistoryEntry) -> Self {
+        Self {
+            code: entry.code.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
         }
     }
 }
@@ -2070,6 +2144,26 @@ mod tests {
         assert_eq!(settings.entries[0].source, ValueSourceDto::Reported);
         assert_eq!(settings.entries[1].field.value, 45);
         assert_eq!(settings.entries[1].quality, ValueQualityDto::Inferred);
+    }
+
+    #[test]
+    fn fault_history_output_preserves_structured_unknown_code_and_distance() {
+        let readback = FaultHistoryReadback::fault_since(
+            FaultHistoryEntry::reported_unknown(RawFieldValue::new(0x0040, 1)),
+            Some(Measured::reported(Distance::from_millimetres(61_456_941))),
+        );
+
+        let dto = FaultHistoryReadbackDto::from(readback);
+
+        assert_eq!(dto.availability, FaultHistoryAvailabilityDto::Available);
+        assert_eq!(
+            dto.last_fault.expect("fault").code,
+            RawFieldValueDto {
+                id: 0x0040,
+                value: 1
+            }
+        );
+        assert_eq!(dto.since_distance.expect("distance").value, 61_456_941);
     }
 
     #[test]

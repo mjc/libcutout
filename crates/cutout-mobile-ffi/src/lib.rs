@@ -3,20 +3,21 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, GattChannel, GattFingerprint,
-    GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredI16Dto,
-    MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto, MonotonicMillisDto,
-    MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
-    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
-    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue, RawFieldValueDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
-    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
-    TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
-    ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
+    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultHistoryAvailability,
+    FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
+    FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
+    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredI16Dto, MeasuredI32Dto,
+    MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto, MonotonicMillisDto, MonotonicTimestamp,
+    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
+    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
+    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding,
+    PevcapHeader, PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto,
+    RawFieldValue, RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -1091,6 +1092,35 @@ pub struct MobileSettingsReadbackDto {
     pub entries: Vec<MobileSettingsEntryDto>,
 }
 
+/// Last reported fault for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileFaultHistoryEntryDto {
+    /// Protocol-specific fault code without proven semantic mapping.
+    pub code: MobileRawFieldValueDto,
+
+    /// Source of the fault code.
+    pub source: MobileValueSourceDto,
+
+    /// Confidence in the fault-code interpretation.
+    pub quality: MobileValueQualityDto,
+
+    /// Verification state for the fault-code interpretation.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Read-only last-fault history for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileFaultHistoryReadbackDto {
+    /// Whether fault history is available for display.
+    pub availability: MobileReadbackAvailabilityDto,
+
+    /// Last reported fault, if any.
+    pub last_fault: Option<MobileFaultHistoryEntryDto>,
+
+    /// Distance since the last fault, if reported separately.
+    pub since_distance: Option<DistanceReading>,
+}
+
 /// Mobile GATT characteristic role.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileGattRoleDto {
@@ -1513,6 +1543,71 @@ impl From<SettingsReadbackAvailabilityDto> for MobileReadbackAvailabilityDto {
             SettingsReadbackAvailabilityDto::Available => Self::Available,
             SettingsReadbackAvailabilityDto::Unavailable => Self::Unavailable,
             SettingsReadbackAvailabilityDto::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<FaultHistoryAvailability> for MobileReadbackAvailabilityDto {
+    fn from(availability: FaultHistoryAvailability) -> Self {
+        match availability {
+            FaultHistoryAvailability::Available => Self::Available,
+            FaultHistoryAvailability::Unavailable => Self::Unavailable,
+            FaultHistoryAvailability::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<FaultHistoryAvailabilityDto> for MobileReadbackAvailabilityDto {
+    fn from(availability: FaultHistoryAvailabilityDto) -> Self {
+        match availability {
+            FaultHistoryAvailabilityDto::Available => Self::Available,
+            FaultHistoryAvailabilityDto::Unavailable => Self::Unavailable,
+            FaultHistoryAvailabilityDto::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+impl From<FaultHistoryEntry> for MobileFaultHistoryEntryDto {
+    fn from(entry: FaultHistoryEntry) -> Self {
+        Self {
+            code: entry.code.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<FaultHistoryEntryDto> for MobileFaultHistoryEntryDto {
+    fn from(entry: FaultHistoryEntryDto) -> Self {
+        Self {
+            code: entry.code.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<FaultHistoryReadback> for MobileFaultHistoryReadbackDto {
+    fn from(readback: FaultHistoryReadback) -> Self {
+        Self {
+            availability: readback.availability.into(),
+            last_fault: readback.last_fault.map(Into::into),
+            since_distance: readback
+                .since_distance
+                .map(MeasuredU64Dto::from)
+                .map(Into::into),
+        }
+    }
+}
+
+impl From<FaultHistoryReadbackDto> for MobileFaultHistoryReadbackDto {
+    fn from(readback: FaultHistoryReadbackDto) -> Self {
+        Self {
+            availability: readback.availability.into(),
+            last_fault: readback.last_fault.map(Into::into),
+            since_distance: readback.since_distance.map(Into::into),
         }
     }
 }
@@ -2421,6 +2516,49 @@ mod tests {
                 availability: MobileReadbackAvailabilityDto::Unsupported,
                 entries: Vec::new(),
             }
+        );
+    }
+
+    #[test]
+    fn mobile_fault_history_preserves_unknown_fault_code_and_since_distance() {
+        let mobile = MobileFaultHistoryReadbackDto::from(FaultHistoryReadbackDto {
+            availability: FaultHistoryAvailabilityDto::Available,
+            last_fault: Some(FaultHistoryEntryDto {
+                code: RawFieldValueDto {
+                    id: 0x0040,
+                    value: 1,
+                },
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+            since_distance: Some(MeasuredU64Dto {
+                value: 61_456_941,
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+        });
+
+        assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Available
+        );
+        assert_eq!(
+            mobile.last_fault.expect("fault"),
+            MobileFaultHistoryEntryDto {
+                code: MobileRawFieldValueDto {
+                    id: 0x0040,
+                    value: 1,
+                },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            }
+        );
+        assert_eq!(
+            mobile.since_distance.expect("distance").value,
+            Distance { value: 61_456_941 }
         );
     }
 
