@@ -440,6 +440,8 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
             match self.reassembler.feed_byte_result_at(*byte, monotonic_ms) {
                 Ok(BegodeFrameParseResult::Complete(frame)) => {
                     event_count = event_count.saturating_add(push_begode_frame(
+                        family,
+                        channel,
                         &mut self.context,
                         self.pack_voltage_profile,
                         &frame,
@@ -707,12 +709,29 @@ const fn vesc_diagnostic_detail(id: u16, value: i64) -> DiagnosticDetail {
 }
 
 fn push_begode_frame(
+    family: ProtocolFamily,
+    channel: GattChannel,
     context: &mut BegodeTelemetryContext,
     pack_voltage_profile: BegodePackVoltageProfile,
     frame: &BegodeFrame,
     monotonic_ms: MonotonicTimestamp,
     output: &mut Vec<SessionOutput>,
 ) -> SemanticEventCount {
+    let retain_bms_frame = |output: &mut Vec<SessionOutput>| {
+        output.push(SessionOutput::NotificationIngest(
+            NotificationIngestOutcome::parser_gap(
+                family,
+                channel,
+                NotificationByteLen::from_bytes(frame.as_slice().len()),
+                monotonic_ms,
+                ParserGapEvidence {
+                    classifier: PayloadClassifier::tag(frame.tag()),
+                    body_len: PayloadBodyLen::from_bytes(frame.as_slice().len()),
+                    retained_payload: RetainedNotificationPayload::from_bytes(frame.as_slice()),
+                },
+            ),
+        ));
+    };
     match frame.tag().get() {
         0x00 => match BegodeLiveATelemetry::decode(frame, pack_voltage_profile) {
             Ok(telemetry) => {
@@ -731,6 +750,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     summary.to_battery_response(),
                 )));
+                retain_bms_frame(output);
                 SemanticEventCount::from_events(2)
             }
             Err(error) => push_begode_bms_error(error, output),
@@ -740,6 +760,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     page.to_battery_response(),
                 )));
+                retain_bms_frame(output);
                 SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_bms_error(error, output),
@@ -1383,8 +1404,8 @@ mod tests {
     use crate::{GearRatioDenominator, MotorPolePairs};
     use core::mem::size_of;
     use cutout_core::{
-        BatteryPageKind, LinkInfo, Measured, RawFieldValue, ReadOnlyResponse, TelemetryDelta,
-        TransportAction, VerificationStatus, WriteMode,
+        BatteryPageKind, LinkInfo, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse,
+        TelemetryDelta, TransportAction, VerificationStatus, WriteMode,
     };
     use proptest::prelude::*;
 
@@ -1600,6 +1621,24 @@ mod tests {
                 retained_payload: RetainedNotificationPayload::from_bytes(
                     &frame[47..frame.len() - 4],
                 ),
+            },
+        )
+    }
+
+    fn begode_bms_frame_gap(
+        frame: &[u8],
+        tag: u16,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> NotificationIngestOutcome {
+        NotificationIngestOutcome::parser_gap(
+            ProtocolFamily::BegodeGotway,
+            BEGODE_DATA_CHANNEL,
+            NotificationByteLen::from_bytes(frame.len()),
+            monotonic_ms,
+            ParserGapEvidence {
+                classifier: PayloadClassifier::tag(ProtocolTag::new(tag)),
+                body_len: PayloadBodyLen::from_bytes(frame.len()),
+                retained_payload: RetainedNotificationPayload::from_bytes(frame),
             },
         )
     }
@@ -2262,10 +2301,54 @@ mod tests {
     }
 
     #[test]
+    fn begode_falcon_bms_summary_retains_complete_frame_evidence() {
+        let summary = live_begode_bms_summary_frame();
+        let output = falcon_output_for_notification_chunks(&[summary.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_bms_frame_gap(summary.as_slice(), 0x01, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(summary.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(2),
+                ),
+            ]
+        );
+        assert!(!read_only_response_events(&output).is_empty());
+    }
+
+    #[test]
     fn begode_falcon_fragmented_bms_cell_page_preserves_read_only_responses() {
         let cell_page = live_begode_bms_cell_page_frame();
 
         assert_falcon_fragmented_read_only_responses_match(cell_page.as_slice());
+    }
+
+    #[test]
+    fn begode_falcon_bms_cell_page_retains_complete_frame_evidence() {
+        let cell_page = live_begode_bms_cell_page_frame();
+        let output = falcon_output_for_notification_chunks(&[cell_page.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_bms_frame_gap(cell_page.as_slice(), 0x02, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(cell_page.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(1),
+                ),
+            ]
+        );
+        assert!(!read_only_response_events(&output).is_empty());
     }
 
     #[test]
