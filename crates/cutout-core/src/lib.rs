@@ -177,6 +177,9 @@ pub enum DeviceCommand {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -203,6 +206,7 @@ impl DeviceCommand {
             Self::RequestFirmwareInfo => CommandKind::RequestFirmwareInfo,
             Self::RequestBatteryInfo => CommandKind::RequestBatteryInfo,
             Self::RequestDiagnostics => CommandKind::RequestDiagnostics,
+            Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SoundHorn => CommandKind::SoundHorn,
@@ -254,6 +258,9 @@ pub enum CommandKind {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -277,6 +284,7 @@ impl CommandKind {
             | Self::RequestFirmwareInfo
             | Self::RequestBatteryInfo
             | Self::RequestDiagnostics
+            | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
@@ -1839,12 +1847,13 @@ impl RegistryHashBuilder {
     }
 }
 
-const ALL_COMMAND_KINDS: [CommandKind; 9] = [
+const ALL_COMMAND_KINDS: [CommandKind; 10] = [
     CommandKind::RequestIdentity,
     CommandKind::RequestTelemetry,
     CommandKind::RequestFirmwareInfo,
     CommandKind::RequestBatteryInfo,
     CommandKind::RequestDiagnostics,
+    CommandKind::RequestFaultHistory,
     CommandKind::RequestSettings,
     CommandKind::SetLights,
     CommandKind::SoundHorn,
@@ -6230,7 +6239,8 @@ impl ReadOnlyResponse {
         match self {
             Self::Firmware(_) => CommandKind::RequestFirmwareInfo,
             Self::Battery(_) => CommandKind::RequestBatteryInfo,
-            Self::Diagnostics(_) | Self::FaultHistory(_) => CommandKind::RequestDiagnostics,
+            Self::Diagnostics(_) => CommandKind::RequestDiagnostics,
+            Self::FaultHistory(_) => CommandKind::RequestFaultHistory,
             Self::RawTelemetry(_) => CommandKind::RequestTelemetry,
             Self::Settings(_) => CommandKind::RequestSettings,
         }
@@ -7807,6 +7817,7 @@ mod tests {
                     DeviceCommand::RequestFirmwareInfo
                     | DeviceCommand::RequestBatteryInfo
                     | DeviceCommand::RequestDiagnostics
+                    | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SoundHorn
@@ -8461,7 +8472,7 @@ mod tests {
                 crate::CommandKind::RequestTelemetry,
                 crate::CommandKind::RequestFirmwareInfo,
                 crate::CommandKind::RequestBatteryInfo,
-                crate::CommandKind::RequestDiagnostics,
+                crate::CommandKind::RequestFaultHistory,
             ]),
             verification: VerificationStatus::HardwareVerified,
         };
@@ -9252,7 +9263,7 @@ mod tests {
         assert_eq!(settings.command_kind(), crate::CommandKind::RequestSettings);
         assert_eq!(
             fault_history.command_kind(),
-            crate::CommandKind::RequestDiagnostics
+            crate::CommandKind::RequestFaultHistory
         );
     }
 
@@ -9299,6 +9310,10 @@ mod tests {
                 crate::CommandKind::RequestDiagnostics,
             ),
             (
+                DeviceCommand::RequestFaultHistory,
+                crate::CommandKind::RequestFaultHistory,
+            ),
+            (
                 DeviceCommand::RequestSettings,
                 crate::CommandKind::RequestSettings,
             ),
@@ -9321,6 +9336,7 @@ mod tests {
             crate::CommandKind::RequestFirmwareInfo,
             crate::CommandKind::RequestBatteryInfo,
             crate::CommandKind::RequestDiagnostics,
+            crate::CommandKind::RequestFaultHistory,
             crate::CommandKind::RequestSettings,
         ]);
 
@@ -9346,6 +9362,13 @@ mod tests {
             })
         );
         assert_eq!(
+            capabilities.check_command(DeviceCommand::RequestFaultHistory),
+            Ok(crate::CommandMetadata {
+                kind: crate::CommandKind::RequestFaultHistory,
+                safety_class: crate::SafetyClass::ReadOnly,
+            })
+        );
+        assert_eq!(
             capabilities.check_command(DeviceCommand::RequestSettings),
             Ok(crate::CommandMetadata {
                 kind: crate::CommandKind::RequestSettings,
@@ -9362,6 +9385,7 @@ mod tests {
             crate::RequestKey::new(crate::CommandKind::RequestFirmwareInfo),
             crate::RequestKey::new(crate::CommandKind::RequestBatteryInfo),
             crate::RequestKey::new(crate::CommandKind::RequestDiagnostics),
+            crate::RequestKey::new(crate::CommandKind::RequestFaultHistory),
             crate::RequestKey::new(crate::CommandKind::RequestSettings),
         ];
 
@@ -9414,6 +9438,7 @@ mod tests {
                     crate::CommandKind::RequestFirmwareInfo,
                     crate::CommandKind::RequestBatteryInfo,
                     crate::CommandKind::RequestDiagnostics,
+                    crate::CommandKind::RequestFaultHistory,
                     crate::CommandKind::RequestSettings,
                 ][..],
             ),
@@ -10538,13 +10563,14 @@ mod tests {
 
     proptest! {
         #[test]
-        fn poll_request_accepts_read_only_commands(value in 0u8..6) {
+        fn poll_request_accepts_read_only_commands(value in 0u8..7) {
             let kind = match value {
                 0 => crate::CommandKind::RequestIdentity,
                 1 => crate::CommandKind::RequestTelemetry,
                 2 => crate::CommandKind::RequestFirmwareInfo,
                 3 => crate::CommandKind::RequestBatteryInfo,
                 4 => crate::CommandKind::RequestDiagnostics,
+                5 => crate::CommandKind::RequestFaultHistory,
                 _ => crate::CommandKind::RequestSettings,
             };
             let request = crate::PollRequest::new(

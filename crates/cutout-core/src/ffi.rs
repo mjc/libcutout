@@ -215,6 +215,9 @@ pub enum CommandKindDto {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -236,6 +239,7 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             CommandKind::RequestBatteryInfo => Self::RequestBatteryInfo,
             CommandKind::RequestDiagnostics => Self::RequestDiagnostics,
+            CommandKind::RequestFaultHistory => Self::RequestFaultHistory,
             CommandKind::RequestSettings => Self::RequestSettings,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SoundHorn => Self::SoundHorn,
@@ -262,6 +266,9 @@ pub enum DeviceCommandDto {
     /// Request device diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
     /// Request current settings without changing device state.
     RequestSettings,
 
@@ -286,6 +293,7 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             DeviceCommand::RequestBatteryInfo => Self::RequestBatteryInfo,
             DeviceCommand::RequestDiagnostics => Self::RequestDiagnostics,
+            DeviceCommand::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
@@ -304,6 +312,7 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             DeviceCommandDto::RequestBatteryInfo => Self::RequestBatteryInfo,
             DeviceCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
+            DeviceCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
@@ -2268,7 +2277,7 @@ mod tests {
 
         let output = ReadOnlyOutput::from(ReadOnlyResponse::FaultHistory(readback));
 
-        assert_eq!(output.command_kind, CommandKindDto::RequestDiagnostics);
+        assert_eq!(output.command_kind, CommandKindDto::RequestFaultHistory);
         let ReadOnlyOutputPayload::FaultHistory(dto) = output.payload else {
             panic!("expected fault-history DTO");
         };

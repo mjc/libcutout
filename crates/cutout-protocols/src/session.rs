@@ -980,7 +980,7 @@ impl SupportsReadRequests for NosfetAeroModel {
         CommandKind::RequestFirmwareInfo,
         CommandKind::RequestTelemetry,
         CommandKind::RequestBatteryInfo,
-        CommandKind::RequestDiagnostics,
+        CommandKind::RequestFaultHistory,
         CommandKind::RequestSettings,
     ]);
     const WRITE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
@@ -1121,7 +1121,7 @@ fn handle_read_only_session<M: ReadOnlyModelSpec, const ACCEPT_ANY_NOTIFICATION:
                     ReadOnlyResponse::Settings(cutout_core::SettingsReadback::unsupported()),
                 )));
             }
-            ReadOnlyCommandGate::Unsupported(CommandKind::RequestDiagnostics) => {
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory) => {
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported()),
                 )));
@@ -1141,7 +1141,7 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         CommandKind::RequestBatteryInfo => Some(ReadOnlyResponse::Battery(
             cutout_core::BatteryReadback::unavailable(),
         )),
-        CommandKind::RequestDiagnostics => Some(ReadOnlyResponse::FaultHistory(
+        CommandKind::RequestFaultHistory => Some(ReadOnlyResponse::FaultHistory(
             cutout_core::FaultHistoryReadback::unavailable(),
         )),
         CommandKind::RequestSettings => Some(ReadOnlyResponse::Settings(
@@ -1150,6 +1150,7 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         CommandKind::RequestIdentity
         | CommandKind::RequestFirmwareInfo
         | CommandKind::RequestTelemetry
+        | CommandKind::RequestDiagnostics
         | CommandKind::SetLights
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
@@ -1168,7 +1169,7 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
             }
         }
         Some(RequestDisposition::Passive {
-            command: CommandKind::RequestDiagnostics,
+            command: CommandKind::RequestFaultHistory,
             ..
         }) => {
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
@@ -1405,7 +1406,7 @@ mod tests {
 
         const READ_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
             CommandKind::RequestBatteryInfo,
-            CommandKind::RequestDiagnostics,
+            CommandKind::RequestFaultHistory,
             CommandKind::RequestSettings,
         ]);
         const WRITE_CHANNEL: GattChannel = TEST_CHANNEL;
@@ -2874,8 +2875,8 @@ mod tests {
     #[test]
     fn read_only_gate_accepts_supported_read_commands() {
         assert_eq!(
-            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestDiagnostics),
-            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestDiagnostics)
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestFaultHistory),
+            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestFaultHistory)
         );
         assert_eq!(
             gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestSettings),
@@ -2890,8 +2891,8 @@ mod tests {
     #[test]
     fn read_only_gate_rejects_unsupported_read_commands() {
         assert_eq!(
-            gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestDiagnostics),
-            ReadOnlyCommandGate::Unsupported(CommandKind::RequestDiagnostics)
+            gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestFaultHistory),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory)
         );
     }
 
@@ -3001,7 +3002,7 @@ mod tests {
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            SessionInput::Command(DeviceCommand::RequestFaultHistory),
             &mut output,
         );
 
@@ -3019,12 +3020,12 @@ mod tests {
     }
 
     #[test]
-    fn aero_passive_diagnostics_reports_unavailable_fault_history_without_writes() {
+    fn aero_passive_fault_history_reports_unavailable_fault_history_without_writes() {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
         session.handle(
-            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            SessionInput::Command(DeviceCommand::RequestFaultHistory),
             &mut output,
         );
 
@@ -3051,7 +3052,7 @@ mod tests {
             &mut output,
         );
         session.handle(
-            SessionInput::Command(DeviceCommand::RequestDiagnostics),
+            SessionInput::Command(DeviceCommand::RequestFaultHistory),
             &mut output,
         );
         session.handle(

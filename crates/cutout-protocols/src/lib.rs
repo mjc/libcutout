@@ -156,7 +156,7 @@ mod tests {
                 CommandKind::RequestFirmwareInfo,
                 CommandKind::RequestTelemetry,
                 CommandKind::RequestBatteryInfo,
-                CommandKind::RequestDiagnostics,
+                CommandKind::RequestFaultHistory,
                 CommandKind::RequestSettings,
             ])
         );

@@ -1531,6 +1531,7 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
         ReadProbe::Telemetry => DeviceCommand::RequestTelemetry,
         ReadProbe::Battery => DeviceCommand::RequestBatteryInfo,
         ReadProbe::Diagnostics => DeviceCommand::RequestDiagnostics,
+        ReadProbe::FaultHistory => DeviceCommand::RequestFaultHistory,
     }
 }
 
@@ -2392,6 +2393,7 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestFirmwareInfo => "request_firmware_info",
         CommandKind::RequestBatteryInfo => "request_battery_info",
         CommandKind::RequestDiagnostics => "request_diagnostics",
+        CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
         CommandKind::SetLights => "set_lights",
         CommandKind::SoundHorn => "sound_horn",
@@ -4962,6 +4964,7 @@ mod tests {
                 ReadProbe::Telemetry,
                 ReadProbe::Battery,
                 ReadProbe::Diagnostics,
+                ReadProbe::FaultHistory,
             ]),
             vec![
                 DeviceCommand::RequestIdentity,
@@ -4969,6 +4972,7 @@ mod tests {
                 DeviceCommand::RequestTelemetry,
                 DeviceCommand::RequestBatteryInfo,
                 DeviceCommand::RequestDiagnostics,
+                DeviceCommand::RequestFaultHistory,
             ]
         );
     }

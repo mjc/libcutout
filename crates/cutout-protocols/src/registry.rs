@@ -443,6 +443,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestTelemetry));
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestDiagnostics));
+        assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
         assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
     }
 

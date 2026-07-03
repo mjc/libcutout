@@ -320,7 +320,7 @@ fn parse_probe(line: usize, value: &str) -> Result<ProtocolProbe, RequestFixture
         "aero.firmware-info" => Ok(ProtocolProbe::Aero(AeroProbe::FirmwareInfo)),
         "aero.telemetry" => Ok(ProtocolProbe::Aero(AeroProbe::Telemetry)),
         "aero.battery-info" => Ok(ProtocolProbe::Aero(AeroProbe::BatteryInfo)),
-        "aero.diagnostics" => Ok(ProtocolProbe::Aero(AeroProbe::Diagnostics)),
+        "aero.fault-history" => Ok(ProtocolProbe::Aero(AeroProbe::FaultHistory)),
         "falcon.identity" => Ok(ProtocolProbe::Falcon(FalconProbe::Identity)),
         "falcon.firmware-info" => Ok(ProtocolProbe::Falcon(FalconProbe::FirmwareInfo)),
         "falcon.telemetry" => Ok(ProtocolProbe::Falcon(FalconProbe::Telemetry)),
@@ -338,6 +338,7 @@ fn parse_command(line: usize, value: &str) -> Result<CommandKind, RequestFixture
         "request-firmware-info" => Ok(CommandKind::RequestFirmwareInfo),
         "request-telemetry" => Ok(CommandKind::RequestTelemetry),
         "request-battery-info" => Ok(CommandKind::RequestBatteryInfo),
+        "request-fault-history" => Ok(CommandKind::RequestFaultHistory),
         "request-diagnostics" => Ok(CommandKind::RequestDiagnostics),
         _ => Err(RequestFixtureLoadError::InvalidValue {
             line,
@@ -457,7 +458,7 @@ mod tests {
         };
         let fixture = RequestFixture::new(
             DeviceFamily::NosfetAero,
-            ProtocolProbe::Aero(AeroProbe::Diagnostics),
+            ProtocolProbe::Aero(AeroProbe::FaultHistory),
             WriteMode::WithResponse,
             &[0x10, 0x20, 0x30],
             channels,
@@ -467,8 +468,8 @@ mod tests {
         .expect("fixture should validate");
 
         assert_eq!(fixture.family, DeviceFamily::NosfetAero);
-        assert_eq!(fixture.probe, ProtocolProbe::Aero(AeroProbe::Diagnostics));
-        assert_eq!(fixture.command, CommandKind::RequestDiagnostics);
+        assert_eq!(fixture.probe, ProtocolProbe::Aero(AeroProbe::FaultHistory));
+        assert_eq!(fixture.command, CommandKind::RequestFaultHistory);
         assert_eq!(fixture.mode, WriteMode::WithResponse);
         assert_eq!(fixture.bytes.as_slice(), &[0x10, 0x20, 0x30]);
         assert_eq!(fixture.channels, channels);
@@ -602,7 +603,7 @@ mod tests {
     #[test]
     fn loader_preserves_optional_channels_and_verification() {
         let fixtures = load_request_fixtures(
-            "family=nosfet-aero probe=aero.diagnostics command=request-diagnostics mode=with-response bytes=0102 service=0000ffe000001000800000805f9b34fb characteristic=0000ffe100001000800000805f9b34fb provenance=bluetooth-capture verification=verified-on-bluetooth",
+            "family=nosfet-aero probe=aero.fault-history command=request-fault-history mode=with-response bytes=0102 service=0000ffe000001000800000805f9b34fb characteristic=0000ffe100001000800000805f9b34fb provenance=bluetooth-capture verification=verified-on-bluetooth",
         )
         .expect("fixture with channels loads");
 

@@ -188,6 +188,12 @@ pub enum MobileCommandDto {
     /// Request diagnostics.
     RequestDiagnostics,
 
+    /// Request historical fault information.
+    RequestFaultHistory,
+
+    /// Request current settings without changing device state.
+    RequestSettings,
+
     /// Sound a horn or alert.
     SoundHorn,
 }
@@ -1950,24 +1956,24 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
             MobileCommandDto::RequestBatteryInfo => Self::RequestBatteryInfo,
             MobileCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
+            MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
+            MobileCommandDto::RequestSettings => Self::RequestSettings,
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
 }
 
-impl From<CommandKindDto> for MobileCommandDto {
-    fn from(command: CommandKindDto) -> Self {
-        match command {
-            CommandKindDto::RequestIdentity => Self::RequestIdentity,
-            CommandKindDto::RequestTelemetry => Self::RequestTelemetry,
-            CommandKindDto::RequestFirmwareInfo => Self::RequestFirmwareInfo,
-            CommandKindDto::RequestBatteryInfo => Self::RequestBatteryInfo,
-            CommandKindDto::RequestDiagnostics
-            | CommandKindDto::RequestSettings
-            | CommandKindDto::SetLights
-            | CommandKindDto::SetRawMotorCurrent => Self::RequestDiagnostics,
-            CommandKindDto::SoundHorn => Self::SoundHorn,
-        }
+fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCommandDto> {
+    match command {
+        CommandKindDto::RequestIdentity => Some(MobileCommandDto::RequestIdentity),
+        CommandKindDto::RequestTelemetry => Some(MobileCommandDto::RequestTelemetry),
+        CommandKindDto::RequestFirmwareInfo => Some(MobileCommandDto::RequestFirmwareInfo),
+        CommandKindDto::RequestBatteryInfo => Some(MobileCommandDto::RequestBatteryInfo),
+        CommandKindDto::RequestDiagnostics => Some(MobileCommandDto::RequestDiagnostics),
+        CommandKindDto::RequestFaultHistory => Some(MobileCommandDto::RequestFaultHistory),
+        CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
+        CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
+        CommandKindDto::SetLights | CommandKindDto::SetRawMotorCurrent => None,
     }
 }
 
@@ -2331,7 +2337,7 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
         match error {
             ConcreteSessionErrorDto::CommandRefused { refusal } => Self {
                 kind: MobileSessionStepErrorKindDto::CommandRefused,
-                command: Some(refusal.command.into()),
+                command: mobile_command_from_command_kind(refusal.command),
                 reason: Some(control_refusal_reason_text(refusal.reason).to_owned()),
             },
             ConcreteSessionErrorDto::UnsupportedFalconProfile { .. } => Self {
@@ -2826,7 +2832,7 @@ mod tests {
     #[test]
     fn mobile_session_output_preserves_fault_history_readback_event() {
         let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
-            command_kind: CommandKindDto::RequestDiagnostics,
+            command_kind: CommandKindDto::RequestFaultHistory,
             payload: ReadOnlyOutputPayload::FaultHistory(FaultHistoryReadbackDto {
                 availability: FaultHistoryAvailabilityDto::Available,
                 last_fault: Some(FaultHistoryEntryDto {
@@ -2872,6 +2878,26 @@ mod tests {
                 }),
                 since_distance: None,
             })
+        );
+    }
+
+    #[test]
+    fn mobile_command_mapping_keeps_readback_commands_distinct() {
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::RequestDiagnostics),
+            Some(MobileCommandDto::RequestDiagnostics)
+        );
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::RequestFaultHistory),
+            Some(MobileCommandDto::RequestFaultHistory)
+        );
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::RequestSettings),
+            Some(MobileCommandDto::RequestSettings)
+        );
+        assert_eq!(
+            mobile_command_from_command_kind(CommandKindDto::SetRawMotorCurrent),
+            None
         );
     }
 

@@ -432,6 +432,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestFirmwareInfo
     case requestBatteryInfo
     case requestDiagnostics
+    case requestFaultHistory
+    case requestSettings
     case soundHorn
 
     fileprivate init(_ dto: MobileCommandDto) {
@@ -446,6 +448,10 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .requestBatteryInfo
         case .requestDiagnostics:
             self = .requestDiagnostics
+        case .requestFaultHistory:
+            self = .requestFaultHistory
+        case .requestSettings:
+            self = .requestSettings
         case .soundHorn:
             self = .soundHorn
         }
@@ -463,6 +469,10 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .requestBatteryInfo
         case .requestDiagnostics:
             .requestDiagnostics
+        case .requestFaultHistory:
+            .requestFaultHistory
+        case .requestSettings:
+            .requestSettings
         case .soundHorn:
             .soundHorn
         }

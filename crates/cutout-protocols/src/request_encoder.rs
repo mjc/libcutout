@@ -115,6 +115,7 @@ impl VescRequestEncoder {
             ),
             CommandKind::RequestIdentity
             | CommandKind::RequestBatteryInfo
+            | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::SetLights
             | CommandKind::SoundHorn
@@ -178,6 +179,7 @@ impl VescCanTarget {
             ),
             CommandKind::RequestIdentity
             | CommandKind::RequestBatteryInfo
+            | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::SetLights
             | CommandKind::SoundHorn
