@@ -10,11 +10,11 @@ use cutout_core::{
     NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
     ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
     PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ReservedPayloadEvidenceDto,
-    SemanticEventCountDto, SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
-    TransportActionDto, TransportWriteLimit, TransportWriteLimitDto, ValueQualityDto,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    WallClockUnixTimestamp,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue,
+    ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto,
+    SettingsEntry, SettingsReadback, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
@@ -1034,6 +1034,39 @@ pub enum MobileVerificationStatusDto {
     SourceAndHardwareVerified,
 }
 
+/// Raw numeric field from a read-only settings response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRawFieldValueDto {
+    /// Protocol-family field identifier.
+    pub id: u16,
+
+    /// Sign-extended value exactly as reported by the protocol layer.
+    pub value: i64,
+}
+
+/// Generic read-only settings entry for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSettingsEntryDto {
+    /// Raw field value with protocol identity preserved.
+    pub field: MobileRawFieldValueDto,
+
+    /// Source of the settings value.
+    pub source: MobileValueSourceDto,
+
+    /// Confidence in the settings value.
+    pub quality: MobileValueQualityDto,
+
+    /// Verification state for the settings value.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Bounded read-only settings response for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSettingsReadbackDto {
+    /// Present settings entries.
+    pub entries: Vec<MobileSettingsEntryDto>,
+}
+
 /// Mobile GATT characteristic role.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileGattRoleDto {
@@ -1311,11 +1344,30 @@ impl From<ValueSourceDto> for MobileValueSourceDto {
     }
 }
 
+impl From<ValueSource> for MobileValueSourceDto {
+    fn from(source: ValueSource) -> Self {
+        match source {
+            ValueSource::Reported => Self::Reported,
+            ValueSource::Calculated => Self::Calculated,
+            ValueSource::Estimated => Self::Estimated,
+        }
+    }
+}
+
 impl From<ValueQualityDto> for MobileValueQualityDto {
     fn from(quality: ValueQualityDto) -> Self {
         match quality {
             ValueQualityDto::Known => Self::Known,
             ValueQualityDto::Inferred => Self::Inferred,
+        }
+    }
+}
+
+impl From<ValueQuality> for MobileValueQualityDto {
+    fn from(quality: ValueQuality) -> Self {
+        match quality {
+            ValueQuality::Known => Self::Known,
+            ValueQuality::Inferred => Self::Inferred,
         }
     }
 }
@@ -1332,6 +1384,18 @@ impl From<VerificationStatusDto> for MobileVerificationStatusDto {
     }
 }
 
+impl From<VerificationStatus> for MobileVerificationStatusDto {
+    fn from(status: VerificationStatus) -> Self {
+        match status {
+            VerificationStatus::Unverified => Self::Unverified,
+            VerificationStatus::Inferred => Self::Inferred,
+            VerificationStatus::SourceVerified => Self::SourceVerified,
+            VerificationStatus::HardwareVerified => Self::HardwareVerified,
+            VerificationStatus::SourceAndHardwareVerified => Self::SourceAndHardwareVerified,
+        }
+    }
+}
+
 impl From<MobileVerificationStatusDto> for VerificationStatus {
     fn from(status: MobileVerificationStatusDto) -> Self {
         match status {
@@ -1342,6 +1406,39 @@ impl From<MobileVerificationStatusDto> for VerificationStatus {
             MobileVerificationStatusDto::SourceAndHardwareVerified => {
                 Self::SourceAndHardwareVerified
             }
+        }
+    }
+}
+
+impl From<RawFieldValue> for MobileRawFieldValueDto {
+    fn from(field: RawFieldValue) -> Self {
+        Self {
+            id: field.id,
+            value: field.value,
+        }
+    }
+}
+
+impl From<SettingsEntry> for MobileSettingsEntryDto {
+    fn from(entry: SettingsEntry) -> Self {
+        Self {
+            field: entry.field.into(),
+            source: entry.source.into(),
+            quality: entry.quality.into(),
+            verification: entry.verification.into(),
+        }
+    }
+}
+
+impl From<SettingsReadback> for MobileSettingsReadbackDto {
+    fn from(readback: SettingsReadback) -> Self {
+        Self {
+            entries: readback
+                .entries
+                .into_iter()
+                .flatten()
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -2164,6 +2261,54 @@ mod tests {
         assert_eq!(
             snapshot.capture_action_title.as_deref(),
             Some("record unsupported pack")
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_preserves_present_fields_and_metadata() {
+        let readback = SettingsReadback {
+            entries: [
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x0102, -17),
+                    source: ValueSource::Reported,
+                    quality: ValueQuality::Known,
+                    verification: VerificationStatus::HardwareVerified,
+                }),
+                None,
+                Some(SettingsEntry {
+                    field: RawFieldValue::new(0x0203, 42),
+                    source: ValueSource::Estimated,
+                    quality: ValueQuality::Inferred,
+                    verification: VerificationStatus::Inferred,
+                }),
+                None,
+            ],
+        };
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.entries,
+            vec![
+                MobileSettingsEntryDto {
+                    field: MobileRawFieldValueDto {
+                        id: 0x0102,
+                        value: -17,
+                    },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::HardwareVerified,
+                },
+                MobileSettingsEntryDto {
+                    field: MobileRawFieldValueDto {
+                        id: 0x0203,
+                        value: 42,
+                    },
+                    source: MobileValueSourceDto::Estimated,
+                    quality: MobileValueQualityDto::Inferred,
+                    verification: MobileVerificationStatusDto::Inferred,
+                },
+            ]
         );
     }
 
