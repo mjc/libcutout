@@ -541,6 +541,29 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(presented.bmsContent?.chips.map(\.title), ["live readback", "6S1P pack"])
     }
 
+    func testPresentedScreenDerivesNoDataHeaderFromLiveSnapshot() throws {
+        let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let liveSnapshot = BmsSnapshot(
+            availability: .unsupported,
+            topology: BmsTopology(
+                layoutLabel: "non-smart BMS",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 0,
+                confidence: .inferred
+            ),
+            captureActionState: "limited data"
+        )
+
+        let presented = MockupScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
+
+        XCTAssertEqual(presented.id, .bmsNoData)
+        XCTAssertEqual(presented.title, "Battery")
+        XCTAssertEqual(presented.subtitle, "non-smart BMS · controller-only estimate")
+        XCTAssertEqual(presented.secondaryValue, "limited data")
+    }
+
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
         let unknown = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsUnknownTopology)?.bmsContent)
         let snapshot = unknown.snapshot

@@ -257,6 +257,24 @@ private extension MockupBmsScreenKind {
         }
     }
 
+    func liveSubtitle(snapshot: BmsSnapshot, fallback: String) -> String {
+        switch self {
+        case .noData:
+            "\(snapshot.topology.layoutLabel) · controller-only estimate"
+        default:
+            fallback
+        }
+    }
+
+    func liveSecondaryValue(snapshot: BmsSnapshot, fallback: String) -> String {
+        switch self {
+        case .noData:
+            snapshot.captureActionState ?? fallback
+        default:
+            fallback
+        }
+    }
+
     func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [MockupBmsChip] {
         switch self {
         case .overview:
@@ -624,9 +642,9 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         return MockupScreen(
             id: fixtureScreen.id,
             title: resolvedKind.liveTitle(snapshot: liveBmsSnapshot),
-            subtitle: fixtureScreen.subtitle,
+            subtitle: resolvedKind.liveSubtitle(snapshot: liveBmsSnapshot, fallback: fixtureScreen.subtitle),
             primaryValue: fixtureScreen.primaryValue,
-            secondaryValue: fixtureScreen.secondaryValue,
+            secondaryValue: resolvedKind.liveSecondaryValue(snapshot: liveBmsSnapshot, fallback: fixtureScreen.secondaryValue),
             warning: fixtureScreen.warning,
             metrics: fixtureScreen.metrics,
             pickerRows: fixtureScreen.pickerRows,
