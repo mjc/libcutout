@@ -453,6 +453,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
 }
 
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
+    public let at: MonotonicMilliseconds?
     public let speed: Speed?
     public let operatingState: RideOperatingState
     public let voltage: Voltage?
@@ -473,6 +474,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let batteryLevelEstimated: BatteryLevel?
 
     public init(
+        at: MonotonicMilliseconds? = nil,
         speed: Speed? = nil,
         operatingState: RideOperatingState = .unknown,
         voltage: Voltage? = nil,
@@ -492,6 +494,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         batteryLevelReported: BatteryLevel? = nil,
         batteryLevelEstimated: BatteryLevel? = nil
     ) {
+        self.at = at
         self.speed = speed
         self.operatingState = operatingState
         self.voltage = voltage
@@ -514,6 +517,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
 
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
         self.init(
+            at: dto.atMs.map { MonotonicMilliseconds($0.milliseconds) },
             speed: dto.speed?.value,
             operatingState: dto.operatingState,
             voltage: dto.voltage?.value,
@@ -1011,6 +1015,22 @@ public enum EucRideTelemetryAvailability: Equatable, Hashable, Sendable {
     case populated
 }
 
+public enum EucRideUpdateFreshness: Equatable, Hashable, Sendable {
+    case unavailable
+    case fresh
+    case stale
+}
+
+public struct EucRideUpdateAge: Equatable, Hashable, Sendable {
+    public let elapsed: MonotonicMilliseconds?
+    public let freshness: EucRideUpdateFreshness
+
+    public init(elapsed: MonotonicMilliseconds?, freshness: EucRideUpdateFreshness) {
+        self.elapsed = elapsed
+        self.freshness = freshness
+    }
+}
+
 public enum EucRideWarningSeverity: Equatable, Hashable, Sendable {
     case normal
     case caution
@@ -1035,6 +1055,7 @@ public struct EucRideWarningState: Equatable, Hashable, Sendable {
 public enum EucRideVisibleField: Equatable, Hashable, Sendable {
     case status
     case speed
+    case updateAge
     case pwmHeadroom
     case sagAdjustedEnergy
     case packVoltage
@@ -1124,6 +1145,19 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         telemetry?.limpHomeRange
     }
 
+    public func updateAge(
+        at now: MonotonicMilliseconds,
+        staleAfter staleThreshold: MonotonicMilliseconds
+    ) -> EucRideUpdateAge {
+        guard let updatedAt = telemetry?.at ?? displayState.lastUpdate else {
+            return EucRideUpdateAge(elapsed: nil, freshness: .unavailable)
+        }
+
+        let elapsed = now.rawValue >= updatedAt.rawValue ? now.rawValue - updatedAt.rawValue : 0
+        let freshness: EucRideUpdateFreshness = elapsed > staleThreshold.rawValue ? .stale : .fresh
+        return EucRideUpdateAge(elapsed: MonotonicMilliseconds(elapsed), freshness: freshness)
+    }
+
     public var warningState: EucRideWarningState {
         switch phase {
         case .failed(let failure):
@@ -1186,6 +1220,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         [
             EucRideVisibleFieldCoverage(field: .status, source: .sessionState),
             EucRideVisibleFieldCoverage(field: .speed, source: speedCoverage),
+            EucRideVisibleFieldCoverage(field: .updateAge, source: updateAgeCoverage),
             EucRideVisibleFieldCoverage(field: .pwmHeadroom, source: pwmHeadroomCoverage),
             EucRideVisibleFieldCoverage(field: .sagAdjustedEnergy, source: .explicitlyUnavailable),
             EucRideVisibleFieldCoverage(
@@ -1204,6 +1239,10 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     private var speedCoverage: EucRideVisibleFieldSource {
         displayState.speed.millimetersPerSecond == nil ? .explicitlyUnavailable : .liveTelemetry
+    }
+
+    private var updateAgeCoverage: EucRideVisibleFieldSource {
+        telemetry?.at == nil && displayState.lastUpdate == nil ? .explicitlyUnavailable : .liveTelemetry
     }
 
     private var pwmHeadroomCoverage: EucRideVisibleFieldSource {

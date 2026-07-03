@@ -636,6 +636,7 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .status), .sessionState)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .speed), .liveTelemetry)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .updateAge), .explicitlyUnavailable)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .pwmHeadroom), .derivedTelemetry)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .sagAdjustedEnergy), .explicitlyUnavailable)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .packVoltage), .liveTelemetry)
@@ -744,6 +745,37 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .packVoltage), .explicitlyUnavailable)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .explicitlyUnavailable)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .thermal), .explicitlyUnavailable)
+    }
+
+    func testRideStateClassifiesUpdateAgeFromMonotonicTimestamp() {
+        let missing = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: TelemetrySnapshot())
+        )
+        let fresh = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(at: MonotonicMilliseconds(1_000))
+            )
+        )
+        let stale = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(lastUpdate: MonotonicMilliseconds(1_000))
+        )
+
+        XCTAssertEqual(
+            missing.updateAge(at: MonotonicMilliseconds(1_100), staleAfter: MonotonicMilliseconds(250)),
+            EucRideUpdateAge(elapsed: nil, freshness: .unavailable)
+        )
+        XCTAssertEqual(
+            fresh.updateAge(at: MonotonicMilliseconds(1_100), staleAfter: MonotonicMilliseconds(250)),
+            EucRideUpdateAge(elapsed: MonotonicMilliseconds(100), freshness: .fresh)
+        )
+        XCTAssertEqual(
+            stale.updateAge(at: MonotonicMilliseconds(1_300), staleAfter: MonotonicMilliseconds(250)),
+            EucRideUpdateAge(elapsed: MonotonicMilliseconds(300), freshness: .stale)
+        )
+        XCTAssertEqual(fresh.visibleFieldCoverage.source(for: .updateAge), .liveTelemetry)
     }
 
     func testRideStateDoesNotClaimDerivedPowerForZeroCurrent() {
