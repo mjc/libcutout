@@ -286,4 +286,29 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.unknownTopologyTemperatureDetail, "sensor names unavailable")
         XCTAssertEqual(snapshot.unknownTopologyCaptureDetail, "show raw-safe info until topology is confirmed")
     }
+
+    func testSnapshotExposesScrollableCellMapHelpers() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "large EUC pack",
+                seriesGroupCount: 40,
+                parallelCount: 4,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            groups: [
+                BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), temperature: Temperature(value: 34_900), resistance: Resistance(value: 21), alertLevel: .warning),
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+            ] + (19...56).map { index in
+                BmsGroupSnapshot(index: index, voltage: Voltage(value: 4_080), alertLevel: .nominal)
+            }
+        )
+
+        XCTAssertEqual(snapshot.inlineCellMapModeTitles, ["balance view", "temps", "faults"])
+        XCTAssertEqual(snapshot.scrollableCellMapModeTitles, ["overview", "strip", "raw table", "temps"])
+        XCTAssertEqual(snapshot.cellMapInteractionHint, "tap a group for history, IR estimate, and BMS raw fields")
+        XCTAssertEqual(snapshot.scrollableCellMapRule, "40 groups need overview before exact cells")
+        XCTAssertEqual(snapshot.scrollableCellMapFocusHint, "show flagged groups before the raw table")
+    }
 }

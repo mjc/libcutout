@@ -1073,6 +1073,48 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         faultDetail ?? topology.layoutLabel
     }
 
+    public var inlineCellMapModeTitles: [String] {
+        var titles = ["balance view"]
+        if groups.contains(where: { $0.temperature != nil }) {
+            titles.append("temps")
+        }
+        if !faults.isEmpty || !flaggedGroups.isEmpty {
+            titles.append("faults")
+        }
+        return titles
+    }
+
+    public var scrollableCellMapModeTitles: [String] {
+        var titles = ["overview", "strip", "raw table"]
+        if groups.contains(where: { $0.temperature != nil }) {
+            titles.append("temps")
+        } else if !faults.isEmpty || !flaggedGroups.isEmpty {
+            titles.append("faults")
+        }
+        return titles
+    }
+
+    public var cellMapInteractionHint: String {
+        if groups.contains(where: { $0.resistance != nil }) {
+            return "tap a group for history, IR estimate, and BMS raw fields"
+        }
+        if groups.contains(where: { $0.temperature != nil }) {
+            return "tap a group for voltage and temperature detail"
+        }
+        return "tap a group for exact voltage detail"
+    }
+
+    public var scrollableCellMapRule: String {
+        guard !groups.isEmpty else {
+            return topology.layoutLabel
+        }
+        return "\(groups.count) groups need overview before exact cells"
+    }
+
+    public var scrollableCellMapFocusHint: String {
+        flaggedGroups.isEmpty ? "scan the raw table after the overview" : "show flagged groups before the raw table"
+    }
+
     private var groupVoltages: [Voltage] {
         groups.compactMap(\.voltage)
     }

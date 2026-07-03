@@ -2136,7 +2136,7 @@ private struct BmsInlineLayout: View {
                         BmsModeChip(title: title, isSelected: title == content.modeTitles.first, scale: scale)
                     }
                 }
-                Text("tap a cell for history, IR estimate, and BMS raw fields")
+                Text(snapshot.cellMapInteractionHint)
                     .font(.system(size: 13 * scale, weight: .semibold))
                     .foregroundStyle(MockupColors.muted)
             }
@@ -2196,10 +2196,10 @@ private struct BmsScrollableLayout: View {
                     .font(.system(size: 19 * scale, weight: .black))
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
-                Text("Rule: never render 40+ cells as a tiny unreadable grid.")
+                Text(snapshot.scrollableCellMapRule)
                     .font(.system(size: 13 * scale, weight: .semibold))
                     .foregroundStyle(MockupColors.muted)
-                Text("Show anomalies first, raw table second.")
+                Text(snapshot.scrollableCellMapFocusHint)
                     .font(.system(size: 13 * scale, weight: .black))
                     .foregroundStyle(MockupColors.yellow)
             }

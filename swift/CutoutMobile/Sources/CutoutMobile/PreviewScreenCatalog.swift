@@ -205,13 +205,15 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
             : nil
         let highlightedGroupIndices = selectedGroupIndex.map { [$0] } ?? liveSnapshot.lowestGroupIndex.map { [$0] } ?? []
         let chips = resolvedKind.liveChips(snapshot: liveSnapshot, selectedGroupIndex: selectedGroupIndex)
+        let modeTitles = resolvedKind.liveModeTitles(snapshot: liveSnapshot)
 
         return MockupBmsContent(
             kind: resolvedKind,
             snapshot: liveSnapshot,
             chips: chips,
             highlightedGroupIndices: highlightedGroupIndices,
-            selectedGroupIndex: selectedGroupIndex
+            selectedGroupIndex: selectedGroupIndex,
+            modeTitles: modeTitles
         )
     }
 }
@@ -302,6 +304,17 @@ private extension MockupBmsScreenKind {
             return [
                 MockupBmsChip(title: snapshot.captureActionState ?? "limited data", accent: .yellow),
             ]
+        }
+    }
+
+    func liveModeTitles(snapshot: BmsSnapshot) -> [String] {
+        switch self {
+        case .cellMapInline:
+            snapshot.inlineCellMapModeTitles
+        case .cellMapScrollable:
+            snapshot.scrollableCellMapModeTitles
+        case .overview, .cellDetail, .unknownTopology, .noData:
+            []
         }
     }
 }

@@ -486,6 +486,33 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(resolved.snapshot, liveSnapshot)
         XCTAssertEqual(resolved.highlightedGroupIndices, [3])
         XCTAssertEqual(resolved.selectedGroupIndex, nil)
+        XCTAssertEqual(resolved.modeTitles, ["balance view"])
+    }
+
+    func testResolvedBmsContentDerivesScrollableLiveModeTitles() throws {
+        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let liveSnapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "large EUC pack",
+                seriesGroupCount: 40,
+                parallelCount: 4,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            lowestGroupIndex: 17,
+            groups: [
+                BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), temperature: Temperature(value: 34_900), resistance: Resistance(value: 21), alertLevel: .warning),
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+            ] + (19...56).map { index in
+                BmsGroupSnapshot(index: index, voltage: Voltage(value: 4_080), alertLevel: .nominal)
+            }
+        )
+
+        let resolved = try XCTUnwrap(screen.resolvedBmsContent(liveSnapshot: liveSnapshot))
+
+        XCTAssertEqual(resolved.kind, .cellMapScrollable)
+        XCTAssertEqual(resolved.modeTitles, ["overview", "strip", "raw table", "temps"])
     }
 
     func testPresentedScreenRoutesPackToLiveBmsScreen() throws {
