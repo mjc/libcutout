@@ -918,8 +918,8 @@ private struct EucRideScreenView: View {
 
     private var safetyBars: [MockupSafetyBar] {
         if let rideState {
-            if let telemetry = rideState.telemetry {
-                return liveSafetyBars(for: rideState, telemetry: telemetry)
+            if rideState.telemetry != nil {
+                return liveSafetyBars(for: rideState)
             }
             return unavailableSafetyBars(from: screen.safetyBars)
         }
@@ -1690,7 +1690,7 @@ private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard
     }
 }
 
-private func liveSafetyBars(for state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [MockupSafetyBar] {
+private func liveSafetyBars(for state: EucRideScreenState) -> [MockupSafetyBar] {
     [
         state.pwmHeadroomPermille.map { headroomPermille in
             return MockupSafetyBar(
@@ -1705,14 +1705,7 @@ private func liveSafetyBars(for state: EucRideScreenState, telemetry: TelemetryS
             progress: 0,
             accent: .yellow
         ),
-        telemetry.batteryLevelEstimated.map { batteryLevel in
-            MockupSafetyBar(
-                label: "estimated energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value)),
-                progress: Double(batteryLevel.value) / 100.0,
-                accent: .cyan
-            )
-        } ?? MockupSafetyBar(label: "estimated energy", value: "Unavailable", progress: 0, accent: .cyan),
+        MockupSafetyBar(label: "sag-adjusted energy", value: "Unavailable", progress: 0, accent: .cyan),
     ]
 }
 

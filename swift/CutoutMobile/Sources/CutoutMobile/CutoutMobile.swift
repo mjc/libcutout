@@ -1015,7 +1015,7 @@ public enum EucRideVisibleField: Equatable, Hashable, Sendable {
     case status
     case speed
     case pwmHeadroom
-    case estimatedEnergy
+    case sagAdjustedEnergy
     case packVoltage
     case power
     case thermal
@@ -1137,7 +1137,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
             EucRideVisibleFieldCoverage(field: .status, source: .sessionState),
             EucRideVisibleFieldCoverage(field: .speed, source: speedCoverage),
             EucRideVisibleFieldCoverage(field: .pwmHeadroom, source: pwmHeadroomCoverage),
-            EucRideVisibleFieldCoverage(field: .estimatedEnergy, source: estimatedEnergyCoverage),
+            EucRideVisibleFieldCoverage(field: .sagAdjustedEnergy, source: .explicitlyUnavailable),
             EucRideVisibleFieldCoverage(
                 field: .packVoltage,
                 source: telemetry?.voltage == nil ? .explicitlyUnavailable : .liveTelemetry
@@ -1165,10 +1165,6 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         case .notApplicable:
             .notApplicable
         }
-    }
-
-    private var estimatedEnergyCoverage: EucRideVisibleFieldSource {
-        telemetry?.batteryLevelEstimated == nil ? .explicitlyUnavailable : .derivedTelemetry
     }
 
     private var powerCoverage: EucRideVisibleFieldSource {
