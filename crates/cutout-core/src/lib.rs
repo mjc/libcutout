@@ -5929,10 +5929,10 @@ pub enum BatteryReadbackAvailability {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BatteryReadback {
     /// Whether battery or BMS data is available for display.
-    pub availability: BatteryReadbackAvailability,
+    availability: BatteryReadbackAvailability,
 
     /// Battery/BMS page payload, when available.
-    pub page: Option<BatteryPagePayload>,
+    page: Option<BatteryPagePayload>,
 }
 
 impl BatteryReadback {
@@ -5961,6 +5961,18 @@ impl BatteryReadback {
             availability: BatteryReadbackAvailability::Unsupported,
             page: None,
         }
+    }
+
+    /// Returns whether battery or BMS data is available for display.
+    #[must_use]
+    pub const fn availability(&self) -> BatteryReadbackAvailability {
+        self.availability
+    }
+
+    /// Returns the battery/BMS page payload, when available.
+    #[must_use]
+    pub const fn page(&self) -> Option<&BatteryPagePayload> {
+        self.page.as_ref()
     }
 }
 
@@ -6041,10 +6053,10 @@ pub enum SettingsReadbackAvailability {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SettingsReadback {
     /// Whether settings are available for display.
-    pub availability: SettingsReadbackAvailability,
+    availability: SettingsReadbackAvailability,
 
     /// Settings entries.
-    pub entries: [Option<SettingsEntry>; 4],
+    entries: [Option<SettingsEntry>; 4],
 }
 
 impl SettingsReadback {
@@ -6073,6 +6085,18 @@ impl SettingsReadback {
             availability: SettingsReadbackAvailability::Unsupported,
             entries: [None, None, None, None],
         }
+    }
+
+    /// Returns whether settings are available for display.
+    #[must_use]
+    pub const fn availability(self) -> SettingsReadbackAvailability {
+        self.availability
+    }
+
+    /// Returns the bounded settings entries.
+    #[must_use]
+    pub const fn entries(self) -> [Option<SettingsEntry>; 4] {
+        self.entries
     }
 }
 
@@ -8374,13 +8398,13 @@ mod tests {
         let response = crate::SettingsReadback::available([Some(entry), None, None, None]);
 
         assert_eq!(
-            response.availability,
+            response.availability(),
             crate::SettingsReadbackAvailability::Available
         );
-        assert_eq!(response.entries[0], Some(entry));
-        assert_eq!(response.entries[1], None);
+        assert_eq!(response.entries()[0], Some(entry));
+        assert_eq!(response.entries()[1], None);
         assert_eq!(
-            response.entries[0].map(|entry| entry.verification),
+            response.entries()[0].map(|entry| entry.verification),
             Some(VerificationStatus::HardwareVerified)
         );
     }

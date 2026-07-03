@@ -1510,7 +1510,7 @@ mod tests {
 
     fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
         match response {
-            ReadOnlyResponse::Battery(readback) => readback.page.clone(),
+            ReadOnlyResponse::Battery(readback) => readback.page().cloned(),
             _ => None,
         }
     }
@@ -2330,7 +2330,7 @@ mod tests {
         let fields: Vec<_> = responses[1..]
             .iter()
             .flat_map(|response| match response {
-                ReadOnlyResponse::Settings(settings) => settings.entries,
+                ReadOnlyResponse::Settings(settings) => settings.entries(),
                 _ => [None, None, None, None],
             })
             .flatten()

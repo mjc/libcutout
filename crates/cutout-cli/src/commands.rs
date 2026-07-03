@@ -2186,8 +2186,8 @@ fn render_read_only_response_jsonl(
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "settings",
-            "availability": settings_readback_availability_name(settings.availability),
-            "entries": settings.entries.iter().flatten().copied().map(settings_entry_json).collect::<Vec<_>>(),
+            "availability": settings_readback_availability_name(settings.availability()),
+            "entries": settings.entries().iter().flatten().copied().map(settings_entry_json).collect::<Vec<_>>(),
         })),
         ReadOnlyResponse::FaultHistory(fault_history) => {
             serde_json::to_string(&serde_json::json!({
@@ -2226,8 +2226,8 @@ fn render_battery_response_jsonl(
         "sequence": sequence.get(),
         "command_kind": command_kind_name(CommandKind::RequestBatteryInfo),
         "response": "battery",
-        "availability": battery_readback_availability_name(readback.availability),
-        "page": readback.page.as_ref().map(battery_page_json),
+        "availability": battery_readback_availability_name(readback.availability()),
+        "page": readback.page().map(battery_page_json),
     }))
 }
 
@@ -2575,21 +2575,21 @@ struct SettingsLine(SettingsReadback);
 
 impl SettingsLine {
     fn has_fields(self) -> bool {
-        self.0.availability != SettingsReadbackAvailability::Available
-            || self.0.entries.into_iter().any(|entry| entry.is_some())
+        self.0.availability() != SettingsReadbackAvailability::Available
+            || self.0.entries().into_iter().any(|entry| entry.is_some())
     }
 }
 
 impl fmt::Display for SettingsLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut fields = CommandFieldWriter::new(f, "settings");
-        if self.0.availability != SettingsReadbackAvailability::Available {
+        if self.0.availability() != SettingsReadbackAvailability::Available {
             fields.write_str_field(
                 "availability",
-                settings_readback_availability_name(self.0.availability),
+                settings_readback_availability_name(self.0.availability()),
             )?;
         }
-        for entry in self.0.entries.into_iter().flatten() {
+        for entry in self.0.entries().into_iter().flatten() {
             fields.write_raw_field(entry.field)?;
         }
         Ok(())
@@ -2744,7 +2744,7 @@ mod tests {
 
     fn available_battery_page(response: &ReadOnlyResponse) -> Option<BatteryPagePayload> {
         match response {
-            ReadOnlyResponse::Battery(readback) => readback.page.clone(),
+            ReadOnlyResponse::Battery(readback) => readback.page().cloned(),
             _ => None,
         }
     }

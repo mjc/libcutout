@@ -1407,7 +1407,7 @@ mod tests {
         let present: Vec<_> = responses
             .into_iter()
             .flat_map(|response| match response {
-                ReadOnlyResponse::Settings(settings) => settings.entries,
+                ReadOnlyResponse::Settings(settings) => settings.entries(),
                 _ => [None, None, None, None],
             })
             .flatten()

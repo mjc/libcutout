@@ -1232,7 +1232,11 @@ async fn drive_session_relays_notifications_back_into_session() {
         Some(Measured::reported(43))
     );
     assert_eq!(
-        report.settings.first().expect("settings response").entries[0]
+        report
+            .settings
+            .first()
+            .expect("settings response")
+            .entries()[0]
             .expect("settings entry")
             .field,
         RawFieldValue::new(0x0014, 30)
@@ -1287,7 +1291,7 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
             response: ReadOnlyResponse::Settings(settings),
-        } if *monotonic_ms == crate::MonotonicMs::new(2) && settings.entries[0].is_some()
+        } if *monotonic_ms == crate::MonotonicMs::new(2) && settings.entries()[0].is_some()
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,

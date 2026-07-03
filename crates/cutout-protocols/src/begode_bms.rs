@@ -325,7 +325,7 @@ mod tests {
         let ReadOnlyResponse::Battery(readback) = summary.to_battery_response() else {
             panic!("expected battery response");
         };
-        let payload = readback.page.expect("available battery page");
+        let payload = readback.page().expect("available battery page");
 
         assert_eq!(payload.page().selector, ProtocolSelector::new(3));
         assert_eq!(payload.page().kind, BatteryPageKind::Metadata);
@@ -375,7 +375,7 @@ mod tests {
         let ReadOnlyResponse::Battery(readback) = page.to_battery_response() else {
             panic!("expected battery response");
         };
-        let payload = readback.page.expect("available battery page");
+        let payload = readback.page().expect("available battery page");
 
         assert_eq!(payload.page().selector, ProtocolSelector::new(2));
         assert_eq!(payload.page().kind, BatteryPageKind::CellVoltage);

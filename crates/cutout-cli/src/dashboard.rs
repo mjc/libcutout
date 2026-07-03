@@ -907,12 +907,12 @@ impl ReadOnlyDashboardState {
                 self.firmware = Some(firmware);
             }
             ReadOnlyResponse::Settings(settings) => {
-                for entry in settings.entries.into_iter().flatten() {
+                for entry in settings.entries().into_iter().flatten() {
                     push_bounded(&mut self.settings, entry);
                 }
             }
             ReadOnlyResponse::Battery(readback) => {
-                if let Some(payload) = readback.page {
+                if let Some(payload) = readback.page() {
                     let page = payload.page();
                     if matches!(
                         page.kind,
@@ -920,10 +920,10 @@ impl ReadOnlyDashboardState {
                     ) {
                         self.unknown_raw_pages = self.unknown_raw_pages.increment();
                     }
-                    if BmsTemperatureValues(&payload).has_values() {
+                    if BmsTemperatureValues(payload).has_values() {
                         self.latest_bms_temperature = Some(payload.clone());
                     }
-                    push_bounded(&mut self.bms_pages, payload);
+                    push_bounded(&mut self.bms_pages, payload.clone());
                 }
             }
             ReadOnlyResponse::Diagnostics(_) => {
@@ -2425,11 +2425,11 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
         ReadOnlyResponse::FaultHistory(fault_history) => {
             FaultHistoryReadbackLog(fault_history).to_string()
         }
-        ReadOnlyResponse::Battery(readback) => readback.page.map_or_else(
+        ReadOnlyResponse::Battery(readback) => readback.page().map_or_else(
             || {
                 format!(
                     "read-only battery availability={}",
-                    battery_readback_availability_name(readback.availability)
+                    battery_readback_availability_name(readback.availability())
                 )
             },
             |payload| {
@@ -2440,13 +2440,13 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
                     battery_page_side_suffix(page.kind, page.selector.get()),
                     battery_page_kind_name(page.kind),
                     verification_name(page.verification),
-                    battery_readback_availability_name(readback.availability)
+                    battery_readback_availability_name(readback.availability())
                 );
                 let _ = write!(
                     summary,
                     "{}{}",
-                    BmsTemperatureValues(&payload),
-                    BmsCurrentSummary(&payload)
+                    BmsTemperatureValues(payload),
+                    BmsCurrentSummary(payload)
                 );
                 summary
             },
@@ -2467,7 +2467,7 @@ struct SettingsReadbackLog(SettingsReadback);
 impl fmt::Display for SettingsReadbackLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut wrote = false;
-        for entry in self.0.entries.into_iter().flatten() {
+        for entry in self.0.entries().into_iter().flatten() {
             if wrote {
                 write!(f, " ")?;
             } else {
@@ -2490,7 +2490,7 @@ impl fmt::Display for SettingsReadbackLog {
             write!(
                 f,
                 "read-only settings {}",
-                settings_readback_availability_name(self.0.availability)
+                settings_readback_availability_name(self.0.availability())
             )
         }
     }

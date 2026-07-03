@@ -1776,9 +1776,9 @@ fn speed_from_milli_kmh(value: i64) -> Option<CoreSpeed> {
 
 impl From<SettingsReadback> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadback) -> Self {
-        let availability = readback.availability.into();
+        let availability = readback.availability().into();
         let entries: Vec<_> = readback
-            .entries
+            .entries()
             .into_iter()
             .flatten()
             .map(Into::into)

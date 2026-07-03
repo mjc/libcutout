@@ -862,8 +862,8 @@ pub struct BatteryReadbackDto {
 impl From<BatteryReadback> for BatteryReadbackDto {
     fn from(readback: BatteryReadback) -> Self {
         Self {
-            availability: readback.availability.into(),
-            page: readback.page.map(Into::into),
+            availability: readback.availability().into(),
+            page: readback.page().cloned().map(Into::into),
         }
     }
 }
@@ -1028,9 +1028,9 @@ impl From<SettingsReadbackAvailability> for SettingsReadbackAvailabilityDto {
 impl From<SettingsReadback> for SettingsReadbackDto {
     fn from(settings: SettingsReadback) -> Self {
         Self {
-            availability: settings.availability.into(),
+            availability: settings.availability().into(),
             entries: settings
-                .entries
+                .entries()
                 .into_iter()
                 .flatten()
                 .map(Into::into)

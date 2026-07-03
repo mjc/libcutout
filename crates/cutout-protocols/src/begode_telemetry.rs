@@ -1397,7 +1397,7 @@ mod tests {
         };
 
         assert_eq!(
-            settings.entries,
+            settings.entries(),
             [
                 Some(settings_entry(BEGODE_FIELD_SETTINGS_BITS, 0)),
                 Some(settings_entry(BEGODE_FIELD_POWER_OFF_TIMER_MINUTES, 15)),
@@ -1482,7 +1482,7 @@ mod tests {
         };
 
         assert_eq!(
-            settings.entries[2],
+            settings.entries()[2],
             Some(settings_entry(BEGODE_FIELD_TILTBACK_SPEED_KMH, 80))
         );
     }
