@@ -35,8 +35,8 @@ pub const VESC_RAW_TACHOMETER_FIELD_ID: u16 = 0x8002;
 /// Raw VESC controller id telemetry field id.
 pub const VESC_RAW_CONTROLLER_ID_FIELD_ID: u16 = 0x8003;
 
-/// Raw VESC fault-code telemetry field id.
-pub const VESC_RAW_FAULT_CODE_FIELD_ID: u16 = 0x8004;
+/// Raw VESC current fault-code telemetry field id.
+pub const VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID: u16 = 0x8004;
 
 /// Raw VESC average speed statistics field id.
 pub const VESC_RAW_STATS_SPEED_AVG_FIELD_ID: u16 = 0x8101;
@@ -627,7 +627,7 @@ fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryRead
                 i64::from(values.controller_id.get()),
             )),
             Some(RawFieldValue::new(
-                VESC_RAW_FAULT_CODE_FIELD_ID,
+                VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID,
                 i64::from(vesc_fault_code_raw(values.fault_code)),
             )),
         ],
@@ -2030,7 +2030,42 @@ mod tests {
         );
         assert_eq!(
             raw.fields[3].expect("fault"),
-            RawFieldValue::new(VESC_RAW_FAULT_CODE_FIELD_ID, 0)
+            RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
+        );
+    }
+
+    #[test]
+    fn generic_vesc_current_fault_code_stays_raw_telemetry_not_fault_history() {
+        let mut output = Vec::new();
+        push_vesc_reply(
+            &VescReadOnlyReply::Values(VescValuesTelemetry {
+                rpm: cutout_core::RotationalSpeed::from_erpm(0),
+                voltage: Voltage::from_millivolts(0),
+                input_current: BatteryCurrent::from_milliamps(0),
+                tachometer: cutout_core::TachometerReading::from_counts(0),
+                controller_id: cutout_core::VescControllerId::new(7),
+                fault_code: VescFaultCode::AbsOverCurrent,
+            }),
+            ms(42),
+            None,
+            &mut output,
+        );
+
+        let responses = read_only_response_events(&output);
+        assert!(
+            responses
+                .iter()
+                .all(|response| !matches!(response, ReadOnlyResponse::FaultHistory(_)))
+        );
+        let Some(raw) = responses.iter().find_map(|response| match response {
+            ReadOnlyResponse::RawTelemetry(raw) => Some(raw),
+            _ => None,
+        }) else {
+            panic!("expected VESC raw telemetry response");
+        };
+        assert_eq!(
+            raw.fields[3].expect("current fault code"),
+            RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 1)
         );
     }
 
