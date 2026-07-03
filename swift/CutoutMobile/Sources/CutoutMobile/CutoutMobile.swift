@@ -256,13 +256,15 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
         entries: [SettingsReadbackEntry],
         availability: ReadbackAvailability = .available
     ) {
-        self.entries = entries
         self.availability = availability
+        self.entries = availability == .available ? entries : []
     }
 
     fileprivate init(_ dto: MobileSettingsReadbackDto) {
-        self.entries = dto.entries.map(SettingsReadbackEntry.init)
-        self.availability = ReadbackAvailability(dto.availability)
+        self.init(
+            entries: dto.entries.map(SettingsReadbackEntry.init),
+            availability: ReadbackAvailability(dto.availability)
+        )
     }
 }
 

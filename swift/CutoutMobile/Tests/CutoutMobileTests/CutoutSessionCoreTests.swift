@@ -179,6 +179,28 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedReadbacks, [readback, nil])
     }
 
+    func testNonAvailableSettingsReadbackDoesNotCarryRawEntries() {
+        let readback = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 42, value: 1_234),
+                source: .reported,
+                quality: .known,
+                verification: .sourceVerified
+            ),
+        ], availability: .unsupported)
+
+        XCTAssertEqual(readback.availability, .unsupported)
+        XCTAssertTrue(readback.entries.isEmpty)
+        XCTAssertEqual(
+            readback.eucGarageSettings,
+            EucGarageSettingsSnapshot(
+                beepMargin: .unsupported,
+                tiltback: .unsupported,
+                pedalMode: .unsupported
+            )
+        )
+    }
+
     func testSettingsReadbackProjectsKnownVeteranGarageSettings() {
         let readback = SettingsReadback(entries: [
             SettingsReadbackEntry(
