@@ -18,15 +18,20 @@ private final class CutoutLiveValidator {
     private let startedAt = Date()
     private let core = CutoutSessionCore()
     private var records: [String] = []
+    private var candidateRecordCount = 0
+    private var didRequestPairing = false
     private(set) var didValidate = false
 
     init(timeout: TimeInterval) {
         self.timeout = timeout
         core.onRecord = { [weak self] record in
-            self?.records.append(record)
+            self?.appendRecord(record)
         }
         core.onPhaseChange = { [weak self] phase in
             self?.records.append("phase=\(phase)")
+        }
+        core.onScanStateChange = { [weak self] state in
+            self?.pairFirstSupportedCandidate(from: state)
         }
     }
 
@@ -65,7 +70,27 @@ private final class CutoutLiveValidator {
         core.protocolIdentityCandidate?.support.electricUnicycleModel == .aero
     }
 
+    private func pairFirstSupportedCandidate(from state: DevicePickerScanState) {
+        guard !didRequestPairing, let row = state.rows.first(where: \.isSupported) else {
+            return
+        }
+
+        didRequestPairing = true
+        let didPair = core.pair(platformIdentifier: row.id)
+        records.append("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
+    }
+
+    private func appendRecord(_ record: String) {
+        guard !record.hasPrefix("candidate=") else {
+            candidateRecordCount += 1
+            return
+        }
+
+        records.append(record)
+    }
+
     private func printRecords() {
+        print("candidate_records_seen=\(candidateRecordCount)")
         records.forEach { print($0) }
     }
 }
