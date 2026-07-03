@@ -311,4 +311,34 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.scrollableCellMapRule, "40 groups need overview before exact cells")
         XCTAssertEqual(snapshot.scrollableCellMapFocusHint, "show flagged groups before the raw table")
     }
+
+    func testSnapshotExposesNoDataHelpers() {
+        let snapshot = BmsSnapshot(
+            availability: .unsupported,
+            topology: BmsTopology(
+                layoutLabel: "non-smart BMS",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 0,
+                confidence: .inferred
+            ),
+            energyPercent: BatteryLevel(value: 71),
+            voltage: Voltage(value: 117_600),
+            current: BatteryCurrent(value: 38_000),
+            captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
+            captureActionState: "limited data"
+        )
+
+        XCTAssertEqual(snapshot.noDataWarningTitle, "No cell-level BMS data")
+        XCTAssertEqual(snapshot.noDataWarningLines, [
+            "CutOut can’t see individual cell balance or weak groups.",
+            "BMS temperature, faults, or cutout reason stay unavailable.",
+        ])
+        XCTAssertEqual(snapshot.noDataUnknownRows, [
+            "individual cell/group voltages",
+            "cell balance / weak parallel group",
+            "BMS temperature, faults, and cutout reason",
+        ])
+    }
 }

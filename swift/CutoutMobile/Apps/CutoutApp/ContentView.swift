@@ -2450,18 +2450,16 @@ private struct BmsNoDataLayout: View {
                     .foregroundStyle(MockupColors.yellow)
                     .frame(width: 28 * scale, height: 28 * scale)
 
-                Text("No cell-level BMS data")
+                Text(snapshot.noDataWarningTitle)
                     .font(.system(size: 15 * scale, weight: .black))
                     .foregroundStyle(MockupColors.yellow)
             }
-            Text("CutOut can’t see cell balance, weak groups,")
-                .font(.system(size: 14 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
-                .fixedSize(horizontal: false, vertical: true)
-            Text("BMS faults, or pack temperature from this wheel.")
-                .font(.system(size: 14 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.primaryText.opacity(0.9))
-                .fixedSize(horizontal: false, vertical: true)
+            ForEach(snapshot.noDataWarningLines, id: \.self) { line in
+                Text(line)
+                    .font(.system(size: 14 * scale, weight: .medium))
+                    .foregroundStyle(MockupColors.primaryText.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, 18 * scale)
         .padding(.vertical, 16 * scale)
@@ -2543,9 +2541,9 @@ private struct BmsNoDataLayout: View {
     private var unknownsCard: some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
             cardLabel("WHAT IS UNKNOWN")
-            noDataUnknownRow("individual cell/group voltages")
-            noDataUnknownRow("cell balance / weak parallel group")
-            noDataUnknownRow("BMS temperature, faults, and cutout reason")
+            ForEach(snapshot.noDataUnknownRows, id: \.self) { row in
+                noDataUnknownRow(row)
+            }
         }
         .padding(.horizontal, 20 * scale)
         .padding(.vertical, 18 * scale)

@@ -1115,6 +1115,25 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         flaggedGroups.isEmpty ? "scan the raw table after the overview" : "show flagged groups before the raw table"
     }
 
+    public var noDataWarningTitle: String {
+        "No cell-level BMS data"
+    }
+
+    public var noDataWarningLines: [String] {
+        [
+            "CutOut can’t see individual cell balance or weak groups.",
+            "BMS temperature, faults, or cutout reason stay unavailable.",
+        ]
+    }
+
+    public var noDataUnknownRows: [String] {
+        [
+            "individual cell/group voltages",
+            "cell balance / weak parallel group",
+            "BMS temperature, faults, and cutout reason",
+        ]
+    }
+
     private var groupVoltages: [Voltage] {
         groups.compactMap(\.voltage)
     }
