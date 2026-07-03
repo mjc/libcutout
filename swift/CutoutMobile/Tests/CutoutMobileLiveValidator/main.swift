@@ -36,7 +36,7 @@ private final class CutoutLiveValidator {
         core.start()
         while !didValidate, Date().timeIntervalSince(startedAt) < timeout {
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
-            didValidate = core.hasObservedSpeedSnapshot
+            didValidate = rideState.isLiveValidationReady && hasConfirmedAeroIdentity
         }
         if didValidate {
             records.append("validation=ok")
@@ -44,8 +44,25 @@ private final class CutoutLiveValidator {
             printRecords()
         } else {
             print("validation=timeout")
+            print("missing_fields=\(missingFieldText)")
             printRecords()
         }
+    }
+
+    private var rideState: EucRideScreenState {
+        EucRideScreenState(phase: core.phase, displayState: core.displayState)
+    }
+
+    private var missingFieldText: String {
+        var fields = rideState.liveValidationMissingFields.map(\.rawValue)
+        if !hasConfirmedAeroIdentity {
+            fields.append("protocolIdentity")
+        }
+        return fields.isEmpty ? "none" : fields.joined(separator: ",")
+    }
+
+    private var hasConfirmedAeroIdentity: Bool {
+        core.protocolIdentityCandidate?.support.electricUnicycleModel == .aero
     }
 
     private func printRecords() {

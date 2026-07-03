@@ -676,6 +676,36 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .tabs), .staticNavigation)
     }
 
+    func testRideStateRequiresRepresentativeLiveFieldsForValidation() {
+        let ready = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: speedValue(1_234),
+                    voltage: voltageValue(118_000),
+                    batteryCurrent: batteryCurrentValue(2_000),
+                    controllerTemperature: temperatureValue(31_000),
+                    pwm: dutyCycle(230)
+                )
+            )
+        )
+        let missing = EucRideScreenState(
+            phase: .subscribing,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(voltage: voltageValue(118_000))
+            )
+        )
+
+        XCTAssertTrue(ready.isLiveValidationReady)
+        XCTAssertEqual(ready.liveValidationMissingFields, [])
+        XCTAssertFalse(missing.isLiveValidationReady)
+        XCTAssertEqual(
+            missing.liveValidationMissingFields,
+            [.livePhase, .updateAge, .speed, .power, .pwm, .thermal]
+        )
+    }
+
     func testRideStateAccountsForRegenerationPowerOnlyWhenFlowIsRegeneration() {
         let rideState = EucRideScreenState(
             phase: .live,

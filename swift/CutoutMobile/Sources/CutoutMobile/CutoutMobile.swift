@@ -1087,6 +1087,16 @@ public struct EucRideVisibleFieldCoverage: Equatable, Hashable, Sendable {
     }
 }
 
+public enum EucRideLiveValidationField: String, Equatable, Hashable, Sendable {
+    case livePhase
+    case updateAge
+    case speed
+    case packVoltage
+    case power
+    case pwm
+    case thermal
+}
+
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
     private static let reduceAccelerationPwmHeadroomThreshold = 250
 
@@ -1260,6 +1270,38 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
             EucRideVisibleFieldCoverage(field: .limpHomeRange, source: limpHomeRangeCoverage),
             EucRideVisibleFieldCoverage(field: .tabs, source: .staticNavigation),
         ]
+    }
+
+    public var liveValidationMissingFields: [EucRideLiveValidationField] {
+        var missing: [EucRideLiveValidationField] = []
+
+        if phase != .live {
+            missing.append(.livePhase)
+        }
+        if telemetry?.at == nil && displayState.lastUpdate == nil {
+            missing.append(.updateAge)
+        }
+        if telemetry?.speed == nil {
+            missing.append(.speed)
+        }
+        if telemetry?.voltage == nil {
+            missing.append(.packVoltage)
+        }
+        if telemetry?.displayPower == nil {
+            missing.append(.power)
+        }
+        if telemetry?.pwm == nil {
+            missing.append(.pwm)
+        }
+        if telemetry?.hasTemperature != true {
+            missing.append(.thermal)
+        }
+
+        return missing
+    }
+
+    public var isLiveValidationReady: Bool {
+        liveValidationMissingFields.isEmpty
     }
 
     private var speedCoverage: EucRideVisibleFieldSource {
