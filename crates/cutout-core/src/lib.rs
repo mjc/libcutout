@@ -321,13 +321,44 @@ pub enum UnsupportedReason {
 }
 
 /// Short-lived authorization token for dangerous actuation commands.
+///
+/// Arm tokens are issued by [`DangerousActuationPolicy::arm`]. External
+/// callers can inspect the derived model and expiry values, but cannot forge a
+/// valid-looking token with a struct literal.
+///
+/// ```compile_fail
+/// # use cutout_core::{DangerousActuationArm, MonotonicTimestamp};
+/// let _forged = DangerousActuationArm {
+///     model: "Begode Falcon",
+///     expires_at_ms: MonotonicTimestamp::new(u64::MAX),
+/// };
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DangerousActuationArm {
-    /// Model this token was issued for.
-    pub model: &'static str,
+    model: &'static str,
+    expires_at_ms: MonotonicTimestamp,
+}
 
-    /// Monotonic expiry time in milliseconds.
-    pub expires_at_ms: MonotonicTimestamp,
+impl DangerousActuationArm {
+    /// Returns the model this token was issued for.
+    #[must_use]
+    pub const fn model(self) -> &'static str {
+        self.model
+    }
+
+    /// Returns the monotonic expiry time for this token.
+    #[must_use]
+    pub const fn expires_at_ms(self) -> MonotonicTimestamp {
+        self.expires_at_ms
+    }
+
+    const fn is_for_model(self, model: &str) -> bool {
+        str_eq(self.model, model)
+    }
+
+    const fn is_expired_at(self, monotonic_ms: MonotonicTimestamp) -> bool {
+        monotonic_ms.get() > self.expires_at_ms.get()
+    }
 }
 
 /// Dangerous actuation policy for a single model/session.
@@ -374,10 +405,10 @@ impl DangerousActuationPolicy {
             return Err(DangerousActuationRefusal::MissingArm);
         };
 
-        if !str_eq(arm.model, self.model) {
+        if !arm.is_for_model(self.model) {
             return Err(DangerousActuationRefusal::WrongModel);
         }
-        if monotonic_ms.get() > arm.expires_at_ms.get() {
+        if arm.is_expired_at(monotonic_ms) {
             return Err(DangerousActuationRefusal::ExpiredArm);
         }
         if let DeviceCommand::SetRawMotorCurrent { current } = command
@@ -3197,6 +3228,7 @@ impl RequestTracker {
         }
         active.retries = active.retries.saturating_add(1);
         active.started_at_ms = now_ms;
+        self.last_started = Some((active.key, now_ms));
         self.in_flight = Some(active);
         Ok(())
     }
@@ -9502,6 +9534,56 @@ mod tests {
         assert_eq!(
             tracker.on_tick(ms(760)),
             crate::RequestTick::TimedOut { key, attempts: 3 }
+        );
+    }
+
+    #[test]
+    fn request_tracker_retry_start_updates_same_key_pacing_watermark() {
+        let policy = crate::RequestPolicy {
+            min_interval: Duration::from_milliseconds(100),
+            timeout: Duration::from_milliseconds(250),
+            max_retries: 1,
+        };
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
+
+        assert_eq!(tracker.start(key, policy, ms(10)), Ok(()));
+        assert_eq!(
+            tracker.on_tick(ms(260)),
+            crate::RequestTick::Retry { key, attempt: 1 }
+        );
+        assert_eq!(tracker.retry_started(ms(260)), Ok(()));
+        assert_eq!(
+            tracker.correlate_reply(key, &mut crate::ParserDiagnostics::default()),
+            crate::CorrelationResult::Matched { key, attempts: 2 }
+        );
+
+        assert_eq!(
+            tracker.start(key, policy, ms(300)),
+            Err(crate::RequestStartError::Pacing {
+                ready_at_ms: ms(360)
+            })
+        );
+    }
+
+    #[test]
+    fn request_tracker_rejects_retry_without_active_request_or_retry_budget() {
+        let policy = crate::RequestPolicy {
+            timeout: Duration::from_milliseconds(250),
+            max_retries: 0,
+            ..crate::RequestPolicy::default()
+        };
+        let mut tracker = crate::RequestTracker::default();
+        let key = crate::RequestKey::new(crate::CommandKind::RequestIdentity);
+
+        assert_eq!(
+            tracker.retry_started(ms(10)),
+            Err(crate::RequestStartError::NoActiveRequest)
+        );
+        assert_eq!(tracker.start(key, policy, ms(10)), Ok(()));
+        assert_eq!(
+            tracker.retry_started(ms(260)),
+            Err(crate::RequestStartError::Busy { key })
         );
     }
 
