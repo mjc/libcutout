@@ -1046,9 +1046,9 @@ pub struct FaultHistoryReadbackDto {
 impl From<FaultHistoryReadback> for FaultHistoryReadbackDto {
     fn from(readback: FaultHistoryReadback) -> Self {
         Self {
-            availability: readback.availability.into(),
-            last_fault: readback.last_fault.map(Into::into),
-            since_distance: readback.since_distance.map(Into::into),
+            availability: readback.availability().into(),
+            last_fault: readback.last_fault().map(Into::into),
+            since_distance: readback.since_distance().map(Into::into),
         }
     }
 }

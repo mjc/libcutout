@@ -6129,13 +6129,13 @@ impl FaultHistoryEntry {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FaultHistoryReadback {
     /// Whether fault history is available for display.
-    pub availability: FaultHistoryAvailability,
+    availability: FaultHistoryAvailability,
 
     /// Last reported fault, if the device reports one.
-    pub last_fault: Option<FaultHistoryEntry>,
+    last_fault: Option<FaultHistoryEntry>,
 
     /// Distance since the last fault, if reported separately.
-    pub since_distance: Option<Measured<Distance>>,
+    since_distance: Option<Measured<Distance>>,
 }
 
 impl FaultHistoryReadback {
@@ -6180,6 +6180,24 @@ impl FaultHistoryReadback {
             last_fault: Some(last_fault),
             since_distance,
         }
+    }
+
+    /// Returns whether fault-history data is available for display.
+    #[must_use]
+    pub const fn availability(self) -> FaultHistoryAvailability {
+        self.availability
+    }
+
+    /// Returns the last reported fault, if one was reported.
+    #[must_use]
+    pub const fn last_fault(self) -> Option<FaultHistoryEntry> {
+        self.last_fault
+    }
+
+    /// Returns distance since the last fault, if reported separately.
+    #[must_use]
+    pub const fn since_distance(self) -> Option<Measured<Distance>> {
+        self.since_distance
     }
 }
 
@@ -8364,22 +8382,22 @@ mod tests {
         let readback = crate::FaultHistoryReadback::fault_since(last_fault, Some(distance));
 
         assert_eq!(
-            readback.availability,
+            readback.availability(),
             crate::FaultHistoryAvailability::Available
         );
-        assert_eq!(readback.last_fault, Some(last_fault));
-        assert_eq!(readback.last_fault.expect("fault").code, code);
-        assert_eq!(readback.since_distance, Some(distance));
+        assert_eq!(readback.last_fault(), Some(last_fault));
+        assert_eq!(readback.last_fault().expect("fault").code, code);
+        assert_eq!(readback.since_distance(), Some(distance));
         assert_eq!(
-            crate::FaultHistoryReadback::no_fault_since(distance).last_fault,
+            crate::FaultHistoryReadback::no_fault_since(distance).last_fault(),
             None
         );
         assert_eq!(
-            crate::FaultHistoryReadback::unavailable().availability,
+            crate::FaultHistoryReadback::unavailable().availability(),
             crate::FaultHistoryAvailability::Unavailable
         );
         assert_eq!(
-            crate::FaultHistoryReadback::unsupported().availability,
+            crate::FaultHistoryReadback::unsupported().availability(),
             crate::FaultHistoryAvailability::Unsupported
         );
     }

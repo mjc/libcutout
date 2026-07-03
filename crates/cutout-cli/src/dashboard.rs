@@ -2516,11 +2516,11 @@ struct FaultHistoryReadbackLog(FaultHistoryReadback);
 
 impl fmt::Display for FaultHistoryReadbackLog {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Some(entry) = self.0.last_fault else {
+        let Some(entry) = self.0.last_fault() else {
             return write!(
                 f,
                 "read-only fault-history {}",
-                fault_history_availability_name(self.0.availability)
+                fault_history_availability_name(self.0.availability())
             );
         };
 
@@ -2532,7 +2532,7 @@ impl fmt::Display for FaultHistoryReadbackLog {
             quality_name(entry.quality),
             verification_name(entry.verification)
         )?;
-        if let Some(distance) = self.0.since_distance {
+        if let Some(distance) = self.0.since_distance() {
             write!(f, " since_mm={}", distance.value.as_millimetres())?;
         }
         Ok(())

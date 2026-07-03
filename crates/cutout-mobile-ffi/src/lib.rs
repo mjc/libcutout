@@ -1763,10 +1763,10 @@ impl From<FaultCode> for MobileFaultCodeDto {
 impl From<FaultHistoryReadback> for MobileFaultHistoryReadbackDto {
     fn from(readback: FaultHistoryReadback) -> Self {
         Self {
-            availability: readback.availability.into(),
-            last_fault: readback.last_fault.map(Into::into),
+            availability: readback.availability().into(),
+            last_fault: readback.last_fault().map(Into::into),
             since_distance: readback
-                .since_distance
+                .since_distance()
                 .map(MeasuredU64Dto::from)
                 .map(Into::into),
         }
