@@ -224,7 +224,7 @@ public extension SettingsReadback {
         EucGarageSettingsSnapshot(
             beepMargin: speedReadback(for: VeteranSettingsField.speedAlertDeciKmh),
             tiltback: speedReadback(for: VeteranSettingsField.speedTiltbackDeciKmh),
-            pedalHardness: missingReadback()
+            pedalHardness: pedalHardnessReadback()
         )
     }
 
@@ -233,6 +233,14 @@ public extension SettingsReadback {
             .first { $0.field.id == fieldID }
             .flatMap { speedFromDeciKmh($0.field.value) }
             .map(ReadbackValue.available)
+            ?? missingReadback()
+    }
+
+    private func pedalHardnessReadback() -> ReadbackValue<PedalHardness> {
+        entries
+            .first { $0.field.id == VeteranSettingsField.pedalsMode }
+            .flatMap { UInt16(exactly: $0.field.value) }
+            .map { ReadbackValue.available(.rawMode($0)) }
             ?? missingReadback()
     }
 
@@ -259,6 +267,7 @@ public extension SettingsReadback {
 private enum VeteranSettingsField {
     static let speedAlertDeciKmh: UInt16 = 0x0005
     static let speedTiltbackDeciKmh: UInt16 = 0x0006
+    static let pedalsMode: UInt16 = 0x001e
 }
 
 public struct FaultHistoryEntry: Equatable, Hashable, Sendable {
@@ -468,10 +477,37 @@ public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, 
 }
 
 public struct PedalHardness: Equatable, Hashable, Sendable {
-    public let percent: UInt8
+    public enum Value: Equatable, Hashable, Sendable {
+        case percent(UInt8)
+        case rawMode(UInt16)
+    }
+
+    public let value: Value
+
+    public var percent: UInt8? {
+        guard case let .percent(percent) = value else {
+            return nil
+        }
+        return percent
+    }
+
+    public var rawMode: UInt16? {
+        guard case let .rawMode(rawMode) = value else {
+            return nil
+        }
+        return rawMode
+    }
 
     public init(percent: UInt8) {
-        self.percent = percent
+        self.value = .percent(percent)
+    }
+
+    public static func rawMode(_ value: UInt16) -> Self {
+        Self(value: .rawMode(value))
+    }
+
+    private init(value: Value) {
+        self.value = value
     }
 }
 

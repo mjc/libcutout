@@ -258,10 +258,21 @@ private struct EucGarageMockupView: View {
             return unavailableTile(tile, availability: readback.availability)
         }
 
+        let value: String
+        let unit: String
+        switch hardness.value {
+        case let .percent(percent):
+            value = "\(percent)"
+            unit = "%"
+        case let .rawMode(rawMode):
+            value = "\(rawMode)"
+            unit = "raw"
+        }
+
         return MockupDashboardTile(
             label: tile.label,
-            value: "\(hardness.percent)",
-            unit: "%",
+            value: value,
+            unit: unit,
             detail: "read-only setting",
             accent: tile.accent
         )
