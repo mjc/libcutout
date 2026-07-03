@@ -1,6 +1,6 @@
 use std::{future::Future, time::Duration};
 
-use cutout_core::{GattChannel, NotificationByteLen};
+use cutout_core::{GattChannel, NotificationByteLen, SessionOutputError};
 use thiserror::Error;
 
 use crate::NegotiatedWriteLimit;
@@ -44,6 +44,10 @@ pub enum SessionBridgeError {
     /// Session tried to emit transport work while handling an externally lost link.
     #[error("bridge cannot process transport actions after external link loss")]
     ExternalLinkDownTransportAction,
+
+    /// Session could not enqueue an output for the bridge to process.
+    #[error(transparent)]
+    SessionOutput(#[from] SessionOutputError),
 }
 
 /// Errors surfaced by the BTLE adapter.
@@ -125,10 +129,19 @@ impl BtleError {
             Self::Bridge(SessionBridgeError::ExternalLinkDownTransportAction) => {
                 "report this session lifecycle bug with the selected profile and capture logs"
             }
+            Self::Bridge(SessionBridgeError::SessionOutput(_)) => {
+                "report this session output buffering bug with the selected profile and capture logs"
+            }
             Self::Backend(_) => {
                 "check OS Bluetooth permissions, adapter state, and whether another app is already connected"
             }
         }
+    }
+}
+
+impl From<SessionOutputError> for BtleError {
+    fn from(error: SessionOutputError) -> Self {
+        Self::Bridge(SessionBridgeError::SessionOutput(error))
     }
 }
 

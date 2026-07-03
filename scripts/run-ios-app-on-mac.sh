@@ -20,8 +20,23 @@ export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Conte
 unset SDKROOT
 
 destination="${CUTOUT_IOS_ON_MAC_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
+<<<<<<<< HEAD:scripts/run-ios-app-on-mac.sh
 product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(CUTOUT_IOS_APP_BUILD_DESTINATION="$destination" cutout_build_ios_app_bundle)}"
+|||||||| 2bdc2c8e:scripts/run-ios-speed-app-on-mac.sh
+product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(cutout_build_ios_speed_app_bundle)}"
+========
+product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(CUTOUT_IOS_APP_BUILD_DESTINATION="$destination" cutout_build_ios_cutout_app_bundle)}"
+>>>>>>>> mjc/libcu-doc1-hardening:scripts/run-ios-cutout-app-on-mac.sh
 
+<<<<<<<< HEAD:scripts/run-ios-app-on-mac.sh
 echo "ios_app_product=$product"
 echo "ios_app_destination=$destination"
 echo "ios_app_note=real iPhoneOS app bundle built; use scripts/run-cutout-app.sh --launch-smoke for local Mac launch proof"
+|||||||| 2bdc2c8e:scripts/run-ios-speed-app-on-mac.sh
+echo "ios_speed_app_product=$product"
+echo "ios_speed_app_note=real iPhoneOS app bundle built; use Xcode or tracked device-launch automation to run it"
+========
+echo "ios_cutout_app_product=$product"
+echo "ios_cutout_app_destination=$destination"
+echo "ios_cutout_app_note=real iPhoneOS app bundle built; use Xcode or tracked device-launch automation to run it"
+>>>>>>>> mjc/libcu-doc1-hardening:scripts/run-ios-cutout-app-on-mac.sh

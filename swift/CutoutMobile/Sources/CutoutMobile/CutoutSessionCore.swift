@@ -1,9 +1,25 @@
 import CoreBluetooth
 import Foundation
 
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
 public final class CutoutSessionCore: NSObject {
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+public final class LiveSpeedSessionCore: NSObject {
+    public private(set) var displayState = LiveSpeedDisplayState()
+    public private(set) var phase = LiveSpeedConnectionPhase.starting
+========
+public enum LiveRideSessionLifecycleStep: Equatable, Sendable {
+    case connecting(model: ElectricUnicycleModel, platformIdentifier: String)
+    case discoveringServices([String])
+    case subscribing([String])
+}
+
+public final class LiveRideSessionCore: NSObject {
+    public private(set) var displayState = LiveRideDisplayState()
+    public private(set) var phase = LiveRideConnectionPhase.starting
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     public private(set) var records: [String] = []
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
@@ -12,8 +28,16 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+    public var onDisplayStateChange: ((LiveSpeedDisplayState) -> Void)?
+    public var onPhaseChange: ((LiveSpeedConnectionPhase) -> Void)?
+========
+    public var onDisplayStateChange: ((LiveRideDisplayState) -> Void)?
+    public var onPhaseChange: ((LiveRideConnectionPhase) -> Void)?
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     public var onRecord: ((String) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
@@ -34,6 +58,8 @@ public final class CutoutSessionCore: NSObject {
     private var suppressReconnect = false
 
     public override init() {}
+
+    deinit {}
 
     public func start() {
         guard central == nil else {
@@ -63,6 +89,7 @@ public final class CutoutSessionCore: NSObject {
         return true
     }
 
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
     @discardableResult
     public func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
         let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
@@ -76,13 +103,37 @@ public final class CutoutSessionCore: NSObject {
         return true
     }
 
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+========
+    public func applyLifecycleStep(_ step: LiveRideSessionLifecycleStep) {
+        switch step {
+        case let .connecting(model, platformIdentifier):
+            selectedModel = model
+            setPhase(.connecting(model: model))
+            record("connect_model=\(model.displayName) platform_identifier=\(platformIdentifier)")
+        case let .discoveringServices(services):
+            setPhase(.discoveringServices)
+            record("services=\(services.joined(separator: ","))")
+        case let .subscribing(channels):
+            setPhase(.subscribing)
+            record("subscribe_channels=\(channels.joined(separator: ","))")
+        }
+    }
+
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     public func disconnectAndScan() {
         suppressReconnect = true
         selectedModel = nil
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
         displayState = RideDisplayState()
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+        displayState = LiveSpeedDisplayState()
+========
+        displayState = LiveRideDisplayState()
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
         hasObservedSpeedSnapshot = false
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -114,10 +165,12 @@ public final class CutoutSessionCore: NSObject {
         step.actions.forEach(applySessionAction)
         displayState = displayState.reducing(step, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speed?.value != nil
+        record("display_speed=\(displayState.speed.displayValue) display_unit=\(displayState.speed.displayUnit)")
         onDisplayStateChange?(displayState)
         setPhase(.live)
     }
 
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
     private func applySessionAction(_ action: SessionAction) {
         switch action.kind {
         case .settingsReadback:
@@ -183,6 +236,21 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func setPhase(_ phase: SessionConnectionPhase) {
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+    private func setPhase(_ phase: LiveSpeedConnectionPhase) {
+========
+    public func timeoutDiagnosticRecords(timeoutSeconds: Int) -> [String] {
+        [
+            "timeout_seconds=\(timeoutSeconds)",
+            "phase=\(phase)",
+            "candidate_count=\(scanState.rows.count)",
+            "selected_model=\(timeoutDiagnosticModelName)",
+            "blocker=\(timeoutDiagnosticBlocker)",
+        ]
+    }
+
+    private func setPhase(_ phase: LiveRideConnectionPhase) {
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
         self.phase = phase
         onPhaseChange?(phase)
     }
@@ -225,7 +293,13 @@ public final class CutoutSessionCore: NSObject {
                 applyLinkUpStep(step)
             }
         } catch {
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
             setPhase(.failed(.sessionFailed(error.sessionMessage)))
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+            setPhase(.failed(.sessionFailed(error.liveSpeedMessage)))
+========
+            setPhase(.failed(.sessionFailed(error.liveRideMessage)))
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
         }
     }
 
@@ -244,7 +318,13 @@ public final class CutoutSessionCore: NSObject {
         }
 
         guard let selectedModel else {
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
             setPhase(.failed(.connectFailed(error.sessionMessage)))
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+            setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+========
+            setPhase(.failed(.connectFailed(error.liveRideMessage)))
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
             return
         }
 
@@ -256,9 +336,43 @@ public final class CutoutSessionCore: NSObject {
         records.append(message)
         onRecord?(message)
     }
+
+    private var timeoutDiagnosticModelName: String {
+        switch phase {
+        case .scanning(let model), .connecting(let model):
+            model.displayName
+        default:
+            selectedModel?.displayName ?? "unknown"
+        }
+    }
+
+    private var timeoutDiagnosticBlocker: String {
+        switch phase {
+        case .starting:
+            "bluetooth_pending"
+        case .bluetoothUnavailable:
+            "bluetooth_unavailable"
+        case .scanning:
+            scanState.rows.isEmpty ? "no_candidate" : "discovered_no_connect"
+        case .connecting, .discoveringServices:
+            "discovered_no_connect"
+        case .subscribing:
+            "connected_no_telemetry"
+        case .live:
+            hasObservedSpeedSnapshot ? "speed_observed" : "parsed_no_speed"
+        case .failed:
+            "code_failure"
+        }
+    }
 }
 
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
 extension CutoutSessionCore: CBCentralManagerDelegate {
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+extension LiveSpeedSessionCore: CBCentralManagerDelegate {
+========
+extension LiveRideSessionCore: CBCentralManagerDelegate {
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         record("central_state=\(central.state.rawValue)")
         guard central.state == .poweredOn else {
@@ -302,7 +416,13 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
         setPhase(.failed(.connectFailed(error.sessionMessage)))
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+        setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+========
+        setPhase(.failed(.connectFailed(error.liveRideMessage)))
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     }
 
     public func centralManager(
@@ -314,10 +434,22 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     }
 }
 
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
 extension CutoutSessionCore: CBPeripheralDelegate {
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+extension LiveSpeedSessionCore: CBPeripheralDelegate {
+========
+extension LiveRideSessionCore: CBPeripheralDelegate {
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error {
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
             setPhase(.failed(.serviceDiscoveryFailed(error.sessionMessage)))
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+            setPhase(.failed(.serviceDiscoveryFailed(error.liveSpeedMessage)))
+========
+            setPhase(.failed(.serviceDiscoveryFailed(error.liveRideMessage)))
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
             return
         }
         let services = peripheral.services ?? []
@@ -334,7 +466,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
             setPhase(.failed(.characteristicDiscoveryFailed(error.sessionMessage)))
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+            setPhase(.failed(.characteristicDiscoveryFailed(error.liveSpeedMessage)))
+========
+            setPhase(.failed(.characteristicDiscoveryFailed(error.liveRideMessage)))
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
             return
         }
         service.characteristics?.forEach { characteristic in
@@ -354,7 +492,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
             setPhase(.failed(.notificationFailed(error.sessionMessage)))
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+            setPhase(.failed(.notificationFailed(error.liveSpeedMessage)))
+========
+            setPhase(.failed(.notificationFailed(error.liveRideMessage)))
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
             return
         }
         guard
@@ -379,12 +523,24 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             applyNotificationStep(step, receivedAt: receivedAt)
         } catch {
             record("notification_ingest_error=\(error)")
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
             setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+            setPhase(.failed(.notificationIngestFailed(error.liveSpeedMessage)))
+========
+            setPhase(.failed(.notificationIngestFailed(error.liveRideMessage)))
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
         }
     }
 }
 
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
 extension CutoutSessionCore: CoreBluetoothOperationSink {
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+extension LiveSpeedSessionCore: CoreBluetoothOperationSink {
+========
+extension LiveRideSessionCore: CoreBluetoothOperationSink {
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     public func subscribe(channel: BluetoothUuid) {
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingNotifyChannel))
@@ -414,13 +570,27 @@ private struct MonotonicClock {
 }
 
 private extension Optional where Wrapped == Error {
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
     var sessionMessage: String {
         map(String.init(describing:)) ?? "unknown error"
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+    var liveSpeedMessage: String {
+        map(String.init(describing:)) ?? "unknown error"
+========
+    var liveRideMessage: String {
+        self?.liveRideMessage ?? "unknown error"
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
     }
 }
 
 private extension Error {
+<<<<<<<< HEAD:swift/CutoutMobile/Sources/CutoutMobile/CutoutSessionCore.swift
     var sessionMessage: String {
+|||||||| 2bdc2c8e:swift/CutoutMobile/Sources/CutoutMobile/LiveSpeedSessionCore.swift
+    var liveSpeedMessage: String {
+========
+    var liveRideMessage: String {
+>>>>>>>> mjc/libcu-doc1-hardening:swift/CutoutMobile/Sources/CutoutMobile/LiveRideSessionCore.swift
         String(describing: self)
     }
 }

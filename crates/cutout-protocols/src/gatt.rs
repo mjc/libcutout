@@ -1,24 +1,26 @@
 use cutout_core::GattChannel;
 
-/// Capture-backed FFE0 service UUID for NOSFET/Veteran-family sessions.
-pub const VETERAN_SERVICE_CHANNEL: GattChannel = GattChannel::from_bytes([
+/// Shared FFE0 service UUID used by supported EUC protocol adapters.
+pub const SHARED_FFE0_SERVICE_CHANNEL: GattChannel = GattChannel::from_bytes([
     0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
 ]);
+
+/// Shared FFE1 data characteristic UUID used by supported EUC protocol adapters.
+pub const SHARED_FFE1_DATA_CHANNEL: GattChannel = GattChannel::from_bytes([
+    0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
+]);
+
+/// Capture-backed FFE0 service UUID for NOSFET/Veteran-family sessions.
+pub const VETERAN_SERVICE_CHANNEL: GattChannel = SHARED_FFE0_SERVICE_CHANNEL;
 
 /// Capture-backed FFE1 data characteristic UUID for NOSFET/Veteran-family sessions.
-pub const VETERAN_DATA_CHANNEL: GattChannel = GattChannel::from_bytes([
-    0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
-]);
+pub const VETERAN_DATA_CHANNEL: GattChannel = SHARED_FFE1_DATA_CHANNEL;
 
 /// Source-backed FFE0 service UUID for Begode/Gotway-family sessions.
-pub const BEGODE_SERVICE_CHANNEL: GattChannel = GattChannel::from_bytes([
-    0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
-]);
+pub const BEGODE_SERVICE_CHANNEL: GattChannel = SHARED_FFE0_SERVICE_CHANNEL;
 
 /// Source-backed FFE1 data characteristic UUID for Begode/Gotway-family sessions.
-pub const BEGODE_DATA_CHANNEL: GattChannel = GattChannel::from_bytes([
-    0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb,
-]);
+pub const BEGODE_DATA_CHANNEL: GattChannel = SHARED_FFE1_DATA_CHANNEL;
 
 /// Common Nordic UART write characteristic used by generic VESC BLE UART adapters.
 pub const VESC_WRITE_CHANNEL: GattChannel = GattChannel::from_bytes([
@@ -52,6 +54,9 @@ mod tests {
         );
         assert_eq!(BEGODE_SERVICE_CHANNEL, VETERAN_SERVICE_CHANNEL);
         assert_eq!(BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL);
+        assert_eq!(VETERAN_SERVICE_CHANNEL, SHARED_FFE0_SERVICE_CHANNEL);
+        assert_eq!(VETERAN_DATA_CHANNEL, SHARED_FFE1_DATA_CHANNEL);
+        assert_ne!(SHARED_FFE0_SERVICE_CHANNEL, SHARED_FFE1_DATA_CHANNEL);
         assert_ne!(VESC_WRITE_CHANNEL, VESC_NOTIFY_CHANNEL);
     }
 }
