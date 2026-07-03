@@ -204,10 +204,12 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
             ? liveSnapshot.lowestGroupIndex ?? liveSnapshot.groups.first?.index
             : nil
         let highlightedGroupIndices = selectedGroupIndex.map { [$0] } ?? liveSnapshot.lowestGroupIndex.map { [$0] } ?? []
+        let chips = resolvedKind.liveChips(snapshot: liveSnapshot, selectedGroupIndex: selectedGroupIndex)
 
         return MockupBmsContent(
             kind: resolvedKind,
             snapshot: liveSnapshot,
+            chips: chips,
             highlightedGroupIndices: highlightedGroupIndices,
             selectedGroupIndex: selectedGroupIndex
         )
@@ -238,6 +240,51 @@ private extension MockupBmsScreenKind {
         }
 
         self = .overview
+    }
+
+    func liveTitle(snapshot: BmsSnapshot) -> String {
+        switch self {
+        case .overview:
+            "Pack overview"
+        case .cellMapInline, .cellMapScrollable:
+            snapshot.topology.seriesGroupCount.map { "\($0)S cell map" } ?? "Cell map"
+        case .cellDetail:
+            "Cell detail"
+        case .unknownTopology:
+            "Unknown BMS"
+        case .noData:
+            "Battery"
+        }
+    }
+
+    func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [MockupBmsChip] {
+        switch self {
+        case .overview:
+            var chips = [MockupBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow)]
+            if snapshot.topology.bmsCount > 0 {
+                chips.append(MockupBmsChip(title: "\(snapshot.topology.bmsCount) BMS online", accent: .green))
+            }
+            return chips
+        case .cellMapInline, .cellMapScrollable:
+            return [
+                MockupBmsChip(title: "live readback", accent: .cyan),
+                MockupBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow),
+            ]
+        case .cellDetail:
+            return [
+                MockupBmsChip(title: "live readback", accent: .cyan),
+                MockupBmsChip(title: selectedGroupIndex.map { "group \($0)" } ?? "selected group", accent: .orange),
+            ]
+        case .unknownTopology:
+            return [
+                MockupBmsChip(title: "partial data", accent: .orange),
+                MockupBmsChip(title: "topology unverified", accent: .green),
+            ]
+        case .noData:
+            return [
+                MockupBmsChip(title: snapshot.captureActionState ?? "limited data", accent: .yellow),
+            ]
+        }
     }
 }
 public enum MockupPickerRowState: Equatable, Hashable, Sendable {
@@ -565,10 +612,37 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             return screen
         }
 
-        let bmsScreenID = MockupBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: .eucGarage)
-            .presentationScreenID
+        let resolvedKind = MockupBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: .eucGarage)
+        let bmsScreenID = resolvedKind.presentationScreenID
 
-        return self.screen(id: bmsScreenID) ?? screen
+        guard let fixtureScreen = self.screen(id: bmsScreenID) else {
+            return screen
+        }
+
+        let resolvedContent = fixtureScreen.resolvedBmsContent(liveSnapshot: liveBmsSnapshot)
+
+        return MockupScreen(
+            id: fixtureScreen.id,
+            title: resolvedKind.liveTitle(snapshot: liveBmsSnapshot),
+            subtitle: fixtureScreen.subtitle,
+            primaryValue: fixtureScreen.primaryValue,
+            secondaryValue: fixtureScreen.secondaryValue,
+            warning: fixtureScreen.warning,
+            metrics: fixtureScreen.metrics,
+            pickerRows: fixtureScreen.pickerRows,
+            discoveryCandidates: fixtureScreen.discoveryCandidates,
+            deviceCard: fixtureScreen.deviceCard,
+            safetyBars: fixtureScreen.safetyBars,
+            warningCard: fixtureScreen.warningCard,
+            dashboardTiles: fixtureScreen.dashboardTiles,
+            summaryTitle: fixtureScreen.summaryTitle,
+            summaryRows: fixtureScreen.summaryRows,
+            faultCard: fixtureScreen.faultCard,
+            tabs: fixtureScreen.tabs,
+            bmsContent: resolvedContent,
+            eucGarageSnapshot: fixtureScreen.eucGarageSnapshot,
+            isFixtureOnly: fixtureScreen.isFixtureOnly
+        )
     }
 
     private static let devicePickerDiscoveryCandidates = [
