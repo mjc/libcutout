@@ -1748,13 +1748,21 @@ fn settings_speed(
 }
 
 fn speed_from_deci_kmh(value: i64) -> Option<CoreSpeed> {
-    i32::try_from(value)
-        .ok()
-        .and_then(|value| (value >= 0).then(|| CoreSpeed::from_deci_kmh(value)))
+    speed_from_milli_kmh(value.checked_mul(100)?)
 }
 
 fn speed_from_kmh(value: i64) -> Option<CoreSpeed> {
-    u64::try_from(value).ok().map(CoreSpeed::from_kmh)
+    speed_from_milli_kmh(value.checked_mul(1_000)?)
+}
+
+fn speed_from_milli_kmh(value: i64) -> Option<CoreSpeed> {
+    (value >= 0)
+        .then_some(value)?
+        .checked_mul(5)?
+        .checked_div(18)?
+        .try_into()
+        .ok()
+        .map(CoreSpeed::from_millimetres_per_second)
 }
 
 impl From<SettingsReadback> for MobileSettingsReadbackDto {
@@ -2926,6 +2934,44 @@ mod tests {
                 pedal_mode: None,
             }
         );
+    }
+
+    #[test]
+    fn mobile_settings_readback_rejects_unrepresentable_euc_garage_speeds() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_ALERT_DECI_KMH, -1),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceAndHardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, i64::MAX),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_TILTBACK_SPEED_KMH, i64::MAX),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Available,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            }
+        );
+        assert_eq!(mobile.entries.len(), 3);
     }
 
     #[test]
