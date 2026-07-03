@@ -2100,8 +2100,8 @@ private struct BmsInlineLayout: View {
         VStack(alignment: .leading, spacing: 16 * scale) {
             BmsWideCard(
                 title: "topology fits inline",
-                value: "no scrolling needed",
-                detail: "show every group with readable numbers",
+                value: snapshot.cellMapVisibilitySummary,
+                detail: snapshot.topology.layoutLabel,
                 accent: .green,
                 border: .normal,
                 scale: scale
@@ -2120,8 +2120,8 @@ private struct BmsInlineLayout: View {
 
             BmsWideCard(
                 title: "range of interest",
-                value: "12 mV spread",
-                detail: "tiny packs can expose exact state immediately",
+                value: snapshot.cellMapSpreadSummary,
+                detail: snapshot.cellMapFocusSummary,
                 accent: .cyan,
                 border: .normal,
                 scale: scale
@@ -2162,8 +2162,8 @@ private struct BmsScrollableLayout: View {
         VStack(alignment: .leading, spacing: 16 * scale) {
             BmsWideCard(
                 title: "large packs use grouped overview first",
-                value: "tap / horizontal-scroll for exact cells",
-                detail: nil,
+                value: snapshot.cellMapVisibilitySummary,
+                detail: snapshot.topology.layoutLabel,
                 accent: .cyan,
                 border: .normal,
                 scale: scale
@@ -2181,8 +2181,8 @@ private struct BmsScrollableLayout: View {
 
             BmsWideCard(
                 title: "interesting groups",
-                value: "17–19 sagging under load",
-                detail: "31 has temp sensor mismatch",
+                value: snapshot.cellMapFocusSummary,
+                detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
                 accent: .orange,
                 border: .warning,
                 scale: scale

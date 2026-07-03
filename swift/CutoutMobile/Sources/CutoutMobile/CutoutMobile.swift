@@ -987,8 +987,39 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         lowestGroupIndex.map { "group \($0)" }
     }
 
+    public var cellMapVisibilitySummary: String {
+        "\(groups.count) groups visible"
+    }
+
+    public var cellMapSpreadSummary: String {
+        cellDelta.map { "\($0.value) mV spread" } ?? "delta unavailable"
+    }
+
+    public var cellMapFocusSummary: String {
+        let flaggedIndices = flaggedGroups.map(\.index)
+        guard !flaggedIndices.isEmpty else {
+            return lowestGroupLabel.map { "\($0) lowest" } ?? topology.layoutLabel
+        }
+        return "groups \(flaggedIndices.map(String.init).joined(separator: ", ")) flagged"
+    }
+
+    public var cellMapFocusDetail: String? {
+        flaggedGroups.lazy.compactMap(\.detail).first ?? highestTemperatureLabel
+    }
+
     private var groupVoltages: [Voltage] {
         groups.compactMap(\.voltage)
+    }
+
+    private var flaggedGroups: [BmsGroupSnapshot] {
+        groups.filter { group in
+            switch group.alertLevel {
+            case .warning, .critical:
+                true
+            case .nominal, .unknown:
+                false
+            }
+        }
     }
 
     private var highGroupVoltage: Voltage? {
