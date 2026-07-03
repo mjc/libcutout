@@ -1705,10 +1705,15 @@ public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
 
     public var modelHint: CutoutModelHint {
         let normalizedName = localName?.lowercased() ?? ""
-        if normalizedName.contains("falcon") {
+        if normalizedName.contains("falcon")
+            || normalizedName.contains("begode")
+            || normalizedName.contains("gotway") {
             return .falcon
         }
-        if normalizedName.contains("aero") || normalizedName.contains("nosfet") {
+        if normalizedName.contains("aero")
+            || normalizedName.contains("nosfet")
+            || normalizedName.contains("veteran")
+            || normalizedName.hasPrefix("nf") {
             return .aero
         }
         return .unknown

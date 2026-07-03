@@ -232,11 +232,18 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
 fn mobile_electric_unicycle_model_from_name(
     lower_name: &str,
 ) -> Option<MobileElectricUnicycleModelDto> {
-    if lower_name.contains("falcon") {
+    if lower_name.contains("falcon")
+        || lower_name.contains("begode")
+        || lower_name.contains("gotway")
+    {
         return Some(MobileElectricUnicycleModelDto::Falcon);
     }
 
-    if lower_name.contains("aero") || lower_name.contains("nosfet") {
+    if lower_name.contains("aero")
+        || lower_name.contains("nosfet")
+        || lower_name.contains("veteran")
+        || lower_name.starts_with("nf")
+    {
         return Some(MobileElectricUnicycleModelDto::Aero);
     }
 
@@ -2835,7 +2842,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_keeps_generic_brand_name_unconfirmed() {
+    fn mobile_discovery_candidate_routes_generic_gotway_name_for_testing() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-begode".to_owned(),
             Some("GotWay_002441".to_owned()),
@@ -2845,14 +2852,41 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            MobileDiscoveryCandidateSupportDto::Unsupported
+            MobileDiscoveryCandidateSupportDto::Supported
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason.as_deref(),
-            Some("Model not confirmed")
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
         );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Falcon)
+        );
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_routes_nf_name_for_testing() {
+        let candidate = mobile_discovery_candidate_from_advertisement(
+            "ios-local-aero".to_owned(),
+            Some("NF2557".to_owned()),
+            vec![0xffe0],
+        );
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Supported
+        );
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]

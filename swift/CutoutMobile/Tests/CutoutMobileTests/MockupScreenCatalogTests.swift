@@ -221,6 +221,16 @@ extension MockupScreenCatalogTests {
                     advertisedServiceUuids: [.bluetooth16(0xFFE0)]
                 ),
                 CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-gotway"),
+                    localName: "GotWay_002441",
+                    advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+                ),
+                CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-nf"),
+                    localName: "NF2557",
+                    advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+                ),
+                CoreBluetoothAdvertisement(
                     peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
                     localName: "Little FOCer",
                     advertisedServiceUuids: [.bluetooth16(0xFFF0)]
@@ -234,9 +244,9 @@ extension MockupScreenCatalogTests {
         )
 
         XCTAssertEqual(state.statusText, "Scanning Bluetooth")
-        XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
-        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, nil])
-        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero"])
+        XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
+        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, nil])
+        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557"])
         XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
         XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Not yet supported"))
         XCTAssertNil(state.sections.manual)
