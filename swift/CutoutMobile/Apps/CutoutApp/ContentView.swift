@@ -114,7 +114,7 @@ private struct MockupScreenContainer: View {
         case .devicePicker:
             DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
-            EucRideMockupView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
+            EucRideScreenView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             BmsMockupView(screen: screen, selectScreen: selectScreen)
         case .eucGarage:
@@ -887,7 +887,7 @@ private struct VescPushbackWarningCard: View {
     }
 }
 
-private struct EucRideMockupView: View {
+private struct EucRideScreenView: View {
     let screen: MockupScreen
     let rideState: EucRideScreenState?
     let rideTitle: String?
@@ -1674,11 +1674,13 @@ private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard
     switch state.phase {
     case .failed(let failure):
         MockupWarningCard(title: "Connection failed", detail: failure.displayText)
-    case .live where state.telemetry != nil:
+    case .live where state.telemetryAvailability == .populated:
         MockupWarningCard(
             title: "Telemetry live",
             detail: state.telemetry?.speed == nil ? "Waiting for speed telemetry" : "Live telemetry from typed Rust/FFI state"
         )
+    case .live where state.telemetryAvailability == .waitingForValues:
+        MockupWarningCard(title: "Waiting for telemetry", detail: "Subscribed; no ride values yet")
     case .live:
         MockupWarningCard(title: "Telemetry unavailable", detail: "No live snapshot yet")
     case .connecting, .discoveringServices, .subscribing:

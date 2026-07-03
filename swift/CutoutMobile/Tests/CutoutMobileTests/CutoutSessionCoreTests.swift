@@ -481,6 +481,31 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(charging.statusText, "Charging")
     }
 
+    func testRideStateDistinguishesEmptyLiveSnapshotFromPopulatedTelemetry() {
+        let waiting = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: TelemetrySnapshot())
+        )
+        let populated = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(voltage: voltageValue(118_000))
+            )
+        )
+
+        XCTAssertEqual(waiting.telemetryAvailability, .waitingForValues)
+        XCTAssertEqual(populated.telemetryAvailability, .populated)
+    }
+
+    func testRideStateTreatsMissingLiveSnapshotAsTelemetryUnavailable() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState()
+        )
+
+        XCTAssertEqual(rideState.telemetryAvailability, .unavailable)
+    }
+
     func testRideStateTreatsParkedPwmHeadroomAsNotApplicable() {
         let rideState = EucRideScreenState(
             phase: .live,

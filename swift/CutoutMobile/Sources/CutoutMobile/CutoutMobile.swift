@@ -984,6 +984,12 @@ public enum EucRideMetricApplicability: Equatable, Hashable, Sendable {
     case notApplicable
 }
 
+public enum EucRideTelemetryAvailability: Equatable, Hashable, Sendable {
+    case unavailable
+    case waitingForValues
+    case populated
+}
+
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
     public let phase: SessionConnectionPhase
     public let displayState: RideDisplayState
@@ -999,6 +1005,14 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     public var operatingState: RideOperatingState {
         telemetry?.operatingState ?? .unknown
+    }
+
+    public var telemetryAvailability: EucRideTelemetryAvailability {
+        guard let telemetry else {
+            return .unavailable
+        }
+
+        return telemetry.hasVisibleRideValues ? .populated : .waitingForValues
     }
 
     public var pwmHeadroomApplicability: EucRideMetricApplicability {
@@ -1045,6 +1059,22 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     public var speedUnit: String {
         displayState.speed.displayUnit
+    }
+}
+
+private extension TelemetrySnapshot {
+    var hasVisibleRideValues: Bool {
+        speed != nil
+            || voltage != nil
+            || batteryCurrent != nil
+            || motorCurrent != nil
+            || power != nil
+            || controllerTemperature != nil
+            || motorTemperature != nil
+            || batteryTemperature != nil
+            || pwm != nil
+            || batteryLevelReported != nil
+            || batteryLevelEstimated != nil
     }
 }
 
