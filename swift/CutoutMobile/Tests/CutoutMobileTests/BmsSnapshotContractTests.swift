@@ -132,4 +132,44 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertNil(snapshot.captureActionTitle)
         XCTAssertNil(snapshot.captureActionState)
     }
+
+    func testSnapshotExposesReadbackRowsForLivePackData() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "20S4P split pack",
+                seriesGroupCount: 20,
+                parallelCount: 4,
+                packCount: 2,
+                bmsCount: 2,
+                confidence: .verified
+            ),
+            energyPercent: BatteryLevel(value: 72),
+            voltage: Voltage(value: 81_600),
+            current: BatteryCurrent(value: -12_400),
+            cellDelta: VoltageDelta(value: 18),
+            lowestGroupIndex: 17,
+            highestTemperature: Temperature(value: 37_800),
+            groups: [
+                BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), alertLevel: .warning),
+                BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
+            ]
+        )
+
+        XCTAssertTrue(snapshot.shouldRenderReadback)
+        XCTAssertEqual(
+            snapshot.readbackRows,
+            [
+                SessionDebugRow(label: "availability", value: "available"),
+                SessionDebugRow(label: "charge", value: "72%"),
+                SessionDebugRow(label: "voltage", value: "81.6"),
+                SessionDebugRow(label: "current", value: "-12.4"),
+                SessionDebugRow(label: "high group", value: "4.089"),
+                SessionDebugRow(label: "low group", value: "4.071"),
+                SessionDebugRow(label: "delta", value: "18"),
+                SessionDebugRow(label: "lowest group", value: "17"),
+                SessionDebugRow(label: "temperature", value: "37.8"),
+                SessionDebugRow(label: "topology", value: "20S4P split pack"),
+            ]
+        )
+    }
 }

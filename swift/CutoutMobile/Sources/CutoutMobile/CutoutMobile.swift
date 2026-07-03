@@ -947,6 +947,71 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             captureActionState: dto.captureActionState
         )
     }
+
+    public var shouldRenderReadback: Bool {
+        availability != .available
+            || energyPercent != nil
+            || voltage != nil
+            || current != nil
+            || highestTemperature != nil
+    }
+
+    public var readbackRows: [SessionDebugRow] {
+        [
+            SessionDebugRow(label: "availability", value: availability.displayText),
+            SessionDebugRow(label: "charge", value: bmsPercentText(energyPercent)),
+            SessionDebugRow(label: "voltage", value: bmsVoltageText(voltage)),
+            SessionDebugRow(label: "current", value: bmsCurrentText(current)),
+            SessionDebugRow(label: "high group", value: bmsGroupVoltageText(highGroupVoltage)),
+            SessionDebugRow(label: "low group", value: bmsGroupVoltageText(lowGroupVoltage)),
+            SessionDebugRow(label: "delta", value: bmsMillivoltsText(cellDelta)),
+            SessionDebugRow(label: "lowest group", value: lowestGroupIndex.map(String.init) ?? "unavailable"),
+            SessionDebugRow(label: "temperature", value: bmsTemperatureText(highestTemperature)),
+            SessionDebugRow(label: "topology", value: topology.layoutLabel),
+        ]
+    }
+
+    private var groupVoltages: [Voltage] {
+        groups.compactMap(\.voltage)
+    }
+
+    private var highGroupVoltage: Voltage? {
+        groupVoltages.max { left, right in
+            left.value < right.value
+        }
+    }
+
+    private var lowGroupVoltage: Voltage? {
+        groupVoltages.min { left, right in
+            left.value < right.value
+        }
+    }
+}
+
+private func bmsPercentText(_ value: BatteryLevel?) -> String {
+    guard let value else { return "--" }
+    return "\(value.value)%"
+}
+
+private func bmsVoltageText(_ value: Voltage?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
+private func bmsCurrentText(_ value: BatteryCurrent?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
+private func bmsMillivoltsText(_ value: VoltageDelta?) -> String {
+    value.map { String($0.value) } ?? "--"
+}
+
+private func bmsTemperatureText(_ value: Temperature?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
+private func bmsGroupVoltageText(_ value: Voltage?) -> String {
+    guard let value else { return "--" }
+    return String(format: "%.3f", Double(value.value) / 1_000.0)
 }
 
 public struct SessionDebugRow: Equatable, Hashable, Sendable {
@@ -956,6 +1021,19 @@ public struct SessionDebugRow: Equatable, Hashable, Sendable {
     public init(label: String, value: String) {
         self.label = label
         self.value = value
+    }
+}
+
+public extension ReadbackAvailability {
+    var displayText: String {
+        switch self {
+        case .available:
+            "available"
+        case .unavailable:
+            "unavailable"
+        case .unsupported:
+            "unsupported"
+        }
     }
 }
 

@@ -305,49 +305,12 @@ private extension FaultHistoryReadback {
     }
 }
 
-private extension BmsSnapshot {
-    var shouldRenderReadback: Bool {
-        availability != .available || energyPercent != nil || voltage != nil || current != nil || highestTemperature != nil
-    }
-}
-
 private struct BmsReadbackRows: View {
     let snapshot: BmsSnapshot
     let scale: CGFloat
 
     private var rows: [SessionDebugRow] {
-        [
-            SessionDebugRow(label: "availability", value: snapshot.availability.displayText),
-            SessionDebugRow(label: "charge", value: percentText(snapshot.energyPercent)),
-            SessionDebugRow(label: "voltage", value: voltageText(snapshot.voltage)),
-            SessionDebugRow(label: "current", value: currentText(snapshot.current)),
-            SessionDebugRow(label: "high group", value: groupVoltageText(highGroupVoltage)),
-            SessionDebugRow(label: "low group", value: groupVoltageText(lowGroupVoltage)),
-            SessionDebugRow(label: "delta", value: millivoltsText(snapshot.cellDelta)),
-            SessionDebugRow(label: "lowest group", value: lowestGroupText),
-            SessionDebugRow(label: "temperature", value: temperatureText(snapshot.highestTemperature)),
-            SessionDebugRow(label: "topology", value: snapshot.topology.layoutLabel),
-        ]
-    }
-
-    private var groupVoltages: [Voltage] {
-        snapshot.groups.compactMap(\.voltage)
-    }
-
-    private var highGroupVoltage: Voltage? {
-        groupVoltages.max { left, right in
-            left.value < right.value
-        }
-    }
-
-    private var lowGroupVoltage: Voltage? {
-        groupVoltages.min { left, right in
-            left.value < right.value
-        }
-    }
-
-    private var lowestGroupText: String {
-        snapshot.lowestGroupIndex.map(String.init) ?? "unavailable"
+        snapshot.readbackRows
     }
 
     var body: some View {
@@ -457,19 +420,6 @@ private struct FaultHistoryReadbackRows: View {
         .padding(.horizontal, 22 * scale)
         .padding(.vertical, 16 * scale)
         .background(CardBackground(cornerRadius: 22 * scale))
-    }
-}
-
-private extension ReadbackAvailability {
-    var displayText: String {
-        switch self {
-        case .available:
-            "available"
-        case .unavailable:
-            "unavailable"
-        case .unsupported:
-            "unsupported"
-        }
     }
 }
 
@@ -1942,12 +1892,20 @@ private struct BmsMockupView: View {
 
             Group {
                 if content.kind == .noData {
-                    BmsNoDataLayout(screen: screen, content: content, scale: scale)
+                    BmsNoDataLayout(
+                        screen: screen,
+                        content: content,
+                        liveSnapshot: bmsSnapshot,
+                        scale: scale
+                    )
                 } else {
                     VStack(alignment: .leading, spacing: 14 * scale) {
                         header(scale: scale)
                         chipRow(scale: scale, contentWidth: designWidth - (46 * scale))
                         contentSection(scale: scale)
+                        if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
+                            liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
+                        }
                         Spacer(minLength: 0)
                         bottomTabs(scale: scale)
                     }
@@ -2037,6 +1995,15 @@ private struct BmsMockupView: View {
             }
         }
         .padding(.horizontal, 18 * scale)
+    }
+
+    private func liveReadbackSection(snapshot: BmsSnapshot, scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 10 * scale) {
+            Text("Live BMS readback")
+                .font(.system(size: 16 * scale, weight: .black))
+                .foregroundStyle(MockupColors.primaryText)
+            BmsReadbackRows(snapshot: snapshot, scale: scale)
+        }
     }
 }
 
@@ -2393,6 +2360,7 @@ private struct BmsUnknownLayout: View {
 private struct BmsNoDataLayout: View {
     let screen: MockupScreen
     let content: MockupBmsContent
+    let liveSnapshot: BmsSnapshot?
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -2416,6 +2384,13 @@ private struct BmsNoDataLayout: View {
             unknownsCard
 
             ridingRuleCard
+
+            if let liveSnapshot, liveSnapshot.shouldRenderReadback {
+                VStack(alignment: .leading, spacing: 10 * scale) {
+                    cardLabel("LIVE BMS READBACK")
+                    BmsReadbackRows(snapshot: liveSnapshot, scale: scale)
+                }
+            }
         }
         .padding(.horizontal, 24 * scale)
         .padding(.top, 44 * scale)
