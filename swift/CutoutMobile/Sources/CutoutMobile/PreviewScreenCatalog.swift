@@ -626,12 +626,19 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
     }
 
     public func presentedScreen(for screen: MockupScreen, liveBmsSnapshot: BmsSnapshot?) -> MockupScreen {
-        guard screen.id == .eucGarage, let liveBmsSnapshot else {
+        guard let liveBmsSnapshot else {
             return screen
         }
 
-        let resolvedKind = MockupBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: .eucGarage)
-        let bmsScreenID = resolvedKind.presentationScreenID
+        let preferredScreenID = screen.id == .eucGarage ? MockupScreenID.eucGarage : screen.id
+        let isBmsPresentation = screen.id == .eucGarage || screen.id.isBmsScreen
+
+        guard isBmsPresentation else {
+            return screen
+        }
+
+        let resolvedKind = MockupBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: preferredScreenID)
+        let bmsScreenID = screen.id == .eucGarage ? resolvedKind.presentationScreenID : screen.id
 
         guard let fixtureScreen = self.screen(id: bmsScreenID) else {
             return screen
@@ -1148,6 +1155,17 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             )
         ),
     ])
+}
+
+private extension MockupScreenID {
+    var isBmsScreen: Bool {
+        switch self {
+        case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
+            true
+        case .devicePicker, .eucRide, .eucGarage, .vescOnewheelRide, .vescDebug:
+            false
+        }
+    }
 }
 
 private extension MockupBmsScreenKind {

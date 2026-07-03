@@ -564,6 +564,29 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(presented.secondaryValue, "limited data")
     }
 
+    func testPresentedScreenDerivesLiveBmsMetadataForDirectBmsScreen() throws {
+        let directScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellMap6S))
+        let liveSnapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "12S2P pack",
+                seriesGroupCount: 12,
+                parallelCount: 2,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            groups: (1...12).map { index in
+                BmsGroupSnapshot(index: index, label: "G\(index)", voltage: Voltage(value: Int32(4_100 + index)))
+            }
+        )
+
+        let presented = MockupScreenCatalog.v2.presentedScreen(for: directScreen, liveBmsSnapshot: liveSnapshot)
+
+        XCTAssertEqual(presented.id, MockupScreenID.bmsCellMap6S)
+        XCTAssertEqual(presented.title, "12S cell map")
+        XCTAssertEqual(presented.bmsContent?.chips.map { $0.title }, ["live readback", "12S2P pack"])
+    }
+
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
         let unknown = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsUnknownTopology)?.bmsContent)
         let snapshot = unknown.snapshot
