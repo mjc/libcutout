@@ -919,17 +919,26 @@ fn bms_groups_from_cell_voltages(
     cell_voltages
         .iter()
         .enumerate()
-        .map(|(index, voltage)| MobileBmsGroupSnapshotDto {
-            index: u16::try_from(index.saturating_add(1)).unwrap_or(u16::MAX),
-            label: Some(format!("group {}", index.saturating_add(1))),
-            voltage: Some((*voltage).into()),
-            temperature: None,
-            resistance: None,
-            is_balancing: None,
-            alert_level: MobileBmsAlertLevelDto::Nominal,
-            detail: None,
+        .filter_map(|(index, voltage)| {
+            let group_index = one_based_group_index(index)?;
+            Some(MobileBmsGroupSnapshotDto {
+                index: group_index,
+                label: Some(format!("group {group_index}")),
+                voltage: Some((*voltage).into()),
+                temperature: None,
+                resistance: None,
+                is_balancing: None,
+                alert_level: MobileBmsAlertLevelDto::Nominal,
+                detail: None,
+            })
         })
         .collect()
+}
+
+fn one_based_group_index(index: usize) -> Option<u16> {
+    index
+        .checked_add(1)
+        .and_then(|index| u16::try_from(index).ok())
 }
 
 fn cell_voltage_delta(cell_voltages: &[MeasuredI32Dto]) -> Option<VoltageDeltaReading> {
@@ -951,7 +960,7 @@ fn lowest_cell_voltage_group_index(cell_voltages: &[MeasuredI32Dto]) -> Option<u
         .iter()
         .enumerate()
         .min_by_key(|(_, voltage)| voltage.value)
-        .and_then(|(index, _)| u16::try_from(index.saturating_add(1)).ok())
+        .and_then(|(index, _)| one_based_group_index(index))
 }
 
 impl MobileBmsTopologyDto {
@@ -3274,6 +3283,18 @@ mod tests {
         assert_eq!(snapshot.voltage, None);
         assert_eq!(snapshot.current, None);
         assert!(snapshot.groups.is_empty());
+    }
+
+    #[test]
+    fn bms_group_projection_skips_unrepresentable_group_indices() {
+        let mut cell_voltages = vec![measured_i32(3_600); usize::from(u16::MAX) + 1];
+        cell_voltages[usize::from(u16::MAX)] = measured_i32(3_500);
+
+        let groups = bms_groups_from_cell_voltages(&cell_voltages);
+
+        assert_eq!(groups.len(), usize::from(u16::MAX));
+        assert_eq!(groups.last().map(|group| group.index), Some(u16::MAX));
+        assert_eq!(lowest_cell_voltage_group_index(&cell_voltages), None);
     }
 
     #[test]
