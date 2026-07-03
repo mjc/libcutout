@@ -537,20 +537,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 2,
             confidence: .verified
         ),
-        energyPercent: .fixture(value: 72),
-        voltage: .fixture(value: 81_600),
-        cellDeltaMillivolts: .fixture(value: 18),
+        energyPercent: BatteryLevel(value: 72),
+        voltage: Voltage(value: 81_600),
+        cellDelta: VoltageDelta(value: 18),
         lowestGroupIndex: 17,
-        highestTemperature: .fixture(value: 37_800),
+        highestTemperature: Temperature(value: 37_800),
         highestTemperatureLabel: "right pack",
         balancingSummary: "idle • top groups only",
         balancingDetail: "3 groups bleeding: 03, 11, 19",
         faultSummary: "no active faults",
         faultDetail: "last: under-voltage warning · 3 days ago",
         groups: (1...20).map { index in
-            BmsGroupSnapshot(
+            let voltage = Voltage(value: 4_089 - Int32(index % 5) * 4)
+            return BmsGroupSnapshot(
                 index: index,
-                voltage: .fixture(value: 4_089 - Int32(index % 5) * 4),
+                voltage: voltage,
                 alertLevel: index == 17 ? .warning : .nominal
             )
         }
@@ -565,14 +566,14 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 12),
+        cellDelta: VoltageDelta(value: 12),
         groups: [
-            BmsGroupSnapshot(index: 1, voltage: .fixture(value: 4_104), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 2, voltage: .fixture(value: 4_101), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 3, voltage: .fixture(value: 4_096), alertLevel: .warning),
-            BmsGroupSnapshot(index: 4, voltage: .fixture(value: 4_099), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 5, voltage: .fixture(value: 4_103), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 6, voltage: .fixture(value: 4_092), alertLevel: .warning),
+            BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_104), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_101), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 3, voltage: Voltage(value: 4_096), alertLevel: .warning),
+            BmsGroupSnapshot(index: 4, voltage: Voltage(value: 4_099), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 5, voltage: Voltage(value: 4_103), alertLevel: .nominal),
+            BmsGroupSnapshot(index: 6, voltage: Voltage(value: 4_092), alertLevel: .warning),
         ]
     )
 
@@ -585,14 +586,14 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 18),
-        highestTemperature: .fixture(value: 31_000),
+        cellDelta: VoltageDelta(value: 18),
+        highestTemperature: Temperature(value: 31_000),
         highestTemperatureLabel: "group 31",
         groups: (1...40).map { index in
             let alertLevel: BmsAlertLevel = [17, 18, 19].contains(index) ? .warning : index == 31 ? .critical : .nominal
             let base = 4_080 + Int32(index % 3) * 6
             let value = [17, 18, 19].contains(index) ? 4_080 : (index == 31 ? 4_072 : base)
-            return BmsGroupSnapshot(index: index, voltage: .fixture(value: value), alertLevel: alertLevel)
+            return BmsGroupSnapshot(index: index, voltage: Voltage(value: value), alertLevel: alertLevel)
         },
         faults: [
             BmsFault(code: "temp-sensor", label: "31 has temp sensor mismatch", level: .warning)
@@ -608,13 +609,16 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 2,
             confidence: .verified
         ),
-        cellDeltaMillivolts: .fixture(value: 18),
+        cellDelta: VoltageDelta(value: 18),
         groups: (1...20).map { index in
-            BmsGroupSnapshot(
+            let voltage = Voltage(value: index == 17 ? 4_071 : 4_086)
+            let temperature = Temperature(value: index == 17 ? 34_900 : 33_000)
+            let resistance = Resistance(value: index == 17 ? 21 : 18)
+            return BmsGroupSnapshot(
                 index: index,
-                voltage: .fixture(value: index == 17 ? 4_071 : 4_086),
-                temperature: .fixture(value: index == 17 ? 34_900 : 33_000),
-                resistanceMilliohms: index == 17 ? 21 : 18,
+                voltage: voltage,
+                temperature: temperature,
+                resistance: resistance,
                 alertLevel: index == 17 ? .warning : .nominal,
                 detail: index == 17 ? "drops first during acceleration" : nil
             )
@@ -630,7 +634,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 1,
             confidence: .unverified
         ),
-        voltage: .fixture(value: 75_900),
+        voltage: Voltage(value: 75_900),
         faultSummary: "BMS found, map unknown",
         faultDetail: "show raw-safe info until topology is confirmed",
         faults: [
@@ -649,9 +653,9 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsCount: 0,
             confidence: .inferred
         ),
-        energyPercent: .estimatedFixture(value: 71),
-        voltage: .fixture(value: 117_600),
-        current: .fixture(value: 38_000),
+        energyPercent: BatteryLevel(value: 71),
+        voltage: Voltage(value: 117_600),
+        current: BatteryCurrent(value: 38_000),
         captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
         captureActionState: "limited data"
     )
@@ -955,24 +959,4 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             )
         ),
     ])
-}
-
-extension TelemetryReading {
-    static func fixture(value: Value) -> Self {
-        Self(
-            value: value,
-            source: .reported,
-            quality: .known,
-            verification: .hardwareVerified
-        )
-    }
-
-    static func estimatedFixture(value: Value) -> Self {
-        Self(
-            value: value,
-            source: .estimated,
-            quality: .inferred,
-            verification: .inferred
-        )
-    }
 }

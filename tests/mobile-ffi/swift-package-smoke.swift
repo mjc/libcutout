@@ -22,8 +22,8 @@ struct CutoutMobilePackageSmoke {
             channel: linkActions.firstSubscribeChannel!,
             at: MonotonicMilliseconds(2)
         )
-        precondition(telemetry.voltage?.value == Voltage(value: 108_760))
-        precondition(telemetry.speed?.value == Speed(value: 0))
+        precondition(telemetry.voltage == Voltage(value: 108_760))
+        precondition(telemetry.speed == Speed(value: 0))
         precondition(telemetry.operatingState == .parked)
         precondition(telemetry.powerFlow != nil)
         precondition(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
@@ -145,8 +145,8 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(21)
         ))
-        precondition(runnerTelemetry.snapshot?.voltage?.value == Voltage(value: 108_760))
-        precondition(runnerTelemetry.snapshot?.speed?.value == Speed(value: 0))
+        precondition(runnerTelemetry.snapshot?.voltage == Voltage(value: 108_760))
+        precondition(runnerTelemetry.snapshot?.speed == Speed(value: 0))
         precondition(runnerTelemetry.snapshot?.operatingState == .parked)
         precondition(runnerTelemetry.snapshot?.powerFlow != nil)
 
@@ -180,8 +180,8 @@ struct CutoutMobilePackageSmoke {
             channel: BluetoothUuid.bluetooth16(0xffe1),
             at: MonotonicMilliseconds(31)
         )
-        precondition(liveTelemetry.snapshot?.voltage?.value == Voltage(value: 108_760))
-        precondition(liveTelemetry.snapshot?.speed?.value == Speed(value: 0))
+        precondition(liveTelemetry.snapshot?.voltage == Voltage(value: 108_760))
+        precondition(liveTelemetry.snapshot?.speed == Speed(value: 0))
         precondition(liveTelemetry.snapshot?.operatingState == .parked)
         precondition(liveTelemetry.snapshot?.powerFlow != nil)
         let initialSpeedState = LiveSpeedDisplayState()
@@ -198,12 +198,7 @@ struct CutoutMobilePackageSmoke {
         let nonzeroSpeedStep = CoreBluetoothSessionStep(
             operations: [],
             snapshot: TelemetrySnapshot(
-                speed: TelemetryReading<Speed>(
-                    value: Speed(value: 1_000),
-                    source: .reported,
-                    quality: .known,
-                    verification: .sourceVerified
-                )
+                speed: Speed(value: 1_000)
             )
         )
         let nonzeroSpeedState = zeroSpeedState.reducing(

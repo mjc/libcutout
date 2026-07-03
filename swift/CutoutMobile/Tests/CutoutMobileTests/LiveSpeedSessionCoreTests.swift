@@ -74,11 +74,11 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
         let core = LiveSpeedSessionCore()
         let snapshot = TelemetrySnapshot(
-            speed: telemetryReading(1_234),
+            speed: speedValue(1_234),
             operatingState: .riding,
-            voltage: voltageReading(117_000),
+            voltage: voltageValue(117_000),
             powerFlow: .negativeUnknown,
-            batteryLevelEstimated: batteryLevelReading(77)
+            batteryLevelEstimated: batteryLevelValue(77)
         )
         let step = CoreBluetoothSessionStep(operations: [], snapshot: snapshot)
         let receivedAt = MonotonicMilliseconds(42)
@@ -92,7 +92,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
             EucRideScreenState(phase: core.phase, displayState: core.displayState).operatingState,
             .riding
         )
-        XCTAssertEqual(core.displayState.telemetry?.speed?.value, Speed(value: 1_234))
+        XCTAssertEqual(core.displayState.telemetry?.speed, Speed(value: 1_234))
         XCTAssertEqual(core.displayState.telemetry?.powerFlow, .negativeUnknown)
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
@@ -101,13 +101,13 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     func testSpeedObservationRemainsStickyAcrossTelemetryWithoutSpeed() {
         let core = LiveSpeedSessionCore()
         let speedSnapshot = TelemetrySnapshot(
-            speed: telemetryReading(1_234),
-            voltage: voltageReading(117_000),
-            batteryLevelEstimated: batteryLevelReading(77)
+            speed: speedValue(1_234),
+            voltage: voltageValue(117_000),
+            batteryLevelEstimated: batteryLevelValue(77)
         )
         let batteryOnlySnapshot = TelemetrySnapshot(
-            voltage: voltageReading(116_500),
-            batteryLevelEstimated: batteryLevelReading(76)
+            voltage: voltageValue(116_500),
+            batteryLevelEstimated: batteryLevelValue(76)
         )
 
         core.applyNotificationStep(
@@ -121,7 +121,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
 
         XCTAssertTrue(core.hasObservedSpeedSnapshot)
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
-        XCTAssertEqual(core.displayState.telemetry?.voltage?.value, Voltage(value: 116_500))
+        XCTAssertEqual(core.displayState.telemetry?.voltage, Voltage(value: 116_500))
         XCTAssertEqual(core.displayState.notificationCount, 2)
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(43))
     }
@@ -129,9 +129,9 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     func testNotificationWithoutSnapshotAdvancesLastUpdate() {
         let core = LiveSpeedSessionCore()
         let speedSnapshot = TelemetrySnapshot(
-            speed: telemetryReading(1_234),
-            voltage: voltageReading(117_000),
-            batteryLevelEstimated: batteryLevelReading(77)
+            speed: speedValue(1_234),
+            voltage: voltageValue(117_000),
+            batteryLevelEstimated: batteryLevelValue(77)
         )
 
         core.applyNotificationStep(
@@ -162,7 +162,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         core.applyNotificationStep(
             CoreBluetoothSessionStep(
                 operations: [],
-                snapshot: TelemetrySnapshot(speed: telemetryReading(1_234))
+                snapshot: TelemetrySnapshot(speed: speedValue(1_234))
             ),
             receivedAt: MonotonicMilliseconds(42)
         )
@@ -179,7 +179,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     func testRideStateCarriesPhaseAndTelemetrySnapshot() {
         let displayState = LiveSpeedDisplayState(
             speed: SpeedReadout(millimetersPerSecond: 1_234),
-            telemetry: TelemetrySnapshot(speed: telemetryReading(1_234), operatingState: .riding),
+            telemetry: TelemetrySnapshot(speed: speedValue(1_234), operatingState: .riding),
             notificationCount: 7,
             lastUpdate: MonotonicMilliseconds(9_876)
         )
@@ -189,7 +189,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.speedText, "2.8")
         XCTAssertEqual(rideState.speedUnit, "mph")
         XCTAssertEqual(rideState.operatingState, .riding)
-        XCTAssertEqual(rideState.telemetry?.speed?.value, Speed(value: 1_234))
+        XCTAssertEqual(rideState.telemetry?.speed, Speed(value: 1_234))
     }
 
     func testDisplayStateProvidesDebugRowsForLiveValidation() {
@@ -209,29 +209,14 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 }
 
-private func telemetryReading(_ value: Int32) -> TelemetryReading<Speed> {
-    TelemetryReading(
-        value: Speed(value: value),
-        source: .reported,
-        quality: .known,
-        verification: .sourceVerified
-    )
+private func speedValue(_ value: Int32) -> Speed {
+    Speed(value: value)
 }
 
-private func voltageReading(_ value: Int32) -> TelemetryReading<Voltage> {
-    TelemetryReading(
-        value: Voltage(value: value),
-        source: .reported,
-        quality: .known,
-        verification: .sourceVerified
-    )
+private func voltageValue(_ value: Int32) -> Voltage {
+    Voltage(value: value)
 }
 
-private func batteryLevelReading(_ value: UInt8) -> TelemetryReading<BatteryLevel> {
-    TelemetryReading(
-        value: BatteryLevel(value: value),
-        source: .reported,
-        quality: .known,
-        verification: .sourceVerified
-    )
+private func batteryLevelValue(_ value: UInt8) -> BatteryLevel {
+    BatteryLevel(value: value)
 }

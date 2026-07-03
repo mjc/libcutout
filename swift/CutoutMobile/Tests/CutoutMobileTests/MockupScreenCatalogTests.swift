@@ -390,9 +390,9 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(snapshot.topology.parallelCount, 4)
         XCTAssertEqual(snapshot.topology.packCount, 2)
         XCTAssertEqual(snapshot.topology.bmsCount, 2)
-        XCTAssertEqual(snapshot.energyPercent?.value, 72)
-        XCTAssertEqual(snapshot.voltage?.value, 81_600)
-        XCTAssertEqual(snapshot.cellDeltaMillivolts?.value, 18)
+        XCTAssertEqual(snapshot.energyPercent, BatteryLevel(value: 72))
+        XCTAssertEqual(snapshot.voltage, Voltage(value: 81_600))
+        XCTAssertEqual(snapshot.cellDelta, VoltageDelta(value: 18))
         XCTAssertEqual(snapshot.lowestGroupIndex, 17)
         XCTAssertEqual(snapshot.balancingSummary, "idle • top groups only")
         XCTAssertEqual(snapshot.faultSummary, "no active faults")
@@ -408,9 +408,10 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(scrollable.highlightedGroupIndices, [17, 18, 19, 31])
 
         let detail = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellDetail)?.bmsContent)
+        let selectedGroup = detail.snapshot.groups.first { $0.index == 17 }
         XCTAssertEqual(detail.selectedGroupIndex, 17)
-        XCTAssertEqual(detail.snapshot.groups.first(where: { $0.index == 17 })?.voltage?.value, 4_071)
-        XCTAssertEqual(detail.snapshot.groups.first(where: { $0.index == 17 })?.resistanceMilliohms, 21)
+        XCTAssertEqual(selectedGroup?.voltage, Voltage(value: 4_071))
+        XCTAssertEqual(selectedGroup?.resistance, Resistance(value: 21))
     }
 
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
@@ -430,12 +431,9 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(snapshot.topology.layoutLabel, "non-smart BMS")
         XCTAssertEqual(snapshot.topology.confidence, .inferred)
-        XCTAssertEqual(snapshot.energyPercent?.value, 71)
-        XCTAssertEqual(snapshot.energyPercent?.source, .estimated)
-        XCTAssertEqual(snapshot.energyPercent?.quality, .inferred)
-        XCTAssertEqual(snapshot.energyPercent?.verification, .inferred)
-        XCTAssertEqual(snapshot.voltage?.value, 117_600)
-        XCTAssertEqual(snapshot.current?.value, 38_000)
+        XCTAssertEqual(snapshot.energyPercent, BatteryLevel(value: 71))
+        XCTAssertEqual(snapshot.voltage, Voltage(value: 117_600))
+        XCTAssertEqual(snapshot.current, BatteryCurrent(value: 38_000))
         XCTAssertEqual(snapshot.captureActionState, "limited data")
     }
 }

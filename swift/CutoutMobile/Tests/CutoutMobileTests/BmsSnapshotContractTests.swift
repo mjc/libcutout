@@ -12,12 +12,12 @@ final class BmsSnapshotContractTests: XCTestCase {
                 bmsCount: 2,
                 confidence: .verified
             ),
-            energyPercent: TelemetryReading.fixture(value: 72),
-            voltage: TelemetryReading.fixture(value: 81_600),
-            current: TelemetryReading.fixture(value: -12_400),
-            cellDeltaMillivolts: TelemetryReading.fixture(value: 18),
+            energyPercent: BatteryLevel(value: 72),
+            voltage: Voltage(value: 81_600),
+            current: BatteryCurrent(value: -12_400),
+            cellDelta: VoltageDelta(value: 18),
             lowestGroupIndex: 17,
-            highestTemperature: TelemetryReading.fixture(value: 37_800),
+            highestTemperature: Temperature(value: 37_800),
             highestTemperatureLabel: "right pack",
             balancingSummary: "idle - top groups only",
             balancingDetail: "3 groups bleeding: 03, 11, 19",
@@ -27,9 +27,9 @@ final class BmsSnapshotContractTests: XCTestCase {
                 BmsGroupSnapshot(
                     index: 17,
                     label: "right pack group 17",
-                    voltage: TelemetryReading.fixture(value: 4_071),
-                    temperature: TelemetryReading.fixture(value: 34_900),
-                    resistanceMilliohms: 21,
+                    voltage: Voltage(value: 4_071),
+                    temperature: Temperature(value: 34_900),
+                    resistance: Resistance(value: 21),
                     isBalancing: true,
                     alertLevel: .warning,
                     detail: "drops first during acceleration"
@@ -46,8 +46,13 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.topology.packCount, 2)
         XCTAssertEqual(snapshot.topology.bmsCount, 2)
         XCTAssertEqual(snapshot.topology.confidence, BmsTopologyConfidence.verified)
+        XCTAssertEqual(snapshot.energyPercent, BatteryLevel(value: 72))
+        XCTAssertEqual(snapshot.voltage, Voltage(value: 81_600))
+        XCTAssertEqual(snapshot.current, BatteryCurrent(value: -12_400))
+        XCTAssertEqual(snapshot.cellDelta, VoltageDelta(value: 18))
         XCTAssertEqual(snapshot.groups.map { $0.label }, ["right pack group 17"])
         XCTAssertEqual(snapshot.groups.map { $0.isBalancing }, [true])
+        XCTAssertEqual(snapshot.groups.map { $0.resistance }, [Resistance(value: 21)])
         XCTAssertEqual(snapshot.groups.map { $0.alertLevel }, [BmsAlertLevel.warning])
         XCTAssertEqual(snapshot.captureActionState, "disabled for launch")
     }
@@ -62,7 +67,7 @@ final class BmsSnapshotContractTests: XCTestCase {
                 bmsCount: 1,
                 confidence: .unverified
             ),
-            voltage: TelemetryReading.fixture(value: 75_900),
+            voltage: Voltage(value: 75_900),
             faultSummary: "BMS found, map unknown",
             faultDetail: "show raw-safe info until topology is confirmed",
             groups: [],

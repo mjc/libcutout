@@ -649,7 +649,7 @@ pub struct MobileTelemetrySnapshotDto {
     pub battery_temperature: Option<TemperatureReading>,
 
     /// Reported PWM duty in permille.
-    pub pwm: Option<MobileMeasuredI16Dto>,
+    pub pwm: Option<DutyCycle>,
 
     /// Reported distance.
     pub distance: Option<DistanceReading>,
@@ -727,14 +727,14 @@ pub struct MobileBmsGroupSnapshotDto {
     /// Optional explicit label such as `left pack`.
     pub label: Option<String>,
 
-    /// Group voltage in millivolts.
-    pub voltage: Option<MobileMeasuredI32Dto>,
+    /// Group voltage.
+    pub voltage: Option<VoltageReading>,
 
-    /// Group temperature in millicelsius.
-    pub temperature: Option<MobileMeasuredI32Dto>,
+    /// Group temperature.
+    pub temperature: Option<TemperatureReading>,
 
-    /// Estimated internal resistance in milliohms.
-    pub resistance_milliohms: Option<u16>,
+    /// Estimated internal resistance.
+    pub resistance: Option<Resistance>,
 
     /// Whether balancing is active for this group when known.
     pub is_balancing: Option<bool>,
@@ -766,22 +766,22 @@ pub struct MobileBmsSnapshotDto {
     pub topology: MobileBmsTopologyDto,
 
     /// State of charge or usable energy percent when known.
-    pub energy_percent: Option<MobileMeasuredU8Dto>,
+    pub energy_percent: Option<BatteryLevelReading>,
 
-    /// Pack voltage in millivolts.
-    pub voltage: Option<MobileMeasuredI32Dto>,
+    /// Pack voltage.
+    pub voltage: Option<VoltageReading>,
 
-    /// Pack current in milliamps.
-    pub current: Option<MobileMeasuredI32Dto>,
+    /// Pack current.
+    pub current: Option<BatteryCurrentReading>,
 
-    /// Cell-group delta in millivolts.
-    pub cell_delta_millivolts: Option<MobileMeasuredI32Dto>,
+    /// Cell-group voltage delta.
+    pub cell_delta: Option<VoltageDeltaReading>,
 
     /// One-based index of the lowest group when known.
     pub lowest_group_index: Option<u16>,
 
-    /// Highest observed temperature in millicelsius.
-    pub highest_temperature: Option<MobileMeasuredI32Dto>,
+    /// Highest observed temperature.
+    pub highest_temperature: Option<TemperatureReading>,
 
     /// Human-readable label for the hottest area.
     pub highest_temperature_label: Option<String>,
@@ -912,85 +912,26 @@ mobile_quantity!(
     "Battery level.",
     "Measured battery level."
 );
+mobile_quantity!(
+    VoltageDelta,
+    VoltageDeltaReading,
+    i32,
+    "Voltage delta.",
+    "Measured voltage delta."
+);
 
-/// Mobile measured i32 value.
+/// Electrical resistance.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredI32Dto {
-    /// Fixed-unit value.
-    pub value: i32,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
+pub struct Resistance {
+    /// Fixed-unit resistance value.
+    pub value: u16,
 }
 
-/// Mobile measured i64 value.
+/// PWM duty cycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredI64Dto {
-    /// Fixed-unit value.
-    pub value: i64,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
-}
-
-/// Mobile measured i16 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredI16Dto {
-    /// Fixed-unit value.
-    pub value: i16,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
-}
-
-/// Mobile measured u8 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredU8Dto {
-    /// Fixed-unit value.
-    pub value: u8,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
-}
-
-/// Mobile measured u64 value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMeasuredU64Dto {
-    /// Fixed-unit value.
-    pub value: u64,
-
-    /// Value source.
-    pub source: MobileValueSourceDto,
-
-    /// Value quality.
-    pub quality: MobileValueQualityDto,
-
-    /// Value verification status.
-    pub verification: MobileVerificationStatusDto,
+pub struct DutyCycle {
+    /// Permille duty cycle.
+    pub permille: i16,
 }
 
 /// Mobile parser diagnostics DTO.
@@ -1706,57 +1647,10 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
     }
 }
 
-impl From<MeasuredI32Dto> for MobileMeasuredI32Dto {
-    fn from(measured: MeasuredI32Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-impl From<MeasuredI64Dto> for MobileMeasuredI64Dto {
-    fn from(measured: MeasuredI64Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-impl From<MeasuredI16Dto> for MobileMeasuredI16Dto {
+impl From<MeasuredI16Dto> for DutyCycle {
     fn from(measured: MeasuredI16Dto) -> Self {
         Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-impl From<MeasuredU8Dto> for MobileMeasuredU8Dto {
-    fn from(measured: MeasuredU8Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
-        }
-    }
-}
-
-impl From<MeasuredU64Dto> for MobileMeasuredU64Dto {
-    fn from(measured: MeasuredU64Dto) -> Self {
-        Self {
-            value: measured.value,
-            source: measured.source.into(),
-            quality: measured.quality.into(),
-            verification: measured.verification.into(),
+            permille: measured.value,
         }
     }
 }
@@ -1787,6 +1681,7 @@ mobile_quantity_from_measured!(MeasuredI32Dto, Temperature, TemperatureReading);
 mobile_quantity_from_measured!(MeasuredU64Dto, Distance, DistanceReading);
 mobile_quantity_from_measured!(MeasuredI32Dto, Angle, AngleReading);
 mobile_quantity_from_measured!(MeasuredU8Dto, BatteryLevel, BatteryLevelReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, VoltageDelta, VoltageDeltaReading);
 
 fn power_flow_from_signed_current(current: MeasuredI32Dto) -> PowerFlowDirection {
     match current.value.cmp(&0) {
@@ -2170,28 +2065,28 @@ mod tests {
                 bms_count: 2,
                 confidence: MobileBmsTopologyConfidenceDto::Verified,
             },
-            energy_percent: Some(MobileMeasuredU8Dto {
-                value: 72,
+            energy_percent: Some(BatteryLevelReading {
+                value: BatteryLevel { value: 72 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
-            voltage: Some(MobileMeasuredI32Dto {
-                value: 81_600,
+            voltage: Some(VoltageReading {
+                value: Voltage { value: 81_600 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
             current: None,
-            cell_delta_millivolts: Some(MobileMeasuredI32Dto {
-                value: 18,
+            cell_delta: Some(VoltageDeltaReading {
+                value: VoltageDelta { value: 18 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
             lowest_group_index: Some(17),
-            highest_temperature: Some(MobileMeasuredI32Dto {
-                value: 37_800,
+            highest_temperature: Some(TemperatureReading {
+                value: Temperature { value: 37_800 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
@@ -2204,19 +2099,19 @@ mod tests {
             groups: vec![MobileBmsGroupSnapshotDto {
                 index: 17,
                 label: Some("group 17".to_owned()),
-                voltage: Some(MobileMeasuredI32Dto {
-                    value: 4_071,
+                voltage: Some(VoltageReading {
+                    value: Voltage { value: 4_071 },
                     source: MobileValueSourceDto::Reported,
                     quality: MobileValueQualityDto::Known,
                     verification: MobileVerificationStatusDto::HardwareVerified,
                 }),
-                temperature: Some(MobileMeasuredI32Dto {
-                    value: 34_900,
+                temperature: Some(TemperatureReading {
+                    value: Temperature { value: 34_900 },
                     source: MobileValueSourceDto::Reported,
                     quality: MobileValueQualityDto::Known,
                     verification: MobileVerificationStatusDto::HardwareVerified,
                 }),
-                resistance_milliohms: Some(21),
+                resistance: Some(Resistance { value: 21 }),
                 is_balancing: Some(true),
                 alert_level: MobileBmsAlertLevelDto::Warning,
                 detail: Some("drops first during acceleration".to_owned()),
@@ -2258,8 +2153,9 @@ mod tests {
             snapshot
                 .groups
                 .first()
-                .map(|group| group.resistance_milliohms),
-            Some(Some(21))
+                .and_then(|group| group.resistance)
+                .map(|resistance| resistance.value),
+            Some(21)
         );
         assert_eq!(
             snapshot.faults.first().map(|fault| fault.code.as_str()),

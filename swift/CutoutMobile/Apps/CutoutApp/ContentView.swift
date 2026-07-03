@@ -1298,7 +1298,7 @@ private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard
     case .live where state.telemetry != nil:
         MockupWarningCard(
             title: "Telemetry live",
-            detail: state.telemetry?.speed?.provenanceText ?? "Live telemetry from typed Rust/FFI state"
+            detail: state.telemetry?.speed == nil ? "Waiting for speed telemetry" : "Live telemetry from typed Rust/FFI state"
         )
     case .live:
         MockupWarningCard(title: "Telemetry unavailable", detail: "No live snapshot yet")
@@ -1312,7 +1312,7 @@ private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard
 private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyBar] {
     [
         telemetry.pwm.map { pwm in
-            let usedPermille = min(1_000, abs(Int(pwm.value.permille)))
+            let usedPermille = min(1_000, abs(Int(pwm.permille)))
             let headroomPermille = max(0, 1_000 - usedPermille)
             return MockupSafetyBar(
                 label: "PWM headroom",
@@ -1324,8 +1324,8 @@ private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyB
         telemetry.batteryLevelEstimated.map { batteryLevel in
             MockupSafetyBar(
                 label: "estimated energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value.value)),
-                progress: Double(batteryLevel.value.value) / 100.0,
+                value: percentageString(fromPercent: Int(batteryLevel.value)),
+                progress: Double(batteryLevel.value) / 100.0,
                 accent: .cyan
             )
         } ?? MockupSafetyBar(label: "estimated energy", value: "Unavailable", progress: 0, accent: .cyan),
@@ -1337,9 +1337,9 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
         telemetry.voltage.map { voltage in
             MockupDashboardTile(
                 label: "pack",
-                value: decimalString(fromMillivolts: voltage.value.value, fractionDigits: 1),
+                value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
-                detail: voltage.provenanceText,
+                detail: "live telemetry",
                 accent: .cyan
             )
         } ?? MockupDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
@@ -1356,9 +1356,9 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
         telemetry.batteryLevelEstimated.map { batteryLevel in
             MockupDashboardTile(
                 label: "energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value.value)),
+                value: percentageString(fromPercent: Int(batteryLevel.value)),
                 unit: "%",
-                detail: batteryLevel.provenanceText,
+                detail: "estimated",
                 accent: .cyan
             )
         } ?? MockupDashboardTile(label: "energy", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
@@ -1368,8 +1368,8 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
 private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboardTile {
     if let voltage = telemetry.voltage,
        let current = telemetry.batteryCurrent,
-       current.value.value != 0 {
-        let milliwatts = Int64(voltage.value.value) * Int64(current.value.value) / 1_000
+       current.value != 0 {
+        let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
         return MockupDashboardTile(
             label: "power",
             value: decimalString(
@@ -1386,11 +1386,11 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
         return MockupDashboardTile(
             label: "power",
             value: decimalString(
-                fromMilliwatts: power.value.value,
-                fractionDigits: powerFractionDigits(fromMilliwatts: power.value.value)
+                fromMilliwatts: power.value,
+                fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
             ),
             unit: "kW",
-            detail: powerFlowDetail(telemetry.powerFlow, fallback: power.provenanceText),
+            detail: powerFlowDetail(telemetry.powerFlow, fallback: "live telemetry"),
             accent: .yellow
         )
     }
@@ -1425,7 +1425,7 @@ private func unavailableDashboardTiles(from tiles: [MockupDashboardTile]) -> [Mo
 
 private func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
     let values = [telemetry.controllerTemperature, telemetry.motorTemperature, telemetry.batteryTemperature]
-        .compactMap { $0?.value.value }
+        .compactMap { $0?.value }
     guard let maxValue = values.max() else {
         return "--"
     }
@@ -1434,9 +1434,9 @@ private func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
 
 private func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
     let parts = [
-        telemetry.controllerTemperature.map { "ESC " + decimalString(fromMillicelsius: $0.value.value, fractionDigits: 0) },
-        telemetry.motorTemperature.map { "motor " + decimalString(fromMillicelsius: $0.value.value, fractionDigits: 0) },
-        telemetry.batteryTemperature.map { "battery " + decimalString(fromMillicelsius: $0.value.value, fractionDigits: 0) },
+        telemetry.controllerTemperature.map { "ESC " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
+        telemetry.motorTemperature.map { "motor " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
+        telemetry.batteryTemperature.map { "battery " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
     ].compactMap { $0 }
     return parts.isEmpty ? "typed telemetry" : parts.joined(separator: " · ")
 }
@@ -1670,7 +1670,7 @@ private struct BmsOverviewLayout: View {
                 )
                 BmsMetricCard(
                     title: "cell delta",
-                    value: millivoltsText(snapshot.cellDeltaMillivolts),
+                    value: millivoltsText(snapshot.cellDelta),
                     unit: "mV",
                     detail: "balanced enough",
                     accent: .green,
@@ -1885,7 +1885,7 @@ private struct BmsDetailLayout: View {
                         )
                         BmsMetricCard(
                             title: "IR est.",
-                            value: selectedGroup.resistanceMilliohms.map(String.init) ?? "--",
+                            value: selectedGroup.resistance.map { String($0.value) } ?? "--",
                             unit: "mΩ",
                             detail: "",
                             accent: .green,
@@ -2208,17 +2208,17 @@ private struct BmsNoDataLayout: View {
             .foregroundStyle(MockupColors.muted)
     }
 
-    private func percentValueText(_ reading: TelemetryReading<UInt8>?) -> String {
-        guard let reading else { return "--" }
-        return String(reading.value)
+    private func percentValueText(_ value: BatteryLevel?) -> String {
+        guard let value else { return "--" }
+        return String(value.value)
     }
 
-    private func currentText(_ reading: TelemetryReading<Int32>?) -> String? {
-        reading.map { decimalString(Double($0.value) / 1_000.0, fractionDigits: 0) }
+    private func currentText(_ value: BatteryCurrent?) -> String? {
+        value.map { decimalString(Double($0.value) / 1_000.0, fractionDigits: 0) }
     }
 
-    private func currentUnitText(_ reading: TelemetryReading<Int32>?) -> String? {
-        reading.map { _ in "A" }
+    private func currentUnitText(_ value: BatteryCurrent?) -> String? {
+        value.map { _ in "A" }
     }
 
     private func metricUnitText(_ metric: MockupMetric) -> String {
@@ -2570,21 +2570,21 @@ private enum BmsCardBorder {
     }
 }
 
-private func percentText(_ reading: TelemetryReading<UInt8>?) -> String {
-    guard let reading else { return "--" }
-    return "\(reading.value)%"
+private func percentText(_ value: BatteryLevel?) -> String {
+    guard let value else { return "--" }
+    return "\(value.value)%"
 }
 
-private func voltageText(_ reading: TelemetryReading<Int32>?) -> String {
-    reading.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+private func voltageText(_ value: Voltage?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
 
-private func millivoltsText(_ reading: TelemetryReading<Int32>?) -> String {
-    reading.map { String($0.value) } ?? "--"
+private func millivoltsText(_ value: VoltageDelta?) -> String {
+    value.map { String($0.value) } ?? "--"
 }
 
-private func temperatureText(_ reading: TelemetryReading<Int32>?) -> String {
-    reading.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+private func temperatureText(_ value: Temperature?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
 
 private func groupVoltageText(_ snapshot: BmsSnapshot, index: Int?) -> String {

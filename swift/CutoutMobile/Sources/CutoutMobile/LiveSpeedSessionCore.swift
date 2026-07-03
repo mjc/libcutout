@@ -278,9 +278,9 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
                 at: receivedAt
             )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
-            record("speed_mm_s=\(step.snapshot?.speed.map { String($0.value.value) } ?? "nil")")
-            record("voltage_mv=\(step.snapshot?.voltage.map { String($0.value.value) } ?? "nil")")
-            record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value.value) } ?? "nil")")
+            record("speed=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
+            record("voltage=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
+            record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value) } ?? "nil")")
             record("live_records=\(liveOwner.records.count)")
             applyNotificationStep(step, receivedAt: receivedAt)
         } catch {
