@@ -84,16 +84,32 @@ public struct MockupWarningCard: Equatable, Hashable, Sendable {
     }
 }
 
+public enum MockupDashboardTileKind: Equatable, Hashable, Sendable {
+    case metric
+    case beepMargin
+    case tiltback
+    case pedalMode
+}
+
 public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { label }
 
+    public let kind: MockupDashboardTileKind
     public let label: String
     public let value: String
     public let unit: String
     public let detail: String
     public let accent: MockupAccent
 
-    public init(label: String, value: String, unit: String, detail: String, accent: MockupAccent) {
+    public init(
+        kind: MockupDashboardTileKind = .metric,
+        label: String,
+        value: String,
+        unit: String,
+        detail: String,
+        accent: MockupAccent
+    ) {
+        self.kind = kind
         self.label = label
         self.value = value
         self.unit = unit
@@ -876,9 +892,9 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             ),
             dashboardTiles: [
                 MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
-                MockupDashboardTile(label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
-                MockupDashboardTile(label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
-                MockupDashboardTile(label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+                MockupDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+                MockupDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+                MockupDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
             ],
             summaryTitle: "Cell / BMS summary",
             summaryRows: [

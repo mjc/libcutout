@@ -145,14 +145,14 @@ private struct EucGarageMockupView: View {
 
         let settings = settingsReadback.eucGarageSettings
         return screen.dashboardTiles.map { tile in
-            switch tile.label {
-            case "beep margin":
+            switch tile.kind {
+            case .beepMargin:
                 return settingsSpeedTile(tile: tile, readback: settings.beepMargin)
-            case "tiltback":
+            case .tiltback:
                 return settingsSpeedTile(tile: tile, readback: settings.tiltback)
-            case "pedal mode":
+            case .pedalMode:
                 return settingsPedalTile(tile: tile, readback: settings.pedalMode)
-            default:
+            case .metric:
                 return tile
             }
         }
