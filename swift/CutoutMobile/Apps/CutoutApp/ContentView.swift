@@ -163,7 +163,7 @@ private struct EucGarageMockupView: View {
                 EucSummaryRows(rows: screen.summaryRows, scale: scale)
             }
 
-            if let settingsReadback, !settingsReadback.entries.isEmpty {
+            if let settingsReadback, settingsReadback.shouldRender {
                 Text("Read-only settings")
                     .font(.system(size: 16 * scale, weight: .black))
                     .foregroundStyle(MockupColors.primaryText)
@@ -184,43 +184,75 @@ private struct EucGarageMockupView: View {
     }
 }
 
+private extension SettingsReadback {
+    var shouldRender: Bool {
+        availability != .available || !entries.isEmpty
+    }
+}
+
 private struct SettingsReadbackRows: View {
     let readback: SettingsReadback
     let scale: CGFloat
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(Array(readback.entries.enumerated()), id: \.offset) { _, entry in
-                VStack(alignment: .leading, spacing: 5 * scale) {
-                    HStack {
-                        Text("setting \(entry.field.id)")
-                            .font(.system(size: 14 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.muted)
-                        Spacer()
-                        Text("\(entry.field.value)")
-                            .font(.system(size: 15 * scale, weight: .black))
-                            .monospacedDigit()
-                            .foregroundStyle(MockupColors.primaryText)
-                    }
-
-                    Text(entry.provenanceText)
-                        .font(.system(size: 12 * scale, weight: .semibold))
+            if readback.entries.isEmpty {
+                HStack {
+                    Text("settings")
+                        .font(.system(size: 14 * scale, weight: .bold))
                         .foregroundStyle(MockupColors.muted)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Text(readback.availability.displayText)
+                        .font(.system(size: 15 * scale, weight: .black))
+                        .foregroundStyle(MockupColors.primaryText)
                 }
-                .padding(.vertical, 10 * scale)
+                .frame(height: 31 * scale)
+            } else {
+                ForEach(Array(readback.entries.enumerated()), id: \.offset) { offset, entry in
+                    VStack(alignment: .leading, spacing: 5 * scale) {
+                        HStack {
+                            Text("setting \(entry.field.id)")
+                                .font(.system(size: 14 * scale, weight: .bold))
+                                .foregroundStyle(MockupColors.muted)
+                            Spacer()
+                            Text("\(entry.field.value)")
+                                .font(.system(size: 15 * scale, weight: .black))
+                                .monospacedDigit()
+                                .foregroundStyle(MockupColors.primaryText)
+                        }
 
-                if entry != readback.entries.last {
-                    Rectangle()
-                        .fill(MockupColors.cardStroke)
-                        .frame(height: 1)
+                        Text(entry.provenanceText)
+                            .font(.system(size: 12 * scale, weight: .semibold))
+                            .foregroundStyle(MockupColors.muted)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 10 * scale)
+
+                    if offset != readback.entries.indices.last {
+                        Rectangle()
+                            .fill(MockupColors.cardStroke)
+                            .frame(height: 1)
+                    }
                 }
             }
         }
         .padding(.horizontal, 22 * scale)
         .padding(.vertical, 6 * scale)
         .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
+private extension ReadbackAvailability {
+    var displayText: String {
+        switch self {
+        case .available:
+            "available"
+        case .unavailable:
+            "unavailable"
+        case .unsupported:
+            "unsupported"
+        }
     }
 }
 

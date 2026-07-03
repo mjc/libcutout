@@ -1041,6 +1041,19 @@ pub enum MobileVerificationStatusDto {
     SourceAndHardwareVerified,
 }
 
+/// Availability of a read-only response for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileReadbackAvailabilityDto {
+    /// The device reported the requested readback.
+    Available,
+
+    /// The readback is expected for this device/profile but was not available.
+    Unavailable,
+
+    /// The readback is not supported for this device/profile.
+    Unsupported,
+}
+
 /// Raw numeric field from a read-only settings response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRawFieldValueDto {
@@ -1070,6 +1083,9 @@ pub struct MobileSettingsEntryDto {
 /// Bounded read-only settings response for mobile UI.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileSettingsReadbackDto {
+    /// Whether the requested settings readback is available for display.
+    pub availability: MobileReadbackAvailabilityDto,
+
     /// Present settings entries.
     pub entries: Vec<MobileSettingsEntryDto>,
 }
@@ -1460,6 +1476,7 @@ impl From<SettingsEntryDto> for MobileSettingsEntryDto {
 impl From<SettingsReadback> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadback) -> Self {
         Self {
+            availability: MobileReadbackAvailabilityDto::Available,
             entries: readback
                 .entries
                 .into_iter()
@@ -1473,6 +1490,7 @@ impl From<SettingsReadback> for MobileSettingsReadbackDto {
 impl From<SettingsReadbackDto> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadbackDto) -> Self {
         Self {
+            availability: MobileReadbackAvailabilityDto::Available,
             entries: readback.entries.into_iter().map(Into::into).collect(),
         }
     }
@@ -2346,6 +2364,10 @@ mod tests {
         let mobile = MobileSettingsReadbackDto::from(readback);
 
         assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Available
+        );
+        assert_eq!(
             mobile.entries,
             vec![
                 MobileSettingsEntryDto {
@@ -2396,6 +2418,7 @@ mod tests {
         assert_eq!(
             mobile.settings_readback,
             Some(MobileSettingsReadbackDto {
+                availability: MobileReadbackAvailabilityDto::Available,
                 entries: vec![MobileSettingsEntryDto {
                     field: MobileRawFieldValueDto {
                         id: 0x0102,

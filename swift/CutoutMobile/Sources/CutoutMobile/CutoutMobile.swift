@@ -173,13 +173,19 @@ public struct SettingsReadbackEntry: Equatable, Hashable, Sendable {
 
 public struct SettingsReadback: Equatable, Hashable, Sendable {
     public let entries: [SettingsReadbackEntry]
+    public let availability: ReadbackAvailability
 
-    public init(entries: [SettingsReadbackEntry]) {
+    public init(
+        entries: [SettingsReadbackEntry],
+        availability: ReadbackAvailability = .available
+    ) {
         self.entries = entries
+        self.availability = availability
     }
 
     fileprivate init(_ dto: MobileSettingsReadbackDto) {
         self.entries = dto.entries.map(SettingsReadbackEntry.init)
+        self.availability = ReadbackAvailability(dto.availability)
     }
 }
 
@@ -306,6 +312,17 @@ public enum ReadbackAvailability: Equatable, Hashable, Sendable {
     case available
     case unavailable
     case unsupported
+
+    fileprivate init(_ dto: MobileReadbackAvailabilityDto) {
+        switch dto {
+        case .available:
+            self = .available
+        case .unavailable:
+            self = .unavailable
+        case .unsupported:
+            self = .unsupported
+        }
+    }
 }
 
 public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, Hashable, Sendable {

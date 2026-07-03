@@ -159,7 +159,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 quality: .known,
                 verification: .sourceVerified
             ),
-        ])
+        ], availability: .available)
         var observedReadbacks: [SettingsReadback?] = []
         core.onSettingsReadbackChange = { observedReadbacks.append($0) }
 
@@ -175,6 +175,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(core.settingsReadback, readback)
+        XCTAssertEqual(core.settingsReadback?.availability, .available)
         XCTAssertEqual(observedReadbacks, [readback])
 
         core.disconnectAndScan()
