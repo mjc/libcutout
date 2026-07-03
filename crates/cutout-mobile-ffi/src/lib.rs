@@ -853,10 +853,13 @@ impl From<BatteryInfoDto> for MobileBmsSnapshotDto {
 
 impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
     fn from(readback: BatteryReadbackDto) -> Self {
-        readback.page.map_or_else(
-            || Self::empty_readback(readback.availability.into()),
-            |page| Self::from_page(readback.availability.into(), page),
-        )
+        let availability = readback.availability.into();
+        match (availability, readback.page) {
+            (MobileReadbackAvailabilityDto::Available, Some(page)) => {
+                Self::from_page(availability, page)
+            }
+            _ => Self::empty_readback(availability),
+        }
     }
 }
 
@@ -1796,7 +1799,12 @@ impl From<SettingsReadback> for MobileSettingsReadbackDto {
 impl From<SettingsReadbackDto> for MobileSettingsReadbackDto {
     fn from(readback: SettingsReadbackDto) -> Self {
         let availability = readback.availability.into();
-        let entries: Vec<_> = readback.entries.into_iter().map(Into::into).collect();
+        let entries: Vec<_> = (availability == MobileReadbackAvailabilityDto::Available)
+            .then_some(readback.entries)
+            .into_iter()
+            .flatten()
+            .map(Into::into)
+            .collect();
         let euc_garage = MobileEucGarageSettingsDto::from_entries(availability, &entries);
 
         Self {
@@ -1910,10 +1918,21 @@ impl From<FaultHistoryReadback> for MobileFaultHistoryReadbackDto {
 
 impl From<FaultHistoryReadbackDto> for MobileFaultHistoryReadbackDto {
     fn from(readback: FaultHistoryReadbackDto) -> Self {
+        let availability = readback.availability.into();
+        let (last_fault, since_distance) =
+            if availability == MobileReadbackAvailabilityDto::Available {
+                (
+                    readback.last_fault.map(Into::into),
+                    readback.since_distance.map(Into::into),
+                )
+            } else {
+                (None, None)
+            };
+
         Self {
-            availability: readback.availability.into(),
-            last_fault: readback.last_fault.map(Into::into),
-            since_distance: readback.since_distance.map(Into::into),
+            availability,
+            last_fault,
+            since_distance,
         }
     }
 }
@@ -3003,6 +3022,37 @@ mod tests {
     }
 
     #[test]
+    fn mobile_settings_readback_dto_strips_entries_when_not_available() {
+        let mobile = MobileSettingsReadbackDto::from(SettingsReadbackDto {
+            availability: SettingsReadbackAvailabilityDto::Unsupported,
+            entries: vec![SettingsEntryDto {
+                field: RawFieldValueDto {
+                    id: VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+                    value: 420,
+                },
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }],
+        });
+
+        assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Unsupported
+        );
+        assert!(mobile.entries.is_empty());
+        assert_eq!(
+            mobile.euc_garage,
+            MobileEucGarageSettingsDto {
+                availability: MobileReadbackAvailabilityDto::Unsupported,
+                beep_margin: None,
+                tiltback: None,
+                pedal_mode: None,
+            }
+        );
+    }
+
+    #[test]
     fn mobile_fault_history_preserves_unknown_fault_code_and_since_distance() {
         let mobile = MobileFaultHistoryReadbackDto::from(FaultHistoryReadbackDto {
             availability: FaultHistoryAvailabilityDto::Available,
@@ -3047,6 +3097,37 @@ mod tests {
             mobile.since_distance.expect("distance").value,
             Distance { value: 61_456_941 }
         );
+    }
+
+    #[test]
+    fn mobile_fault_history_dto_strips_payload_when_not_available() {
+        let mobile = MobileFaultHistoryReadbackDto::from(FaultHistoryReadbackDto {
+            availability: FaultHistoryAvailabilityDto::Unavailable,
+            last_fault: Some(FaultHistoryEntryDto {
+                code: FaultCodeDto {
+                    raw: RawFieldValueDto {
+                        id: 0x0040,
+                        value: 1,
+                    },
+                },
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+            since_distance: Some(MeasuredU64Dto {
+                value: 61_456_941,
+                source: ValueSourceDto::Reported,
+                quality: ValueQualityDto::Known,
+                verification: VerificationStatusDto::HardwareVerified,
+            }),
+        });
+
+        assert_eq!(
+            mobile.availability,
+            MobileReadbackAvailabilityDto::Unavailable
+        );
+        assert_eq!(mobile.last_fault, None);
+        assert_eq!(mobile.since_distance, None);
     }
 
     #[test]
@@ -3282,6 +3363,53 @@ mod tests {
         assert_eq!(snapshot.energy_percent, None);
         assert_eq!(snapshot.voltage, None);
         assert_eq!(snapshot.current, None);
+        assert!(snapshot.groups.is_empty());
+    }
+
+    #[test]
+    fn mobile_battery_readback_dto_strips_page_when_not_available() {
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestBatteryInfo,
+            payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
+                availability: BatteryReadbackAvailabilityDto::Unsupported,
+                page: Some(BatteryInfoDto {
+                    page: cutout_core::BatteryPageMetadataDto {
+                        selector: 3,
+                        kind: cutout_core::BatteryPageKindDto::Temperature,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    },
+                    voltage: Some(measured_i32(81_600)),
+                    current: Some(measured_i32(-1_250)),
+                    bms_pack_current_0: None,
+                    bms_pack_current_1: None,
+                    level_reported: Some(MeasuredU8Dto {
+                        value: 72,
+                        source: ValueSourceDto::Reported,
+                        quality: ValueQualityDto::Known,
+                        verification: VerificationStatusDto::HardwareVerified,
+                    }),
+                    level_estimated: None,
+                    temperature: Some(measured_i32(31_000)),
+                    temperatures: vec![Some(measured_i32(37_800))],
+                    cell_voltages: vec![measured_i32(3_633)],
+                    raw_state: None,
+                }),
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::BmsSnapshot);
+        let snapshot = mobile.bms_snapshot.expect("BMS snapshot");
+        assert_eq!(
+            snapshot.availability,
+            MobileReadbackAvailabilityDto::Unsupported
+        );
+        assert_eq!(snapshot.energy_percent, None);
+        assert_eq!(snapshot.voltage, None);
+        assert_eq!(snapshot.current, None);
+        assert_eq!(snapshot.cell_delta, None);
+        assert_eq!(snapshot.highest_temperature, None);
         assert!(snapshot.groups.is_empty());
     }
 
