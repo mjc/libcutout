@@ -633,6 +633,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Reported power.
     pub power: Option<PowerReading>,
 
+    /// Signed power/current flow direction when known enough for conservative UI labels.
+    pub power_flow: Option<PowerFlowDirection>,
+
     /// Reported controller temperature.
     pub controller_temperature: Option<TemperatureReading>,
 
@@ -803,6 +806,19 @@ pub struct MobileBmsSnapshotDto {
 
     /// Optional state label for the capture action.
     pub capture_action_state: Option<String>,
+}
+
+/// Conservative signed power/current flow direction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum PowerFlowDirection {
+    /// Positive discharge from pack to controller/motor.
+    Discharge,
+
+    /// No measurable signed pack flow.
+    Zero,
+
+    /// Negative signed flow without enough motion or plug context to label charge or regen.
+    NegativeUnknown,
 }
 
 macro_rules! mobile_quantity {
@@ -1753,6 +1769,14 @@ mobile_quantity_from_measured!(MeasuredU64Dto, Distance, DistanceReading);
 mobile_quantity_from_measured!(MeasuredI32Dto, Angle, AngleReading);
 mobile_quantity_from_measured!(MeasuredU8Dto, BatteryLevel, BatteryLevelReading);
 
+fn power_flow_from_signed_current(current: MeasuredI32Dto) -> PowerFlowDirection {
+    match current.value.cmp(&0) {
+        std::cmp::Ordering::Greater => PowerFlowDirection::Discharge,
+        std::cmp::Ordering::Equal => PowerFlowDirection::Zero,
+        std::cmp::Ordering::Less => PowerFlowDirection::NegativeUnknown,
+    }
+}
+
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
@@ -1906,6 +1930,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             battery_current: snapshot.battery_current.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
+            power_flow: snapshot.battery_current.map(power_flow_from_signed_current),
             controller_temperature: snapshot.controller_temperature.map(Into::into),
             motor_temperature: snapshot.motor_temperature.map(Into::into),
             battery_temperature: snapshot.battery_temperature.map(Into::into),
@@ -2272,6 +2297,22 @@ mod tests {
         assert!(!candidate.is_picker_candidate);
     }
 
+    #[test]
+    fn power_flow_direction_does_not_invent_charge_or_regen_from_negative_current() {
+        assert_eq!(
+            power_flow_from_signed_current(measured_current(2_000)),
+            PowerFlowDirection::Discharge
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_current(0)),
+            PowerFlowDirection::Zero
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_current(-2_000)),
+            PowerFlowDirection::NegativeUnknown
+        );
+    }
+
     const fn ms(value: u64) -> MobileMonotonicMillisDto {
         MobileMonotonicMillisDto {
             milliseconds: value,
@@ -2281,6 +2322,15 @@ mod tests {
     const fn wc(value: u64) -> MobileWallClockUnixMillisDto {
         MobileWallClockUnixMillisDto {
             milliseconds: value,
+        }
+    }
+
+    const fn measured_current(value: i32) -> MeasuredI32Dto {
+        MeasuredI32Dto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::SourceVerified,
         }
     }
 
@@ -2591,6 +2641,7 @@ mod tests {
                 ..
             })
         ));
+        assert!(snapshot.power_flow.is_some());
         assert!(snapshot.controller_temperature.is_some() || snapshot.motor_temperature.is_some());
         assert!(snapshot.pwm.is_some());
         assert!(snapshot.battery_level_estimated.is_some());

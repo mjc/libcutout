@@ -1377,7 +1377,7 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
                 fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
             ),
             unit: "kW",
-            detail: "calculated from pack current",
+            detail: powerFlowDetail(telemetry.powerFlow, fallback: "calculated from pack current"),
             accent: .yellow
         )
     }
@@ -1390,12 +1390,25 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
                 fractionDigits: powerFractionDigits(fromMilliwatts: power.value.value)
             ),
             unit: "kW",
-            detail: power.provenanceText,
+            detail: powerFlowDetail(telemetry.powerFlow, fallback: power.provenanceText),
             accent: .yellow
         )
     }
 
     return MockupDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
+}
+
+private func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> String {
+    switch direction {
+    case .discharge:
+        fallback
+    case .zero:
+        "zero signed pack flow"
+    case .negativeUnknown:
+        "negative signed flow; charge/regen unverified"
+    case nil:
+        fallback
+    }
 }
 
 private func unavailableSafetyBars(from bars: [MockupSafetyBar]) -> [MockupSafetyBar] {

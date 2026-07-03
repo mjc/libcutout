@@ -369,6 +369,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let batteryCurrent: TelemetryReading<BatteryCurrent>?
     public let motorCurrent: TelemetryReading<PhaseCurrent>?
     public let power: TelemetryReading<Power>?
+    public let powerFlow: PowerFlowDirection?
     public let controllerTemperature: TelemetryReading<Temperature>?
     public let motorTemperature: TelemetryReading<Temperature>?
     public let batteryTemperature: TelemetryReading<Temperature>?
@@ -385,6 +386,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         batteryCurrent: TelemetryReading<BatteryCurrent>? = nil,
         motorCurrent: TelemetryReading<PhaseCurrent>? = nil,
         power: TelemetryReading<Power>? = nil,
+        powerFlow: PowerFlowDirection? = nil,
         controllerTemperature: TelemetryReading<Temperature>? = nil,
         motorTemperature: TelemetryReading<Temperature>? = nil,
         batteryTemperature: TelemetryReading<Temperature>? = nil,
@@ -400,6 +402,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.batteryCurrent = batteryCurrent
         self.motorCurrent = motorCurrent
         self.power = power
+        self.powerFlow = powerFlow
         self.controllerTemperature = controllerTemperature
         self.motorTemperature = motorTemperature
         self.batteryTemperature = batteryTemperature
@@ -418,6 +421,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             batteryCurrent: dto.batteryCurrent.map { TelemetryReading<BatteryCurrent>($0) },
             motorCurrent: dto.motorCurrent.map { TelemetryReading<PhaseCurrent>($0) },
             power: dto.power.map { TelemetryReading<Power>($0) },
+            powerFlow: dto.powerFlow,
             controllerTemperature: dto.controllerTemperature.map { TelemetryReading<Temperature>($0) },
             motorTemperature: dto.motorTemperature.map { TelemetryReading<Temperature>($0) },
             batteryTemperature: dto.batteryTemperature.map { TelemetryReading<Temperature>($0) },

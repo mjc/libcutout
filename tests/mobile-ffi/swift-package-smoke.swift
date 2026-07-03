@@ -24,6 +24,7 @@ struct CutoutMobilePackageSmoke {
         )
         precondition(telemetry.voltage?.value == Voltage(value: 108_760))
         precondition(telemetry.speed?.value == Speed(value: 0))
+        precondition(telemetry.powerFlow != nil)
         precondition(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
         precondition(SpeedReadout(millimetersPerSecond: nil).displayValue == "--")
         precondition(LiveSpeedConnectionPhase.starting.displayText == "Starting Bluetooth...")
@@ -145,6 +146,7 @@ struct CutoutMobilePackageSmoke {
         ))
         precondition(runnerTelemetry.snapshot?.voltage?.value == Voltage(value: 108_760))
         precondition(runnerTelemetry.snapshot?.speed?.value == Speed(value: 0))
+        precondition(runnerTelemetry.snapshot?.powerFlow != nil)
 
         let liveSink = RecordingCoreBluetoothOperationSink()
         let liveOwner = CoreBluetoothLiveSessionOwner(
@@ -178,6 +180,7 @@ struct CutoutMobilePackageSmoke {
         )
         precondition(liveTelemetry.snapshot?.voltage?.value == Voltage(value: 108_760))
         precondition(liveTelemetry.snapshot?.speed?.value == Speed(value: 0))
+        precondition(liveTelemetry.snapshot?.powerFlow != nil)
         let initialSpeedState = LiveSpeedDisplayState()
         precondition(initialSpeedState.speed.displayValue == "--")
         precondition(initialSpeedState.notificationCount == 0)

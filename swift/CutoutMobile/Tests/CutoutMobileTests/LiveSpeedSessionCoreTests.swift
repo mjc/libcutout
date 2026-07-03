@@ -76,6 +76,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         let snapshot = TelemetrySnapshot(
             speed: telemetryReading(1_234),
             voltage: voltageReading(117_000),
+            powerFlow: .negativeUnknown,
             batteryLevelEstimated: batteryLevelReading(77)
         )
         let step = CoreBluetoothSessionStep(operations: [], snapshot: snapshot)
@@ -87,6 +88,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.hasObservedSpeedSnapshot)
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
         XCTAssertEqual(core.displayState.telemetry?.speed?.value, Speed(value: 1_234))
+        XCTAssertEqual(core.displayState.telemetry?.powerFlow, .negativeUnknown)
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
     }
