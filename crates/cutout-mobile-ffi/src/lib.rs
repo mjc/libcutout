@@ -1061,6 +1061,12 @@ pub enum PowerFlowDirection {
     /// No measurable signed pack flow.
     Zero,
 
+    /// Negative signed pack flow while explicit protocol charge state says charging.
+    Charging,
+
+    /// Negative signed pack flow while the wheel is moving.
+    Regeneration,
+
     /// Negative signed flow without enough motion or plug context to label charge or regen.
     NegativeUnknown,
 }
@@ -2421,11 +2427,20 @@ fn highest_battery_temperature(
         .map(Into::into)
 }
 
-fn power_flow_from_signed_current(current: MeasuredI32Dto) -> PowerFlowDirection {
+fn power_flow_from_signed_current(
+    current: MeasuredI32Dto,
+    operating_state: RideOperatingState,
+) -> PowerFlowDirection {
     match current.value.cmp(&0) {
         std::cmp::Ordering::Greater => PowerFlowDirection::Discharge,
         std::cmp::Ordering::Equal => PowerFlowDirection::Zero,
-        std::cmp::Ordering::Less => PowerFlowDirection::NegativeUnknown,
+        std::cmp::Ordering::Less => match operating_state {
+            RideOperatingState::Charging => PowerFlowDirection::Charging,
+            RideOperatingState::Riding => PowerFlowDirection::Regeneration,
+            RideOperatingState::Parked | RideOperatingState::Unknown => {
+                PowerFlowDirection::NegativeUnknown
+            }
+        },
     }
 }
 
@@ -2617,17 +2632,20 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
 
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
+        let operating_state = ride_operating_state(snapshot.charge_mode, snapshot.speed);
         Self {
             at_ms: snapshot
                 .at_ms
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
-            operating_state: ride_operating_state(snapshot.charge_mode, snapshot.speed),
+            operating_state,
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
-            power_flow: snapshot.battery_current.map(power_flow_from_signed_current),
+            power_flow: snapshot
+                .battery_current
+                .map(|current| power_flow_from_signed_current(current, operating_state)),
             controller_temperature: snapshot.controller_temperature.map(Into::into),
             motor_temperature: snapshot.motor_temperature.map(Into::into),
             battery_temperature: snapshot.battery_temperature.map(Into::into),
@@ -3699,18 +3717,30 @@ mod tests {
     }
 
     #[test]
-    fn power_flow_direction_does_not_invent_charge_or_regen_from_negative_current() {
+    fn power_flow_direction_uses_motion_and_charge_context_for_negative_current() {
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(2_000)),
+            power_flow_from_signed_current(measured_i32(2_000), RideOperatingState::Riding),
             PowerFlowDirection::Discharge
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(0)),
+            power_flow_from_signed_current(measured_i32(0), RideOperatingState::Riding),
             PowerFlowDirection::Zero
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(-2_000)),
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Unknown),
             PowerFlowDirection::NegativeUnknown
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Parked),
+            PowerFlowDirection::NegativeUnknown
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Riding),
+            PowerFlowDirection::Regeneration
+        );
+        assert_eq!(
+            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Charging),
+            PowerFlowDirection::Charging
         );
     }
 

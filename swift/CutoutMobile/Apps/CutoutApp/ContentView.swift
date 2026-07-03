@@ -1780,6 +1780,10 @@ private func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String)
         fallback
     case .zero:
         "zero signed pack flow"
+    case .charging:
+        "charging input"
+    case .regeneration:
+        "regeneration"
     case .negativeUnknown:
         "negative signed flow; charge/regen unverified"
     case nil:
