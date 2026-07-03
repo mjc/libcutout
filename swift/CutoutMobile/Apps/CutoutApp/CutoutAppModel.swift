@@ -8,6 +8,7 @@ final class CutoutAppModel: ObservableObject {
     @Published private(set) var selectedRideTitle: String?
     @Published private(set) var settingsReadback: SettingsReadback?
     @Published private(set) var faultHistoryReadback: FaultHistoryReadback?
+    @Published private(set) var bmsSnapshot: BmsSnapshot?
 
     var speed: SpeedReadout {
         displayState.speed
@@ -34,6 +35,9 @@ final class CutoutAppModel: ObservableObject {
         }
         core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
+        }
+        core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
+            self?.bmsSnapshot = bmsSnapshot
         }
     }
 

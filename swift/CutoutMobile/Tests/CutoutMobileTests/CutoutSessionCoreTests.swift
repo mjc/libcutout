@@ -220,6 +220,46 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedReadbacks, [readback, nil])
     }
 
+    func testBmsSnapshotUpdatesCurrentSessionStateUntilDisconnect() {
+        let core = CutoutSessionCore()
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "unknown BMS topology",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 0,
+                bmsCount: 0,
+                confidence: .unverified
+            ),
+            energyPercent: BatteryLevel(value: 72),
+            voltage: Voltage(value: 81_600),
+            current: BatteryCurrent(value: -1_250),
+            highestTemperature: Temperature(value: 37_800)
+        )
+        var observedSnapshots: [BmsSnapshot?] = []
+        core.onBmsSnapshotChange = { observedSnapshots.append($0) }
+
+        let action = SessionAction(
+            kind: .bmsSnapshot,
+            channel: Data(),
+            bytes: Data(),
+            bmsSnapshot: snapshot
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [action]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(core.bmsSnapshot, snapshot)
+        XCTAssertEqual(core.bmsSnapshot?.topology.confidence, .unverified)
+        XCTAssertEqual(observedSnapshots, [snapshot])
+
+        core.disconnectAndScan()
+
+        XCTAssertNil(core.bmsSnapshot)
+        XCTAssertEqual(observedSnapshots, [snapshot, nil])
+    }
+
     func testDisconnectAndScanClearsRideStateAndReturnsPickerToScanning() {
         let core = CutoutSessionCore()
         core.observeAdvertisement(

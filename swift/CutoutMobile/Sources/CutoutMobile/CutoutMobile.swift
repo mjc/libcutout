@@ -32,6 +32,7 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
     case notificationIngest
     case settingsReadback
     case faultHistoryReadback
+    case bmsSnapshot
 
     fileprivate init(_ dto: MobileSessionOutputKindDto) {
         switch dto {
@@ -49,6 +50,8 @@ public enum SessionActionKind: Equatable, Hashable, Sendable {
             self = .settingsReadback
         case .faultHistoryReadback:
             self = .faultHistoryReadback
+        case .bmsSnapshot:
+            self = .bmsSnapshot
         }
     }
 }
@@ -59,19 +62,22 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let bytes: Data
     public let settingsReadback: SettingsReadback?
     public let faultHistoryReadback: FaultHistoryReadback?
+    public let bmsSnapshot: BmsSnapshot?
 
     public init(
         kind: SessionActionKind,
         channel: Data,
         bytes: Data,
         settingsReadback: SettingsReadback? = nil,
-        faultHistoryReadback: FaultHistoryReadback? = nil
+        faultHistoryReadback: FaultHistoryReadback? = nil,
+        bmsSnapshot: BmsSnapshot? = nil
     ) {
         self.kind = kind
         self.channel = channel
         self.bytes = bytes
         self.settingsReadback = settingsReadback
         self.faultHistoryReadback = faultHistoryReadback
+        self.bmsSnapshot = bmsSnapshot
     }
 
     fileprivate init(_ dto: MobileSessionOutputDto) {
@@ -80,6 +86,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.bytes = dto.bytes
         self.settingsReadback = dto.settingsReadback.map(SettingsReadback.init)
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
+        self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
     }
 }
 
@@ -1140,7 +1147,7 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
             }
         case .disconnect:
             return [.disconnect]
-        case .event, .notificationIngest, .settingsReadback, .faultHistoryReadback:
+        case .event, .notificationIngest, .settingsReadback, .faultHistoryReadback, .bmsSnapshot:
             return []
         }
     }

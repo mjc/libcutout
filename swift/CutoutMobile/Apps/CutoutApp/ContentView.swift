@@ -30,6 +30,7 @@ struct ContentView: View {
                         rideTitle: model.selectedRideTitle,
                         settingsReadback: model.settingsReadback,
                         faultHistoryReadback: model.faultHistoryReadback,
+                        bmsSnapshot: model.bmsSnapshot,
                         disconnect: {
                             model.disconnectAndSearch()
                             pairedDestinationScreenID = nil
@@ -103,6 +104,7 @@ private struct MockupScreenContainer: View {
     let rideTitle: String?
     let settingsReadback: SettingsReadback?
     let faultHistoryReadback: FaultHistoryReadback?
+    let bmsSnapshot: BmsSnapshot?
     let disconnect: () -> Void
     let pair: (MockupPickerRow) -> Void
     let selectScreen: (MockupScreenID) -> Void
@@ -119,7 +121,8 @@ private struct MockupScreenContainer: View {
             EucGarageMockupView(
                 screen: screen,
                 settingsReadback: settingsReadback,
-                faultHistoryReadback: faultHistoryReadback
+                faultHistoryReadback: faultHistoryReadback,
+                bmsSnapshot: bmsSnapshot
             )
         case .vescOnewheelRide:
             VescOnewheelRideMockupView(screen: screen)
@@ -133,6 +136,7 @@ private struct EucGarageMockupView: View {
     let screen: MockupScreen
     let settingsReadback: SettingsReadback?
     let faultHistoryReadback: FaultHistoryReadback?
+    let bmsSnapshot: BmsSnapshot?
 
     var body: some View {
         MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
@@ -168,6 +172,15 @@ private struct EucGarageMockupView: View {
 
             if !screen.summaryRows.isEmpty {
                 EucSummaryRows(rows: screen.summaryRows, scale: scale)
+            }
+
+            if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
+                Text("Read-only pack health")
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 12 * scale)
+
+                BmsReadbackRows(snapshot: bmsSnapshot, scale: scale)
             }
 
             if let settingsReadback, settingsReadback.shouldRender {
@@ -209,6 +222,54 @@ private extension SettingsReadback {
 private extension FaultHistoryReadback {
     var shouldRender: Bool {
         availability != .available || lastFault != nil || sinceDistance != nil
+    }
+}
+
+private extension BmsSnapshot {
+    var shouldRenderReadback: Bool {
+        energyPercent != nil || voltage != nil || current != nil || highestTemperature != nil
+    }
+}
+
+private struct BmsReadbackRows: View {
+    let snapshot: BmsSnapshot
+    let scale: CGFloat
+
+    private var rows: [SessionDebugRow] {
+        [
+            SessionDebugRow(label: "charge", value: percentText(snapshot.energyPercent)),
+            SessionDebugRow(label: "voltage", value: voltageText(snapshot.voltage)),
+            SessionDebugRow(label: "current", value: currentText(snapshot.current)),
+            SessionDebugRow(label: "temperature", value: temperatureText(snapshot.highestTemperature)),
+            SessionDebugRow(label: "topology", value: snapshot.topology.layoutLabel),
+        ]
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { offset, row in
+                HStack {
+                    Text(row.label)
+                        .font(.system(size: 14 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.muted)
+                    Spacer()
+                    Text(row.value)
+                        .font(.system(size: 15 * scale, weight: .black))
+                        .monospacedDigit()
+                        .foregroundStyle(MockupColors.primaryText)
+                }
+                .frame(height: 31 * scale)
+
+                if offset != rows.indices.last {
+                    Rectangle()
+                        .fill(MockupColors.cardStroke)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 6 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
     }
 }
 
@@ -2790,6 +2851,10 @@ private func percentText(_ value: BatteryLevel?) -> String {
 }
 
 private func voltageText(_ value: Voltage?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
+private func currentText(_ value: BatteryCurrent?) -> String {
     value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
 

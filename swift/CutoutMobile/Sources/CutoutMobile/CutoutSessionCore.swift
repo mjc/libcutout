@@ -9,6 +9,7 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
     public private(set) var settingsReadback: SettingsReadback?
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
+    public private(set) var bmsSnapshot: BmsSnapshot?
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -16,6 +17,7 @@ public final class CutoutSessionCore: NSObject {
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
+    public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
 
     private let clock = MonotonicClock()
     private var central: CBCentralManager?
@@ -69,6 +71,7 @@ public final class CutoutSessionCore: NSObject {
         hasObservedSpeedSnapshot = false
         clearSettingsReadback()
         clearFaultHistoryReadback()
+        clearBmsSnapshot()
         onDisplayStateChange?(displayState)
 
         if let peripheral {
@@ -107,6 +110,9 @@ public final class CutoutSessionCore: NSObject {
         case .faultHistoryReadback:
             faultHistoryReadback = action.faultHistoryReadback
             onFaultHistoryReadbackChange?(faultHistoryReadback)
+        case .bmsSnapshot:
+            bmsSnapshot = action.bmsSnapshot
+            onBmsSnapshotChange?(bmsSnapshot)
         case .subscribe, .write, .event, .disconnect, .notificationIngest:
             break
         }
@@ -128,6 +134,14 @@ public final class CutoutSessionCore: NSObject {
         onFaultHistoryReadbackChange?(nil)
     }
 
+    private func clearBmsSnapshot() {
+        guard bmsSnapshot != nil else {
+            return
+        }
+        bmsSnapshot = nil
+        onBmsSnapshotChange?(nil)
+    }
+
     private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
         onPhaseChange?(phase)
@@ -144,6 +158,7 @@ public final class CutoutSessionCore: NSObject {
         selectedModel = model
         clearSettingsReadback()
         clearFaultHistoryReadback()
+        clearBmsSnapshot()
         peripheral.delegate = self
         setPhase(.connecting(model: model))
         central?.stopScan()

@@ -3,9 +3,9 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultHistoryAvailability,
-    FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
-    FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
+    BatteryInfoDto, CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto,
+    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
+    FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
     IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredI16Dto, MeasuredI32Dto,
     MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto, MonotonicMillisDto, MonotonicTimestamp,
     NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
@@ -383,6 +383,9 @@ pub enum MobileSessionOutputKindDto {
 
     /// Read-only fault-history response.
     FaultHistoryReadback,
+
+    /// Read-only BMS or pack-health response.
+    BmsSnapshot,
 }
 
 /// Mobile output DTO.
@@ -405,6 +408,9 @@ pub struct MobileSessionOutputDto {
 
     /// Typed read-only fault-history response.
     pub fault_history_readback: Option<MobileFaultHistoryReadbackDto>,
+
+    /// Typed read-only BMS or pack-health response.
+    pub bms_snapshot: Option<MobileBmsSnapshotDto>,
 }
 
 /// Mobile notification ingest outcome kind.
@@ -824,6 +830,48 @@ pub struct MobileBmsSnapshotDto {
 
     /// Optional state label for the capture action.
     pub capture_action_state: Option<String>,
+}
+
+impl From<BatteryInfoDto> for MobileBmsSnapshotDto {
+    fn from(battery: BatteryInfoDto) -> Self {
+        Self {
+            topology: MobileBmsTopologyDto::unknown_readback(),
+            energy_percent: battery
+                .level_reported
+                .or(battery.level_estimated)
+                .map(Into::into),
+            voltage: battery.voltage.map(Into::into),
+            current: battery.current.map(Into::into),
+            cell_delta: None,
+            lowest_group_index: None,
+            highest_temperature: highest_battery_temperature(
+                battery.temperature,
+                battery.temperatures,
+            ),
+            highest_temperature_label: None,
+            balancing_summary: None,
+            balancing_detail: None,
+            fault_summary: None,
+            fault_detail: None,
+            groups: Vec::new(),
+            faults: Vec::new(),
+            capture_action_title: None,
+            capture_action_state: None,
+        }
+    }
+}
+
+impl MobileBmsTopologyDto {
+    fn unknown_readback() -> Self {
+        Self {
+            layout_label: "unknown BMS topology".to_owned(),
+            series_group_count: None,
+            parallel_count: None,
+            pack_count: 0,
+            bms_count: 0,
+            confidence: MobileBmsTopologyConfidenceDto::Unverified,
+        }
+    }
 }
 
 /// Conservative signed power/current flow direction.
@@ -1816,6 +1864,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 ingest: None,
                 settings_readback: None,
                 fault_history_readback: None,
+                bms_snapshot: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
                 kind: MobileSessionOutputKindDto::Write,
@@ -1824,6 +1873,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 ingest: None,
                 settings_readback: None,
                 fault_history_readback: None,
+                bms_snapshot: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
                 kind: MobileSessionOutputKindDto::Disconnect,
@@ -1832,6 +1882,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 ingest: None,
                 settings_readback: None,
                 fault_history_readback: None,
+                bms_snapshot: None,
             },
             SessionOutputDto::ReadOnly(response) => match response.payload {
                 ReadOnlyOutputPayload::Settings(settings) => Self {
@@ -1841,6 +1892,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     ingest: None,
                     settings_readback: Some(settings.into()),
                     fault_history_readback: None,
+                    bms_snapshot: None,
                 },
                 ReadOnlyOutputPayload::FaultHistory(fault_history) => Self {
                     kind: MobileSessionOutputKindDto::FaultHistoryReadback,
@@ -1849,9 +1901,18 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     ingest: None,
                     settings_readback: None,
                     fault_history_readback: Some(fault_history.into()),
+                    bms_snapshot: None,
+                },
+                ReadOnlyOutputPayload::Battery(battery) => Self {
+                    kind: MobileSessionOutputKindDto::BmsSnapshot,
+                    channel: Vec::new(),
+                    bytes: Vec::new(),
+                    ingest: None,
+                    settings_readback: None,
+                    fault_history_readback: None,
+                    bms_snapshot: Some(battery.into()),
                 },
                 ReadOnlyOutputPayload::Firmware(_)
-                | ReadOnlyOutputPayload::Battery(_)
                 | ReadOnlyOutputPayload::Diagnostics(_)
                 | ReadOnlyOutputPayload::RawTelemetry(_) => Self {
                     kind: MobileSessionOutputKindDto::Event,
@@ -1860,6 +1921,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     ingest: None,
                     settings_readback: None,
                     fault_history_readback: None,
+                    bms_snapshot: None,
                 },
             },
             SessionOutputDto::Event(_) => Self {
@@ -1869,6 +1931,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 ingest: None,
                 settings_readback: None,
                 fault_history_readback: None,
+                bms_snapshot: None,
             },
             SessionOutputDto::NotificationIngest(outcome) => Self {
                 kind: MobileSessionOutputKindDto::NotificationIngest,
@@ -1877,6 +1940,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 ingest: Some(outcome.into()),
                 settings_readback: None,
                 fault_history_readback: None,
+                bms_snapshot: None,
             },
         }
     }
@@ -1992,6 +2056,17 @@ mobile_quantity_from_measured!(MeasuredU64Dto, Distance, DistanceReading);
 mobile_quantity_from_measured!(MeasuredI32Dto, Angle, AngleReading);
 mobile_quantity_from_measured!(MeasuredU8Dto, BatteryLevel, BatteryLevelReading);
 mobile_quantity_from_measured!(MeasuredI32Dto, VoltageDelta, VoltageDeltaReading);
+
+fn highest_battery_temperature(
+    temperature: Option<MeasuredI32Dto>,
+    temperatures: Vec<Option<MeasuredI32Dto>>,
+) -> Option<TemperatureReading> {
+    temperature
+        .into_iter()
+        .chain(temperatures.into_iter().flatten())
+        .max_by_key(|reading| reading.value)
+        .map(Into::into)
+}
 
 fn power_flow_from_signed_current(current: MeasuredI32Dto) -> PowerFlowDirection {
     match current.value.cmp(&0) {
@@ -2622,6 +2697,8 @@ mod tests {
                 }],
             })
         );
+        assert_eq!(mobile.fault_history_readback, None);
+        assert_eq!(mobile.bms_snapshot, None);
     }
 
     #[test]
@@ -2653,6 +2730,7 @@ mod tests {
         assert!(mobile.bytes.is_empty());
         assert_eq!(mobile.ingest, None);
         assert_eq!(mobile.settings_readback, None);
+        assert_eq!(mobile.bms_snapshot, None);
         assert_eq!(
             mobile.fault_history_readback,
             Some(MobileFaultHistoryReadbackDto {
@@ -2668,6 +2746,75 @@ mod tests {
                 }),
                 since_distance: None,
             })
+        );
+    }
+
+    #[test]
+    fn mobile_session_output_maps_battery_readback_to_bms_snapshot() {
+        let reported = |value| MeasuredI32Dto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::HardwareVerified,
+        };
+        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+            command_kind: CommandKindDto::RequestBatteryInfo,
+            payload: ReadOnlyOutputPayload::Battery(BatteryInfoDto {
+                page: cutout_core::BatteryPageMetadataDto {
+                    selector: 3,
+                    kind: cutout_core::BatteryPageKindDto::Temperature,
+                    verification: VerificationStatusDto::HardwareVerified,
+                },
+                voltage: Some(reported(81_600)),
+                current: Some(reported(-1_250)),
+                bms_pack_current_0: None,
+                bms_pack_current_1: None,
+                level_reported: Some(MeasuredU8Dto {
+                    value: 72,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                level_estimated: None,
+                temperature: Some(reported(31_000)),
+                temperatures: vec![None, Some(reported(37_800)), Some(reported(35_200))],
+                raw_state: None,
+            }),
+        });
+
+        let mobile = MobileSessionOutputDto::from(output);
+
+        assert_eq!(mobile.kind, MobileSessionOutputKindDto::BmsSnapshot);
+        assert!(mobile.channel.is_empty());
+        assert!(mobile.bytes.is_empty());
+        assert_eq!(mobile.ingest, None);
+        assert_eq!(mobile.settings_readback, None);
+        assert_eq!(mobile.fault_history_readback, None);
+        let snapshot = mobile.bms_snapshot.expect("BMS snapshot");
+        assert_eq!(snapshot.topology.layout_label, "unknown BMS topology");
+        assert_eq!(
+            snapshot.topology.confidence,
+            MobileBmsTopologyConfidenceDto::Unverified
+        );
+        assert!(snapshot.groups.is_empty());
+        assert_eq!(
+            snapshot.energy_percent.expect("reported level").value,
+            BatteryLevel { value: 72 }
+        );
+        assert_eq!(
+            snapshot.voltage.expect("pack voltage").value,
+            Voltage { value: 81_600 }
+        );
+        assert_eq!(
+            snapshot.current.expect("pack current").value,
+            BatteryCurrent { value: -1_250 }
+        );
+        assert_eq!(
+            snapshot
+                .highest_temperature
+                .expect("highest temperature")
+                .value,
+            Temperature { value: 37_800 }
         );
     }
 
