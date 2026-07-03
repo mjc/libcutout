@@ -1600,7 +1600,7 @@ mod tests {
         output
     }
 
-    fn falcon_telemetry_for_notifications(notifications: &[&[u8]]) -> Vec<TelemetryDelta> {
+    fn falcon_output_for_notification_chunks(chunks: &[&[u8]]) -> Vec<SessionOutput> {
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
@@ -1611,7 +1611,7 @@ mod tests {
             }),
             &mut output,
         );
-        for (index, bytes) in notifications.iter().enumerate() {
+        for (index, bytes) in chunks.iter().enumerate() {
             session.handle(
                 SessionInput::Notification {
                     channel: BEGODE_DATA_CHANNEL,
@@ -1621,6 +1621,12 @@ mod tests {
                 &mut output,
             );
         }
+
+        output
+    }
+
+    fn falcon_telemetry_for_notifications(notifications: &[&[u8]]) -> Vec<TelemetryDelta> {
+        let output = falcon_output_for_notification_chunks(notifications);
 
         telemetry_events(&output)
     }
@@ -2163,6 +2169,18 @@ mod tests {
             telemetry[0].distance.map(|value| value.value.get()),
             Some(50_000)
         );
+    }
+
+    #[test]
+    fn begode_falcon_fragmented_live_b_preserves_read_only_responses() {
+        let live_b = live_begode_b_frame();
+        let chunks: Vec<_> = live_b.chunks(1).collect();
+        let whole_responses =
+            read_only_response_events(&falcon_output_for_notification_chunks(&[live_b.as_slice()]));
+        let fragmented_responses =
+            read_only_response_events(&falcon_output_for_notification_chunks(&chunks));
+
+        assert_eq!(fragmented_responses, whole_responses);
     }
 
     #[test]
