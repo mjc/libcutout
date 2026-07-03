@@ -282,7 +282,8 @@ cutout_archive_ios_release_testing_app() {
 }
 
 cutout_export_ios_ad_hoc_ipa() {
-  local root archive_path export_path options_plist bundle_id ipa_path
+  local root archive_path export_path options_plist bundle_id ipa_path team_id
+  local profile_specifier signing_certificate signing_style
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
@@ -290,6 +291,14 @@ cutout_export_ios_ad_hoc_ipa() {
   export_path="${CUTOUT_IOS_AD_HOC_EXPORT_PATH:-$root/target/xcode-ad-hoc/export}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE:-$archive_path}"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-io.cutout.cutoutapp}"
+  team_id="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
+  profile_specifier="${CUTOUT_IOS_AD_HOC_PROFILE:-}"
+  signing_certificate="${CUTOUT_IOS_AD_HOC_CERTIFICATE:-Apple Distribution}"
+  signing_style="${CUTOUT_IOS_AD_HOC_SIGNING_STYLE:-automatic}"
+
+  if [[ -n "$profile_specifier" ]]; then
+    signing_style="manual"
+  fi
 
   if [[ ! -d "$archive_path" ]]; then
     archive_path="$(cutout_archive_ios_release_testing_app)"
@@ -307,21 +316,24 @@ cutout_export_ios_ad_hoc_ipa() {
   options_plist="$(mktemp "${TMPDIR:-/tmp}/cutout-ad-hoc-export.XXXXXX.plist")"
   trap 'rm -f "$options_plist"' RETURN
 
-  python3 - "$options_plist" "$bundle_id" "${CUTOUT_IOS_DEVELOPMENT_TEAM:-}" <<'PY'
+  python3 - "$options_plist" "$bundle_id" "$team_id" "$signing_style" "$profile_specifier" "$signing_certificate" <<'PY'
 import plistlib
 import sys
 
-path, bundle_id, team_id = sys.argv[1:4]
+path, bundle_id, team_id, signing_style, profile_specifier, signing_certificate = sys.argv[1:7]
 options = {
     "destination": "export",
     "method": "release-testing",
-    "signingStyle": "automatic",
+    "signingStyle": signing_style,
     "stripSwiftSymbols": True,
     "teamID": team_id,
     "thinning": "<none>",
 }
 if bundle_id:
     options["distributionBundleIdentifier"] = bundle_id
+if signing_style == "manual":
+    options["provisioningProfiles"] = {bundle_id: profile_specifier}
+    options["signingCertificate"] = signing_certificate
 
 with open(path, "wb") as fh:
     plistlib.dump(options, fh)

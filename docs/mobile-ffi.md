@@ -168,10 +168,13 @@ IPA. Xcode 27 names this export method `release-testing`, which replaces the
  emitting the current export method underneath. This path still depends on local
  Apple signing state: set `CUTOUT_IOS_DEVELOPMENT_TEAM`, optionally
  `CUTOUT_IOS_APP_BUNDLE_ID`, and either have a logged-in Xcode account with an
- eligible profile or provide App Store Connect API key env vars
+ eligible profile, provide App Store Connect API key env vars
  (`CUTOUT_APPSTORE_AUTH_KEY_PATH`, `CUTOUT_APPSTORE_AUTH_KEY_ID`,
- `CUTOUT_APPSTORE_AUTH_KEY_ISSUER_ID`). The script prints the archive path,
- export directory, and final `.ipa` path when export succeeds.
+ `CUTOUT_APPSTORE_AUTH_KEY_ISSUER_ID`), or provide a manually installed
+ distribution profile via `CUTOUT_IOS_AD_HOC_PROFILE`. For manual export,
+ `CUTOUT_IOS_AD_HOC_CERTIFICATE` defaults to `Apple Distribution`, and the
+ helper flips the export plist to `signingStyle=manual`. The script prints the
+ archive path, export directory, and final `.ipa` path when export succeeds.
 
 ### Current Xcode Beta Warning Noise
 
