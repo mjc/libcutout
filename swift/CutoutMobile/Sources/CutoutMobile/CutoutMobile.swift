@@ -1409,6 +1409,45 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         telemetry?.limpHomeRange
     }
 
+    public var controllerOnlyEstimatePercent: BatteryLevel? {
+        telemetry?.batteryLevelReported ?? telemetry?.batteryLevelEstimated
+    }
+
+    public var controllerOnlyEstimateDetail: String {
+        if telemetry?.voltage != nil, voltageSag != nil {
+            return "derived from voltage curve + recent sag"
+        }
+        if telemetry?.voltage != nil {
+            return "derived from voltage curve only"
+        }
+        return "estimate unavailable"
+    }
+
+    public var controllerOnlyConfidenceTitle: String {
+        if controllerOnlyEstimatePercent != nil, voltageSag != nil {
+            return "medium"
+        }
+        if controllerOnlyEstimatePercent != nil || telemetry?.voltage != nil {
+            return "low"
+        }
+        return "unknown"
+    }
+
+    public var controllerOnlyConfidenceDetail: String {
+        controllerOnlyConfidenceTitle == "unknown" ? "telemetry unavailable" : "not cell-safe"
+    }
+
+    public var controllerOnlyRidingRuleProgress: Double {
+        switch controllerOnlyConfidenceTitle {
+        case "medium":
+            0.62
+        case "low":
+            0.35
+        default:
+            0.15
+        }
+    }
+
     public func updateAge(
         at now: MonotonicMilliseconds,
         staleAfter staleThreshold: MonotonicMilliseconds

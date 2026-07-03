@@ -117,7 +117,7 @@ private struct MockupScreenContainer: View {
         case .eucRide:
             EucRideScreenView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
-            BmsMockupView(screen: screen, bmsSnapshot: bmsSnapshot, selectScreen: selectScreen)
+            BmsMockupView(screen: screen, rideState: rideState, bmsSnapshot: bmsSnapshot, selectScreen: selectScreen)
         case .eucGarage:
             EucGarageMockupView(
                 screen: screen,
@@ -1866,6 +1866,7 @@ private struct GenericMockupView: View {
 
 private struct BmsMockupView: View {
     let screen: MockupScreen
+    let rideState: EucRideScreenState?
     let bmsSnapshot: BmsSnapshot?
     let selectScreen: (MockupScreenID) -> Void
 
@@ -1895,6 +1896,7 @@ private struct BmsMockupView: View {
                     BmsNoDataLayout(
                         screen: screen,
                         content: content,
+                        rideState: rideState,
                         liveSnapshot: bmsSnapshot,
                         scale: scale
                     )
@@ -2367,6 +2369,7 @@ private struct BmsUnknownLayout: View {
 private struct BmsNoDataLayout: View {
     let screen: MockupScreen
     let content: MockupBmsContent
+    let rideState: EucRideScreenState?
     let liveSnapshot: BmsSnapshot?
     let scale: CGFloat
 
@@ -2376,6 +2379,61 @@ private struct BmsNoDataLayout: View {
     }
     private var loadNowMetric: MockupMetric? {
         screen.metrics.first { $0.label == "load now" }
+    }
+    private var controllerEstimatePercentText: String {
+        if let percent = rideState?.controllerOnlyEstimatePercent ?? snapshot.energyPercent {
+            return String(percent.value)
+        }
+        return screen.primaryValue.replacingOccurrences(of: "%", with: "")
+    }
+    private var controllerEstimateDetail: String {
+        rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail
+    }
+    private var controllerConfidenceTitle: String {
+        rideState?.controllerOnlyConfidenceTitle ?? fallbackConfidenceTitle
+    }
+    private var controllerConfidenceDetail: String {
+        rideState?.controllerOnlyConfidenceDetail ?? (controllerConfidenceTitle == "unknown" ? "telemetry unavailable" : "not cell-safe")
+    }
+    private var controllerRidingRuleProgress: Double {
+        rideState?.controllerOnlyRidingRuleProgress ?? fallbackRidingRuleProgress
+    }
+    private var packVoltage: Voltage? {
+        rideState?.telemetry?.voltage ?? snapshot.voltage
+    }
+    private var packCurrent: BatteryCurrent? {
+        rideState?.telemetry?.batteryCurrent ?? snapshot.current
+    }
+    private var rideSagText: String? {
+        rideState?.voltageSag.map { String(format: "%.1f", abs(Double($0.value)) / 1_000.0) }
+    }
+    private var fallbackEstimateDetail: String {
+        if snapshot.voltage != nil, snapshot.current != nil || rideSagMetric != nil {
+            return "derived from voltage curve + recent sag"
+        }
+        if snapshot.voltage != nil || !screen.primaryValue.isEmpty {
+            return "derived from voltage curve only"
+        }
+        return "estimate unavailable"
+    }
+    private var fallbackConfidenceTitle: String {
+        if snapshot.voltage != nil, snapshot.current != nil || rideSagMetric != nil {
+            return "medium"
+        }
+        if snapshot.voltage != nil || snapshot.energyPercent != nil || !screen.primaryValue.isEmpty {
+            return "low"
+        }
+        return "unknown"
+    }
+    private var fallbackRidingRuleProgress: Double {
+        switch fallbackConfidenceTitle {
+        case "medium":
+            0.62
+        case "low":
+            0.35
+        default:
+            0.15
+        }
     }
 
     var body: some View {
@@ -2479,14 +2537,14 @@ private struct BmsNoDataLayout: View {
             VStack(alignment: .leading, spacing: 8 * scale) {
                 cardLabel("PACK ESTIMATE")
                 HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
-                    Text(percentValueText(snapshot.energyPercent))
+                    Text(controllerEstimatePercentText)
                         .font(.system(size: 64 * scale, weight: .black))
                         .monospacedDigit()
                     Text("%")
                         .font(.system(size: 18 * scale, weight: .bold))
                         .foregroundStyle(MockupColors.muted)
                 }
-                Text("derived from voltage curve + recent sag")
+                Text(controllerEstimateDetail)
                     .font(.system(size: 10 * scale, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -2496,11 +2554,11 @@ private struct BmsNoDataLayout: View {
 
             VStack(alignment: .leading, spacing: 8 * scale) {
                 cardLabel("CONFIDENCE")
-                Text("medium")
+                Text(controllerConfidenceTitle)
                     .font(.system(size: 22 * scale, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                Text("not cell-safe")
+                Text(controllerConfidenceDetail)
                     .font(.system(size: 11 * scale, weight: .medium))
                     .foregroundStyle(MockupColors.muted)
             }
@@ -2519,15 +2577,15 @@ private struct BmsNoDataLayout: View {
         VStack(alignment: .leading, spacing: 14 * scale) {
             cardLabel("WHAT WE CAN SEE")
             HStack(alignment: .top, spacing: 18 * scale) {
-                noDataMetric(value: voltageText(snapshot.voltage), unit: "V", label: "pack voltage")
+                noDataMetric(value: voltageText(packVoltage), unit: "V", label: "pack voltage")
                 noDataMetric(
-                    value: rideSagMetric.map(metricValueText) ?? "--",
-                    unit: rideSagMetric.map(metricUnitText) ?? "",
+                    value: rideSagText ?? rideSagMetric.map(metricValueText) ?? "--",
+                    unit: rideSagText == nil ? rideSagMetric.map(metricUnitText) ?? "" : "V",
                     label: "ride sag"
                 )
                 noDataMetric(
-                    value: currentText(snapshot.current) ?? loadNowMetric.map(metricValueText) ?? "--",
-                    unit: currentUnitText(snapshot.current) ?? loadNowMetric.map(metricUnitText) ?? "",
+                    value: currentText(packCurrent) ?? loadNowMetric.map(metricValueText) ?? "--",
+                    unit: currentUnitText(packCurrent) ?? loadNowMetric.map(metricUnitText) ?? "",
                     label: "load now"
                 )
             }
@@ -2571,7 +2629,7 @@ private struct BmsNoDataLayout: View {
                                 endPoint: .trailing
                             )
                         )
-                        .frame(width: 186 * scale)
+                        .frame(width: 300 * scale * controllerRidingRuleProgress)
                 }
         }
         .padding(.horizontal, 20 * scale)

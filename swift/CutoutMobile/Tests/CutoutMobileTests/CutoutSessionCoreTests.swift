@@ -780,6 +780,44 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(typedState.visibleFieldCoverage.source(for: .limpHomeRange), .derivedTelemetry)
     }
 
+    func testRideStateBuildsControllerOnlyEstimateFromLiveTelemetry() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(117_600),
+                    batteryCurrent: batteryCurrentValue(38_000),
+                    voltageSag: VoltageDelta(value: 4_800),
+                    batteryLevelEstimated: batteryLevelValue(71)
+                )
+            )
+        )
+
+        XCTAssertEqual(rideState.controllerOnlyEstimatePercent, batteryLevelValue(71))
+        XCTAssertEqual(rideState.controllerOnlyEstimateDetail, "derived from voltage curve + recent sag")
+        XCTAssertEqual(rideState.controllerOnlyConfidenceTitle, "medium")
+        XCTAssertEqual(rideState.controllerOnlyConfidenceDetail, "not cell-safe")
+        XCTAssertEqual(rideState.controllerOnlyRidingRuleProgress, 0.62, accuracy: 0.001)
+    }
+
+    func testRideStateLowersControllerOnlyEstimateConfidenceWhenSagIsUnavailable() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    voltage: voltageValue(117_600),
+                    batteryLevelReported: batteryLevelValue(68)
+                )
+            )
+        )
+
+        XCTAssertEqual(rideState.controllerOnlyEstimatePercent, batteryLevelValue(68))
+        XCTAssertEqual(rideState.controllerOnlyEstimateDetail, "derived from voltage curve only")
+        XCTAssertEqual(rideState.controllerOnlyConfidenceTitle, "low")
+        XCTAssertEqual(rideState.controllerOnlyConfidenceDetail, "not cell-safe")
+        XCTAssertEqual(rideState.controllerOnlyRidingRuleProgress, 0.35, accuracy: 0.001)
+    }
+
     func testRideStateAccountsForParkedPwmAsNotApplicable() {
         let rideState = EucRideScreenState(
             phase: .live,
