@@ -24,8 +24,10 @@ use cutout_core::{
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
     ConcreteFalconReadOnlySession, ConcreteSessionErrorDto, ConcreteSessionStepResultDto,
-    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, new_nosfet_aero_read_only_session,
+    IdentityBannerEvidence, ProtocolFamilyClassification, ProtocolModelIdentityEvidence,
+    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
+    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+    identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 
@@ -156,6 +158,74 @@ pub fn mobile_discovery_candidate_from_advertisement(
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Not yet supported".to_owned()),
+    }
+}
+
+/// Build a mobile discovery candidate from Veteran/NOSFET protocol identity.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
+    platform_identifier: String,
+    display_name: String,
+    model_id: u16,
+) -> MobileDiscoveryCandidateDto {
+    let resolution = identify_known_model(&StagedIdentityInput {
+        advertised_name: None,
+        gatt: &[] as &[GattFingerprint],
+        stream_family: ProtocolFamilyClassification::Pending,
+        banner_model: IdentityBannerEvidence::Missing,
+        protocol_model: ProtocolModelIdentityEvidence::model_id(
+            ProtocolFamily::VeteranLeaperkimNosfet,
+            model_id,
+        ),
+    });
+
+    let Some(model) = resolution.model else {
+        return MobileDiscoveryCandidateDto {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "Veteran protocol model id".to_owned(),
+            detail: format!("Unknown Veteran/NOSFET model id {model_id}"),
+            is_picker_candidate: true,
+            support: MobileDiscoveryCandidateSupportDto::Unsupported,
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Model not supported".to_owned()),
+        };
+    };
+
+    let electric_unicycle_model = match (
+        model.protocol_family,
+        model.wire_model_id.map(|wire_model_id| wire_model_id.value),
+    ) {
+        (ProtocolFamily::VeteranLeaperkimNosfet, Some(43)) => {
+            Some(MobileElectricUnicycleModelDto::Aero)
+        }
+        _ => None,
+    };
+    let supported = electric_unicycle_model.is_some();
+
+    MobileDiscoveryCandidateDto {
+        platform_identifier,
+        display_name,
+        product_category: "Electric unicycle".to_owned(),
+        evidence: "Veteran protocol model id".to_owned(),
+        detail: match resolution.outcome {
+            StagedIdentityOutcome::Matched => {
+                format!("{} confirmed by model id {model_id}", model.model)
+            }
+            _ => format!("Veteran/NOSFET model id {model_id} confirmed"),
+        },
+        is_picker_candidate: true,
+        support: if supported {
+            MobileDiscoveryCandidateSupportDto::Supported
+        } else {
+            MobileDiscoveryCandidateSupportDto::Unsupported
+        },
+        connection_route: supported.then(|| "electric_unicycle".to_owned()),
+        electric_unicycle_model,
+        disabled_reason: (!supported).then(|| "Model not supported".to_owned()),
     }
 }
 
@@ -2714,6 +2784,59 @@ mod tests {
         assert_eq!(
             candidate.disabled_reason.as_deref(),
             Some("Model not confirmed")
+        );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_routes_veteran_protocol_model_id_to_aero() {
+        let candidate = mobile_discovery_candidate_from_veteran_protocol_identity(
+            "ios-local-aero".to_owned(),
+            "NF2557".to_owned(),
+            43,
+        );
+
+        assert_eq!(candidate.platform_identifier, "ios-local-aero");
+        assert_eq!(candidate.display_name, "NF2557");
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(candidate.evidence, "Veteran protocol model id");
+        assert_eq!(candidate.detail, "NOSFET Aero confirmed by model id 43");
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Supported
+        );
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
+        assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_keeps_unknown_veteran_model_id_unrouteable() {
+        let candidate = mobile_discovery_candidate_from_veteran_protocol_identity(
+            "ios-local-veteran".to_owned(),
+            "Veteran stream".to_owned(),
+            99,
+        );
+
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(candidate.evidence, "Veteran protocol model id");
+        assert_eq!(candidate.detail, "Unknown Veteran/NOSFET model id 99");
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(
+            candidate.support,
+            MobileDiscoveryCandidateSupportDto::Unsupported
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason.as_deref(),
+            Some("Model not supported")
         );
     }
 
