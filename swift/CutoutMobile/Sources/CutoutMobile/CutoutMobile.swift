@@ -277,42 +277,123 @@ public struct TelemetryReading<Value: Equatable & Hashable & Sendable>: Equatabl
         )
     }
 
+    fileprivate init(_ dto: SpeedReading) where Value == Speed {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: VoltageReading) where Value == Voltage {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: BatteryCurrentReading) where Value == BatteryCurrent {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: PhaseCurrentReading) where Value == PhaseCurrent {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: PowerReading) where Value == Power {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: TemperatureReading) where Value == Temperature {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: DistanceReading) where Value == Distance {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: AngleReading) where Value == Angle {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
+    fileprivate init(_ dto: BatteryLevelReading) where Value == BatteryLevel {
+        self.init(
+            value: dto.value,
+            source: TelemetryValueSource(dto.source),
+            quality: TelemetryValueQuality(dto.quality),
+            verification: TelemetryVerificationStatus(dto.verification)
+        )
+    }
+
     public var provenanceText: String {
         "\(source.displayText) · \(quality.displayText) · \(verification.displayText)"
     }
 }
 
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
-    public let speed: TelemetryReading<Int32>?
-    public let voltage: TelemetryReading<Int32>?
-    public let batteryCurrent: TelemetryReading<Int32>?
-    public let motorCurrent: TelemetryReading<Int32>?
-    public let power: TelemetryReading<Int64>?
-    public let controllerTemperature: TelemetryReading<Int32>?
-    public let motorTemperature: TelemetryReading<Int32>?
-    public let batteryTemperature: TelemetryReading<Int32>?
+    public let speed: TelemetryReading<Speed>?
+    public let voltage: TelemetryReading<Voltage>?
+    public let batteryCurrent: TelemetryReading<BatteryCurrent>?
+    public let motorCurrent: TelemetryReading<PhaseCurrent>?
+    public let power: TelemetryReading<Power>?
+    public let controllerTemperature: TelemetryReading<Temperature>?
+    public let motorTemperature: TelemetryReading<Temperature>?
+    public let batteryTemperature: TelemetryReading<Temperature>?
     public let pwm: TelemetryReading<DutyCycle>?
-    public let distance: TelemetryReading<UInt64>?
-    public let pitch: TelemetryReading<Int32>?
-    public let roll: TelemetryReading<Int32>?
-    public let batteryLevelReported: TelemetryReading<UInt8>?
-    public let batteryLevelEstimated: TelemetryReading<UInt8>?
+    public let distance: TelemetryReading<Distance>?
+    public let pitch: TelemetryReading<Angle>?
+    public let roll: TelemetryReading<Angle>?
+    public let batteryLevelReported: TelemetryReading<BatteryLevel>?
+    public let batteryLevelEstimated: TelemetryReading<BatteryLevel>?
 
     public init(
-        speed: TelemetryReading<Int32>? = nil,
-        voltage: TelemetryReading<Int32>? = nil,
-        batteryCurrent: TelemetryReading<Int32>? = nil,
-        motorCurrent: TelemetryReading<Int32>? = nil,
-        power: TelemetryReading<Int64>? = nil,
-        controllerTemperature: TelemetryReading<Int32>? = nil,
-        motorTemperature: TelemetryReading<Int32>? = nil,
-        batteryTemperature: TelemetryReading<Int32>? = nil,
+        speed: TelemetryReading<Speed>? = nil,
+        voltage: TelemetryReading<Voltage>? = nil,
+        batteryCurrent: TelemetryReading<BatteryCurrent>? = nil,
+        motorCurrent: TelemetryReading<PhaseCurrent>? = nil,
+        power: TelemetryReading<Power>? = nil,
+        controllerTemperature: TelemetryReading<Temperature>? = nil,
+        motorTemperature: TelemetryReading<Temperature>? = nil,
+        batteryTemperature: TelemetryReading<Temperature>? = nil,
         pwm: TelemetryReading<DutyCycle>? = nil,
-        distance: TelemetryReading<UInt64>? = nil,
-        pitch: TelemetryReading<Int32>? = nil,
-        roll: TelemetryReading<Int32>? = nil,
-        batteryLevelReported: TelemetryReading<UInt8>? = nil,
-        batteryLevelEstimated: TelemetryReading<UInt8>? = nil
+        distance: TelemetryReading<Distance>? = nil,
+        pitch: TelemetryReading<Angle>? = nil,
+        roll: TelemetryReading<Angle>? = nil,
+        batteryLevelReported: TelemetryReading<BatteryLevel>? = nil,
+        batteryLevelEstimated: TelemetryReading<BatteryLevel>? = nil
     ) {
         self.speed = speed
         self.voltage = voltage
@@ -332,20 +413,20 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
 
     fileprivate init(_ dto: MobileTelemetrySnapshotDto) {
         self.init(
-            speed: dto.speed.map { TelemetryReading<Int32>($0) },
-            voltage: dto.voltage.map { TelemetryReading<Int32>($0) },
-            batteryCurrent: dto.batteryCurrent.map { TelemetryReading<Int32>($0) },
-            motorCurrent: dto.motorCurrent.map { TelemetryReading<Int32>($0) },
-            power: dto.power.map { TelemetryReading<Int64>($0) },
-            controllerTemperature: dto.controllerTemperature.map { TelemetryReading<Int32>($0) },
-            motorTemperature: dto.motorTemperature.map { TelemetryReading<Int32>($0) },
-            batteryTemperature: dto.batteryTemperature.map { TelemetryReading<Int32>($0) },
+            speed: dto.speed.map { TelemetryReading<Speed>($0) },
+            voltage: dto.voltage.map { TelemetryReading<Voltage>($0) },
+            batteryCurrent: dto.batteryCurrent.map { TelemetryReading<BatteryCurrent>($0) },
+            motorCurrent: dto.motorCurrent.map { TelemetryReading<PhaseCurrent>($0) },
+            power: dto.power.map { TelemetryReading<Power>($0) },
+            controllerTemperature: dto.controllerTemperature.map { TelemetryReading<Temperature>($0) },
+            motorTemperature: dto.motorTemperature.map { TelemetryReading<Temperature>($0) },
+            batteryTemperature: dto.batteryTemperature.map { TelemetryReading<Temperature>($0) },
             pwm: dto.pwm.map { TelemetryReading<DutyCycle>($0) },
-            distance: dto.distance.map { TelemetryReading<UInt64>($0) },
-            pitch: dto.pitch.map { TelemetryReading<Int32>($0) },
-            roll: dto.roll.map { TelemetryReading<Int32>($0) },
-            batteryLevelReported: dto.batteryLevelReported.map { TelemetryReading<UInt8>($0) },
-            batteryLevelEstimated: dto.batteryLevelEstimated.map { TelemetryReading<UInt8>($0) }
+            distance: dto.distance.map { TelemetryReading<Distance>($0) },
+            pitch: dto.pitch.map { TelemetryReading<Angle>($0) },
+            roll: dto.roll.map { TelemetryReading<Angle>($0) },
+            batteryLevelReported: dto.batteryLevelReported.map { TelemetryReading<BatteryLevel>($0) },
+            batteryLevelEstimated: dto.batteryLevelEstimated.map { TelemetryReading<BatteryLevel>($0) }
         )
     }
 }
@@ -356,7 +437,7 @@ public struct SpeedReadout: Equatable, Hashable, Sendable {
     public let millimetersPerSecond: Int32?
 
     public init(snapshot: TelemetrySnapshot?) {
-        self.init(millimetersPerSecond: snapshot?.speed?.value)
+        self.init(millimetersPerSecond: snapshot?.speed?.value.value)
     }
 
     public init(millimetersPerSecond: Int32?) {
@@ -628,7 +709,8 @@ public struct LiveSpeedDisplayState: Equatable, Hashable, Sendable {
         _ step: CoreBluetoothSessionStep,
         receivedAt: MonotonicMilliseconds
     ) -> LiveSpeedDisplayState {
-        let nextSpeed = step.snapshot?.speed.map { SpeedReadout(millimetersPerSecond: $0.value) } ?? speed
+        let nextSpeed =
+            step.snapshot?.speed.map { SpeedReadout(millimetersPerSecond: $0.value.value) } ?? speed
         return LiveSpeedDisplayState(
             speed: nextSpeed,
             telemetry: step.snapshot ?? telemetry,

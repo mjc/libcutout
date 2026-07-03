@@ -1324,8 +1324,8 @@ private func liveSafetyBars(from telemetry: TelemetrySnapshot) -> [MockupSafetyB
         telemetry.batteryLevelEstimated.map { batteryLevel in
             MockupSafetyBar(
                 label: "estimated energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value)),
-                progress: Double(batteryLevel.value) / 100.0,
+                value: percentageString(fromPercent: Int(batteryLevel.value.value)),
+                progress: Double(batteryLevel.value.value) / 100.0,
                 accent: .cyan
             )
         } ?? MockupSafetyBar(label: "estimated energy", value: "Unavailable", progress: 0, accent: .cyan),
@@ -1337,7 +1337,7 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
         telemetry.voltage.map { voltage in
             MockupDashboardTile(
                 label: "pack",
-                value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
+                value: decimalString(fromMillivolts: voltage.value.value, fractionDigits: 1),
                 unit: "V",
                 detail: voltage.provenanceText,
                 accent: .cyan
@@ -1356,7 +1356,7 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
         telemetry.batteryLevelEstimated.map { batteryLevel in
             MockupDashboardTile(
                 label: "energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value)),
+                value: percentageString(fromPercent: Int(batteryLevel.value.value)),
                 unit: "%",
                 detail: batteryLevel.provenanceText,
                 accent: .cyan
@@ -1368,8 +1368,8 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
 private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboardTile {
     if let voltage = telemetry.voltage,
        let current = telemetry.batteryCurrent,
-       current.value != 0 {
-        let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
+       current.value.value != 0 {
+        let milliwatts = Int64(voltage.value.value) * Int64(current.value.value) / 1_000
         return MockupDashboardTile(
             label: "power",
             value: decimalString(
@@ -1386,8 +1386,8 @@ private func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboard
         return MockupDashboardTile(
             label: "power",
             value: decimalString(
-                fromMilliwatts: power.value,
-                fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
+                fromMilliwatts: power.value.value,
+                fractionDigits: powerFractionDigits(fromMilliwatts: power.value.value)
             ),
             unit: "kW",
             detail: power.provenanceText,
@@ -1412,7 +1412,7 @@ private func unavailableDashboardTiles(from tiles: [MockupDashboardTile]) -> [Mo
 
 private func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
     let values = [telemetry.controllerTemperature, telemetry.motorTemperature, telemetry.batteryTemperature]
-        .compactMap { $0?.value }
+        .compactMap { $0?.value.value }
     guard let maxValue = values.max() else {
         return "--"
     }
@@ -1421,9 +1421,9 @@ private func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
 
 private func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
     let parts = [
-        telemetry.controllerTemperature.map { "ESC " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
-        telemetry.motorTemperature.map { "motor " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
-        telemetry.batteryTemperature.map { "battery " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) },
+        telemetry.controllerTemperature.map { "ESC " + decimalString(fromMillicelsius: $0.value.value, fractionDigits: 0) },
+        telemetry.motorTemperature.map { "motor " + decimalString(fromMillicelsius: $0.value.value, fractionDigits: 0) },
+        telemetry.batteryTemperature.map { "battery " + decimalString(fromMillicelsius: $0.value.value, fractionDigits: 0) },
     ].compactMap { $0 }
     return parts.isEmpty ? "typed telemetry" : parts.joined(separator: " · ")
 }

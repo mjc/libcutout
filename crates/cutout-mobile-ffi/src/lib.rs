@@ -618,47 +618,47 @@ pub struct MobileTelemetrySnapshotDto {
     /// Snapshot timestamp.
     pub at_ms: Option<MobileMonotonicMillisDto>,
 
-    /// Reported or calculated speed in millimeters per second.
-    pub speed: Option<MobileMeasuredI32Dto>,
+    /// Reported or calculated speed.
+    pub speed: Option<SpeedReading>,
 
-    /// Reported voltage in millivolts.
-    pub voltage: Option<MobileMeasuredI32Dto>,
+    /// Reported voltage.
+    pub voltage: Option<VoltageReading>,
 
-    /// Reported battery current in milliamps.
-    pub battery_current: Option<MobileMeasuredI32Dto>,
+    /// Reported battery current.
+    pub battery_current: Option<BatteryCurrentReading>,
 
-    /// Reported motor current in milliamps.
-    pub motor_current: Option<MobileMeasuredI32Dto>,
+    /// Reported motor current.
+    pub motor_current: Option<PhaseCurrentReading>,
 
-    /// Reported power in milliwatts.
-    pub power: Option<MobileMeasuredI64Dto>,
+    /// Reported power.
+    pub power: Option<PowerReading>,
 
-    /// Reported controller temperature in millicelsius.
-    pub controller_temperature: Option<MobileMeasuredI32Dto>,
+    /// Reported controller temperature.
+    pub controller_temperature: Option<TemperatureReading>,
 
-    /// Reported motor temperature in millicelsius.
-    pub motor_temperature: Option<MobileMeasuredI32Dto>,
+    /// Reported motor temperature.
+    pub motor_temperature: Option<TemperatureReading>,
 
-    /// Reported battery temperature in millicelsius.
-    pub battery_temperature: Option<MobileMeasuredI32Dto>,
+    /// Reported battery temperature.
+    pub battery_temperature: Option<TemperatureReading>,
 
     /// Reported PWM duty in permille.
     pub pwm: Option<MobileMeasuredI16Dto>,
 
-    /// Reported distance in millimeters.
-    pub distance: Option<MobileMeasuredU64Dto>,
+    /// Reported distance.
+    pub distance: Option<DistanceReading>,
 
-    /// Reported pitch in millidegrees.
-    pub pitch: Option<MobileMeasuredI32Dto>,
+    /// Reported pitch.
+    pub pitch: Option<AngleReading>,
 
-    /// Reported roll in millidegrees.
-    pub roll: Option<MobileMeasuredI32Dto>,
+    /// Reported roll.
+    pub roll: Option<AngleReading>,
 
     /// Reported battery level.
-    pub battery_level_reported: Option<MobileMeasuredU8Dto>,
+    pub battery_level_reported: Option<BatteryLevelReading>,
 
     /// Estimated battery percent.
-    pub battery_level_estimated: Option<MobileMeasuredU8Dto>,
+    pub battery_level_estimated: Option<BatteryLevelReading>,
 }
 
 /// Confidence level for BMS topology mapping.
@@ -804,6 +804,79 @@ pub struct MobileBmsSnapshotDto {
     /// Optional state label for the capture action.
     pub capture_action_state: Option<String>,
 }
+
+macro_rules! mobile_quantity {
+    ($quantity:ident, $reading:ident, $raw:ty, $quantity_doc:literal, $reading_doc:literal) => {
+        #[doc = $quantity_doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        pub struct $quantity {
+            /// Fixed-unit value owned by this quantity type.
+            pub value: $raw,
+        }
+
+        #[doc = $reading_doc]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+        pub struct $reading {
+            /// Semantic quantity value.
+            pub value: $quantity,
+
+            /// Value source.
+            pub source: MobileValueSourceDto,
+
+            /// Value quality.
+            pub quality: MobileValueQualityDto,
+
+            /// Value verification status.
+            pub verification: MobileVerificationStatusDto,
+        }
+    };
+}
+
+mobile_quantity!(Speed, SpeedReading, i32, "Speed.", "Measured speed.");
+mobile_quantity!(
+    Voltage,
+    VoltageReading,
+    i32,
+    "Voltage.",
+    "Measured voltage."
+);
+mobile_quantity!(
+    BatteryCurrent,
+    BatteryCurrentReading,
+    i32,
+    "Battery current.",
+    "Measured battery current."
+);
+mobile_quantity!(
+    PhaseCurrent,
+    PhaseCurrentReading,
+    i32,
+    "Phase current.",
+    "Measured phase current."
+);
+mobile_quantity!(Power, PowerReading, i64, "Power.", "Measured power.");
+mobile_quantity!(
+    Temperature,
+    TemperatureReading,
+    i32,
+    "Temperature.",
+    "Measured temperature."
+);
+mobile_quantity!(
+    Distance,
+    DistanceReading,
+    u64,
+    "Distance.",
+    "Measured distance."
+);
+mobile_quantity!(Angle, AngleReading, i32, "Angle.", "Measured angle.");
+mobile_quantity!(
+    BatteryLevel,
+    BatteryLevelReading,
+    u8,
+    "Battery level.",
+    "Measured battery level."
+);
 
 /// Mobile measured i32 value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
@@ -1653,6 +1726,33 @@ impl From<MeasuredU64Dto> for MobileMeasuredU64Dto {
     }
 }
 
+macro_rules! mobile_quantity_from_measured {
+    ($measured:ty, $quantity:ident, $reading:ident) => {
+        impl From<$measured> for $reading {
+            fn from(measured: $measured) -> Self {
+                Self {
+                    value: $quantity {
+                        value: measured.value,
+                    },
+                    source: measured.source.into(),
+                    quality: measured.quality.into(),
+                    verification: measured.verification.into(),
+                }
+            }
+        }
+    };
+}
+
+mobile_quantity_from_measured!(MeasuredI32Dto, Speed, SpeedReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, Voltage, VoltageReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, BatteryCurrent, BatteryCurrentReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, PhaseCurrent, PhaseCurrentReading);
+mobile_quantity_from_measured!(MeasuredI64Dto, Power, PowerReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, Temperature, TemperatureReading);
+mobile_quantity_from_measured!(MeasuredU64Dto, Distance, DistanceReading);
+mobile_quantity_from_measured!(MeasuredI32Dto, Angle, AngleReading);
+mobile_quantity_from_measured!(MeasuredU8Dto, BatteryLevel, BatteryLevelReading);
+
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
@@ -2470,15 +2570,27 @@ mod tests {
         let snapshot = session.current_snapshot();
         assert_eq!(
             snapshot.voltage,
-            Some(MobileMeasuredI32Dto {
-                value: 108_760,
+            Some(VoltageReading {
+                value: Voltage { value: 108_760 },
                 source: MobileValueSourceDto::Reported,
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             })
         );
-        assert!(snapshot.battery_current.is_some());
-        assert!(snapshot.power.is_some());
+        assert!(matches!(
+            snapshot.battery_current,
+            Some(BatteryCurrentReading {
+                value: BatteryCurrent { .. },
+                ..
+            })
+        ));
+        assert!(matches!(
+            snapshot.power,
+            Some(PowerReading {
+                value: Power { .. },
+                ..
+            })
+        ));
         assert!(snapshot.controller_temperature.is_some() || snapshot.motor_temperature.is_some());
         assert!(snapshot.pwm.is_some());
         assert!(snapshot.battery_level_estimated.is_some());

@@ -75,8 +75,8 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         let core = LiveSpeedSessionCore()
         let snapshot = TelemetrySnapshot(
             speed: telemetryReading(1_234),
-            voltage: telemetryReading(117_000),
-            batteryLevelEstimated: telemetryReading(77)
+            voltage: voltageReading(117_000),
+            batteryLevelEstimated: batteryLevelReading(77)
         )
         let step = CoreBluetoothSessionStep(operations: [], snapshot: snapshot)
         let receivedAt = MonotonicMilliseconds(42)
@@ -86,7 +86,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phase, .live)
         XCTAssertTrue(core.hasObservedSpeedSnapshot)
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
-        XCTAssertEqual(core.displayState.telemetry?.speed?.value, 1_234)
+        XCTAssertEqual(core.displayState.telemetry?.speed?.value, Speed(value: 1_234))
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
     }
@@ -95,12 +95,12 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         let core = LiveSpeedSessionCore()
         let speedSnapshot = TelemetrySnapshot(
             speed: telemetryReading(1_234),
-            voltage: telemetryReading(117_000),
-            batteryLevelEstimated: telemetryReading(77)
+            voltage: voltageReading(117_000),
+            batteryLevelEstimated: batteryLevelReading(77)
         )
         let batteryOnlySnapshot = TelemetrySnapshot(
-            voltage: telemetryReading(116_500),
-            batteryLevelEstimated: telemetryReading(76)
+            voltage: voltageReading(116_500),
+            batteryLevelEstimated: batteryLevelReading(76)
         )
 
         core.applyNotificationStep(
@@ -114,7 +114,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
 
         XCTAssertTrue(core.hasObservedSpeedSnapshot)
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
-        XCTAssertEqual(core.displayState.telemetry?.voltage?.value, 116_500)
+        XCTAssertEqual(core.displayState.telemetry?.voltage?.value, Voltage(value: 116_500))
         XCTAssertEqual(core.displayState.notificationCount, 2)
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(43))
     }
@@ -123,8 +123,8 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         let core = LiveSpeedSessionCore()
         let speedSnapshot = TelemetrySnapshot(
             speed: telemetryReading(1_234),
-            voltage: telemetryReading(117_000),
-            batteryLevelEstimated: telemetryReading(77)
+            voltage: voltageReading(117_000),
+            batteryLevelEstimated: batteryLevelReading(77)
         )
 
         core.applyNotificationStep(
@@ -181,7 +181,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.phaseText, "Subscribing...")
         XCTAssertEqual(rideState.speedText, "2.8")
         XCTAssertEqual(rideState.speedUnit, "mph")
-        XCTAssertEqual(rideState.telemetry?.speed?.value, 1_234)
+        XCTAssertEqual(rideState.telemetry?.speed?.value, Speed(value: 1_234))
     }
 
     func testDisplayStateProvidesDebugRowsForLiveValidation() {
@@ -201,18 +201,27 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 }
 
-private func telemetryReading(_ value: Int32) -> TelemetryReading<Int32> {
+private func telemetryReading(_ value: Int32) -> TelemetryReading<Speed> {
     TelemetryReading(
-        value: value,
+        value: Speed(value: value),
         source: .reported,
         quality: .known,
         verification: .sourceVerified
     )
 }
 
-private func telemetryReading(_ value: UInt8) -> TelemetryReading<UInt8> {
+private func voltageReading(_ value: Int32) -> TelemetryReading<Voltage> {
     TelemetryReading(
-        value: value,
+        value: Voltage(value: value),
+        source: .reported,
+        quality: .known,
+        verification: .sourceVerified
+    )
+}
+
+private func batteryLevelReading(_ value: UInt8) -> TelemetryReading<BatteryLevel> {
+    TelemetryReading(
+        value: BatteryLevel(value: value),
         source: .reported,
         quality: .known,
         verification: .sourceVerified
