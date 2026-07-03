@@ -29,7 +29,7 @@ struct CutoutMobilePackageSmoke {
         precondition(SpeedReadout(snapshot: telemetry).displayValue == "0.0")
         precondition(SpeedReadout(millimetersPerSecond: nil).displayValue == "--")
         precondition(SessionConnectionPhase.starting.displayText == "Starting Bluetooth...")
-        precondition(SessionConnectionPhase.scanning(model: .aero).displayText == "Scanning for Aero...")
+        precondition(SessionConnectionPhase.scanning.displayText == "Scanning for rides...")
         precondition(SessionConnectionPhase.live.displayText == "Live")
         precondition(SessionConnectionPhase.bluetoothUnavailable(rawState: 4).displayText == "Bluetooth unavailable: state 4")
         precondition(SessionConnectionPhase.failed(.missingNotifyChannel).displayText == "Missing notify channel")

@@ -421,7 +421,7 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         core.disconnectAndScan()
 
-        XCTAssertEqual(core.phase, .scanning(model: .aero))
+        XCTAssertEqual(core.phase, .scanning)
         XCTAssertEqual(core.displayState, RideDisplayState())
         XCTAssertFalse(core.hasObservedSpeedSnapshot)
         XCTAssertEqual(core.scanState.status, .scanning)

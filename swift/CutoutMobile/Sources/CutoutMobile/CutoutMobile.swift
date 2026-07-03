@@ -1113,7 +1113,7 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
 public enum SessionConnectionPhase: Equatable, Hashable, Sendable {
     case starting
     case bluetoothUnavailable(rawState: Int)
-    case scanning(model: ElectricUnicycleModel)
+    case scanning
     case connecting(model: ElectricUnicycleModel)
     case discoveringServices
     case subscribing
@@ -1126,8 +1126,8 @@ public enum SessionConnectionPhase: Equatable, Hashable, Sendable {
             "Starting Bluetooth..."
         case .bluetoothUnavailable(let rawState):
             "Bluetooth unavailable: state \(rawState)"
-        case .scanning(let model):
-            "Scanning for \(model.displayName)..."
+        case .scanning:
+            "Scanning for rides..."
         case .connecting(let model):
             "Connecting to \(model.displayName)..."
         case .discoveringServices:

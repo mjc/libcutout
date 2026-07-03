@@ -82,7 +82,7 @@ public final class CutoutSessionCore: NSObject {
 
         scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
         onScanStateChange?(scanState)
-        setPhase(.scanning(model: .aero))
+        setPhase(.scanning)
         central?.scanForPeripherals(withServices: nil)
     }
 
@@ -224,7 +224,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             setPhase(.bluetoothUnavailable(rawState: central.state.rawValue))
             return
         }
-        setPhase(.scanning(model: .aero))
+        setPhase(.scanning)
         let services = CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
         record("scan_supported_services=\(services.map(\.uuidString).joined(separator: ","))")
         central.scanForPeripherals(withServices: nil)
