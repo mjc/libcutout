@@ -116,7 +116,7 @@ private struct MockupScreenContainer: View {
         case .eucRide:
             EucRideScreenView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
-            BmsMockupView(screen: screen, selectScreen: selectScreen)
+            BmsMockupView(screen: screen, bmsSnapshot: bmsSnapshot, selectScreen: selectScreen)
         case .eucGarage:
             EucGarageMockupView(
                 screen: screen,
@@ -1915,10 +1915,11 @@ private struct GenericMockupView: View {
 
 private struct BmsMockupView: View {
     let screen: MockupScreen
+    let bmsSnapshot: BmsSnapshot?
     let selectScreen: (MockupScreenID) -> Void
 
     private var content: MockupBmsContent {
-        screen.bmsContent ?? MockupBmsContent(
+        screen.resolvedBmsContent(liveSnapshot: bmsSnapshot) ?? MockupBmsContent(
             kind: .unknownTopology,
             snapshot: BmsSnapshot(
                 topology: BmsTopology(

@@ -457,6 +457,37 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(selectedGroup?.resistance, Resistance(value: 21))
     }
 
+    func testResolvedBmsContentPrefersLiveSnapshotAndDerivesSmallPackLayout() throws {
+        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let liveSnapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "6S1P pack",
+                seriesGroupCount: 6,
+                parallelCount: 1,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            voltage: Voltage(value: 25_200),
+            lowestGroupIndex: 3,
+            groups: [
+                BmsGroupSnapshot(index: 1, label: "G1", voltage: Voltage(value: 4_201)),
+                BmsGroupSnapshot(index: 2, label: "G2", voltage: Voltage(value: 4_199)),
+                BmsGroupSnapshot(index: 3, label: "G3", voltage: Voltage(value: 4_150)),
+                BmsGroupSnapshot(index: 4, label: "G4", voltage: Voltage(value: 4_203)),
+                BmsGroupSnapshot(index: 5, label: "G5", voltage: Voltage(value: 4_205)),
+                BmsGroupSnapshot(index: 6, label: "G6", voltage: Voltage(value: 4_202)),
+            ]
+        )
+
+        let resolved = try XCTUnwrap(screen.resolvedBmsContent(liveSnapshot: liveSnapshot))
+
+        XCTAssertEqual(resolved.kind, .cellMapInline)
+        XCTAssertEqual(resolved.snapshot, liveSnapshot)
+        XCTAssertEqual(resolved.highlightedGroupIndices, [3])
+        XCTAssertEqual(resolved.selectedGroupIndex, nil)
+    }
+
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
         let unknown = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsUnknownTopology)?.bmsContent)
         let snapshot = unknown.snapshot

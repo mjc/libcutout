@@ -197,6 +197,48 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
         self.selectedGroupIndex = selectedGroupIndex
         self.modeTitles = modeTitles
     }
+
+    public func resolved(with liveSnapshot: BmsSnapshot, preferredScreenID: MockupScreenID) -> Self {
+        let resolvedKind = MockupBmsScreenKind(liveSnapshot: liveSnapshot, preferredScreenID: preferredScreenID)
+        let selectedGroupIndex = resolvedKind == .cellDetail
+            ? liveSnapshot.lowestGroupIndex ?? liveSnapshot.groups.first?.index
+            : nil
+        let highlightedGroupIndices = selectedGroupIndex.map { [$0] } ?? liveSnapshot.lowestGroupIndex.map { [$0] } ?? []
+
+        return MockupBmsContent(
+            kind: resolvedKind,
+            snapshot: liveSnapshot,
+            highlightedGroupIndices: highlightedGroupIndices,
+            selectedGroupIndex: selectedGroupIndex
+        )
+    }
+}
+
+private extension MockupBmsScreenKind {
+    init(liveSnapshot: BmsSnapshot, preferredScreenID: MockupScreenID) {
+        if liveSnapshot.availability == .unsupported {
+            self = .noData
+            return
+        }
+
+        if !liveSnapshot.groups.isEmpty {
+            if preferredScreenID == .bmsCellDetail {
+                self = .cellDetail
+            } else if liveSnapshot.groups.count <= 14 {
+                self = .cellMapInline
+            } else {
+                self = .cellMapScrollable
+            }
+            return
+        }
+
+        if liveSnapshot.topology.confidence == .unverified, liveSnapshot.topology.seriesGroupCount == nil {
+            self = .unknownTopology
+            return
+        }
+
+        self = .overview
+    }
 }
 public enum MockupPickerRowState: Equatable, Hashable, Sendable {
     case supported(action: String)
@@ -494,6 +536,16 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.bmsContent = bmsContent
         self.eucGarageSnapshot = eucGarageSnapshot
         self.isFixtureOnly = isFixtureOnly
+    }
+
+    public func resolvedBmsContent(liveSnapshot: BmsSnapshot?) -> MockupBmsContent? {
+        guard let bmsContent else {
+            return nil
+        }
+        guard let liveSnapshot else {
+            return bmsContent
+        }
+        return bmsContent.resolved(with: liveSnapshot, preferredScreenID: id)
     }
 }
 
