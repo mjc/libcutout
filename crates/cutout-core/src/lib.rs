@@ -6159,13 +6159,13 @@ impl FaultHistoryReadback {
         }
     }
 
-    /// Creates an available fault-history readback with no reported fault.
+    /// Creates an available fault-history readback proving no fault at a reported distance.
     #[must_use]
-    pub const fn none_since(since_distance: Option<Measured<Distance>>) -> Self {
+    pub const fn no_fault_since(since_distance: Measured<Distance>) -> Self {
         Self {
             availability: FaultHistoryAvailability::Available,
             last_fault: None,
-            since_distance,
+            since_distance: Some(since_distance),
         }
     }
 
@@ -8371,7 +8371,7 @@ mod tests {
         assert_eq!(readback.last_fault.expect("fault").code, code);
         assert_eq!(readback.since_distance, Some(distance));
         assert_eq!(
-            crate::FaultHistoryReadback::none_since(Some(distance)).last_fault,
+            crate::FaultHistoryReadback::no_fault_since(distance).last_fault,
             None
         );
         assert_eq!(
