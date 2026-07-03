@@ -43,6 +43,28 @@ pub enum MobileElectricUnicycleModelDto {
     Falcon,
 }
 
+/// Begode/Gotway protocol identity probe evidence.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeIdentityProbeDto {
+    /// Model text returned by the `N` probe when available.
+    pub reported_model: Option<String>,
+
+    /// Firmware or model-code text returned by the `V` probe when available.
+    pub reported_code_name: Option<String>,
+
+    /// IMU text returned by the `M` probe when available.
+    pub reported_imu: Option<String>,
+
+    /// Firmware version text returned by the wheel when available.
+    pub reported_firmware_version: Option<String>,
+
+    /// Stable device serial or other persistent identity text when available.
+    pub reported_serial: Option<String>,
+
+    /// Nominal voltage hint or pack-class observation, in millivolts.
+    pub nominal_voltage_hint_mv: Option<u32>,
+}
+
 /// Mobile discovery candidate for picker UI.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileDiscoveryCandidateDto {
@@ -92,28 +114,17 @@ pub fn mobile_discovery_candidate_from_advertisement(
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
     let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
-        let electric_unicycle_model = mobile_electric_unicycle_model_from_name(&lower_name);
         return MobileDiscoveryCandidateDto {
             platform_identifier,
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "advertisement hint".to_owned(),
-            detail: electric_unicycle_model
-                .map_or("Model not confirmed", |model| match model {
-                    MobileElectricUnicycleModelDto::Aero => "NOSFET Aero candidate",
-                    MobileElectricUnicycleModelDto::Falcon => "Begode Falcon candidate",
-                })
-                .to_owned(),
+            detail: "Begode/GotWay candidate; protocol probe required".to_owned(),
             is_picker_candidate: true,
-            support: electric_unicycle_model
-                .map_or(MobileDiscoveryCandidateSupportDto::Unsupported, |_| {
-                    MobileDiscoveryCandidateSupportDto::Supported
-                }),
-            connection_route: electric_unicycle_model.map(|_| "electric_unicycle".to_owned()),
-            electric_unicycle_model,
-            disabled_reason: electric_unicycle_model
-                .is_none()
-                .then(|| "Model not confirmed".to_owned()),
+            support: MobileDiscoveryCandidateSupportDto::Unsupported,
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Model not confirmed".to_owned()),
         };
     }
 
@@ -151,18 +162,134 @@ pub fn mobile_discovery_candidate_from_advertisement(
     }
 }
 
-fn mobile_electric_unicycle_model_from_name(
-    lower_name: &str,
-) -> Option<MobileElectricUnicycleModelDto> {
-    if lower_name.contains("falcon") {
-        return Some(MobileElectricUnicycleModelDto::Falcon);
-    }
+/// Build a mobile discovery candidate from Begode/Gotway protocol identity evidence.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned records"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_candidate_from_begode_identity_probe(
+    platform_identifier: String,
+    display_name: String,
+    probe: MobileBegodeIdentityProbeDto,
+) -> MobileDiscoveryCandidateDto {
+    let evidence = mobile_begode_identity_probe_evidence(&probe);
+    let reported_model = probe.reported_model.as_deref();
+    let reported_code_name = probe.reported_code_name.as_deref();
+    let reported_imu = probe.reported_imu.as_deref();
+    let reported_firmware_version = probe.reported_firmware_version.as_deref();
+    let reported_serial = probe.reported_serial.as_deref();
+    let supported = mobile_begode_identity_probe_support(reported_model, reported_code_name);
+    let detail = mobile_begode_identity_probe_detail(
+        supported,
+        reported_model,
+        reported_code_name,
+        reported_imu,
+        reported_firmware_version,
+        reported_serial,
+        probe.nominal_voltage_hint_mv,
+    );
 
-    if lower_name.contains("aero") || lower_name.contains("nosfet") {
-        return Some(MobileElectricUnicycleModelDto::Aero);
+    MobileDiscoveryCandidateDto {
+        platform_identifier,
+        display_name,
+        product_category: "Electric unicycle".to_owned(),
+        evidence,
+        detail,
+        is_picker_candidate: true,
+        support: if supported {
+            MobileDiscoveryCandidateSupportDto::Supported
+        } else {
+            MobileDiscoveryCandidateSupportDto::Unsupported
+        },
+        connection_route: supported.then(|| "electric_unicycle".to_owned()),
+        electric_unicycle_model: supported.then_some(MobileElectricUnicycleModelDto::Falcon),
+        disabled_reason: (!supported).then(|| "Model not confirmed".to_owned()),
     }
+}
 
-    None
+fn mobile_begode_identity_probe_support(
+    reported_model: Option<&str>,
+    reported_code_name: Option<&str>,
+) -> bool {
+    mobile_begode_identity_probe_matches_falcon(reported_model)
+        || mobile_begode_identity_probe_matches_falcon(reported_code_name)
+}
+
+fn mobile_begode_identity_probe_matches_falcon(value: Option<&str>) -> bool {
+    value.is_some_and(|value| value.to_ascii_lowercase().contains("falcon"))
+}
+
+fn mobile_begode_identity_probe_evidence(probe: &MobileBegodeIdentityProbeDto) -> String {
+    let mut parts = Vec::new();
+    if let Some(model) = probe.reported_model.as_deref() {
+        parts.push(format!("model={model}"));
+    }
+    if let Some(code_name) = probe.reported_code_name.as_deref() {
+        parts.push(format!("code={code_name}"));
+    }
+    if let Some(imu) = probe.reported_imu.as_deref() {
+        parts.push(format!("imu={imu}"));
+    }
+    if let Some(firmware_version) = probe.reported_firmware_version.as_deref() {
+        parts.push(format!("firmware={firmware_version}"));
+    }
+    if let Some(serial) = probe.reported_serial.as_deref() {
+        parts.push(format!("serial={serial}"));
+    }
+    if let Some(voltage_hint_mv) = probe.nominal_voltage_hint_mv {
+        parts.push(format!("voltage_hint={voltage_hint_mv}mV"));
+    }
+    if parts.is_empty() {
+        "Begode protocol identity probe".to_owned()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn mobile_begode_identity_probe_detail(
+    supported: bool,
+    reported_model: Option<&str>,
+    reported_code_name: Option<&str>,
+    reported_imu: Option<&str>,
+    reported_firmware_version: Option<&str>,
+    reported_serial: Option<&str>,
+    nominal_voltage_hint_mv: Option<u32>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(model) = reported_model {
+        parts.push(format!("reported model {model}"));
+    }
+    if let Some(code_name) = reported_code_name {
+        parts.push(format!("code {code_name}"));
+    }
+    if let Some(imu) = reported_imu {
+        parts.push(format!("imu {imu}"));
+    }
+    if let Some(firmware_version) = reported_firmware_version {
+        parts.push(format!("firmware {firmware_version}"));
+    }
+    if let Some(serial) = reported_serial {
+        parts.push(format!("serial {serial}"));
+    }
+    if let Some(voltage_hint_mv) = nominal_voltage_hint_mv {
+        parts.push(format!("voltage hint {voltage_hint_mv}mV"));
+    }
+    if supported {
+        if parts.is_empty() {
+            "Begode/Falcon confirmed by protocol evidence".to_owned()
+        } else {
+            format!("Begode/Falcon confirmed by {}", parts.join(", "))
+        }
+    } else if parts.is_empty() {
+        "Begode/GotWay identity probe collected; model not confirmed".to_owned()
+    } else {
+        format!(
+            "Begode/GotWay identity probe collected; {}",
+            parts.join(", ")
+        )
+    }
 }
 
 /// Mobile DTO command kind.
@@ -1853,31 +1980,49 @@ mod tests {
         assert_eq!(candidate.display_name, "NOSFET Aero");
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "advertisement hint");
-        assert_eq!(candidate.detail, "NOSFET Aero candidate");
+        assert_eq!(
+            candidate.detail,
+            "Begode/GotWay candidate; protocol probe required"
+        );
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            MobileDiscoveryCandidateSupportDto::Supported
+            MobileDiscoveryCandidateSupportDto::Unsupported
         );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            candidate.disabled_reason,
+            Some("Model not confirmed".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(MobileElectricUnicycleModelDto::Aero)
-        );
-        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_explicit_falcon_name_to_session() {
-        let candidate = mobile_discovery_candidate_from_advertisement(
+    fn mobile_discovery_candidate_routes_reported_falcon_model_to_session() {
+        let candidate = mobile_discovery_candidate_from_begode_identity_probe(
             "ios-local-falcon".to_owned(),
-            Some("Begode Falcon".to_owned()),
-            vec![0xffe0],
+            "GotWay_002441".to_owned(),
+            MobileBegodeIdentityProbeDto {
+                reported_model: Some("Falcon".to_owned()),
+                reported_code_name: Some("GW-FALCON".to_owned()),
+                reported_imu: Some("MPU6500".to_owned()),
+                reported_firmware_version: Some("1.0.0".to_owned()),
+                reported_serial: Some("012345".to_owned()),
+                nominal_voltage_hint_mv: Some(100_800),
+            },
         );
 
+        assert_eq!(candidate.platform_identifier, "ios-local-falcon");
+        assert_eq!(candidate.display_name, "GotWay_002441");
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(
+            candidate.evidence,
+            "model=Falcon, code=GW-FALCON, imu=MPU6500, firmware=1.0.0, serial=012345, voltage_hint=100800mV"
+        );
+        assert_eq!(
+            candidate.detail,
+            "Begode/Falcon confirmed by reported model Falcon, code GW-FALCON, imu MPU6500, firmware 1.0.0, serial 012345, voltage hint 100800mV"
+        );
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
@@ -1891,6 +2036,7 @@ mod tests {
             candidate.electric_unicycle_model,
             Some(MobileElectricUnicycleModelDto::Falcon)
         );
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
