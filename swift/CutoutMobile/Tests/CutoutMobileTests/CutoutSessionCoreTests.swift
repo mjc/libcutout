@@ -584,6 +584,33 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(waiting.warningState.title, "Waiting for telemetry")
     }
 
+    func testRideStateRecommendsReducingAccelerationForLowRidingPwmHeadroom() {
+        let lowHeadroom = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(800))
+            )
+        )
+        let healthyHeadroom = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(500))
+            )
+        )
+        let parked = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .parked, pwm: dutyCycle(800))
+            )
+        )
+
+        XCTAssertEqual(lowHeadroom.pwmHeadroomPermille, 200)
+        XCTAssertEqual(lowHeadroom.warningState.severity, .reduceAcceleration)
+        XCTAssertEqual(lowHeadroom.warningState.title, "Reduce acceleration")
+        XCTAssertEqual(healthyHeadroom.warningState.severity, .normal)
+        XCTAssertEqual(parked.warningState.severity, .normal)
+    }
+
     func testRideStateTreatsMissingLiveSnapshotAsTelemetryUnavailable() {
         let rideState = EucRideScreenState(
             phase: .live,
@@ -801,6 +828,25 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(
             fresh.warningState(at: MonotonicMilliseconds(4_000), staleAfter: MonotonicMilliseconds(2_000)).severity,
             .normal
+        )
+    }
+
+    func testRideStatePrefersStaleWarningOverLowPwmHeadroom() {
+        let stale = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    operatingState: .riding,
+                    pwm: dutyCycle(800)
+                )
+            )
+        )
+
+        XCTAssertEqual(stale.warningState.severity, .reduceAcceleration)
+        XCTAssertEqual(
+            stale.warningState(at: MonotonicMilliseconds(4_000), staleAfter: MonotonicMilliseconds(2_000)),
+            EucRideWarningState(severity: .caution, title: "Telemetry stale", detail: "Last update 3000 ms ago")
         )
     }
 

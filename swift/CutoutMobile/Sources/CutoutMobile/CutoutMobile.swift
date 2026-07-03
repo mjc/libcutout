@@ -1088,6 +1088,8 @@ public struct EucRideVisibleFieldCoverage: Equatable, Hashable, Sendable {
 }
 
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
+    private static let reduceAccelerationPwmHeadroomThreshold = 250
+
     public let phase: SessionConnectionPhase
     public let displayState: RideDisplayState
 
@@ -1161,29 +1163,37 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     public var warningState: EucRideWarningState {
         switch phase {
         case .failed(let failure):
-            EucRideWarningState(severity: .failed, title: "Connection failed", detail: failure.displayText)
+            return EucRideWarningState(severity: .failed, title: "Connection failed", detail: failure.displayText)
         case .live where telemetryAvailability == .populated:
-            EucRideWarningState(
+            if shouldReduceAcceleration {
+                return EucRideWarningState(
+                    severity: .reduceAcceleration,
+                    title: "Reduce acceleration",
+                    detail: "PWM headroom is low while riding"
+                )
+            }
+
+            return EucRideWarningState(
                 severity: .normal,
                 title: "Telemetry live",
                 detail: telemetry?.speed == nil ? "Waiting for speed telemetry" : "Live telemetry from typed Rust/FFI state"
             )
         case .live where telemetryAvailability == .waitingForValues:
-            EucRideWarningState(
+            return EucRideWarningState(
                 severity: .caution,
                 title: "Waiting for telemetry",
                 detail: "Subscribed; no ride values yet"
             )
         case .live:
-            EucRideWarningState(
+            return EucRideWarningState(
                 severity: .unavailable,
                 title: "Telemetry unavailable",
                 detail: "No live snapshot yet"
             )
         case .connecting, .discoveringServices, .subscribing:
-            EucRideWarningState(severity: .caution, title: phaseText, detail: "Waiting for live telemetry")
+            return EucRideWarningState(severity: .caution, title: phaseText, detail: "Waiting for live telemetry")
         case .starting, .bluetoothUnavailable, .scanning:
-            EucRideWarningState(severity: .unavailable, title: phaseText, detail: "Ride screen is not active yet")
+            return EucRideWarningState(severity: .unavailable, title: phaseText, detail: "Ride screen is not active yet")
         }
     }
 
@@ -1258,6 +1268,14 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     private var updateAgeCoverage: EucRideVisibleFieldSource {
         telemetry?.at == nil && displayState.lastUpdate == nil ? .explicitlyUnavailable : .liveTelemetry
+    }
+
+    private var shouldReduceAcceleration: Bool {
+        guard let pwmHeadroomPermille else {
+            return false
+        }
+
+        return pwmHeadroomPermille <= Self.reduceAccelerationPwmHeadroomThreshold
     }
 
     private var pwmHeadroomCoverage: EucRideVisibleFieldSource {
