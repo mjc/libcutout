@@ -222,6 +222,32 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testSettingsReadbackProjectsKnownBegodeGarageSettings() {
+        let readback = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x040a, value: 50),
+                source: .reported,
+                quality: .known,
+                verification: .sourceVerified
+            ),
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x0406, value: 0),
+                source: .reported,
+                quality: .known,
+                verification: .sourceVerified
+            ),
+        ])
+
+        XCTAssertEqual(
+            readback.eucGarageSettings,
+            EucGarageSettingsSnapshot(
+                beepMargin: .unavailable,
+                tiltback: .available(Speed(value: 13_888)),
+                pedalMode: .unavailable
+            )
+        )
+    }
+
     func testFaultHistoryReadbackUpdatesCurrentSessionStateUntilDisconnect() {
         let core = CutoutSessionCore()
         let readback = FaultHistoryReadback(
