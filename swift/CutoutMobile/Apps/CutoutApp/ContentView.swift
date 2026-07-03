@@ -21,8 +21,9 @@ struct ContentView: View {
 
             TabView(selection: $selectedScreenID) {
                 ForEach(catalog.screens) { screen in
+                    let presentedScreen = catalog.presentedScreen(for: screen, liveBmsSnapshot: model.bmsSnapshot)
                     MockupScreenContainer(
-                        screen: screen,
+                        screen: presentedScreen,
                         devicePickerScanState: model.devicePickerScanState,
                         rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
                             ? nil

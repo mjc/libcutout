@@ -560,6 +560,17 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         screens.first { $0.id == id }
     }
 
+    public func presentedScreen(for screen: MockupScreen, liveBmsSnapshot: BmsSnapshot?) -> MockupScreen {
+        guard screen.id == .eucGarage, let liveBmsSnapshot else {
+            return screen
+        }
+
+        let bmsScreenID = MockupBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: .eucGarage)
+            .presentationScreenID
+
+        return self.screen(id: bmsScreenID) ?? screen
+    }
+
     private static let devicePickerDiscoveryCandidates = [
         DevicePickerDiscoveryCandidate(
             platformIdentifier: "fixture:aero",
@@ -1045,4 +1056,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             )
         ),
     ])
+}
+
+private extension MockupBmsScreenKind {
+    var presentationScreenID: MockupScreenID {
+        switch self {
+        case .overview:
+            .bmsOverview
+        case .cellMapInline:
+            .bmsCellMap6S
+        case .cellMapScrollable, .cellDetail:
+            .bmsCellMap40S
+        case .unknownTopology:
+            .bmsUnknownTopology
+        case .noData:
+            .bmsNoData
+        }
+    }
 }

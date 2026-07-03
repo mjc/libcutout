@@ -488,6 +488,32 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(resolved.selectedGroupIndex, nil)
     }
 
+    func testPresentedScreenRoutesPackToLiveBmsScreen() throws {
+        let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let liveSnapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "6S1P pack",
+                seriesGroupCount: 6,
+                parallelCount: 1,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            groups: [
+                BmsGroupSnapshot(index: 1, label: "G1", voltage: Voltage(value: 4_201)),
+                BmsGroupSnapshot(index: 2, label: "G2", voltage: Voltage(value: 4_199)),
+                BmsGroupSnapshot(index: 3, label: "G3", voltage: Voltage(value: 4_150)),
+                BmsGroupSnapshot(index: 4, label: "G4", voltage: Voltage(value: 4_203)),
+                BmsGroupSnapshot(index: 5, label: "G5", voltage: Voltage(value: 4_205)),
+                BmsGroupSnapshot(index: 6, label: "G6", voltage: Voltage(value: 4_202)),
+            ]
+        )
+
+        let presented = MockupScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
+
+        XCTAssertEqual(presented.id, .bmsCellMap6S)
+    }
+
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
         let unknown = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsUnknownTopology)?.bmsContent)
         let snapshot = unknown.snapshot
