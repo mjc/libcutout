@@ -7,11 +7,13 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var records: [String] = []
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
+    public private(set) var settingsReadback: SettingsReadback?
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
 
     private let clock = MonotonicClock()
     private var central: CBCentralManager?
@@ -63,6 +65,7 @@ public final class CutoutSessionCore: NSObject {
         pendingServiceDiscoveries.removeAll()
         displayState = RideDisplayState()
         hasObservedSpeedSnapshot = false
+        clearSettingsReadback()
         onDisplayStateChange?(displayState)
 
         if let peripheral {
@@ -86,10 +89,27 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
+        step.actions.forEach(applySessionAction)
         displayState = displayState.reducing(step, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speed?.value != nil
         onDisplayStateChange?(displayState)
         setPhase(.live)
+    }
+
+    private func applySessionAction(_ action: SessionAction) {
+        guard action.kind == .settingsReadback else {
+            return
+        }
+        settingsReadback = action.settingsReadback
+        onSettingsReadbackChange?(settingsReadback)
+    }
+
+    private func clearSettingsReadback() {
+        guard settingsReadback != nil else {
+            return
+        }
+        settingsReadback = nil
+        onSettingsReadbackChange?(nil)
     }
 
     private func setPhase(_ phase: SessionConnectionPhase) {
@@ -106,6 +126,7 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = model
+        clearSettingsReadback()
         peripheral.delegate = self
         setPhase(.connecting(model: model))
         central?.stopScan()

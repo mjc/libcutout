@@ -6,6 +6,7 @@ final class CutoutAppModel: ObservableObject {
     @Published private(set) var phase = SessionConnectionPhase.starting
     @Published private(set) var devicePickerScanState: DevicePickerScanState?
     @Published private(set) var selectedRideTitle: String?
+    @Published private(set) var settingsReadback: SettingsReadback?
 
     var speed: SpeedReadout {
         displayState.speed
@@ -26,6 +27,9 @@ final class CutoutAppModel: ObservableObject {
         }
         core.onScanStateChange = { [weak self] scanState in
             self?.devicePickerScanState = scanState
+        }
+        core.onSettingsReadbackChange = { [weak self] settingsReadback in
+            self?.settingsReadback = settingsReadback
         }
     }
 

@@ -893,8 +893,16 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         channel: Data,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> TelemetrySnapshot {
-        _ = try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
+        _ = try ingestNotificationActions(bytes, channel: channel, at: monotonicMilliseconds)
         return currentSnapshot
+    }
+
+    public func ingestNotificationActions(
+        _ bytes: Data,
+        channel: Data,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
     }
 
     public func perform(
@@ -1103,10 +1111,10 @@ public enum CoreBluetoothSession: Sendable {
         _ bytes: Data,
         channel: BluetoothUuid,
         at monotonicMilliseconds: MonotonicMilliseconds
-    ) throws -> TelemetrySnapshot {
+    ) throws -> [SessionAction] {
         switch self {
         case .electricUnicycle(let session):
-            try session.ingestNotification(bytes, channel: channel.bytes, at: monotonicMilliseconds)
+            try session.ingestNotificationActions(bytes, channel: channel.bytes, at: monotonicMilliseconds)
         }
     }
 }
@@ -1120,15 +1128,18 @@ public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
 public struct CoreBluetoothSessionStep: Equatable, Hashable, Sendable {
     public let operations: [CoreBluetoothPlannedOperation]
     public let snapshot: TelemetrySnapshot?
+    public let actions: [SessionAction]
     public let captureContext: CoreBluetoothCaptureContext?
 
     public init(
         operations: [CoreBluetoothPlannedOperation],
         snapshot: TelemetrySnapshot?,
+        actions: [SessionAction] = [],
         captureContext: CoreBluetoothCaptureContext? = nil
     ) {
         self.operations = operations
         self.snapshot = snapshot
+        self.actions = actions
         self.captureContext = captureContext
     }
 }
@@ -1162,14 +1173,15 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
             )
 
         case .notification(let bytes, let channel, let monotonicMilliseconds):
-            let snapshot = try session.ingestNotification(
+            let actions = try session.ingestNotification(
                 bytes,
                 channel: channel,
                 at: monotonicMilliseconds
             )
             return CoreBluetoothSessionStep(
-                operations: [],
-                snapshot: snapshot,
+                operations: actions.flatMap(planner.plan(action:)),
+                snapshot: session.currentSnapshot,
+                actions: actions,
                 captureContext: captureContext
             )
 

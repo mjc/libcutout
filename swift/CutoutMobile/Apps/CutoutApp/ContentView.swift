@@ -28,6 +28,7 @@ struct ContentView: View {
                             ? nil
                             : model.rideState,
                         rideTitle: model.selectedRideTitle,
+                        settingsReadback: model.settingsReadback,
                         disconnect: {
                             model.disconnectAndSearch()
                             pairedDestinationScreenID = nil
@@ -99,6 +100,7 @@ private struct MockupScreenContainer: View {
     let devicePickerScanState: DevicePickerScanState?
     let rideState: EucRideScreenState?
     let rideTitle: String?
+    let settingsReadback: SettingsReadback?
     let disconnect: () -> Void
     let pair: (MockupPickerRow) -> Void
     let selectScreen: (MockupScreenID) -> Void
@@ -112,7 +114,7 @@ private struct MockupScreenContainer: View {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             BmsMockupView(screen: screen, selectScreen: selectScreen)
         case .eucGarage:
-            EucGarageMockupView(screen: screen)
+            EucGarageMockupView(screen: screen, settingsReadback: settingsReadback)
         case .vescOnewheelRide:
             VescOnewheelRideMockupView(screen: screen)
         case .vescDebug:
@@ -123,6 +125,7 @@ private struct MockupScreenContainer: View {
 
 private struct EucGarageMockupView: View {
     let screen: MockupScreen
+    let settingsReadback: SettingsReadback?
 
     var body: some View {
         MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
@@ -160,6 +163,15 @@ private struct EucGarageMockupView: View {
                 EucSummaryRows(rows: screen.summaryRows, scale: scale)
             }
 
+            if let settingsReadback, !settingsReadback.entries.isEmpty {
+                Text("Read-only settings")
+                    .font(.system(size: 16 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.top, 12 * scale)
+
+                SettingsReadbackRows(readback: settingsReadback, scale: scale)
+            }
+
             if let faultCard = screen.faultCard {
                 Text(faultCard.title)
                     .font(.system(size: 16 * scale, weight: .black))
@@ -168,6 +180,93 @@ private struct EucGarageMockupView: View {
 
                 EucFaultStatusCard(card: faultCard, scale: scale)
             }
+        }
+    }
+}
+
+private struct SettingsReadbackRows: View {
+    let readback: SettingsReadback
+    let scale: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(readback.entries.enumerated()), id: \.offset) { _, entry in
+                VStack(alignment: .leading, spacing: 5 * scale) {
+                    HStack {
+                        Text("setting \(entry.field.id)")
+                            .font(.system(size: 14 * scale, weight: .bold))
+                            .foregroundStyle(MockupColors.muted)
+                        Spacer()
+                        Text("\(entry.field.value)")
+                            .font(.system(size: 15 * scale, weight: .black))
+                            .monospacedDigit()
+                            .foregroundStyle(MockupColors.primaryText)
+                    }
+
+                    Text(entry.provenanceText)
+                        .font(.system(size: 12 * scale, weight: .semibold))
+                        .foregroundStyle(MockupColors.muted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 10 * scale)
+
+                if entry != readback.entries.last {
+                    Rectangle()
+                        .fill(MockupColors.cardStroke)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, 6 * scale)
+        .background(CardBackground(cornerRadius: 22 * scale))
+    }
+}
+
+private extension SettingsReadbackEntry {
+    var provenanceText: String {
+        "\(source.displayText), \(quality.displayText), \(verification.displayText)"
+    }
+}
+
+private extension ReadbackSource {
+    var displayText: String {
+        switch self {
+        case .reported:
+            "reported"
+        case .calculated:
+            "calculated"
+        case .estimated:
+            "estimated"
+        }
+    }
+}
+
+private extension ReadbackQuality {
+    var displayText: String {
+        switch self {
+        case .known:
+            "known"
+        case .inferred:
+            "inferred"
+        }
+    }
+}
+
+private extension VerificationState {
+    var displayText: String {
+        switch self {
+        case .unverified:
+            "unverified"
+        case .inferred:
+            "inferred"
+        case .sourceVerified:
+            "source verified"
+        case .hardwareVerified:
+            "hardware verified"
+        case .sourceAndHardwareVerified:
+            "source + hardware verified"
         }
     }
 }
