@@ -1011,6 +1011,27 @@ public enum EucRideTelemetryAvailability: Equatable, Hashable, Sendable {
     case populated
 }
 
+public enum EucRideWarningSeverity: Equatable, Hashable, Sendable {
+    case normal
+    case caution
+    case reduceAcceleration
+    case limpHome
+    case unavailable
+    case failed
+}
+
+public struct EucRideWarningState: Equatable, Hashable, Sendable {
+    public let severity: EucRideWarningSeverity
+    public let title: String
+    public let detail: String
+
+    public init(severity: EucRideWarningSeverity, title: String, detail: String) {
+        self.severity = severity
+        self.title = title
+        self.detail = detail
+    }
+}
+
 public enum EucRideVisibleField: Equatable, Hashable, Sendable {
     case status
     case speed
@@ -1101,6 +1122,35 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
     public var limpHomeRange: Distance? {
         telemetry?.limpHomeRange
+    }
+
+    public var warningState: EucRideWarningState {
+        switch phase {
+        case .failed(let failure):
+            EucRideWarningState(severity: .failed, title: "Connection failed", detail: failure.displayText)
+        case .live where telemetryAvailability == .populated:
+            EucRideWarningState(
+                severity: .normal,
+                title: "Telemetry live",
+                detail: telemetry?.speed == nil ? "Waiting for speed telemetry" : "Live telemetry from typed Rust/FFI state"
+            )
+        case .live where telemetryAvailability == .waitingForValues:
+            EucRideWarningState(
+                severity: .caution,
+                title: "Waiting for telemetry",
+                detail: "Subscribed; no ride values yet"
+            )
+        case .live:
+            EucRideWarningState(
+                severity: .unavailable,
+                title: "Telemetry unavailable",
+                detail: "No live snapshot yet"
+            )
+        case .connecting, .discoveringServices, .subscribing:
+            EucRideWarningState(severity: .caution, title: phaseText, detail: "Waiting for live telemetry")
+        case .starting, .bluetoothUnavailable, .scanning:
+            EucRideWarningState(severity: .unavailable, title: phaseText, detail: "Ride screen is not active yet")
+        }
     }
 
     public var phaseText: String {

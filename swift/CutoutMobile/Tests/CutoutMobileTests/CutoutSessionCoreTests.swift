@@ -557,6 +557,33 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(populated.telemetryAvailability, .populated)
     }
 
+    func testRideStateCarriesTypedWarningSeverity() {
+        let failed = EucRideScreenState(
+            phase: .failed(.connectFailed("link dropped")),
+            displayState: RideDisplayState()
+        )
+        let inactive = EucRideScreenState(
+            phase: .scanning,
+            displayState: RideDisplayState()
+        )
+        let waiting = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: TelemetrySnapshot())
+        )
+        let populated = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(voltage: voltageValue(118_000))
+            )
+        )
+
+        XCTAssertEqual(failed.warningState.severity, .failed)
+        XCTAssertEqual(inactive.warningState.severity, .unavailable)
+        XCTAssertEqual(waiting.warningState.severity, .caution)
+        XCTAssertEqual(populated.warningState.severity, .normal)
+        XCTAssertEqual(waiting.warningState.title, "Waiting for telemetry")
+    }
+
     func testRideStateTreatsMissingLiveSnapshotAsTelemetryUnavailable() {
         let rideState = EucRideScreenState(
             phase: .live,

@@ -916,6 +916,10 @@ private struct EucRideScreenView: View {
         return screen.warningCard
     }
 
+    private var warningSeverity: EucRideWarningSeverity {
+        rideState?.warningState.severity ?? .reduceAcceleration
+    }
+
     private var safetyBars: [MockupSafetyBar] {
         if let rideState {
             if rideState.telemetry != nil {
@@ -992,7 +996,7 @@ private struct EucRideScreenView: View {
             }
 
             if let warningCard {
-                EucWarningCard(card: warningCard, scale: scale)
+                EucWarningCard(card: warningCard, severity: warningSeverity, scale: scale)
                     .padding(.top, 14 * scale)
             }
 
@@ -1058,13 +1062,27 @@ private struct EucSafetyBar: View {
 
 private struct EucWarningCard: View {
     let card: MockupWarningCard
+    let severity: EucRideWarningSeverity
     let scale: CGFloat
+
+    private var accent: Color {
+        switch severity {
+        case .normal:
+            MockupColors.green
+        case .caution, .reduceAcceleration:
+            MockupColors.orange
+        case .limpHome, .failed:
+            MockupColors.red
+        case .unavailable:
+            MockupColors.muted
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5 * scale) {
             Text(card.title)
                 .font(.system(size: 20 * scale, weight: .black))
-                .foregroundStyle(MockupColors.orange)
+                .foregroundStyle(accent)
             Text(card.detail)
                 .font(.system(size: 13 * scale, weight: .black))
                 .foregroundStyle(MockupColors.warningText)
@@ -1631,6 +1649,7 @@ private enum MockupColors {
     static let cyan = Color(red: 0.278, green: 0.824, blue: 0.933)
     static let green = Color(red: 0.376, green: 0.906, blue: 0.553)
     static let orange = Color(red: 1.0, green: 0.486, blue: 0.188)
+    static let red = Color(red: 1.0, green: 0.243, blue: 0.243)
     static let warningText = Color(red: 1.0, green: 0.667, blue: 0.345)
     static let warningFill = Color(red: 0.173, green: 0.087, blue: 0.040)
     static let warningStroke = Color(red: 0.443, green: 0.216, blue: 0.102)
@@ -1671,23 +1690,7 @@ private extension MockupPickerRowState {
 }
 
 private func liveWarningCard(for state: EucRideScreenState) -> MockupWarningCard {
-    switch state.phase {
-    case .failed(let failure):
-        MockupWarningCard(title: "Connection failed", detail: failure.displayText)
-    case .live where state.telemetryAvailability == .populated:
-        MockupWarningCard(
-            title: "Telemetry live",
-            detail: state.telemetry?.speed == nil ? "Waiting for speed telemetry" : "Live telemetry from typed Rust/FFI state"
-        )
-    case .live where state.telemetryAvailability == .waitingForValues:
-        MockupWarningCard(title: "Waiting for telemetry", detail: "Subscribed; no ride values yet")
-    case .live:
-        MockupWarningCard(title: "Telemetry unavailable", detail: "No live snapshot yet")
-    case .connecting, .discoveringServices, .subscribing:
-        MockupWarningCard(title: state.phaseText, detail: "Waiting for live telemetry")
-    case .starting, .bluetoothUnavailable, .scanning:
-        MockupWarningCard(title: state.phaseText, detail: "Ride screen is not active yet")
-    }
+    MockupWarningCard(title: state.warningState.title, detail: state.warningState.detail)
 }
 
 private func liveSafetyBars(for state: EucRideScreenState) -> [MockupSafetyBar] {
