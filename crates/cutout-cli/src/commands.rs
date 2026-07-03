@@ -2467,14 +2467,15 @@ impl fmt::Display for IdentityLine<'_> {
         let identity = self.0;
         write!(
             f,
-            "identity confidence={:?} manufacturer={} model={} advertised_name_hint={} gatt_hint={} passive_family={} banner_model={}",
+            "identity confidence={:?} manufacturer={} model={} advertised_name_hint={} gatt_hint={} passive_family={} banner_model={} protocol_model_id={}",
             identity.confidence,
             identity.manufacturer.unwrap_or("<unknown>"),
             identity.model.unwrap_or("<unknown>"),
             identity.evidence.has_advertised_name_hint(),
             identity.evidence.has_gatt_hint(),
             identity.evidence.has_passive_family_match(),
-            identity.evidence.has_banner_model_match()
+            identity.evidence.has_banner_model_match(),
+            identity.evidence.has_protocol_model_id()
         )
     }
 }
@@ -4800,7 +4801,8 @@ mod tests {
                     .with(BridgeIdentityEvidenceKind::AdvertisedNameHint)
                     .with(BridgeIdentityEvidenceKind::GattHint)
                     .with(BridgeIdentityEvidenceKind::PassiveFamilyMatch)
-                    .with(BridgeIdentityEvidenceKind::BannerModelMatch),
+                    .with(BridgeIdentityEvidenceKind::BannerModelMatch)
+                    .with(BridgeIdentityEvidenceKind::ProtocolModelId),
             }),
             ..SessionBridgeReport::default()
         };
@@ -4808,7 +4810,7 @@ mod tests {
         assert_eq!(
             render_identity(&report).map(|identity| identity.to_string()),
             Some(
-                "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true".to_owned()
+                "identity confidence=Model manufacturer=Begode model=Falcon advertised_name_hint=true gatt_hint=true passive_family=true banner_model=true protocol_model_id=true".to_owned()
             )
         );
     }

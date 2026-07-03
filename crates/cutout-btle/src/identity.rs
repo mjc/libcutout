@@ -28,6 +28,9 @@ pub enum BridgeIdentityEvidenceKind {
 
     /// Model banner evidence contributed to the decision.
     BannerModelMatch,
+
+    /// Protocol-owned model id evidence contributed to the decision.
+    ProtocolModelId,
 }
 
 impl BridgeIdentityEvidence {
@@ -35,6 +38,7 @@ impl BridgeIdentityEvidence {
     const GATT_HINT: u8 = 1 << 1;
     const PASSIVE_FAMILY_MATCH: u8 = 1 << 2;
     const BANNER_MODEL_MATCH: u8 = 1 << 3;
+    const PROTOCOL_MODEL_ID: u8 = 1 << 4;
 
     /// Empty identity evidence.
     #[must_use]
@@ -72,6 +76,12 @@ impl BridgeIdentityEvidence {
         self.has(BridgeIdentityEvidenceKind::BannerModelMatch)
     }
 
+    /// Returns whether protocol-owned model-id evidence contributed to the decision.
+    #[must_use]
+    pub const fn has_protocol_model_id(self) -> bool {
+        self.has(BridgeIdentityEvidenceKind::ProtocolModelId)
+    }
+
     const fn has(self, kind: BridgeIdentityEvidenceKind) -> bool {
         self.0 & kind.mask() != 0
     }
@@ -84,6 +94,7 @@ impl BridgeIdentityEvidenceKind {
             Self::GattHint => BridgeIdentityEvidence::GATT_HINT,
             Self::PassiveFamilyMatch => BridgeIdentityEvidence::PASSIVE_FAMILY_MATCH,
             Self::BannerModelMatch => BridgeIdentityEvidence::BANNER_MODEL_MATCH,
+            Self::ProtocolModelId => BridgeIdentityEvidence::PROTOCOL_MODEL_ID,
         }
     }
 }

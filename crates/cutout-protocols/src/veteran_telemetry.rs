@@ -9,7 +9,7 @@ use cutout_core::{
 use thiserror::Error;
 
 use crate::{
-    BatteryVoltageProfile, SAMSUNG_50S_PROFILE, VeteranFrame,
+    BatteryVoltageProfile, ProtocolModelIdentityEvidence, SAMSUNG_50S_PROFILE, VeteranFrame,
     parser::{ParserCursor, ParserOffset},
 };
 use crate::{VETERAN_BMS_CELL_VALUES_PER_PAGE, classify_veteran_bms_selector};
@@ -734,6 +734,15 @@ impl VeteranFirmwareVersion {
             revision: raw_version % 100,
         }
     }
+
+    /// Returns Rust-owned protocol identity evidence decoded from this firmware word.
+    #[must_use]
+    pub const fn protocol_model_identity(self) -> ProtocolModelIdentityEvidence {
+        ProtocolModelIdentityEvidence::model_id(
+            cutout_core::ProtocolFamily::VeteranLeaperkimNosfet,
+            self.model_id.get(),
+        )
+    }
 }
 
 /// Estimates Aero battery percent from its model's Samsung 50S battery profile.
@@ -766,6 +775,11 @@ mod tests {
     }
 
     use super::*;
+    use crate::{
+        IdentityBannerEvidence, IdentityConfidence, NOSFET_AERO_REGISTRY_ENTRY,
+        ProtocolFamilyClassification, StagedIdentityInput, StagedIdentityOutcome,
+        identify_known_model,
+    };
 
     const fn pct(value: u8) -> BatteryLevel {
         BatteryLevel::from_percent(value)
@@ -861,6 +875,24 @@ mod tests {
             telemetry.battery_level_estimated,
             BatteryLevel::from_percent(47)
         );
+    }
+
+    #[test]
+    fn veteran_firmware_model_id_resolves_live_aero_identity() {
+        let telemetry = VeteranTelemetry::decode(&live_aero_frame()).expect("telemetry decodes");
+
+        let resolution = identify_known_model(&StagedIdentityInput {
+            advertised_name: Some("NF2557"),
+            gatt: core::iter::empty::<cutout_core::GattFingerprint>(),
+            stream_family: ProtocolFamilyClassification::Pending,
+            banner_model: IdentityBannerEvidence::Missing,
+            protocol_model: telemetry.firmware.protocol_model_identity(),
+        });
+
+        assert_eq!(resolution.confidence, IdentityConfidence::Model);
+        assert_eq!(resolution.outcome, StagedIdentityOutcome::Matched);
+        assert_eq!(resolution.model, Some(&NOSFET_AERO_REGISTRY_ENTRY));
+        assert!(resolution.evidence.has_protocol_model_id());
     }
 
     #[test]
