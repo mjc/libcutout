@@ -11,6 +11,7 @@ use thiserror::Error;
 use crate::{
     BatteryVoltageProfile, ProtocolModelIdentityEvidence, SAMSUNG_50S_PROFILE, VeteranFrame,
     parser::{ParserCursor, ParserOffset},
+    util::u64_to_i64_saturating,
 };
 use crate::{VETERAN_BMS_CELL_VALUES_PER_PAGE, classify_veteran_bms_selector};
 
@@ -505,10 +506,6 @@ const fn charge_mode_from_veteran_field(value: u16) -> ChargeMode {
 
 const fn veteran_charge_mode_field(mode: ChargeMode) -> u16 {
     if mode.is_active() { 1 } else { 0 }
-}
-
-fn u64_to_i64_saturating(value: u64) -> i64 {
-    i64::try_from(value).map_or(i64::MAX, |value| value)
 }
 
 impl VeteranTelemetry {

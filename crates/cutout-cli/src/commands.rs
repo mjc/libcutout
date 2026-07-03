@@ -4722,7 +4722,7 @@ mod tests {
 
         assert_eq!(profile, selected_falcon_session_profile());
         assert_eq!(report.replay_records.get(), 1153);
-        assert_eq!(report.outputs.get(), 3453);
+        assert_eq!(report.outputs.get(), 3645);
         assert_eq!(report.telemetry.get(), 767);
         assert_eq!(report.read_only_responses.get(), 766);
         assert_eq!(report.diagnostics.get(), 0);

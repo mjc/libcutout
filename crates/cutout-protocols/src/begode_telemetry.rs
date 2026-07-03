@@ -12,6 +12,7 @@ use thiserror::Error;
 use crate::{
     BegodeFrame,
     parser::{ParserCursor, ParserOffset},
+    util::u64_to_i64_saturating,
 };
 
 const SERIES_CELLS_20: SeriesCount = SeriesCount::new(20);
@@ -1232,10 +1233,6 @@ const fn settings_entry(id: u16, value: i64) -> SettingsEntry {
         quality: ValueQuality::Known,
         verification: VerificationStatus::SourceVerified,
     }
-}
-
-fn u64_to_i64_saturating(value: u64) -> i64 {
-    i64::try_from(value).map_or(i64::MAX, |value| value)
 }
 
 fn byte(cursor: ParserCursor<'_>, offset: ParserOffset) -> u8 {

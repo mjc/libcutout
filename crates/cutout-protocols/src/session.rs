@@ -23,7 +23,7 @@ use crate::{
     VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence,
     VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
     VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
-    begode_falcon_target_voltage_profile, decode_veteran_bms_page,
+    begode_falcon_target_voltage_profile, decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -314,37 +314,33 @@ fn push_veteran_ingest_outcome_for_frame(
     output: &mut Vec<SessionOutput>,
 ) {
     let frame_len = NotificationByteLen::from_bytes(frame.as_slice().len());
-    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
-        && evidence.kind != BatteryPageKind::Raw
-    {
-        output.push(SessionOutput::NotificationIngest(
-            NotificationIngestOutcome::semantic_events(
-                family,
-                channel,
-                frame_len,
-                monotonic_ms,
-                event_count,
-            ),
-        ));
-        output.push(SessionOutput::NotificationIngest(
-            NotificationIngestOutcome::parser_gap(
-                family,
-                channel,
-                frame_len,
-                monotonic_ms,
-                ParserGapEvidence {
-                    classifier: PayloadClassifier::selector(evidence.selector),
-                    body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
-                    retained_payload: RetainedNotificationPayload::from_bytes(evidence.body),
-                },
-            ),
-        ));
-        return;
-    }
+    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
+        if evidence.kind != BatteryPageKind::Raw {
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::semantic_events(
+                    family,
+                    channel,
+                    frame_len,
+                    monotonic_ms,
+                    event_count,
+                ),
+            ));
+            output.push(SessionOutput::NotificationIngest(
+                NotificationIngestOutcome::parser_gap(
+                    family,
+                    channel,
+                    frame_len,
+                    monotonic_ms,
+                    ParserGapEvidence {
+                        classifier: PayloadClassifier::selector(evidence.selector),
+                        body_len: PayloadBodyLen::from_bytes(evidence.body.len()),
+                        retained_payload: RetainedNotificationPayload::from_bytes(evidence.body),
+                    },
+                ),
+            ));
+            return;
+        }
 
-    if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame)
-        && evidence.kind == BatteryPageKind::Raw
-    {
         if evidence.selector == ProtocolSelector::new(8) {
             output.push(SessionOutput::NotificationIngest(
                 NotificationIngestOutcome::known_reserved(
@@ -695,10 +691,6 @@ fn vesc_stats_to_diagnostics(stats: VescStatsTelemetry) -> DiagnosticReadback {
     }
 }
 
-fn u64_to_i64_saturating(value: u64) -> i64 {
-    i64::try_from(value).map_or(i64::MAX, |value| value)
-}
-
 const fn vesc_diagnostic_detail(id: u16, value: i64) -> DiagnosticDetail {
     DiagnosticDetail {
         field: RawFieldValue::new(id, value),
@@ -788,6 +780,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     telemetry.to_delta(monotonic_ms),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
@@ -844,13 +837,15 @@ fn push_veteran_frame(
                 )));
             }
             if let Some(evidence) = VeteranBmsPageEvidence::from_frame(frame) {
-                if evidence.kind != BatteryPageKind::Raw
-                    && let Some(payload) = veteran_bms_payload(evidence)
-                {
-                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                        ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(payload)),
-                    )));
-                    return SemanticEventCount::from_events(3).saturating_add(settings_count);
+                if evidence.kind != BatteryPageKind::Raw {
+                    if let Some(payload) = veteran_bms_payload(evidence) {
+                        output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                            ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(
+                                payload,
+                            )),
+                        )));
+                        return SemanticEventCount::from_events(3).saturating_add(settings_count);
+                    }
                 }
             }
             SemanticEventCount::from_events(2).saturating_add(settings_count)
@@ -1531,6 +1526,10 @@ mod tests {
 
     fn live_begode_bms_cell_page_frame() -> [u8; 24] {
         hex_literal::hex!("55aa0fa00fa10fa20fa30fa40fa50fa60fa702025a5a5a5a")
+    }
+
+    fn live_begode_extra_frame() -> [u8; 24] {
+        hex_literal::hex!("55aaff9c0000002affd8000000000000000007185a5a5a5a")
     }
 
     fn vesc_selective_values_frame() -> [u8; 28] {
@@ -2338,6 +2337,28 @@ mod tests {
         );
         assert_eq!(telemetry_events(&output).len(), 1);
         assert_eq!(read_only_response_events(&output).len(), 2);
+    }
+
+    #[test]
+    fn begode_falcon_extra_telemetry_retains_complete_frame_evidence() {
+        let extra = live_begode_extra_frame();
+        let output = falcon_output_for_notification_chunks(&[extra.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(extra.as_slice(), 0x07, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(extra.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(1),
+                ),
+            ]
+        );
+        assert_eq!(telemetry_events(&output).len(), 1);
     }
 
     #[test]

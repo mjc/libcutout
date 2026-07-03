@@ -69,6 +69,7 @@ pub use registry::{
 };
 mod request_encoder;
 mod session;
+mod util;
 mod vesc_codec;
 mod veteran_bms;
 mod veteran_frame;
