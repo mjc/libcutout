@@ -271,10 +271,11 @@ extension MockupScreenCatalogTests {
         ])
         XCTAssertEqual(ride.tabs, [
             MockupScreenTab(title: "Ride", isSelected: true),
-            MockupScreenTab(title: "Pack", isSelected: false),
+            MockupScreenTab(title: "Pack", isSelected: false, destinationScreenID: .eucGarage),
             MockupScreenTab(title: "Map", isSelected: false),
             MockupScreenTab(title: "Tune", isSelected: false),
         ])
+        XCTAssertEqual(ride.tabs.first { $0.title == "Pack" }?.destinationScreenID, .eucGarage)
     }
     func testEucGarageFixtureCarriesPackHealthStructureFromMockup() throws {
         let garage = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))

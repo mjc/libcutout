@@ -123,10 +123,12 @@ public struct MockupScreenTab: Equatable, Hashable, Sendable, Identifiable {
 
     public let title: String
     public let isSelected: Bool
+    public let destinationScreenID: MockupScreenID?
 
-    public init(title: String, isSelected: Bool) {
+    public init(title: String, isSelected: Bool, destinationScreenID: MockupScreenID? = nil) {
         self.title = title
         self.isSelected = isSelected
+        self.destinationScreenID = destinationScreenID
     }
 }
 
@@ -910,7 +912,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             ],
             tabs: [
                 MockupScreenTab(title: "Ride", isSelected: true),
-                MockupScreenTab(title: "Pack", isSelected: false),
+                MockupScreenTab(title: "Pack", isSelected: false, destinationScreenID: .eucGarage),
                 MockupScreenTab(title: "Map", isSelected: false),
                 MockupScreenTab(title: "Tune", isSelected: false),
             ]

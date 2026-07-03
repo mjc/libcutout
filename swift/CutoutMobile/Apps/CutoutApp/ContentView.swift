@@ -115,7 +115,13 @@ private struct MockupScreenContainer: View {
         case .devicePicker:
             DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
         case .eucRide:
-            EucRideScreenView(screen: screen, rideState: rideState, rideTitle: rideTitle, disconnect: disconnect)
+            EucRideScreenView(
+                screen: screen,
+                rideState: rideState,
+                rideTitle: rideTitle,
+                disconnect: disconnect,
+                selectScreen: selectScreen
+            )
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             BmsMockupView(screen: screen, rideState: rideState, bmsSnapshot: bmsSnapshot, selectScreen: selectScreen)
         case .eucGarage:
@@ -843,6 +849,7 @@ private struct EucRideScreenView: View {
     let rideState: EucRideScreenState?
     let rideTitle: String?
     let disconnect: () -> Void
+    let selectScreen: (MockupScreenID) -> Void
 
     private var speedParts: (value: String, unit: String) {
         if let rideState {
@@ -968,7 +975,7 @@ private struct EucRideScreenView: View {
             }
             .padding(.top, 12 * scale)
 
-            EucRideTabs(tabs: screen.tabs, scale: scale)
+            EucRideTabs(tabs: screen.tabs, scale: scale, selectScreen: selectScreen)
                 .padding(.top, 48 * scale)
         }
     }
@@ -1173,6 +1180,7 @@ private struct MockupFaultDetailCard: View {
 private struct EucRideTabs: View {
     let tabs: [MockupScreenTab]
     let scale: CGFloat
+    var selectScreen: ((MockupScreenID) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 12 * scale) {
@@ -1182,23 +1190,42 @@ private struct EucRideTabs: View {
 
             HStack(spacing: 0) {
                 ForEach(tabs) { tab in
-                    VStack(spacing: 8 * scale) {
-                        Text(tab.title)
-                            .font(.system(size: 14 * scale, weight: tab.isSelected ? .black : .semibold))
-                            .foregroundStyle(tab.isSelected ? MockupColors.yellow : MockupColors.muted)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        Capsule()
-                            .fill(tab.isSelected ? MockupColors.yellow : Color.clear)
-                            .frame(width: 28 * scale, height: 4 * scale)
-                    }
-                    .frame(maxWidth: .infinity)
+                    tabContent(tab)
                 }
             }
             .frame(width: 254 * scale)
         }
         .frame(height: 58 * scale, alignment: .top)
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func tabContent(_ tab: MockupScreenTab) -> some View {
+        if let destination = tab.destinationScreenID, let selectScreen {
+            Button {
+                selectScreen(destination)
+            } label: {
+                tabLabel(tab)
+            }
+            .buttonStyle(.plain)
+        } else {
+            tabLabel(tab)
+        }
+    }
+
+    private func tabLabel(_ tab: MockupScreenTab) -> some View {
+        VStack(spacing: 8 * scale) {
+            Text(tab.title)
+                .font(.system(size: 14 * scale, weight: tab.isSelected ? .black : .semibold))
+                .foregroundStyle(tab.isSelected ? MockupColors.yellow : MockupColors.muted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Capsule()
+                .fill(tab.isSelected ? MockupColors.yellow : Color.clear)
+                .frame(width: 28 * scale, height: 4 * scale)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
     }
 }
 
