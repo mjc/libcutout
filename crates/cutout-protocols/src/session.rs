@@ -980,7 +980,6 @@ impl SupportsReadRequests for NosfetAeroModel {
         CommandKind::RequestFirmwareInfo,
         CommandKind::RequestTelemetry,
         CommandKind::RequestBatteryInfo,
-        CommandKind::RequestFaultHistory,
         CommandKind::RequestSettings,
     ]);
     const WRITE_CHANNEL: GattChannel = VETERAN_DATA_CHANNEL;
@@ -2863,10 +2862,6 @@ mod tests {
     #[test]
     fn read_only_gate_accepts_supported_read_commands() {
         assert_eq!(
-            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestFaultHistory),
-            ReadOnlyCommandGate::SupportedRead(CommandKind::RequestFaultHistory)
-        );
-        assert_eq!(
             gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestSettings),
             ReadOnlyCommandGate::SupportedRead(CommandKind::RequestSettings)
         );
@@ -2880,6 +2875,10 @@ mod tests {
     fn read_only_gate_rejects_unsupported_read_commands() {
         assert_eq!(
             gate_read_only_command::<BegodeFalconModel>(DeviceCommand::RequestFaultHistory),
+            ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory)
+        );
+        assert_eq!(
+            gate_read_only_command::<NosfetAeroModel>(DeviceCommand::RequestFaultHistory),
             ReadOnlyCommandGate::Unsupported(CommandKind::RequestFaultHistory)
         );
     }
@@ -3018,7 +3017,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_passive_fault_history_reports_unavailable_fault_history_without_writes() {
+    fn aero_passive_fault_history_reports_unsupported_fault_history_without_writes() {
         let mut session = ReadOnlySession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
@@ -3035,7 +3034,7 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unavailable())
+                ReadOnlyResponse::FaultHistory(cutout_core::FaultHistoryReadback::unsupported())
             ))]
         );
     }
