@@ -1737,15 +1737,7 @@ private func liveDashboardTiles(from telemetry: TelemetrySnapshot) -> [MockupDas
                 accent: .green
             )
             : MockupDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
-        telemetry.batteryLevelEstimated.map { batteryLevel in
-            MockupDashboardTile(
-                label: "energy",
-                value: percentageString(fromPercent: Int(batteryLevel.value)),
-                unit: "%",
-                detail: "estimated",
-                accent: .cyan
-            )
-        } ?? MockupDashboardTile(label: "energy", value: "--", unit: "%", detail: "unavailable", accent: .cyan),
+        MockupDashboardTile(label: "limp-home", value: "--", unit: "mi", detail: "unavailable", accent: .cyan),
     ]
 }
 

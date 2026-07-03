@@ -1025,7 +1025,6 @@ public enum EucRideVisibleFieldSource: Equatable, Hashable, Sendable {
     case explicitlyUnavailable
     case notApplicable
     case staticNavigation
-    case fixtureOnly
 }
 
 public struct EucRideVisibleFieldCoverage: Equatable, Hashable, Sendable {
@@ -1122,9 +1121,9 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
             EucRideVisibleFieldCoverage(field: .power, source: powerCoverage),
             EucRideVisibleFieldCoverage(field: .thermal, source: thermalCoverage),
             EucRideVisibleFieldCoverage(field: .warningState, source: .sessionState),
-            EucRideVisibleFieldCoverage(field: .voltageSag, source: .fixtureOnly),
-            EucRideVisibleFieldCoverage(field: .regenPower, source: .fixtureOnly),
-            EucRideVisibleFieldCoverage(field: .limpHomeRange, source: .fixtureOnly),
+            EucRideVisibleFieldCoverage(field: .voltageSag, source: .explicitlyUnavailable),
+            EucRideVisibleFieldCoverage(field: .regenPower, source: .explicitlyUnavailable),
+            EucRideVisibleFieldCoverage(field: .limpHomeRange, source: .explicitlyUnavailable),
             EucRideVisibleFieldCoverage(field: .tabs, source: .staticNavigation),
         ]
     }

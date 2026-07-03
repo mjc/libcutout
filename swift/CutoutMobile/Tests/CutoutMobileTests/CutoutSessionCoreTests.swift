@@ -615,9 +615,9 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .power), .derivedTelemetry)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .thermal), .liveTelemetry)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .warningState), .sessionState)
-        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .voltageSag), .fixtureOnly)
-        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .regenPower), .fixtureOnly)
-        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .limpHomeRange), .fixtureOnly)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .voltageSag), .explicitlyUnavailable)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .regenPower), .explicitlyUnavailable)
+        XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .limpHomeRange), .explicitlyUnavailable)
         XCTAssertEqual(rideState.visibleFieldCoverage.source(for: .tabs), .staticNavigation)
     }
 
