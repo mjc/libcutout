@@ -6,13 +6,13 @@ import SwiftUI
 @main
 struct CutoutApp: App {
     #if os(macOS)
-    @NSApplicationDelegateAdaptor(SpeedAppDelegate.self) private var appDelegate
+    @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
-    @StateObject private var model = LiveSpeedModel()
+    @StateObject private var model = CutoutAppModel()
 
     init() {
         if CommandLine.arguments.contains("--smoke") {
-            print("speed_app=ok")
+            print("cutout_app=ok")
             Foundation.exit(EXIT_SUCCESS)
         }
     }
@@ -38,7 +38,7 @@ struct CutoutApp: App {
 }
 
 #if os(macOS)
-final class SpeedAppDelegate: NSObject, NSApplicationDelegate {
+final class CutoutAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)

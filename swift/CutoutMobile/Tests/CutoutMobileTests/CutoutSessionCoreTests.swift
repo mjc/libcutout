@@ -1,9 +1,9 @@
 import XCTest
 @testable import CutoutMobile
 
-final class LiveSpeedSessionCoreTests: XCTestCase {
+final class CutoutSessionCoreTests: XCTestCase {
     func testObservedAdvertisementsUpdatePickerScanState() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
         var observedStates: [DevicePickerScanState] = []
         core.onScanStateChange = { observedStates.append($0) }
 
@@ -30,7 +30,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 
     func testObservedAdvertisementsHideNonPevRows() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
 
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
@@ -44,13 +44,13 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 
     func testPairUnknownCandidateReturnsFalse() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
 
         XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
     }
 
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
 
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
@@ -72,7 +72,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
         let snapshot = TelemetrySnapshot(
             speed: speedValue(1_234),
             operatingState: .riding,
@@ -99,7 +99,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 
     func testSpeedObservationRemainsStickyAcrossTelemetryWithoutSpeed() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
         let speedSnapshot = TelemetrySnapshot(
             speed: speedValue(1_234),
             voltage: voltageValue(117_000),
@@ -127,7 +127,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 
     func testNotificationWithoutSnapshotAdvancesLastUpdate() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
         let speedSnapshot = TelemetrySnapshot(
             speed: speedValue(1_234),
             voltage: voltageValue(117_000),
@@ -151,7 +151,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 
     func testDisconnectAndScanClearsRideStateAndReturnsPickerToScanning() {
-        let core = LiveSpeedSessionCore()
+        let core = CutoutSessionCore()
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
@@ -170,14 +170,14 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         core.disconnectAndScan()
 
         XCTAssertEqual(core.phase, .scanning(model: .aero))
-        XCTAssertEqual(core.displayState, LiveSpeedDisplayState())
+        XCTAssertEqual(core.displayState, RideDisplayState())
         XCTAssertFalse(core.hasObservedSpeedSnapshot)
         XCTAssertEqual(core.scanState.status, .scanning)
         XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero"])
     }
 
     func testRideStateCarriesPhaseAndTelemetrySnapshot() {
-        let displayState = LiveSpeedDisplayState(
+        let displayState = RideDisplayState(
             speed: SpeedReadout(millimetersPerSecond: 1_234),
             telemetry: TelemetrySnapshot(speed: speedValue(1_234), operatingState: .riding),
             notificationCount: 7,
@@ -193,7 +193,7 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
     }
 
     func testDisplayStateProvidesDebugRowsForLiveValidation() {
-        let displayState = LiveSpeedDisplayState(
+        let displayState = RideDisplayState(
             speed: SpeedReadout(millimetersPerSecond: 1_234),
             notificationCount: 7,
             lastUpdate: MonotonicMilliseconds(9_876)
@@ -202,8 +202,8 @@ final class LiveSpeedSessionCoreTests: XCTestCase {
         XCTAssertEqual(
             displayState.debugRows,
             [
-                LiveSpeedDebugRow(label: "Notifications", value: "7"),
-                LiveSpeedDebugRow(label: "Last update", value: "9876 ms"),
+                SessionDebugRow(label: "Notifications", value: "7"),
+                SessionDebugRow(label: "Last update", value: "9876 ms"),
             ]
         )
     }

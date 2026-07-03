@@ -26,6 +26,11 @@ let package = Package(
             path: "Tests/CutoutMobileTests"
         ),
         .executableTarget(
+            name: "CutoutApp",
+            dependencies: ["CutoutMobile"],
+            path: "Apps/CutoutApp"
+        ),
+        .executableTarget(
             name: "CutoutMobileSmoke",
             dependencies: ["CutoutMobile"],
             path: "Tests/CutoutMobileSmoke"

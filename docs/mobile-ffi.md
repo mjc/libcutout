@@ -116,8 +116,8 @@ repository dev shell:
 ```console
 nix develop -c ./scripts/test-swift-package.sh
 nix develop -c ./scripts/smoke-ios-app-metadata.sh
-nix develop -c ./scripts/run-ios-speed-app-on-mac.sh
-CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-speed-app-on-phone.sh
+nix develop -c ./scripts/run-ios-app-on-mac.sh
+CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-app-on-phone.sh
 ```
 
 `scripts/test-swift-package.sh` runs the generated Swift package tests with the
@@ -128,14 +128,14 @@ a focused XCTest filter while keeping the same generated workspace path.
 bundle metadata that previously drifted, including portrait orientation and
 Bluetooth usage text.
 
-`scripts/run-ios-speed-app-on-mac.sh` builds the real iPhoneOS app bundle for
+`scripts/run-ios-app-on-mac.sh` builds the real iPhoneOS app bundle for
 Apple Silicon Mac and prints its product path. Set `CUTOUT_IOS_ON_MAC_DESTINATION`
 to override the Xcode destination. Raw `open` of this `Debug-iphoneos` bundle
 currently fails with an incorrect-executable-format error, so Mac launch proof is
 still tracked by the app workflow cleanup ticket rather than hidden behind a
 flaky command.
 
-`scripts/run-ios-speed-app-on-phone.sh` builds, installs, and launches the app
+`scripts/run-ios-app-on-phone.sh` builds, installs, and launches the app
 on a connected booted iOS device. Signing stays local: provide
 `CUTOUT_IOS_DEVELOPMENT_TEAM`, and optionally `CUTOUT_IOS_APP_BUNDLE_ID`, in
 your shell or a private env file. The Xcode project intentionally does not

@@ -1,9 +1,9 @@
 import CutoutMobile
 import Foundation
 
-final class LiveSpeedModel: ObservableObject {
-    @Published private(set) var displayState = LiveSpeedDisplayState()
-    @Published private(set) var phase = LiveSpeedConnectionPhase.starting
+final class CutoutAppModel: ObservableObject {
+    @Published private(set) var displayState = RideDisplayState()
+    @Published private(set) var phase = SessionConnectionPhase.starting
     @Published private(set) var devicePickerScanState: DevicePickerScanState?
     @Published private(set) var selectedRideTitle: String?
 
@@ -15,7 +15,7 @@ final class LiveSpeedModel: ObservableObject {
         EucRideScreenState(phase: phase, displayState: displayState)
     }
 
-    private let core = LiveSpeedSessionCore()
+    private let core = CutoutSessionCore()
 
     init() {
         core.onDisplayStateChange = { [weak self] displayState in

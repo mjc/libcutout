@@ -7,16 +7,16 @@ struct CutoutMobileLiveValidator {
         let timeoutSeconds = TimeInterval(
             CommandLine.arguments.dropFirst().first.flatMap(Double.init) ?? 45
         )
-        let validator = LiveSpeedValidator(timeout: timeoutSeconds)
+        let validator = CutoutLiveValidator(timeout: timeoutSeconds)
         validator.start()
         exit(validator.didValidate ? EXIT_SUCCESS : EXIT_FAILURE)
     }
 }
 
-private final class LiveSpeedValidator {
+private final class CutoutLiveValidator {
     private let timeout: TimeInterval
     private let startedAt = Date()
-    private let core = LiveSpeedSessionCore()
+    private let core = CutoutSessionCore()
     private var records: [String] = []
     private(set) var didValidate = false
 

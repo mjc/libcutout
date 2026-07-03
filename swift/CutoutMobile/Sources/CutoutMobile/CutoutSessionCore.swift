@@ -1,15 +1,15 @@
 import CoreBluetooth
 import Foundation
 
-public final class LiveSpeedSessionCore: NSObject {
-    public private(set) var displayState = LiveSpeedDisplayState()
-    public private(set) var phase = LiveSpeedConnectionPhase.starting
+public final class CutoutSessionCore: NSObject {
+    public private(set) var displayState = RideDisplayState()
+    public private(set) var phase = SessionConnectionPhase.starting
     public private(set) var records: [String] = []
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
 
-    public var onDisplayStateChange: ((LiveSpeedDisplayState) -> Void)?
-    public var onPhaseChange: ((LiveSpeedConnectionPhase) -> Void)?
+    public var onDisplayStateChange: ((RideDisplayState) -> Void)?
+    public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
 
@@ -61,7 +61,7 @@ public final class LiveSpeedSessionCore: NSObject {
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
-        displayState = LiveSpeedDisplayState()
+        displayState = RideDisplayState()
         hasObservedSpeedSnapshot = false
         onDisplayStateChange?(displayState)
 
@@ -92,7 +92,7 @@ public final class LiveSpeedSessionCore: NSObject {
         setPhase(.live)
     }
 
-    private func setPhase(_ phase: LiveSpeedConnectionPhase) {
+    private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
         onPhaseChange?(phase)
     }
@@ -131,7 +131,7 @@ public final class LiveSpeedSessionCore: NSObject {
                 applyLinkUpStep(step)
             }
         } catch {
-            setPhase(.failed(.sessionFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.sessionFailed(error.sessionMessage)))
         }
     }
 
@@ -150,7 +150,7 @@ public final class LiveSpeedSessionCore: NSObject {
         }
 
         guard let selectedModel else {
-            setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.connectFailed(error.sessionMessage)))
             return
         }
 
@@ -164,7 +164,7 @@ public final class LiveSpeedSessionCore: NSObject {
     }
 }
 
-extension LiveSpeedSessionCore: CBCentralManagerDelegate {
+extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         record("central_state=\(central.state.rawValue)")
         guard central.state == .poweredOn else {
@@ -208,7 +208,7 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
-        setPhase(.failed(.connectFailed(error.liveSpeedMessage)))
+        setPhase(.failed(.connectFailed(error.sessionMessage)))
     }
 
     public func centralManager(
@@ -220,10 +220,10 @@ extension LiveSpeedSessionCore: CBCentralManagerDelegate {
     }
 }
 
-extension LiveSpeedSessionCore: CBPeripheralDelegate {
+extension CutoutSessionCore: CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         if let error {
-            setPhase(.failed(.serviceDiscoveryFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.serviceDiscoveryFailed(error.sessionMessage)))
             return
         }
         let services = peripheral.services ?? []
@@ -240,7 +240,7 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.characteristicDiscoveryFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.characteristicDiscoveryFailed(error.sessionMessage)))
             return
         }
         service.characteristics?.forEach { characteristic in
@@ -260,7 +260,7 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
         error: Error?
     ) {
         if let error {
-            setPhase(.failed(.notificationFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.notificationFailed(error.sessionMessage)))
             return
         }
         guard
@@ -285,12 +285,12 @@ extension LiveSpeedSessionCore: CBPeripheralDelegate {
             applyNotificationStep(step, receivedAt: receivedAt)
         } catch {
             record("notification_ingest_error=\(error)")
-            setPhase(.failed(.notificationIngestFailed(error.liveSpeedMessage)))
+            setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
         }
     }
 }
 
-extension LiveSpeedSessionCore: CoreBluetoothOperationSink {
+extension CutoutSessionCore: CoreBluetoothOperationSink {
     public func subscribe(channel: BluetoothUuid) {
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingNotifyChannel))
@@ -320,13 +320,13 @@ private struct MonotonicClock {
 }
 
 private extension Optional where Wrapped == Error {
-    var liveSpeedMessage: String {
+    var sessionMessage: String {
         map(String.init(describing:)) ?? "unknown error"
     }
 }
 
 private extension Error {
-    var liveSpeedMessage: String {
+    var sessionMessage: String {
         String(describing: self)
     }
 }

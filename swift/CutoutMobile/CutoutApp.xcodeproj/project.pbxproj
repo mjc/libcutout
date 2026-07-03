@@ -7,17 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		111111111111111111111111 /* Apps/CutoutApp/SpeedApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111121 /* Apps/CutoutApp/SpeedApp.swift */; };
+		111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */; };
 		111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */; };
-		111111111111111111111113 /* Apps/CutoutApp/LiveSpeedModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111123 /* Apps/CutoutApp/LiveSpeedModel.swift */; };
+		111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */; };
 		111111111111111111111114 /* Apps/CutoutApp/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */; };
 		25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 111111111111111111111181 /* CutoutMobile */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		111111111111111111111121 /* Apps/CutoutApp/SpeedApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/SpeedApp.swift; sourceTree = SOURCE_ROOT; };
+		111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutApp.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ContentView.swift; sourceTree = SOURCE_ROOT; };
-		111111111111111111111123 /* Apps/CutoutApp/LiveSpeedModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LiveSpeedModel.swift; sourceTree = SOURCE_ROOT; };
+		111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppModel.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111124 /* CutoutApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CutoutApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Apps/CutoutApp/Assets.xcassets; sourceTree = SOURCE_ROOT; };
 		111111111111111111111126 /* Apps/CutoutApp/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/Info.plist; sourceTree = SOURCE_ROOT; };
@@ -48,9 +48,9 @@
 		111111111111111111111151 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
-				111111111111111111111121 /* Apps/CutoutApp/SpeedApp.swift */,
+				111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */,
 				111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */,
-				111111111111111111111123 /* Apps/CutoutApp/LiveSpeedModel.swift */,
+				111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -152,9 +152,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				111111111111111111111111 /* Apps/CutoutApp/SpeedApp.swift in Sources */,
+				111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */,
 				111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */,
-				111111111111111111111113 /* Apps/CutoutApp/LiveSpeedModel.swift in Sources */,
+				111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

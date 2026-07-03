@@ -3,13 +3,13 @@ import CutoutMobile
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject var model: LiveSpeedModel
+    @ObservedObject var model: CutoutAppModel
     @State private var selectedScreenID: MockupScreenID
     @State private var pairedDestinationScreenID: MockupScreenID?
 
     private let catalog = MockupScreenCatalog.v2
 
-    init(model: LiveSpeedModel) {
+    init(model: CutoutAppModel) {
         self.model = model
         _selectedScreenID = State(initialValue: Self.initialScreenID())
     }
@@ -40,7 +40,7 @@ struct ContentView: View {
                     .tag(screen.id)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            .cutoutAppTabPager()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -57,7 +57,7 @@ struct ContentView: View {
         selectedScreenID = screenID
     }
 
-    private func openRideScreen(ifNeededFor phase: LiveSpeedConnectionPhase) {
+    private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
         guard phase.opensRideScreen else { return }
         selectedScreenID = pairedDestinationScreenID ?? .eucRide
     }
@@ -80,6 +80,17 @@ struct ContentView: View {
 
     private static func destinationScreenID(for row: MockupPickerRow) -> MockupScreenID? {
         row.connectionRoute?.destinationScreenID
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func cutoutAppTabPager() -> some View {
+        #if os(macOS)
+        self
+        #else
+        tabViewStyle(.page(indexDisplayMode: .never))
+        #endif
     }
 }
 
@@ -1471,7 +1482,7 @@ private func decimalString(_ value: Double, fractionDigits: Int) -> String {
 
 private struct GenericMockupView: View {
     let screen: MockupScreen
-    let liveSpeed: String
+    let speedText: String
 
     var body: some View {
         ScrollView {
@@ -1507,7 +1518,7 @@ private struct GenericMockupView: View {
                 HStack {
                     Text("Live speed").foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(liveSpeed) mph").monospacedDigit()
+                    Text("\(speedText) mph").monospacedDigit()
                 }
             }
             .padding(24)
@@ -2624,7 +2635,7 @@ private extension MockupScreen {
     }
 }
 
-private extension LiveSpeedConnectionPhase {
+private extension SessionConnectionPhase {
     var opensRideScreen: Bool {
         switch self {
         case .connecting, .discoveringServices, .subscribing, .live:
