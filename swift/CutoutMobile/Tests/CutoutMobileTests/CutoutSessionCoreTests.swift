@@ -250,9 +250,8 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testFaultHistoryReadbackUpdatesCurrentSessionStateUntilDisconnect() {
         let core = CutoutSessionCore()
-        let readback = FaultHistoryReadback(
-            availability: .available,
-            lastFault: FaultHistoryEntry(
+        let readback = FaultHistoryReadback.faultSince(
+            FaultHistoryEntry(
                 code: FaultCode.unknown(id: 0x0040, value: 1),
                 source: .reported,
                 quality: .known,
@@ -282,6 +281,23 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertNil(core.faultHistoryReadback)
         XCTAssertEqual(observedReadbacks, [readback, nil])
+    }
+
+    func testFaultHistoryReadbackConstructorsKeepNoFaultEvidenceExplicit() {
+        let distance = Distance(value: 61_456_941)
+        let noFault = FaultHistoryReadback.noFaultSince(distance)
+        let unavailable = FaultHistoryReadback.unavailable()
+        let unsupported = FaultHistoryReadback.unsupported()
+
+        XCTAssertEqual(noFault.availability, .available)
+        XCTAssertNil(noFault.lastFault)
+        XCTAssertEqual(noFault.sinceDistance, distance)
+        XCTAssertEqual(unavailable.availability, .unavailable)
+        XCTAssertNil(unavailable.lastFault)
+        XCTAssertNil(unavailable.sinceDistance)
+        XCTAssertEqual(unsupported.availability, .unsupported)
+        XCTAssertNil(unsupported.lastFault)
+        XCTAssertNil(unsupported.sinceDistance)
     }
 
     func testBmsSnapshotUpdatesCurrentSessionStateUntilDisconnect() {

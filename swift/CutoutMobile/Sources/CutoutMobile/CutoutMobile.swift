@@ -327,20 +327,53 @@ public struct FaultHistoryReadback: Equatable, Hashable, Sendable {
     public let lastFault: FaultHistoryEntry?
     public let sinceDistance: Distance?
 
-    public init(
+    private init(
         availability: ReadbackAvailability,
-        lastFault: FaultHistoryEntry? = nil,
-        sinceDistance: Distance? = nil
+        lastFault: FaultHistoryEntry?,
+        sinceDistance: Distance?
     ) {
         self.availability = availability
         self.lastFault = lastFault
         self.sinceDistance = sinceDistance
     }
 
+    public static func unavailable() -> Self {
+        Self(availability: .unavailable, lastFault: nil, sinceDistance: nil)
+    }
+
+    public static func unsupported() -> Self {
+        Self(availability: .unsupported, lastFault: nil, sinceDistance: nil)
+    }
+
+    public static func noFaultSince(_ sinceDistance: Distance) -> Self {
+        Self(availability: .available, lastFault: nil, sinceDistance: sinceDistance)
+    }
+
+    public static func faultSince(
+        _ lastFault: FaultHistoryEntry,
+        sinceDistance: Distance? = nil
+    ) -> Self {
+        Self(
+            availability: .available,
+            lastFault: lastFault,
+            sinceDistance: sinceDistance
+        )
+    }
+
     fileprivate init(_ dto: MobileFaultHistoryReadbackDto) {
-        self.availability = ReadbackAvailability(dto.availability)
-        self.lastFault = dto.lastFault.map(FaultHistoryEntry.init)
-        self.sinceDistance = dto.sinceDistance?.value
+        let availability = ReadbackAvailability(dto.availability)
+        let lastFault = dto.lastFault.map(FaultHistoryEntry.init)
+        let sinceDistance = dto.sinceDistance?.value
+
+        if availability == .available, lastFault == nil, sinceDistance == nil {
+            self = .unavailable()
+        } else {
+            self.init(
+                availability: availability,
+                lastFault: lastFault,
+                sinceDistance: sinceDistance
+            )
+        }
     }
 }
 
@@ -576,7 +609,7 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
 }
 
 public enum EucFaultHistoryState: Equatable, Hashable, Sendable {
-    case none(sinceDistance: Distance?)
+    case none(sinceDistance: Distance)
     case fault(code: FaultCode, sinceDistance: Distance?)
 }
 
