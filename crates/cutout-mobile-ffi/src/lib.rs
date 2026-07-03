@@ -124,17 +124,26 @@ pub fn mobile_discovery_candidate_from_advertisement(
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
     let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
+        let model = if lower_name.contains("falcon")
+            || lower_name.contains("begode")
+            || lower_name.contains("gotway")
+        {
+            MobileElectricUnicycleModelDto::Falcon
+        } else {
+            MobileElectricUnicycleModelDto::Aero
+        };
+
         return MobileDiscoveryCandidateDto {
             platform_identifier,
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "advertisement hint".to_owned(),
-            detail: "Begode/GotWay candidate; protocol probe required".to_owned(),
+            detail: format!("{model:?} provisional route"),
             is_picker_candidate: true,
-            support: MobileDiscoveryCandidateSupportDto::Unsupported,
-            connection_route: None,
-            electric_unicycle_model: None,
-            disabled_reason: Some("Model not confirmed".to_owned()),
+            support: MobileDiscoveryCandidateSupportDto::Supported,
+            connection_route: Some("electric_unicycle".to_owned()),
+            electric_unicycle_model: Some(model),
+            disabled_reason: None,
         };
     }
 
@@ -215,7 +224,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         },
         connection_route: supported.then(|| "electric_unicycle".to_owned()),
         electric_unicycle_model: supported.then_some(MobileElectricUnicycleModelDto::Falcon),
-        disabled_reason: (!supported).then(|| "Model not confirmed".to_owned()),
+        disabled_reason: (!supported).then(|| "Not yet supported".to_owned()),
     }
 }
 
@@ -2921,21 +2930,21 @@ mod tests {
         assert_eq!(candidate.display_name, "NOSFET Aero");
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "advertisement hint");
-        assert_eq!(
-            candidate.detail,
-            "Begode/GotWay candidate; protocol probe required"
-        );
+        assert_eq!(candidate.detail, "Aero provisional route");
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            MobileDiscoveryCandidateSupportDto::Unsupported
+            MobileDiscoveryCandidateSupportDto::Supported
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason,
-            Some("Model not confirmed".to_owned())
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
         );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
@@ -2981,7 +2990,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_keeps_generic_gotway_name_provisional() {
+    fn mobile_discovery_candidate_routes_generic_gotway_name_provisionally() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-begode".to_owned(),
             Some("GotWay_002441".to_owned()),
@@ -2991,18 +3000,22 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            MobileDiscoveryCandidateSupportDto::Unsupported
+            MobileDiscoveryCandidateSupportDto::Supported
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason.as_deref(),
-            Some("Model not confirmed")
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
         );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Falcon)
+        );
+        assert_eq!(candidate.disabled_reason, None);
+        assert_eq!(candidate.detail, "Falcon provisional route");
     }
 
     #[test]
-    fn mobile_discovery_candidate_keeps_nf_name_provisional() {
+    fn mobile_discovery_candidate_routes_nf_name_provisionally() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NF2557".to_owned()),
@@ -3012,14 +3025,18 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            MobileDiscoveryCandidateSupportDto::Unsupported
+            MobileDiscoveryCandidateSupportDto::Supported
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason.as_deref(),
-            Some("Model not confirmed")
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
         );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
+        assert_eq!(candidate.disabled_reason, None);
+        assert_eq!(candidate.detail, "Aero provisional route");
     }
 
     #[test]
@@ -3838,7 +3855,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_keeps_unconfirmed_euc_visible_but_unrouteable() {
+    fn mobile_discovery_candidate_routes_unknown_ffe0_to_default_euc_session() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown-euc".to_owned(),
             Some("EUC-unknown".to_owned()),
@@ -3848,14 +3865,17 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            MobileDiscoveryCandidateSupportDto::Unsupported
+            MobileDiscoveryCandidateSupportDto::Supported
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason,
-            Some("Model not confirmed".to_owned())
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
         );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Aero)
+        );
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
