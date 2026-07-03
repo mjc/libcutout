@@ -202,6 +202,16 @@ mod tests {
     }
 
     #[test]
+    fn catalog_does_not_advertise_unproven_fault_history() {
+        assert!(MODEL_CATALOG.iter().all(|entry| {
+            !entry
+                .registry
+                .capabilities
+                .supports_command_kind(CommandKind::RequestFaultHistory)
+        }));
+    }
+
+    #[test]
     fn session_registration_constructs_model_sessions_by_typed_key() {
         let aero = find_session_registration(NOSFET_AERO_SESSION_KEY)
             .expect("Aero session registration exists");
