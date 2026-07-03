@@ -717,7 +717,7 @@ fn push_begode_frame(
     monotonic_ms: MonotonicTimestamp,
     output: &mut Vec<SessionOutput>,
 ) -> SemanticEventCount {
-    let retain_bms_frame = |output: &mut Vec<SessionOutput>| {
+    let retain_known_frame = |output: &mut Vec<SessionOutput>| {
         output.push(SessionOutput::NotificationIngest(
             NotificationIngestOutcome::parser_gap(
                 family,
@@ -738,6 +738,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::Telemetry(
                     context.live_a_to_delta(telemetry, monotonic_ms),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_telemetry_error(error, output),
@@ -750,7 +751,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     summary.to_battery_response(),
                 )));
-                retain_bms_frame(output);
+                retain_known_frame(output);
                 SemanticEventCount::from_events(2)
             }
             Err(error) => push_begode_bms_error(error, output),
@@ -760,7 +761,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     page.to_battery_response(),
                 )));
-                retain_bms_frame(output);
+                retain_known_frame(output);
                 SemanticEventCount::from_events(1)
             }
             Err(error) => push_begode_bms_error(error, output),
@@ -777,6 +778,7 @@ fn push_begode_frame(
                 output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
                     telemetry.to_diagnostics_response(),
                 )));
+                retain_known_frame(output);
                 SemanticEventCount::from_events(3)
             }
             Err(error) => push_begode_telemetry_error(error, output),
@@ -1625,7 +1627,7 @@ mod tests {
         )
     }
 
-    fn begode_bms_frame_gap(
+    fn begode_frame_gap(
         frame: &[u8],
         tag: u16,
         monotonic_ms: MonotonicTimestamp,
@@ -1986,6 +1988,28 @@ mod tests {
     }
 
     #[test]
+    fn begode_falcon_live_a_retains_complete_frame_evidence() {
+        let live_a = live_begode_a_frame();
+        let output = falcon_output_for_notification_chunks(&[live_a.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(live_a.as_slice(), 0x00, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(live_a.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(1),
+                ),
+            ]
+        );
+        assert_eq!(telemetry_events(&output).len(), 1);
+    }
+
+    #[test]
     fn begode_falcon_session_can_use_explicit_100v_pack_profile() {
         let live_a = live_begode_a_frame();
         let mut session = ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
@@ -2294,6 +2318,29 @@ mod tests {
     }
 
     #[test]
+    fn begode_falcon_live_b_retains_complete_frame_evidence() {
+        let live_b = live_begode_b_frame();
+        let output = falcon_output_for_notification_chunks(&[live_b.as_slice()]);
+        let outcomes = notification_ingest_outcomes(&output);
+
+        assert_eq!(
+            outcomes,
+            vec![
+                begode_frame_gap(live_b.as_slice(), 0x04, ms(42)),
+                NotificationIngestOutcome::semantic_events(
+                    ProtocolFamily::BegodeGotway,
+                    BEGODE_DATA_CHANNEL,
+                    NotificationByteLen::from_bytes(live_b.len()),
+                    ms(42),
+                    SemanticEventCount::from_events(3),
+                ),
+            ]
+        );
+        assert_eq!(telemetry_events(&output).len(), 1);
+        assert_eq!(read_only_response_events(&output).len(), 2);
+    }
+
+    #[test]
     fn begode_falcon_fragmented_bms_summary_preserves_read_only_responses() {
         let summary = live_begode_bms_summary_frame();
 
@@ -2309,7 +2356,7 @@ mod tests {
         assert_eq!(
             outcomes,
             vec![
-                begode_bms_frame_gap(summary.as_slice(), 0x01, ms(42)),
+                begode_frame_gap(summary.as_slice(), 0x01, ms(42)),
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::BegodeGotway,
                     BEGODE_DATA_CHANNEL,
@@ -2338,7 +2385,7 @@ mod tests {
         assert_eq!(
             outcomes,
             vec![
-                begode_bms_frame_gap(cell_page.as_slice(), 0x02, ms(42)),
+                begode_frame_gap(cell_page.as_slice(), 0x02, ms(42)),
                 NotificationIngestOutcome::semantic_events(
                     ProtocolFamily::BegodeGotway,
                     BEGODE_DATA_CHANNEL,
