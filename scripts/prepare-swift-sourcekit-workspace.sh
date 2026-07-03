@@ -17,19 +17,28 @@ esac
 
 swift_cmd=($(cutout_swift_runtime_command))
 
-package_dir="${CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
+package_dir="${CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR:-swift/CutoutMobile}"
 generated_dir="$package_dir/Sources/CutoutMobile/Generated"
 system_target_dir="$package_dir/Sources/cutout_mobile_ffiFFI"
 smoke_dir="$package_dir/Tests/CutoutMobileSmoke"
+in_place_package_dir="swift/CutoutMobile"
 
 SDKROOT="$(cutout_macosx_sdk_path)" cargo build -p cutout-mobile-ffi
 
-rm -rf "$package_dir"
-mkdir -p "$package_dir"
-cp swift/CutoutMobile/Package.swift "$package_dir/Package.swift"
-cp -R swift/CutoutMobile/Apps "$package_dir/Apps"
-cp -R swift/CutoutMobile/Sources "$package_dir/Sources"
-cp -R swift/CutoutMobile/Tests "$package_dir/Tests"
+case "$package_dir" in
+  "$in_place_package_dir" | "$root/$in_place_package_dir")
+    rm -rf "$generated_dir" "$system_target_dir" "$smoke_dir"
+    ;;
+  *)
+    rm -rf "$package_dir"
+    mkdir -p "$package_dir"
+    cp swift/CutoutMobile/Package.swift "$package_dir/Package.swift"
+    cp -R swift/CutoutMobile/Apps "$package_dir/Apps"
+    cp -R swift/CutoutMobile/Sources "$package_dir/Sources"
+    cp -R swift/CutoutMobile/Tests "$package_dir/Tests"
+    ;;
+esac
+
 mkdir -p "$generated_dir" "$system_target_dir" "$smoke_dir"
 
 SDKROOT="$(cutout_macosx_sdk_path)" cargo run -p cutout-uniffi-bindgen -- generate \

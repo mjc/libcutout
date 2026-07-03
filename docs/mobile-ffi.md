@@ -86,27 +86,40 @@ continue to come from the Rust crate.
 ## Swift SourceKit Workspace
 
 The checked-in Swift package depends on generated UniFFI bindings, so tools that
-expect a complete SwiftPM workspace should use a generated workspace under
-`target/`:
+expect a complete SwiftPM workspace should prepare the local package before
+asking SourceKit for diagnostics:
 
 ```console
 ./scripts/prepare-swift-sourcekit-workspace.sh
 ```
 
-The script builds `cutout-mobile-ffi`, generates Swift UniFFI bindings, lays out
-the `cutout_mobile_ffiFFI` system-library target, and verifies the staged package
-with `swift package describe`. On Darwin it clears `SDKROOT` and `DEVELOPER_DIR`
-for the Swift command so Xcode's Swift toolchain does not accidentally pair with
-a Nix Apple SDK.
+The script builds `cutout-mobile-ffi`, generates ignored Swift UniFFI bindings
+under `swift/CutoutMobile/Sources/CutoutMobile/Generated`, lays out the ignored
+`cutout_mobile_ffiFFI` system-library target, and verifies the package with
+`swift package describe`. On Darwin it clears `SDKROOT` and `DEVELOPER_DIR` for
+the Swift command so Xcode's Swift toolchain does not accidentally pair with a
+Nix Apple SDK.
 
-By default the workspace is written to:
+By default this prepares the checked-in Swift package in place:
 
 ```text
-target/swift-sourcekit/CutoutMobile
+swift/CutoutMobile
 ```
 
-Set `CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR` to choose a different generated
-workspace path. Do not check in the generated bindings, header, or module map.
+Set `CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR` to choose a separate generated
+workspace path, for example `target/swift-sourcekit/CutoutMobile`. Do not check
+in the generated bindings, header, or module map.
+
+For Serena/SourceKit diagnostics, activate Serena on the Swift package root
+after running the preparation script:
+
+```text
+swift/CutoutMobile
+```
+
+The repository root remains the right Serena project for Rust work, but
+SourceKit needs the SwiftPM package root to resolve generated UniFFI types such
+as `RideOperatingState` and `Power`.
 
 ## App Commands
 
