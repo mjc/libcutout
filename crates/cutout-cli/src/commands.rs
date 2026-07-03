@@ -1780,6 +1780,46 @@ fn pevcap_identity_for_catalog_entry(
     }
 }
 
+fn pevcap_identity_from_protocol_report(
+    profile: SelectedSessionProfile,
+    report: &SessionBridgeReport,
+) -> Option<PevcapResolvedIdentity> {
+    if profile.session_key() != NOSFET_AERO_SESSION_KEY {
+        return None;
+    }
+
+    let firmware = report.firmware?;
+    let model_id = firmware.firmware_major?;
+    let resolution =
+        cutout_protocols::identify_known_model(&cutout_protocols::StagedIdentityInput {
+            advertised_name: None,
+            gatt: core::iter::empty::<cutout_core::GattFingerprint>(),
+            stream_family: cutout_protocols::ProtocolFamilyClassification::Pending,
+            banner_model: cutout_protocols::IdentityBannerEvidence::Missing,
+            protocol_model: cutout_protocols::ProtocolModelIdentityEvidence::model_id(
+                ProtocolFamily::VeteranLeaperkimNosfet,
+                model_id.value,
+            ),
+        });
+    let model = resolution.model.map(|entry| VerifiedValue {
+        value: entry.model.as_str().to_owned(),
+        verification: entry
+            .wire_model_id
+            .map_or(VerificationStatus::Inferred, |wire_model_id| {
+                wire_model_id.verification
+            }),
+    });
+
+    Some(PevcapResolvedIdentity {
+        protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+        model,
+        firmware: Some(VerifiedValue {
+            value: firmware_summary_string(firmware),
+            verification: model_id.verification,
+        }),
+    })
+}
+
 fn print_session_endpoints(endpoints: SessionEndpoints<'_>) {
     info!(
         write = %endpoints.write.uuid,
@@ -1924,6 +1964,8 @@ fn encode_session_capture_pevcap(
     resolved_identity: Option<PevcapResolvedIdentity>,
     annotations: &[&str],
 ) -> Result<Vec<u8>> {
+    let resolved_identity =
+        pevcap_identity_from_protocol_report(profile, &capture.report).or(resolved_identity);
     let mut capture_annotations = Vec::with_capacity(annotations.len() + 1);
     capture_annotations.push("cutout-cli capture");
     capture_annotations.extend_from_slice(annotations);
@@ -1932,6 +1974,22 @@ fn encode_session_capture_pevcap(
         "selected_session_key={}",
         profile.session_key().as_str()
     ));
+    if profile.session_key() == NOSFET_AERO_SESSION_KEY {
+        if let Some(model_id) = capture
+            .report
+            .firmware
+            .and_then(|firmware| firmware.firmware_major)
+        {
+            resolver_evidence.push(format!("protocol_model_id={}", model_id.value));
+        }
+        if let Some(raw) = capture
+            .report
+            .firmware
+            .and_then(|firmware| firmware.build_id)
+        {
+            resolver_evidence.push(format!("protocol_firmware_raw={}", raw.value));
+        }
+    }
     if let Some(identity) = resolved_identity.as_ref() {
         if let Some(protocol_family) = identity.protocol_family {
             resolver_evidence.push(format!("resolved_protocol_family={protocol_family:?}"));
@@ -2976,6 +3034,23 @@ mod tests {
         }
     }
 
+    fn aero_connection_summary() -> ConnectionSummary {
+        ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "NF2557".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: Some(rssi(-67)),
+                advertised_services: vec![Uuid::from_u128(
+                    0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb,
+                )]
+                .into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        }
+    }
+
     fn sample_aero_replay_capture() -> PevcapCapture {
         let header = PevcapHeader::new(
             wc(1_725_000_123_456),
@@ -3173,6 +3248,75 @@ mod tests {
             Some(WriteMode::WithoutResponse)
         );
         assert_eq!(decoded.records[2].bytes.as_ref(), b"NAME=NF2557");
+    }
+
+    #[test]
+    fn capture_pevcap_prefers_veteran_protocol_identity_from_report() {
+        let summary = aero_connection_summary();
+        let capture = SessionCapture {
+            records: vec![],
+            report: SessionBridgeReport {
+                firmware: Some(FirmwareInfo {
+                    firmware_major: Some(Measured::reported(43)),
+                    firmware_minor: Some(Measured::reported(2)),
+                    firmware_patch: Some(Measured::reported(54)),
+                    build_id: Some(cutout_core::RawFieldValue::new(0x20, 43_254)),
+                    ..FirmwareInfo::default()
+                }),
+                ..SessionBridgeReport::default()
+            },
+        };
+
+        let bytes = encode_session_capture_pevcap(
+            &capture,
+            &summary,
+            PevcapFormat::Binary,
+            wc(42),
+            selected_aero_session_profile(),
+            Some(PevcapResolvedIdentity {
+                protocol_family: Some(ProtocolFamily::VeteranLeaperkimNosfet),
+                model: None,
+                firmware: None,
+            }),
+            &[],
+        )
+        .expect("capture encodes");
+        let decoded =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary PEVCAP decodes");
+        let identity = decoded
+            .header
+            .resolved_identity
+            .expect("protocol identity is recorded");
+
+        assert_eq!(
+            identity.protocol_family,
+            Some(ProtocolFamily::VeteranLeaperkimNosfet)
+        );
+        assert_eq!(
+            identity.model,
+            Some(VerifiedValue {
+                value: "NOSFET Aero".to_owned(),
+                verification: VerificationStatus::HardwareVerified,
+            })
+        );
+        assert_eq!(
+            identity.firmware,
+            Some(VerifiedValue {
+                value: "43.2.54".to_owned(),
+                verification: VerificationStatus::HardwareVerified,
+            })
+        );
+        assert_eq!(
+            decoded.header.resolver_evidence.as_slice(),
+            &[
+                "selected_session_key=nosfet-aero-read-only".to_owned(),
+                "protocol_model_id=43".to_owned(),
+                "protocol_firmware_raw=43254".to_owned(),
+                "resolved_protocol_family=VeteranLeaperkimNosfet".to_owned(),
+                "resolved_model=NOSFET Aero".to_owned(),
+                "resolved_firmware=43.2.54".to_owned(),
+            ]
+        );
     }
 
     #[test]
