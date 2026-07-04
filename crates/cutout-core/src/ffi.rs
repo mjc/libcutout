@@ -8,11 +8,11 @@ use crate::{
     LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
     NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
     ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power,
-    ProtocolFamily, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
-    WriteMode,
+    ProtocolFamily, ProtocolTag, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
+    SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed, TelemetryDelta,
+    TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
+    ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -803,14 +803,11 @@ impl From<RawFieldValue> for RawFieldValueDto {
     }
 }
 
-/// UniFFI-ready battery page metadata.
+/// UniFFI-ready interpreted BMS status page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BatteryPageMetadataDto {
-    /// BMS page selector.
-    pub selector: u8,
-
-    /// Protocol tag/opcode that produced this page, when available.
-    pub tag: Option<u16>,
+pub struct BmsStatusPage {
+    /// Source BMS status page id.
+    pub id: BmsStatusPageId,
 
     /// Battery page kind.
     pub kind: BatteryPageKindDto,
@@ -819,14 +816,50 @@ pub struct BatteryPageMetadataDto {
     pub verification: VerificationStatusDto,
 }
 
-impl From<BatteryPageMetadata> for BatteryPageMetadataDto {
+impl From<BatteryPageMetadata> for BmsStatusPage {
     fn from(page: BatteryPageMetadata) -> Self {
         Self {
-            selector: page.selector.get(),
-            tag: page.tag.map(|tag| tag.get()),
+            id: page.into(),
             kind: page.kind.into(),
             verification: page.verification.into(),
         }
+    }
+}
+
+/// UniFFI-ready BMS status page id.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BmsStatusPageId {
+    /// Protocol namespace that scopes the selector, when available.
+    pub namespace: Option<BmsStatusPageNamespace>,
+
+    /// BMS page selector.
+    pub selector: u8,
+}
+
+impl From<BatteryPageMetadata> for BmsStatusPageId {
+    fn from(page: BatteryPageMetadata) -> Self {
+        Self {
+            namespace: page.tag.map(BmsStatusPageNamespace::from_core),
+            selector: page.selector.get(),
+        }
+    }
+}
+
+/// UniFFI-ready BMS status page namespace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BmsStatusPageNamespace {
+    /// Raw protocol namespace value.
+    pub value: u16,
+}
+
+impl BmsStatusPageNamespace {
+    fn from_core(tag: ProtocolTag) -> Self {
+        Self { value: tag.get() }
+    }
+
+    /// Converts this status page namespace back into the core protocol tag type.
+    pub fn into_core(self) -> ProtocolTag {
+        ProtocolTag::new(self.value)
     }
 }
 
@@ -876,7 +909,7 @@ impl From<BatteryReadback> for BatteryReadbackDto {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatteryInfoDto {
     /// Page metadata for this battery response.
-    pub page: BatteryPageMetadataDto,
+    pub page: BmsStatusPage,
 
     /// Pack or input voltage in millivolts.
     pub voltage: Option<MeasuredI32Dto>,
@@ -1629,7 +1662,7 @@ impl From<ReservedPayloadEvidence> for ReservedPayloadEvidenceDto {
                 .classifier
                 .selector_value()
                 .map(super::ProtocolSelector::get),
-            tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
+            tag: evidence.classifier.tag_value().map(ProtocolTag::get),
             body_len: PayloadBodyLenDto::from_core(evidence.body_len),
             retained_payload: evidence.retained_payload.as_slice().to_vec(),
             verification: evidence.verification.into(),
@@ -1660,7 +1693,7 @@ impl From<ParserGapEvidence> for ParserGapEvidenceDto {
                 .classifier
                 .selector_value()
                 .map(super::ProtocolSelector::get),
-            tag: evidence.classifier.tag_value().map(super::ProtocolTag::get),
+            tag: evidence.classifier.tag_value().map(ProtocolTag::get),
             body_len: PayloadBodyLenDto::from_core(evidence.body_len),
             retained_payload: evidence.retained_payload.as_slice().to_vec(),
         }
@@ -2168,7 +2201,7 @@ mod tests {
             BatteryReadbackAvailabilityDto::Available
         );
         let battery = readback.page.expect("battery page");
-        assert_eq!(battery.page.selector, 8);
+        assert_eq!(battery.page.id.selector, 8);
         assert_eq!(battery.page.kind, BatteryPageKindDto::Raw);
         assert_eq!(
             battery.page.verification,

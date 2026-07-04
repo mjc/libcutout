@@ -1323,25 +1323,17 @@ private func bmsPercentText(_ value: BatteryLevel?) -> String {
 }
 
 private func bmsPageText(selector: UInt8?, tag: UInt16?, kind: String?) -> String {
-    let tagText = tag.map { String(format: "0x%02x", Int($0)) }
-    switch (selector, tagText, kind) {
-    case (let selector?, let tag?, let kind?):
-        return "\(kind) \(tag) #\(selector)"
-    case (let selector?, nil, let kind?):
-        return "\(kind) #\(selector)"
-    case (let selector?, let tag?, nil):
-        return "\(tag) #\(selector)"
-    case (nil, let tag?, let kind?):
-        return "\(kind) \(tag)"
-    case (nil, nil, let kind?):
-        return kind
-    case (let selector?, nil, nil):
-        return "#\(selector)"
-    case (nil, let tag?, nil):
-        return tag
-    case (nil, nil, nil):
-        return "--"
+    var parts: [String] = []
+    if let kind {
+        parts.append(kind)
     }
+    if let tag {
+        parts.append(String(format: "0x%02x", Int(tag)))
+    }
+    if let selector {
+        parts.append("#\(selector)")
+    }
+    return parts.isEmpty ? "--" : parts.joined(separator: " ")
 }
 
 private func bmsVoltageText(_ value: Voltage?) -> String {

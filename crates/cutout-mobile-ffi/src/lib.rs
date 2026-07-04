@@ -1111,8 +1111,8 @@ impl MobileBmsSnapshotDto {
         Self {
             availability,
             topology: MobileBmsTopologyDto::from_observed_groups(groups.len()),
-            page_selector: Some(battery.page.selector),
-            page_tag: battery.page.tag,
+            page_selector: Some(battery.page.id.selector),
+            page_tag: battery.page.id.namespace.map(|namespace| namespace.value),
             page_kind: Some(bms_page_kind_label(battery.page.kind).to_owned()),
             page_verification: Some(battery.page.verification.into()),
             energy_percent: battery
@@ -1223,8 +1223,11 @@ struct BmsPageIdentity {
 }
 
 impl BmsPageIdentity {
-    fn from_page(page: cutout_core::BatteryPageMetadataDto) -> Self {
-        Self::from_tag_and_selector(page.tag.map(ProtocolTag::new), page.selector)
+    fn from_page(page: cutout_core::BmsStatusPage) -> Self {
+        Self::from_tag_and_selector(
+            page.id.namespace.map(|namespace| namespace.into_core()),
+            page.id.selector,
+        )
     }
 
     fn from_tag_and_selector(page_tag: Option<ProtocolTag>, page_selector: u8) -> Self {
@@ -1284,14 +1287,13 @@ impl BegodeCellPageBank {
             Self::First => BmsGroupOffset::ZERO,
             Self::Second => Self::VALUES_PER_BANK,
         };
-        BmsGroupIndex::FIRST
+        let bank_base = BmsGroupIndex::FIRST
             .offset_by(bank_offset)
-            .and_then(|index| {
-                page_selector
-                    .cell_page_offset(Self::VALUES_PER_PAGE)
-                    .and_then(|offset| index.offset_by(offset))
-            })
-            .unwrap_or(BmsGroupIndex::FIRST)
+            .unwrap_or(BmsGroupIndex::FIRST);
+        page_selector
+            .cell_page_offset(Self::VALUES_PER_PAGE)
+            .and_then(|offset| bank_base.offset_by(offset))
+            .unwrap_or(bank_base)
     }
 }
 
@@ -3931,9 +3933,11 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Available,
                 page: Some(BatteryInfoDto {
-                    page: cutout_core::BatteryPageMetadataDto {
-                        selector: 3,
-                        tag: None,
+                    page: cutout_core::BmsStatusPage {
+                        id: cutout_core::BmsStatusPageId {
+                            namespace: None,
+                            selector: 3,
+                        },
                         kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
@@ -4073,9 +4077,11 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Unsupported,
                 page: Some(BatteryInfoDto {
-                    page: cutout_core::BatteryPageMetadataDto {
-                        selector: 3,
-                        tag: None,
+                    page: cutout_core::BmsStatusPage {
+                        id: cutout_core::BmsStatusPageId {
+                            namespace: None,
+                            selector: 3,
+                        },
                         kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
@@ -4148,6 +4154,14 @@ mod tests {
             lowest_cell_voltage_group_index(&cell_voltages, page_identity),
             Some(50)
         );
+    }
+
+    #[test]
+    fn begode_second_bank_overflow_falls_back_to_bank_base() {
+        let page_identity =
+            BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), u8::MAX);
+
+        assert_eq!(page_identity.first_group_index().as_mobile_dto(), 33);
     }
 
     #[test]
