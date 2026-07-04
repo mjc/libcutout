@@ -2077,6 +2077,85 @@ private struct BmsOverviewLayout: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14 * scale) {
+            summaryCard
+
+            if snapshot.voltage != nil || snapshot.cellDelta != nil {
+                HStack(spacing: 14 * scale) {
+                    if snapshot.voltage != nil {
+                        BmsMetricCard(
+                            title: "pack voltage",
+                            value: voltageText(snapshot.voltage),
+                            unit: "V",
+                            detail: averageGroupVoltageDetail,
+                            accent: .green,
+                            scale: scale
+                        )
+                    }
+                    if snapshot.cellDelta != nil {
+                        BmsMetricCard(
+                            title: "cell delta",
+                            value: millivoltsText(snapshot.cellDelta),
+                            unit: "mV",
+                            detail: snapshot.balancingSummary ?? "",
+                            accent: .green,
+                            scale: scale
+                        )
+                    }
+                }
+            }
+
+            if lowestGroupVoltage != nil || hasTemperatureEvidence {
+                HStack(spacing: 14 * scale) {
+                    if let lowestGroupVoltage {
+                        BmsMetricCard(
+                            title: "lowest group",
+                            value: groupVoltageText(lowestGroupVoltage),
+                            unit: "V",
+                            detail: snapshot.lowestGroupLabel ?? "",
+                            accent: .orange,
+                            scale: scale
+                        )
+                    }
+                    if hasTemperatureEvidence {
+                        BmsMetricCard(
+                            title: "highest temp",
+                            value: temperatureText(snapshot.highestTemperature),
+                            unit: "°C",
+                            detail: snapshot.highestTemperatureLabel ?? "",
+                            accent: .green,
+                            scale: scale
+                        )
+                    }
+                }
+            }
+
+            if let balancingSummary = snapshot.balancingSummary {
+                BmsWideCard(
+                    title: "balancing",
+                    value: balancingSummary,
+                    detail: snapshot.balancingDetail ?? "",
+                    accent: .orange,
+                    border: .normal,
+                    scale: scale
+                )
+            }
+
+            if let faultSummary = snapshot.faultSummary {
+                BmsWideCard(
+                    title: "fault state",
+                    value: faultSummary,
+                    detail: snapshot.faultDetail ?? "",
+                    accent: .orange,
+                    border: .critical,
+                    scale: scale
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var summaryCard: some View {
+        if snapshot.energyPercent != nil {
             BmsHeroCard(
                 eyebrow: "usable energy",
                 title: percentText(snapshot.energyPercent),
@@ -2085,63 +2164,25 @@ private struct BmsOverviewLayout: View {
                 accent: .yellow,
                 scale: scale
             )
-
-            HStack(spacing: 14 * scale) {
-                BmsMetricCard(
-                    title: "pack voltage",
-                    value: voltageText(snapshot.voltage),
-                    unit: "V",
-                    detail: averageGroupVoltageDetail,
-                    accent: .green,
-                    scale: scale
-                )
-                BmsMetricCard(
-                    title: "cell delta",
-                    value: millivoltsText(snapshot.cellDelta),
-                    unit: "mV",
-                    detail: snapshot.balancingSummary ?? snapshot.availability.displayText,
-                    accent: .green,
-                    scale: scale
-                )
-            }
-
-            HStack(spacing: 14 * scale) {
-                BmsMetricCard(
-                    title: "lowest group",
-                    value: groupVoltageText(snapshot, index: snapshot.lowestGroupIndex),
-                    unit: "V",
-                    detail: snapshot.lowestGroupLabel ?? snapshot.topology.layoutLabel,
-                    accent: .orange,
-                    scale: scale
-                )
-                BmsMetricCard(
-                    title: "highest temp",
-                    value: temperatureText(snapshot.highestTemperature),
-                    unit: "°C",
-                    detail: snapshot.highestTemperatureLabel ?? "",
-                    accent: .green,
-                    scale: scale
-                )
-            }
-
+        } else {
             BmsWideCard(
-                title: "balancing",
-                value: snapshot.balancingSummary ?? "--",
-                detail: snapshot.balancingDetail ?? "",
-                accent: .orange,
+                title: "pack telemetry",
+                value: voltageText(snapshot.voltage) == "--" ? snapshot.availability.displayText : "\(voltageText(snapshot.voltage)) V",
+                detail: snapshot.topology.layoutLabel,
+                accent: .green,
                 border: .normal,
                 scale: scale
             )
-
-            BmsWideCard(
-                title: "fault state",
-                value: snapshot.faultSummary ?? "--",
-                detail: snapshot.faultDetail ?? "",
-                accent: .orange,
-                border: .critical,
-                scale: scale
-            )
         }
+    }
+
+    private var lowestGroupVoltage: Voltage? {
+        guard let lowestGroupIndex = snapshot.lowestGroupIndex else { return nil }
+        return snapshot.groups.first { $0.index == lowestGroupIndex }?.voltage
+    }
+
+    private var hasTemperatureEvidence: Bool {
+        snapshot.highestTemperature != nil && (!snapshot.temperatureReadings.isEmpty || snapshot.highestTemperatureLabel != nil)
     }
 
     private var averageGroupVoltageDetail: String {
