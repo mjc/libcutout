@@ -12,6 +12,9 @@ final class BmsSnapshotContractTests: XCTestCase {
                 bmsCount: 2,
                 confidence: .verified
             ),
+            pageSelector: 3,
+            pageKind: "temperature",
+            pageVerification: .hardwareVerified,
             energyPercent: BatteryLevel(value: 72),
             voltage: Voltage(value: 81_600),
             current: BatteryCurrent(value: -12_400),
@@ -121,6 +124,9 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.availability, .unsupported)
         XCTAssertEqual(snapshot.topology.layoutLabel, "unsupported pack")
         XCTAssertNil(snapshot.energyPercent)
+        XCTAssertNil(snapshot.pageSelector)
+        XCTAssertNil(snapshot.pageKind)
+        XCTAssertNil(snapshot.pageVerification)
         XCTAssertNil(snapshot.voltage)
         XCTAssertNil(snapshot.current)
         XCTAssertNil(snapshot.cellDelta)
@@ -147,6 +153,9 @@ final class BmsSnapshotContractTests: XCTestCase {
                 bmsCount: 2,
                 confidence: .verified
             ),
+            pageSelector: 3,
+            pageKind: "temperature",
+            pageVerification: .hardwareVerified,
             energyPercent: BatteryLevel(value: 72),
             voltage: Voltage(value: 81_600),
             current: BatteryCurrent(value: -12_400),
@@ -166,6 +175,8 @@ final class BmsSnapshotContractTests: XCTestCase {
             snapshot.readbackRows,
             [
                 SessionDebugRow(label: "availability", value: "available"),
+                SessionDebugRow(label: "page", value: "temperature #3"),
+                SessionDebugRow(label: "page verification", value: "hardware verified"),
                 SessionDebugRow(label: "charge", value: "72%"),
                 SessionDebugRow(label: "voltage", value: "81.6"),
                 SessionDebugRow(label: "current", value: "-12.4"),

@@ -3,19 +3,19 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use cutout_core::{
-    BatteryInfoDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, ChargeModeDto,
-    CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultCode, FaultCodeDto,
-    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
-    FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
-    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredChargeModeDto,
-    MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
-    MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
-    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
-    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue, RawFieldValueDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    BatteryInfoDto, BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
+    ChargeModeDto, CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultCode,
+    FaultCodeDto, FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry,
+    FaultHistoryEntryDto, FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel,
+    GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
+    MeasuredChargeModeDto, MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto,
+    MeasuredU64Dto, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
+    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue,
+    RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto,
+    SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
     Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
     TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
@@ -1014,6 +1014,15 @@ pub struct MobileBmsSnapshotDto {
     /// Topology summary for this reading.
     pub topology: MobileBmsTopologyDto,
 
+    /// BMS page selector that produced this snapshot.
+    pub page_selector: Option<u8>,
+
+    /// BMS page kind that produced this snapshot.
+    pub page_kind: Option<String>,
+
+    /// Verification for the BMS page interpretation.
+    pub page_verification: Option<MobileVerificationStatusDto>,
+
     /// State of charge or usable energy percent when known.
     pub energy_percent: Option<BatteryLevelReading>,
 
@@ -1090,6 +1099,9 @@ impl MobileBmsSnapshotDto {
         Self {
             availability,
             topology: MobileBmsTopologyDto::from_observed_groups(groups.len()),
+            page_selector: Some(battery.page.selector),
+            page_kind: Some(bms_page_kind_label(battery.page.kind).to_owned()),
+            page_verification: Some(battery.page.verification.into()),
             energy_percent: battery
                 .level_reported
                 .or(battery.level_estimated)
@@ -1120,6 +1132,9 @@ impl MobileBmsSnapshotDto {
         Self {
             availability,
             topology: MobileBmsTopologyDto::unknown_readback(),
+            page_selector: None,
+            page_kind: None,
+            page_verification: None,
             energy_percent: None,
             voltage: None,
             current: None,
@@ -1138,6 +1153,15 @@ impl MobileBmsSnapshotDto {
             capture_action_title: None,
             capture_action_state: None,
         }
+    }
+}
+
+fn bms_page_kind_label(kind: BatteryPageKindDto) -> &'static str {
+    match kind {
+        BatteryPageKindDto::Metadata => "metadata",
+        BatteryPageKindDto::CellVoltage => "cell voltage",
+        BatteryPageKindDto::Temperature => "temperature",
+        BatteryPageKindDto::Raw => "raw",
     }
 }
 
@@ -3127,6 +3151,9 @@ mod tests {
                 bms_count: 2,
                 confidence: MobileBmsTopologyConfidenceDto::Verified,
             },
+            page_selector: None,
+            page_kind: None,
+            page_verification: None,
             energy_percent: Some(BatteryLevelReading {
                 value: BatteryLevel { value: 72 },
                 source: MobileValueSourceDto::Reported,
@@ -3721,7 +3748,7 @@ mod tests {
                 page: Some(BatteryInfoDto {
                     page: cutout_core::BatteryPageMetadataDto {
                         selector: 3,
-                        kind: cutout_core::BatteryPageKindDto::Temperature,
+                        kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
                     voltage: Some(reported(81_600)),
@@ -3792,6 +3819,12 @@ mod tests {
             snapshot.current.expect("pack current").value,
             BatteryCurrent { value: -1_250 }
         );
+        assert_eq!(snapshot.page_selector, Some(3));
+        assert_eq!(snapshot.page_kind.as_deref(), Some("temperature"));
+        assert_eq!(
+            snapshot.page_verification,
+            Some(MobileVerificationStatusDto::HardwareVerified)
+        );
         assert_eq!(
             snapshot
                 .bms_pack_current_0
@@ -3848,7 +3881,7 @@ mod tests {
                 page: Some(BatteryInfoDto {
                     page: cutout_core::BatteryPageMetadataDto {
                         selector: 3,
-                        kind: cutout_core::BatteryPageKindDto::Temperature,
+                        kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
                     voltage: Some(measured_i32(81_600)),

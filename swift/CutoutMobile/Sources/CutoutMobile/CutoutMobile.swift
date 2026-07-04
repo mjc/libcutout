@@ -871,6 +871,9 @@ public struct BmsFault: Equatable, Hashable, Sendable, Identifiable {
 public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let availability: ReadbackAvailability
     public let topology: BmsTopology
+    public let pageSelector: UInt8?
+    public let pageKind: String?
+    public let pageVerification: VerificationState?
     public let energyPercent: BatteryLevel?
     public let voltage: Voltage?
     public let current: BatteryCurrent?
@@ -892,6 +895,9 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public init(
         availability: ReadbackAvailability = .available,
         topology: BmsTopology,
+        pageSelector: UInt8? = nil,
+        pageKind: String? = nil,
+        pageVerification: VerificationState? = nil,
         energyPercent: BatteryLevel? = nil,
         voltage: Voltage? = nil,
         current: BatteryCurrent? = nil,
@@ -913,6 +919,9 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         let hasReadbackData = availability == .available
         self.availability = availability
         self.topology = topology
+        self.pageSelector = hasReadbackData ? pageSelector : nil
+        self.pageKind = hasReadbackData ? pageKind : nil
+        self.pageVerification = hasReadbackData ? pageVerification : nil
         self.energyPercent = hasReadbackData ? energyPercent : nil
         self.voltage = hasReadbackData ? voltage : nil
         self.current = hasReadbackData ? current : nil
@@ -936,6 +945,9 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.init(
             availability: ReadbackAvailability(dto.availability),
             topology: BmsTopology(dto.topology),
+            pageSelector: dto.pageSelector,
+            pageKind: dto.pageKind,
+            pageVerification: dto.pageVerification.map(VerificationState.init),
             energyPercent: dto.energyPercent?.value,
             voltage: dto.voltage?.value,
             current: dto.current?.value,
@@ -959,6 +971,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public var shouldRenderReadback: Bool {
         availability != .available
             || energyPercent != nil
+            || pageSelector != nil
+            || pageKind != nil
             || voltage != nil
             || current != nil
             || bmsPackCurrent0 != nil
@@ -969,6 +983,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public var readbackRows: [SessionDebugRow] {
         var rows = [
             SessionDebugRow(label: "availability", value: availability.displayText),
+            SessionDebugRow(label: "page", value: bmsPageText(selector: pageSelector, kind: pageKind)),
+            SessionDebugRow(label: "page verification", value: pageVerification?.displayText ?? "unavailable"),
             SessionDebugRow(label: "charge", value: bmsPercentText(energyPercent)),
             SessionDebugRow(label: "voltage", value: bmsVoltageText(voltage)),
             SessionDebugRow(label: "current", value: bmsCurrentText(current)),
@@ -1190,6 +1206,19 @@ private func bmsPercentText(_ value: BatteryLevel?) -> String {
     return "\(value.value)%"
 }
 
+private func bmsPageText(selector: UInt8?, kind: String?) -> String {
+    switch (selector, kind) {
+    case (let selector?, let kind?):
+        "\(kind) #\(selector)"
+    case (let selector?, nil):
+        "#\(selector)"
+    case (nil, let kind?):
+        kind
+    case (nil, nil):
+        "--"
+    }
+}
+
 private func bmsVoltageText(_ value: Voltage?) -> String {
     value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
@@ -1230,6 +1259,23 @@ public extension ReadbackAvailability {
             "unavailable"
         case .unsupported:
             "unsupported"
+        }
+    }
+}
+
+public extension VerificationState {
+    var displayText: String {
+        switch self {
+        case .unverified:
+            "unverified"
+        case .inferred:
+            "inferred"
+        case .sourceVerified:
+            "source verified"
+        case .hardwareVerified:
+            "hardware verified"
+        case .sourceAndHardwareVerified:
+            "source and hardware verified"
         }
     }
 }
