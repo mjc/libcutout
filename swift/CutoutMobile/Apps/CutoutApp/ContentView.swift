@@ -1914,7 +1914,8 @@ private struct BmsMockupView: View {
                         content: content,
                         rideState: rideState,
                         liveSnapshot: bmsSnapshot,
-                        scale: scale
+                        scale: scale,
+                        selectScreen: selectScreen
                     )
                 } else {
                     VStack(alignment: .leading, spacing: 14 * scale) {
@@ -1996,21 +1997,16 @@ private struct BmsMockupView: View {
                 selectScreen(.eucRide)
             }
             Spacer()
-            BmsBottomTab(title: "Pack", isSelected: content.kind == .overview || content.kind == .noData, scale: scale) {
-                selectScreen(.bmsOverview)
-            }
+            BmsBottomTab(title: "Pack", isSelected: true, scale: scale, action: nil)
             Spacer()
             BmsBottomTab(
                 title: "Cells",
                 isSelected: [.cellMapInline, .cellMapScrollable, .cellDetail].contains(content.kind),
-                scale: scale
-            ) {
-                selectScreen(.bmsCellMap40S)
-            }
+                scale: scale,
+                action: nil
+            )
             Spacer()
-            BmsBottomTab(title: "Faults", isSelected: content.kind == .unknownTopology, scale: scale) {
-                selectScreen(.bmsUnknownTopology)
-            }
+            BmsBottomTab(title: "Faults", isSelected: content.kind == .unknownTopology, scale: scale, action: nil)
         }
         .padding(.horizontal, 18 * scale)
     }
@@ -2388,6 +2384,7 @@ private struct BmsNoDataLayout: View {
     let rideState: EucRideScreenState?
     let liveSnapshot: BmsSnapshot?
     let scale: CGFloat
+    let selectScreen: (MockupScreenID) -> Void
 
     private var snapshot: BmsSnapshot { content.snapshot }
     private var rideSagMetric: MockupMetric? {
@@ -2471,6 +2468,16 @@ private struct BmsNoDataLayout: View {
                     cardLabel("LIVE BMS READBACK")
                     BmsReadbackRows(snapshot: liveSnapshot, scale: scale)
                 }
+            }
+
+            Spacer(minLength: 0)
+
+            HStack {
+                BmsBottomTab(title: "Ride", isSelected: false, scale: scale) {
+                    selectScreen(.eucRide)
+                }
+                Spacer()
+                BmsBottomTab(title: "Pack", isSelected: true, scale: scale, action: nil)
             }
         }
         .padding(.horizontal, 24 * scale)
@@ -2755,10 +2762,12 @@ private struct BmsBottomTab: View {
     let title: String
     let isSelected: Bool
     let scale: CGFloat
-    let action: () -> Void
+    let action: (() -> Void)?
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            action?()
+        } label: {
             VStack(spacing: 7 * scale) {
                 Text(title)
                     .font(.system(size: 15 * scale, weight: isSelected ? .black : .medium))
@@ -2769,6 +2778,7 @@ private struct BmsBottomTab: View {
             }
         }
         .buttonStyle(.plain)
+        .disabled(action == nil)
     }
 }
 
