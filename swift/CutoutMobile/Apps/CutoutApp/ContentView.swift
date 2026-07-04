@@ -2105,34 +2105,19 @@ private struct BmsOverviewLayout: View {
         VStack(alignment: .leading, spacing: 14 * scale) {
             summaryCard
 
-            if snapshot.voltage != nil || hasGroupVoltageReadings {
+            if hasCellVoltageEvidence {
                 HStack(spacing: 14 * scale) {
-                    if snapshot.voltage != nil {
+                    if let averageGroupVoltage {
                         BmsMetricCard(
-                            title: "pack voltage",
-                            value: voltageText(snapshot.voltage),
+                            title: "average group",
+                            value: groupVoltageText(averageGroupVoltage),
                             unit: "V",
-                            detail: averageGroupVoltageDetail,
+                            detail: "",
                             accent: .green,
                             scale: scale
                         )
                     }
-                    if hasGroupVoltageReadings, snapshot.cellDelta != nil {
-                        BmsMetricCard(
-                            title: "cell delta",
-                            value: millivoltsText(snapshot.cellDelta),
-                            unit: "mV",
-                            detail: snapshot.balancingSummary ?? "",
-                            accent: .green,
-                            scale: scale
-                        )
-                    }
-                }
-            }
-
-            if (hasGroupVoltageReadings && lowestGroupVoltage != nil) || hasTemperatureEvidence {
-                HStack(spacing: 14 * scale) {
-                    if hasGroupVoltageReadings, let lowestGroupVoltage {
+                    if let lowestGroupVoltage {
                         BmsMetricCard(
                             title: "lowest group",
                             value: groupVoltageText(lowestGroupVoltage),
@@ -2142,17 +2127,18 @@ private struct BmsOverviewLayout: View {
                             scale: scale
                         )
                     }
-                    if hasTemperatureEvidence {
-                        BmsMetricCard(
-                            title: "highest temp",
-                            value: temperatureText(snapshot.highestTemperature),
-                            unit: "°C",
-                            detail: snapshot.highestTemperatureLabel ?? "",
-                            accent: .green,
-                            scale: scale
-                        )
-                    }
                 }
+            }
+
+            if hasTemperatureEvidence {
+                BmsMetricCard(
+                    title: "highest temp",
+                    value: temperatureText(snapshot.highestTemperature),
+                    unit: "°C",
+                    detail: snapshot.highestTemperatureLabel ?? "",
+                    accent: .green,
+                    scale: scale
+                )
             }
 
             if let balancingSummary = snapshot.balancingSummary {
@@ -2204,25 +2190,26 @@ private struct BmsOverviewLayout: View {
 
     private var lowestGroupVoltage: Voltage? {
         guard let lowestGroupIndex = snapshot.lowestGroupIndex else { return nil }
-        return snapshot.groups.first { $0.index == lowestGroupIndex }?.voltage
+        return snapshot.groups.first { $0.index == lowestGroupIndex }?.voltage.flatMap(nonZeroVoltage)
     }
 
-    private var hasGroupVoltageReadings: Bool {
-        snapshot.groups.contains { $0.voltage != nil }
+    private var averageGroupVoltage: Voltage? {
+        guard hasCellVoltageEvidence else { return nil }
+        return snapshot.averageGroupVoltage.flatMap(nonZeroVoltage)
+    }
+
+    private var hasCellVoltageEvidence: Bool {
+        snapshot.groups.contains { group in
+            group.voltage.map { $0.value > 0 } ?? false
+        }
+    }
+
+    private func nonZeroVoltage(_ voltage: Voltage) -> Voltage? {
+        voltage.value > 0 ? voltage : nil
     }
 
     private var hasTemperatureEvidence: Bool {
         snapshot.highestTemperature != nil && (!snapshot.temperatureReadings.isEmpty || snapshot.highestTemperatureLabel != nil)
-    }
-
-    private var averageGroupVoltageDetail: String {
-        guard hasGroupVoltageReadings else {
-            return ""
-        }
-        guard let averageGroupVoltage = snapshot.averageGroupVoltage else {
-            return ""
-        }
-        return "\(groupVoltageText(averageGroupVoltage)) V avg"
     }
 }
 
