@@ -1016,6 +1016,37 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         return rows
     }
 
+    public func mergingBmsPage(_ update: BmsSnapshot) -> BmsSnapshot {
+        guard availability == .available, update.availability == .available else {
+            return update
+        }
+
+        return BmsSnapshot(
+            topology: update.topology,
+            pageSelector: update.pageSelector ?? pageSelector,
+            pageKind: update.pageKind ?? pageKind,
+            pageVerification: update.pageVerification ?? pageVerification,
+            energyPercent: update.energyPercent ?? energyPercent,
+            voltage: update.voltage ?? voltage,
+            current: update.current ?? current,
+            bmsPackCurrent0: update.bmsPackCurrent0 ?? bmsPackCurrent0,
+            bmsPackCurrent1: update.bmsPackCurrent1 ?? bmsPackCurrent1,
+            cellDelta: update.cellDelta ?? cellDelta,
+            lowestGroupIndex: update.lowestGroupIndex ?? lowestGroupIndex,
+            highestTemperature: update.highestTemperature ?? highestTemperature,
+            temperatureReadings: update.temperatureReadings.isEmpty ? temperatureReadings : update.temperatureReadings,
+            highestTemperatureLabel: update.highestTemperatureLabel ?? highestTemperatureLabel,
+            balancingSummary: update.balancingSummary ?? balancingSummary,
+            balancingDetail: update.balancingDetail ?? balancingDetail,
+            faultSummary: update.faultSummary ?? faultSummary,
+            faultDetail: update.faultDetail ?? faultDetail,
+            groups: update.groups.isEmpty ? groups : mergeGroups(update.groups, into: groups),
+            faults: update.faults.isEmpty ? faults : update.faults,
+            captureActionTitle: update.captureActionTitle ?? captureActionTitle,
+            captureActionState: update.captureActionState ?? captureActionState
+        )
+    }
+
     public var averageGroupVoltage: Voltage? {
         guard !groupVoltages.isEmpty else {
             return nil
@@ -1205,6 +1236,14 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             left.value < right.value
         }
     }
+}
+
+private func mergeGroups(_ updates: [BmsGroupSnapshot], into existing: [BmsGroupSnapshot]) -> [BmsGroupSnapshot] {
+    var groupsByIndex = Dictionary(uniqueKeysWithValues: existing.map { ($0.index, $0) })
+    for update in updates {
+        groupsByIndex[update.index] = update
+    }
+    return groupsByIndex.values.sorted { $0.index < $1.index }
 }
 
 private func bmsPercentText(_ value: BatteryLevel?) -> String {

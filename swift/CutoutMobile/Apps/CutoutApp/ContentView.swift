@@ -18,10 +18,7 @@ struct ContentView: View {
             MockupColors.pageBackground
                 .ignoresSafeArea()
 
-            if route == .pack {
-                LivePackView(bmsSnapshot: model.bmsSnapshot, selectScreen: selectScreen)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            } else if let screen = screen(for: route) {
+            if let screen = screen(for: route) {
                 MockupScreenContainer(
                     screen: screen,
                     devicePickerScanState: model.devicePickerScanState,
@@ -71,7 +68,9 @@ struct ContentView: View {
         case .ride:
             catalog.screen(id: .eucRide)
         case .pack:
-            nil
+            catalog.screen(id: .bmsOverview).map {
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot, fixtureFallback: false)
+            }
         case .mockup(let screenID):
             catalog.screen(id: screenID)
         }
@@ -123,98 +122,6 @@ private enum CutoutAppRoute: Equatable {
     case ride
     case pack
     case mockup(MockupScreenID)
-}
-
-private struct LivePackView: View {
-    let bmsSnapshot: BmsSnapshot?
-    let selectScreen: (MockupScreenID) -> Void
-
-    var body: some View {
-        GeometryReader { proxy in
-            let designWidth = min(proxy.size.width, 390)
-            let scale = min(1, designWidth / 390.0)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16 * scale) {
-                    header(scale: scale)
-
-                    if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
-                        liveSummary(snapshot: bmsSnapshot, scale: scale)
-                        BmsReadbackRows(snapshot: bmsSnapshot, scale: scale)
-                    } else {
-                        noDataCard(scale: scale)
-                    }
-                }
-                .padding(.horizontal, 23 * scale)
-                .padding(.top, 31 * scale)
-                .padding(.bottom, 84 * scale)
-            }
-            .safeAreaInset(edge: .bottom) {
-                bottomTabs(scale: scale)
-                    .padding(.horizontal, 41 * scale)
-                    .padding(.vertical, 14 * scale)
-                    .background(MockupColors.pageBackground.opacity(0.96))
-            }
-            .frame(width: designWidth, height: proxy.size.height, alignment: .top)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(MockupColors.pageBackground)
-            .foregroundStyle(MockupColors.primaryText)
-        }
-    }
-
-    private func header(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 2 * scale) {
-            Text("CutOut · Pack")
-                .font(.system(size: 15 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
-            Text("Live BMS")
-                .font(.system(size: 34 * scale, weight: .black))
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-        }
-    }
-
-    private func liveSummary(snapshot: BmsSnapshot, scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
-            Text(snapshot.topology.layoutLabel)
-                .font(.system(size: 18 * scale, weight: .black))
-            Text(pageText(snapshot))
-                .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
-        }
-        .padding(18 * scale)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BmsCardBackground(cornerRadius: 24 * scale))
-    }
-
-    private func noDataCard(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
-            Text("No live BMS readback yet")
-                .font(.system(size: 20 * scale, weight: .black))
-            Text("Pair a wheel with BMS notifications and this page will show the raw live readback.")
-                .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
-        }
-        .padding(18 * scale)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BmsCardBackground(cornerRadius: 24 * scale))
-    }
-
-    private func bottomTabs(scale: CGFloat) -> some View {
-        HStack {
-            BmsBottomTab(title: "Ride", isSelected: false, scale: scale) {
-                selectScreen(.eucRide)
-            }
-            Spacer()
-            BmsBottomTab(title: "Pack", isSelected: true, scale: scale, action: nil)
-        }
-    }
-
-    private func pageText(_ snapshot: BmsSnapshot) -> String {
-        let kind = snapshot.pageKind ?? "BMS"
-        guard let pageSelector = snapshot.pageSelector else { return kind }
-        return "\(kind) #\(pageSelector)"
-    }
 }
 
 private struct MockupScreenContainer: View {
@@ -2089,27 +1996,14 @@ private struct BmsMockupView: View {
     }
 
     private func header(scale: CGFloat) -> some View {
-        HStack(alignment: .top, spacing: 12 * scale) {
-            VStack(alignment: .leading, spacing: 2 * scale) {
-                Text("CutOut · BMS")
-                    .font(.system(size: 15 * scale, weight: .medium))
-                    .foregroundStyle(MockupColors.muted)
-                Text(screen.title)
-                    .font(.system(size: 32 * scale, weight: .black))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            }
-
-            Spacer(minLength: 8 * scale)
-
-            Button("Ride") {
-                selectScreen(.eucRide)
-            }
-            .font(.system(size: 14 * scale, weight: .black))
-            .foregroundStyle(.black)
-            .padding(.horizontal, 14 * scale)
-            .frame(height: 34 * scale)
-            .background(Capsule().fill(MockupColors.yellow))
+        VStack(alignment: .leading, spacing: 2 * scale) {
+            Text("CutOut · BMS")
+                .font(.system(size: 15 * scale, weight: .medium))
+                .foregroundStyle(MockupColors.muted)
+            Text(screen.title)
+                .font(.system(size: 32 * scale, weight: .black))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
         }
     }
 
@@ -2644,15 +2538,6 @@ private struct BmsNoDataLayout: View {
             }
 
             Spacer(minLength: 12 * scale)
-
-            Button("Ride") {
-                selectScreen(.eucRide)
-            }
-            .font(.system(size: 13 * scale, weight: .black))
-            .foregroundStyle(.black)
-            .padding(.horizontal, 12 * scale)
-            .frame(height: 30 * scale)
-            .background(Capsule().fill(MockupColors.yellow))
 
             HStack(spacing: 10 * scale) {
                 Circle()

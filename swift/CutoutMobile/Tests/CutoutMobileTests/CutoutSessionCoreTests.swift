@@ -402,6 +402,59 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedSnapshots, [snapshot, nil])
     }
 
+    func testBmsSnapshotMergesPartialPagesInsteadOfBlinkingFields() {
+        let core = CutoutSessionCore()
+        let metadataPage = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "8 observed BMS groups",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            pageSelector: 2,
+            pageKind: "metadata",
+            pageVerification: .sourceVerified,
+            voltage: Voltage(value: 95_800),
+            current: BatteryCurrent(value: 0)
+        )
+        let cellPage = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "8 observed BMS groups",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            pageSelector: 3,
+            pageKind: "cell voltage",
+            pageVerification: .sourceVerified,
+            cellDelta: VoltageDelta(value: 12),
+            lowestGroupIndex: 1,
+            groups: [
+                BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_090), alertLevel: .warning),
+                BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_102)),
+            ]
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(metadataPage)]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(cellPage)]),
+            receivedAt: MonotonicMilliseconds(43)
+        )
+
+        XCTAssertEqual(core.bmsSnapshot?.pageKind, "cell voltage")
+        XCTAssertEqual(core.bmsSnapshot?.voltage, Voltage(value: 95_800))
+        XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
+        XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 12))
+        XCTAssertEqual(core.bmsSnapshot?.groups.count, 2)
+    }
+
     func testProtocolIdentityCandidateUpdatesFromVeteranModelId() {
         let core = CutoutSessionCore()
         var observedCandidates: [DevicePickerDiscoveryCandidate?] = []

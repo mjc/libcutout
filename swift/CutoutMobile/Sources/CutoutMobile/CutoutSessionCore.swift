@@ -129,13 +129,23 @@ public final class CutoutSessionCore: NSObject {
             faultHistoryReadback = action.faultHistoryReadback
             onFaultHistoryReadbackChange?(faultHistoryReadback)
         case .bmsSnapshot:
-            bmsSnapshot = action.bmsSnapshot
+            bmsSnapshot = mergedBmsSnapshot(with: action.bmsSnapshot)
             onBmsSnapshotChange?(bmsSnapshot)
         case .event:
             applyProtocolIdentityModelId(action.veteranProtocolModelId)
         case .subscribe, .write, .disconnect, .notificationIngest:
             break
         }
+    }
+
+    private func mergedBmsSnapshot(with update: BmsSnapshot?) -> BmsSnapshot? {
+        guard let update else {
+            return bmsSnapshot
+        }
+        guard let previous = bmsSnapshot else {
+            return update
+        }
+        return previous.mergingBmsPage(update)
     }
 
     private func applyProtocolIdentityModelId(_ modelId: UInt16?) {
