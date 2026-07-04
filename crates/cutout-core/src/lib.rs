@@ -6694,13 +6694,219 @@ pub trait ProtocolSession {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>);
 }
 
+/// Rust-owned durable state for one `CutOut` mobile/device session.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CutoutSessionState {
+    discovery: DiscoveryState,
+    identity: IdentityState,
+    device: DeviceState,
+    lifecycle: LifecycleState,
+    transport: TransportState,
+    protocol: ProtocolRuntimeState,
+    telemetry: TelemetryState,
+    readbacks: ReadbackState,
+    commands: CommandState,
+    diagnostics: DiagnosticsState,
+}
+
+impl CutoutSessionState {
+    /// Returns a derived snapshot of the current session state.
+    #[must_use]
+    pub const fn snapshot(&self) -> CutoutSessionSnapshot {
+        CutoutSessionSnapshot {
+            discovery: self.discovery,
+            identity: self.identity,
+            device: self.device,
+            lifecycle: self.lifecycle,
+            transport: self.transport,
+            protocol: self.protocol,
+            telemetry: self.telemetry,
+            readbacks: self.readbacks,
+            commands: self.commands,
+            diagnostics: self.diagnostics,
+        }
+    }
+
+    fn observe_input(&mut self, input: SessionInput<'_>) {
+        self.transport.observe_input(input);
+    }
+
+    fn observe_outputs(&mut self, outputs: &[SessionOutput]) {
+        for output in outputs {
+            self.observe_output(output);
+        }
+    }
+
+    fn observe_output(&mut self, output: &SessionOutput) {
+        match output {
+            SessionOutput::Event(event) => self.observe_event(event),
+            SessionOutput::Transport(_) | SessionOutput::NotificationIngest(_) => {}
+        }
+    }
+
+    fn observe_event(&mut self, event: &DeviceEvent) {
+        match event {
+            DeviceEvent::Telemetry(delta) => self.telemetry.current.apply_delta(*delta),
+            DeviceEvent::Diagnostics(diagnostics) => self.diagnostics.parser.merge(*diagnostics),
+            DeviceEvent::LinkUp(link) => self.transport.link = LinkState::Up(*link),
+            DeviceEvent::LinkDown => self.transport.link = LinkState::Down,
+            DeviceEvent::Tick { monotonic_ms } => self.transport.last_tick = Some(*monotonic_ms),
+            DeviceEvent::ReadOnlyResponse(_)
+            | DeviceEvent::ControlRefusal(_)
+            | DeviceEvent::DiagnosticError(_) => {}
+        }
+    }
+}
+
+/// Derived snapshot of Rust-owned `CutOut` session state.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CutoutSessionSnapshot {
+    /// Discovery state slice.
+    pub discovery: DiscoveryState,
+
+    /// Identity state slice.
+    pub identity: IdentityState,
+
+    /// Device state slice.
+    pub device: DeviceState,
+
+    /// Lifecycle state slice.
+    pub lifecycle: LifecycleState,
+
+    /// Transport state slice.
+    pub transport: TransportState,
+
+    /// Protocol runtime state slice.
+    pub protocol: ProtocolRuntimeState,
+
+    /// Telemetry state slice.
+    pub telemetry: TelemetryState,
+
+    /// Readback state slice.
+    pub readbacks: ReadbackState,
+
+    /// Command state slice.
+    pub commands: CommandState,
+
+    /// Diagnostics state slice.
+    pub diagnostics: DiagnosticsState,
+}
+
+/// Device discovery state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DiscoveryState;
+
+/// Device identity state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct IdentityState;
+
+/// Device model and capability state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeviceState;
+
+/// Host/mobile lifecycle state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LifecycleState;
+
+/// Protocol-visible transport state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TransportState {
+    /// Current protocol-visible link state.
+    pub link: LinkState,
+
+    /// Latest host tick observed by the Rust session boundary.
+    pub last_tick: Option<MonotonicTimestamp>,
+}
+
+impl TransportState {
+    fn observe_input(&mut self, input: SessionInput<'_>) {
+        match input {
+            SessionInput::LinkUp(link) => self.link = LinkState::Up(link),
+            SessionInput::LinkDown => self.link = LinkState::Down,
+            SessionInput::Tick { monotonic_ms } => self.last_tick = Some(monotonic_ms),
+            SessionInput::Notification { .. } | SessionInput::Command(_) => {}
+        }
+    }
+}
+
+/// Current protocol-visible link state.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LinkState {
+    /// Transport link is not available.
+    #[default]
+    Down,
+
+    /// Transport link is available.
+    Up(LinkInfo),
+}
+
+/// Protocol runtime state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProtocolRuntimeState;
+
+/// Latest decoded telemetry state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TelemetryState {
+    /// Latest telemetry snapshot retained by the Rust state root.
+    pub current: TelemetrySnapshot,
+}
+
+/// Readback state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ReadbackState;
+
+/// Command correlation state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CommandState;
+
+/// Cumulative diagnostics state slice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DiagnosticsState {
+    /// Cumulative parser diagnostics retained by the Rust state root.
+    pub parser: ParserDiagnostics,
+}
+
 /// Host-facing synchronous session facade.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostSession<S> {
     session: S,
     output: Vec<SessionOutput>,
-    snapshot: TelemetrySnapshot,
-    diagnostics: ParserDiagnostics,
+    state: CutoutSessionState,
+}
+
+#[cfg(test)]
+mod host_session_state_tests {
+    use super::*;
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct NoopSession;
+
+    impl ProtocolSession for NoopSession {
+        fn handle(&mut self, _input: SessionInput<'_>, _output: &mut Vec<SessionOutput>) {}
+    }
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn cutout_session_state_and_host_boundary_are_send_sync() {
+        assert_send_sync::<CutoutSessionState>();
+        assert_send_sync::<HostSession<NoopSession>>();
+    }
+
+    #[test]
+    fn host_session_state_retains_latest_tick_across_calls() {
+        let mut session = HostSession::new(NoopSession);
+        let first = MonotonicTimestamp::from_milliseconds(10);
+        let second = MonotonicTimestamp::from_milliseconds(20);
+
+        session.tick(first);
+        session.tick(second);
+
+        assert_eq!(
+            session.session_state_snapshot().transport.last_tick,
+            Some(second)
+        );
+    }
 }
 
 impl<S> HostSession<S>
@@ -6713,25 +6919,7 @@ where
         Self {
             session,
             output: Vec::with_capacity(4),
-            snapshot: TelemetrySnapshot {
-                at_ms: None,
-                speed: None,
-                voltage: None,
-                battery_current: None,
-                charge_mode: None,
-                motor_current: None,
-                power: None,
-                controller_temperature: None,
-                motor_temperature: None,
-                battery_temperature: None,
-                pwm: None,
-                distance: None,
-                pitch: None,
-                roll: None,
-                battery_level_reported: None,
-                battery_level_estimated: None,
-            },
-            diagnostics: ParserDiagnostics::default(),
+            state: CutoutSessionState::default(),
         }
     }
 
@@ -6799,53 +6987,40 @@ where
         limit: ParserQueuedOutputCount,
     ) -> Result<(), SessionOutputError> {
         let actual = output.len().saturating_add(self.output.len());
-        if actual > limit.as_outputs() {
-            return Err(SessionOutputError::OutputOverflow {
+        if actual <= limit.as_outputs() {
+            self.drain_outputs_into(output);
+            Ok(())
+        } else {
+            Err(SessionOutputError::OutputOverflow {
                 limit,
                 actual: ParserQueuedOutputCount::from_outputs(actual),
-            });
+            })
         }
-        self.drain_outputs_into(output);
-        Ok(())
     }
 
     /// Returns the latest telemetry snapshot.
     #[must_use]
     pub const fn current_snapshot(&self) -> TelemetrySnapshot {
-        self.snapshot
+        self.state.telemetry.current
     }
 
     /// Returns accumulated parser diagnostics.
     #[must_use]
     pub const fn diagnostics(&self) -> ParserDiagnostics {
-        self.diagnostics
+        self.state.diagnostics.parser
+    }
+
+    /// Returns a derived snapshot of the Rust-owned session state.
+    #[must_use]
+    pub const fn session_state_snapshot(&self) -> CutoutSessionSnapshot {
+        self.state.snapshot()
     }
 
     fn handle(&mut self, input: SessionInput<'_>) {
         let start = self.output.len();
+        self.state.observe_input(input);
         self.session.handle(input, &mut self.output);
-        self.apply_state_from_outputs(start);
-    }
-
-    fn apply_state_from_outputs(&mut self, start: usize) {
-        for output in &self.output[start..] {
-            if let SessionOutput::Event(event) = output {
-                match event {
-                    DeviceEvent::Telemetry(delta) => {
-                        self.snapshot.apply_delta(*delta);
-                    }
-                    DeviceEvent::Diagnostics(diagnostics) => {
-                        self.diagnostics.merge(*diagnostics);
-                    }
-                    DeviceEvent::ReadOnlyResponse(_)
-                    | DeviceEvent::ControlRefusal(_)
-                    | DeviceEvent::DiagnosticError(_)
-                    | DeviceEvent::LinkUp(_)
-                    | DeviceEvent::LinkDown
-                    | DeviceEvent::Tick { .. } => {}
-                }
-            }
-        }
+        self.state.observe_outputs(&self.output[start..]);
     }
 }
 
