@@ -640,9 +640,16 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         screens.first { $0.id == id }
     }
 
-    public func presentedScreen(for screen: MockupScreen, liveBmsSnapshot: BmsSnapshot?) -> MockupScreen {
+    public func presentedScreen(
+        for screen: MockupScreen,
+        liveBmsSnapshot: BmsSnapshot?,
+        fixtureFallback: Bool = true
+    ) -> MockupScreen {
         guard let liveBmsSnapshot else {
-            return screen
+            guard !fixtureFallback, screen.id == .eucGarage || screen.id.isBmsScreen else {
+                return screen
+            }
+            return Self.noLiveBmsReadbackScreen()
         }
 
         let preferredScreenID = screen.id == .eucGarage ? MockupScreenID.eucGarage : screen.id
@@ -682,6 +689,38 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             bmsContent: resolvedContent,
             eucGarageSnapshot: fixtureScreen.eucGarageSnapshot,
             isFixtureOnly: fixtureScreen.isFixtureOnly
+        )
+    }
+
+    private static func noLiveBmsReadbackScreen() -> MockupScreen {
+        let snapshot = BmsSnapshot(
+            availability: .unavailable,
+            topology: BmsTopology(
+                layoutLabel: "live BMS readback unavailable",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 0,
+                bmsCount: 0,
+                confidence: .unverified
+            )
+        )
+
+        return MockupScreen(
+            id: .bmsNoData,
+            title: "Battery",
+            subtitle: "live BMS readback unavailable",
+            primaryValue: "--",
+            secondaryValue: "no live BMS",
+            warning: nil,
+            metrics: [],
+            bmsContent: MockupBmsContent(
+                kind: .noData,
+                snapshot: snapshot,
+                chips: [
+                    MockupBmsChip(title: "no live BMS", accent: .yellow),
+                ]
+            ),
+            isFixtureOnly: false
         )
     }
 

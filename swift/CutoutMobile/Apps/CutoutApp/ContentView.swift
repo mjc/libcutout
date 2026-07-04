@@ -21,7 +21,11 @@ struct ContentView: View {
 
             TabView(selection: $selectedScreenID) {
                 ForEach(catalog.screens) { screen in
-                    let presentedScreen = catalog.presentedScreen(for: screen, liveBmsSnapshot: model.bmsSnapshot)
+                    let presentedScreen = catalog.presentedScreen(
+                        for: screen,
+                        liveBmsSnapshot: model.bmsSnapshot,
+                        fixtureFallback: false
+                    )
                     MockupScreenContainer(
                         screen: presentedScreen,
                         devicePickerScanState: model.devicePickerScanState,

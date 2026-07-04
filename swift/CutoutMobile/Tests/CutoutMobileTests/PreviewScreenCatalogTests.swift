@@ -542,6 +542,26 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(presented.id, .bmsCellMap6S)
     }
 
+    func testPresentedScreenRoutesPackWithoutLiveBmsToNoDataWithoutFixtureValues() throws {
+        let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+
+        let presented = MockupScreenCatalog.v2.presentedScreen(
+            for: packScreen,
+            liveBmsSnapshot: nil,
+            fixtureFallback: false
+        )
+
+        XCTAssertEqual(presented.id, .bmsNoData)
+        XCTAssertEqual(presented.primaryValue, "--")
+        XCTAssertEqual(presented.secondaryValue, "no live BMS")
+        XCTAssertTrue(presented.metrics.isEmpty)
+        XCTAssertEqual(presented.bmsContent?.snapshot.availability, .unavailable)
+        XCTAssertEqual(presented.bmsContent?.snapshot.topology.layoutLabel, "live BMS readback unavailable")
+        XCTAssertNil(presented.bmsContent?.snapshot.energyPercent)
+        XCTAssertNil(presented.bmsContent?.snapshot.voltage)
+        XCTAssertTrue(presented.bmsContent?.snapshot.groups.isEmpty ?? false)
+    }
+
     func testPresentedScreenDerivesLiveBmsTitleAndChips() throws {
         let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
