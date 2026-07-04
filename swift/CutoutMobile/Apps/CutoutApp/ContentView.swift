@@ -2105,7 +2105,7 @@ private struct BmsOverviewLayout: View {
         VStack(alignment: .leading, spacing: 14 * scale) {
             summaryCard
 
-            if snapshot.voltage != nil || snapshot.cellDelta != nil {
+            if snapshot.voltage != nil || hasGroupVoltageReadings {
                 HStack(spacing: 14 * scale) {
                     if snapshot.voltage != nil {
                         BmsMetricCard(
@@ -2117,7 +2117,7 @@ private struct BmsOverviewLayout: View {
                             scale: scale
                         )
                     }
-                    if snapshot.cellDelta != nil {
+                    if hasGroupVoltageReadings, snapshot.cellDelta != nil {
                         BmsMetricCard(
                             title: "cell delta",
                             value: millivoltsText(snapshot.cellDelta),
@@ -2130,9 +2130,9 @@ private struct BmsOverviewLayout: View {
                 }
             }
 
-            if lowestGroupVoltage != nil || hasTemperatureEvidence {
+            if (hasGroupVoltageReadings && lowestGroupVoltage != nil) || hasTemperatureEvidence {
                 HStack(spacing: 14 * scale) {
-                    if let lowestGroupVoltage {
+                    if hasGroupVoltageReadings, let lowestGroupVoltage {
                         BmsMetricCard(
                             title: "lowest group",
                             value: groupVoltageText(lowestGroupVoltage),
@@ -2207,13 +2207,20 @@ private struct BmsOverviewLayout: View {
         return snapshot.groups.first { $0.index == lowestGroupIndex }?.voltage
     }
 
+    private var hasGroupVoltageReadings: Bool {
+        snapshot.groups.contains { $0.voltage != nil }
+    }
+
     private var hasTemperatureEvidence: Bool {
         snapshot.highestTemperature != nil && (!snapshot.temperatureReadings.isEmpty || snapshot.highestTemperatureLabel != nil)
     }
 
     private var averageGroupVoltageDetail: String {
+        guard hasGroupVoltageReadings else {
+            return ""
+        }
         guard let averageGroupVoltage = snapshot.averageGroupVoltage else {
-            return snapshot.topology.layoutLabel
+            return ""
         }
         return "\(groupVoltageText(averageGroupVoltage)) V avg"
     }
