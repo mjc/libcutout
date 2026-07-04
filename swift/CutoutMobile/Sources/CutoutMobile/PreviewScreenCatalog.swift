@@ -951,7 +951,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             ],
             tabs: [
                 MockupScreenTab(title: "Ride", isSelected: true),
-                MockupScreenTab(title: "Pack", isSelected: false, destinationScreenID: .eucGarage),
+                MockupScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
                 MockupScreenTab(title: "Map", isSelected: false),
                 MockupScreenTab(title: "Tune", isSelected: false),
             ]

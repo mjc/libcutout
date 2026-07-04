@@ -19,37 +19,32 @@ struct ContentView: View {
             MockupColors.pageBackground
                 .ignoresSafeArea()
 
-            TabView(selection: $selectedScreenID) {
-                ForEach(catalog.screens) { screen in
-                    let presentedScreen = catalog.presentedScreen(
-                        for: screen,
-                        liveBmsSnapshot: model.bmsSnapshot,
-                        fixtureFallback: false
-                    )
-                    MockupScreenContainer(
-                        screen: presentedScreen,
-                        devicePickerScanState: model.devicePickerScanState,
-                        rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
-                            ? nil
-                            : model.rideState,
-                        rideTitle: model.selectedRideTitle,
-                        settingsReadback: model.settingsReadback,
-                        faultHistoryReadback: model.faultHistoryReadback,
-                        bmsSnapshot: model.bmsSnapshot,
-                        disconnect: {
-                            model.disconnectAndSearch()
-                            pairedDestinationScreenID = nil
-                            selectedScreenID = .devicePicker
-                        },
-                        pair: pair,
-                        selectScreen: { selectedScreenID = $0 }
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .tag(screen.id)
-                }
+            if let screen = catalog.screen(id: selectedScreenID) {
+                let presentedScreen = catalog.presentedScreen(
+                    for: screen,
+                    liveBmsSnapshot: model.bmsSnapshot,
+                    fixtureFallback: false
+                )
+                MockupScreenContainer(
+                    screen: presentedScreen,
+                    devicePickerScanState: model.devicePickerScanState,
+                    rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
+                        ? nil
+                        : model.rideState,
+                    rideTitle: model.selectedRideTitle,
+                    settingsReadback: model.settingsReadback,
+                    faultHistoryReadback: model.faultHistoryReadback,
+                    bmsSnapshot: model.bmsSnapshot,
+                    disconnect: {
+                        model.disconnectAndSearch()
+                        pairedDestinationScreenID = nil
+                        selectedScreenID = .devicePicker
+                    },
+                    pair: pair,
+                    selectScreen: { selectedScreenID = $0 }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .cutoutAppTabPager()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MockupColors.pageBackground.ignoresSafeArea())
@@ -67,6 +62,7 @@ struct ContentView: View {
 
     private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
         guard phase.opensRideScreen else { return }
+        guard selectedScreenID == .devicePicker else { return }
         selectedScreenID = pairedDestinationScreenID ?? .eucRide
     }
 
@@ -88,17 +84,6 @@ struct ContentView: View {
 
     private static func destinationScreenID(for row: MockupPickerRow) -> MockupScreenID? {
         row.connectionRoute?.destinationScreenID
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func cutoutAppTabPager() -> some View {
-        #if os(macOS)
-        self
-        #else
-        tabViewStyle(.page(indexDisplayMode: .never))
-        #endif
     }
 }
 
