@@ -1083,7 +1083,7 @@ impl MobileBmsSnapshotDto {
         let groups = bms_groups_from_cell_voltages(&battery.cell_voltages);
         Self {
             availability,
-            topology: MobileBmsTopologyDto::unknown_readback(),
+            topology: MobileBmsTopologyDto::from_observed_groups(groups.len()),
             energy_percent: battery
                 .level_reported
                 .or(battery.level_estimated)
@@ -1182,6 +1182,20 @@ fn lowest_cell_voltage_group_index(cell_voltages: &[MeasuredI32Dto]) -> Option<u
 }
 
 impl MobileBmsTopologyDto {
+    fn from_observed_groups(group_count: usize) -> Self {
+        if group_count == 0 {
+            return Self::unknown_readback();
+        }
+        Self {
+            layout_label: format!("{group_count} observed BMS groups"),
+            series_group_count: None,
+            parallel_count: None,
+            pack_count: 1,
+            bms_count: 1,
+            confidence: MobileBmsTopologyConfidenceDto::Unverified,
+        }
+    }
+
     fn unknown_readback() -> Self {
         Self {
             layout_label: "unknown BMS topology".to_owned(),
@@ -3730,7 +3744,11 @@ mod tests {
             snapshot.availability,
             MobileReadbackAvailabilityDto::Available
         );
-        assert_eq!(snapshot.topology.layout_label, "unknown BMS topology");
+        assert_eq!(snapshot.topology.layout_label, "3 observed BMS groups");
+        assert_eq!(snapshot.topology.series_group_count, None);
+        assert_eq!(snapshot.topology.parallel_count, None);
+        assert_eq!(snapshot.topology.pack_count, 1);
+        assert_eq!(snapshot.topology.bms_count, 1);
         assert_eq!(
             snapshot.topology.confidence,
             MobileBmsTopologyConfidenceDto::Unverified
