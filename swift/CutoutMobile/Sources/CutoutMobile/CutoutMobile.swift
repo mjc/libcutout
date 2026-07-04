@@ -874,6 +874,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let energyPercent: BatteryLevel?
     public let voltage: Voltage?
     public let current: BatteryCurrent?
+    public let bmsPackCurrent0: BatteryCurrent?
+    public let bmsPackCurrent1: BatteryCurrent?
     public let cellDelta: VoltageDelta?
     public let lowestGroupIndex: Int?
     public let highestTemperature: Temperature?
@@ -893,6 +895,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         energyPercent: BatteryLevel? = nil,
         voltage: Voltage? = nil,
         current: BatteryCurrent? = nil,
+        bmsPackCurrent0: BatteryCurrent? = nil,
+        bmsPackCurrent1: BatteryCurrent? = nil,
         cellDelta: VoltageDelta? = nil,
         lowestGroupIndex: Int? = nil,
         highestTemperature: Temperature? = nil,
@@ -912,6 +916,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.energyPercent = hasReadbackData ? energyPercent : nil
         self.voltage = hasReadbackData ? voltage : nil
         self.current = hasReadbackData ? current : nil
+        self.bmsPackCurrent0 = hasReadbackData ? bmsPackCurrent0 : nil
+        self.bmsPackCurrent1 = hasReadbackData ? bmsPackCurrent1 : nil
         self.cellDelta = hasReadbackData ? cellDelta : nil
         self.lowestGroupIndex = hasReadbackData ? lowestGroupIndex : nil
         self.highestTemperature = hasReadbackData ? highestTemperature : nil
@@ -933,6 +939,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             energyPercent: dto.energyPercent?.value,
             voltage: dto.voltage?.value,
             current: dto.current?.value,
+            bmsPackCurrent0: dto.bmsPackCurrent0?.value,
+            bmsPackCurrent1: dto.bmsPackCurrent1?.value,
             cellDelta: dto.cellDelta?.value,
             lowestGroupIndex: dto.lowestGroupIndex.map(Int.init),
             highestTemperature: dto.highestTemperature?.value,
@@ -953,15 +961,29 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             || energyPercent != nil
             || voltage != nil
             || current != nil
+            || bmsPackCurrent0 != nil
+            || bmsPackCurrent1 != nil
             || highestTemperature != nil
     }
 
     public var readbackRows: [SessionDebugRow] {
-        [
+        var rows = [
             SessionDebugRow(label: "availability", value: availability.displayText),
             SessionDebugRow(label: "charge", value: bmsPercentText(energyPercent)),
             SessionDebugRow(label: "voltage", value: bmsVoltageText(voltage)),
             SessionDebugRow(label: "current", value: bmsCurrentText(current)),
+        ]
+        if let bmsPackCurrent0 {
+            rows.append(
+                SessionDebugRow(label: "bms current 0", value: bmsCurrentText(bmsPackCurrent0))
+            )
+        }
+        if let bmsPackCurrent1 {
+            rows.append(
+                SessionDebugRow(label: "bms current 1", value: bmsCurrentText(bmsPackCurrent1))
+            )
+        }
+        rows += [
             SessionDebugRow(label: "high group", value: bmsGroupVoltageText(highGroupVoltage)),
             SessionDebugRow(label: "low group", value: bmsGroupVoltageText(lowGroupVoltage)),
             SessionDebugRow(label: "delta", value: bmsMillivoltsText(cellDelta)),
@@ -969,6 +991,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(label: "temperature", value: bmsTemperatureText(highestTemperature)),
             SessionDebugRow(label: "topology", value: topology.layoutLabel),
         ]
+        return rows
     }
 
     public var averageGroupVoltage: Voltage? {

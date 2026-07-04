@@ -1023,6 +1023,12 @@ pub struct MobileBmsSnapshotDto {
     /// Pack current.
     pub current: Option<BatteryCurrentReading>,
 
+    /// First page-specific BMS pack current.
+    pub bms_pack_current_0: Option<BatteryCurrentReading>,
+
+    /// Second page-specific BMS pack current.
+    pub bms_pack_current_1: Option<BatteryCurrentReading>,
+
     /// Cell-group voltage delta.
     pub cell_delta: Option<VoltageDeltaReading>,
 
@@ -1090,6 +1096,8 @@ impl MobileBmsSnapshotDto {
                 .map(Into::into),
             voltage: battery.voltage.map(Into::into),
             current: battery.current.map(Into::into),
+            bms_pack_current_0: battery.bms_pack_current_0.map(Into::into),
+            bms_pack_current_1: battery.bms_pack_current_1.map(Into::into),
             cell_delta: cell_voltage_delta(&battery.cell_voltages),
             lowest_group_index: lowest_cell_voltage_group_index(&battery.cell_voltages),
             highest_temperature: highest_battery_temperature(
@@ -1115,6 +1123,8 @@ impl MobileBmsSnapshotDto {
             energy_percent: None,
             voltage: None,
             current: None,
+            bms_pack_current_0: None,
+            bms_pack_current_1: None,
             cell_delta: None,
             lowest_group_index: None,
             highest_temperature: None,
@@ -3130,6 +3140,8 @@ mod tests {
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
             current: None,
+            bms_pack_current_0: None,
+            bms_pack_current_1: None,
             cell_delta: Some(VoltageDeltaReading {
                 value: VoltageDelta { value: 18 },
                 source: MobileValueSourceDto::Reported,
@@ -3714,8 +3726,8 @@ mod tests {
                     },
                     voltage: Some(reported(81_600)),
                     current: Some(reported(-1_250)),
-                    bms_pack_current_0: None,
-                    bms_pack_current_1: None,
+                    bms_pack_current_0: Some(reported(-1_100)),
+                    bms_pack_current_1: Some(reported(-150)),
                     level_reported: Some(MeasuredU8Dto {
                         value: 72,
                         source: ValueSourceDto::Reported,
@@ -3779,6 +3791,20 @@ mod tests {
         assert_eq!(
             snapshot.current.expect("pack current").value,
             BatteryCurrent { value: -1_250 }
+        );
+        assert_eq!(
+            snapshot
+                .bms_pack_current_0
+                .expect("first BMS pack current")
+                .value,
+            BatteryCurrent { value: -1_100 }
+        );
+        assert_eq!(
+            snapshot
+                .bms_pack_current_1
+                .expect("second BMS pack current")
+                .value,
+            BatteryCurrent { value: -150 }
         );
         assert_eq!(
             snapshot
