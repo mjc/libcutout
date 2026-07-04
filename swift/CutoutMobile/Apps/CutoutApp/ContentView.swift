@@ -4,14 +4,13 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var model: CutoutAppModel
-    @State private var selectedScreenID: MockupScreenID
-    @State private var pairedDestinationScreenID: MockupScreenID?
+    @State private var route: CutoutAppRoute
 
     private let catalog = MockupScreenCatalog.v2
 
     init(model: CutoutAppModel) {
         self.model = model
-        _selectedScreenID = State(initialValue: Self.initialScreenID())
+        _route = State(initialValue: Self.initialRoute())
     }
 
     var body: some View {
@@ -19,14 +18,9 @@ struct ContentView: View {
             MockupColors.pageBackground
                 .ignoresSafeArea()
 
-            if let screen = catalog.screen(id: selectedScreenID) {
-                let presentedScreen = catalog.presentedScreen(
-                    for: screen,
-                    liveBmsSnapshot: model.bmsSnapshot,
-                    fixtureFallback: false
-                )
+            if let screen = screen(for: route) {
                 MockupScreenContainer(
-                    screen: presentedScreen,
+                    screen: screen,
                     devicePickerScanState: model.devicePickerScanState,
                     rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
                         ? nil
@@ -37,11 +31,10 @@ struct ContentView: View {
                     bmsSnapshot: model.bmsSnapshot,
                     disconnect: {
                         model.disconnectAndSearch()
-                        pairedDestinationScreenID = nil
-                        selectedScreenID = .devicePicker
+                        route = .devicePicker
                     },
                     pair: pair,
-                    selectScreen: { selectedScreenID = $0 }
+                    selectScreen: selectScreen
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
@@ -55,36 +48,80 @@ struct ContentView: View {
 
     private func pair(_ row: MockupPickerRow) {
         guard model.pair(platformIdentifier: row.id) else { return }
-        guard let screenID = Self.destinationScreenID(for: row) else { return }
-        pairedDestinationScreenID = screenID
-        selectedScreenID = screenID
+        route = Self.route(for: row.connectionRoute)
     }
 
     private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
         guard phase.opensRideScreen else { return }
-        guard selectedScreenID == .devicePicker else { return }
-        selectedScreenID = pairedDestinationScreenID ?? .eucRide
+        guard route == .devicePicker else { return }
+        route = .ride
     }
 
-    private static func initialScreenID() -> MockupScreenID {
+    private func selectScreen(_ screenID: MockupScreenID) {
+        route = Self.route(for: screenID)
+    }
+
+    private func screen(for route: CutoutAppRoute) -> MockupScreen? {
+        switch route {
+        case .devicePicker:
+            catalog.screen(id: .devicePicker)
+        case .ride:
+            catalog.screen(id: .eucRide)
+        case .pack:
+            catalog.screen(id: .bmsOverview).map {
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot, fixtureFallback: false)
+            }
+        case .mockup(let screenID):
+            catalog.screen(id: screenID)
+        }
+    }
+
+    private static func initialRoute() -> CutoutAppRoute {
         let arguments = CommandLine.arguments
         if let index = arguments.firstIndex(of: "--mockup-screen"),
            arguments.indices.contains(index + 1),
            let id = MockupScreenID(rawValue: arguments[index + 1]) {
-            return id
+            return .mockup(id)
         }
 
         if let value = ProcessInfo.processInfo.environment["CUTOUT_MOCKUP_SCREEN"],
            let id = MockupScreenID(rawValue: value) {
-            return id
+            return .mockup(id)
         }
 
         return .devicePicker
     }
 
-    private static func destinationScreenID(for row: MockupPickerRow) -> MockupScreenID? {
-        row.connectionRoute?.destinationScreenID
+    private static func route(for screenID: MockupScreenID) -> CutoutAppRoute {
+        switch screenID {
+        case .devicePicker:
+            .devicePicker
+        case .eucRide:
+            .ride
+        case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData, .eucGarage:
+            .pack
+        case .vescOnewheelRide, .vescDebug:
+            .mockup(screenID)
+        }
     }
+
+    private static func route(for connectionRoute: MockupConnectionRoute?) -> CutoutAppRoute {
+        switch connectionRoute {
+        case .electricUnicycle?:
+            .ride
+        case .vescOnewheel?:
+            .mockup(.vescOnewheelRide)
+        case nil:
+            .devicePicker
+        }
+    }
+}
+
+private enum CutoutAppRoute: Equatable {
+    case devicePicker
+    case ride
+    case pack
+    case mockup(MockupScreenID)
 }
 
 private struct MockupScreenContainer: View {
@@ -1887,7 +1924,7 @@ private struct BmsMockupView: View {
     let selectScreen: (MockupScreenID) -> Void
 
     private var content: MockupBmsContent {
-        screen.resolvedBmsContent(liveSnapshot: bmsSnapshot) ?? MockupBmsContent(
+        screen.bmsContent ?? MockupBmsContent(
             kind: .unknownTopology,
             snapshot: BmsSnapshot(
                 topology: BmsTopology(
@@ -1959,14 +1996,27 @@ private struct BmsMockupView: View {
     }
 
     private func header(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 2 * scale) {
-            Text("CutOut · BMS")
-                .font(.system(size: 15 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
-            Text(screen.title)
-                .font(.system(size: 32 * scale, weight: .black))
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
+        HStack(alignment: .top, spacing: 12 * scale) {
+            VStack(alignment: .leading, spacing: 2 * scale) {
+                Text("CutOut · BMS")
+                    .font(.system(size: 15 * scale, weight: .medium))
+                    .foregroundStyle(MockupColors.muted)
+                Text(screen.title)
+                    .font(.system(size: 32 * scale, weight: .black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+
+            Spacer(minLength: 8 * scale)
+
+            Button("Ride") {
+                selectScreen(.eucRide)
+            }
+            .font(.system(size: 14 * scale, weight: .black))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 14 * scale)
+            .frame(height: 34 * scale)
+            .background(Capsule().fill(MockupColors.yellow))
         }
     }
 
@@ -2501,6 +2551,15 @@ private struct BmsNoDataLayout: View {
             }
 
             Spacer(minLength: 12 * scale)
+
+            Button("Ride") {
+                selectScreen(.eucRide)
+            }
+            .font(.system(size: 13 * scale, weight: .black))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 12 * scale)
+            .frame(height: 30 * scale)
+            .background(Capsule().fill(MockupColors.yellow))
 
             HStack(spacing: 10 * scale) {
                 Circle()

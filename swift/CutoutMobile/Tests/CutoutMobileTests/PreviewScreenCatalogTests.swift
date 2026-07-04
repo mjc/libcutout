@@ -459,7 +459,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testResolvedBmsContentPrefersLiveSnapshotAndDerivesSmallPackLayout() throws {
-        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "6S1P pack",
@@ -481,7 +481,8 @@ extension MockupScreenCatalogTests {
             ]
         )
 
-        let resolved = try XCTUnwrap(screen.resolvedBmsContent(liveSnapshot: liveSnapshot))
+        let presented = MockupScreenCatalog.v2.presentedScreen(for: screen, liveBmsSnapshot: liveSnapshot)
+        let resolved = try XCTUnwrap(presented.bmsContent)
 
         XCTAssertEqual(resolved.kind, .cellMapInline)
         XCTAssertEqual(resolved.snapshot, liveSnapshot)
@@ -491,7 +492,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testResolvedBmsContentDerivesScrollableLiveModeTitles() throws {
-        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "large EUC pack",
@@ -510,7 +511,8 @@ extension MockupScreenCatalogTests {
             }
         )
 
-        let resolved = try XCTUnwrap(screen.resolvedBmsContent(liveSnapshot: liveSnapshot))
+        let presented = MockupScreenCatalog.v2.presentedScreen(for: screen, liveBmsSnapshot: liveSnapshot)
+        let resolved = try XCTUnwrap(presented.bmsContent)
 
         XCTAssertEqual(resolved.kind, .cellMapScrollable)
         XCTAssertEqual(resolved.modeTitles, ["overview", "strip", "raw table", "temps"])
@@ -633,6 +635,29 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(presented.id, MockupScreenID.bmsCellMap6S)
         XCTAssertEqual(presented.title, "12S cell map")
         XCTAssertEqual(presented.bmsContent?.chips.map { $0.title }, ["live readback", "12S2P pack"])
+    }
+
+    func testPresentedOverviewScreenDoesNotMorphToUnknownTopology() throws {
+        let directScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let liveSnapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "2 observed BMS groups",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            pageSelector: 2,
+            pageKind: "metadata",
+            voltage: Voltage(value: 95_800),
+        )
+
+        let presented = MockupScreenCatalog.v2.presentedScreen(for: directScreen, liveBmsSnapshot: liveSnapshot)
+
+        XCTAssertEqual(presented.id, MockupScreenID.bmsOverview)
+        XCTAssertEqual(presented.title, "Pack overview")
+        XCTAssertEqual(presented.bmsContent?.kind, .overview)
     }
 
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {

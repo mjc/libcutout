@@ -17,15 +17,6 @@ public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable 
 public enum MockupConnectionRoute: String, Equatable, Hashable, Sendable {
     case electricUnicycle = "electric_unicycle"
     case vescOnewheel = "vesc_onewheel"
-
-    public var destinationScreenID: MockupScreenID {
-        switch self {
-        case .electricUnicycle:
-            .eucRide
-        case .vescOnewheel:
-            .vescOnewheelRide
-        }
-    }
 }
 
 public struct MockupMetric: Equatable, Hashable, Sendable {
@@ -222,6 +213,11 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
 
 private extension MockupBmsScreenKind {
     init(liveSnapshot: BmsSnapshot, preferredScreenID: MockupScreenID) {
+        if let explicitKind = Self(explicitScreenID: preferredScreenID) {
+            self = explicitKind
+            return
+        }
+
         if liveSnapshot.availability == .unsupported {
             self = .noData
             return
@@ -244,6 +240,25 @@ private extension MockupBmsScreenKind {
         }
 
         self = .overview
+    }
+
+    init?(explicitScreenID: MockupScreenID) {
+        switch explicitScreenID {
+        case .bmsOverview:
+            self = .overview
+        case .bmsCellMap6S:
+            self = .cellMapInline
+        case .bmsCellMap40S:
+            self = .cellMapScrollable
+        case .bmsCellDetail:
+            self = .cellDetail
+        case .bmsUnknownTopology:
+            self = .unknownTopology
+        case .bmsNoData:
+            self = .noData
+        case .devicePicker, .eucRide, .eucGarage, .vescOnewheelRide, .vescDebug:
+            return nil
+        }
     }
 
     func liveTitle(snapshot: BmsSnapshot) -> String {
