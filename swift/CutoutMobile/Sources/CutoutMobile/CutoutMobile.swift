@@ -872,6 +872,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let availability: ReadbackAvailability
     public let topology: BmsTopology
     public let pageSelector: UInt8?
+    public let pageTag: UInt16?
     public let pageKind: String?
     public let pageVerification: VerificationState?
     public let energyPercent: BatteryLevel?
@@ -897,6 +898,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         availability: ReadbackAvailability = .available,
         topology: BmsTopology,
         pageSelector: UInt8? = nil,
+        pageTag: UInt16? = nil,
         pageKind: String? = nil,
         pageVerification: VerificationState? = nil,
         energyPercent: BatteryLevel? = nil,
@@ -922,6 +924,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.availability = availability
         self.topology = topology
         self.pageSelector = hasReadbackData ? pageSelector : nil
+        self.pageTag = hasReadbackData ? pageTag : nil
         self.pageKind = hasReadbackData ? pageKind : nil
         self.pageVerification = hasReadbackData ? pageVerification : nil
         self.energyPercent = hasReadbackData ? energyPercent : nil
@@ -949,6 +952,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             availability: ReadbackAvailability(dto.availability),
             topology: BmsTopology(dto.topology),
             pageSelector: dto.pageSelector,
+            pageTag: dto.pageTag,
             pageKind: dto.pageKind,
             pageVerification: dto.pageVerification.map(VerificationState.init),
             energyPercent: dto.energyPercent?.value,
@@ -976,6 +980,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         availability != .available
             || energyPercent != nil
             || pageSelector != nil
+            || pageTag != nil
             || pageKind != nil
             || voltage != nil
             || current != nil
@@ -988,7 +993,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public var readbackRows: [SessionDebugRow] {
         var rows = [
             SessionDebugRow(label: "availability", value: availability.displayText),
-            SessionDebugRow(label: "page", value: bmsPageText(selector: pageSelector, kind: pageKind)),
+            SessionDebugRow(label: "page", value: bmsPageText(selector: pageSelector, tag: pageTag, kind: pageKind)),
             SessionDebugRow(label: "page verification", value: pageVerification?.displayText ?? "unavailable"),
             SessionDebugRow(label: "charge", value: bmsPercentText(energyPercent)),
             SessionDebugRow(label: "voltage", value: bmsVoltageText(voltage)),
@@ -1024,6 +1029,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         return BmsSnapshot(
             topology: topology.mergingBmsPage(update.topology),
             pageSelector: nil,
+            pageTag: nil,
             pageKind: nil,
             pageVerification: update.pageVerification ?? pageVerification,
             energyPercent: update.energyPercent ?? energyPercent,
@@ -1244,6 +1250,7 @@ public extension BmsSnapshot {
             availability: availability,
             topology: topology,
             pageSelector: nil,
+            pageTag: nil,
             pageKind: nil,
             pageVerification: pageVerification,
             energyPercent: energyPercent,
@@ -1315,17 +1322,18 @@ private func bmsPercentText(_ value: BatteryLevel?) -> String {
     return "\(value.value)%"
 }
 
-private func bmsPageText(selector: UInt8?, kind: String?) -> String {
-    switch (selector, kind) {
-    case (let selector?, let kind?):
-        "\(kind) #\(selector)"
-    case (let selector?, nil):
-        "#\(selector)"
-    case (nil, let kind?):
-        kind
-    case (nil, nil):
-        "--"
+private func bmsPageText(selector: UInt8?, tag: UInt16?, kind: String?) -> String {
+    var parts: [String] = []
+    if let kind {
+        parts.append(kind)
     }
+    if let tag {
+        parts.append(String(format: "0x%02x", Int(tag)))
+    }
+    if let selector {
+        parts.append("#\(selector)")
+    }
+    return parts.isEmpty ? "--" : parts.joined(separator: " ")
 }
 
 private func bmsVoltageText(_ value: Voltage?) -> String {

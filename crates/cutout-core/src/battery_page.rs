@@ -2,7 +2,7 @@ use arrayvec::ArrayVec;
 
 use crate::{
     BatteryInfo, BmsPackCurrents, BmsTemperatureValuesPerPage, Measured, ProtocolSelector,
-    Temperature, VerificationStatus, Voltage,
+    ProtocolTag, Temperature, VerificationStatus, Voltage,
 };
 
 /// Maximum number of cell or cell-group voltage values carried by one typed BMS page.
@@ -36,6 +36,9 @@ pub struct BatteryPageMetadata {
     /// BMS page selector.
     pub selector: ProtocolSelector,
 
+    /// Protocol tag/opcode that produced this page, when the family exposes one.
+    pub tag: Option<ProtocolTag>,
+
     /// Current interpretation of the page.
     pub kind: BatteryPageKind,
 
@@ -53,9 +56,17 @@ impl BatteryPageMetadata {
     ) -> Self {
         Self {
             selector,
+            tag: None,
             kind,
             verification,
         }
+    }
+
+    /// Attaches the source protocol tag/opcode to this page.
+    #[must_use]
+    pub const fn with_tag(mut self, tag: ProtocolTag) -> Self {
+        self.tag = Some(tag);
+        self
     }
 
     /// Creates metadata for an interpreted metadata page.

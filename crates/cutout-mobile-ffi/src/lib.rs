@@ -1,6 +1,9 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::{
+    fmt,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
 
 use cutout_core::{
     BatteryInfoDto, BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
@@ -13,13 +16,14 @@ use cutout_core::{
     NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
     ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, RawFieldValue,
-    RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto,
-    SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
-    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
-    Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
+    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
+    RawFieldValue, RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
@@ -1017,6 +1021,9 @@ pub struct MobileBmsSnapshotDto {
     /// BMS page selector that produced this snapshot.
     pub page_selector: Option<u8>,
 
+    /// Protocol tag/opcode that produced this snapshot.
+    pub page_tag: Option<u16>,
+
     /// BMS page kind that produced this snapshot.
     pub page_kind: Option<String>,
 
@@ -1098,12 +1105,14 @@ impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
 
 impl MobileBmsSnapshotDto {
     fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
-        let groups = bms_groups_from_cell_voltages(&battery.cell_voltages);
+        let page_identity = BmsPageIdentity::from_page(battery.page);
+        let groups = bms_groups_from_cell_voltages(&battery.cell_voltages, page_identity);
         let temperatures = bms_temperatures(&battery.temperatures);
         Self {
             availability,
             topology: MobileBmsTopologyDto::from_observed_groups(groups.len()),
-            page_selector: Some(battery.page.selector),
+            page_selector: Some(battery.page.id.selector),
+            page_tag: battery.page.id.namespace.map(|namespace| namespace.value),
             page_kind: Some(bms_page_kind_label(battery.page.kind).to_owned()),
             page_verification: Some(battery.page.verification.into()),
             energy_percent: battery
@@ -1115,7 +1124,10 @@ impl MobileBmsSnapshotDto {
             bms_pack_current_0: battery.bms_pack_current_0.map(Into::into),
             bms_pack_current_1: battery.bms_pack_current_1.map(Into::into),
             cell_delta: cell_voltage_delta(&battery.cell_voltages),
-            lowest_group_index: lowest_cell_voltage_group_index(&battery.cell_voltages),
+            lowest_group_index: lowest_cell_voltage_group_index(
+                &battery.cell_voltages,
+                page_identity,
+            ),
             highest_temperature: highest_battery_temperature(
                 battery.temperature,
                 battery.temperatures,
@@ -1138,6 +1150,7 @@ impl MobileBmsSnapshotDto {
             availability,
             topology: MobileBmsTopologyDto::unknown_readback(),
             page_selector: None,
+            page_tag: None,
             page_kind: None,
             page_verification: None,
             energy_percent: None,
@@ -1173,14 +1186,15 @@ fn bms_page_kind_label(kind: BatteryPageKindDto) -> &'static str {
 
 fn bms_groups_from_cell_voltages(
     cell_voltages: &[MeasuredI32Dto],
+    page_identity: BmsPageIdentity,
 ) -> Vec<MobileBmsGroupSnapshotDto> {
     cell_voltages
         .iter()
         .enumerate()
         .filter_map(|(index, voltage)| {
-            let group_index = one_based_group_index(index)?;
+            let group_index = page_identity.group_index(index)?;
             Some(MobileBmsGroupSnapshotDto {
-                index: group_index,
+                index: group_index.as_mobile_dto(),
                 label: Some(format!("group {group_index}")),
                 voltage: Some((*voltage).into()),
                 temperature: None,
@@ -1202,10 +1216,162 @@ fn bms_temperatures(temperatures: &[Option<MeasuredI32Dto>]) -> Vec<TemperatureR
         .collect()
 }
 
-fn one_based_group_index(index: usize) -> Option<u16> {
-    index
-        .checked_add(1)
-        .and_then(|index| u16::try_from(index).ok())
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsPageIdentity {
+    page_selector: BmsPageSelector,
+    cell_bank: Option<BegodeCellPageBank>,
+}
+
+impl BmsPageIdentity {
+    fn from_page(page: cutout_core::BmsStatusPage) -> Self {
+        Self::from_tag_and_selector(
+            page.id.namespace.map(|namespace| namespace.into_core()),
+            page.id.selector,
+        )
+    }
+
+    fn from_tag_and_selector(page_tag: Option<ProtocolTag>, page_selector: u8) -> Self {
+        Self {
+            page_selector: BmsPageSelector::from_mobile_dto(page_selector),
+            cell_bank: BegodeCellPageBank::from_protocol_tag(page_tag),
+        }
+    }
+
+    fn first_group_index(self) -> BmsGroupIndex {
+        match self.cell_bank {
+            Some(bank) => bank.first_group_index_for_page(self.page_selector),
+            None => BmsGroupIndex::FIRST,
+        }
+    }
+
+    fn group_index(self, page_offset: usize) -> Option<BmsGroupIndex> {
+        self.first_group_index().offset(page_offset)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsPageSelector(u8);
+
+impl BmsPageSelector {
+    fn from_mobile_dto(selector: u8) -> Self {
+        Self(selector)
+    }
+
+    fn cell_page_offset(self, values_per_page: BmsPageGroupCount) -> Option<BmsGroupOffset> {
+        self.0
+            .checked_mul(values_per_page.get())
+            .map(BmsGroupOffset::new)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BegodeCellPageBank {
+    First,
+    Second,
+}
+
+impl BegodeCellPageBank {
+    const VALUES_PER_PAGE: BmsPageGroupCount = BmsPageGroupCount::new(8);
+    const VALUES_PER_BANK: BmsGroupOffset = BmsGroupOffset::new(32);
+
+    fn from_protocol_tag(tag: Option<ProtocolTag>) -> Option<Self> {
+        match tag.map(BegodeBmsPageTag::from_protocol_tag) {
+            Some(BegodeBmsPageTag::FirstCellBank) => Some(Self::First),
+            Some(BegodeBmsPageTag::SecondCellBank) => Some(Self::Second),
+            Some(BegodeBmsPageTag::Summary | BegodeBmsPageTag::Unknown) | None => None,
+        }
+    }
+
+    fn first_group_index_for_page(self, page_selector: BmsPageSelector) -> BmsGroupIndex {
+        let bank_offset = match self {
+            Self::First => BmsGroupOffset::ZERO,
+            Self::Second => Self::VALUES_PER_BANK,
+        };
+        let bank_base = BmsGroupIndex::FIRST
+            .offset_by(bank_offset)
+            .unwrap_or(BmsGroupIndex::FIRST);
+        page_selector
+            .cell_page_offset(Self::VALUES_PER_PAGE)
+            .and_then(|offset| bank_base.offset_by(offset))
+            .unwrap_or(bank_base)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BegodeBmsPageTag {
+    Summary,
+    FirstCellBank,
+    SecondCellBank,
+    Unknown,
+}
+
+impl BegodeBmsPageTag {
+    fn from_protocol_tag(tag: ProtocolTag) -> Self {
+        match tag.get() {
+            0x01 => Self::Summary,
+            0x02 => Self::FirstCellBank,
+            0x03 => Self::SecondCellBank,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsPageGroupCount(u8);
+
+impl BmsPageGroupCount {
+    const fn new(count: u8) -> Self {
+        Self(count)
+    }
+
+    const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsGroupOffset(u8);
+
+impl BmsGroupOffset {
+    const ZERO: Self = Self(0);
+
+    const fn new(offset: u8) -> Self {
+        Self(offset)
+    }
+
+    const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BmsGroupIndex(u8);
+
+impl BmsGroupIndex {
+    const FIRST: Self = Self(1);
+    #[cfg(test)]
+    const MAX: Self = Self(u8::MAX);
+
+    fn as_mobile_dto(self) -> u16 {
+        self.0.into()
+    }
+
+    fn offset(self, page_offset: usize) -> Option<Self> {
+        u8::try_from(page_offset)
+            .ok()
+            .and_then(|offset| self.0.checked_add(offset))
+            .map(Self)
+    }
+
+    fn offset_by(self, offset: BmsGroupOffset) -> Option<Self> {
+        self.0.checked_add(offset.get()).map(Self)
+    }
+}
+
+impl fmt::Display for BmsGroupIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
 }
 
 fn cell_voltage_delta(cell_voltages: &[MeasuredI32Dto]) -> Option<VoltageDeltaReading> {
@@ -1222,12 +1388,16 @@ fn cell_voltage_delta(cell_voltages: &[MeasuredI32Dto]) -> Option<VoltageDeltaRe
     })
 }
 
-fn lowest_cell_voltage_group_index(cell_voltages: &[MeasuredI32Dto]) -> Option<u16> {
+fn lowest_cell_voltage_group_index(
+    cell_voltages: &[MeasuredI32Dto],
+    page_identity: BmsPageIdentity,
+) -> Option<u16> {
     cell_voltages
         .iter()
         .enumerate()
         .min_by_key(|(_, voltage)| voltage.value)
-        .and_then(|(index, _)| one_based_group_index(index))
+        .and_then(|(index, _)| page_identity.group_index(index))
+        .map(BmsGroupIndex::as_mobile_dto)
 }
 
 impl MobileBmsTopologyDto {
@@ -3167,6 +3337,7 @@ mod tests {
                 confidence: MobileBmsTopologyConfidenceDto::Verified,
             },
             page_selector: None,
+            page_tag: None,
             page_kind: None,
             page_verification: None,
             energy_percent: Some(BatteryLevelReading {
@@ -3762,8 +3933,11 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Available,
                 page: Some(BatteryInfoDto {
-                    page: cutout_core::BatteryPageMetadataDto {
-                        selector: 3,
+                    page: cutout_core::BmsStatusPage {
+                        id: cutout_core::BmsStatusPageId {
+                            namespace: None,
+                            selector: 3,
+                        },
                         kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
@@ -3903,8 +4077,11 @@ mod tests {
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Unsupported,
                 page: Some(BatteryInfoDto {
-                    page: cutout_core::BatteryPageMetadataDto {
-                        selector: 3,
+                    page: cutout_core::BmsStatusPage {
+                        id: cutout_core::BmsStatusPageId {
+                            namespace: None,
+                            selector: 3,
+                        },
                         kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
@@ -3945,14 +4122,46 @@ mod tests {
 
     #[test]
     fn bms_group_projection_skips_unrepresentable_group_indices() {
-        let mut cell_voltages = vec![measured_i32(3_600); usize::from(u16::MAX) + 1];
-        cell_voltages[usize::from(u16::MAX)] = measured_i32(3_500);
+        let mut cell_voltages = vec![measured_i32(3_600); usize::from(u8::MAX) + 1];
+        cell_voltages[usize::from(u8::MAX)] = measured_i32(3_500);
+        let page_identity = BmsPageIdentity::from_tag_and_selector(None, 0);
 
-        let groups = bms_groups_from_cell_voltages(&cell_voltages);
+        let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
 
-        assert_eq!(groups.len(), usize::from(u16::MAX));
-        assert_eq!(groups.last().map(|group| group.index), Some(u16::MAX));
-        assert_eq!(lowest_cell_voltage_group_index(&cell_voltages), None);
+        assert_eq!(groups.len(), usize::from(u8::MAX));
+        assert_eq!(
+            groups.last().map(|group| group.index),
+            Some(BmsGroupIndex::MAX.as_mobile_dto())
+        );
+        assert_eq!(
+            lowest_cell_voltage_group_index(&cell_voltages, page_identity),
+            None
+        );
+    }
+
+    #[test]
+    fn begode_cell_pages_project_to_global_group_indices() {
+        let cell_voltages = vec![measured_i32(3_600), measured_i32(3_590)];
+        let page_identity = BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), 2);
+        let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
+
+        assert_eq!(page_identity.first_group_index().as_mobile_dto(), 49);
+        assert_eq!(
+            groups.iter().map(|group| group.index).collect::<Vec<_>>(),
+            vec![49, 50]
+        );
+        assert_eq!(
+            lowest_cell_voltage_group_index(&cell_voltages, page_identity),
+            Some(50)
+        );
+    }
+
+    #[test]
+    fn begode_second_bank_overflow_falls_back_to_bank_base() {
+        let page_identity =
+            BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), u8::MAX);
+
+        assert_eq!(page_identity.first_group_index().as_mobile_dto(), 33);
     }
 
     #[test]

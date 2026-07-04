@@ -7546,7 +7546,7 @@ mod tests {
     #[test]
     fn battery_page_types_remain_small() {
         assert_eq!(size_of::<crate::BatteryPageKind>(), 1);
-        assert_eq!(size_of::<crate::BatteryPageMetadata>(), 3);
+        assert_eq!(size_of::<crate::BatteryPageMetadata>(), 8);
         assert!(size_of::<crate::BatteryInfo>() <= 64);
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
         assert!(size_of::<crate::RawTelemetryReadback>() <= 96);

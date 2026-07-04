@@ -2293,6 +2293,7 @@ fn battery_page_json(payload: &BatteryPagePayload) -> serde_json::Value {
     let page = payload.page();
     serde_json::json!({
         "selector": page.selector.get(),
+        "tag": page.tag.map(|tag| tag.get()),
         "side": battery_page_side_name(page.kind, page.selector.get()),
         "kind": battery_page_kind_name(page.kind),
         "verification": verification_status_name(page.verification),

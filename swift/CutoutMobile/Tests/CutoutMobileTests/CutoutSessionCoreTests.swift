@@ -510,6 +510,49 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.bmsSnapshot?.pageKind)
     }
 
+    func testBmsSnapshotCollectionKeepsSameSelectorWithDifferentProtocolTags() {
+        let core = CutoutSessionCore()
+        let topology = BmsTopology(
+            layoutLabel: "64 observed BMS groups",
+            seriesGroupCount: nil,
+            parallelCount: nil,
+            packCount: 1,
+            bmsCount: 2,
+            confidence: .unverified
+        )
+        let firstBank = BmsSnapshot(
+            topology: topology,
+            pageSelector: 0,
+            pageTag: 0x02,
+            pageKind: "cell voltage",
+            pageVerification: .sourceVerified,
+            groups: [
+                BmsGroupSnapshot(index: 1, voltage: Voltage(value: 0))
+            ]
+        )
+        let secondBank = BmsSnapshot(
+            topology: topology,
+            pageSelector: 0,
+            pageTag: 0x03,
+            pageKind: "cell voltage",
+            pageVerification: .sourceVerified,
+            groups: [
+                BmsGroupSnapshot(index: 33, voltage: Voltage(value: 0))
+            ]
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(firstBank)]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(secondBank)]),
+            receivedAt: MonotonicMilliseconds(43)
+        )
+
+        XCTAssertEqual(core.bmsSnapshot?.groups.map(\.index), [1, 33])
+    }
+
     func testBmsSnapshotDoesNotReplaceObservedPackIdentityWithUnknown() {
         let core = CutoutSessionCore()
         let observedPage = BmsSnapshot(
