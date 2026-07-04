@@ -809,6 +809,9 @@ pub struct BatteryPageMetadataDto {
     /// BMS page selector.
     pub selector: u8,
 
+    /// Protocol tag/opcode that produced this page, when available.
+    pub tag: Option<u16>,
+
     /// Battery page kind.
     pub kind: BatteryPageKindDto,
 
@@ -820,6 +823,7 @@ impl From<BatteryPageMetadata> for BatteryPageMetadataDto {
     fn from(page: BatteryPageMetadata) -> Self {
         Self {
             selector: page.selector.get(),
+            tag: page.tag.map(|tag| tag.get()),
             kind: page.kind.into(),
             verification: page.verification.into(),
         }

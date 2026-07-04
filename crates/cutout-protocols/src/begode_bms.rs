@@ -104,7 +104,8 @@ impl BegodeBmsSummary {
     pub fn to_battery_response(self) -> ReadOnlyResponse {
         ReadOnlyResponse::Battery(cutout_core::BatteryReadback::available(
             BatteryPagePayload::raw(
-                BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified),
+                BatteryPageMetadata::metadata(self.sub_index, VerificationStatus::SourceVerified)
+                    .with_tag(ProtocolTag::new(0x01)),
                 BatteryInfo {
                     voltage: Some(source_reported(self.pack_voltage)),
                     current: Some(source_reported(self.current)),
@@ -177,7 +178,8 @@ impl BegodeBmsCellPage {
                 BatteryPageMetadata::cell_voltage(
                     self.page_index,
                     VerificationStatus::SourceVerified,
-                ),
+                )
+                .with_tag(self.tag),
                 BatteryInfo::default(),
                 self.cell_voltage.clone().into_iter().collect(),
             ),
