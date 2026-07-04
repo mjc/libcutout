@@ -6987,15 +6987,12 @@ where
         limit: ParserQueuedOutputCount,
     ) -> Result<(), SessionOutputError> {
         let actual = output.len().saturating_add(self.output.len());
-        if actual <= limit.as_outputs() {
-            self.drain_outputs_into(output);
-            Ok(())
-        } else {
-            Err(SessionOutputError::OutputOverflow {
+        (actual <= limit.as_outputs())
+            .then(|| self.drain_outputs_into(output))
+            .ok_or_else(|| SessionOutputError::OutputOverflow {
                 limit,
                 actual: ParserQueuedOutputCount::from_outputs(actual),
             })
-        }
     }
 
     /// Returns the latest telemetry snapshot.
