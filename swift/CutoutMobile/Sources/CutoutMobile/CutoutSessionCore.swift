@@ -34,6 +34,9 @@ public final class CutoutSessionCore: NSObject {
     private var suppressReconnect = false
     private var captureURL: URL?
     private var captureHandle: FileHandle?
+    private var captureStartedAt: MonotonicMilliseconds?
+    private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var didRecordCaptureFile = false
 
     public override init() {}
 
@@ -160,6 +163,7 @@ public final class CutoutSessionCore: NSObject {
         protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
         onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
         record("protocol_identity=\(candidate.detail)")
+        updateCaptureIdentity()
     }
 
     private func clearSettingsReadback() {
@@ -272,38 +276,140 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func captureFrame(direction: String, characteristic: CBUUID, bytes: Data) {
-        let line = [
-            "\"at\":\(Int(Date().timeIntervalSince1970 * 1_000))",
-            "\"direction\":\"\(direction)\"",
-            "\"characteristic\":\"\(characteristic.uuidString)\"",
-            "\"bytes\":\"\(bytes.hexString)\"",
-        ].joined(separator: ",")
-        appendCapture("{\(line)}")
+        guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
+            return
+        }
+
+        guard direction == "notify", let service = pevcapServiceUuid(for: channel) else {
+            return
+        }
+
+        captureBuilder?.recordNotification(
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
+            characteristic: channel.bytes,
+            service: service.bytes,
+            bytes: bytes
+        )
+        writeCapture()
     }
 
     private func startCapture(reason: String) {
         try? captureHandle?.close()
         captureHandle = nil
+        captureStartedAt = clock.now()
+        didRecordCaptureFile = false
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         captureURL = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
-        appendCapture("{\"event\":\"capture_start\",\"reason\":\"\(reason)\"}")
+        let builder = MobilePevcapCaptureBuilder(
+            wallClockStartUnixMs: MobileWallClockUnixMillisDto(milliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)),
+            platformId: advertisement?.peripheralIdentifier.rawValue ?? "ios",
+            writeLimit: MobileTransportWriteLimitDto(bytes: 23)
+        )
+        (advertisement?.advertisedServiceUuids ?? []).forEach { service in
+            builder.addAdvertisedService(service: service.bytes)
+        }
+        [
+            "source=ios-app",
+            "capture_reason=\(reason)",
+            "capture_privacy=private",
+            "capture_evidence=hardware_tested",
+        ].forEach { builder.addAnnotation(annotation: $0) }
+        captureBuilder = builder
+        updateCaptureIdentity()
+        writeCapture()
     }
 
-    private func appendCapture(_ line: String) {
+    private func writeCapture() {
         do {
-            if captureHandle == nil {
-                let url = captureURL ?? FileManager.default
-                    .urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
-                captureURL = url
-                FileManager.default.createFile(atPath: url.path, contents: nil)
-                captureHandle = try FileHandle(forWritingTo: url)
+            guard let builder = captureBuilder else { return }
+            let url = captureURL ?? FileManager.default
+                .urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
+            captureURL = url
+            let bytes = try builder.export(encoding: .jsonl)
+            try bytes.write(to: url, options: [.atomic])
+            if !didRecordCaptureFile {
+                didRecordCaptureFile = true
                 record("capture_file=\(url.path)")
             }
-            captureHandle?.write(Data((line + "\n").utf8))
         } catch {
             record("capture_error=\(error)")
+        }
+    }
+
+    private func captureElapsedMilliseconds() -> UInt64 {
+        guard let captureStartedAt else {
+            return 0
+        }
+        return clock.now().rawValue.saturatingSubtracting(captureStartedAt.rawValue)
+    }
+
+    private func updateCaptureIdentity() {
+        guard let builder = captureBuilder, let identity = pevcapResolvedIdentity() else {
+            return
+        }
+        builder.setResolvedIdentity(identity: identity)
+        if let protocolIdentityCandidate {
+            builder.addAnnotation(annotation: "resolved_evidence=\(protocolIdentityCandidate.evidence)")
+            builder.addAnnotation(annotation: "resolved_detail=\(protocolIdentityCandidate.detail)")
+        }
+        writeCapture()
+    }
+
+    private func pevcapResolvedIdentity() -> MobileResolvedIdentityDto? {
+        if let candidate = protocolIdentityCandidate,
+           let model = candidate.support.electricUnicycleModel {
+            return model.pevcapResolvedIdentity(verification: .hardwareVerified)
+        }
+        return selectedModel?.pevcapResolvedIdentity(verification: .inferred)
+    }
+
+    private func pevcapServiceUuid(for characteristic: BluetoothUuid) -> BluetoothUuid? {
+        guard let shortUuid = characteristic.bluetooth16Value else {
+            return nil
+        }
+        switch shortUuid {
+        case 0xffe1:
+            return .bluetooth16(0xffe0)
+        case 0xfff1:
+            return .bluetooth16(0xfff0)
+        default:
+            return nil
+        }
+    }
+}
+
+private extension UInt64 {
+    func saturatingSubtracting(_ other: UInt64) -> UInt64 {
+        self >= other ? self - other : 0
+    }
+}
+
+private extension ElectricUnicycleModel {
+    func pevcapResolvedIdentity(verification: MobileVerificationStatusDto) -> MobileResolvedIdentityDto {
+        MobileResolvedIdentityDto(
+            protocolFamily: pevcapProtocolFamily,
+            model: MobileVerifiedStringDto(value: pevcapModelName, verification: verification),
+            firmware: nil
+        )
+    }
+
+    var pevcapProtocolFamily: MobileProtocolFamilyDto {
+        switch self {
+        case .aero:
+            .veteranLeaperkimNosfet
+        case .falcon:
+            .begodeGotway
+        }
+    }
+
+    var pevcapModelName: String {
+        switch self {
+        case .aero:
+            "NOSFET Aero"
+        case .falcon:
+            "Begode Falcon"
         }
     }
 }
