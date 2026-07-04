@@ -7,8 +7,11 @@ use std::{
 
 use cutout_core::{
     BatteryInfoDto, BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
-    ChargeModeDto, CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultCode,
-    FaultCodeDto, FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry,
+    ChargeModeDto, CommandKindDto, ControlRefusalReasonDto, CutoutSessionState, DeviceCommandDto,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport, DiscoveryElectricUnicycleModel,
+    DiscoveryManufacturerDataSummary, DiscoveryObservation,
+    DiscoveryObservation as CoreDiscoveryObservation, FaultCode, FaultCodeDto,
+    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry,
     FaultHistoryEntryDto, FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
     MeasuredChargeModeDto, MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto,
@@ -112,6 +115,232 @@ pub struct MobileDiscoveryCandidateDto {
 
     /// Disabled reason, when connecting is not allowed.
     pub disabled_reason: Option<String>,
+}
+
+/// Mobile advertised manufacturer data summary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryManufacturerDataSummaryRecord {
+    /// Bluetooth company identifier.
+    pub company_identifier: u16,
+
+    /// Opaque manufacturer payload length in bytes.
+    pub payload_len: u64,
+}
+
+/// Mobile discovery observation to feed into Rust-owned session state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryObservationRecord {
+    /// Platform-local peripheral identifier; not a Bluetooth MAC address.
+    pub platform_identifier: String,
+
+    /// Raw advertised-name bytes from the mobile BLE stack.
+    pub advertised_name: Option<Vec<u8>>,
+
+    /// Advertised 16-bit service UUID values relevant to picker routing.
+    pub advertised_service_uuids: Vec<u16>,
+
+    /// Manufacturer data summaries without opaque payload bytes.
+    pub manufacturer_data: Vec<DiscoveryManufacturerDataSummaryRecord>,
+
+    /// Last observed RSSI in dBm.
+    pub rssi_dbm: Option<i16>,
+}
+
+/// Mobile discovery observation snapshot returned from Rust state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryObservationSnapshotRecord {
+    /// Platform-local peripheral identifier; not a Bluetooth MAC address.
+    pub platform_identifier: String,
+
+    /// Raw advertised-name bytes retained by Rust state.
+    pub advertised_name: Option<Vec<u8>>,
+
+    /// UTF-8 advertised-name view, when valid.
+    pub advertised_name_text: Option<String>,
+
+    /// Advertised 16-bit service UUID values relevant to picker routing.
+    pub advertised_service_uuids: Vec<u16>,
+
+    /// Manufacturer data summaries without opaque payload bytes.
+    pub manufacturer_data: Vec<DiscoveryManufacturerDataSummaryRecord>,
+
+    /// Last observed RSSI in dBm.
+    pub rssi_dbm: Option<i16>,
+}
+
+/// Mobile discovery state snapshot returned from Rust state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoverySnapshotRecord {
+    /// Retained discovery observations.
+    pub observations: Vec<DiscoveryObservationSnapshotRecord>,
+
+    /// Picker candidates derived from retained Rust discovery evidence.
+    pub picker_candidates: Vec<MobileDiscoveryCandidateDto>,
+
+    /// Platform identifier selected for the current mobile session.
+    pub selected_platform_identifier: Option<String>,
+}
+
+/// Mobile-facing Rust-owned `CutOut` session state handle.
+#[derive(Debug, uniffi::Object)]
+pub struct CutoutSessionStateHandle {
+    inner: Mutex<CutoutSessionState>,
+}
+
+impl DiscoveryObservationRecord {
+    fn into_core(self) -> CoreDiscoveryObservation {
+        CoreDiscoveryObservation {
+            platform_identifier: self.platform_identifier,
+            advertised_name: self.advertised_name,
+            advertised_service_uuids: self.advertised_service_uuids,
+            manufacturer_data: self
+                .manufacturer_data
+                .into_iter()
+                .map(DiscoveryManufacturerDataSummary::from)
+                .collect(),
+            rssi_dbm: self.rssi_dbm,
+        }
+    }
+}
+
+impl From<DiscoveryManufacturerDataSummaryRecord> for DiscoveryManufacturerDataSummary {
+    fn from(summary: DiscoveryManufacturerDataSummaryRecord) -> Self {
+        Self {
+            company_identifier: summary.company_identifier,
+            payload_len: usize::try_from(summary.payload_len).unwrap_or(usize::MAX),
+        }
+    }
+}
+
+impl From<DiscoveryManufacturerDataSummary> for DiscoveryManufacturerDataSummaryRecord {
+    fn from(summary: DiscoveryManufacturerDataSummary) -> Self {
+        Self {
+            company_identifier: summary.company_identifier,
+            payload_len: summary.payload_len as u64,
+        }
+    }
+}
+
+impl From<&DiscoveryObservation> for DiscoveryObservationSnapshotRecord {
+    fn from(observation: &DiscoveryObservation) -> Self {
+        Self {
+            platform_identifier: observation.platform_identifier.clone(),
+            advertised_name: observation.advertised_name.clone(),
+            advertised_name_text: observation.advertised_name_text().map(str::to_owned),
+            advertised_service_uuids: observation.advertised_service_uuids.clone(),
+            manufacturer_data: observation
+                .manufacturer_data
+                .iter()
+                .copied()
+                .map(DiscoveryManufacturerDataSummaryRecord::from)
+                .collect(),
+            rssi_dbm: observation.rssi_dbm,
+        }
+    }
+}
+
+impl DiscoverySnapshotRecord {
+    fn from_state(state: &CutoutSessionState) -> Self {
+        let discovery = state.discovery();
+        Self {
+            observations: discovery
+                .observations
+                .iter()
+                .map(DiscoveryObservationSnapshotRecord::from)
+                .collect(),
+            picker_candidates: discovery
+                .picker_candidates()
+                .into_iter()
+                .map(MobileDiscoveryCandidateDto::from)
+                .collect(),
+            selected_platform_identifier: discovery.selected_platform_identifier.clone(),
+        }
+    }
+}
+
+impl From<DiscoveryCandidateSnapshot> for MobileDiscoveryCandidateDto {
+    fn from(candidate: DiscoveryCandidateSnapshot) -> Self {
+        let support = MobileDiscoveryCandidateSupportDto::from(candidate.support);
+        let electric_unicycle_model = candidate
+            .electric_unicycle_model
+            .map(MobileElectricUnicycleModelDto::from);
+        Self {
+            platform_identifier: candidate.platform_identifier,
+            display_name: candidate.display_name,
+            product_category: candidate.product_category,
+            evidence: candidate.evidence,
+            detail: candidate.detail,
+            is_picker_candidate: true,
+            support,
+            connection_route: (candidate.support == DiscoveryCandidateSupport::Supported)
+                .then(|| "electric_unicycle".to_owned()),
+            electric_unicycle_model,
+            disabled_reason: (candidate.support == DiscoveryCandidateSupport::Unsupported)
+                .then(|| "Not yet supported".to_owned()),
+        }
+    }
+}
+
+impl From<DiscoveryElectricUnicycleModel> for MobileElectricUnicycleModelDto {
+    fn from(model: DiscoveryElectricUnicycleModel) -> Self {
+        match model {
+            DiscoveryElectricUnicycleModel::Aero => Self::Aero,
+            DiscoveryElectricUnicycleModel::Falcon => Self::Falcon,
+        }
+    }
+}
+
+impl From<DiscoveryCandidateSupport> for MobileDiscoveryCandidateSupportDto {
+    fn from(support: DiscoveryCandidateSupport) -> Self {
+        match support {
+            DiscoveryCandidateSupport::Supported => Self::Supported,
+            DiscoveryCandidateSupport::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+#[uniffi::export]
+impl CutoutSessionStateHandle {
+    /// Creates an empty Rust-owned session state handle.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CutoutSessionState::default()),
+        })
+    }
+
+    /// Observes one mobile discovery advertisement.
+    pub fn observe_discovery(
+        &self,
+        observation: DiscoveryObservationRecord,
+    ) -> DiscoverySnapshotRecord {
+        let mut state = self.lock_inner();
+        state.observe_discovery(observation.into_core());
+        DiscoverySnapshotRecord::from_state(&state)
+    }
+
+    /// Selects a discovered platform identifier for this session.
+    pub fn select_discovered_platform(
+        &self,
+        platform_identifier: String,
+    ) -> DiscoverySnapshotRecord {
+        let mut state = self.lock_inner();
+        state.select_discovered_platform(platform_identifier);
+        DiscoverySnapshotRecord::from_state(&state)
+    }
+
+    /// Returns the current discovery snapshot.
+    #[must_use]
+    pub fn discovery_snapshot(&self) -> DiscoverySnapshotRecord {
+        DiscoverySnapshotRecord::from_state(&self.lock_inner())
+    }
+}
+
+impl CutoutSessionStateHandle {
+    fn lock_inner(&self) -> MutexGuard<'_, CutoutSessionState> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// Device-detection resolution exposed across the `UniFFI` boundary.
@@ -3398,6 +3627,39 @@ mod tests {
         assert_eq!(resolution.protocol_family, None);
         assert_eq!(resolution.advertised_name, Some(vec![b'N', b'F', 0xff]));
         assert_eq!(resolution.model_banner, None);
+    }
+
+    #[test]
+    fn mobile_cutout_session_state_retains_discovery_observations() {
+        let session = CutoutSessionStateHandle::new();
+
+        let snapshot = session.observe_discovery(DiscoveryObservationRecord {
+            platform_identifier: "ios-local-falcon".to_owned(),
+            advertised_name: Some(b"Begode Falcon".to_vec()),
+            advertised_service_uuids: vec![0xffe0],
+            manufacturer_data: vec![DiscoveryManufacturerDataSummaryRecord {
+                company_identifier: 0x004c,
+                payload_len: 6,
+            }],
+            rssi_dbm: Some(-48),
+        });
+
+        assert_eq!(snapshot.observations.len(), 1);
+        assert_eq!(
+            snapshot.observations[0].advertised_name_text,
+            Some("Begode Falcon".to_owned())
+        );
+        assert_eq!(snapshot.picker_candidates.len(), 1);
+        assert_eq!(
+            snapshot.picker_candidates[0].electric_unicycle_model,
+            Some(MobileElectricUnicycleModelDto::Falcon)
+        );
+
+        let selected = session.select_discovered_platform("ios-local-falcon".to_owned());
+        assert_eq!(
+            selected.selected_platform_identifier,
+            Some("ios-local-falcon".to_owned())
+        );
     }
 
     #[test]

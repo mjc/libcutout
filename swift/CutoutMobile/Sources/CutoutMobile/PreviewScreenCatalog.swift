@@ -544,6 +544,15 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
         )
     }
 
+    public init(status: DevicePickerScanStatus, discoverySnapshot: DiscoverySnapshotRecord) {
+        self.init(
+            status: status,
+            rows: discoverySnapshot.pickerCandidates.map {
+                DevicePickerDiscoveryCandidate(candidate: $0).pickerRow
+            }
+        )
+    }
+
     public var sections: MockupPickerSections {
         MockupPickerSections(rows: rows)
     }

@@ -2292,19 +2292,35 @@ public enum CutoutModelHint: Equatable, Hashable, Sendable {
     case unknown
 }
 
+public struct CoreBluetoothManufacturerDataSummary: Equatable, Hashable, Sendable {
+    public let companyIdentifier: UInt16
+    public let payloadLength: UInt64
+
+    public init(companyIdentifier: UInt16, payloadLength: UInt64) {
+        self.companyIdentifier = companyIdentifier
+        self.payloadLength = payloadLength
+    }
+}
+
 public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
     public let peripheralIdentifier: CoreBluetoothPeripheralIdentifier
     public let localName: String?
     public let advertisedServiceUuids: [BluetoothUuid]
+    public let manufacturerData: [CoreBluetoothManufacturerDataSummary]
+    public let rssiDbm: Int16?
 
     public init(
         peripheralIdentifier: CoreBluetoothPeripheralIdentifier,
         localName: String?,
-        advertisedServiceUuids: [BluetoothUuid]
+        advertisedServiceUuids: [BluetoothUuid],
+        manufacturerData: [CoreBluetoothManufacturerDataSummary] = [],
+        rssiDbm: Int16? = nil
     ) {
         self.peripheralIdentifier = peripheralIdentifier
         self.localName = localName
         self.advertisedServiceUuids = advertisedServiceUuids
+        self.manufacturerData = manufacturerData
+        self.rssiDbm = rssiDbm
     }
 
     public var modelHint: CutoutModelHint {
@@ -2830,16 +2846,75 @@ public extension BluetoothUuid {
 }
 
 public extension CoreBluetoothAdvertisement {
-    init(peripheral: CBPeripheral, advertisementData: [String: Any]) {
+    init(peripheral: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber? = nil) {
         let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let serviceUuids = (
             advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
         ).compactMap(BluetoothUuid.init(coreBluetoothUuid:))
+        let manufacturerData = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)
+            .flatMap(CoreBluetoothManufacturerDataSummary.init(advertisementData:))
+            .map { [$0] } ?? []
         self.init(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString),
             localName: localName ?? peripheral.name,
-            advertisedServiceUuids: serviceUuids
+            advertisedServiceUuids: serviceUuids,
+            manufacturerData: manufacturerData,
+            rssiDbm: rssi.map(Int16.init(truncating:))
         )
+    }
+
+    init(discoveryObservation observation: DiscoveryObservationSnapshotRecord) {
+        self.init(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier(observation.platformIdentifier),
+            localName: observation.advertisedNameText,
+            advertisedServiceUuids: observation.advertisedServiceUuids.map(BluetoothUuid.bluetooth16),
+            manufacturerData: observation.manufacturerData.map(CoreBluetoothManufacturerDataSummary.init),
+            rssiDbm: observation.rssiDbm
+        )
+    }
+}
+
+public extension DiscoveryObservationRecord {
+    init(_ advertisement: CoreBluetoothAdvertisement) {
+        self.init(
+            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+            advertisedName: advertisement.localName.map { Data($0.utf8) },
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value),
+            manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummaryRecord.init),
+            rssiDbm: advertisement.rssiDbm
+        )
+    }
+}
+
+public extension CoreBluetoothManufacturerDataSummary {
+    init(_ summary: DiscoveryManufacturerDataSummaryRecord) {
+        self.init(companyIdentifier: summary.companyIdentifier, payloadLength: summary.payloadLen)
+    }
+}
+
+public extension DiscoveryManufacturerDataSummaryRecord {
+    init(_ summary: CoreBluetoothManufacturerDataSummary) {
+        self.init(companyIdentifier: summary.companyIdentifier, payloadLen: summary.payloadLength)
+    }
+}
+
+private extension CoreBluetoothManufacturerDataSummary {
+    init?(advertisementData: Data) {
+        if advertisementData.count >= 2 {
+            let companyIdentifier = UInt16(advertisementData[0]) | (UInt16(advertisementData[1]) << 8)
+            self.init(
+                companyIdentifier: companyIdentifier,
+                payloadLength: UInt64(advertisementData.count.saturatingSubtracting(2))
+            )
+        } else {
+            return nil
+        }
+    }
+}
+
+private extension Int {
+    func saturatingSubtracting(_ rhs: Int) -> Int {
+        Swift.max(0, self - rhs)
     }
 }
 
@@ -2937,11 +3012,12 @@ public final class CoreBluetoothCentralLifecycle: NSObject, CBCentralManagerDele
         _ central: CBCentralManager,
         didDiscover peripheral: CBPeripheral,
         advertisementData: [String: Any],
-        rssi _: NSNumber
+        rssi: NSNumber
     ) {
         let advertisement = CoreBluetoothAdvertisement(
             peripheral: peripheral,
-            advertisementData: advertisementData
+            advertisementData: advertisementData,
+            rssi: rssi
         )
         guard case .connect = coordinator.handleDiscovered(advertisement) else {
             return
