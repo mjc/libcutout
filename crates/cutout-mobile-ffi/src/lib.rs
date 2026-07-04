@@ -1047,6 +1047,9 @@ pub struct MobileBmsSnapshotDto {
     /// Highest observed temperature.
     pub highest_temperature: Option<TemperatureReading>,
 
+    /// Page-specific BMS temperature readings.
+    pub temperatures: Vec<TemperatureReading>,
+
     /// Human-readable label for the hottest area.
     pub highest_temperature_label: Option<String>,
 
@@ -1096,6 +1099,7 @@ impl From<BatteryReadbackDto> for MobileBmsSnapshotDto {
 impl MobileBmsSnapshotDto {
     fn from_page(availability: MobileReadbackAvailabilityDto, battery: BatteryInfoDto) -> Self {
         let groups = bms_groups_from_cell_voltages(&battery.cell_voltages);
+        let temperatures = bms_temperatures(&battery.temperatures);
         Self {
             availability,
             topology: MobileBmsTopologyDto::from_observed_groups(groups.len()),
@@ -1116,6 +1120,7 @@ impl MobileBmsSnapshotDto {
                 battery.temperature,
                 battery.temperatures,
             ),
+            temperatures,
             highest_temperature_label: None,
             balancing_summary: None,
             balancing_detail: None,
@@ -1143,6 +1148,7 @@ impl MobileBmsSnapshotDto {
             cell_delta: None,
             lowest_group_index: None,
             highest_temperature: None,
+            temperatures: Vec::new(),
             highest_temperature_label: None,
             balancing_summary: None,
             balancing_detail: None,
@@ -1184,6 +1190,15 @@ fn bms_groups_from_cell_voltages(
                 detail: None,
             })
         })
+        .collect()
+}
+
+fn bms_temperatures(temperatures: &[Option<MeasuredI32Dto>]) -> Vec<TemperatureReading> {
+    temperatures
+        .iter()
+        .flatten()
+        .copied()
+        .map(Into::into)
         .collect()
 }
 
@@ -3182,6 +3197,7 @@ mod tests {
                 quality: MobileValueQualityDto::Known,
                 verification: MobileVerificationStatusDto::HardwareVerified,
             }),
+            temperatures: Vec::new(),
             highest_temperature_label: Some("right pack".to_owned()),
             balancing_summary: Some("idle • top groups only".to_owned()),
             balancing_detail: Some("3 groups bleeding: 03, 11, 19".to_owned()),
@@ -3845,6 +3861,14 @@ mod tests {
                 .expect("highest temperature")
                 .value,
             Temperature { value: 37_800 }
+        );
+        assert_eq!(
+            snapshot
+                .temperatures
+                .iter()
+                .map(|temperature| temperature.value)
+                .collect::<Vec<_>>(),
+            vec![Temperature { value: 37_800 }, Temperature { value: 35_200 }]
         );
     }
 

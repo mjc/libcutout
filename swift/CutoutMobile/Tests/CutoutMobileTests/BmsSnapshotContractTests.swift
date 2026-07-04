@@ -23,6 +23,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             cellDelta: VoltageDelta(value: 18),
             lowestGroupIndex: 17,
             highestTemperature: Temperature(value: 37_800),
+            temperatureReadings: [Temperature(value: 37_800), Temperature(value: 35_200)],
             highestTemperatureLabel: "right pack",
             balancingSummary: "idle - top groups only",
             balancingDetail: "3 groups bleeding: 03, 11, 19",
@@ -132,6 +133,7 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertNil(snapshot.cellDelta)
         XCTAssertNil(snapshot.lowestGroupIndex)
         XCTAssertNil(snapshot.highestTemperature)
+        XCTAssertTrue(snapshot.temperatureReadings.isEmpty)
         XCTAssertNil(snapshot.highestTemperatureLabel)
         XCTAssertNil(snapshot.balancingSummary)
         XCTAssertNil(snapshot.balancingDetail)
@@ -164,6 +166,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             cellDelta: VoltageDelta(value: 18),
             lowestGroupIndex: 17,
             highestTemperature: Temperature(value: 37_800),
+            temperatureReadings: [Temperature(value: 37_800), Temperature(value: 35_200)],
             groups: [
                 BmsGroupSnapshot(index: 17, voltage: Voltage(value: 4_071), alertLevel: .warning),
                 BmsGroupSnapshot(index: 18, voltage: Voltage(value: 4_089), alertLevel: .nominal)
@@ -187,6 +190,7 @@ final class BmsSnapshotContractTests: XCTestCase {
                 SessionDebugRow(label: "delta", value: "18"),
                 SessionDebugRow(label: "lowest group", value: "17"),
                 SessionDebugRow(label: "temperature", value: "37.8"),
+                SessionDebugRow(label: "temperature sensors", value: "2"),
                 SessionDebugRow(label: "topology", value: "20S4P split pack"),
             ]
         )

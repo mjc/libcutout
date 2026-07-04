@@ -882,6 +882,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let cellDelta: VoltageDelta?
     public let lowestGroupIndex: Int?
     public let highestTemperature: Temperature?
+    public let temperatureReadings: [Temperature]
     public let highestTemperatureLabel: String?
     public let balancingSummary: String?
     public let balancingDetail: String?
@@ -906,6 +907,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         cellDelta: VoltageDelta? = nil,
         lowestGroupIndex: Int? = nil,
         highestTemperature: Temperature? = nil,
+        temperatureReadings: [Temperature] = [],
         highestTemperatureLabel: String? = nil,
         balancingSummary: String? = nil,
         balancingDetail: String? = nil,
@@ -930,6 +932,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.cellDelta = hasReadbackData ? cellDelta : nil
         self.lowestGroupIndex = hasReadbackData ? lowestGroupIndex : nil
         self.highestTemperature = hasReadbackData ? highestTemperature : nil
+        self.temperatureReadings = hasReadbackData ? temperatureReadings : []
         self.highestTemperatureLabel = hasReadbackData ? highestTemperatureLabel : nil
         self.balancingSummary = hasReadbackData ? balancingSummary : nil
         self.balancingDetail = hasReadbackData ? balancingDetail : nil
@@ -956,6 +959,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             cellDelta: dto.cellDelta?.value,
             lowestGroupIndex: dto.lowestGroupIndex.map(Int.init),
             highestTemperature: dto.highestTemperature?.value,
+            temperatureReadings: dto.temperatures.map(\.value),
             highestTemperatureLabel: dto.highestTemperatureLabel,
             balancingSummary: dto.balancingSummary,
             balancingDetail: dto.balancingDetail,
@@ -977,6 +981,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             || current != nil
             || bmsPackCurrent0 != nil
             || bmsPackCurrent1 != nil
+            || !temperatureReadings.isEmpty
             || highestTemperature != nil
     }
 
@@ -1005,6 +1010,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(label: "delta", value: bmsMillivoltsText(cellDelta)),
             SessionDebugRow(label: "lowest group", value: lowestGroupIndex.map(String.init) ?? "unavailable"),
             SessionDebugRow(label: "temperature", value: bmsTemperatureText(highestTemperature)),
+            SessionDebugRow(label: "temperature sensors", value: bmsCountText(temperatureReadings.count)),
             SessionDebugRow(label: "topology", value: topology.layoutLabel),
         ]
         return rows
@@ -1229,6 +1235,10 @@ private func bmsCurrentText(_ value: BatteryCurrent?) -> String {
 
 private func bmsMillivoltsText(_ value: VoltageDelta?) -> String {
     value.map { String($0.value) } ?? "--"
+}
+
+private func bmsCountText(_ value: Int) -> String {
+    value == 0 ? "--" : String(value)
 }
 
 private func bmsTemperatureText(_ value: Temperature?) -> String {
