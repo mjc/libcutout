@@ -439,20 +439,32 @@ private extension ElectricUnicycleModel {
 
 private struct BmsPageKey: Hashable {
     let selector: UInt8?
+    let tag: UInt16?
     let kind: String
 
     init(snapshot: BmsSnapshot) {
         selector = snapshot.pageSelector
+        tag = snapshot.pageTag
         kind = snapshot.pageKind ?? "unknown"
     }
 
     var isKnownPage: Bool {
-        selector != nil || kind != "unknown"
+        selector != nil || tag != nil || kind != "unknown"
     }
 
     static func sortSnapshots(_ lhs: BmsSnapshot, _ rhs: BmsSnapshot) -> Bool {
         let lhsKey = BmsPageKey(snapshot: lhs)
         let rhsKey = BmsPageKey(snapshot: rhs)
+        switch (lhsKey.tag, rhsKey.tag) {
+        case let (lhsTag?, rhsTag?) where lhsTag != rhsTag:
+            return lhsTag < rhsTag
+        case (nil, _?):
+            return false
+        case (_?, nil):
+            return true
+        default:
+            break
+        }
         switch (lhsKey.selector, rhsKey.selector) {
         case let (lhsSelector?, rhsSelector?) where lhsSelector != rhsSelector:
             return lhsSelector < rhsSelector
