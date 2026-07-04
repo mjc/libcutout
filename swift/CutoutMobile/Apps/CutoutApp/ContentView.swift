@@ -376,6 +376,32 @@ private struct BmsReadbackRows: View {
     }
 }
 
+private struct BmsDiagnosticsSection: View {
+    let snapshot: BmsSnapshot
+    let scale: CGFloat
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            BmsReadbackRows(snapshot: snapshot, scale: scale, includesPageCursor: false)
+                .padding(.top, 8 * scale)
+        } label: {
+            VStack(alignment: .leading, spacing: 3 * scale) {
+                Text("BMS diagnostics")
+                    .font(.system(size: 15 * scale, weight: .black))
+                    .foregroundStyle(MockupColors.primaryText)
+                Text("raw readback, available when we need to debug")
+                    .font(.system(size: 11 * scale, weight: .bold))
+                    .foregroundStyle(MockupColors.muted)
+            }
+        }
+        .tint(MockupColors.muted)
+        .padding(.horizontal, 16 * scale)
+        .padding(.vertical, 14 * scale)
+        .background(BmsCardBackground(cornerRadius: 20 * scale))
+    }
+}
+
 private struct SettingsReadbackRows: View {
     let readback: SettingsReadback
     let scale: CGFloat
@@ -1925,6 +1951,7 @@ private struct BmsMockupView: View {
     let rideState: EucRideScreenState?
     let bmsSnapshot: BmsSnapshot?
     let selectScreen: (MockupScreenID) -> Void
+    @State private var showsDiagnostics = false
 
     private var content: MockupBmsContent {
         screen.bmsContent ?? MockupBmsContent(
@@ -2060,12 +2087,11 @@ private struct BmsMockupView: View {
     }
 
     private func liveReadbackSection(snapshot: BmsSnapshot, scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 10 * scale) {
-            Text("Live BMS readback")
-                .font(.system(size: 16 * scale, weight: .black))
-                .foregroundStyle(MockupColors.primaryText)
-            BmsReadbackRows(snapshot: snapshot, scale: scale, includesPageCursor: false)
-        }
+        BmsDiagnosticsSection(
+            snapshot: snapshot,
+            scale: scale,
+            isExpanded: $showsDiagnostics
+        )
     }
 }
 
@@ -2474,6 +2500,7 @@ private struct BmsNoDataLayout: View {
     let liveSnapshot: BmsSnapshot?
     let scale: CGFloat
     let selectScreen: (MockupScreenID) -> Void
+    @State private var showsDiagnostics = false
 
     private var snapshot: BmsSnapshot { content.snapshot }
     private var rideSagMetric: MockupMetric? {
@@ -2555,10 +2582,11 @@ private struct BmsNoDataLayout: View {
                     ridingRuleCard
 
                     if let liveSnapshot, liveSnapshot.shouldRenderReadback {
-                        VStack(alignment: .leading, spacing: 10 * scale) {
-                            cardLabel("LIVE BMS READBACK")
-                            BmsReadbackRows(snapshot: liveSnapshot, scale: scale)
-                        }
+                        BmsDiagnosticsSection(
+                            snapshot: liveSnapshot,
+                            scale: scale,
+                            isExpanded: $showsDiagnostics
+                        )
                     }
                 }
                 .padding(.horizontal, 24 * scale)
