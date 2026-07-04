@@ -402,7 +402,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedSnapshots, [snapshot, nil])
     }
 
-    func testBmsSnapshotMergesPartialPagesInsteadOfBlinkingFields() {
+    func testBmsSnapshotAggregatesCollectedPagesForPackOverview() {
         let core = CutoutSessionCore()
         let metadataPage = BmsSnapshot(
             topology: BmsTopology(
@@ -448,11 +448,105 @@ final class CutoutSessionCoreTests: XCTestCase {
             receivedAt: MonotonicMilliseconds(43)
         )
 
-        XCTAssertEqual(core.bmsSnapshot?.pageKind, "cell voltage")
+        XCTAssertNil(core.bmsSnapshot?.pageSelector)
+        XCTAssertNil(core.bmsSnapshot?.pageKind)
+        XCTAssertEqual(core.bmsSnapshot?.topology.layoutLabel, "8 observed BMS groups")
         XCTAssertEqual(core.bmsSnapshot?.voltage, Voltage(value: 95_800))
         XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
         XCTAssertEqual(core.bmsSnapshot?.cellDelta, VoltageDelta(value: 12))
         XCTAssertEqual(core.bmsSnapshot?.groups.count, 2)
+    }
+
+    func testBmsSnapshotCollectionDoesNotPublishCursorOnlyUpdates() {
+        let core = CutoutSessionCore()
+        let firstPage = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "8 observed BMS groups",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            pageSelector: 0,
+            pageKind: "cell voltage",
+            pageVerification: .sourceVerified,
+            voltage: Voltage(value: 95_800),
+            groups: [
+                BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_090))
+            ]
+        )
+        let cursorOnlyPage = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "8 observed BMS groups",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            pageSelector: 1,
+            pageKind: "cell voltage",
+            pageVerification: .sourceVerified,
+            voltage: Voltage(value: 95_800),
+            groups: [
+                BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_090))
+            ]
+        )
+        var observedSnapshots: [BmsSnapshot?] = []
+        core.onBmsSnapshotChange = { observedSnapshots.append($0) }
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(firstPage)]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(cursorOnlyPage)]),
+            receivedAt: MonotonicMilliseconds(43)
+        )
+
+        XCTAssertEqual(observedSnapshots.count, 1)
+        XCTAssertNil(core.bmsSnapshot?.pageSelector)
+        XCTAssertNil(core.bmsSnapshot?.pageKind)
+    }
+
+    func testBmsSnapshotDoesNotReplaceObservedPackIdentityWithUnknown() {
+        let core = CutoutSessionCore()
+        let observedPage = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "8 observed BMS groups",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            voltage: Voltage(value: 95_800)
+        )
+        let unknownPage = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "unknown BMS topology",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 0,
+                bmsCount: 0,
+                confidence: .unverified
+            ),
+            current: BatteryCurrent(value: 0)
+        )
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(observedPage)]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [.withBmsSnapshot(unknownPage)]),
+            receivedAt: MonotonicMilliseconds(43)
+        )
+
+        XCTAssertEqual(core.bmsSnapshot?.topology.layoutLabel, "8 observed BMS groups")
+        XCTAssertEqual(core.bmsSnapshot?.topology.bmsCount, 1)
+        XCTAssertEqual(core.bmsSnapshot?.current, BatteryCurrent(value: 0))
     }
 
     func testProtocolIdentityCandidateUpdatesFromVeteranModelId() {

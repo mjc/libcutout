@@ -1022,9 +1022,9 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
 
         return BmsSnapshot(
-            topology: update.topology,
-            pageSelector: update.pageSelector ?? pageSelector,
-            pageKind: update.pageKind ?? pageKind,
+            topology: topology.mergingBmsPage(update.topology),
+            pageSelector: nil,
+            pageKind: nil,
             pageVerification: update.pageVerification ?? pageVerification,
             energyPercent: update.energyPercent ?? energyPercent,
             voltage: update.voltage ?? voltage,
@@ -1235,6 +1235,70 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         groupVoltages.min { left, right in
             left.value < right.value
         }
+    }
+}
+
+public extension BmsSnapshot {
+    func withoutPageCursor() -> BmsSnapshot {
+        BmsSnapshot(
+            availability: availability,
+            topology: topology,
+            pageSelector: nil,
+            pageKind: nil,
+            pageVerification: pageVerification,
+            energyPercent: energyPercent,
+            voltage: voltage,
+            current: current,
+            bmsPackCurrent0: bmsPackCurrent0,
+            bmsPackCurrent1: bmsPackCurrent1,
+            cellDelta: cellDelta,
+            lowestGroupIndex: lowestGroupIndex,
+            highestTemperature: highestTemperature,
+            temperatureReadings: temperatureReadings,
+            highestTemperatureLabel: highestTemperatureLabel,
+            balancingSummary: balancingSummary,
+            balancingDetail: balancingDetail,
+            faultSummary: faultSummary,
+            faultDetail: faultDetail,
+            groups: groups,
+            faults: faults,
+            captureActionTitle: captureActionTitle,
+            captureActionState: captureActionState
+        )
+    }
+}
+
+public extension BmsTopology {
+    func mergingBmsPage(_ update: BmsTopology) -> BmsTopology {
+        guard update.hasObservedBmsTopology else {
+            return self
+        }
+        guard hasObservedBmsTopology else {
+            return update
+        }
+        return update.observedRank >= observedRank ? update : self
+    }
+
+    var hasObservedBmsTopology: Bool {
+        bmsCount > 0 || packCount > 0 || seriesGroupCount != nil || layoutLabel.localizedCaseInsensitiveContains("observed")
+    }
+
+    var observedRank: Int {
+        var rank = 0
+        if packCount > 0 { rank += 1 }
+        if bmsCount > 0 { rank += 1 }
+        if seriesGroupCount != nil { rank += 2 }
+        if parallelCount != nil { rank += 1 }
+        if layoutLabel.localizedCaseInsensitiveContains("observed") { rank += 1 }
+        switch confidence {
+        case .verified:
+            rank += 3
+        case .inferred:
+            rank += 2
+        case .unverified:
+            rank += 1
+        }
+        return rank
     }
 }
 

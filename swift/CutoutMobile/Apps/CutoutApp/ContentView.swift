@@ -340,9 +340,12 @@ private extension FaultHistoryReadback {
 private struct BmsReadbackRows: View {
     let snapshot: BmsSnapshot
     let scale: CGFloat
+    var includesPageCursor = true
 
     private var rows: [SessionDebugRow] {
-        snapshot.readbackRows
+        includesPageCursor
+            ? snapshot.readbackRows
+            : snapshot.readbackRows.filter { $0.label != "page" && $0.label != "page verification" }
     }
 
     var body: some View {
@@ -1955,19 +1958,27 @@ private struct BmsMockupView: View {
                         selectScreen: selectScreen
                     )
                 } else {
-                    VStack(alignment: .leading, spacing: 14 * scale) {
-                        header(scale: scale)
-                        chipRow(scale: scale, contentWidth: designWidth - (46 * scale))
-                        contentSection(scale: scale)
-                        if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
-                            liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
+                    VStack(spacing: 0) {
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: 14 * scale) {
+                                header(scale: scale)
+                                chipRow(scale: scale, contentWidth: designWidth - (46 * scale))
+                                contentSection(scale: scale)
+                                if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
+                                    liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
+                                }
+                            }
+                            .padding(.horizontal, 23 * scale)
+                            .padding(.top, 31 * scale)
+                            .padding(.bottom, 18 * scale)
                         }
-                        Spacer(minLength: 0)
+
                         bottomTabs(scale: scale)
+                            .padding(.horizontal, 23 * scale)
+                            .padding(.top, 12 * scale)
+                            .padding(.bottom, 18 * scale)
+                            .background(MockupColors.pageBackground)
                     }
-                    .padding(.horizontal, 23 * scale)
-                    .padding(.top, 31 * scale)
-                    .padding(.bottom, 18 * scale)
                 }
             }
             .frame(width: designWidth, height: proxy.size.height, alignment: .topLeading)
@@ -2053,7 +2064,7 @@ private struct BmsMockupView: View {
             Text("Live BMS readback")
                 .font(.system(size: 16 * scale, weight: .black))
                 .foregroundStyle(MockupColors.primaryText)
-            BmsReadbackRows(snapshot: snapshot, scale: scale)
+            BmsReadbackRows(snapshot: snapshot, scale: scale, includesPageCursor: false)
         }
     }
 }
@@ -2487,27 +2498,32 @@ private struct BmsNoDataLayout: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14 * scale) {
-            header
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14 * scale) {
+                    header
 
-            warningCard
+                    warningCard
 
-            packEstimateCard
+                    packEstimateCard
 
-            telemetryCard
+                    telemetryCard
 
-            unknownsCard
+                    unknownsCard
 
-            ridingRuleCard
+                    ridingRuleCard
 
-            if let liveSnapshot, liveSnapshot.shouldRenderReadback {
-                VStack(alignment: .leading, spacing: 10 * scale) {
-                    cardLabel("LIVE BMS READBACK")
-                    BmsReadbackRows(snapshot: liveSnapshot, scale: scale)
+                    if let liveSnapshot, liveSnapshot.shouldRenderReadback {
+                        VStack(alignment: .leading, spacing: 10 * scale) {
+                            cardLabel("LIVE BMS READBACK")
+                            BmsReadbackRows(snapshot: liveSnapshot, scale: scale)
+                        }
+                    }
                 }
+                .padding(.horizontal, 24 * scale)
+                .padding(.top, 44 * scale)
+                .padding(.bottom, 20 * scale)
             }
-
-            Spacer(minLength: 0)
 
             HStack {
                 BmsBottomTab(title: "Ride", isSelected: false, scale: scale) {
@@ -2516,10 +2532,11 @@ private struct BmsNoDataLayout: View {
                 Spacer()
                 BmsBottomTab(title: "Pack", isSelected: true, scale: scale, action: nil)
             }
+            .padding(.horizontal, 24 * scale)
+            .padding(.top, 12 * scale)
+            .padding(.bottom, 20 * scale)
+            .background(MockupColors.pageBackground)
         }
-        .padding(.horizontal, 24 * scale)
-        .padding(.top, 44 * scale)
-        .padding(.bottom, 20 * scale)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(MockupColors.pageBackground)
         .foregroundStyle(MockupColors.primaryText)

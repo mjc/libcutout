@@ -37,6 +37,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureBuilder: MobilePevcapCaptureBuilder?
     private var didRecordCaptureFile = false
+    private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
 
     public override init() {}
 
@@ -132,7 +133,11 @@ public final class CutoutSessionCore: NSObject {
             faultHistoryReadback = action.faultHistoryReadback
             onFaultHistoryReadbackChange?(faultHistoryReadback)
         case .bmsSnapshot:
-            bmsSnapshot = mergedBmsSnapshot(with: action.bmsSnapshot)
+            let mergedSnapshot = mergedBmsSnapshot(with: action.bmsSnapshot)
+            guard mergedSnapshot != bmsSnapshot else {
+                return
+            }
+            bmsSnapshot = mergedSnapshot
             onBmsSnapshotChange?(bmsSnapshot)
         case .event:
             applyProtocolIdentityModelId(action.veteranProtocolModelId)
@@ -145,10 +150,27 @@ public final class CutoutSessionCore: NSObject {
         guard let update else {
             return bmsSnapshot
         }
-        guard let previous = bmsSnapshot else {
+
+        guard update.availability == .available else {
+            bmsPages.removeAll()
             return update
         }
-        return previous.mergingBmsPage(update)
+
+        let pageKey = BmsPageKey(snapshot: update)
+        guard pageKey.isKnownPage || bmsPages.isEmpty else {
+            return aggregateBmsSnapshot()?.mergingBmsPage(update) ?? update.withoutPageCursor()
+        }
+
+        bmsPages[pageKey] = update
+        return aggregateBmsSnapshot()
+    }
+
+    private func aggregateBmsSnapshot() -> BmsSnapshot? {
+        bmsPages.values
+            .sorted(by: BmsPageKey.sortSnapshots)
+            .reduce(nil as BmsSnapshot?) { aggregate, page in
+                aggregate?.mergingBmsPage(page) ?? page.withoutPageCursor()
+            }
     }
 
     private func applyProtocolIdentityModelId(_ modelId: UInt16?) {
@@ -187,6 +209,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         bmsSnapshot = nil
+        bmsPages.removeAll()
         onBmsSnapshotChange?(nil)
     }
 
@@ -410,6 +433,35 @@ private extension ElectricUnicycleModel {
             "NOSFET Aero"
         case .falcon:
             "Begode Falcon"
+        }
+    }
+}
+
+private struct BmsPageKey: Hashable {
+    let selector: UInt8?
+    let kind: String
+
+    init(snapshot: BmsSnapshot) {
+        selector = snapshot.pageSelector
+        kind = snapshot.pageKind ?? "unknown"
+    }
+
+    var isKnownPage: Bool {
+        selector != nil || kind != "unknown"
+    }
+
+    static func sortSnapshots(_ lhs: BmsSnapshot, _ rhs: BmsSnapshot) -> Bool {
+        let lhsKey = BmsPageKey(snapshot: lhs)
+        let rhsKey = BmsPageKey(snapshot: rhs)
+        switch (lhsKey.selector, rhsKey.selector) {
+        case let (lhsSelector?, rhsSelector?) where lhsSelector != rhsSelector:
+            return lhsSelector < rhsSelector
+        case (nil, _?):
+            return false
+        case (_?, nil):
+            return true
+        default:
+            return lhsKey.kind < rhsKey.kind
         }
     }
 }
