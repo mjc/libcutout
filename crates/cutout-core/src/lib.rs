@@ -6704,8 +6704,6 @@ pub struct HostSession<S> {
     state: Box<CutoutSessionState>,
 }
 
-
-
 impl<S> HostSession<S>
 where
     S: ProtocolSession,

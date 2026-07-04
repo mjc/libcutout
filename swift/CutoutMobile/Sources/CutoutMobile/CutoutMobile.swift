@@ -2105,7 +2105,7 @@ public enum ElectricUnicycleModel: Equatable, Hashable, Sendable {
 }
 
 public extension ElectricUnicycleModel {
-    init(_ dto: MobileElectricUnicycleModelDto) {
+    init(_ dto: DiscoveryElectricUnicycleModel) {
         switch dto {
         case .aero:
             self = .aero
@@ -2863,7 +2863,7 @@ public extension CoreBluetoothAdvertisement {
         )
     }
 
-    init(discoveryObservation observation: DiscoveryObservationSnapshotRecord) {
+    init(discoveryObservation observation: DiscoveryObservationSnapshot) {
         self.init(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier(observation.platformIdentifier),
             localName: observation.advertisedNameText,
@@ -2874,25 +2874,25 @@ public extension CoreBluetoothAdvertisement {
     }
 }
 
-public extension DiscoveryObservationRecord {
+public extension DiscoveryObservation {
     init(_ advertisement: CoreBluetoothAdvertisement) {
         self.init(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             advertisedName: advertisement.localName.map { Data($0.utf8) },
             advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value),
-            manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummaryRecord.init),
+            manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummary.init),
             rssiDbm: advertisement.rssiDbm
         )
     }
 }
 
 public extension CoreBluetoothManufacturerDataSummary {
-    init(_ summary: DiscoveryManufacturerDataSummaryRecord) {
+    init(_ summary: DiscoveryManufacturerDataSummary) {
         self.init(companyIdentifier: summary.companyIdentifier, payloadLength: summary.payloadLen)
     }
 }
 
-public extension DiscoveryManufacturerDataSummaryRecord {
+public extension DiscoveryManufacturerDataSummary {
     init(_ summary: CoreBluetoothManufacturerDataSummary) {
         self.init(companyIdentifier: summary.companyIdentifier, payloadLen: summary.payloadLength)
     }

@@ -49,7 +49,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
-        let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservationRecord(advertisement))
+        let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
         scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
         onScanStateChange?(scanState)
     }
@@ -174,18 +174,21 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func applyProtocolIdentityModelId(_ modelId: UInt16?) {
-        guard let modelId, let advertisement = advertisement ?? rustSessionState.discoverySnapshot().lastAdvertisement else {
-            return
+        let discovery = rustSessionState.discoverySnapshot()
+        switch (modelId, advertisement ?? discovery.selectedAdvertisement ?? discovery.lastAdvertisement) {
+        case let (.some(modelId), .some(advertisement)):
+            let candidate = mobileDiscoveryCandidateFromVeteranProtocolIdentity(
+                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+                displayName: advertisement.localName ?? "Veteran/NOSFET device",
+                modelId: modelId
+            )
+            protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+            onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
+            record("protocol_identity=\(candidate.detail)")
+            updateCaptureIdentity()
+        case (.none, _), (_, .none):
+            break
         }
-        let candidate = mobileDiscoveryCandidateFromVeteranProtocolIdentity(
-            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-            displayName: advertisement.localName ?? "Veteran/NOSFET device",
-            modelId: modelId
-        )
-        protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
-        onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
-        record("protocol_identity=\(candidate.detail)")
-        updateCaptureIdentity()
     }
 
     private func clearSettingsReadback() {
@@ -492,7 +495,11 @@ private struct BmsPageKey: Hashable {
     }
 }
 
-private extension DiscoverySnapshotRecord {
+private extension DiscoverySnapshot {
+    var selectedAdvertisement: CoreBluetoothAdvertisement? {
+        selectedPlatformIdentifier.flatMap(advertisement(platformIdentifier:))
+    }
+
     var lastAdvertisement: CoreBluetoothAdvertisement? {
         observations.last.map(CoreBluetoothAdvertisement.init(discoveryObservation:))
     }

@@ -62,7 +62,8 @@ impl CutoutSessionState {
 
     /// Selects a discovered platform identifier for this session.
     pub fn select_discovered_platform(&mut self, platform_identifier: String) {
-        self.identity.select_discovered_platform(platform_identifier);
+        self.identity
+            .select_discovered_platform(platform_identifier);
     }
 
     pub(crate) fn observe_outputs(&mut self, outputs: &[SessionOutput]) {
@@ -183,29 +184,12 @@ impl DiscoveryState {
         self.selected_platform_identifier = Some(platform_identifier);
     }
 
-    /// Returns the selected observation, when it is still retained.
-    #[must_use]
-    pub fn selected_observation(&self) -> Option<&DiscoveryObservation> {
-        self.selected_platform_identifier
-            .as_deref()
-            .and_then(|selected| {
-                self.observations
-                    .iter()
-                    .find(|observation| observation.platform_identifier == selected)
-            })
-    }
-
     /// Returns picker candidates derived from retained discovery evidence.
     #[must_use]
     pub fn picker_candidates(&self) -> Vec<DiscoveryCandidateSnapshot> {
         self.observations
             .iter()
-            .filter_map(|observation| {
-                DiscoveryCandidateSnapshot::from_observation(
-                    observation,
-                    self.selected_platform_identifier.as_deref(),
-                )
-            })
+            .filter_map(DiscoveryCandidateSnapshot::from_observation)
             .collect()
     }
 }
@@ -292,22 +276,14 @@ pub struct DiscoveryCandidateSnapshot {
 
     /// Electric-unicycle model hint for supported discovery routes.
     pub electric_unicycle_model: Option<DiscoveryElectricUnicycleModel>,
-
-    /// Whether this candidate is selected for the current mobile session.
-    pub selected: bool,
 }
 
 impl DiscoveryCandidateSnapshot {
-    fn from_observation(
-        observation: &DiscoveryObservation,
-        selected_platform_identifier: Option<&str>,
-    ) -> Option<Self> {
+    fn from_observation(observation: &DiscoveryObservation) -> Option<Self> {
         let display_name = observation
             .advertised_name_text()
             .unwrap_or("Unknown Bluetooth device");
         let lower_name = display_name.to_ascii_lowercase();
-        let selected = selected_platform_identifier
-            .is_some_and(|identifier| identifier == observation.platform_identifier);
 
         match (
             observation.advertised_service_uuids.contains(&0xffe0),
@@ -325,7 +301,6 @@ impl DiscoveryCandidateSnapshot {
                 detail: discovery_electric_unicycle_detail(&lower_name).to_owned(),
                 support: DiscoveryCandidateSupport::Supported,
                 electric_unicycle_model: Some(discovery_electric_unicycle_model(&lower_name)),
-                selected,
             }),
             (false, true) => Some(Self {
                 platform_identifier: observation.platform_identifier.clone(),
@@ -335,7 +310,6 @@ impl DiscoveryCandidateSnapshot {
                 detail: "Not yet supported".to_owned(),
                 support: DiscoveryCandidateSupport::Unsupported,
                 electric_unicycle_model: None,
-                selected,
             }),
             (false, false) => None,
         }
@@ -508,7 +482,10 @@ mod tests {
             state.identity().discovery.observations[1].advertised_service_uuids,
             [0xffe0, 0x180f]
         );
-        assert_eq!(state.identity().discovery.observations[1].rssi_dbm, Some(-42));
+        assert_eq!(
+            state.identity().discovery.observations[1].rssi_dbm,
+            Some(-42)
+        );
     }
 
     #[test]
@@ -535,8 +512,13 @@ mod tests {
         ));
         state.select_discovered_platform("falcon-id".to_owned());
 
-        let picker_candidates = state.discovery().picker_candidates();
+        let discovery = state.discovery();
+        let picker_candidates = discovery.picker_candidates();
 
+        assert_eq!(
+            discovery.selected_platform_identifier.as_deref(),
+            Some("falcon-id")
+        );
         assert_eq!(picker_candidates.len(), 2);
         assert_eq!(picker_candidates[0].platform_identifier, "falcon-id");
         assert_eq!(
@@ -547,7 +529,6 @@ mod tests {
             picker_candidates[0].electric_unicycle_model,
             Some(DiscoveryElectricUnicycleModel::Falcon)
         );
-        assert_eq!(picker_candidates[0].selected, true);
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,

@@ -415,7 +415,7 @@ public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
 }
 
 public extension DevicePickerCandidateSupport {
-    init(_ dto: MobileDiscoveryCandidateDto) {
+    init(_ dto: DiscoveryCandidate) {
         switch dto.support {
         case .supported:
             self = .supported(
@@ -463,7 +463,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         ))
     }
 
-    public init(candidate: MobileDiscoveryCandidateDto) {
+    public init(candidate: DiscoveryCandidate) {
         self.init(
             platformIdentifier: candidate.platformIdentifier,
             displayName: candidate.displayName,
@@ -544,7 +544,7 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
         )
     }
 
-    public init(status: DevicePickerScanStatus, discoverySnapshot: DiscoverySnapshotRecord) {
+    public init(status: DevicePickerScanStatus, discoverySnapshot: DiscoverySnapshot) {
         self.init(
             status: status,
             rows: discoverySnapshot.pickerCandidates.map {

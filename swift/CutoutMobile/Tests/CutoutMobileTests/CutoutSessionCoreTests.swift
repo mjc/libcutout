@@ -623,6 +623,37 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.records.last, "protocol_identity=NOSFET Aero confirmed by model id 43")
     }
 
+    func testProtocolIdentityCandidatePrefersSelectedAdvertisement() {
+        let core = CutoutSessionCore()
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-selected"),
+                localName: "NF2557",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-last"),
+                localName: "Later scan row",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        XCTAssertFalse(core.pair(platformIdentifier: "ios-local-selected"))
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: nil,
+                actions: [.protocolIdentity(veteranModelId: 43)]
+            ),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(core.protocolIdentityCandidate?.platformIdentifier, "ios-local-selected")
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "NF2557")
+    }
+
     func testDisconnectAndScanClearsProtocolIdentityCandidate() {
         let core = CutoutSessionCore()
         var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
