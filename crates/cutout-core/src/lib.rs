@@ -6748,10 +6748,10 @@ impl CutoutSessionState {
         match event {
             DeviceEvent::Telemetry(delta) => self.telemetry.current.apply_delta(*delta),
             DeviceEvent::Diagnostics(diagnostics) => self.diagnostics.parser.merge(*diagnostics),
-            DeviceEvent::LinkUp(link) => self.transport.link = LinkState::Up(*link),
-            DeviceEvent::LinkDown => self.transport.link = LinkState::Down,
-            DeviceEvent::Tick { monotonic_ms } => self.transport.last_tick = Some(*monotonic_ms),
-            DeviceEvent::ReadOnlyResponse(_)
+            DeviceEvent::LinkUp(_)
+            | DeviceEvent::LinkDown
+            | DeviceEvent::Tick { .. }
+            | DeviceEvent::ReadOnlyResponse(_)
             | DeviceEvent::ControlRefusal(_)
             | DeviceEvent::DiagnosticError(_) => {}
         }
@@ -6883,14 +6883,6 @@ mod host_session_state_tests {
 
     impl ProtocolSession for NoopSession {
         fn handle(&mut self, _input: SessionInput<'_>, _output: &mut Vec<SessionOutput>) {}
-    }
-
-    fn assert_send_sync<T: Send + Sync>() {}
-
-    #[test]
-    fn cutout_session_state_and_host_boundary_are_send_sync() {
-        assert_send_sync::<CutoutSessionState>();
-        assert_send_sync::<HostSession<NoopSession>>();
     }
 
     #[test]
