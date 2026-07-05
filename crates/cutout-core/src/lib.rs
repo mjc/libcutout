@@ -20,6 +20,8 @@ mod battery_page;
 pub use battery_page::*;
 mod ffi;
 pub use ffi::*;
+mod session_state;
+pub use session_state::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
@@ -6694,22 +6696,12 @@ pub trait ProtocolSession {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>);
 }
 
-/// Rust-owned durable state for one `CutOut` mobile/device session.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CutoutSessionState {
-    /// Latest telemetry snapshot retained by the Rust state root.
-    pub telemetry: TelemetrySnapshot,
-
-    /// Cumulative parser diagnostics retained by the Rust state root.
-    pub diagnostics: ParserDiagnostics,
-}
-
 /// Host-facing synchronous session facade.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HostSession<S> {
     session: S,
     output: Vec<SessionOutput>,
-    state: CutoutSessionState,
+    state: Box<CutoutSessionState>,
 }
 
 impl<S> HostSession<S>
@@ -6722,7 +6714,7 @@ where
         Self {
             session,
             output: Vec::with_capacity(4),
-            state: CutoutSessionState::default(),
+            state: Box::default(),
         }
     }
 
@@ -6800,45 +6792,26 @@ where
 
     /// Returns the latest telemetry snapshot.
     #[must_use]
-    pub const fn current_snapshot(&self) -> TelemetrySnapshot {
-        self.state.telemetry
+    pub fn current_snapshot(&self) -> TelemetrySnapshot {
+        self.state.current_telemetry()
     }
 
     /// Returns accumulated parser diagnostics.
     #[must_use]
-    pub const fn diagnostics(&self) -> ParserDiagnostics {
-        self.state.diagnostics
+    pub fn diagnostics(&self) -> ParserDiagnostics {
+        self.state.parser_diagnostics()
     }
 
-    /// Returns a copy of the Rust-owned session state.
+    /// Returns the borrowed Rust-owned session state.
     #[must_use]
-    pub const fn session_state_snapshot(&self) -> CutoutSessionState {
-        self.state
+    pub fn session_state(&self) -> &CutoutSessionState {
+        self.state.as_ref()
     }
 
     fn handle(&mut self, input: SessionInput<'_>) {
         let start = self.output.len();
         self.session.handle(input, &mut self.output);
-        for output in &self.output[start..] {
-            match output {
-                SessionOutput::Event(DeviceEvent::Telemetry(delta)) => {
-                    self.state.telemetry.apply_delta(*delta);
-                }
-                SessionOutput::Event(DeviceEvent::Diagnostics(diagnostics)) => {
-                    self.state.diagnostics.merge(*diagnostics);
-                }
-                SessionOutput::Event(
-                    DeviceEvent::LinkUp(_)
-                    | DeviceEvent::LinkDown
-                    | DeviceEvent::Tick { .. }
-                    | DeviceEvent::ReadOnlyResponse(_)
-                    | DeviceEvent::ControlRefusal(_)
-                    | DeviceEvent::DiagnosticError(_),
-                )
-                | SessionOutput::Transport(_)
-                | SessionOutput::NotificationIngest(_) => {}
-            }
-        }
+        self.state.observe_outputs(&self.output[start..]);
     }
 }
 
@@ -10781,20 +10754,56 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct StateSession;
+    struct StateSession {
+        bms_step: u8,
+        telemetry_step: u8,
+    }
 
     impl ProtocolSession for StateSession {
         fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
             match input {
                 SessionInput::Command(DeviceCommand::RequestTelemetry) => {
-                    output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                        TelemetryDelta {
+                    let delta = match self.telemetry_step {
+                        0 => TelemetryDelta {
                             at_ms: ms(40),
                             speed: Some(Measured::reported(Speed::from_millimetres_per_second(
                                 1_200,
                             ))),
                             ..TelemetryDelta::empty(ms(40))
                         },
+                        _ => TelemetryDelta {
+                            at_ms: ms(41),
+                            voltage: Some(Measured::reported(Voltage::from_millivolts(80_400))),
+                            ..TelemetryDelta::empty(ms(41))
+                        },
+                    };
+                    self.telemetry_step = self.telemetry_step.saturating_add(1);
+                    output.push(SessionOutput::Event(DeviceEvent::Telemetry(delta)));
+                }
+                SessionInput::Command(DeviceCommand::RequestBatteryInfo) => {
+                    let selector = match self.bms_step {
+                        0 => 8,
+                        _ => 9,
+                    };
+                    self.bms_step = self.bms_step.saturating_add(1);
+                    output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                        TelemetryDelta::empty(ms(42)),
+                    )));
+                    output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
+                        crate::ReadOnlyResponse::Battery(crate::BatteryReadback::available(
+                            crate::BatteryPagePayload::Raw(crate::BatteryRawPage::new(
+                                crate::BatteryPageMetadata::raw(
+                                    crate::ProtocolSelector::new(selector),
+                                    VerificationStatus::SourceVerified,
+                                ),
+                                crate::BatteryInfo {
+                                    voltage: Some(Measured::reported(Voltage::from_millivolts(
+                                        80_400,
+                                    ))),
+                                    ..crate::BatteryInfo::default()
+                                },
+                            )),
+                        )),
                     )));
                 }
                 SessionInput::Tick { monotonic_ms } => {
@@ -10814,36 +10823,75 @@ mod tests {
     }
 
     #[test]
-    fn host_session_updates_current_snapshot_from_events() {
-        let mut host = crate::HostSession::new(StateSession);
+    fn host_session_aggregates_current_snapshot_from_multiple_events() {
+        let mut host = crate::HostSession::new(StateSession::default());
 
         host.issue_command(DeviceCommand::RequestTelemetry);
+        host.issue_command(DeviceCommand::RequestTelemetry);
 
-        assert_eq!(host.current_snapshot().at_ms, Some(ms(40)));
+        assert_eq!(host.current_snapshot().at_ms, Some(ms(41)));
         assert_eq!(
             host.current_snapshot().speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_200
             )))
         );
+        assert_eq!(
+            host.current_snapshot().voltage,
+            Some(Measured::reported(Voltage::from_millivolts(80_400)))
+        );
+    }
+
+    #[test]
+    fn host_session_aggregates_bms_pages_under_telemetry_state() {
+        let mut host = crate::HostSession::new(StateSession::default());
+
+        host.issue_command(DeviceCommand::RequestBatteryInfo);
+        host.issue_command(DeviceCommand::RequestBatteryInfo);
+
+        assert_eq!(
+            host.session_state().telemetry().bms.latest.availability(),
+            crate::BatteryReadbackAvailability::Available
+        );
+        assert_eq!(
+            host.session_state()
+                .telemetry()
+                .bms
+                .latest
+                .page()
+                .map(crate::BatteryPagePayload::page)
+                .map(|page| page.selector.get()),
+            Some(9)
+        );
+        assert_eq!(
+            host.session_state()
+                .telemetry()
+                .bms
+                .pages
+                .iter()
+                .map(crate::BatteryPagePayload::page)
+                .map(|page| page.selector.get())
+                .collect::<Vec<_>>(),
+            vec![8, 9]
+        );
     }
 
     #[test]
     fn host_session_merges_diagnostics_from_events() {
-        let mut host = crate::HostSession::new(StateSession);
+        let mut host = crate::HostSession::new(StateSession::default());
 
         host.tick(ms(2));
         host.tick(ms(3));
 
         assert_eq!(
-            host.session_state_snapshot().diagnostics.timeouts,
+            host.session_state().diagnostics.parser.timeouts,
             diag_count(5)
         );
     }
 
     #[test]
     fn diagnostic_snapshot_maps_from_host_session_diagnostics() {
-        let mut host = crate::HostSession::new(StateSession);
+        let mut host = crate::HostSession::new(StateSession::default());
 
         host.tick(ms(2));
 
