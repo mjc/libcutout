@@ -22,10 +22,10 @@ public final class CutoutSessionCore: NSObject {
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
     private let clock = MonotonicClock()
+    private let rustSessionState = CutoutSessionStateHandle()
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var advertisement: CoreBluetoothAdvertisement?
-    private var discoveredAdvertisements: [CoreBluetoothAdvertisement] = []
     private var discoveredPeripherals: [CoreBluetoothPeripheralIdentifier: CBPeripheral] = [:]
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var selectedModel: ElectricUnicycleModel?
@@ -49,37 +49,37 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
-        discoveredAdvertisements.removeAll { $0.peripheralIdentifier == advertisement.peripheralIdentifier }
-        discoveredAdvertisements.append(advertisement)
-        scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
+        let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
+        scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
         onScanStateChange?(scanState)
     }
 
     @discardableResult
     public func pair(platformIdentifier: String) -> Bool {
         let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-        guard
-            let peripheral = discoveredPeripherals[identifier],
-            let advertisement = discoveredAdvertisements.last(where: { $0.peripheralIdentifier == identifier }),
-            let model = DevicePickerDiscoveryCandidate(advertisement: advertisement).support.electricUnicycleModel
-        else {
-            return false
-        }
-        connect(to: peripheral, using: advertisement, model: model)
-        return true
+        let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+        let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
+        let model = snapshot.pickerCandidates
+            .first { $0.platformIdentifier == platformIdentifier }
+            .map(DevicePickerDiscoveryCandidate.init(candidate:))?
+            .support
+            .electricUnicycleModel
+        return connectIfReady(
+            peripheral: discoveredPeripherals[identifier],
+            advertisement: advertisement,
+            model: model
+        )
     }
 
     @discardableResult
     public func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
         let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-        guard
-            let peripheral = discoveredPeripherals[identifier],
-            let advertisement = discoveredAdvertisements.last(where: { $0.peripheralIdentifier == identifier })
-        else {
-            return false
-        }
-        connect(to: peripheral, using: advertisement, model: model)
-        return true
+        let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+        return connectIfReady(
+            peripheral: discoveredPeripherals[identifier],
+            advertisement: snapshot.advertisement(platformIdentifier: platformIdentifier),
+            model: model
+        )
     }
 
     public func disconnectAndScan() {
@@ -102,7 +102,7 @@ public final class CutoutSessionCore: NSObject {
         peripheral = nil
         advertisement = nil
 
-        scanState = DevicePickerScanState(status: .scanning, advertisements: discoveredAdvertisements)
+        scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
         onScanStateChange?(scanState)
         setPhase(.scanning)
         central?.scanForPeripherals(withServices: nil)
@@ -174,18 +174,21 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func applyProtocolIdentityModelId(_ modelId: UInt16?) {
-        guard let modelId, let advertisement = advertisement ?? discoveredAdvertisements.last else {
-            return
+        let discovery = rustSessionState.discoverySnapshot()
+        switch (modelId, advertisement ?? discovery.selectedAdvertisement ?? discovery.lastAdvertisement) {
+        case let (.some(modelId), .some(advertisement)):
+            let candidate = mobileDiscoveryCandidateFromVeteranProtocolIdentity(
+                platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+                displayName: advertisement.localName ?? "Veteran/NOSFET device",
+                modelId: modelId
+            )
+            protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+            onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
+            record("protocol_identity=\(candidate.detail)")
+            updateCaptureIdentity()
+        case (.none, _), (_, .none):
+            break
         }
-        let candidate = mobileDiscoveryCandidateFromVeteranProtocolIdentity(
-            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-            displayName: advertisement.localName ?? "Veteran/NOSFET device",
-            modelId: modelId
-        )
-        protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
-        onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
-        record("protocol_identity=\(candidate.detail)")
-        updateCaptureIdentity()
     }
 
     private func clearSettingsReadback() {
@@ -244,6 +247,20 @@ public final class CutoutSessionCore: NSObject {
         setPhase(.connecting(model: model))
         central?.stopScan()
         central?.connect(peripheral)
+    }
+
+    private func connectIfReady(
+        peripheral: CBPeripheral?,
+        advertisement: CoreBluetoothAdvertisement?,
+        model: ElectricUnicycleModel?
+    ) -> Bool {
+        switch (peripheral, advertisement, model) {
+        case let (.some(peripheral), .some(advertisement), .some(model)):
+            connect(to: peripheral, using: advertisement, model: model)
+            return true
+        case (.none, _, _), (_, .none, _), (_, _, .none):
+            return false
+        }
     }
 
     private func buildOwner(for peripheral: CBPeripheral) {
@@ -475,6 +492,22 @@ private struct BmsPageKey: Hashable {
         default:
             return lhsKey.kind < rhsKey.kind
         }
+    }
+}
+
+private extension DiscoverySnapshot {
+    var selectedAdvertisement: CoreBluetoothAdvertisement? {
+        selectedPlatformIdentifier.flatMap(advertisement(platformIdentifier:))
+    }
+
+    var lastAdvertisement: CoreBluetoothAdvertisement? {
+        observations.last.map(CoreBluetoothAdvertisement.init(discoveryObservation:))
+    }
+
+    func advertisement(platformIdentifier: String) -> CoreBluetoothAdvertisement? {
+        observations
+            .last { $0.platformIdentifier == platformIdentifier }
+            .map(CoreBluetoothAdvertisement.init(discoveryObservation:))
     }
 }
 

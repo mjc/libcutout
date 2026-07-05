@@ -7,23 +7,26 @@ use std::{
 
 use cutout_core::{
     BatteryInfoDto, BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
-    ChargeModeDto, CommandKindDto, ControlRefusalReasonDto, DeviceCommandDto, FaultCode,
-    FaultCodeDto, FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry,
-    FaultHistoryEntryDto, FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel,
-    GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    MeasuredChargeModeDto, MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto,
-    MeasuredU64Dto, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
-    RawFieldValue, RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto,
-    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
-    SettingsReadbackDto, Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto,
-    TransportWriteLimit, TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    WallClockUnixTimestamp,
+    ChargeModeDto, CommandKindDto, ControlRefusalReasonDto, CutoutSessionState, DeviceCommandDto,
+    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
+    DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
+    DiscoveryObservation as CoreDiscoveryObservation, FaultCode, FaultCodeDto,
+    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
+    FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
+    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredChargeModeDto,
+    MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
+    MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
+    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
+    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RawFieldValue,
+    RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto,
+    SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
+    Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
 };
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
@@ -40,7 +43,7 @@ uniffi::setup_scaffolding!();
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileDiscoveryCandidateSupportDto {
+pub enum DiscoveryCandidateSupport {
     /// Candidate has a supported read-only route.
     Supported,
 
@@ -50,7 +53,7 @@ pub enum MobileDiscoveryCandidateSupportDto {
 
 /// Mobile EUC read-only session model.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileElectricUnicycleModelDto {
+pub enum DiscoveryElectricUnicycleModel {
     /// NOSFET Aero session.
     Aero,
 
@@ -82,7 +85,7 @@ pub struct MobileBegodeIdentityProbeDto {
 
 /// Mobile discovery candidate for picker UI.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileDiscoveryCandidateDto {
+pub struct DiscoveryCandidate {
     /// Platform-local peripheral identifier; not a Bluetooth MAC address.
     pub platform_identifier: String,
 
@@ -102,16 +105,236 @@ pub struct MobileDiscoveryCandidateDto {
     pub is_picker_candidate: bool,
 
     /// Support state.
-    pub support: MobileDiscoveryCandidateSupportDto,
+    pub support: DiscoveryCandidateSupport,
 
     /// Supported connection route key, when connecting is allowed.
     pub connection_route: Option<String>,
 
     /// Electric-unicycle session model to construct for the route.
-    pub electric_unicycle_model: Option<MobileElectricUnicycleModelDto>,
+    pub electric_unicycle_model: Option<DiscoveryElectricUnicycleModel>,
 
     /// Disabled reason, when connecting is not allowed.
     pub disabled_reason: Option<String>,
+}
+
+/// Mobile advertised manufacturer data summary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryManufacturerDataSummary {
+    /// Bluetooth company identifier.
+    pub company_identifier: u16,
+
+    /// Opaque manufacturer payload length in bytes.
+    pub payload_len: u64,
+}
+
+/// Mobile discovery observation to feed into Rust-owned session state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryObservation {
+    /// Platform-local peripheral identifier; not a Bluetooth MAC address.
+    pub platform_identifier: String,
+
+    /// Raw advertised-name bytes from the mobile BLE stack.
+    pub advertised_name: Option<Vec<u8>>,
+
+    /// Advertised 16-bit service UUID values relevant to picker routing.
+    pub advertised_service_uuids: Vec<u16>,
+
+    /// Manufacturer data summaries without opaque payload bytes.
+    pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
+
+    /// Last observed RSSI in dBm.
+    pub rssi_dbm: Option<i16>,
+}
+
+/// Mobile discovery observation snapshot returned from Rust state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryObservationSnapshot {
+    /// Platform-local peripheral identifier; not a Bluetooth MAC address.
+    pub platform_identifier: String,
+
+    /// Raw advertised-name bytes retained by Rust state.
+    pub advertised_name: Option<Vec<u8>>,
+
+    /// UTF-8 advertised-name view, when valid.
+    pub advertised_name_text: Option<String>,
+
+    /// Advertised 16-bit service UUID values relevant to picker routing.
+    pub advertised_service_uuids: Vec<u16>,
+
+    /// Manufacturer data summaries without opaque payload bytes.
+    pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
+
+    /// Last observed RSSI in dBm.
+    pub rssi_dbm: Option<i16>,
+}
+
+/// Mobile discovery state snapshot returned from Rust state.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoverySnapshot {
+    /// Retained discovery observations.
+    pub observations: Vec<DiscoveryObservationSnapshot>,
+
+    /// Picker candidates derived from retained Rust discovery evidence.
+    pub picker_candidates: Vec<DiscoveryCandidate>,
+
+    /// Platform identifier selected for the current mobile session.
+    pub selected_platform_identifier: Option<String>,
+}
+
+/// Mobile-facing Rust-owned `CutOut` session state handle.
+#[derive(Debug, uniffi::Object)]
+pub struct CutoutSessionStateHandle {
+    inner: Mutex<CutoutSessionState>,
+}
+
+impl DiscoveryObservation {
+    fn into_core(self) -> CoreDiscoveryObservation {
+        CoreDiscoveryObservation {
+            platform_identifier: self.platform_identifier,
+            advertised_name: self.advertised_name,
+            advertised_service_uuids: self.advertised_service_uuids,
+            manufacturer_data: self
+                .manufacturer_data
+                .into_iter()
+                .map(CoreDiscoveryManufacturerDataSummary::from)
+                .collect(),
+            rssi_dbm: self.rssi_dbm,
+        }
+    }
+}
+
+impl From<DiscoveryManufacturerDataSummary> for CoreDiscoveryManufacturerDataSummary {
+    fn from(summary: DiscoveryManufacturerDataSummary) -> Self {
+        Self {
+            company_identifier: summary.company_identifier,
+            payload_len: usize::try_from(summary.payload_len).unwrap_or(usize::MAX),
+        }
+    }
+}
+
+impl From<CoreDiscoveryManufacturerDataSummary> for DiscoveryManufacturerDataSummary {
+    fn from(summary: CoreDiscoveryManufacturerDataSummary) -> Self {
+        Self {
+            company_identifier: summary.company_identifier,
+            payload_len: summary.payload_len as u64,
+        }
+    }
+}
+
+impl From<&CoreDiscoveryObservation> for DiscoveryObservationSnapshot {
+    fn from(observation: &CoreDiscoveryObservation) -> Self {
+        Self {
+            platform_identifier: observation.platform_identifier.clone(),
+            advertised_name: observation.advertised_name.clone(),
+            advertised_name_text: observation.advertised_name_text().map(str::to_owned),
+            advertised_service_uuids: observation.advertised_service_uuids.clone(),
+            manufacturer_data: observation
+                .manufacturer_data
+                .iter()
+                .copied()
+                .map(DiscoveryManufacturerDataSummary::from)
+                .collect(),
+            rssi_dbm: observation.rssi_dbm,
+        }
+    }
+}
+
+impl DiscoverySnapshot {
+    fn from_state(state: &CutoutSessionState) -> Self {
+        let discovery = state.discovery();
+        Self {
+            observations: discovery
+                .observations
+                .iter()
+                .map(DiscoveryObservationSnapshot::from)
+                .collect(),
+            picker_candidates: discovery
+                .picker_candidates()
+                .into_iter()
+                .map(DiscoveryCandidate::from)
+                .collect(),
+            selected_platform_identifier: discovery.selected_platform_identifier.clone(),
+        }
+    }
+}
+
+impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
+    fn from(candidate: DiscoveryCandidateSnapshot) -> Self {
+        let support = DiscoveryCandidateSupport::from(candidate.support);
+        let electric_unicycle_model = candidate
+            .electric_unicycle_model
+            .map(DiscoveryElectricUnicycleModel::from);
+        Self {
+            platform_identifier: candidate.platform_identifier,
+            display_name: candidate.display_name,
+            product_category: candidate.product_category,
+            evidence: candidate.evidence,
+            detail: candidate.detail,
+            is_picker_candidate: true,
+            support,
+            connection_route: (candidate.support == CoreDiscoveryCandidateSupport::Supported)
+                .then(|| "electric_unicycle".to_owned()),
+            electric_unicycle_model,
+            disabled_reason: (candidate.support == CoreDiscoveryCandidateSupport::Unsupported)
+                .then(|| "Not yet supported".to_owned()),
+        }
+    }
+}
+
+impl From<CoreDiscoveryElectricUnicycleModel> for DiscoveryElectricUnicycleModel {
+    fn from(model: CoreDiscoveryElectricUnicycleModel) -> Self {
+        match model {
+            CoreDiscoveryElectricUnicycleModel::Aero => Self::Aero,
+            CoreDiscoveryElectricUnicycleModel::Falcon => Self::Falcon,
+        }
+    }
+}
+
+impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
+    fn from(support: CoreDiscoveryCandidateSupport) -> Self {
+        match support {
+            CoreDiscoveryCandidateSupport::Supported => Self::Supported,
+            CoreDiscoveryCandidateSupport::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+#[uniffi::export]
+impl CutoutSessionStateHandle {
+    /// Creates an empty Rust-owned session state handle.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CutoutSessionState::default()),
+        })
+    }
+
+    /// Observes one mobile discovery advertisement.
+    pub fn observe_discovery(&self, observation: DiscoveryObservation) -> DiscoverySnapshot {
+        let mut state = self.lock_inner();
+        state.observe_discovery(observation.into_core());
+        DiscoverySnapshot::from_state(&state)
+    }
+
+    /// Selects a discovered platform identifier for this session.
+    pub fn select_discovered_platform(&self, platform_identifier: String) -> DiscoverySnapshot {
+        let mut state = self.lock_inner();
+        state.select_discovered_platform(platform_identifier);
+        DiscoverySnapshot::from_state(&state)
+    }
+
+    /// Returns the current discovery snapshot.
+    #[must_use]
+    pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
+        DiscoverySnapshot::from_state(&self.lock_inner())
+    }
+}
+
+impl CutoutSessionStateHandle {
+    fn lock_inner(&self) -> MutexGuard<'_, CutoutSessionState> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// Device-detection resolution exposed across the `UniFFI` boundary.
@@ -206,7 +429,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
     platform_identifier: String,
     local_name: Option<String>,
     advertised_service_uuids: Vec<u16>,
-) -> MobileDiscoveryCandidateDto {
+) -> DiscoveryCandidate {
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
     let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
@@ -214,19 +437,19 @@ pub fn mobile_discovery_candidate_from_advertisement(
             || lower_name.contains("begode")
             || lower_name.contains("gotway")
         {
-            MobileElectricUnicycleModelDto::Falcon
+            DiscoveryElectricUnicycleModel::Falcon
         } else {
-            MobileElectricUnicycleModelDto::Aero
+            DiscoveryElectricUnicycleModel::Aero
         };
 
-        return MobileDiscoveryCandidateDto {
+        return DiscoveryCandidate {
             platform_identifier,
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "advertisement hint".to_owned(),
             detail: format!("{model:?} provisional route"),
             is_picker_candidate: true,
-            support: MobileDiscoveryCandidateSupportDto::Supported,
+            support: DiscoveryCandidateSupport::Supported,
             connection_route: Some("electric_unicycle".to_owned()),
             electric_unicycle_model: Some(model),
             disabled_reason: None,
@@ -239,28 +462,28 @@ pub fn mobile_discovery_candidate_from_advertisement(
         || lower_name.contains("onewheel")
         || lower_name.contains("floatwheel")
     {
-        return MobileDiscoveryCandidateDto {
+        return DiscoveryCandidate {
             platform_identifier,
             display_name,
             product_category: "VESC Onewheel".to_owned(),
             evidence: "VESC advertisement hint".to_owned(),
             detail: "Not yet supported".to_owned(),
             is_picker_candidate: true,
-            support: MobileDiscoveryCandidateSupportDto::Unsupported,
+            support: DiscoveryCandidateSupport::Unsupported,
             connection_route: None,
             electric_unicycle_model: None,
             disabled_reason: Some("Not yet supported".to_owned()),
         };
     }
 
-    MobileDiscoveryCandidateDto {
+    DiscoveryCandidate {
         platform_identifier,
         display_name,
         product_category: "Unknown rideable".to_owned(),
         evidence: "advertisement observed".to_owned(),
         detail: "Not yet supported".to_owned(),
         is_picker_candidate: false,
-        support: MobileDiscoveryCandidateSupportDto::Unsupported,
+        support: DiscoveryCandidateSupport::Unsupported,
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Not yet supported".to_owned()),
@@ -278,7 +501,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
     platform_identifier: String,
     display_name: String,
     probe: MobileBegodeIdentityProbeDto,
-) -> MobileDiscoveryCandidateDto {
+) -> DiscoveryCandidate {
     let evidence = mobile_begode_identity_probe_evidence(&probe);
     let reported_model = probe.reported_model.as_deref();
     let reported_code_name = probe.reported_code_name.as_deref();
@@ -296,7 +519,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         probe.nominal_voltage_hint_mv,
     );
 
-    MobileDiscoveryCandidateDto {
+    DiscoveryCandidate {
         platform_identifier,
         display_name,
         product_category: "Electric unicycle".to_owned(),
@@ -304,12 +527,12 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         detail,
         is_picker_candidate: true,
         support: if supported {
-            MobileDiscoveryCandidateSupportDto::Supported
+            DiscoveryCandidateSupport::Supported
         } else {
-            MobileDiscoveryCandidateSupportDto::Unsupported
+            DiscoveryCandidateSupport::Unsupported
         },
         connection_route: supported.then(|| "electric_unicycle".to_owned()),
-        electric_unicycle_model: supported.then_some(MobileElectricUnicycleModelDto::Falcon),
+        electric_unicycle_model: supported.then_some(DiscoveryElectricUnicycleModel::Falcon),
         disabled_reason: (!supported).then(|| "Not yet supported".to_owned()),
     }
 }
@@ -321,7 +544,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
     platform_identifier: String,
     display_name: String,
     model_id: u16,
-) -> MobileDiscoveryCandidateDto {
+) -> DiscoveryCandidate {
     let resolution = identify_known_model(&StagedIdentityInput {
         advertised_name: None,
         gatt: &[] as &[GattFingerprint],
@@ -334,14 +557,14 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
     });
 
     let Some(model) = resolution.model else {
-        return MobileDiscoveryCandidateDto {
+        return DiscoveryCandidate {
             platform_identifier,
             display_name,
             product_category: "Electric unicycle".to_owned(),
             evidence: "Veteran protocol model id".to_owned(),
             detail: format!("Unknown Veteran/NOSFET model id {model_id}"),
             is_picker_candidate: true,
-            support: MobileDiscoveryCandidateSupportDto::Unsupported,
+            support: DiscoveryCandidateSupport::Unsupported,
             connection_route: None,
             electric_unicycle_model: None,
             disabled_reason: Some("Model not supported".to_owned()),
@@ -353,13 +576,13 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
         model.wire_model_id.map(|wire_model_id| wire_model_id.value),
     ) {
         (ProtocolFamily::VeteranLeaperkimNosfet, Some(43)) => {
-            Some(MobileElectricUnicycleModelDto::Aero)
+            Some(DiscoveryElectricUnicycleModel::Aero)
         }
         _ => None,
     };
     let supported = electric_unicycle_model.is_some();
 
-    MobileDiscoveryCandidateDto {
+    DiscoveryCandidate {
         platform_identifier,
         display_name,
         product_category: "Electric unicycle".to_owned(),
@@ -372,9 +595,9 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
         },
         is_picker_candidate: true,
         support: if supported {
-            MobileDiscoveryCandidateSupportDto::Supported
+            DiscoveryCandidateSupport::Supported
         } else {
-            MobileDiscoveryCandidateSupportDto::Unsupported
+            DiscoveryCandidateSupport::Unsupported
         },
         connection_route: supported.then(|| "electric_unicycle".to_owned()),
         electric_unicycle_model,
@@ -3282,17 +3505,14 @@ mod tests {
         assert_eq!(candidate.evidence, "advertisement hint");
         assert_eq!(candidate.detail, "Aero provisional route");
         assert!(candidate.is_picker_candidate);
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Supported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
         );
         assert_eq!(
             candidate.electric_unicycle_model,
-            Some(MobileElectricUnicycleModelDto::Aero)
+            Some(DiscoveryElectricUnicycleModel::Aero)
         );
         assert_eq!(candidate.disabled_reason, None);
     }
@@ -3324,17 +3544,14 @@ mod tests {
             "Begode/Falcon confirmed by reported model Falcon, code GW-FALCON, imu MPU6500, firmware 1.0.0, serial 012345, voltage hint 100800mV"
         );
         assert!(candidate.is_picker_candidate);
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Supported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
         );
         assert_eq!(
             candidate.electric_unicycle_model,
-            Some(MobileElectricUnicycleModelDto::Falcon)
+            Some(DiscoveryElectricUnicycleModel::Falcon)
         );
         assert_eq!(candidate.disabled_reason, None);
     }
@@ -3348,17 +3565,14 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Supported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
         );
         assert_eq!(
             candidate.electric_unicycle_model,
-            Some(MobileElectricUnicycleModelDto::Falcon)
+            Some(DiscoveryElectricUnicycleModel::Falcon)
         );
         assert_eq!(candidate.disabled_reason, None);
         assert_eq!(candidate.detail, "Falcon provisional route");
@@ -3373,17 +3587,14 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Supported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
         );
         assert_eq!(
             candidate.electric_unicycle_model,
-            Some(MobileElectricUnicycleModelDto::Aero)
+            Some(DiscoveryElectricUnicycleModel::Aero)
         );
         assert_eq!(candidate.disabled_reason, None);
         assert_eq!(candidate.detail, "Aero provisional route");
@@ -3398,6 +3609,39 @@ mod tests {
         assert_eq!(resolution.protocol_family, None);
         assert_eq!(resolution.advertised_name, Some(vec![b'N', b'F', 0xff]));
         assert_eq!(resolution.model_banner, None);
+    }
+
+    #[test]
+    fn mobile_cutout_session_state_retains_discovery_observations() {
+        let session = CutoutSessionStateHandle::new();
+
+        let snapshot = session.observe_discovery(DiscoveryObservation {
+            platform_identifier: "ios-local-falcon".to_owned(),
+            advertised_name: Some(b"Begode Falcon".to_vec()),
+            advertised_service_uuids: vec![0xffe0],
+            manufacturer_data: vec![DiscoveryManufacturerDataSummary {
+                company_identifier: 0x004c,
+                payload_len: 6,
+            }],
+            rssi_dbm: Some(-48),
+        });
+
+        assert_eq!(snapshot.observations.len(), 1);
+        assert_eq!(
+            snapshot.observations[0].advertised_name_text,
+            Some("Begode Falcon".to_owned())
+        );
+        assert_eq!(snapshot.picker_candidates.len(), 1);
+        assert_eq!(
+            snapshot.picker_candidates[0].electric_unicycle_model,
+            Some(DiscoveryElectricUnicycleModel::Falcon)
+        );
+
+        let selected = session.select_discovered_platform("ios-local-falcon".to_owned());
+        assert_eq!(
+            selected.selected_platform_identifier,
+            Some("ios-local-falcon".to_owned())
+        );
     }
 
     #[test]
@@ -3449,17 +3693,14 @@ mod tests {
         assert_eq!(candidate.evidence, "Veteran protocol model id");
         assert_eq!(candidate.detail, "NOSFET Aero confirmed by model id 43");
         assert!(candidate.is_picker_candidate);
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Supported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
         );
         assert_eq!(
             candidate.electric_unicycle_model,
-            Some(MobileElectricUnicycleModelDto::Aero)
+            Some(DiscoveryElectricUnicycleModel::Aero)
         );
         assert_eq!(candidate.disabled_reason, None);
     }
@@ -3476,10 +3717,7 @@ mod tests {
         assert_eq!(candidate.evidence, "Veteran protocol model id");
         assert_eq!(candidate.detail, "Unknown Veteran/NOSFET model id 99");
         assert!(candidate.is_picker_candidate);
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Unsupported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
@@ -4336,17 +4574,14 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Supported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
         );
         assert_eq!(
             candidate.electric_unicycle_model,
-            Some(MobileElectricUnicycleModelDto::Aero)
+            Some(DiscoveryElectricUnicycleModel::Aero)
         );
         assert_eq!(candidate.disabled_reason, None);
     }
@@ -4361,10 +4596,7 @@ mod tests {
 
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.product_category, "VESC Onewheel");
-        assert_eq!(
-            candidate.support,
-            MobileDiscoveryCandidateSupportDto::Unsupported
-        );
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(

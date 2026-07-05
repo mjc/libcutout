@@ -26,6 +26,12 @@ impl CutoutSessionState {
         &self.identity
     }
 
+    /// Returns the current discovery facts without cloning the whole root.
+    #[must_use]
+    pub const fn discovery(&self) -> &DiscoveryState {
+        &self.identity.discovery
+    }
+
     /// Returns the current telemetry state without cloning the whole root.
     #[must_use]
     pub const fn telemetry(&self) -> &TelemetryState {
@@ -47,6 +53,17 @@ impl CutoutSessionState {
     /// Accumulates model/protocol identity evidence into the identity slice.
     pub fn observe_identity(&mut self, update: DeviceIdentityUpdate) {
         self.identity.apply_update(update);
+    }
+
+    /// Adds a discovery observation to the identity slice.
+    pub fn observe_discovery(&mut self, observation: DiscoveryObservation) {
+        self.identity.observe_discovery(observation);
+    }
+
+    /// Selects a discovered platform identifier for this session.
+    pub fn select_discovered_platform(&mut self, platform_identifier: String) {
+        self.identity
+            .select_discovered_platform(platform_identifier);
     }
 
     pub(crate) fn observe_outputs(&mut self, outputs: &[SessionOutput]) {
@@ -98,6 +115,9 @@ pub struct DeviceIdentityState {
     /// Resolved model name, once enough evidence identifies it.
     pub model: Option<String>,
 
+    /// Discovery observations and selection facts from the mobile BLE stack.
+    pub discovery: DiscoveryState,
+
     /// Firmware or protocol version readback, when reported.
     pub firmware: Option<FirmwareInfo>,
 }
@@ -107,6 +127,14 @@ impl DeviceIdentityState {
         self.protocol_family = self.protocol_family.or(update.protocol_family);
         self.model = self.model.take().or(update.model);
         self.firmware = self.firmware.or(update.firmware);
+    }
+
+    fn observe_discovery(&mut self, observation: DiscoveryObservation) {
+        self.discovery.observe(observation);
+    }
+
+    fn select_discovered_platform(&mut self, platform_identifier: String) {
+        self.discovery.select_platform(platform_identifier);
     }
 }
 
@@ -132,6 +160,175 @@ impl DeviceIdentityUpdate {
             model: None,
             firmware: Some(firmware),
         }
+    }
+}
+
+/// Device discovery state retained as identity evidence from the mobile BLE stack.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DiscoveryState {
+    /// Discovery observations retained by platform identifier in last-observed order.
+    pub observations: Vec<DiscoveryObservation>,
+
+    /// Platform identifier selected for the current mobile session.
+    pub selected_platform_identifier: Option<String>,
+}
+
+impl DiscoveryState {
+    fn observe(&mut self, observation: DiscoveryObservation) {
+        self.observations
+            .retain(|existing| existing.platform_identifier != observation.platform_identifier);
+        self.observations.push(observation);
+    }
+
+    fn select_platform(&mut self, platform_identifier: String) {
+        self.selected_platform_identifier = Some(platform_identifier);
+    }
+
+    /// Returns picker candidates derived from retained discovery evidence.
+    #[must_use]
+    pub fn picker_candidates(&self) -> Vec<DiscoveryCandidateSnapshot> {
+        self.observations
+            .iter()
+            .filter_map(DiscoveryCandidateSnapshot::from_observation)
+            .collect()
+    }
+}
+
+/// Discovery facts observed for one platform peripheral.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiscoveryObservation {
+    /// Stable platform identifier supplied by the mobile BLE stack.
+    pub platform_identifier: String,
+
+    /// Raw advertised-name bytes.
+    pub advertised_name: Option<Vec<u8>>,
+
+    /// Advertised 16-bit service UUID values relevant to picker routing.
+    pub advertised_service_uuids: Vec<u16>,
+
+    /// Manufacturer data summaries without retaining opaque payload bytes.
+    pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
+
+    /// Last observed RSSI in dBm.
+    pub rssi_dbm: Option<i16>,
+}
+
+impl DiscoveryObservation {
+    /// Returns advertised-name text only when the raw bytes are valid UTF-8.
+    #[must_use]
+    pub fn advertised_name_text(&self) -> Option<&str> {
+        self.advertised_name
+            .as_deref()
+            .and_then(|bytes| core::str::from_utf8(bytes).ok())
+    }
+}
+
+/// Summary of advertised manufacturer data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiscoveryManufacturerDataSummary {
+    /// Bluetooth company identifier.
+    pub company_identifier: u16,
+
+    /// Opaque manufacturer payload length in bytes.
+    pub payload_len: usize,
+}
+
+/// Picker candidate support derived from discovery evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryCandidateSupport {
+    /// Candidate can be paired through the current mobile route.
+    Supported,
+
+    /// Candidate is recognized but not currently supported.
+    Unsupported,
+}
+
+/// Electric-unicycle route model derived from typed discovery evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryElectricUnicycleModel {
+    /// NOSFET Aero session.
+    Aero,
+
+    /// Begode Falcon session.
+    Falcon,
+}
+
+/// Picker/discovery candidate derived from Rust-owned discovery evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiscoveryCandidateSnapshot {
+    /// Stable platform identifier supplied by the mobile BLE stack.
+    pub platform_identifier: String,
+
+    /// User-facing display name derived from advertisement bytes.
+    pub display_name: String,
+
+    /// Product category derived from typed discovery evidence.
+    pub product_category: String,
+
+    /// Evidence label describing why this is a picker candidate.
+    pub evidence: String,
+
+    /// Detail text derived from registry/discovery evidence.
+    pub detail: String,
+
+    /// Candidate support state.
+    pub support: DiscoveryCandidateSupport,
+
+    /// Electric-unicycle model hint for supported discovery routes.
+    pub electric_unicycle_model: Option<DiscoveryElectricUnicycleModel>,
+}
+
+impl DiscoveryCandidateSnapshot {
+    fn from_observation(observation: &DiscoveryObservation) -> Option<Self> {
+        let display_name = observation
+            .advertised_name_text()
+            .unwrap_or("Unknown Bluetooth device");
+        let lower_name = display_name.to_ascii_lowercase();
+
+        match (
+            observation.advertised_service_uuids.contains(&0xffe0),
+            observation.advertised_service_uuids.contains(&0xfff0)
+                || lower_name.contains("vesc")
+                || lower_name.contains("focer")
+                || lower_name.contains("onewheel")
+                || lower_name.contains("floatwheel"),
+        ) {
+            (true, _) => Some(Self {
+                platform_identifier: observation.platform_identifier.clone(),
+                display_name: display_name.to_owned(),
+                product_category: "Electric unicycle".to_owned(),
+                evidence: "advertisement hint".to_owned(),
+                detail: discovery_electric_unicycle_detail(&lower_name).to_owned(),
+                support: DiscoveryCandidateSupport::Supported,
+                electric_unicycle_model: Some(discovery_electric_unicycle_model(&lower_name)),
+            }),
+            (false, true) => Some(Self {
+                platform_identifier: observation.platform_identifier.clone(),
+                display_name: display_name.to_owned(),
+                product_category: "VESC Onewheel".to_owned(),
+                evidence: "VESC advertisement hint".to_owned(),
+                detail: "Not yet supported".to_owned(),
+                support: DiscoveryCandidateSupport::Unsupported,
+                electric_unicycle_model: None,
+            }),
+            (false, false) => None,
+        }
+    }
+}
+
+fn discovery_electric_unicycle_model(lower_name: &str) -> DiscoveryElectricUnicycleModel {
+    ["falcon", "begode", "gotway"]
+        .into_iter()
+        .find(|needle| lower_name.contains(needle))
+        .map_or(DiscoveryElectricUnicycleModel::Aero, |_| {
+            DiscoveryElectricUnicycleModel::Falcon
+        })
+}
+
+fn discovery_electric_unicycle_detail(lower_name: &str) -> &'static str {
+    match discovery_electric_unicycle_model(lower_name) {
+        DiscoveryElectricUnicycleModel::Falcon => "Falcon provisional route",
+        DiscoveryElectricUnicycleModel::Aero => "Aero provisional route",
     }
 }
 
@@ -201,6 +398,24 @@ pub struct SessionDiagnosticsState {
 mod tests {
     use super::*;
 
+    fn discovery_observation(
+        platform_identifier: &str,
+        name: &[u8],
+        services: Vec<u16>,
+        rssi_dbm: i16,
+    ) -> DiscoveryObservation {
+        DiscoveryObservation {
+            platform_identifier: platform_identifier.to_owned(),
+            advertised_name: Some(name.to_vec()),
+            advertised_service_uuids: services,
+            manufacturer_data: vec![DiscoveryManufacturerDataSummary {
+                company_identifier: 0x004c,
+                payload_len: 6,
+            }],
+            rssi_dbm: Some(rssi_dbm),
+        }
+    }
+
     #[test]
     fn identity_state_accumulates_protocol_and_model_evidence() {
         let mut state = CutoutSessionState::default();
@@ -219,5 +434,105 @@ mod tests {
             Some(ProtocolFamily::BegodeGotway)
         );
         assert_eq!(state.identity().model.as_deref(), Some("Begode Falcon"));
+    }
+
+    #[test]
+    fn identity_state_retains_latest_discovery_by_platform_identifier() {
+        let mut state = CutoutSessionState::default();
+
+        state.observe_discovery(discovery_observation(
+            "peripheral-b",
+            b"Later stale",
+            vec![0xffe0],
+            -60,
+        ));
+        state.observe_discovery(discovery_observation(
+            "peripheral-a",
+            b"Old",
+            vec![0xffe0],
+            -70,
+        ));
+        state.observe_discovery(discovery_observation(
+            "peripheral-a",
+            &[b'F', b'a', b'l', b'c', b'o', b'n', 0xff],
+            vec![0xffe0, 0x180f],
+            -42,
+        ));
+
+        assert_eq!(state.identity().discovery.observations.len(), 2);
+        assert_eq!(
+            state.identity().discovery.observations[0].platform_identifier,
+            "peripheral-b"
+        );
+        assert_eq!(
+            state.identity().discovery.observations[1].platform_identifier,
+            "peripheral-a"
+        );
+        assert_eq!(
+            state.identity().discovery.observations[1]
+                .advertised_name
+                .as_deref(),
+            Some(&[b'F', b'a', b'l', b'c', b'o', b'n', 0xff][..])
+        );
+        assert_eq!(
+            state.identity().discovery.observations[1].advertised_name_text(),
+            None
+        );
+        assert_eq!(
+            state.identity().discovery.observations[1].advertised_service_uuids,
+            [0xffe0, 0x180f]
+        );
+        assert_eq!(
+            state.identity().discovery.observations[1].rssi_dbm,
+            Some(-42)
+        );
+    }
+
+    #[test]
+    fn discovery_snapshot_projects_picker_candidates_from_identity_state() {
+        let mut state = CutoutSessionState::default();
+
+        state.observe_discovery(discovery_observation(
+            "falcon-id",
+            b"Begode Falcon",
+            vec![0xffe0],
+            -50,
+        ));
+        state.observe_discovery(discovery_observation(
+            "vesc-id",
+            b"Floatwheel",
+            vec![0xfff0],
+            -60,
+        ));
+        state.observe_discovery(discovery_observation(
+            "unknown-id",
+            b"Keyboard",
+            vec![0x180f],
+            -65,
+        ));
+        state.select_discovered_platform("falcon-id".to_owned());
+
+        let discovery = state.discovery();
+        let picker_candidates = discovery.picker_candidates();
+
+        assert_eq!(
+            discovery.selected_platform_identifier.as_deref(),
+            Some("falcon-id")
+        );
+        assert_eq!(picker_candidates.len(), 2);
+        assert_eq!(picker_candidates[0].platform_identifier, "falcon-id");
+        assert_eq!(
+            picker_candidates[0].support,
+            DiscoveryCandidateSupport::Supported
+        );
+        assert_eq!(
+            picker_candidates[0].electric_unicycle_model,
+            Some(DiscoveryElectricUnicycleModel::Falcon)
+        );
+        assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
+        assert_eq!(
+            picker_candidates[1].support,
+            DiscoveryCandidateSupport::Unsupported
+        );
     }
 }

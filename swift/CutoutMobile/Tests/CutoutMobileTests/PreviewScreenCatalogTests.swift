@@ -189,7 +189,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testUnknownSupportedConnectionRouteStillPairsWithoutMockupDestination() {
-        let dto = MobileDiscoveryCandidateDto(
+        let dto = DiscoveryCandidate(
             platformIdentifier: "ios-local-supported-future",
             displayName: "Future rideable",
             productCategory: "Rideable",
