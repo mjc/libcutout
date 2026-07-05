@@ -52,10 +52,11 @@ mod fixture;
 pub use fixture::*;
 mod identification;
 pub use identification::{
-    IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, IdentityParser,
-    ParsedModelBanner, ProtocolModelIdentity, ProtocolModelIdentityEvidence, StagedIdentityInput,
-    StagedIdentityOutcome, StagedIdentityResolution, identify_known_model, identify_model,
-    parse_model_banner,
+    AdvertisedName, DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession,
+    IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, ModelBanner, ParsedModelBanner,
+    PendingProbe, ProtocolFamilyState, ProtocolModelIdentity, ProtocolModelIdentityEvidence,
+    StagedIdentityInput, StagedIdentityOutcome, StagedIdentityResolution, identify_known_model,
+    identify_model, parse_model_banner,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};

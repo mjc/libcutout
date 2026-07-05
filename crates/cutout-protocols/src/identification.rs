@@ -1,11 +1,15 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, str};
 
+use arrayvec::ArrayVec;
+use bytes::Bytes;
 use cutout_core::{GattFingerprint, ModelRegistryEntry, ProtocolFamily};
 
 use crate::{
-    BegodeBanner, BegodeBannerParse, DeviceFamily, ProtocolFamilyClassification,
-    classify_begode_ascii_banner,
+    BegodeBanner, BegodeBannerParse, BegodeFrame, DeviceFamily, ProtocolFamilyClassification,
+    VeteranFrame, VeteranTelemetry, classify_begode_ascii_banner,
 };
+
+const DETECTION_MAX_GATT_FINGERPRINTS: usize = 16;
 
 /// Confidence level for staged model identification.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -185,6 +189,333 @@ pub struct StagedIdentityResolution {
     pub protocol_model: ProtocolModelIdentityEvidence,
 }
 
+/// Caller-owned state machine for incremental device detection.
+#[derive(Clone, Debug)]
+pub struct DeviceDetectionSession {
+    pending_probe: Option<PendingProbe>,
+    resolution: DeviceDetectionResolution,
+    gatt: ArrayVec<GattFingerprint, DETECTION_MAX_GATT_FINGERPRINTS>,
+}
+
+/// Raw advertised-name bytes retained as device identity provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdvertisedName(Bytes);
+
+impl AdvertisedName {
+    /// Copies borrowed advertised-name bytes into owned provenance.
+    #[must_use]
+    pub fn copy_from_slice(bytes: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(bytes))
+    }
+
+    /// Returns the original advertised-name bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+
+    /// Returns the advertised name only when the bytes are valid UTF-8.
+    #[must_use]
+    pub fn get(&self) -> Option<&str> {
+        str::from_utf8(self.as_bytes()).ok()
+    }
+}
+
+/// Raw model-banner bytes retained as probe-response provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelBanner(Bytes);
+
+impl ModelBanner {
+    /// Copies borrowed model-banner bytes into owned provenance.
+    #[must_use]
+    pub fn copy_from_slice(bytes: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(bytes))
+    }
+
+    /// Returns the original model-banner bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+
+    /// Returns the model banner only when the bytes are valid banner text.
+    #[must_use]
+    pub fn get(&self) -> Option<&str> {
+        str::from_utf8(self.as_bytes())
+            .ok()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .filter(|model| {
+                model
+                    .bytes()
+                    .all(|byte| matches!(byte, b'\n' | b'\r' | b'\t' | 0x20..=0x7e))
+            })
+    }
+}
+
+/// Pending probe state remembered by the detection session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PendingProbe {
+    /// Begode `N` probe awaiting a `NAME...` response.
+    BegodeName,
+}
+
+/// Current protocol-family state for the detection session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ProtocolFamilyState {
+    /// No protocol family has been confirmed.
+    #[default]
+    Unknown,
+
+    /// Veteran / `LeaperKim` / NOSFET has been confirmed.
+    VeteranLeaperkimNosfet,
+
+    /// Begode / `GotWay` has been confirmed.
+    BegodeGotway,
+}
+
+/// Owned resolution produced by the caller-owned detection session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceDetectionResolution {
+    /// Latest staged identity resolution.
+    pub staged: StagedIdentityResolution,
+
+    /// Current protocol-family state.
+    pub protocol: ProtocolFamilyState,
+
+    /// Latest raw advertisement name retained as provenance.
+    pub advertised_name: Option<AdvertisedName>,
+
+    /// Latest raw model banner retained as probe provenance.
+    pub model_banner: Option<ModelBanner>,
+}
+
+/// Incremental device-detection event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceDetectionEvent<'a> {
+    /// Advertisement hint reported by the caller.
+    Advertisement {
+        /// Raw advertised-name bytes, when present.
+        name: Option<&'a [u8]>,
+    },
+
+    /// GATT fingerprint snapshot reported by the caller.
+    Gatt {
+        /// Current GATT fingerprints.
+        gatt: &'a [GattFingerprint],
+    },
+
+    /// Notification evidence reported by the caller.
+    Notification {
+        /// Raw notification bytes.
+        bytes: &'a [u8],
+    },
+
+    /// Probe write issued by the caller.
+    ProbeWrite {
+        /// Probe kind.
+        probe: PendingProbe,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NotificationDecision<'a> {
+    protocol: ProtocolFamilyState,
+    banner_model: IdentityBannerEvidence<'a>,
+    protocol_model: ProtocolModelIdentityEvidence,
+}
+
+impl DeviceDetectionSession {
+    /// Creates an empty caller-owned detection session.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pending_probe: None,
+            resolution: DeviceDetectionResolution {
+                staged: StagedIdentityResolution::NO_MATCH,
+                protocol: ProtocolFamilyState::Unknown,
+                advertised_name: None,
+                model_banner: None,
+            },
+            gatt: ArrayVec::new(),
+        }
+    }
+
+    /// Observes one ordered detection event and updates the session state.
+    #[must_use]
+    pub fn observe(&mut self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolution {
+        match event {
+            DeviceDetectionEvent::Advertisement { name } => {
+                self.resolution.advertised_name = name.map(AdvertisedName::copy_from_slice);
+                self.refresh_resolution(None, None, self.resolution.protocol);
+            }
+            DeviceDetectionEvent::Gatt { gatt } => {
+                self.gatt.clear();
+                self.gatt
+                    .extend(gatt.iter().copied().take(DETECTION_MAX_GATT_FINGERPRINTS));
+                self.refresh_resolution(None, None, self.resolution.protocol);
+            }
+            DeviceDetectionEvent::Notification { bytes } => {
+                let decision = NotificationDecision::from_bytes(
+                    self.resolution.protocol,
+                    self.pending_probe,
+                    bytes,
+                );
+                let malformed_model_banner =
+                    match (decision.banner_model, self.resolution.staged.model) {
+                        (IdentityBannerEvidence::Malformed, None) => {
+                            Some(ModelBanner::copy_from_slice(model_banner_bytes(bytes)))
+                        }
+                        _ => None,
+                    };
+                if matches!(
+                    decision.banner_model,
+                    IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
+                ) {
+                    self.pending_probe = None;
+                }
+                let banner_model = match (decision.banner_model, self.resolution.staged.model) {
+                    (IdentityBannerEvidence::Malformed, Some(_)) => None,
+                    _ => decision.banner_model_update(),
+                };
+                let protocol_model = match (
+                    decision.protocol == self.resolution.protocol,
+                    decision.protocol_model,
+                ) {
+                    (false, ProtocolModelIdentityEvidence::Missing) => {
+                        Some(ProtocolModelIdentityEvidence::Missing)
+                    }
+                    (_, ProtocolModelIdentityEvidence::Missing) => None,
+                    (_, protocol_model) => Some(protocol_model),
+                };
+                self.refresh_resolution(banner_model, protocol_model, decision.protocol);
+                if let Some(model_banner) = malformed_model_banner {
+                    self.resolution.model_banner = Some(model_banner);
+                }
+            }
+            DeviceDetectionEvent::ProbeWrite { probe } => self.pending_probe = Some(probe),
+        }
+
+        self.resolution.clone()
+    }
+
+    /// Returns the current detection resolution.
+    #[must_use]
+    pub fn resolution(&self) -> &DeviceDetectionResolution {
+        &self.resolution
+    }
+
+    fn refresh_resolution(
+        &mut self,
+        banner_model: Option<IdentityBannerEvidence<'_>>,
+        protocol_model: Option<ProtocolModelIdentityEvidence>,
+        protocol: ProtocolFamilyState,
+    ) {
+        let advertised_name = self
+            .resolution
+            .advertised_name
+            .as_ref()
+            .and_then(AdvertisedName::get);
+        let banner_model = banner_model.unwrap_or_else(|| {
+            self.resolution
+                .model_banner
+                .as_ref()
+                .and_then(ModelBanner::get)
+                .map_or(
+                    IdentityBannerEvidence::Missing,
+                    IdentityBannerEvidence::model,
+                )
+        });
+        let protocol_model = protocol_model.unwrap_or(self.resolution.staged.protocol_model);
+        let input = StagedIdentityInput {
+            advertised_name,
+            gatt: self.gatt.as_slice(),
+            stream_family: protocol.into_classification(),
+            banner_model,
+            protocol_model,
+        };
+        self.resolution = DeviceDetectionResolution {
+            staged: identify_known_model(&input),
+            protocol,
+            advertised_name: self.resolution.advertised_name.clone(),
+            model_banner: match banner_model {
+                IdentityBannerEvidence::Model(model) => {
+                    Some(ModelBanner::copy_from_slice(model.model.as_bytes()))
+                }
+                IdentityBannerEvidence::Missing => self.resolution.model_banner.clone(),
+                IdentityBannerEvidence::Malformed => None,
+            },
+        };
+    }
+}
+
+fn model_banner_bytes(bytes: &[u8]) -> &[u8] {
+    bytes
+        .strip_prefix(b"NAME=")
+        .or_else(|| bytes.strip_prefix(b"NAME:"))
+        .unwrap_or(bytes)
+}
+
+impl<'a> NotificationDecision<'a> {
+    fn from_bytes(
+        current_protocol: ProtocolFamilyState,
+        pending_probe: Option<PendingProbe>,
+        bytes: &[u8],
+    ) -> NotificationDecision<'_> {
+        let banner_model = match pending_probe {
+            Some(PendingProbe::BegodeName) => parse_model_banner(bytes),
+            None => IdentityBannerEvidence::Missing,
+        };
+        let (protocol, protocol_model) = match VeteranFrame::try_from_slice(bytes) {
+            Ok(frame) => (
+                ProtocolFamilyState::VeteranLeaperkimNosfet,
+                VeteranTelemetry::decode(&frame)
+                    .map_or(ProtocolModelIdentityEvidence::Missing, |telemetry| {
+                        telemetry.firmware.protocol_model_identity()
+                    }),
+            ),
+            Err(_) if BegodeFrame::try_from_slice(bytes).is_ok() => (
+                ProtocolFamilyState::BegodeGotway,
+                ProtocolModelIdentityEvidence::Missing,
+            ),
+            Err(_) => (current_protocol, ProtocolModelIdentityEvidence::Missing),
+        };
+
+        NotificationDecision {
+            protocol,
+            banner_model,
+            protocol_model,
+        }
+    }
+
+    fn banner_model_update(self) -> Option<IdentityBannerEvidence<'a>> {
+        match self.banner_model {
+            IdentityBannerEvidence::Missing => None,
+            IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed => {
+                Some(self.banner_model)
+            }
+        }
+    }
+}
+
+impl Default for DeviceDetectionSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProtocolFamilyState {
+    fn into_classification(self) -> ProtocolFamilyClassification {
+        match self {
+            Self::Unknown => ProtocolFamilyClassification::Pending,
+            Self::VeteranLeaperkimNosfet => {
+                ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
+            }
+            Self::BegodeGotway => ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+        }
+    }
+}
+
 /// Model evidence parsed from untrusted identity bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ParsedModelBanner<'a> {
@@ -213,38 +544,10 @@ impl<'a> IdentityBannerEvidence<'a> {
     }
 }
 
-/// Parser for model identity bytes emitted by a protocol family.
-#[derive(Clone, Copy, Debug)]
-pub struct IdentityParser {
-    parse_model_banner: for<'a> fn(&'a [u8]) -> IdentityBannerEvidence<'a>,
-}
-
-impl IdentityParser {
-    /// Creates a parser from a model-banner parser function.
-    #[must_use]
-    pub const fn new(
-        parse_model_banner: for<'a> fn(&'a [u8]) -> IdentityBannerEvidence<'a>,
-    ) -> Self {
-        Self { parse_model_banner }
-    }
-
-    /// Parses untrusted identity bytes as model banner evidence.
-    #[must_use]
-    pub fn parse_model_banner(self, bytes: &[u8]) -> IdentityBannerEvidence<'_> {
-        (self.parse_model_banner)(bytes)
-    }
-}
-
-const IDENTITY_PARSERS: [IdentityParser; 1] = [IdentityParser::new(parse_begode_model_banner)];
-
-/// Iterates known identity parsers and returns the first identity evidence they recognize.
+/// Parses untrusted identity bytes as model banner evidence.
 #[must_use]
 pub fn parse_model_banner(bytes: &[u8]) -> IdentityBannerEvidence<'_> {
-    IDENTITY_PARSERS
-        .into_iter()
-        .map(|parser| parser.parse_model_banner(bytes))
-        .find(|evidence| !matches!(evidence, IdentityBannerEvidence::Missing))
-        .unwrap_or(IdentityBannerEvidence::Missing)
+    parse_begode_model_banner(bytes)
 }
 
 impl StagedIdentityResolution {
@@ -263,21 +566,20 @@ pub fn identify_model(
     input: &StagedIdentityInput<'_, impl Clone + IntoIterator<Item: Borrow<GattFingerprint>>>,
     registry: &[&'static ModelRegistryEntry],
 ) -> StagedIdentityResolution {
-    if let Some(resolution) = protocol_model_resolution(input, registry) {
-        return resolution;
-    }
-
-    let Some(expected_family) = protocol_family_from_classification(input.stream_family) else {
-        return hints_only_resolution(input, registry);
-    };
-
-    best_resolution(
-        registry
-            .iter()
-            .copied()
-            .filter(|entry| entry.protocol_family == expected_family)
-            .map(|entry| family_resolution(input, entry)),
-    )
+    protocol_model_resolution(input, registry).unwrap_or_else(|| {
+        protocol_family_from_classification(input.stream_family).map_or_else(
+            || hints_only_resolution(input, registry),
+            |expected_family| {
+                best_resolution(
+                    registry
+                        .iter()
+                        .copied()
+                        .filter(|entry| entry.protocol_family == expected_family)
+                        .map(|entry| family_resolution(input, entry)),
+                )
+            },
+        )
+    })
 }
 
 /// Identifies the best known model from the crate-owned compile-time registry.
@@ -558,13 +860,14 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        Capabilities, GattFingerprint, GattRoles, ModelRegistryEntry, ProtocolFamily,
+        Capabilities, GattChannel, GattFingerprint, GattRoles, ModelRegistryEntry, ProtocolFamily,
         VerificationStatus,
     };
 
     use crate::{
-        BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL, DeviceFamily,
-        IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, NOSFET_AERO_REGISTRY_ENTRY,
+        BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL,
+        DeviceDetectionEvent, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+        IdentityConfidence, IdentityEvidence, NOSFET_AERO_REGISTRY_ENTRY, PendingProbe,
         ProtocolFamilyClassification, ProtocolModelIdentityEvidence, StagedIdentityInput,
         StagedIdentityOutcome, identify_known_model, identify_model, parse_model_banner,
     };
@@ -577,7 +880,22 @@ mod tests {
             .with_notify(),
         verification: VerificationStatus::HardwareVerified,
     }];
+    const UNKNOWN_GATT: GattFingerprint = GattFingerprint {
+        service: GattChannel::from_bytes([0x11; 16]),
+        characteristic: GattChannel::from_bytes([0x22; 16]),
+        roles: GattRoles::empty(),
+        verification: VerificationStatus::Inferred,
+    };
     const NO_GATT: [GattFingerprint; 0] = [];
+    const BEGODE_LIVE_A_FRAME: [u8; 24] =
+        hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
+
+    fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
+        let mut bytes = [0_u8; 42];
+        bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        bytes[28..30].copy_from_slice(&(model_id * 1_000).to_be_bytes());
+        bytes
+    }
 
     #[test]
     fn advertised_name_and_shared_gatt_are_hints_only() {
@@ -856,6 +1174,356 @@ mod tests {
             ProtocolModelIdentityEvidence::model_id(ProtocolFamily::VeteranLeaperkimNosfet, 99)
         );
         assert!(resolution.evidence.has_protocol_model_id());
+    }
+
+    #[test]
+    fn caller_owned_detection_session_keeps_name_hint_unconfirmed() {
+        let mut session = DeviceDetectionSession::new();
+
+        let _ = session.observe(DeviceDetectionEvent::Advertisement {
+            name: Some(b"NF2557"),
+        });
+        let update = session.observe(DeviceDetectionEvent::Gatt { gatt: &BEGODE_GATT });
+
+        assert_ne!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.model, None);
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::Unknown);
+        assert_eq!(
+            update.advertised_name.as_ref().and_then(|name| name.get()),
+            Some("NF2557")
+        );
+        assert_eq!(session.resolution(), &update);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_keeps_gotway_name_hint_unconfirmed() {
+        let mut session = DeviceDetectionSession::new();
+
+        let _ = session.observe(DeviceDetectionEvent::Advertisement {
+            name: Some(b"GotWay_002441"),
+        });
+        let update = session.observe(DeviceDetectionEvent::Gatt { gatt: &BEGODE_GATT });
+
+        assert_ne!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.model, None);
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::Unknown);
+        assert_eq!(
+            update.advertised_name.as_ref().and_then(|name| name.get()),
+            Some("GotWay_002441")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_caps_retained_gatt_fingerprints() {
+        let mut session = DeviceDetectionSession::new();
+        let mut gatt = [UNKNOWN_GATT; super::DETECTION_MAX_GATT_FINGERPRINTS + 1];
+        gatt[super::DETECTION_MAX_GATT_FINGERPRINTS] = BEGODE_GATT[0];
+
+        let update = session.observe(DeviceDetectionEvent::Gatt { gatt: &gatt });
+
+        assert_eq!(update.staged.confidence, IdentityConfidence::NoMatch);
+        assert_eq!(update.staged.model, None);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_retains_non_utf8_advertisement_bytes() {
+        let mut session = DeviceDetectionSession::new();
+
+        let update = session.observe(DeviceDetectionEvent::Advertisement {
+            name: Some(&[b'N', b'F', 0xff]),
+        });
+
+        let advertised_name = update.advertised_name.as_ref().unwrap();
+        assert_eq!(advertised_name.as_bytes(), &[b'N', b'F', 0xff]);
+        assert_eq!(advertised_name.get(), None);
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::NoMatch);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_associates_probe_followed_by_banner() {
+        let mut session = DeviceDetectionSession::new();
+
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME:Falcon",
+        });
+
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::NoMatch);
+        assert_eq!(
+            update.model_banner.as_ref().and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_confirms_aero_from_veteran_model_id_without_name() {
+        let mut session = DeviceDetectionSession::new();
+        let frame = synthetic_veteran_frame_with_model_id(43);
+
+        let update = session.observe(DeviceDetectionEvent::Notification { bytes: &frame });
+
+        assert_eq!(
+            update.protocol,
+            crate::ProtocolFamilyState::VeteranLeaperkimNosfet
+        );
+        assert_eq!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::Matched);
+        assert_eq!(update.staged.model, Some(&NOSFET_AERO_REGISTRY_ENTRY));
+        assert!(update.staged.evidence.has_protocol_model_id());
+    }
+
+    #[test]
+    fn caller_owned_detection_session_clears_protocol_model_when_protocol_changes() {
+        let mut session = DeviceDetectionSession::new();
+        let frame = synthetic_veteran_frame_with_model_id(43);
+        let _ = session.observe(DeviceDetectionEvent::Notification { bytes: &frame });
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
+        assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(update.staged.model, None);
+        assert_eq!(
+            update.staged.protocol_model,
+            ProtocolModelIdentityEvidence::Missing
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_keeps_unknown_veteran_model_at_family_only() {
+        let mut session = DeviceDetectionSession::new();
+        let frame = synthetic_veteran_frame_with_model_id(60);
+
+        let update = session.observe(DeviceDetectionEvent::Notification { bytes: &frame });
+
+        assert_eq!(
+            update.protocol,
+            crate::ProtocolFamilyState::VeteranLeaperkimNosfet
+        );
+        assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(update.staged.model, None);
+        assert_eq!(
+            update.staged.protocol_model,
+            ProtocolModelIdentityEvidence::model_id(ProtocolFamily::VeteranLeaperkimNosfet, 60)
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_confirms_begode_family_without_falcon_model() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Advertisement {
+            name: Some(b"GotWay_002441"),
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
+        assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(update.staged.model, None);
+        assert_eq!(
+            update.advertised_name.as_ref().and_then(|name| name.get()),
+            Some("GotWay_002441")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_uses_begode_name_response_after_probe() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon",
+        });
+
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
+        assert_eq!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+        assert!(update.staged.evidence.has_banner_model_match());
+        assert_eq!(
+            update.model_banner.as_ref().and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_keeps_begode_probe_across_unrelated_notification() {
+        let mut session = DeviceDetectionSession::new();
+
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let unrelated = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+
+        assert_eq!(unrelated.model_banner, None);
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon",
+        });
+
+        assert_eq!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+        assert_eq!(
+            update.model_banner.as_ref().and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_keeps_model_after_advertisement_refresh() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon",
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Advertisement {
+            name: Some(b"GotWay_002441"),
+        });
+
+        assert_eq!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+        assert_eq!(
+            update.model_banner.as_ref().and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_keeps_model_after_gatt_refresh() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon",
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Gatt {
+            gatt: BEGODE_FALCON_REGISTRY_ENTRY.gatt,
+        });
+
+        assert_eq!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+        assert_eq!(
+            update.model_banner.as_ref().and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_keeps_model_after_unrelated_notification() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon",
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+
+        assert_eq!(update.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(update.staged.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+        assert_eq!(
+            update.model_banner.as_ref().and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_ignores_malformed_probe_after_model_resolution() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon",
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+
+        let malformed = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon\x00",
+        });
+        let unrelated = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+
+        assert_eq!(
+            malformed
+                .model_banner
+                .as_ref()
+                .and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+        assert_eq!(malformed.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(malformed.staged.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+        assert_eq!(
+            unrelated
+                .model_banner
+                .as_ref()
+                .and_then(|banner| banner.get()),
+            Some("Falcon")
+        );
+        assert_eq!(unrelated.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(unrelated.staged.model, Some(&BEGODE_FALCON_REGISTRY_ENTRY));
+    }
+
+    #[test]
+    fn caller_owned_detection_session_preserves_raw_malformed_probe_response() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+
+        let malformed = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon\x00",
+        });
+
+        assert_eq!(
+            malformed
+                .model_banner
+                .as_ref()
+                .map(super::ModelBanner::as_bytes),
+            Some(&b"Falcon\x00"[..])
+        );
+
+        let refreshed = session.observe(DeviceDetectionEvent::Gatt {
+            gatt: BEGODE_FALCON_REGISTRY_ENTRY.gatt,
+        });
+
+        assert_ne!(refreshed.staged.confidence, IdentityConfidence::Model);
+        assert_eq!(refreshed.staged.model, None);
     }
 
     #[test]
