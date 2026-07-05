@@ -4,6 +4,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
+target_dir="${CARGO_TARGET_DIR:-$root/target}"
 cd "$root"
 
 case "$(cutout_host_os)" in
@@ -44,7 +45,7 @@ rm -rf "$generated_dir" "$system_target_dir" "$smoke_dir"
 mkdir -p "$generated_dir" "$system_target_dir" "$smoke_dir"
 
 SDKROOT="$(cutout_macosx_sdk_path)" cargo run -p cutout-uniffi-bindgen -- generate \
-  --library "target/debug/$lib_name" \
+  --library "$target_dir/debug/$lib_name" \
   --language swift \
   --no-format \
   --out-dir "$generated_dir"

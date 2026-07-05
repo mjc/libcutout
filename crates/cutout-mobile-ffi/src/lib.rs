@@ -28,10 +28,11 @@ use cutout_core::{
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
     ConcreteFalconReadOnlySession, ConcreteSessionErrorDto, ConcreteSessionStepResultDto,
-    IdentityBannerEvidence, ProtocolFamilyClassification, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
-    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    identify_known_model, new_nosfet_aero_read_only_session,
+    DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession,
+    IdentityBannerEvidence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 
@@ -111,6 +112,87 @@ pub struct MobileDiscoveryCandidateDto {
 
     /// Disabled reason, when connecting is not allowed.
     pub disabled_reason: Option<String>,
+}
+
+/// Device-detection resolution exposed across the `UniFFI` boundary.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DeviceDetectionResolutionRecord {
+    /// Resolved protocol family, when known.
+    pub protocol_family: Option<MobileProtocolFamilyDto>,
+
+    /// Raw advertised-name bytes retained by the detector.
+    pub advertised_name: Option<Vec<u8>>,
+
+    /// Raw model-banner bytes retained by the detector.
+    pub model_banner: Option<Vec<u8>>,
+}
+
+/// `UniFFI` handle for a caller-owned device detection session.
+#[derive(Debug, uniffi::Object)]
+pub struct DeviceDetectionSessionHandle {
+    inner: Mutex<DeviceDetectionSession>,
+}
+
+#[uniffi::export]
+impl DeviceDetectionSessionHandle {
+    /// Creates an empty caller-owned device detection session.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(DeviceDetectionSession::new()),
+        })
+    }
+
+    /// Observes raw advertisement-name bytes from the mobile BLE stack.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
+    pub fn observe_advertisement(&self, name: Option<Vec<u8>>) -> DeviceDetectionResolutionRecord {
+        self.observe(DeviceDetectionEvent::Advertisement {
+            name: name.as_deref(),
+        })
+    }
+
+    /// Observes the current mobile GATT fingerprint snapshot.
+    pub fn observe_gatt(
+        &self,
+        fingerprints: Vec<MobileGattFingerprintDto>,
+    ) -> DeviceDetectionResolutionRecord {
+        let fingerprints = fingerprints
+            .into_iter()
+            .map(GattFingerprint::from)
+            .collect::<Vec<_>>();
+        self.observe(DeviceDetectionEvent::Gatt {
+            gatt: &fingerprints,
+        })
+    }
+
+    /// Observes raw notification bytes from the mobile BLE stack.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
+    pub fn observe_notification(&self, bytes: Vec<u8>) -> DeviceDetectionResolutionRecord {
+        self.observe(DeviceDetectionEvent::Notification { bytes: &bytes })
+    }
+
+    /// Records that the caller issued a Begode `N` name probe.
+    pub fn observe_begode_name_probe(&self) -> DeviceDetectionResolutionRecord {
+        self.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        })
+    }
+
+    /// Returns the current detection resolution.
+    pub fn resolution(&self) -> DeviceDetectionResolutionRecord {
+        self.lock_inner().resolution().into()
+    }
+}
+
+impl DeviceDetectionSessionHandle {
+    fn observe(&self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolutionRecord {
+        self.lock_inner().observe(event).into()
+    }
+
+    fn lock_inner(&self) -> MutexGuard<'_, DeviceDetectionSession> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// Build a mobile discovery candidate from advertisement evidence.
@@ -1825,6 +1907,40 @@ pub struct MobileResolvedIdentityDto {
     pub firmware: Option<MobileVerifiedStringDto>,
 }
 
+impl From<&DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
+    fn from(resolution: &DeviceDetectionResolution) -> Self {
+        Self {
+            protocol_family: mobile_protocol_family_from_detection(resolution.protocol),
+            advertised_name: resolution
+                .advertised_name
+                .as_ref()
+                .map(|name| name.as_bytes().to_vec()),
+            model_banner: resolution
+                .model_banner
+                .as_ref()
+                .map(|banner| banner.as_bytes().to_vec()),
+        }
+    }
+}
+
+impl From<DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
+    fn from(resolution: DeviceDetectionResolution) -> Self {
+        Self::from(&resolution)
+    }
+}
+
+const fn mobile_protocol_family_from_detection(
+    protocol: ProtocolFamilyState,
+) -> Option<MobileProtocolFamilyDto> {
+    match protocol {
+        ProtocolFamilyState::Unknown => None,
+        ProtocolFamilyState::VeteranLeaperkimNosfet => {
+            Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+        }
+        ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
+    }
+}
+
 /// Mobile Falcon construction error.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileSessionConstructorError {
@@ -3150,6 +3266,7 @@ impl FalconReadOnlySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cutout_protocols::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL};
 
     #[test]
     fn mobile_discovery_candidate_preserves_ios_local_id_without_mac() {
@@ -3270,6 +3387,52 @@ mod tests {
         );
         assert_eq!(candidate.disabled_reason, None);
         assert_eq!(candidate.detail, "Aero provisional route");
+    }
+
+    #[test]
+    fn mobile_device_detection_session_preserves_raw_advertisement_bytes() {
+        let session = DeviceDetectionSessionHandle::new();
+
+        let resolution = session.observe_advertisement(Some(vec![b'N', b'F', 0xff]));
+
+        assert_eq!(resolution.protocol_family, None);
+        assert_eq!(resolution.advertised_name, Some(vec![b'N', b'F', 0xff]));
+        assert_eq!(resolution.model_banner, None);
+    }
+
+    #[test]
+    fn mobile_device_detection_session_preserves_begode_model_banner_bytes() {
+        let session = DeviceDetectionSessionHandle::new();
+        let _ = session.observe_begode_name_probe();
+
+        let resolution = session.observe_notification(b"NAME=Falcon".to_vec());
+
+        assert_eq!(resolution.model_banner, Some(b"Falcon".to_vec()));
+    }
+
+    #[test]
+    fn mobile_device_detection_session_preserves_malformed_banner_until_valid_probe_response() {
+        let session = DeviceDetectionSessionHandle::new();
+        let gatt = vec![MobileGattFingerprintDto {
+            service: BEGODE_SERVICE_CHANNEL.as_bytes().to_vec(),
+            characteristic: BEGODE_DATA_CHANNEL.as_bytes().to_vec(),
+            roles: vec![
+                MobileGattRoleDto::WriteWithoutResponse,
+                MobileGattRoleDto::Notify,
+            ],
+            verification: MobileVerificationStatusDto::HardwareVerified,
+        }];
+        let _ = session.observe_gatt(gatt.clone());
+        let _ = session.observe_begode_name_probe();
+
+        let malformed = session.observe_notification(b"NAME=Falcon\0".to_vec());
+        let refreshed = session.observe_gatt(gatt);
+        let _ = session.observe_begode_name_probe();
+        let valid = session.observe_notification(b"NAME=Falcon".to_vec());
+
+        assert_eq!(malformed.model_banner, Some(b"Falcon\0".to_vec()));
+        assert_eq!(refreshed.model_banner, Some(b"Falcon\0".to_vec()));
+        assert_eq!(valid.model_banner, Some(b"Falcon".to_vec()));
     }
 
     #[test]
