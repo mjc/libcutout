@@ -6712,7 +6712,7 @@ pub struct CutoutSessionState {
 impl CutoutSessionState {
     /// Returns a derived snapshot of the current session state.
     #[must_use]
-    pub const fn snapshot(&self) -> CutoutSessionSnapshot {
+    pub fn snapshot(&self) -> CutoutSessionSnapshot {
         CutoutSessionSnapshot {
             discovery: self.discovery,
             identity: self.identity,
@@ -7009,7 +7009,7 @@ where
 
     /// Returns a derived snapshot of the Rust-owned session state.
     #[must_use]
-    pub const fn session_state_snapshot(&self) -> CutoutSessionSnapshot {
+    pub fn session_state_snapshot(&self) -> CutoutSessionSnapshot {
         self.state.snapshot()
     }
 
