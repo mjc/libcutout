@@ -24,6 +24,114 @@ public struct TransportWriteLimitBytes: Equatable, Hashable, Sendable {
     }
 }
 
+public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
+    case veteranLeaperkimNosfet
+    case begodeGotway
+    case vesc
+
+    fileprivate init(_ dto: MobileProtocolFamilyDto) {
+        switch dto {
+        case .veteranLeaperkimNosfet:
+            self = .veteranLeaperkimNosfet
+        case .begodeGotway:
+            self = .begodeGotway
+        case .vesc:
+            self = .vesc
+        }
+    }
+}
+
+public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
+    public let protocolFamily: DeviceDetectionProtocolFamily?
+    public let advertisedName: Data?
+    public let modelBanner: Data?
+
+    fileprivate init(_ record: DeviceDetectionResolutionRecord) {
+        self.protocolFamily = record.protocolFamily.map(DeviceDetectionProtocolFamily.init)
+        self.advertisedName = record.advertisedName
+        self.modelBanner = record.modelBanner
+    }
+}
+
+public enum DeviceDetectionGattRole: Equatable, Hashable, Sendable {
+    case read
+    case write
+    case writeWithoutResponse
+    case notify
+    case indicate
+
+    fileprivate var dto: MobileGattRoleDto {
+        switch self {
+        case .read:
+            .read
+        case .write:
+            .write
+        case .writeWithoutResponse:
+            .writeWithoutResponse
+        case .notify:
+            .notify
+        case .indicate:
+            .indicate
+        }
+    }
+}
+
+public struct DeviceDetectionGattFingerprint: Equatable, Hashable, Sendable {
+    public let service: Data
+    public let characteristic: Data
+    public let roles: [DeviceDetectionGattRole]
+    public let verification: VerificationState
+
+    public init(
+        service: Data,
+        characteristic: Data,
+        roles: [DeviceDetectionGattRole],
+        verification: VerificationState
+    ) {
+        self.service = service
+        self.characteristic = characteristic
+        self.roles = roles
+        self.verification = verification
+    }
+
+    fileprivate var dto: MobileGattFingerprintDto {
+        MobileGattFingerprintDto(
+            service: service,
+            characteristic: characteristic,
+            roles: roles.map(\.dto),
+            verification: verification.dto
+        )
+    }
+}
+
+public final class DeviceDetectionSession {
+    private let inner: DeviceDetectionSessionHandle
+
+    public init() {
+        self.inner = DeviceDetectionSessionHandle()
+    }
+
+    public func observeAdvertisement(name: Data?) -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeAdvertisement(name: name))
+    }
+
+    public func observeGatt(fingerprints: [DeviceDetectionGattFingerprint]) -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeGatt(fingerprints: fingerprints.map(\.dto)))
+    }
+
+    public func observeNotification(bytes: Data) -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeNotification(bytes: bytes))
+    }
+
+    public func observeBegodeNameProbe() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeNameProbe())
+    }
+
+    public var resolution: DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.resolution())
+    }
+}
+
 public enum SessionActionKind: Equatable, Hashable, Sendable {
     case subscribe
     case write
@@ -231,6 +339,21 @@ public enum VerificationState: Equatable, Hashable, Sendable {
             self = .hardwareVerified
         case .sourceAndHardwareVerified:
             self = .sourceAndHardwareVerified
+        }
+    }
+
+    fileprivate var dto: MobileVerificationStatusDto {
+        switch self {
+        case .unverified:
+            .unverified
+        case .inferred:
+            .inferred
+        case .sourceVerified:
+            .sourceVerified
+        case .hardwareVerified:
+            .hardwareVerified
+        case .sourceAndHardwareVerified:
+            .sourceAndHardwareVerified
         }
     }
 }
