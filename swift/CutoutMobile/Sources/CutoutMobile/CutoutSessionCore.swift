@@ -747,7 +747,16 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
-        setPhase(.failed(.skippedReadOnlyWrite))
+        guard isReadOnlyBegodeProbeWrite(channel: channel, bytes: bytes) else {
+            setPhase(.failed(.skippedReadOnlyWrite))
+            return
+        }
+        guard let characteristic = subscribedCharacteristics[channel] else {
+            setPhase(.failed(.missingNotifyChannel))
+            return
+        }
+        peripheral?.writeValue(bytes, for: characteristic, type: .withoutResponse)
+        record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
     }
 
     public func disconnect() {
@@ -784,7 +793,7 @@ extension CutoutSessionCore {
     }
 
     func observeDetectionProbeWrite(channel: BluetoothUuid, bytes: Data) {
-        guard channel.bluetooth16Value == 0xffe1 else {
+        guard isReadOnlyBegodeProbeWrite(channel: channel, bytes: bytes) else {
             return
         }
         switch bytes.first {
@@ -799,6 +808,18 @@ extension CutoutSessionCore {
             annotateDetection("begode_probe_write=imu")
         default:
             break
+        }
+    }
+
+    func isReadOnlyBegodeProbeWrite(channel: BluetoothUuid, bytes: Data) -> Bool {
+        guard channel.bluetooth16Value == 0xffe1, bytes.count == 1 else {
+            return false
+        }
+        return switch bytes.first {
+        case UInt8(ascii: "N")?, UInt8(ascii: "V")?, UInt8(ascii: "M")?:
+            true
+        default:
+            false
         }
     }
 

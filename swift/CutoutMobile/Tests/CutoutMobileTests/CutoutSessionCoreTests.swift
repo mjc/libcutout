@@ -642,6 +642,33 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.records.contains("begode_probe_write=imu"))
     }
 
+    func testBegodeProbeWriteDoesNotUseSkippedWriteGuard() {
+        let core = CutoutSessionCore()
+
+        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8))
+
+        XCTAssertEqual(core.phase, .failed(.missingNotifyChannel))
+        XCTAssertTrue(core.records.contains("begode_probe_write=model"))
+    }
+
+    func testUnrelatedWriteStillUsesSkippedWriteGuard() {
+        let core = CutoutSessionCore()
+
+        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data([0x01]))
+
+        XCTAssertEqual(core.phase, .failed(.skippedReadOnlyWrite))
+        XCTAssertFalse(core.records.contains("begode_probe_write=model"))
+    }
+
+    func testMultiBytePayloadStartingWithProbeByteStillUsesSkippedWriteGuard() {
+        let core = CutoutSessionCore()
+
+        core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("NAME".utf8))
+
+        XCTAssertEqual(core.phase, .failed(.skippedReadOnlyWrite))
+        XCTAssertFalse(core.records.contains("begode_probe_write=model"))
+    }
+
     func testBegodeProbeResponsesAreLabeledFromDetectionSession() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)
