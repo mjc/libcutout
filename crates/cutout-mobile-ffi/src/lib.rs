@@ -923,6 +923,26 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         );
     }
 
+    if matches!(
+        resolution.protocol_family.as_ref(),
+        Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
+    ) {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "Veteran/NOSFET protocol family".to_owned(),
+            detail: "Veteran/NOSFET model not confirmed".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::UnknownRecordable,
+            recommended_action: DiscoveryCandidateSupport::UnknownRecordable.recommended_action(),
+            section: DiscoveryCandidateSupport::UnknownRecordable.picker_section(),
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Veteran/NOSFET model not confirmed".to_owned()),
+        };
+    }
+
     mobile_discovery_candidate_from_begode_identity_probe(
         platform_identifier,
         display_name,
@@ -4452,6 +4472,39 @@ mod tests {
         assert_eq!(
             candidate.electric_unicycle_model,
             Some(DiscoveryElectricUnicycleModel::Aero)
+        );
+    }
+
+    #[test]
+    fn mobile_device_detection_resolution_keeps_veteran_family_only_recordable() {
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-veteran-family".to_owned(),
+            "Veteran stream".to_owned(),
+            DeviceDetectionResolutionRecord {
+                protocol_family: Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet),
+                protocol_conflict: false,
+                veteran_protocol_model_id: None,
+                advertised_name: None,
+                model_banner: None,
+                firmware_banner: None,
+                imu_banner: None,
+                missing_probe_response: None,
+                malformed_probe_response: None,
+            },
+        );
+
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(candidate.evidence, "Veteran/NOSFET protocol family");
+        assert_eq!(candidate.detail, "Veteran/NOSFET model not confirmed");
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Veteran/NOSFET model not confirmed".to_owned())
         );
     }
 
