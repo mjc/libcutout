@@ -81,7 +81,7 @@ public final class LiveActivityRideLifecycleCoordinator {
 #if canImport(ActivityKit) && !os(macOS)
 @preconcurrency import ActivityKit
 
-@available(iOS 16.1, *)
+@available(iOS 16.2, *)
 public struct LiveActivityRideAttributes: ActivityAttributes, Codable, Hashable, Sendable {
     public struct ContentState: Codable, Hashable, Sendable {
         public let snapshot: LiveActivityRideSnapshot
@@ -98,7 +98,7 @@ public struct LiveActivityRideAttributes: ActivityAttributes, Codable, Hashable,
     }
 }
 
-@available(iOS 16.1, *)
+@available(iOS 16.2, *)
 public final class LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
     private let state = LiveActivityRideActivityKitState()
 

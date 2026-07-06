@@ -52,7 +52,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     Text(context.state.snapshot.battery.displayValue)
                         .font(.caption.weight(.semibold))
                     Circle()
-                        .fill(RideActivityPalette.connected)
+                        .fill(context.state.snapshot.connectionState == .connected ? RideActivityPalette.connected : RideActivityPalette.warning)
                         .frame(width: 5, height: 5)
                 }
             } minimal: {

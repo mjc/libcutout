@@ -192,7 +192,7 @@ final class CutoutAppModel: ObservableObject {
 
     private func syncLiveActivity() {
         let shouldBeActive = phase.supportsLiveActivity && liveActivityModel != nil && isRecordOnlyCapture == false
-        let snapshot = liveActivityModel.map { LiveActivityRideSnapshot(identity: .model($0), rideState: rideState) }
+        let snapshot = liveActivityModel.map { LiveActivityRideSnapshot(identity: .model($0), rideState: rideState, now: core.now()) }
         let endReason: LiveActivityRideLifecycleEndReason = switch phase {
         case .scanning:
             .disconnected

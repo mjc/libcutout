@@ -153,6 +153,10 @@ public final class CutoutSessionCore: NSObject {
         central?.scanForPeripherals(withServices: nil)
     }
 
+    public func now() -> MonotonicMilliseconds {
+        clock.now()
+    }
+
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
         record("link_operations=\(step.operations.map(String.init(describing:)).joined(separator: ","))")
         captureBuilder?.recordLinkUp(
