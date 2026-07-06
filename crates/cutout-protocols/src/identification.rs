@@ -5,8 +5,9 @@ use bytes::Bytes;
 use cutout_core::{GattFingerprint, ModelRegistryEntry, ProtocolFamily};
 
 use crate::{
-    BegodeBanner, BegodeBannerParse, BegodeFrame, DeviceFamily, ProtocolFamilyClassification,
-    VeteranFrame, VeteranTelemetry, classify_begode_ascii_banner,
+    BegodeBanner, BegodeBannerParse, BegodeFrame, BegodeFrameParseResult, BegodeFrameReassembler,
+    DeviceFamily, ProtocolFamilyClassification, VeteranFrame, VeteranTelemetry,
+    classify_begode_ascii_banner,
 };
 
 const DETECTION_MAX_GATT_FINGERPRINTS: usize = 16;
@@ -195,6 +196,7 @@ pub struct DeviceDetectionSession {
     pending_probe: Option<PendingProbe>,
     resolution: DeviceDetectionResolution,
     gatt: ArrayVec<GattFingerprint, DETECTION_MAX_GATT_FINGERPRINTS>,
+    begode_reassembler: BegodeFrameReassembler,
 }
 
 /// Raw advertised-name bytes retained as device identity provenance.
@@ -434,6 +436,7 @@ impl DeviceDetectionSession {
                 malformed_probe_response: None,
             },
             gatt: ArrayVec::new(),
+            begode_reassembler: BegodeFrameReassembler::default(),
         }
     }
 
@@ -453,6 +456,16 @@ impl DeviceDetectionSession {
             }
             DeviceDetectionEvent::Notification { bytes } => {
                 let pending_probe = self.pending_probe;
+                let begode_frame = bytes
+                    .iter()
+                    .filter_map(|byte| self.begode_reassembler.feed_byte_result(*byte).ok())
+                    .find_map(|result| match result {
+                        BegodeFrameParseResult::Complete(frame) => Some(*frame.as_slice()),
+                        BegodeFrameParseResult::Seeking | BegodeFrameParseResult::Buffered => None,
+                    });
+                let bytes = begode_frame
+                    .as_ref()
+                    .map_or(bytes, |frame| frame.as_slice());
                 let decision = NotificationDecision::from_bytes(
                     self.resolution.protocol,
                     pending_probe,
@@ -1525,6 +1538,26 @@ mod tests {
             update.advertised_name.as_ref().and_then(|name| name.get()),
             Some("GotWay_002441")
         );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_reassembles_fragmented_begode_family_frame() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Advertisement {
+            name: Some(b"GotWay_002441"),
+        });
+        let partial = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME[..20],
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME[20..],
+        });
+
+        assert_eq!(partial.protocol, crate::ProtocolFamilyState::Unknown);
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
+        assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(update.staged.model, None);
     }
 
     #[test]

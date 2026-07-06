@@ -4300,6 +4300,21 @@ mod tests {
     }
 
     #[test]
+    fn mobile_device_detection_session_exposes_fragmented_begode_family_frame() {
+        let session = DeviceDetectionSessionHandle::new();
+        let frame = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
+
+        let partial = session.observe_notification(frame[..20].to_vec());
+        let resolution = session.observe_notification(frame[20..].to_vec());
+
+        assert_eq!(partial.protocol_family, None);
+        assert_eq!(
+            resolution.protocol_family,
+            Some(MobileProtocolFamilyDto::BegodeGotway)
+        );
+    }
+
+    #[test]
     fn mobile_device_detection_session_preserves_begode_firmware_banner_bytes() {
         let session = DeviceDetectionSessionHandle::new();
         let _ = session.observe_begode_firmware_probe();
