@@ -47,6 +47,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate has a supported read-only route.
     Supported,
 
+    /// Candidate has a read-only test route from provisional evidence.
+    ProvisionalRoute,
+
     /// Candidate is relevant enough to record for future support.
     UnknownRecordable,
 
@@ -278,11 +281,16 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
             detail: candidate.detail.clone(),
             is_picker_candidate: true,
             support,
-            connection_route: (candidate.support == CoreDiscoveryCandidateSupport::Supported)
-                .then(|| "electric_unicycle".to_owned()),
+            connection_route: matches!(
+                candidate.support,
+                CoreDiscoveryCandidateSupport::Supported
+                    | CoreDiscoveryCandidateSupport::ProvisionalRoute
+            )
+            .then(|| "electric_unicycle".to_owned()),
             electric_unicycle_model,
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
+                CoreDiscoveryCandidateSupport::ProvisionalRoute => None,
                 CoreDiscoveryCandidateSupport::UnknownRecordable => Some(candidate.detail.clone()),
                 CoreDiscoveryCandidateSupport::KnownUnsupported => {
                     Some("Not yet supported".to_owned())
@@ -306,6 +314,7 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
     fn from(support: CoreDiscoveryCandidateSupport) -> Self {
         match support {
             CoreDiscoveryCandidateSupport::Supported => Self::Supported,
+            CoreDiscoveryCandidateSupport::ProvisionalRoute => Self::ProvisionalRoute,
             CoreDiscoveryCandidateSupport::UnknownRecordable => Self::UnknownRecordable,
             CoreDiscoveryCandidateSupport::KnownUnsupported => Self::KnownUnsupported,
             CoreDiscoveryCandidateSupport::Unsupported => Self::Unsupported,
@@ -475,7 +484,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
                 evidence: "advertisement hint".to_owned(),
                 detail: format!("{model:?} provisional route"),
                 is_picker_candidate: true,
-                support: DiscoveryCandidateSupport::Supported,
+                support: DiscoveryCandidateSupport::ProvisionalRoute,
                 connection_route: Some("electric_unicycle".to_owned()),
                 electric_unicycle_model: Some(model),
                 disabled_reason: None,
@@ -3599,7 +3608,10 @@ mod tests {
         assert_eq!(candidate.evidence, "advertisement hint");
         assert_eq!(candidate.detail, "Aero provisional route");
         assert!(candidate.is_picker_candidate);
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::ProvisionalRoute
+        );
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
@@ -3659,7 +3671,10 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::ProvisionalRoute
+        );
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())
@@ -3693,7 +3708,10 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::ProvisionalRoute
+        );
         assert_eq!(
             candidate.connection_route,
             Some("electric_unicycle".to_owned())

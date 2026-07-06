@@ -239,6 +239,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate can be paired through the current mobile route.
     Supported,
 
+    /// Candidate can use a read-only test route but is not confirmed identity.
+    ProvisionalRoute,
+
     /// Candidate is relevant enough to capture but has no supported route yet.
     UnknownRecordable,
 
@@ -306,7 +309,7 @@ impl DiscoveryCandidateSnapshot {
                     product_category: "Electric unicycle".to_owned(),
                     evidence: "advertisement hint".to_owned(),
                     detail: discovery_electric_unicycle_detail(model).to_owned(),
-                    support: DiscoveryCandidateSupport::Supported,
+                    support: DiscoveryCandidateSupport::ProvisionalRoute,
                     electric_unicycle_model: Some(model),
                 },
                 None => Self {
@@ -556,7 +559,7 @@ mod tests {
         assert_eq!(picker_candidates[0].platform_identifier, "falcon-id");
         assert_eq!(
             picker_candidates[0].support,
-            DiscoveryCandidateSupport::Supported
+            DiscoveryCandidateSupport::ProvisionalRoute
         );
         assert_eq!(
             picker_candidates[0].electric_unicycle_model,

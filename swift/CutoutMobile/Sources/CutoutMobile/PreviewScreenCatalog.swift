@@ -411,6 +411,7 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
 
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case supported(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
+    case provisionalRoute(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case unknownRecordable(disabledReason: String)
     case knownUnsupported(disabledReason: String)
     case unsupported(disabledReason: String)
@@ -421,6 +422,11 @@ public extension DevicePickerCandidateSupport {
         switch dto.support {
         case .supported:
             self = .supported(
+                connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)),
+                electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
+            )
+        case .provisionalRoute:
+            self = .provisionalRoute(
                 connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
@@ -506,20 +512,35 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
 
 public extension DevicePickerCandidateSupport {
     var isSupported: Bool {
-        if case .supported = self { true } else { false }
+        switch self {
+        case .supported, .provisionalRoute:
+            true
+        case .unknownRecordable, .knownUnsupported, .unsupported:
+            false
+        }
     }
 
     var connectionRoute: MockupConnectionRoute? {
-        if case .supported(let connectionRoute, _) = self { connectionRoute } else { nil }
+        switch self {
+        case .supported(let connectionRoute, _), .provisionalRoute(let connectionRoute, _):
+            connectionRoute
+        case .unknownRecordable, .knownUnsupported, .unsupported:
+            nil
+        }
     }
 
     var electricUnicycleModel: ElectricUnicycleModel? {
-        if case .supported(_, let electricUnicycleModel) = self { electricUnicycleModel } else { nil }
+        switch self {
+        case .supported(_, let electricUnicycleModel), .provisionalRoute(_, let electricUnicycleModel):
+            electricUnicycleModel
+        case .unknownRecordable, .knownUnsupported, .unsupported:
+            nil
+        }
     }
 
     var pickerRowState: MockupPickerRowState {
         switch self {
-        case .supported:
+        case .supported, .provisionalRoute:
             .supported(action: "Pair")
         case .unknownRecordable:
             .unsupported(action: "Record")

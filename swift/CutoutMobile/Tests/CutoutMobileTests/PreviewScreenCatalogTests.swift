@@ -182,7 +182,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.platformIdentifier, "ios-local-aero")
         XCTAssertEqual(candidate.displayName, "NOSFET Aero")
         XCTAssertEqual(candidate.productCategory, "Electric unicycle")
-        XCTAssertEqual(candidate.support, .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero))
+        XCTAssertEqual(candidate.support, .provisionalRoute(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero))
         XCTAssertEqual(candidate.pickerRow.id, "ios-local-aero")
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
@@ -224,6 +224,29 @@ extension MockupScreenCatalogTests {
         )
         XCTAssertEqual(candidate.pickerRow.state, MockupPickerRowState.supported(action: "Pair"))
         XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
+    func testProvisionalRouteDiscoveryCandidateOffersPairPickerAction() {
+        let dto = DiscoveryCandidate(
+            platformIdentifier: "ios-local-gotway",
+            displayName: "GotWay_002441",
+            productCategory: "Electric unicycle",
+            evidence: "advertisement hint",
+            detail: "Falcon provisional route",
+            isPickerCandidate: true,
+            support: .provisionalRoute,
+            connectionRoute: "electric_unicycle",
+            electricUnicycleModel: .falcon,
+            disabledReason: nil
+        )
+        let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
+
+        XCTAssertEqual(
+            candidate.support,
+            .provisionalRoute(connectionRoute: .electricUnicycle, electricUnicycleModel: .falcon)
+        )
+        XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
+        XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
     }
 
     func testUnsupportedDiscoveryCandidateOffersRecordOnlyPickerAction() {
