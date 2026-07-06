@@ -27,7 +27,9 @@ final class CutoutAppModel: ObservableObject {
     }
 
     private let core = CutoutSessionCore()
+    private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
     private let selectedDeviceStore = DevicePickerSelectionStore()
+    private var liveActivityModel: ElectricUnicycleModel?
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
@@ -35,9 +37,11 @@ final class CutoutAppModel: ObservableObject {
     init() {
         core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
+            self?.syncLiveActivity()
         }
         core.onPhaseChange = { [weak self] phase in
             self?.handlePhaseChange(phase)
+            self?.syncLiveActivity()
         }
         core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
@@ -52,9 +56,17 @@ final class CutoutAppModel: ObservableObject {
             self?.bmsSnapshot = bmsSnapshot
         }
         core.onProtocolIdentityCandidateChange = { [weak self] candidate in
-            guard self?.isRecordOnlyCapture != true else { return }
-            guard case .supported = candidate?.support else { return }
+            self?.liveActivityModel = candidate?.support.electricUnicycleModel
+            guard self?.isRecordOnlyCapture != true else {
+                self?.syncLiveActivity()
+                return
+            }
+            guard case .supported = candidate?.support else {
+                self?.syncLiveActivity()
+                return
+            }
             self?.selectedRideTitle = candidate?.detail
+            self?.syncLiveActivity()
         }
         core.onRecord = { [weak self] message in
             self?.updateCaptureStatus(from: message)
@@ -75,6 +87,7 @@ final class CutoutAppModel: ObservableObject {
             recordOnlyDeviceKind = nil
             selectedDeviceStore.save(platformIdentifier: platformIdentifier)
             selectedRideTitle = devicePickerScanState?.rows.first(where: { $0.id == platformIdentifier })?.title
+            syncLiveActivity()
         }
         return didPair
     }
@@ -108,6 +121,10 @@ final class CutoutAppModel: ObservableObject {
             }
             isRecordOnlyCapture = modelHint == .unknown
             recordOnlyDeviceKind = annotationKind
+            if modelHint == .unknown {
+                liveActivityModel = nil
+            }
+            syncLiveActivity()
         }
         return didStart
     }
@@ -140,8 +157,10 @@ final class CutoutAppModel: ObservableObject {
         captureLabel = nil
         recordOnlyDeviceKind = nil
         selectedRideTitle = nil
+        liveActivityModel = nil
         selectedDeviceStore.clear()
         core.disconnectAndScan()
+        syncLiveActivity()
     }
 
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
@@ -157,6 +176,20 @@ final class CutoutAppModel: ObservableObject {
         guard case .failed = phase else { return }
         let rows = devicePickerScanState?.rows ?? []
         devicePickerScanState = .failed(phase.displayText, rows: rows)
+    }
+
+    private func syncLiveActivity() {
+        let shouldBeActive = phase == .live && liveActivityModel != nil && isRecordOnlyCapture == false
+        let snapshot = liveActivityModel.map { LiveActivityRideSnapshot(identity: .model($0), rideState: rideState) }
+        let endReason: LiveActivityRideLifecycleEndReason = switch phase {
+        case .scanning:
+            .disconnected
+        case .failed:
+            .unavailable
+        default:
+            .sessionEnded
+        }
+        liveActivityCoordinator.reconcile(snapshot: snapshot, shouldBeActive: shouldBeActive, endReason: endReason)
     }
 
     private func updateCaptureStatus(from message: String) {
