@@ -65,7 +65,7 @@ public extension LiveActivityRideFixtureMatrix {
             mode: .deferred(label: "Mode"),
             duration: .available(label: "Duration", value: "08:03", unit: nil, source: .fixture),
             distance: .available(label: "Distance", value: "2.1", unit: "mi", source: .fixture),
-            headroom: .deferred(label: "Headroom", unit: "%"),
+            headroom: .deferred(label: "Headroom"),
             beeps: .available(label: "Beeps", value: "0", unit: nil, source: .fixture),
             temperature: .available(label: "Temp", value: "29", unit: "C", source: .fixture)
         )),

@@ -101,6 +101,31 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.speed.state, .unavailable)
     }
 
+    func testWaitingSnapshotDoesNotShowRetainedTelemetryAsCurrent() {
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: EucRideScreenState(
+                phase: .connecting(model: .aero),
+                displayState: RideDisplayState(
+                    speed: SpeedReadout(millimetersPerSecond: 12_070),
+                    telemetry: TelemetrySnapshot(
+                        at: MonotonicMilliseconds(1_000),
+                        speed: Speed(value: 12_070),
+                        voltage: Voltage(value: 118_400),
+                        batteryLevelReported: BatteryLevel(value: 68)
+                    )
+                )
+            ),
+            now: MonotonicMilliseconds(1_500),
+            staleAfter: MonotonicMilliseconds(2_000)
+        )
+
+        XCTAssertEqual(snapshot.connectionState, .waitingForFirstTelemetry)
+        XCTAssertEqual(snapshot.speed, .unavailable(label: "Speed", unit: "mph"))
+        XCTAssertEqual(snapshot.battery, .unavailable(label: "Battery", unit: "%"))
+        XCTAssertEqual(snapshot.packVoltage, .unavailable(label: "Voltage", unit: "V"))
+    }
+
     func testParkedSnapshotMarksPwmHeadroomNotApplicable() {
         let snapshot = LiveActivityRideSnapshot(
             identity: .model(.aero),

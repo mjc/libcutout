@@ -433,7 +433,14 @@ private extension LiveActivityRideSnapshot {
         source: LiveActivityRideValueSource,
         connectionState: LiveActivityRideConnectionState
     ) -> LiveActivityRideValue {
-        LiveActivityRideValue(
+        if (source == .liveTelemetry || source == .derivedTelemetry)
+            && connectionState != .connected
+            && connectionState != .stale
+            && connectionState != .fixture {
+            return .unavailable(label: label, unit: unit)
+        }
+
+        return LiveActivityRideValue(
             label: label,
             value: value,
             unit: unit,
