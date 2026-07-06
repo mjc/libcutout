@@ -20,7 +20,8 @@ export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Conte
 unset SDKROOT
 
 destination="${CUTOUT_IOS_ON_MAC_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
-product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(CUTOUT_IOS_APP_BUILD_DESTINATION="$destination" cutout_build_ios_app_bundle)}"
+export CUTOUT_IOS_APP_BUILD_DESTINATION="$destination"
+product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(cutout_build_ios_app_bundle)}"
 
 echo "ios_app_product=$product"
 echo "ios_app_destination=$destination"

@@ -57,6 +57,8 @@ final class CutoutAppModel: ObservableObject {
         }
     }
 
+    deinit {}
+
     func start() {
         core.start()
     }

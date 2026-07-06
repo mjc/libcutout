@@ -123,18 +123,33 @@ struct ContentView: View {
 
     private static func initialRoute() -> CutoutAppRoute {
         let arguments = CommandLine.arguments
-        if let index = arguments.firstIndex(of: "--mockup-screen"),
-           arguments.indices.contains(index + 1),
-           let id = MockupScreenID(rawValue: arguments[index + 1]) {
-            return .mockup(id)
-        }
-
-        if let value = ProcessInfo.processInfo.environment["CUTOUT_MOCKUP_SCREEN"],
-           let id = MockupScreenID(rawValue: value) {
+        if let id = previewScreenID(arguments: arguments, environment: ProcessInfo.processInfo.environment) {
             return .mockup(id)
         }
 
         return .devicePicker
+    }
+
+    private static func previewScreenID(arguments: [String], environment: [String: String]) -> MockupScreenID? {
+        if let id = screenID(after: "--preview-screen", in: arguments) {
+            return id
+        }
+        if let id = screenID(after: "--mockup-screen", in: arguments) {
+            return id
+        }
+        if let value = environment["CUTOUT_PREVIEW_SCREEN"], let id = MockupScreenID(rawValue: value) {
+            return id
+        }
+        if let value = environment["CUTOUT_MOCKUP_SCREEN"], let id = MockupScreenID(rawValue: value) {
+            return id
+        }
+        return nil
+    }
+
+    private static func screenID(after flag: String, in arguments: [String]) -> MockupScreenID? {
+        guard let index = arguments.firstIndex(of: flag),
+              arguments.indices.contains(index + 1) else { return nil }
+        return MockupScreenID(rawValue: arguments[index + 1])
     }
 
     private static func route(for screenID: MockupScreenID) -> CutoutAppRoute {
