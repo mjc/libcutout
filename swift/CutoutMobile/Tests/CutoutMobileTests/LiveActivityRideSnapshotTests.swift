@@ -86,6 +86,21 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(stale.speed.state, .stale)
     }
 
+    func testConnectingSnapshotWaitsForFirstTelemetry() {
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: EucRideScreenState(
+                phase: .connecting(model: .aero),
+                displayState: RideDisplayState()
+            ),
+            now: MonotonicMilliseconds(3_000),
+            staleAfter: MonotonicMilliseconds(1_000)
+        )
+
+        XCTAssertEqual(snapshot.connectionState, .waitingForFirstTelemetry)
+        XCTAssertEqual(snapshot.speed.state, .unavailable)
+    }
+
     func testParkedSnapshotMarksPwmHeadroomNotApplicable() {
         let snapshot = LiveActivityRideSnapshot(
             identity: .model(.aero),

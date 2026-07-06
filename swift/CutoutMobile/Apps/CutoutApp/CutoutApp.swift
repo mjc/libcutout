@@ -1,5 +1,7 @@
 #if os(macOS)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
 #endif
 import SwiftUI
 
@@ -23,6 +25,11 @@ struct CutoutApp: App {
                 .task {
                     model.start()
                 }
+                #if canImport(UIKit)
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                    model.endLiveActivity()
+                }
+                #endif
         }
     }
 

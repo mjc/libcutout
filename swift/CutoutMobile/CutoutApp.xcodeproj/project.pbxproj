@@ -10,17 +10,51 @@
 		111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */; };
 		111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */; };
 		111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */; };
+		111111111111111111111128 /* Apps/CutoutApp/LiveActivityMockupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111127 /* Apps/CutoutApp/LiveActivityMockupView.swift */; };
 		111111111111111111111114 /* Apps/CutoutApp/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */; };
 		25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 111111111111111111111181 /* CutoutMobile */; };
+		222222222222222222222111 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */; };
+		222222222222222222222112 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 222222222222222222222181 /* CutoutMobile */; };
+		222222222222222222222113 /* CutoutLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 222222222222222222222124 /* CutoutLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		222222222222222222222114 /* Apps/CutoutLiveActivityExtension/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222127 /* Apps/CutoutLiveActivityExtension/Assets.xcassets */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		222222222222222222222192 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 111111111111111111111191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 222222222222222222222161;
+			remoteInfo = CutoutLiveActivityExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		222222222222222222222134 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				222222222222222222222113 /* CutoutLiveActivityExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutApp.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ContentView.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppModel.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111124 /* CutoutApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CutoutApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		111111111111111111111127 /* Apps/CutoutApp/LiveActivityMockupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LiveActivityMockupView.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Apps/CutoutApp/Assets.xcassets; sourceTree = SOURCE_ROOT; };
 		111111111111111111111126 /* Apps/CutoutApp/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/Info.plist; sourceTree = SOURCE_ROOT; };
+		222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift; sourceTree = SOURCE_ROOT; };
+		222222222222222222222124 /* CutoutLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CutoutLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		222222222222222222222126 /* Apps/CutoutLiveActivityExtension/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutLiveActivityExtension/Info.plist; sourceTree = SOURCE_ROOT; };
+		222222222222222222222127 /* Apps/CutoutLiveActivityExtension/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Apps/CutoutLiveActivityExtension/Assets.xcassets; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -32,6 +66,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		222222222222222222222131 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				222222222222222222222112 /* CutoutMobile in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -39,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				111111111111111111111151 /* Sources */,
+				222222222222222222222151 /* Live Activity Extension */,
 				111111111111111111111154 /* Resources */,
 				111111111111111111111152 /* Frameworks */,
 				111111111111111111111153 /* Products */,
@@ -51,6 +94,7 @@
 				111111111111111111111121 /* Apps/CutoutApp/CutoutApp.swift */,
 				111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */,
 				111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
+				111111111111111111111127 /* Apps/CutoutApp/LiveActivityMockupView.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -66,6 +110,7 @@
 			isa = PBXGroup;
 			children = (
 				111111111111111111111124 /* CutoutApp.app */,
+				222222222222222222222124 /* CutoutLiveActivityExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -79,6 +124,16 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		222222222222222222222151 /* Live Activity Extension */ = {
+			isa = PBXGroup;
+			children = (
+				222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */,
+				222222222222222222222126 /* Apps/CutoutLiveActivityExtension/Info.plist */,
+				222222222222222222222127 /* Apps/CutoutLiveActivityExtension/Assets.xcassets */,
+			);
+			path = "Live Activity Extension";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -89,10 +144,12 @@
 				111111111111111111111131 /* Frameworks */,
 				111111111111111111111132 /* Sources */,
 				111111111111111111111133 /* Resources */,
+				222222222222222222222134 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				222222222222222222222191 /* PBXTargetDependency */,
 			);
 			name = CutoutApp;
 			packageProductDependencies = (
@@ -101,6 +158,26 @@
 			productName = CutoutApp;
 			productReference = 111111111111111111111124 /* CutoutApp.app */;
 			productType = "com.apple.product-type.application";
+		};
+		222222222222222222222161 /* CutoutLiveActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 222222222222222222222171 /* Build configuration list for PBXNativeTarget "CutoutLiveActivityExtension" */;
+			buildPhases = (
+				222222222222222222222132 /* Sources */,
+				222222222222222222222131 /* Frameworks */,
+				222222222222222222222133 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CutoutLiveActivityExtension;
+			packageProductDependencies = (
+				222222222222222222222181 /* CutoutMobile */,
+			);
+			productName = CutoutLiveActivityExtension;
+			productReference = 222222222222222222222124 /* CutoutLiveActivityExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -111,6 +188,9 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					111111111111111111111161 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					222222222222222222222161 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -132,6 +212,7 @@
 			projectRoot = "";
 			targets = (
 				111111111111111111111161 /* CutoutApp */,
+				222222222222222222222161 /* CutoutLiveActivityExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -145,6 +226,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		222222222222222222222133 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				222222222222222222222114 /* Apps/CutoutLiveActivityExtension/Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -155,10 +244,27 @@
 				111111111111111111111111 /* Apps/CutoutApp/CutoutApp.swift in Sources */,
 				111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */,
 				111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
+				111111111111111111111128 /* Apps/CutoutApp/LiveActivityMockupView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		222222222222222222222132 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				222222222222222222222111 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		222222222222222222222191 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 222222222222222222222161 /* CutoutLiveActivityExtension */;
+			targetProxy = 222222222222222222222192 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		111111111111111111111201 /* Debug */ = {
@@ -239,6 +345,56 @@
 			};
 			name = Release;
 		};
+		222222222222222222222201 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Apps/CutoutLiveActivityExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp.liveactivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		222222222222222222222202 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Apps/CutoutLiveActivityExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp.liveactivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -260,6 +416,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		222222222222222222222171 /* Build configuration list for PBXNativeTarget "CutoutLiveActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				222222222222222222222201 /* Debug */,
+				222222222222222222222202 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -271,6 +436,11 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		111111111111111111111181 /* CutoutMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */;
+			productName = CutoutMobile;
+		};
+		222222222222222222222181 /* CutoutMobile */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */;
 			productName = CutoutMobile;

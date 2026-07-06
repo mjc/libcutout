@@ -252,6 +252,8 @@ private extension LiveActivityRideSnapshot {
             now
                 .map { rideState.updateAge(at: $0, staleAfter: staleThreshold).freshness }
                 .map { $0 == .stale ? .stale : .connected } ?? .connected
+        case (_, .connecting, _), (_, .discoveringServices, _), (_, .subscribing, _):
+            .waitingForFirstTelemetry
         case (_, .live, _):
             .waitingForFirstTelemetry
         case (_, .bluetoothUnavailable, _), (_, .failed, _):

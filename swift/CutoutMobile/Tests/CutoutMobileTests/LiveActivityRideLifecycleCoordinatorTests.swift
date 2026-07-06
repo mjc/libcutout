@@ -30,6 +30,21 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertTrue(manager.events.isEmpty)
     }
 
+    func testEndStopsActiveActivityOnce() {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let snapshot = fixtureSnapshot(label: "Demo ride", speed: "19 mph")
+
+        coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
+        coordinator.end(reason: .sessionEnded)
+        coordinator.end(reason: .sessionEnded)
+
+        XCTAssertEqual(manager.events, [
+            .start(snapshot),
+            .end(.sessionEnded),
+        ])
+    }
+
     func testFixtureSnapshotCanEnterThePipeline() {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)

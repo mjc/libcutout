@@ -364,6 +364,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let section: DevicePickerRowSection
     public let symbolName: String
     public let connectionRoute: DevicePickerConnectionRoute?
+    public let electricUnicycleModel: ElectricUnicycleModel?
 
     public init(
         id: String? = nil,
@@ -373,7 +374,8 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         state: DevicePickerRowState,
         section: DevicePickerRowSection? = nil,
         symbolName: String,
-        connectionRoute: DevicePickerConnectionRoute? = nil
+        connectionRoute: DevicePickerConnectionRoute? = nil,
+        electricUnicycleModel: ElectricUnicycleModel? = nil
     ) {
         self.id = id ?? title
         self.title = title
@@ -383,6 +385,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         self.section = section ?? DevicePickerRowSection(state: state)
         self.symbolName = symbolName
         self.connectionRoute = connectionRoute
+        self.electricUnicycleModel = electricUnicycleModel
     }
 }
 
@@ -616,7 +619,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             state: rowState,
             section: section,
             symbolName: symbolName,
-            connectionRoute: support.connectionRoute
+            connectionRoute: support.connectionRoute,
+            electricUnicycleModel: support.electricUnicycleModel
         )
     }
 }
