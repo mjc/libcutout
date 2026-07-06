@@ -56,6 +56,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate category is known, but no route exists yet.
     KnownUnsupported,
 
+    /// Candidate is unrelated Bluetooth noise.
+    RejectedNoise,
+
     /// Candidate is not supported for launch.
     Unsupported,
 }
@@ -531,10 +534,10 @@ pub fn mobile_discovery_candidate_from_advertisement(
         evidence: "advertisement observed".to_owned(),
         detail: "Not yet supported".to_owned(),
         is_picker_candidate: false,
-        support: DiscoveryCandidateSupport::Unsupported,
+        support: DiscoveryCandidateSupport::RejectedNoise,
         connection_route: None,
         electric_unicycle_model: None,
-        disabled_reason: Some("Not yet supported".to_owned()),
+        disabled_reason: Some("Rejected noise".to_owned()),
     }
 }
 
@@ -4767,6 +4770,9 @@ mod tests {
         );
 
         assert!(!candidate.is_picker_candidate);
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::RejectedNoise);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
     }
 
     #[test]

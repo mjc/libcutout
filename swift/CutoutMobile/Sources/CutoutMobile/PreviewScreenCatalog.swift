@@ -414,6 +414,7 @@ public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case provisionalRoute(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case unknownRecordable(disabledReason: String)
     case knownUnsupported(disabledReason: String)
+    case rejectedNoise(disabledReason: String)
     case unsupported(disabledReason: String)
 }
 
@@ -434,6 +435,8 @@ public extension DevicePickerCandidateSupport {
             self = .unknownRecordable(disabledReason: dto.disabledReason ?? dto.detail)
         case .knownUnsupported:
             self = .knownUnsupported(disabledReason: dto.disabledReason ?? dto.detail)
+        case .rejectedNoise:
+            self = .rejectedNoise(disabledReason: dto.disabledReason ?? dto.detail)
         case .unsupported:
             self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
         }
@@ -515,7 +518,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported, .provisionalRoute:
             true
-        case .unknownRecordable, .knownUnsupported, .unsupported:
+        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .unsupported:
             false
         }
     }
@@ -524,7 +527,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(let connectionRoute, _), .provisionalRoute(let connectionRoute, _):
             connectionRoute
-        case .unknownRecordable, .knownUnsupported, .unsupported:
+        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .unsupported:
             nil
         }
     }
@@ -533,7 +536,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(_, let electricUnicycleModel), .provisionalRoute(_, let electricUnicycleModel):
             electricUnicycleModel
-        case .unknownRecordable, .knownUnsupported, .unsupported:
+        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .unsupported:
             nil
         }
     }
@@ -545,6 +548,8 @@ public extension DevicePickerCandidateSupport {
         case .unknownRecordable:
             .unsupported(action: "Record")
         case .knownUnsupported:
+            .unsupported(action: "Record")
+        case .rejectedNoise:
             .unsupported(action: "Record")
         case .unsupported:
             .unsupported(action: "Record")

@@ -269,6 +269,26 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testRejectedNoiseDiscoveryCandidateStaysUnrouteable() {
+        let dto = DiscoveryCandidate(
+            platformIdentifier: "ios-local-keyboard",
+            displayName: "Keyboard",
+            productCategory: "Unknown rideable",
+            evidence: "advertisement observed",
+            detail: "Rejected noise",
+            isPickerCandidate: false,
+            support: .rejectedNoise,
+            connectionRoute: nil,
+            electricUnicycleModel: nil,
+            disabledReason: "Rejected noise"
+        )
+        let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
+
+        XCTAssertEqual(candidate.support, .rejectedNoise(disabledReason: "Rejected noise"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testKnownUnsupportedDiscoveryCandidateOffersRecordOnlyPickerAction() {
         let dto = DiscoveryCandidate(
             platformIdentifier: "ios-local-vesc",
