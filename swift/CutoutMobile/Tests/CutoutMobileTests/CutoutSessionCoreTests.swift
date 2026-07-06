@@ -787,6 +787,46 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testMixedProtocolFamiliesUpdateProtocolIdentityCandidate() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        let begodeFrame: [UInt8] = [
+            0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+            0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+            0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+        ]
+        var veteranFrame = Array(repeating: UInt8(0), count: 42)
+        veteranFrame.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+        veteranFrame.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+        var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
+        core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-conflict"),
+                localName: "Conflicting wheel",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        core.observeDetectionNotification(channel: channel, bytes: Data(veteranFrame))
+        core.observeDetectionNotification(channel: channel, bytes: Data(begodeFrame))
+
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Conflicting wheel")
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Conflicting protocol family evidence")
+        XCTAssertEqual(
+            core.protocolIdentityCandidate?.support,
+            .conflicting(disabledReason: "Conflicting identity evidence")
+        )
+        XCTAssertEqual(
+            observedCandidates.compactMap { $0?.detail },
+            [
+                "Begode/GotWay identity probe collected; model not confirmed",
+                "Conflicting protocol family evidence",
+            ]
+        )
+        XCTAssertEqual(core.records.last, "protocol_identity=Conflicting protocol family evidence")
+    }
+
     func testMalformedBegodeProbeResponseIsLabeledFromDetectionSession() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)

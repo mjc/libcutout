@@ -260,6 +260,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func publishDetectionIdentityCandidate(_ resolution: DeviceDetectionResolution) {
         guard resolution.protocolFamily != nil
+            || resolution.protocolConflict
             || resolution.modelBanner != nil
             || resolution.missingProbeResponse != nil
             || resolution.malformedProbeResponse != nil
