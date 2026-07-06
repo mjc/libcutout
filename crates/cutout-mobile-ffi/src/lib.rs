@@ -75,6 +75,44 @@ pub enum DiscoveryCandidateSupport {
     Unsupported,
 }
 
+/// Mobile picker action recommended by Rust-owned discovery projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum DiscoveryCandidateAction {
+    /// Use a routeable candidate.
+    Use,
+
+    /// Run a read-only identity probe before routing.
+    Probe,
+
+    /// Record a capture for unsupported or unknown devices.
+    Record,
+
+    /// Ask the user to confirm ambiguous identity evidence.
+    Confirm,
+
+    /// Ask the user to review conflicting identity evidence.
+    Review,
+
+    /// Placeholder action for future/manual flows.
+    Later,
+}
+
+impl DiscoveryCandidateSupport {
+    fn recommended_action(self) -> DiscoveryCandidateAction {
+        match self {
+            Self::Supported | Self::ProvisionalRoute => DiscoveryCandidateAction::Use,
+            Self::ProbeRecommended => DiscoveryCandidateAction::Probe,
+            Self::UnknownRecordable
+            | Self::KnownUnsupported
+            | Self::RejectedNoise
+            | Self::Unsupported => DiscoveryCandidateAction::Record,
+            Self::Ambiguous => DiscoveryCandidateAction::Confirm,
+            Self::Conflicting => DiscoveryCandidateAction::Review,
+            Self::ManualPlaceholder => DiscoveryCandidateAction::Later,
+        }
+    }
+}
+
 /// Mobile EUC read-only session model.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum DiscoveryElectricUnicycleModel {
@@ -136,6 +174,9 @@ pub struct DiscoveryCandidate {
 
     /// Support state.
     pub support: DiscoveryCandidateSupport,
+
+    /// Picker action recommended by Rust-owned projection.
+    pub recommended_action: DiscoveryCandidateAction,
 
     /// Supported connection route key, when connecting is allowed.
     pub connection_route: Option<String>,
@@ -302,6 +343,7 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
             detail: candidate.detail.clone(),
             is_picker_candidate: true,
             support,
+            recommended_action: support.recommended_action(),
             connection_route: matches!(
                 candidate.support,
                 CoreDiscoveryCandidateSupport::Supported
@@ -562,6 +604,8 @@ pub fn mobile_discovery_candidate_from_advertisement(
                 detail: format!("{model:?} provisional route"),
                 is_picker_candidate: true,
                 support: DiscoveryCandidateSupport::ProvisionalRoute,
+                recommended_action: DiscoveryCandidateSupport::ProvisionalRoute
+                    .recommended_action(),
                 connection_route: Some("electric_unicycle".to_owned()),
                 electric_unicycle_model: Some(model),
                 disabled_reason: None,
@@ -574,6 +618,8 @@ pub fn mobile_discovery_candidate_from_advertisement(
                 detail: "Read-only probe recommended".to_owned(),
                 is_picker_candidate: true,
                 support: DiscoveryCandidateSupport::ProbeRecommended,
+                recommended_action: DiscoveryCandidateSupport::ProbeRecommended
+                    .recommended_action(),
                 connection_route: None,
                 electric_unicycle_model: None,
                 disabled_reason: Some("Read-only probe recommended".to_owned()),
@@ -595,6 +641,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
             detail: "Not yet supported".to_owned(),
             is_picker_candidate: true,
             support: DiscoveryCandidateSupport::KnownUnsupported,
+            recommended_action: DiscoveryCandidateSupport::KnownUnsupported.recommended_action(),
             connection_route: None,
             electric_unicycle_model: None,
             disabled_reason: Some("Not yet supported".to_owned()),
@@ -609,6 +656,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
         detail: "Not yet supported".to_owned(),
         is_picker_candidate: false,
         support: DiscoveryCandidateSupport::RejectedNoise,
+        recommended_action: DiscoveryCandidateSupport::RejectedNoise.recommended_action(),
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Rejected noise".to_owned()),
@@ -626,6 +674,7 @@ pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
         detail: "Capture flow later".to_owned(),
         is_picker_candidate: true,
         support: DiscoveryCandidateSupport::ManualPlaceholder,
+        recommended_action: DiscoveryCandidateSupport::ManualPlaceholder.recommended_action(),
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Capture flow later".to_owned()),
@@ -647,6 +696,7 @@ pub fn mobile_ambiguous_discovery_candidate(
         detail,
         is_picker_candidate: true,
         support: DiscoveryCandidateSupport::Ambiguous,
+        recommended_action: DiscoveryCandidateSupport::Ambiguous.recommended_action(),
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Needs user confirmation".to_owned()),
@@ -668,6 +718,7 @@ pub fn mobile_conflicting_discovery_candidate(
         detail,
         is_picker_candidate: true,
         support: DiscoveryCandidateSupport::Conflicting,
+        recommended_action: DiscoveryCandidateSupport::Conflicting.recommended_action(),
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Conflicting identity evidence".to_owned()),
@@ -749,6 +800,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         detail,
         is_picker_candidate: true,
         support,
+        recommended_action: support.recommended_action(),
         connection_route: supported.then(|| "electric_unicycle".to_owned()),
         electric_unicycle_model: supported.then_some(DiscoveryElectricUnicycleModel::Falcon),
         disabled_reason: mobile_begode_identity_probe_disabled_reason(
@@ -788,6 +840,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
             detail: format!("Unknown Veteran/NOSFET model id {model_id}"),
             is_picker_candidate: true,
             support: DiscoveryCandidateSupport::UnknownRecordable,
+            recommended_action: DiscoveryCandidateSupport::UnknownRecordable.recommended_action(),
             connection_route: None,
             electric_unicycle_model: None,
             disabled_reason: Some(format!("Unknown Veteran/NOSFET model id {model_id}")),
@@ -804,6 +857,11 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
         _ => None,
     };
     let supported = electric_unicycle_model.is_some();
+    let support = if supported {
+        DiscoveryCandidateSupport::Supported
+    } else {
+        DiscoveryCandidateSupport::Unsupported
+    };
 
     DiscoveryCandidate {
         platform_identifier,
@@ -817,11 +875,8 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
             _ => format!("Veteran/NOSFET model id {model_id} confirmed"),
         },
         is_picker_candidate: true,
-        support: if supported {
-            DiscoveryCandidateSupport::Supported
-        } else {
-            DiscoveryCandidateSupport::Unsupported
-        },
+        support,
+        recommended_action: support.recommended_action(),
         connection_route: supported.then(|| "electric_unicycle".to_owned()),
         electric_unicycle_model,
         disabled_reason: (!supported).then(|| "Model not supported".to_owned()),
@@ -5138,6 +5193,10 @@ mod tests {
         assert_eq!(
             candidate.support,
             DiscoveryCandidateSupport::ProbeRecommended
+        );
+        assert_eq!(
+            candidate.recommended_action,
+            DiscoveryCandidateAction::Probe
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);

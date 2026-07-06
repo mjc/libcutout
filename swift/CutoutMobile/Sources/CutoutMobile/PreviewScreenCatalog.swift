@@ -400,6 +400,23 @@ public extension DevicePickerRow {
 }
 
 public extension DevicePickerRowState {
+    init(action: DiscoveryCandidateAction) {
+        switch action {
+        case .use:
+            self = .supported(action: "Use")
+        case .probe:
+            self = .probeRecommended(action: "Probe")
+        case .record:
+            self = .unsupported(action: "Record")
+        case .confirm:
+            self = .unsupported(action: "Confirm")
+        case .review:
+            self = .unsupported(action: "Review")
+        case .later:
+            self = .manual(action: "later")
+        }
+    }
+
     var actionTitle: String {
         switch self {
         case .supported(let action), .probeRecommended(let action), .unsupported(let action), .manual(let action):
@@ -482,6 +499,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     public let detail: String
     public let support: DevicePickerCandidateSupport
     public let symbolName: String
+    public let rowState: DevicePickerRowState
 
     public init(
         platformIdentifier: String,
@@ -490,7 +508,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         evidence: String,
         detail: String,
         support: DevicePickerCandidateSupport,
-        symbolName: String
+        symbolName: String,
+        rowState: DevicePickerRowState? = nil
     ) {
         self.platformIdentifier = platformIdentifier
         self.displayName = displayName
@@ -499,6 +518,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         self.detail = detail
         self.support = support
         self.symbolName = symbolName
+        self.rowState = rowState ?? support.pickerRowState
     }
 
     public init(advertisement: CoreBluetoothAdvertisement) {
@@ -517,7 +537,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             evidence: candidate.evidence,
             detail: candidate.detail,
             support: DevicePickerCandidateSupport(candidate),
-            symbolName: candidate.support == .supported ? "circle.hexagongrid.circle" : "questionmark.circle"
+            symbolName: candidate.support == .supported ? "circle.hexagongrid.circle" : "questionmark.circle",
+            rowState: DevicePickerRowState(action: candidate.recommendedAction)
         )
     }
 
@@ -537,7 +558,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             title: displayName,
             subtitle: "\(productCategory) - \(evidence)",
             detail: detail,
-            state: support.pickerRowState,
+            state: rowState,
             symbolName: symbolName,
             connectionRoute: support.connectionRoute
         )
