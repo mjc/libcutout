@@ -807,7 +807,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
 
 fn mobile_begode_identity_probe_support(
     reported_model: Option<&str>,
-    reported_code_name: Option<&str>,
+    _reported_code_name: Option<&str>,
     missing_probe_response: Option<MobilePendingProbeDto>,
 ) -> DiscoveryCandidateSupport {
     let resolution = reported_model.map(|model| {
@@ -825,16 +825,9 @@ fn mobile_begode_identity_probe_support(
         Some(StagedIdentityOutcome::Ambiguous) => DiscoveryCandidateSupport::Ambiguous,
         Some(StagedIdentityOutcome::Conflict) => DiscoveryCandidateSupport::Conflicting,
         Some(_) => DiscoveryCandidateSupport::Unsupported,
-        None if mobile_begode_identity_probe_matches_falcon(reported_code_name) => {
-            DiscoveryCandidateSupport::Supported
-        }
         None if missing_probe_response.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
         None => DiscoveryCandidateSupport::Unsupported,
     }
-}
-
-fn mobile_begode_identity_probe_matches_falcon(value: Option<&str>) -> bool {
-    value.is_some_and(|value| value.to_ascii_lowercase().contains("falcon"))
 }
 
 fn mobile_begode_identity_probe_evidence(probe: &MobileBegodeIdentityProbeDto) -> String {
@@ -3849,6 +3842,31 @@ mod tests {
         assert_eq!(
             candidate.disabled_reason,
             Some("Conflicting identity evidence".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_does_not_confirm_from_code_substring_only() {
+        let candidate = mobile_discovery_candidate_from_begode_identity_probe(
+            "ios-local-falcon".to_owned(),
+            "GotWay_002441".to_owned(),
+            MobileBegodeIdentityProbeDto {
+                reported_model: None,
+                reported_code_name: Some("GW-FALCON".to_owned()),
+                reported_imu: None,
+                reported_firmware_version: None,
+                reported_serial: None,
+                nominal_voltage_hint_mv: None,
+                missing_probe_response: None,
+            },
+        );
+
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Not yet supported".to_owned())
         );
     }
 
