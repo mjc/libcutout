@@ -276,15 +276,7 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         let step = try runner.handle(.linkUp(at: MonotonicMilliseconds(7)))
 
-        let vescNotifyChannel = BluetoothUuid(Data([
-            0x6e, 0x40, 0x00, 0x03,
-            0xb5, 0xa3,
-            0xf3, 0x93,
-            0xe0, 0xa9,
-            0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
-        ]))!
-
-        XCTAssertEqual(step.operations, [.subscribe(channel: vescNotifyChannel)])
+        XCTAssertEqual(step.operations, [.subscribe(channel: .vescNordicUartNotify)])
         XCTAssertNil(step.snapshot?.speed)
     }
 
