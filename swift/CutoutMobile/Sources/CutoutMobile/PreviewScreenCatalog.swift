@@ -501,12 +501,12 @@ public extension DevicePickerCandidateSupport {
         switch dto.support {
         case .supported:
             self = .supported(
-                connectionRoute: dto.connectionRoute.flatMap(DevicePickerConnectionRoute.init(rawValue:)),
+                connectionRoute: dto.connectionRoute.map(DevicePickerConnectionRoute.init),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
         case .provisionalRoute:
             self = .provisionalRoute(
-                connectionRoute: dto.connectionRoute.flatMap(DevicePickerConnectionRoute.init(rawValue:)),
+                connectionRoute: dto.connectionRoute.map(DevicePickerConnectionRoute.init),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
         case .probeRecommended:
@@ -525,6 +525,15 @@ public extension DevicePickerCandidateSupport {
             self = .manualPlaceholder(disabledReason: dto.disabledReason ?? dto.detail)
         case .unsupported:
             self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
+        }
+    }
+}
+
+private extension DevicePickerConnectionRoute {
+    init(_ route: DiscoveryConnectionRoute) {
+        switch route {
+        case .electricUnicycle:
+            self = .electricUnicycle
         }
     }
 }

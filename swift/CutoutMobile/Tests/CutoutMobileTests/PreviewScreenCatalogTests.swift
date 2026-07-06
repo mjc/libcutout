@@ -396,7 +396,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(advertisement.modelHint, .falcon)
     }
 
-    func testUnknownSupportedConnectionRouteStillPairsWithoutMockupDestination() {
+    func testRouteLessSupportedDiscoveryCandidateStaysUnrouteableInPicker() {
         let dto = DiscoveryCandidate(
             platformIdentifier: "ios-local-supported-future",
             displayName: "Future rideable",
@@ -407,7 +407,7 @@ extension MockupScreenCatalogTests {
             support: .supported,
             recommendedAction: .use,
             section: .supported,
-            connectionRoute: "future_route",
+            connectionRoute: nil,
             electricUnicycleModel: nil,
             disabledReason: nil
         )
@@ -432,7 +432,7 @@ extension MockupScreenCatalogTests {
             support: .provisionalRoute,
             recommendedAction: .use,
             section: .supported,
-            connectionRoute: "electric_unicycle",
+            connectionRoute: .electricUnicycle,
             electricUnicycleModel: .falcon,
             disabledReason: nil
         )

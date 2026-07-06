@@ -153,6 +153,13 @@ pub enum DiscoveryElectricUnicycleModel {
     Falcon,
 }
 
+/// Mobile connection route for supported picker candidates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum DiscoveryConnectionRoute {
+    /// Electric unicycle read-only session route.
+    ElectricUnicycle,
+}
+
 /// Begode/Gotway protocol identity probe evidence.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBegodeIdentityProbeDto {
@@ -211,8 +218,8 @@ pub struct DiscoveryCandidate {
     /// Picker section recommended by Rust-owned projection.
     pub section: DiscoveryCandidateSection,
 
-    /// Supported connection route key, when connecting is allowed.
-    pub connection_route: Option<String>,
+    /// Supported connection route, when connecting is allowed.
+    pub connection_route: Option<DiscoveryConnectionRoute>,
 
     /// Electric-unicycle session model to construct for the route.
     pub electric_unicycle_model: Option<DiscoveryElectricUnicycleModel>,
@@ -383,7 +390,7 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
                 CoreDiscoveryCandidateSupport::Supported
                     | CoreDiscoveryCandidateSupport::ProvisionalRoute
             )
-            .then(|| "electric_unicycle".to_owned()),
+            .then_some(DiscoveryConnectionRoute::ElectricUnicycle),
             electric_unicycle_model,
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
@@ -647,7 +654,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
                 recommended_action: DiscoveryCandidateSupport::ProvisionalRoute
                     .recommended_action(),
                 section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
-                connection_route: Some("electric_unicycle".to_owned()),
+                connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
                 electric_unicycle_model: Some(model),
                 disabled_reason: None,
             },
@@ -849,7 +856,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         support,
         recommended_action: support.recommended_action(),
         section: support.picker_section(),
-        connection_route: supported.then(|| "electric_unicycle".to_owned()),
+        connection_route: supported.then_some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model: supported.then_some(DiscoveryElectricUnicycleModel::Falcon),
         disabled_reason: mobile_begode_identity_probe_disabled_reason(
             support,
@@ -1098,7 +1105,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
         support,
         recommended_action: support.recommended_action(),
         section: support.picker_section(),
-        connection_route: supported.then(|| "electric_unicycle".to_owned()),
+        connection_route: supported.then_some(DiscoveryConnectionRoute::ElectricUnicycle),
         electric_unicycle_model,
         disabled_reason: (!supported).then(|| "Model not supported".to_owned()),
     }
@@ -4139,7 +4146,7 @@ mod tests {
         );
         assert_eq!(
             candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            Some(DiscoveryConnectionRoute::ElectricUnicycle)
         );
         assert_eq!(
             candidate.electric_unicycle_model,
@@ -4180,7 +4187,7 @@ mod tests {
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            Some(DiscoveryConnectionRoute::ElectricUnicycle)
         );
         assert_eq!(
             candidate.electric_unicycle_model,
@@ -4354,7 +4361,7 @@ mod tests {
         );
         assert_eq!(
             candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            Some(DiscoveryConnectionRoute::ElectricUnicycle)
         );
         assert_eq!(
             candidate.electric_unicycle_model,
@@ -4391,7 +4398,7 @@ mod tests {
         );
         assert_eq!(
             candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            Some(DiscoveryConnectionRoute::ElectricUnicycle)
         );
         assert_eq!(
             candidate.electric_unicycle_model,
@@ -4487,7 +4494,7 @@ mod tests {
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            Some(DiscoveryConnectionRoute::ElectricUnicycle)
         );
         assert_eq!(
             candidate.electric_unicycle_model,
@@ -4790,7 +4797,7 @@ mod tests {
         assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
         assert_eq!(
             candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            Some(DiscoveryConnectionRoute::ElectricUnicycle)
         );
         assert_eq!(
             candidate.electric_unicycle_model,
