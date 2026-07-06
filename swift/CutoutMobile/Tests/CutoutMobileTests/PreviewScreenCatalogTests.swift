@@ -215,12 +215,33 @@ extension MockupScreenCatalogTests {
                 reportedImu: nil,
                 reportedFirmwareVersion: nil,
                 reportedSerial: nil,
-                nominalVoltageHintMv: nil
+                nominalVoltageHintMv: nil,
+                missingProbeResponse: nil
             )
         ))
 
         XCTAssertEqual(candidate.support, .conflicting(disabledReason: "Conflicting identity evidence"))
         XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Review"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
+    func testMissingBegodeProbeResponseMapsToRecordRow() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromBegodeIdentityProbe(
+            platformIdentifier: "ios-local-falcon",
+            displayName: "GotWay_002441",
+            probe: MobileBegodeIdentityProbeDto(
+                reportedModel: nil,
+                reportedCodeName: nil,
+                reportedImu: nil,
+                reportedFirmwareVersion: nil,
+                reportedSerial: nil,
+                nominalVoltageHintMv: nil,
+                missingProbeResponse: .begodeName
+            )
+        ))
+
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Missing Begode probe response"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
