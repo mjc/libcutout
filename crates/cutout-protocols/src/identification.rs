@@ -284,6 +284,41 @@ impl FirmwareBanner {
     }
 }
 
+/// Raw IMU-banner bytes retained as probe-response provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImuBanner(Bytes);
+
+impl ImuBanner {
+    /// Copies borrowed IMU-banner bytes into owned provenance.
+    #[must_use]
+    pub fn copy_from_slice(bytes: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(bytes))
+    }
+
+    /// Returns the original IMU-banner bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+
+    /// Returns the IMU banner only when the bytes are valid banner text.
+    #[must_use]
+    pub fn get(&self) -> Option<&str> {
+        match classify_begode_ascii_banner(self.as_bytes()) {
+            BegodeBannerParse::Banner(BegodeBanner::Imu(_)) => {
+                str::from_utf8(self.as_bytes()).ok().map(str::trim)
+            }
+            BegodeBannerParse::Banner(
+                BegodeBanner::Firmware { .. } | BegodeBanner::ModelName(_),
+            )
+            | BegodeBannerParse::Empty
+            | BegodeBannerParse::BinaryFrame
+            | BegodeBannerParse::NonAscii
+            | BegodeBannerParse::UnknownText => None,
+        }
+    }
+}
+
 /// Pending probe state remembered by the detection session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PendingProbe {
@@ -292,6 +327,9 @@ pub enum PendingProbe {
 
     /// Begode `V` probe awaiting a firmware/code banner response.
     BegodeFirmware,
+
+    /// Begode `M` probe awaiting an IMU banner response.
+    BegodeImu,
 }
 
 /// Current protocol-family state for the detection session.
@@ -325,6 +363,9 @@ pub struct DeviceDetectionResolution {
 
     /// Latest raw firmware banner retained as probe provenance.
     pub firmware_banner: Option<FirmwareBanner>,
+
+    /// Latest raw IMU banner retained as probe provenance.
+    pub imu_banner: Option<ImuBanner>,
 }
 
 /// Incremental device-detection event.
@@ -361,6 +402,7 @@ struct NotificationDecision<'a> {
     banner_model: IdentityBannerEvidence<'a>,
     protocol_model: ProtocolModelIdentityEvidence,
     firmware_banner: bool,
+    imu_banner: bool,
 }
 
 impl DeviceDetectionSession {
@@ -375,6 +417,7 @@ impl DeviceDetectionSession {
                 advertised_name: None,
                 model_banner: None,
                 firmware_banner: None,
+                imu_banner: None,
             },
             gatt: ArrayVec::new(),
         }
@@ -411,12 +454,16 @@ impl DeviceDetectionSession {
                     decision.banner_model,
                     IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
                 ) || decision.firmware_banner
+                    || decision.imu_banner
                 {
                     self.pending_probe = None;
                 }
                 let firmware_banner = decision
                     .firmware_banner
                     .then(|| FirmwareBanner::copy_from_slice(bytes));
+                let imu_banner = decision
+                    .imu_banner
+                    .then(|| ImuBanner::copy_from_slice(bytes));
                 let banner_model = match (decision.banner_model, self.resolution.staged.model) {
                     (IdentityBannerEvidence::Malformed, Some(_)) => None,
                     _ => decision.banner_model_update(),
@@ -437,6 +484,9 @@ impl DeviceDetectionSession {
                 }
                 if let Some(firmware_banner) = firmware_banner {
                     self.resolution.firmware_banner = Some(firmware_banner);
+                }
+                if let Some(imu_banner) = imu_banner {
+                    self.resolution.imu_banner = Some(imu_banner);
                 }
             }
             DeviceDetectionEvent::ProbeWrite { probe } => self.pending_probe = Some(probe),
@@ -492,6 +542,7 @@ impl DeviceDetectionSession {
                 IdentityBannerEvidence::Malformed => None,
             },
             firmware_banner: self.resolution.firmware_banner.clone(),
+            imu_banner: self.resolution.imu_banner.clone(),
         };
     }
 }
@@ -511,7 +562,9 @@ impl<'a> NotificationDecision<'a> {
     ) -> NotificationDecision<'_> {
         let banner_model = match pending_probe {
             Some(PendingProbe::BegodeName) => parse_model_banner(bytes),
-            Some(PendingProbe::BegodeFirmware) | None => IdentityBannerEvidence::Missing,
+            Some(PendingProbe::BegodeFirmware | PendingProbe::BegodeImu) | None => {
+                IdentityBannerEvidence::Missing
+            }
         };
         let firmware_banner = match pending_probe {
             Some(PendingProbe::BegodeFirmware) => {
@@ -520,7 +573,14 @@ impl<'a> NotificationDecision<'a> {
                     BegodeBannerParse::Banner(BegodeBanner::Firmware { .. })
                 )
             }
-            Some(PendingProbe::BegodeName) | None => false,
+            Some(PendingProbe::BegodeName | PendingProbe::BegodeImu) | None => false,
+        };
+        let imu_banner = match pending_probe {
+            Some(PendingProbe::BegodeImu) => matches!(
+                classify_begode_ascii_banner(bytes),
+                BegodeBannerParse::Banner(BegodeBanner::Imu(_))
+            ),
+            Some(PendingProbe::BegodeName | PendingProbe::BegodeFirmware) | None => false,
         };
         let (protocol, protocol_model) = match VeteranFrame::try_from_slice(bytes) {
             Ok(frame) => (
@@ -542,6 +602,7 @@ impl<'a> NotificationDecision<'a> {
             banner_model,
             protocol_model,
             firmware_banner,
+            imu_banner,
         }
     }
 
@@ -1443,6 +1504,31 @@ mod tests {
                 .as_ref()
                 .map(super::FirmwareBanner::as_bytes),
             Some(&b"GW FALCON 1.0"[..])
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_preserves_begode_imu_banner_after_probe() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeImu,
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Notification { bytes: b"MPU6500" });
+
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
+        assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(update.staged.model, None);
+        assert_eq!(
+            update.imu_banner.as_ref().and_then(|banner| banner.get()),
+            Some("MPU6500")
+        );
+        assert_eq!(
+            update.imu_banner.as_ref().map(super::ImuBanner::as_bytes),
+            Some(&b"MPU6500"[..])
         );
     }
 

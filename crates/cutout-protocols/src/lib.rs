@@ -53,8 +53,8 @@ pub use fixture::*;
 mod identification;
 pub use identification::{
     AdvertisedName, DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession,
-    FirmwareBanner, IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, ModelBanner,
-    ParsedModelBanner, PendingProbe, ProtocolFamilyState, ProtocolModelIdentity,
+    FirmwareBanner, IdentityBannerEvidence, IdentityConfidence, IdentityEvidence, ImuBanner,
+    ModelBanner, ParsedModelBanner, PendingProbe, ProtocolFamilyState, ProtocolModelIdentity,
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
     StagedIdentityResolution, identify_known_model, identify_model, parse_model_banner,
 };

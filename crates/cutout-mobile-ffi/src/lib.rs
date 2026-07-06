@@ -351,6 +351,9 @@ pub struct DeviceDetectionResolutionRecord {
 
     /// Raw firmware-banner bytes retained by the detector.
     pub firmware_banner: Option<Vec<u8>>,
+
+    /// Raw IMU-banner bytes retained by the detector.
+    pub imu_banner: Option<Vec<u8>>,
 }
 
 /// `UniFFI` handle for a caller-owned device detection session.
@@ -409,6 +412,13 @@ impl DeviceDetectionSessionHandle {
     pub fn observe_begode_firmware_probe(&self) -> DeviceDetectionResolutionRecord {
         self.observe(DeviceDetectionEvent::ProbeWrite {
             probe: PendingProbe::BegodeFirmware,
+        })
+    }
+
+    /// Records that the caller issued a Begode `M` IMU probe.
+    pub fn observe_begode_imu_probe(&self) -> DeviceDetectionResolutionRecord {
+        self.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeImu,
         })
     }
 
@@ -2156,6 +2166,10 @@ impl From<&DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
                 .firmware_banner
                 .as_ref()
                 .map(|banner| banner.as_bytes().to_vec()),
+            imu_banner: resolution
+                .imu_banner
+                .as_ref()
+                .map(|banner| banner.as_bytes().to_vec()),
         }
     }
 }
@@ -3695,6 +3709,16 @@ mod tests {
         let resolution = session.observe_notification(b"GW FALCON 1.0".to_vec());
 
         assert_eq!(resolution.firmware_banner, Some(b"GW FALCON 1.0".to_vec()));
+    }
+
+    #[test]
+    fn mobile_device_detection_session_preserves_begode_imu_banner_bytes() {
+        let session = DeviceDetectionSessionHandle::new();
+        let _ = session.observe_begode_imu_probe();
+
+        let resolution = session.observe_notification(b"MPU6500".to_vec());
+
+        assert_eq!(resolution.imu_banner, Some(b"MPU6500".to_vec()));
     }
 
     #[test]
