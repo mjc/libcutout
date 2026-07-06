@@ -1,4 +1,5 @@
 use arrayvec::{ArrayString, ArrayVec};
+use cutout_core::{Measured, MonotonicTimestamp, Speed, TelemetryDelta};
 use thiserror::Error;
 
 use crate::VESC_MAX_FRAME_LEN;
@@ -183,6 +184,27 @@ pub struct RefloatRealtimeData {
 
     /// VESC firmware fault code, present when mask bit 2 is set.
     pub firmware_fault_code: Option<u8>,
+}
+
+impl RefloatRealtimeData {
+    /// Converts decoded Refloat realtime values to shared telemetry.
+    #[must_use]
+    pub fn to_delta(&self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
+        TelemetryDelta {
+            speed: self.value("motor.speed").map(|metres_per_second| {
+                Measured::reported(Speed::from_metres_per_second(metres_per_second))
+            }),
+            ..TelemetryDelta::empty(at_ms)
+        }
+    }
+
+    fn value(&self, id: &str) -> Option<f32> {
+        self.values
+            .iter()
+            .chain(self.runtime_values.iter())
+            .find(|value| value.id.as_str() == id)
+            .map(|value| value.value)
+    }
 }
 
 /// Refloat codec failure.
@@ -915,6 +937,31 @@ mod tests {
         assert_eq!(data.active_alert_mask_low, Some(0x0000_0004));
         assert_eq!(data.active_alert_mask_high, Some(0));
         assert_eq!(data.firmware_fault_code, Some(0));
+    }
+
+    #[test]
+    fn realtime_data_reports_refloat_speed_without_board_profile() {
+        let mut decoder = RefloatStreamDecoder::new();
+        decoder
+            .feed_result(&custom_app_frame(&ids_payload()))
+            .expect("ids decode");
+        let RefloatStreamResult::Replies(replies) = decoder
+            .feed_result(&custom_app_frame(&realtime_payload()))
+            .expect("data decode")
+        else {
+            panic!("expected realtime data reply");
+        };
+        let [RefloatReply::RealtimeData(data)] = replies.as_slice() else {
+            panic!("expected realtime data");
+        };
+
+        assert_eq!(
+            data.to_delta(MonotonicTimestamp::from_milliseconds(42))
+                .speed,
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_000
+            )))
+        );
     }
 
     #[test]
