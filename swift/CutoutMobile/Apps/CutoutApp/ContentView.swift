@@ -1423,6 +1423,26 @@ private struct DevicePickerView: View {
                         }
                     }
 
+                    if !sections.probeRecommended.isEmpty {
+                        SectionLabel("Probe first", scale: scale)
+                            .padding(.top, 8 * scale)
+                        VStack(spacing: 12 * scale) {
+                            ForEach(sections.probeRecommended) { row in
+                                VStack(spacing: 8 * scale) {
+                                    PickerDeviceRow(row: row, scale: scale)
+
+                                    Button {
+                                        recordOnly(row, recordOnlyDeviceKind)
+                                    } label: {
+                                        RecordOnlyButtonLabel(title: row.captureActionTitle, scale: scale, isEnabled: hasRecordOnlyDeviceKind)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(!hasRecordOnlyDeviceKind)
+                                }
+                            }
+                        }
+                    }
+
                     if !sections.unsupported.isEmpty {
                         SectionLabel("Record only", scale: scale)
                             .padding(.top, 8 * scale)

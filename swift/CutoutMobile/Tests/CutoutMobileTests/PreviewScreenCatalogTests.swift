@@ -134,14 +134,24 @@ extension MockupScreenCatalogTests {
             state: .unsupported(action: "Not yet"),
             symbolName: "scooter"
         )
+        let probeRecommended = MockupPickerRow(
+            title: "EUC-unknown",
+            subtitle: "Electric unicycle",
+            detail: "read-only probe recommended",
+            state: .unsupported(action: "Probe"),
+            symbolName: "questionmark.circle"
+        )
 
         XCTAssertEqual(MockupPickerSections(rows: [supported]).supported, [supported])
+        XCTAssertTrue(MockupPickerSections(rows: [supported]).probeRecommended.isEmpty)
         XCTAssertTrue(MockupPickerSections(rows: [supported]).unsupported.isEmpty)
         XCTAssertNil(MockupPickerSections(rows: [supported]).manual)
 
-        XCTAssertTrue(MockupPickerSections(rows: [unsupported]).supported.isEmpty)
-        XCTAssertEqual(MockupPickerSections(rows: [unsupported]).unsupported, [unsupported])
-        XCTAssertNil(MockupPickerSections(rows: [unsupported]).manual)
+        let unrouteable = MockupPickerSections(rows: [probeRecommended, unsupported])
+        XCTAssertTrue(unrouteable.supported.isEmpty)
+        XCTAssertEqual(unrouteable.probeRecommended, [probeRecommended])
+        XCTAssertEqual(unrouteable.unsupported, [unsupported])
+        XCTAssertNil(unrouteable.manual)
     }
 
     func testDevicePickerScanStateCoversUnavailableAndEmptyStates() {
@@ -151,6 +161,7 @@ extension MockupScreenCatalogTests {
         let empty = DevicePickerScanState(status: .idle, rows: [])
         XCTAssertEqual(empty.statusText, "No rideable devices found")
         XCTAssertTrue(empty.sections.supported.isEmpty)
+        XCTAssertTrue(empty.sections.probeRecommended.isEmpty)
         XCTAssertTrue(empty.sections.unsupported.isEmpty)
         XCTAssertNil(empty.sections.manual)
     }

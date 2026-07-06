@@ -389,6 +389,10 @@ public extension DevicePickerRow {
         if case .manual = state { true } else { false }
     }
 
+    var isProbeRecommended: Bool {
+        state.actionTitle == "Probe"
+    }
+
     var captureActionTitle: String {
         state.actionTitle == "Probe" ? "Start probe" : "Start capture"
     }
@@ -409,12 +413,14 @@ public extension DevicePickerRowState {
 
 public struct DevicePickerSections: Equatable, Hashable, Sendable {
     public let supported: [DevicePickerRow]
+    public let probeRecommended: [DevicePickerRow]
     public let unsupported: [DevicePickerRow]
     public let manual: DevicePickerRow?
 
     public init(rows: [DevicePickerRow]) {
         supported = rows.filter { $0.isSupported }
-        unsupported = rows.filter { $0.isUnsupported }
+        probeRecommended = rows.filter { $0.isProbeRecommended }
+        unsupported = rows.filter { $0.isUnsupported && !$0.isProbeRecommended }
         manual = rows.first { $0.isManual }
     }
 }
