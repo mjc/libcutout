@@ -110,8 +110,8 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         Self(label: label, value: value, unit: unit, state: .stale, source: source)
     }
 
-    public static func notApplicable(label: String, unit: String? = nil) -> Self {
-        Self(label: label, value: "Not applicable", unit: unit, state: .notApplicable, source: .notApplicable)
+    public static func notApplicable(label: String, unit _: String? = nil) -> Self {
+        Self(label: label, value: "Not applicable", unit: nil, state: .notApplicable, source: .notApplicable)
     }
 
     public static func deferred(label: String, unit: String? = nil) -> Self {
@@ -347,7 +347,7 @@ private extension LiveActivityRideSnapshot {
         case .unavailable:
             return .unavailable(label: "PWM", unit: "%")
         case .notApplicable:
-            return .notApplicable(label: "PWM", unit: "%")
+            return .notApplicable(label: "PWM")
         }
     }
 

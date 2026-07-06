@@ -45,4 +45,24 @@ final class LiveActivityRideFixtureMatrixTests: XCTestCase {
         XCTAssertEqual(snapshots.first?.headroom.unit, nil)
         XCTAssertEqual(snapshots.first?.beeps.value, "Beeps armed")
     }
+
+    func testFixtureMatrixMatchesProductionUnavailableAndNotApplicableSemantics() {
+        let fixtures = Dictionary(uniqueKeysWithValues: LiveActivityRideFixtureMatrix.v1.fixtures.map { ($0.kind, $0.snapshot) })
+
+        XCTAssertEqual(fixtures[.waitingForFirstTelemetry]?.distance.state, .unavailable)
+        XCTAssertEqual(fixtures[.disconnected]?.distance.state, .unavailable)
+
+        let parked = fixtures[.parked]
+        XCTAssertEqual(parked?.speed, .available(label: "Speed", value: "0.0", unit: "mph", source: .fixture))
+        XCTAssertEqual(parked?.duration.state, .deferred)
+        XCTAssertEqual(parked?.distance.state, .unavailable)
+        XCTAssertEqual(parked?.pwm.state, .notApplicable)
+        XCTAssertEqual(parked?.headroom.state, .notApplicable)
+
+        let notApplicableUnits = LiveActivityRideFixtureMatrix.v1.fixtures
+            .flatMap(\.snapshot.visibleValues)
+            .filter { $0.state == .notApplicable }
+            .compactMap(\.unit)
+        XCTAssertEqual(notApplicableUnits, [])
+    }
 }
