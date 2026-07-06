@@ -748,6 +748,66 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.records.last, "protocol_identity=Begode/Falcon confirmed by reported model Falcon")
     }
 
+    func testBegodeFirmwareProbeResponseUpdatesProtocolIdentityCandidate() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
+        core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon-code"),
+                localName: "GotWay_002441",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("V".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("GW-FALCON".utf8))
+
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "GotWay_002441")
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/GotWay identity probe collected; code GW-FALCON")
+        XCTAssertEqual(
+            core.protocolIdentityCandidate?.support,
+            .unknownRecordable(disabledReason: "Unresolved Begode code banner")
+        )
+        XCTAssertNil(core.protocolIdentityCandidate?.pickerRow.connectionRoute)
+        XCTAssertEqual(
+            observedCandidates.compactMap { $0?.detail },
+            ["Begode/GotWay identity probe collected; code GW-FALCON"]
+        )
+        XCTAssertEqual(core.records.last, "protocol_identity=Begode/GotWay identity probe collected; code GW-FALCON")
+    }
+
+    func testBegodeImuProbeResponseUpdatesProtocolIdentityCandidate() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
+        core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon-imu"),
+                localName: "GotWay_002441",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("MPU6500".utf8))
+
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "GotWay_002441")
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/GotWay identity probe collected; imu MPU6500")
+        XCTAssertEqual(
+            core.protocolIdentityCandidate?.support,
+            .unknownRecordable(disabledReason: "Begode model not confirmed")
+        )
+        XCTAssertNil(core.protocolIdentityCandidate?.pickerRow.connectionRoute)
+        XCTAssertEqual(
+            observedCandidates.compactMap { $0?.detail },
+            ["Begode/GotWay identity probe collected; imu MPU6500"]
+        )
+        XCTAssertEqual(core.records.last, "protocol_identity=Begode/GotWay identity probe collected; imu MPU6500")
+    }
+
     func testFragmentedBegodeFrameUpdatesProtocolIdentityCandidate() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)

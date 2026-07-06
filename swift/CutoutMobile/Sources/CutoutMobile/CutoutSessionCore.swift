@@ -262,6 +262,8 @@ public final class CutoutSessionCore: NSObject {
         guard resolution.protocolFamily != nil
             || resolution.protocolConflict
             || resolution.modelBanner != nil
+            || resolution.firmwareBanner != nil
+            || resolution.imuBanner != nil
             || resolution.missingProbeResponse != nil
             || resolution.malformedProbeResponse != nil
         else {
