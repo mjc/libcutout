@@ -23,6 +23,7 @@ final class CutoutAppModel: ObservableObject {
     }
 
     private let core = CutoutSessionCore()
+    private let selectedDeviceStore = DevicePickerSelectionStore()
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
@@ -66,6 +67,7 @@ final class CutoutAppModel: ObservableObject {
             isRecordOnlyCapture = false
             captureLabel = nil
             recordOnlyDeviceKind = nil
+            selectedDeviceStore.save(platformIdentifier: platformIdentifier)
             selectedRideTitle = devicePickerScanState?.rows.first(where: { $0.id == platformIdentifier })?.title
         }
         return didPair
@@ -94,6 +96,7 @@ final class CutoutAppModel: ObservableObject {
             )
         }
         if didStart {
+            selectedDeviceStore.clear()
             if modelHint != .unknown {
                 core.annotateCapture(label: "device_kind=\(annotationKind)")
             }
@@ -131,6 +134,7 @@ final class CutoutAppModel: ObservableObject {
         captureLabel = nil
         recordOnlyDeviceKind = nil
         selectedRideTitle = nil
+        selectedDeviceStore.clear()
         core.disconnectAndScan()
     }
 
