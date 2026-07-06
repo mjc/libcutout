@@ -155,6 +155,30 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(empty.sections.manual)
     }
 
+    func testDevicePickerScanStateFindsStoredSupportedPickerRow() {
+        let supported = DevicePickerRow(
+            id: "ios-local-aero",
+            title: "NOSFET Aero",
+            subtitle: "Electric unicycle",
+            detail: "telemetry profile found",
+            state: .supported(action: "Use"),
+            symbolName: "circle"
+        )
+        let unsupported = DevicePickerRow(
+            id: "ios-local-unknown",
+            title: "Unknown",
+            subtitle: "Electric unicycle",
+            detail: "model not confirmed",
+            state: .unsupported(action: "Record"),
+            symbolName: "questionmark.circle"
+        )
+        let state = DevicePickerScanState(status: .scanning, rows: [unsupported, supported])
+
+        XCTAssertEqual(state.storedSupportedRow(platformIdentifier: "ios-local-aero"), supported)
+        XCTAssertNil(state.storedSupportedRow(platformIdentifier: "ios-local-unknown"))
+        XCTAssertNil(state.storedSupportedRow(platformIdentifier: nil))
+    }
+
     func testDiscoveryCandidatesMapToPickerRows() {
         let supported = DevicePickerDiscoveryCandidate(
             platformIdentifier: "ios-local-1",

@@ -641,6 +641,13 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     public static let permissionDenied = DevicePickerScanState(status: .permissionDenied, rows: [])
 }
 
+public extension DevicePickerScanState {
+    func storedSupportedRow(platformIdentifier: String?) -> DevicePickerRow? {
+        guard let platformIdentifier else { return nil }
+        return rows.first { $0.id == platformIdentifier && $0.isSupported }
+    }
+}
+
 public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     public let id: MockupScreenID
     public let title: String

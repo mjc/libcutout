@@ -36,7 +36,7 @@ final class CutoutAppModel: ObservableObject {
             self?.phase = phase
         }
         core.onScanStateChange = { [weak self] scanState in
-            self?.devicePickerScanState = scanState
+            self?.handleScanStateChange(scanState)
         }
         core.onSettingsReadbackChange = { [weak self] settingsReadback in
             self?.settingsReadback = settingsReadback
@@ -136,6 +136,14 @@ final class CutoutAppModel: ObservableObject {
         selectedRideTitle = nil
         selectedDeviceStore.clear()
         core.disconnectAndScan()
+    }
+
+    private func handleScanStateChange(_ scanState: DevicePickerScanState) {
+        devicePickerScanState = scanState
+        guard phase == .starting else { return }
+        guard let platformIdentifier = selectedDeviceStore.platformIdentifier else { return }
+        guard scanState.storedSupportedRow(platformIdentifier: platformIdentifier) != nil else { return }
+        _ = pair(platformIdentifier: platformIdentifier)
     }
 
     private func updateCaptureStatus(from message: String) {
