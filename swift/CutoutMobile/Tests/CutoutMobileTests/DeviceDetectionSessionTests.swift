@@ -71,6 +71,25 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testMalformedBegodeDetectionResolutionProjectsRecordOnlyCandidate() {
+        let session = DeviceDetectionSession()
+
+        _ = session.observeBegodeNameProbe()
+        let resolution = session.observeNotification(
+            bytes: Data([0x4e, 0x41, 0x4d, 0x45, 0x3d, 0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00])
+        )
+        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
+            platformIdentifier: "ios-local-falcon-malformed",
+            displayName: "GotWay_002441"
+        ))
+
+        XCTAssertEqual(resolution.malformedProbeResponse, .begodeName)
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Malformed Begode probe response"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertEqual(candidate.pickerRow.section, .recordOnly)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testMixedProtocolFamiliesProjectConflictingCandidate() {
         let session = DeviceDetectionSession()
         let begodeFrame = Data([

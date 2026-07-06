@@ -889,21 +889,30 @@ pub fn mobile_discovery_candidate_from_begode_detection_resolution(
         platform_identifier,
         display_name,
         MobileBegodeIdentityProbeDto {
-            reported_model: resolution
-                .model_banner
-                .as_deref()
-                .and_then(|banner| std::str::from_utf8(banner).ok())
-                .map(ToOwned::to_owned),
-            reported_code_name: resolution
-                .firmware_banner
-                .as_deref()
-                .and_then(|banner| std::str::from_utf8(banner).ok())
-                .map(ToOwned::to_owned),
-            reported_imu: resolution
-                .imu_banner
-                .as_deref()
-                .and_then(|banner| std::str::from_utf8(banner).ok())
-                .map(ToOwned::to_owned),
+            reported_model: match resolution.malformed_probe_response {
+                Some(MobilePendingProbeDto::BegodeName) => None,
+                _ => resolution
+                    .model_banner
+                    .as_deref()
+                    .and_then(|banner| std::str::from_utf8(banner).ok())
+                    .map(ToOwned::to_owned),
+            },
+            reported_code_name: match resolution.malformed_probe_response {
+                Some(MobilePendingProbeDto::BegodeFirmware) => None,
+                _ => resolution
+                    .firmware_banner
+                    .as_deref()
+                    .and_then(|banner| std::str::from_utf8(banner).ok())
+                    .map(ToOwned::to_owned),
+            },
+            reported_imu: match resolution.malformed_probe_response {
+                Some(MobilePendingProbeDto::BegodeImu) => None,
+                _ => resolution
+                    .imu_banner
+                    .as_deref()
+                    .and_then(|banner| std::str::from_utf8(banner).ok())
+                    .map(ToOwned::to_owned),
+            },
             reported_firmware_version: None,
             reported_serial: None,
             nominal_voltage_hint_mv: None,
@@ -4469,6 +4478,35 @@ mod tests {
         assert_eq!(
             candidate.disabled_reason,
             Some("Missing Begode probe response".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_projects_malformed_begode_detection_resolution() {
+        let session = DeviceDetectionSessionHandle::new();
+        let _ = session.observe_begode_name_probe();
+        let resolution = session.observe_notification(b"NAME=Falcon\0".to_vec());
+
+        let candidate = mobile_discovery_candidate_from_begode_detection_resolution(
+            "ios-local-falcon-malformed".to_owned(),
+            "GotWay_002441".to_owned(),
+            resolution,
+        );
+
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
+        assert_eq!(
+            candidate.recommended_action,
+            DiscoveryCandidateAction::Record
+        );
+        assert_eq!(candidate.section, DiscoveryCandidateSection::RecordOnly);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Malformed Begode probe response".to_owned())
         );
     }
 
