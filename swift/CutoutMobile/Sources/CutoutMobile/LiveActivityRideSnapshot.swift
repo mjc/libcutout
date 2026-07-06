@@ -117,6 +117,25 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     public static func deferred(label: String, unit: String? = nil) -> Self {
         Self(label: label, value: "--", unit: unit, state: .deferred, source: .deferred)
     }
+
+    public var progressValue: Double? {
+        guard
+            unit == "%",
+            let percentage = fraction(of: 100)
+        else { return nil }
+
+        return percentage
+    }
+
+    public func fraction(of maximum: Double) -> Double? {
+        guard
+            state == .available || state == .stale,
+            maximum > 0,
+            let number = Double(value)
+        else { return nil }
+
+        return min(max(number / maximum, 0), 1)
+    }
 }
 
 public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {

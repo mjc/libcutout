@@ -166,6 +166,34 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.identity.displayLabel, "Lynx-S demo")
         XCTAssertTrue(snapshot.visibleValues.allSatisfy { $0.source == .fixture })
     }
+
+    func testPercentProgressComesFromAvailableAndStaleValues() {
+        let values: [(LiveActivityRideValue, Double?)] = [
+            (.available(label: "Battery", value: "68", unit: "%", source: .liveTelemetry), 0.68),
+            (.stale(label: "PWM", value: "42", unit: "%", source: .liveTelemetry), 0.42),
+            (.available(label: "Battery", value: "120", unit: "%", source: .liveTelemetry), 1.0),
+            (.available(label: "PWM", value: "-8", unit: "%", source: .liveTelemetry), 0.0),
+            (.available(label: "Voltage", value: "68", unit: "V", source: .liveTelemetry), nil),
+            (.unavailable(label: "Battery", unit: "%"), nil),
+            (.deferred(label: "PWM", unit: "%"), nil),
+        ]
+
+        XCTAssertEqual(values.map { $0.0.progressValue }, values.map(\.1))
+    }
+
+    func testNumericFractionComesFromAvailableAndStaleValues() {
+        let values: [(LiveActivityRideValue, Double?)] = [
+            (.available(label: "Speed", value: "25.0", unit: "mph", source: .liveTelemetry), 0.5),
+            (.stale(label: "Speed", value: "12.5", unit: "mph", source: .liveTelemetry), 0.25),
+            (.available(label: "Speed", value: "123.4", unit: "mph", source: .liveTelemetry), 1.0),
+            (.available(label: "Speed", value: "-1.0", unit: "mph", source: .liveTelemetry), 0.0),
+            (.unavailable(label: "Speed", unit: "mph"), nil),
+            (.available(label: "Speed", value: "--", unit: "mph", source: .liveTelemetry), nil),
+        ]
+
+        XCTAssertEqual(values.map { $0.0.fraction(of: 50) }, values.map(\.1))
+        XCTAssertNil(LiveActivityRideValue.available(label: "Speed", value: "25.0", unit: "mph", source: .liveTelemetry).fraction(of: 0))
+    }
 }
 
 private func liveRideState(speed: Int32?, telemetry: TelemetrySnapshot) -> EucRideScreenState {

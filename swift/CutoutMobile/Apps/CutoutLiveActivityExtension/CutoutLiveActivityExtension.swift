@@ -133,13 +133,15 @@ private struct RideSpeedGauge: View {
     let diameter: CGFloat
 
     var body: some View {
+        let gaugeEnd = 0.12 + (0.76 * (snapshot.speed.speedGaugeProgressValue ?? 0.0))
+
         ZStack {
             Circle()
                 .trim(from: 0.12, to: 0.88)
                 .stroke(RideActivityPalette.track, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 .rotationEffect(.degrees(38))
             Circle()
-                .trim(from: 0.12, to: 0.68)
+                .trim(from: 0.12, to: gaugeEnd)
                 .stroke(
                     AngularGradient(
                         colors: [RideActivityPalette.accent, RideActivityPalette.accent2],
@@ -211,6 +213,8 @@ private struct MetricCell: View {
     var showProgress = false
 
     var body: some View {
+        let progress = value.progressValue
+
         VStack(alignment: .leading, spacing: compact ? 2 : 3) {
             Text(value.label)
                 .font(.system(size: compact ? 7 : 9, weight: .bold))
@@ -228,11 +232,11 @@ private struct MetricCell: View {
                         .foregroundStyle(RideActivityPalette.secondaryText)
                 }
             }
-            ProgressView(value: value.state == .available ? 0.68 : 0.0)
+            ProgressView(value: progress ?? 0.0)
                 .progressViewStyle(.linear)
                 .tint(tint)
-                .frame(height: value.unit == "%" ? 2 : 0)
-                .opacity(value.unit == "%" && showProgress ? 1 : 0)
+                .frame(height: progress != nil ? 2 : 0)
+                .opacity(progress != nil && showProgress ? 1 : 0)
         }
         .padding(.horizontal, compact ? 7 : 9)
         .padding(.vertical, compact ? 4 : 7)
@@ -314,6 +318,17 @@ private extension LiveActivityRideValue {
             "n/a"
         case .unavailable, .deferred:
             "--"
+        }
+    }
+
+    var speedGaugeProgressValue: Double? {
+        switch unit {
+        case "mph":
+            fraction(of: 50)
+        case "km/h", "kmh":
+            fraction(of: 80)
+        default:
+            nil
         }
     }
 }
