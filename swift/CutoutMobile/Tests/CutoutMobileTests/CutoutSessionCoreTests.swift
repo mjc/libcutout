@@ -651,6 +651,25 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.records.contains("begode_probe_write=model"))
     }
 
+    func testFalconLinkUpPlansBegodeIdentityProbeWrites() throws {
+        let runner = CoreBluetoothSessionRunner(
+            session: try .electricUnicycle(model: .falcon),
+            writeLimit: TransportWriteLimitBytes(23)
+        )
+
+        let step = try runner.handle(.linkUp(at: MonotonicMilliseconds(42)))
+
+        XCTAssertEqual(
+            step.operations,
+            [
+                .subscribe(channel: .bluetooth16(0xffe1)),
+                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8)),
+                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("V".utf8)),
+                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("M".utf8)),
+            ]
+        )
+    }
+
     func testUnrelatedWriteStillUsesSkippedWriteGuard() {
         let core = CutoutSessionCore()
 

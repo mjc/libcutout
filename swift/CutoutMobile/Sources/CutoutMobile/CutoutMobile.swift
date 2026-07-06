@@ -2409,6 +2409,19 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    fileprivate var startupProbeOperations: [CoreBluetoothPlannedOperation] {
+        switch self {
+        case .electricUnicycle(let session) where session.model == .falcon:
+            [
+                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8)),
+                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("V".utf8)),
+                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("M".utf8)),
+            ]
+        case .electricUnicycle:
+            []
+        }
+    }
+
     fileprivate func linkUp(
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes
@@ -2478,8 +2491,9 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
                 at: monotonicMilliseconds,
                 writeLimit: planner.writeLimit
             )
+            let operations = actions.flatMap(planner.plan(action:)) + session.startupProbeOperations
             return CoreBluetoothSessionStep(
-                operations: actions.flatMap(planner.plan(action:)),
+                operations: operations,
                 snapshot: session.currentSnapshot,
                 captureContext: captureContext
             )
