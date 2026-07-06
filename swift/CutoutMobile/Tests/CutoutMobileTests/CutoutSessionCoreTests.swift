@@ -748,6 +748,45 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.records.last, "protocol_identity=Begode/Falcon confirmed by reported model Falcon")
     }
 
+    func testFragmentedBegodeFrameUpdatesProtocolIdentityCandidate() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        let frame: [UInt8] = [
+            0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+            0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+            0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+        ]
+        var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
+        core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-gotway"),
+                localName: "Mystery Wheel",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        core.observeDetectionNotification(channel: channel, bytes: Data(Array(frame.prefix(20))))
+        XCTAssertNil(core.protocolIdentityCandidate)
+
+        core.observeDetectionNotification(channel: channel, bytes: Data(Array(frame.dropFirst(20))))
+
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Mystery Wheel")
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/GotWay identity probe collected; model not confirmed")
+        XCTAssertEqual(
+            core.protocolIdentityCandidate?.support,
+            .unknownRecordable(disabledReason: "Begode model not confirmed")
+        )
+        XCTAssertEqual(
+            observedCandidates.compactMap { $0?.detail },
+            ["Begode/GotWay identity probe collected; model not confirmed"]
+        )
+        XCTAssertEqual(
+            core.records.last,
+            "protocol_identity=Begode/GotWay identity probe collected; model not confirmed"
+        )
+    }
+
     func testMalformedBegodeProbeResponseIsLabeledFromDetectionSession() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)

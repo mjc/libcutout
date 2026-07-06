@@ -259,6 +259,13 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishDetectionIdentityCandidate(_ resolution: DeviceDetectionResolution) {
+        guard resolution.protocolFamily != nil
+            || resolution.modelBanner != nil
+            || resolution.missingProbeResponse != nil
+            || resolution.malformedProbeResponse != nil
+        else {
+            return
+        }
         let discovery = rustSessionState.discoverySnapshot()
         guard let advertisement = advertisement ?? discovery.selectedAdvertisement ?? discovery.lastAdvertisement else {
             return
