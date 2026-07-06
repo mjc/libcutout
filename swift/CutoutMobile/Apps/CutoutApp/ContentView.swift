@@ -111,6 +111,8 @@ struct ContentView: View {
             nil
         case .ride:
             catalog.screen(id: .eucRide)
+        case .liveActivity:
+            catalog.screen(id: .liveActivity)
         case .pack:
             catalog.screen(id: .bmsOverview).map {
                 catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot, fixtureFallback: false)
@@ -159,6 +161,8 @@ struct ContentView: View {
             .devicePicker
         case .eucRide:
             .ride
+        case .liveActivity:
+            .mockup(.liveActivity)
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData, .eucGarage:
             .pack
         case .vescOnewheelRide, .vescDebug:
@@ -181,6 +185,7 @@ struct ContentView: View {
 private enum CutoutAppRoute: Equatable {
     case devicePicker
     case ride
+    case liveActivity
     case pack
     case capture
     case mockup(MockupScreenID)
@@ -225,6 +230,8 @@ private struct MockupScreenContainer: View {
                 disconnect: disconnect,
                 selectScreen: selectScreen
             )
+        case .liveActivity:
+            LiveActivityMockupView(screen: screen)
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             BmsMockupView(screen: screen, rideState: rideState, bmsSnapshot: bmsSnapshot, selectScreen: selectScreen)
         case .eucGarage:
@@ -3568,6 +3575,8 @@ private extension MockupScreen {
             "Picker"
         case .eucRide:
             "EUC"
+        case .liveActivity:
+            "Live Activity"
         case .bmsOverview, .bmsNoData:
             "BMS"
         case .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail:

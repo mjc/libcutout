@@ -3,6 +3,7 @@ import Foundation
 public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case devicePicker
     case eucRide
+    case liveActivity
     case bmsOverview
     case bmsCellMap6S
     case bmsCellMap40S
@@ -258,7 +259,7 @@ private extension MockupBmsScreenKind {
             self = .unknownTopology
         case .bmsNoData:
             self = .noData
-        case .devicePicker, .eucRide, .eucGarage, .vescOnewheelRide, .vescDebug:
+        case .devicePicker, .eucRide, .liveActivity, .eucGarage, .vescOnewheelRide, .vescDebug:
             return nil
         }
     }
@@ -1142,6 +1143,19 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             ]
         ),
         MockupScreen(
+            id: .liveActivity,
+            title: "Live Activity",
+            subtitle: "fixture harness for compact, expanded, and lock screen states",
+            primaryValue: "3 layouts",
+            secondaryValue: "matrix driven",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "fixture states", value: "demo, populated, partial, waiting, stale, disconnected, parked"),
+                MockupMetric(label: "render modes", value: "compact, expanded, lock screen"),
+            ],
+            isFixtureOnly: true
+        ),
+        MockupScreen(
             id: .bmsOverview,
             title: "Pack overview",
             subtitle: "CutOut · BMS",
@@ -1401,7 +1415,7 @@ private extension MockupScreenID {
         switch self {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             true
-        case .devicePicker, .eucRide, .eucGarage, .vescOnewheelRide, .vescDebug:
+        case .devicePicker, .eucRide, .liveActivity, .eucGarage, .vescOnewheelRide, .vescDebug:
             false
         }
     }

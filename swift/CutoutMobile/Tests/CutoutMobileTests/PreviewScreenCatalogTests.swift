@@ -8,6 +8,7 @@ final class MockupScreenCatalogTests: XCTestCase {
             [
                 .devicePicker,
                 .eucRide,
+                .liveActivity,
                 .bmsOverview,
                 .bmsCellMap6S,
                 .bmsCellMap40S,
@@ -771,6 +772,14 @@ extension MockupScreenCatalogTests {
             .noData,
         ])
         XCTAssertTrue(screens.allSatisfy { $0.bmsContent?.snapshot != nil })
+    }
+
+    func testLiveActivityFixtureHarnessIsAvailableFromTheCatalog() throws {
+        let liveActivity = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .liveActivity))
+
+        XCTAssertEqual(liveActivity.title, "Live Activity")
+        XCTAssertTrue(liveActivity.isFixtureOnly)
+        XCTAssertEqual(liveActivity.metrics.map(\.label), ["fixture states", "render modes"])
     }
 
     func testBmsOverviewFixtureCapturesTopologyAndFaultSummary() throws {
