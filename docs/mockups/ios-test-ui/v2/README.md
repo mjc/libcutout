@@ -13,6 +13,8 @@ not final visual design.
 - BMS assets and source spec: `bms/`
 - BMS spec file: `bms/cutout-bms-mockups-spec.md`
 - BMS combined sheet: `bms/cutout-bms-mockups-sheet.png`
+- Live Activity assets and source spec: `live-activity/`
+- Live Activity spec file: `live-activity/cutout-live-activity-spec.md`
 
 The mockups were supplied as project input and stored here so the app, fixture,
 and tracker work can reference stable repo paths.
@@ -40,6 +42,12 @@ and tracker work can reference stable repo paths.
 | `cutout-10-dumb-bms-no-data.svg` | 390x844 | `LIBCU-446` |
 | `cutout-bms-mockups-sheet.png` | 1468x663 | `LIBCU-438` |
 
+## Live Activity
+
+| Screen | Asset size | Tracker epic |
+| --- | ---: | --- |
+| `cutout-live-activity-card.jpg` | 1280x960 | `LIBCU-481` |
+
 ## Tracker Map
 
 - Parent screen-set epic: `LIBCU-417`
@@ -52,6 +60,7 @@ and tracker work can reference stable repo paths.
 - Parent BMS screen-set epic: `LIBCU-438`
 - Typed BMS topology and per-group readback contract: `LIBCU-439`
 - Controller-only / non-smart BMS no-data screen: `LIBCU-446`
+- Parent Live Activity epic: `LIBCU-481`
 
 The screen epics intentionally link each visible datum back to the Rust,
 mobile FFI, and Swift API work needed to make the UI hard to misuse. Mockup-only
