@@ -50,6 +50,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate has a read-only test route from provisional evidence.
     ProvisionalRoute,
 
+    /// Candidate should be identified with a read-only probe before routing.
+    ProbeRecommended,
+
     /// Candidate is relevant enough to record for future support.
     UnknownRecordable,
 
@@ -309,6 +312,7 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
                 CoreDiscoveryCandidateSupport::ProvisionalRoute => None,
+                CoreDiscoveryCandidateSupport::ProbeRecommended => Some(candidate.detail.clone()),
                 CoreDiscoveryCandidateSupport::UnknownRecordable => Some(candidate.detail.clone()),
                 CoreDiscoveryCandidateSupport::KnownUnsupported => {
                     Some("Not yet supported".to_owned())
@@ -333,6 +337,7 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
         match support {
             CoreDiscoveryCandidateSupport::Supported => Self::Supported,
             CoreDiscoveryCandidateSupport::ProvisionalRoute => Self::ProvisionalRoute,
+            CoreDiscoveryCandidateSupport::ProbeRecommended => Self::ProbeRecommended,
             CoreDiscoveryCandidateSupport::UnknownRecordable => Self::UnknownRecordable,
             CoreDiscoveryCandidateSupport::KnownUnsupported => Self::KnownUnsupported,
             CoreDiscoveryCandidateSupport::Unsupported => Self::Unsupported,
@@ -552,12 +557,12 @@ pub fn mobile_discovery_candidate_from_advertisement(
                 display_name,
                 product_category: "Electric unicycle".to_owned(),
                 evidence: "FFE0/FFE1 transport hint".to_owned(),
-                detail: "Model not confirmed".to_owned(),
+                detail: "Read-only probe recommended".to_owned(),
                 is_picker_candidate: true,
-                support: DiscoveryCandidateSupport::UnknownRecordable,
+                support: DiscoveryCandidateSupport::ProbeRecommended,
                 connection_route: None,
                 electric_unicycle_model: None,
-                disabled_reason: Some("Model not confirmed".to_owned()),
+                disabled_reason: Some("Read-only probe recommended".to_owned()),
             },
         };
     }
@@ -5105,7 +5110,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_keeps_unknown_ffe0_unrouteable() {
+    fn mobile_discovery_candidate_recommends_probe_for_unknown_ffe0() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown-euc".to_owned(),
             Some("EUC-unknown".to_owned()),
@@ -5115,16 +5120,16 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "FFE0/FFE1 transport hint");
-        assert_eq!(candidate.detail, "Model not confirmed");
+        assert_eq!(candidate.detail, "Read-only probe recommended");
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::UnknownRecordable
+            DiscoveryCandidateSupport::ProbeRecommended
         );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason,
-            Some("Model not confirmed".to_owned())
+            Some("Read-only probe recommended".to_owned())
         );
     }
 

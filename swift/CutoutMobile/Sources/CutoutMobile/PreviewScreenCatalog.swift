@@ -420,6 +420,7 @@ public typealias MockupPickerSections = DevicePickerSections
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case supported(connectionRoute: DevicePickerConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case provisionalRoute(connectionRoute: DevicePickerConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
+    case probeRecommended(disabledReason: String)
     case unknownRecordable(disabledReason: String)
     case knownUnsupported(disabledReason: String)
     case ambiguous(disabledReason: String)
@@ -442,6 +443,8 @@ public extension DevicePickerCandidateSupport {
                 connectionRoute: dto.connectionRoute.flatMap(DevicePickerConnectionRoute.init(rawValue:)),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
+        case .probeRecommended:
+            self = .probeRecommended(disabledReason: dto.disabledReason ?? dto.detail)
         case .unknownRecordable:
             self = .unknownRecordable(disabledReason: dto.disabledReason ?? dto.detail)
         case .knownUnsupported:
@@ -535,7 +538,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported, .provisionalRoute:
             true
-        case .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
             false
         }
     }
@@ -544,7 +547,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(let connectionRoute, _), .provisionalRoute(let connectionRoute, _):
             connectionRoute
-        case .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
             nil
         }
     }
@@ -553,7 +556,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(_, let electricUnicycleModel), .provisionalRoute(_, let electricUnicycleModel):
             electricUnicycleModel
-        case .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
             nil
         }
     }
@@ -562,6 +565,8 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported, .provisionalRoute:
             .supported(action: "Pair")
+        case .probeRecommended:
+            .unsupported(action: "Probe")
         case .unknownRecordable:
             .unsupported(action: "Record")
         case .knownUnsupported:

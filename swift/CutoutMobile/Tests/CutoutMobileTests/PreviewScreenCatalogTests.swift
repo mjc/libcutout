@@ -450,6 +450,26 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testProbeRecommendedDiscoveryCandidateOffersProbePickerAction() {
+        let dto = DiscoveryCandidate(
+            platformIdentifier: "ios-local-unknown-euc",
+            displayName: "EUC-unknown",
+            productCategory: "Electric unicycle",
+            evidence: "FFE0/FFE1 transport hint",
+            detail: "Read-only probe recommended",
+            isPickerCandidate: true,
+            support: .probeRecommended,
+            connectionRoute: nil,
+            electricUnicycleModel: nil,
+            disabledReason: "Read-only probe recommended"
+        )
+        let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
+
+        XCTAssertEqual(candidate.support, .probeRecommended(disabledReason: "Read-only probe recommended"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Probe"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testUnknownRecordableDiscoveryCandidateOffersRecordOnlyPickerAction() {
         let dto = DiscoveryCandidate(
             platformIdentifier: "ios-local-unknown-euc",

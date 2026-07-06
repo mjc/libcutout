@@ -242,6 +242,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate can use a read-only test route but is not confirmed identity.
     ProvisionalRoute,
 
+    /// Candidate should be identified with a read-only probe before routing.
+    ProbeRecommended,
+
     /// Candidate is relevant enough to capture but has no supported route yet.
     UnknownRecordable,
 
@@ -317,8 +320,8 @@ impl DiscoveryCandidateSnapshot {
                     display_name: display_name.to_owned(),
                     product_category: "Electric unicycle".to_owned(),
                     evidence: "FFE0/FFE1 transport hint".to_owned(),
-                    detail: "Model not confirmed".to_owned(),
-                    support: DiscoveryCandidateSupport::UnknownRecordable,
+                    detail: "Read-only probe recommended".to_owned(),
+                    support: DiscoveryCandidateSupport::ProbeRecommended,
                     electric_unicycle_model: None,
                 },
             }),
@@ -573,9 +576,9 @@ mod tests {
         assert_eq!(picker_candidates[2].platform_identifier, "unknown-euc-id");
         assert_eq!(
             picker_candidates[2].support,
-            DiscoveryCandidateSupport::UnknownRecordable
+            DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(picker_candidates[2].detail, "Model not confirmed");
+        assert_eq!(picker_candidates[2].detail, "Read-only probe recommended");
         assert_eq!(picker_candidates[2].electric_unicycle_model, None);
     }
 }
