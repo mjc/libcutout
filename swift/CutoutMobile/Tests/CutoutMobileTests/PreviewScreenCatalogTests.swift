@@ -181,6 +181,30 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testAmbiguousDiscoveryCandidateRequiresConfirmationWithoutRoute() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileAmbiguousDiscoveryCandidate(
+            platformIdentifier: "ios-local-begode",
+            displayName: "GotWay_002441",
+            detail: "Falcon or Falcon variant"
+        ))
+
+        XCTAssertEqual(candidate.support, .ambiguous(disabledReason: "Needs user confirmation"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Confirm"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
+    func testConflictingDiscoveryCandidateStaysUnrouteable() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileConflictingDiscoveryCandidate(
+            platformIdentifier: "ios-local-conflict",
+            displayName: "Conflicting wheel",
+            detail: "Veteran frame conflicts with Begode banner"
+        ))
+
+        XCTAssertEqual(candidate.support, .conflicting(disabledReason: "Conflicting identity evidence"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Review"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testCoreBluetoothAdvertisementMapsToPickerCandidateWithoutMacAddress() {
         let advertisement = CoreBluetoothAdvertisement(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),

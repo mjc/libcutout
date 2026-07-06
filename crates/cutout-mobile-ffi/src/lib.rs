@@ -56,6 +56,12 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate category is known, but no route exists yet.
     KnownUnsupported,
 
+    /// Candidate has multiple plausible identities or variants.
+    Ambiguous,
+
+    /// Candidate has contradictory identity evidence.
+    Conflicting,
+
     /// Candidate is unrelated Bluetooth noise.
     RejectedNoise,
 
@@ -558,6 +564,48 @@ pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Capture flow later".to_owned()),
+    }
+}
+
+/// Ambiguous picker candidate that requires user confirmation before routing.
+#[uniffi::export]
+pub fn mobile_ambiguous_discovery_candidate(
+    platform_identifier: String,
+    display_name: String,
+    detail: String,
+) -> DiscoveryCandidate {
+    DiscoveryCandidate {
+        platform_identifier,
+        display_name,
+        product_category: "Electric unicycle".to_owned(),
+        evidence: "Ambiguous identity evidence".to_owned(),
+        detail,
+        is_picker_candidate: true,
+        support: DiscoveryCandidateSupport::Ambiguous,
+        connection_route: None,
+        electric_unicycle_model: None,
+        disabled_reason: Some("Needs user confirmation".to_owned()),
+    }
+}
+
+/// Conflicting picker candidate that must not route automatically.
+#[uniffi::export]
+pub fn mobile_conflicting_discovery_candidate(
+    platform_identifier: String,
+    display_name: String,
+    detail: String,
+) -> DiscoveryCandidate {
+    DiscoveryCandidate {
+        platform_identifier,
+        display_name,
+        product_category: "Electric unicycle".to_owned(),
+        evidence: "Conflicting identity evidence".to_owned(),
+        detail,
+        is_picker_candidate: true,
+        support: DiscoveryCandidateSupport::Conflicting,
+        connection_route: None,
+        electric_unicycle_model: None,
+        disabled_reason: Some("Conflicting identity evidence".to_owned()),
     }
 }
 
@@ -4810,6 +4858,42 @@ mod tests {
         assert_eq!(
             candidate.disabled_reason,
             Some("Capture flow later".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_ambiguous_discovery_candidate_requires_confirmation_without_route() {
+        let candidate = mobile_ambiguous_discovery_candidate(
+            "ios-local-begode".to_owned(),
+            "GotWay_002441".to_owned(),
+            "Falcon or Falcon variant".to_owned(),
+        );
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Ambiguous);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Needs user confirmation".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_conflicting_discovery_candidate_stays_unrouteable() {
+        let candidate = mobile_conflicting_discovery_candidate(
+            "ios-local-conflict".to_owned(),
+            "Conflicting wheel".to_owned(),
+            "Veteran frame conflicts with Begode banner".to_owned(),
+        );
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Conflicting);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Conflicting identity evidence".to_owned())
         );
     }
 
