@@ -194,6 +194,10 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(values.map { $0.0.fraction(of: 50) }, values.map(\.1))
         XCTAssertNil(LiveActivityRideValue.available(label: "Speed", value: "25.0", unit: "mph", source: .liveTelemetry).fraction(of: 0))
     }
+
+    func testNotApplicablePreservesUnitWhenProvided() {
+        XCTAssertEqual(LiveActivityRideValue.notApplicable(label: "PWM", unit: "%").unit, "%")
+    }
 }
 
 private func liveRideState(speed: Int32?, telemetry: TelemetrySnapshot) -> EucRideScreenState {
