@@ -317,6 +317,16 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
                 CoreDiscoveryCandidateSupport::KnownUnsupported => {
                     Some("Not yet supported".to_owned())
                 }
+                CoreDiscoveryCandidateSupport::Ambiguous => {
+                    Some("Needs user confirmation".to_owned())
+                }
+                CoreDiscoveryCandidateSupport::Conflicting => {
+                    Some("Conflicting identity evidence".to_owned())
+                }
+                CoreDiscoveryCandidateSupport::RejectedNoise => Some("Rejected noise".to_owned()),
+                CoreDiscoveryCandidateSupport::ManualPlaceholder => {
+                    Some("Capture flow later".to_owned())
+                }
                 CoreDiscoveryCandidateSupport::Unsupported => Some("Not yet supported".to_owned()),
             },
         }
@@ -340,6 +350,10 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
             CoreDiscoveryCandidateSupport::ProbeRecommended => Self::ProbeRecommended,
             CoreDiscoveryCandidateSupport::UnknownRecordable => Self::UnknownRecordable,
             CoreDiscoveryCandidateSupport::KnownUnsupported => Self::KnownUnsupported,
+            CoreDiscoveryCandidateSupport::Ambiguous => Self::Ambiguous,
+            CoreDiscoveryCandidateSupport::Conflicting => Self::Conflicting,
+            CoreDiscoveryCandidateSupport::RejectedNoise => Self::RejectedNoise,
+            CoreDiscoveryCandidateSupport::ManualPlaceholder => Self::ManualPlaceholder,
             CoreDiscoveryCandidateSupport::Unsupported => Self::Unsupported,
         }
     }
@@ -5221,6 +5235,49 @@ mod tests {
             candidate.disabled_reason,
             Some("Conflicting identity evidence".to_owned())
         );
+    }
+
+    #[test]
+    fn core_discovery_candidate_resolution_states_project_to_mobile_rows() {
+        [
+            (
+                CoreDiscoveryCandidateSupport::Ambiguous,
+                DiscoveryCandidateSupport::Ambiguous,
+                "Needs user confirmation",
+            ),
+            (
+                CoreDiscoveryCandidateSupport::Conflicting,
+                DiscoveryCandidateSupport::Conflicting,
+                "Conflicting identity evidence",
+            ),
+            (
+                CoreDiscoveryCandidateSupport::RejectedNoise,
+                DiscoveryCandidateSupport::RejectedNoise,
+                "Rejected noise",
+            ),
+            (
+                CoreDiscoveryCandidateSupport::ManualPlaceholder,
+                DiscoveryCandidateSupport::ManualPlaceholder,
+                "Capture flow later",
+            ),
+        ]
+        .into_iter()
+        .for_each(|(core_support, mobile_support, disabled_reason)| {
+            let candidate = DiscoveryCandidate::from(DiscoveryCandidateSnapshot {
+                platform_identifier: "ios-local-row".to_owned(),
+                display_name: "Candidate".to_owned(),
+                product_category: "Electric unicycle".to_owned(),
+                evidence: "resolver evidence".to_owned(),
+                detail: "resolver detail".to_owned(),
+                support: core_support,
+                electric_unicycle_model: None,
+            });
+
+            assert_eq!(candidate.support, mobile_support);
+            assert_eq!(candidate.connection_route, None);
+            assert_eq!(candidate.electric_unicycle_model, None);
+            assert_eq!(candidate.disabled_reason, Some(disabled_reason.to_owned()));
+        });
     }
 
     #[test]

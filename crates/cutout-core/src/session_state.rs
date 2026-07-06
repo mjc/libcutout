@@ -251,6 +251,18 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate category is known, but no route exists yet.
     KnownUnsupported,
 
+    /// Candidate has multiple plausible identities or variants.
+    Ambiguous,
+
+    /// Candidate has contradictory identity evidence.
+    Conflicting,
+
+    /// Candidate is unrelated Bluetooth noise.
+    RejectedNoise,
+
+    /// Manual add / record placeholder until capture flow is available.
+    ManualPlaceholder,
+
     /// Candidate is not currently supported.
     Unsupported,
 }
