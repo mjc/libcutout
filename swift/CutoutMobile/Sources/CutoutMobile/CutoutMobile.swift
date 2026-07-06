@@ -2304,17 +2304,12 @@ public enum CutoutModelHint: Equatable, Hashable, Sendable {
     case unknown
 
     public init(deviceKind: String?) {
-        let normalizedName = deviceKind?.lowercased() ?? ""
-        if normalizedName.contains("falcon")
-            || normalizedName.contains("begode")
-            || normalizedName.contains("gotway") {
-            self = .falcon
-        } else if normalizedName.contains("aero")
-            || normalizedName.contains("nosfet")
-            || normalizedName.contains("veteran")
-            || normalizedName.hasPrefix("nf") {
+        switch deviceKind.flatMap(mobileElectricUnicycleModelHintFromDeviceKind) {
+        case .some(.aero):
             self = .aero
-        } else {
+        case .some(.falcon):
+            self = .falcon
+        case .none:
             self = .unknown
         }
     }

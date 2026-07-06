@@ -453,14 +453,8 @@ pub fn mobile_discovery_candidate_from_advertisement(
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
     let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
-        let model = if lower_name.contains("falcon")
-            || lower_name.contains("begode")
-            || lower_name.contains("gotway")
-        {
-            DiscoveryElectricUnicycleModel::Falcon
-        } else {
-            DiscoveryElectricUnicycleModel::Aero
-        };
+        let model = mobile_electric_unicycle_model_hint(&lower_name)
+            .unwrap_or(DiscoveryElectricUnicycleModel::Aero);
 
         return DiscoveryCandidate {
             platform_identifier,
@@ -507,6 +501,34 @@ pub fn mobile_discovery_candidate_from_advertisement(
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Not yet supported".to_owned()),
+    }
+}
+
+/// Resolve a provisional EUC session model hint from a user-visible device label.
+#[must_use]
+#[uniffi::export]
+pub fn mobile_electric_unicycle_model_hint_from_device_kind(
+    device_kind: String,
+) -> Option<DiscoveryElectricUnicycleModel> {
+    mobile_electric_unicycle_model_hint(&device_kind.to_ascii_lowercase())
+}
+
+fn mobile_electric_unicycle_model_hint(lower_name: &str) -> Option<DiscoveryElectricUnicycleModel> {
+    match lower_name {
+        name if ["falcon", "begode", "gotway"]
+            .into_iter()
+            .any(|needle| name.contains(needle)) =>
+        {
+            Some(DiscoveryElectricUnicycleModel::Falcon)
+        }
+        name if ["aero", "nosfet", "veteran"]
+            .into_iter()
+            .any(|needle| name.contains(needle))
+            || name.starts_with("nf") =>
+        {
+            Some(DiscoveryElectricUnicycleModel::Aero)
+        }
+        _ => None,
     }
 }
 
@@ -3623,6 +3645,18 @@ mod tests {
         );
         assert_eq!(candidate.disabled_reason, None);
         assert_eq!(candidate.detail, "Falcon provisional route");
+    }
+
+    #[test]
+    fn mobile_device_kind_hint_routes_typed_falcon_label() {
+        assert_eq!(
+            mobile_electric_unicycle_model_hint_from_device_kind("EUC falcon".to_owned()),
+            Some(DiscoveryElectricUnicycleModel::Falcon)
+        );
+        assert_eq!(
+            mobile_electric_unicycle_model_hint_from_device_kind("scooter foo bar".to_owned()),
+            None
+        );
     }
 
     #[test]
