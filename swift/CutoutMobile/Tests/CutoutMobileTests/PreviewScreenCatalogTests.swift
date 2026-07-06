@@ -268,6 +268,27 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testFamilyOnlyBegodeProbeMapsToRecordRow() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromBegodeIdentityProbe(
+            platformIdentifier: "ios-local-begode-family",
+            displayName: "GotWay_002441",
+            probe: MobileBegodeIdentityProbeDto(
+                reportedModel: nil,
+                reportedCodeName: nil,
+                reportedImu: nil,
+                reportedFirmwareVersion: nil,
+                reportedSerial: nil,
+                nominalVoltageHintMv: nil,
+                missingProbeResponse: nil,
+                malformedProbeResponse: nil
+            )
+        ))
+
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Begode model not confirmed"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testCodeOnlyBegodeProbeMapsToRecordRow() {
         let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromBegodeIdentityProbe(
             platformIdentifier: "ios-local-falcon-code",
