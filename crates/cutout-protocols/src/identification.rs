@@ -369,6 +369,9 @@ pub struct DeviceDetectionResolution {
 
     /// Latest probe that was issued but did not produce a matching response.
     pub missing_probe_response: Option<PendingProbe>,
+
+    /// Latest probe that produced malformed identity evidence.
+    pub malformed_probe_response: Option<PendingProbe>,
 }
 
 /// Incremental device-detection event.
@@ -428,6 +431,7 @@ impl DeviceDetectionSession {
                 firmware_banner: None,
                 imu_banner: None,
                 missing_probe_response: None,
+                malformed_probe_response: None,
             },
             gatt: ArrayVec::new(),
         }
@@ -448,9 +452,10 @@ impl DeviceDetectionSession {
                 self.refresh_resolution(None, None, self.resolution.protocol);
             }
             DeviceDetectionEvent::Notification { bytes } => {
+                let pending_probe = self.pending_probe;
                 let decision = NotificationDecision::from_bytes(
                     self.resolution.protocol,
-                    self.pending_probe,
+                    pending_probe,
                     bytes,
                 );
                 let malformed_model_banner =
@@ -469,6 +474,14 @@ impl DeviceDetectionSession {
                     self.pending_probe = None;
                     self.resolution.missing_probe_response = None;
                 }
+                self.resolution.malformed_probe_response =
+                    match (decision.banner_model, pending_probe) {
+                        (IdentityBannerEvidence::Malformed, probe) => probe,
+                        (IdentityBannerEvidence::Model(_), _) => None,
+                        (IdentityBannerEvidence::Missing, _) => {
+                            self.resolution.malformed_probe_response
+                        }
+                    };
                 let firmware_banner = decision
                     .firmware_banner
                     .then(|| FirmwareBanner::copy_from_slice(bytes));
@@ -561,6 +574,7 @@ impl DeviceDetectionSession {
             firmware_banner: self.resolution.firmware_banner.clone(),
             imu_banner: self.resolution.imu_banner.clone(),
             missing_probe_response: self.resolution.missing_probe_response,
+            malformed_probe_response: self.resolution.malformed_probe_response,
         };
     }
 }
@@ -1409,6 +1423,32 @@ mod tests {
             Some(PendingProbe::BegodeName)
         );
         assert_eq!(resolution.model_banner, None);
+        assert_eq!(resolution.staged.model, None);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_records_malformed_begode_model_probe_response() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+
+        let resolution = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon\0",
+        });
+
+        assert_eq!(
+            resolution.malformed_probe_response,
+            Some(PendingProbe::BegodeName)
+        );
+        assert_eq!(resolution.missing_probe_response, None);
+        assert_eq!(
+            resolution
+                .model_banner
+                .as_ref()
+                .map(|banner| banner.as_bytes()),
+            Some(b"Falcon\0".as_slice())
+        );
         assert_eq!(resolution.staged.model, None);
     }
 

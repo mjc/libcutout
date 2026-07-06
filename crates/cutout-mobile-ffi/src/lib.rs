@@ -105,6 +105,9 @@ pub struct MobileBegodeIdentityProbeDto {
 
     /// Probe that was issued but did not produce a matching response.
     pub missing_probe_response: Option<MobilePendingProbeDto>,
+
+    /// Probe that produced malformed identity evidence.
+    pub malformed_probe_response: Option<MobilePendingProbeDto>,
 }
 
 /// Mobile discovery candidate for picker UI.
@@ -395,6 +398,9 @@ pub struct DeviceDetectionResolutionRecord {
 
     /// Probe that was issued but did not produce a matching response.
     pub missing_probe_response: Option<MobilePendingProbeDto>,
+
+    /// Probe that produced malformed identity evidence.
+    pub malformed_probe_response: Option<MobilePendingProbeDto>,
 }
 
 /// Pending probe state exposed across the `UniFFI` boundary.
@@ -696,10 +702,12 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
     let reported_firmware_version = probe.reported_firmware_version.as_deref();
     let reported_serial = probe.reported_serial.as_deref();
     let missing_probe_response = probe.missing_probe_response;
+    let malformed_probe_response = probe.malformed_probe_response;
     let support = mobile_begode_identity_probe_support(
         reported_model,
         reported_code_name,
         missing_probe_response,
+        malformed_probe_response,
     );
     let supported = support == DiscoveryCandidateSupport::Supported;
     let detail = mobile_begode_identity_probe_detail(
@@ -711,6 +719,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         reported_serial,
         probe.nominal_voltage_hint_mv,
         missing_probe_response,
+        malformed_probe_response,
     );
 
     DiscoveryCandidate {
@@ -727,6 +736,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
             support,
             reported_code_name,
             missing_probe_response,
+            malformed_probe_response,
         ),
     }
 }
@@ -803,6 +813,7 @@ fn mobile_begode_identity_probe_support(
     reported_model: Option<&str>,
     reported_code_name: Option<&str>,
     missing_probe_response: Option<MobilePendingProbeDto>,
+    malformed_probe_response: Option<MobilePendingProbeDto>,
 ) -> DiscoveryCandidateSupport {
     let resolution = reported_model.map(|model| {
         identify_known_model(&StagedIdentityInput {
@@ -821,6 +832,7 @@ fn mobile_begode_identity_probe_support(
         Some(_) => DiscoveryCandidateSupport::Unsupported,
         None if reported_code_name.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
         None if missing_probe_response.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
+        None if malformed_probe_response.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
         None => DiscoveryCandidateSupport::Unsupported,
     }
 }
@@ -829,18 +841,29 @@ fn mobile_begode_identity_probe_disabled_reason(
     support: DiscoveryCandidateSupport,
     reported_code_name: Option<&str>,
     missing_probe_response: Option<MobilePendingProbeDto>,
+    malformed_probe_response: Option<MobilePendingProbeDto>,
 ) -> Option<String> {
-    match (support, reported_code_name, missing_probe_response) {
-        (DiscoveryCandidateSupport::Supported, _, _) => None,
-        (DiscoveryCandidateSupport::Conflicting, _, _) => {
+    match (
+        support,
+        reported_code_name,
+        missing_probe_response,
+        malformed_probe_response,
+    ) {
+        (DiscoveryCandidateSupport::Supported, _, _, _) => None,
+        (DiscoveryCandidateSupport::Conflicting, _, _, _) => {
             Some("Conflicting identity evidence".to_owned())
         }
-        (DiscoveryCandidateSupport::Ambiguous, _, _) => Some("Needs user confirmation".to_owned()),
-        (DiscoveryCandidateSupport::UnknownRecordable, Some(_), _) => {
+        (DiscoveryCandidateSupport::Ambiguous, _, _, _) => {
+            Some("Needs user confirmation".to_owned())
+        }
+        (DiscoveryCandidateSupport::UnknownRecordable, Some(_), _, _) => {
             Some("Unresolved Begode code banner".to_owned())
         }
-        (DiscoveryCandidateSupport::UnknownRecordable, _, Some(_)) => {
+        (DiscoveryCandidateSupport::UnknownRecordable, _, Some(_), _) => {
             Some("Missing Begode probe response".to_owned())
+        }
+        (DiscoveryCandidateSupport::UnknownRecordable, _, _, Some(_)) => {
+            Some("Malformed Begode probe response".to_owned())
         }
         _ => Some("Not yet supported".to_owned()),
     }
@@ -869,6 +892,11 @@ fn mobile_begode_identity_probe_evidence(probe: &MobileBegodeIdentityProbeDto) -
     if let Some(missing_probe_response) = probe.missing_probe_response {
         parts.push(format!("missing_probe_response={missing_probe_response:?}"));
     }
+    if let Some(malformed_probe_response) = probe.malformed_probe_response {
+        parts.push(format!(
+            "malformed_probe_response={malformed_probe_response:?}"
+        ));
+    }
     if parts.is_empty() {
         "Begode protocol identity probe".to_owned()
     } else {
@@ -885,6 +913,7 @@ fn mobile_begode_identity_probe_detail(
     reported_serial: Option<&str>,
     nominal_voltage_hint_mv: Option<u32>,
     missing_probe_response: Option<MobilePendingProbeDto>,
+    malformed_probe_response: Option<MobilePendingProbeDto>,
 ) -> String {
     let mut parts = Vec::new();
     if let Some(model) = reported_model {
@@ -907,6 +936,9 @@ fn mobile_begode_identity_probe_detail(
     }
     if let Some(missing_probe_response) = missing_probe_response {
         parts.push(format!("missing {missing_probe_response:?} response"));
+    }
+    if let Some(malformed_probe_response) = malformed_probe_response {
+        parts.push(format!("malformed {malformed_probe_response:?} response"));
     }
     if supported {
         if parts.is_empty() {
@@ -2389,6 +2421,9 @@ impl From<&DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
             missing_probe_response: resolution
                 .missing_probe_response
                 .map(MobilePendingProbeDto::from),
+            malformed_probe_response: resolution
+                .malformed_probe_response
+                .map(MobilePendingProbeDto::from),
         }
     }
 }
@@ -3809,6 +3844,7 @@ mod tests {
                 reported_serial: Some("012345".to_owned()),
                 nominal_voltage_hint_mv: Some(100_800),
                 missing_probe_response: None,
+                malformed_probe_response: None,
             },
         );
 
@@ -3849,6 +3885,7 @@ mod tests {
                 reported_serial: None,
                 nominal_voltage_hint_mv: None,
                 missing_probe_response: None,
+                malformed_probe_response: None,
             },
         );
 
@@ -3874,6 +3911,7 @@ mod tests {
                 reported_serial: None,
                 nominal_voltage_hint_mv: None,
                 missing_probe_response: None,
+                malformed_probe_response: None,
             },
         );
 
@@ -3902,6 +3940,7 @@ mod tests {
                 reported_serial: None,
                 nominal_voltage_hint_mv: None,
                 missing_probe_response: Some(MobilePendingProbeDto::BegodeName),
+                malformed_probe_response: None,
             },
         );
 
@@ -3918,6 +3957,39 @@ mod tests {
         assert_eq!(
             candidate.evidence,
             "missing_probe_response=BegodeName".to_owned()
+        );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_keeps_malformed_begode_probe_recordable() {
+        let candidate = mobile_discovery_candidate_from_begode_identity_probe(
+            "ios-local-falcon".to_owned(),
+            "GotWay_002441".to_owned(),
+            MobileBegodeIdentityProbeDto {
+                reported_model: None,
+                reported_code_name: None,
+                reported_imu: None,
+                reported_firmware_version: None,
+                reported_serial: None,
+                nominal_voltage_hint_mv: None,
+                missing_probe_response: None,
+                malformed_probe_response: Some(MobilePendingProbeDto::BegodeName),
+            },
+        );
+
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Malformed Begode probe response".to_owned())
+        );
+        assert_eq!(
+            candidate.evidence,
+            "malformed_probe_response=BegodeName".to_owned()
         );
     }
 
@@ -4069,6 +4141,21 @@ mod tests {
             Some(MobilePendingProbeDto::BegodeName)
         );
         assert_eq!(resolution.model_banner, None);
+    }
+
+    #[test]
+    fn mobile_device_detection_session_exposes_malformed_begode_probe_response() {
+        let session = DeviceDetectionSessionHandle::new();
+        let _ = session.observe_begode_name_probe();
+
+        let resolution = session.observe_notification(b"NAME=Falcon\0".to_vec());
+
+        assert_eq!(
+            resolution.malformed_probe_response,
+            Some(MobilePendingProbeDto::BegodeName)
+        );
+        assert_eq!(resolution.missing_probe_response, None);
+        assert_eq!(resolution.model_banner, Some(b"Falcon\0".to_vec()));
     }
 
     #[test]

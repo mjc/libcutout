@@ -216,7 +216,8 @@ extension MockupScreenCatalogTests {
                 reportedFirmwareVersion: nil,
                 reportedSerial: nil,
                 nominalVoltageHintMv: nil,
-                missingProbeResponse: nil
+                missingProbeResponse: nil,
+                malformedProbeResponse: nil
             )
         ))
 
@@ -236,11 +237,33 @@ extension MockupScreenCatalogTests {
                 reportedFirmwareVersion: nil,
                 reportedSerial: nil,
                 nominalVoltageHintMv: nil,
-                missingProbeResponse: .begodeName
+                missingProbeResponse: .begodeName,
+                malformedProbeResponse: nil
             )
         ))
 
         XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Missing Begode probe response"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
+    func testMalformedBegodeProbeResponseMapsToRecordRow() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromBegodeIdentityProbe(
+            platformIdentifier: "ios-local-falcon-malformed",
+            displayName: "GotWay_002441",
+            probe: MobileBegodeIdentityProbeDto(
+                reportedModel: nil,
+                reportedCodeName: nil,
+                reportedImu: nil,
+                reportedFirmwareVersion: nil,
+                reportedSerial: nil,
+                nominalVoltageHintMv: nil,
+                missingProbeResponse: nil,
+                malformedProbeResponse: .begodeName
+            )
+        ))
+
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Malformed Begode probe response"))
         XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
@@ -256,7 +279,8 @@ extension MockupScreenCatalogTests {
                 reportedFirmwareVersion: nil,
                 reportedSerial: nil,
                 nominalVoltageHintMv: nil,
-                missingProbeResponse: nil
+                missingProbeResponse: nil,
+                malformedProbeResponse: nil
             )
         ))
 
