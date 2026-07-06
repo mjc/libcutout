@@ -854,6 +854,46 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
     }
 }
 
+/// Build a mobile discovery candidate from caller-owned detection output.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned records"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_candidate_from_begode_detection_resolution(
+    platform_identifier: String,
+    display_name: String,
+    resolution: DeviceDetectionResolutionRecord,
+) -> DiscoveryCandidate {
+    mobile_discovery_candidate_from_begode_identity_probe(
+        platform_identifier,
+        display_name,
+        MobileBegodeIdentityProbeDto {
+            reported_model: resolution
+                .model_banner
+                .as_deref()
+                .and_then(|banner| std::str::from_utf8(banner).ok())
+                .map(ToOwned::to_owned),
+            reported_code_name: resolution
+                .firmware_banner
+                .as_deref()
+                .and_then(|banner| std::str::from_utf8(banner).ok())
+                .map(ToOwned::to_owned),
+            reported_imu: resolution
+                .imu_banner
+                .as_deref()
+                .and_then(|banner| std::str::from_utf8(banner).ok())
+                .map(ToOwned::to_owned),
+            reported_firmware_version: None,
+            reported_serial: None,
+            nominal_voltage_hint_mv: None,
+            missing_probe_response: resolution.missing_probe_response,
+            malformed_probe_response: resolution.malformed_probe_response,
+        },
+    )
+}
+
 /// Build a mobile discovery candidate from Veteran/NOSFET protocol identity.
 #[must_use]
 #[uniffi::export]
@@ -4331,6 +4371,35 @@ mod tests {
         assert_eq!(malformed.model_banner, Some(b"Falcon\0".to_vec()));
         assert_eq!(refreshed.model_banner, Some(b"Falcon\0".to_vec()));
         assert_eq!(valid.model_banner, Some(b"Falcon".to_vec()));
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_projects_begode_detection_resolution() {
+        let session = DeviceDetectionSessionHandle::new();
+        let _ = session.observe_begode_name_probe();
+        let resolution = session.observe_begode_name_probe_timeout();
+
+        let candidate = mobile_discovery_candidate_from_begode_detection_resolution(
+            "ios-local-falcon".to_owned(),
+            "GotWay_002441".to_owned(),
+            resolution,
+        );
+
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
+        assert_eq!(
+            candidate.recommended_action,
+            DiscoveryCandidateAction::Record
+        );
+        assert_eq!(candidate.section, DiscoveryCandidateSection::RecordOnly);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Missing Begode probe response".to_owned())
+        );
     }
 
     #[test]

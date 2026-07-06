@@ -39,6 +39,17 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
             self = .vesc
         }
     }
+
+    fileprivate var dto: MobileProtocolFamilyDto {
+        switch self {
+        case .veteranLeaperkimNosfet:
+            .veteranLeaperkimNosfet
+        case .begodeGotway:
+            .begodeGotway
+        case .vesc:
+            .vesc
+        }
+    }
 }
 
 public enum DeviceDetectionPendingProbe: Equatable, Hashable, Sendable {
@@ -54,6 +65,17 @@ public enum DeviceDetectionPendingProbe: Equatable, Hashable, Sendable {
             self = .begodeFirmware
         case .begodeImu:
             self = .begodeImu
+        }
+    }
+
+    fileprivate var dto: MobilePendingProbeDto {
+        switch self {
+        case .begodeName:
+            .begodeName
+        case .begodeFirmware:
+            .begodeFirmware
+        case .begodeImu:
+            .begodeImu
         }
     }
 }
@@ -75,6 +97,27 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
         self.imuBanner = record.imuBanner
         self.missingProbeResponse = record.missingProbeResponse.map(DeviceDetectionPendingProbe.init)
         self.malformedProbeResponse = record.malformedProbeResponse.map(DeviceDetectionPendingProbe.init)
+    }
+}
+
+public extension DeviceDetectionResolution {
+    func discoveryCandidate(
+        platformIdentifier: String,
+        displayName: String
+    ) -> DiscoveryCandidate {
+        mobileDiscoveryCandidateFromBegodeDetectionResolution(
+            platformIdentifier: platformIdentifier,
+            displayName: displayName,
+            resolution: DeviceDetectionResolutionRecord(
+                protocolFamily: protocolFamily.map(\.dto),
+                advertisedName: advertisedName,
+                modelBanner: modelBanner,
+                firmwareBanner: firmwareBanner,
+                imuBanner: imuBanner,
+                missingProbeResponse: missingProbeResponse.map(\.dto),
+                malformedProbeResponse: malformedProbeResponse.map(\.dto)
+            )
+        )
     }
 }
 

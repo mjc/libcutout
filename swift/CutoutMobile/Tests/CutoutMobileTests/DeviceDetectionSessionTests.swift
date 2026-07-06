@@ -48,6 +48,22 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(resolution.modelBanner)
     }
 
+    func testBegodeDetectionResolutionProjectsRecordOnlyCandidate() {
+        let session = DeviceDetectionSession()
+
+        _ = session.observeBegodeNameProbe()
+        let resolution = session.observeBegodeNameProbeTimeout()
+        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
+            platformIdentifier: "ios-local-falcon",
+            displayName: "GotWay_002441"
+        ))
+
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Missing Begode probe response"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertEqual(candidate.pickerRow.section, .recordOnly)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testMalformedBegodeNameProbeRetainsRawControlByte() {
         let session = DeviceDetectionSession()
 
