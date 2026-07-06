@@ -453,20 +453,31 @@ pub fn mobile_discovery_candidate_from_advertisement(
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
     let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
-        let model = mobile_electric_unicycle_model_hint(&lower_name)
-            .unwrap_or(DiscoveryElectricUnicycleModel::Aero);
-
-        return DiscoveryCandidate {
-            platform_identifier,
-            display_name,
-            product_category: "Electric unicycle".to_owned(),
-            evidence: "advertisement hint".to_owned(),
-            detail: format!("{model:?} provisional route"),
-            is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::Supported,
-            connection_route: Some("electric_unicycle".to_owned()),
-            electric_unicycle_model: Some(model),
-            disabled_reason: None,
+        return match mobile_electric_unicycle_model_hint(&lower_name) {
+            Some(model) => DiscoveryCandidate {
+                platform_identifier,
+                display_name,
+                product_category: "Electric unicycle".to_owned(),
+                evidence: "advertisement hint".to_owned(),
+                detail: format!("{model:?} provisional route"),
+                is_picker_candidate: true,
+                support: DiscoveryCandidateSupport::Supported,
+                connection_route: Some("electric_unicycle".to_owned()),
+                electric_unicycle_model: Some(model),
+                disabled_reason: None,
+            },
+            None => DiscoveryCandidate {
+                platform_identifier,
+                display_name,
+                product_category: "Electric unicycle".to_owned(),
+                evidence: "FFE0/FFE1 transport hint".to_owned(),
+                detail: "Model not confirmed".to_owned(),
+                is_picker_candidate: true,
+                support: DiscoveryCandidateSupport::Unsupported,
+                connection_route: None,
+                electric_unicycle_model: None,
+                disabled_reason: Some("Model not confirmed".to_owned()),
+            },
         };
     }
 
@@ -4667,7 +4678,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_unknown_ffe0_to_default_euc_session() {
+    fn mobile_discovery_candidate_keeps_unknown_ffe0_unrouteable() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown-euc".to_owned(),
             Some("EUC-unknown".to_owned()),
@@ -4675,16 +4686,16 @@ mod tests {
         );
 
         assert!(candidate.is_picker_candidate);
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(candidate.product_category, "Electric unicycle");
+        assert_eq!(candidate.evidence, "FFE0/FFE1 transport hint");
+        assert_eq!(candidate.detail, "Model not confirmed");
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some("electric_unicycle".to_owned())
+            candidate.disabled_reason,
+            Some("Model not confirmed".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        );
-        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
