@@ -293,14 +293,25 @@ impl DiscoveryCandidateSnapshot {
                 || lower_name.contains("onewheel")
                 || lower_name.contains("floatwheel"),
         ) {
-            (true, _) => Some(Self {
-                platform_identifier: observation.platform_identifier.clone(),
-                display_name: display_name.to_owned(),
-                product_category: "Electric unicycle".to_owned(),
-                evidence: "advertisement hint".to_owned(),
-                detail: discovery_electric_unicycle_detail(&lower_name).to_owned(),
-                support: DiscoveryCandidateSupport::Supported,
-                electric_unicycle_model: Some(discovery_electric_unicycle_model(&lower_name)),
+            (true, _) => Some(match discovery_electric_unicycle_model(&lower_name) {
+                Some(model) => Self {
+                    platform_identifier: observation.platform_identifier.clone(),
+                    display_name: display_name.to_owned(),
+                    product_category: "Electric unicycle".to_owned(),
+                    evidence: "advertisement hint".to_owned(),
+                    detail: discovery_electric_unicycle_detail(model).to_owned(),
+                    support: DiscoveryCandidateSupport::Supported,
+                    electric_unicycle_model: Some(model),
+                },
+                None => Self {
+                    platform_identifier: observation.platform_identifier.clone(),
+                    display_name: display_name.to_owned(),
+                    product_category: "Electric unicycle".to_owned(),
+                    evidence: "FFE0/FFE1 transport hint".to_owned(),
+                    detail: "Model not confirmed".to_owned(),
+                    support: DiscoveryCandidateSupport::Unsupported,
+                    electric_unicycle_model: None,
+                },
             }),
             (false, true) => Some(Self {
                 platform_identifier: observation.platform_identifier.clone(),
@@ -316,17 +327,27 @@ impl DiscoveryCandidateSnapshot {
     }
 }
 
-fn discovery_electric_unicycle_model(lower_name: &str) -> DiscoveryElectricUnicycleModel {
-    ["falcon", "begode", "gotway"]
-        .into_iter()
-        .find(|needle| lower_name.contains(needle))
-        .map_or(DiscoveryElectricUnicycleModel::Aero, |_| {
-            DiscoveryElectricUnicycleModel::Falcon
-        })
+fn discovery_electric_unicycle_model(lower_name: &str) -> Option<DiscoveryElectricUnicycleModel> {
+    match lower_name {
+        name if ["falcon", "begode", "gotway"]
+            .into_iter()
+            .any(|needle| name.contains(needle)) =>
+        {
+            Some(DiscoveryElectricUnicycleModel::Falcon)
+        }
+        name if ["aero", "nosfet", "veteran"]
+            .into_iter()
+            .any(|needle| name.contains(needle))
+            || name.starts_with("nf") =>
+        {
+            Some(DiscoveryElectricUnicycleModel::Aero)
+        }
+        _ => None,
+    }
 }
 
-fn discovery_electric_unicycle_detail(lower_name: &str) -> &'static str {
-    match discovery_electric_unicycle_model(lower_name) {
+fn discovery_electric_unicycle_detail(model: DiscoveryElectricUnicycleModel) -> &'static str {
+    match model {
         DiscoveryElectricUnicycleModel::Falcon => "Falcon provisional route",
         DiscoveryElectricUnicycleModel::Aero => "Aero provisional route",
     }
@@ -505,6 +526,12 @@ mod tests {
             -60,
         ));
         state.observe_discovery(discovery_observation(
+            "unknown-euc-id",
+            b"EUC-unknown",
+            vec![0xffe0],
+            -55,
+        ));
+        state.observe_discovery(discovery_observation(
             "unknown-id",
             b"Keyboard",
             vec![0x180f],
@@ -519,7 +546,7 @@ mod tests {
             discovery.selected_platform_identifier.as_deref(),
             Some("falcon-id")
         );
-        assert_eq!(picker_candidates.len(), 2);
+        assert_eq!(picker_candidates.len(), 3);
         assert_eq!(picker_candidates[0].platform_identifier, "falcon-id");
         assert_eq!(
             picker_candidates[0].support,
@@ -534,5 +561,12 @@ mod tests {
             picker_candidates[1].support,
             DiscoveryCandidateSupport::Unsupported
         );
+        assert_eq!(picker_candidates[2].platform_identifier, "unknown-euc-id");
+        assert_eq!(
+            picker_candidates[2].support,
+            DiscoveryCandidateSupport::Unsupported
+        );
+        assert_eq!(picker_candidates[2].detail, "Model not confirmed");
+        assert_eq!(picker_candidates[2].electric_unicycle_model, None);
     }
 }
