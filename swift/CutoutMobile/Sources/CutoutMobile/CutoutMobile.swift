@@ -757,6 +757,261 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 }
 
+public enum VescControllerState: Equatable, Hashable, Sendable {
+    case armed
+    case disarmed
+    case unknown
+
+    fileprivate init(_ dto: MobileVescControllerStateDto) {
+        switch dto {
+        case .armed:
+            self = .armed
+        case .disarmed:
+            self = .disarmed
+        case .unknown:
+            self = .unknown
+        }
+    }
+}
+
+public enum VescRideWarning: Equatable, Hashable, Sendable {
+    case none
+    case pushbackSoon
+    case unknown
+
+    fileprivate init(_ dto: MobileVescRideWarningDto) {
+        switch dto {
+        case .none:
+            self = .none
+        case .pushbackSoon:
+            self = .pushbackSoon
+        case .unknown:
+            self = .unknown
+        }
+    }
+}
+
+public enum VescVehicleKind: Equatable, Hashable, Sendable {
+    case float
+    case bike
+    case skateboard
+    case electricUnicycle
+    case unknown
+
+    public var displayName: String {
+        switch self {
+        case .float:
+            "VESC Float"
+        case .bike:
+            "VESC Bike"
+        case .skateboard:
+            "VESC Skateboard"
+        case .electricUnicycle:
+            "VESC EUC"
+        case .unknown:
+            "VESC"
+        }
+    }
+
+    fileprivate init(_ dto: MobileVescVehicleKindDto) {
+        switch dto {
+        case .float:
+            self = .float
+        case .bike:
+            self = .bike
+        case .skateboard:
+            self = .skateboard
+        case .electricUnicycle:
+            self = .electricUnicycle
+        case .unknown:
+            self = .unknown
+        }
+    }
+}
+
+public enum VescSubProtocol: Equatable, Hashable, Sendable {
+    case refloat
+    case bike
+    case eskate
+    case generic
+
+    public var displayName: String {
+        switch self {
+        case .refloat:
+            "Refloat"
+        case .bike:
+            "Bike"
+        case .eskate:
+            "eSkate"
+        case .generic:
+            "VESC"
+        }
+    }
+
+    fileprivate init(_ dto: MobileVescSubProtocolDto) {
+        switch dto {
+        case .refloat:
+            self = .refloat
+        case .bike:
+            self = .bike
+        case .eskate:
+            self = .eskate
+        case .generic:
+            self = .generic
+        }
+    }
+}
+
+public struct VescRideSnapshot: Equatable, Hashable, Sendable {
+    public let title: String
+    public let vehicleKind: VescVehicleKind
+    public let subProtocol: VescSubProtocol
+    public let controllerState: VescControllerState
+    public let warning: VescRideWarning
+    public let boardSpeed: Speed?
+    public let dutyCycle: DutyCycle?
+    public let dutyHeadroom: BatteryLevel?
+    public let batteryCurrent: BatteryCurrent?
+    public let motorCurrent: PhaseCurrent?
+    public let boardAngle: Angle?
+    public let controllerTemperature: Temperature?
+    public let motorTemperature: Temperature?
+
+    public init(
+        title: String,
+        vehicleKind: VescVehicleKind,
+        subProtocol: VescSubProtocol,
+        controllerState: VescControllerState,
+        warning: VescRideWarning = .unknown,
+        boardSpeed: Speed? = nil,
+        dutyCycle: DutyCycle? = nil,
+        dutyHeadroom: BatteryLevel? = nil,
+        batteryCurrent: BatteryCurrent? = nil,
+        motorCurrent: PhaseCurrent? = nil,
+        boardAngle: Angle? = nil,
+        controllerTemperature: Temperature? = nil,
+        motorTemperature: Temperature? = nil
+    ) {
+        self.title = title
+        self.vehicleKind = vehicleKind
+        self.subProtocol = subProtocol
+        self.controllerState = controllerState
+        self.warning = warning
+        self.boardSpeed = boardSpeed
+        self.dutyCycle = dutyCycle
+        self.dutyHeadroom = dutyHeadroom
+        self.batteryCurrent = batteryCurrent
+        self.motorCurrent = motorCurrent
+        self.boardAngle = boardAngle
+        self.controllerTemperature = controllerTemperature
+        self.motorTemperature = motorTemperature
+    }
+
+    fileprivate init(_ dto: MobileVescRideSnapshotDto) {
+        self.init(
+            title: dto.title,
+            vehicleKind: VescVehicleKind(dto.vehicleKind),
+            subProtocol: VescSubProtocol(dto.subProtocol),
+            controllerState: VescControllerState(dto.controllerState),
+            warning: VescRideWarning(dto.warning),
+            boardSpeed: dto.boardSpeed?.value,
+            dutyCycle: dto.dutyCycle,
+            dutyHeadroom: dto.dutyHeadroom,
+            batteryCurrent: dto.batteryCurrent?.value,
+            motorCurrent: dto.motorCurrent?.value,
+            boardAngle: dto.boardAngle?.value,
+            controllerTemperature: dto.controllerTemperature?.value,
+            motorTemperature: dto.motorTemperature?.value
+        )
+    }
+}
+
+public enum VescWriteGuardrail: Equatable, Hashable, Sendable {
+    case readOnly
+    case unsupportedCommand
+    case policyRefusal
+    case authorizedButUnimplemented
+    case parkedAndConfirmed
+    case unknown
+
+    fileprivate init(_ dto: MobileVescWriteGuardrailDto) {
+        switch dto {
+        case .readOnly:
+            self = .readOnly
+        case .unsupportedCommand:
+            self = .unsupportedCommand
+        case .policyRefusal:
+            self = .policyRefusal
+        case .authorizedButUnimplemented:
+            self = .authorizedButUnimplemented
+        case .parkedAndConfirmed:
+            self = .parkedAndConfirmed
+        case .unknown:
+            self = .unknown
+        }
+    }
+}
+
+public struct VescDebugSnapshot: Equatable, Hashable, Sendable {
+    public let profileTitle: String
+    public let transportDetail: String
+    public let dutyCycle: DutyCycle?
+    public let maxSeenDutyCycle: DutyCycle?
+    public let packVoltage: Voltage?
+    public let batteryCurrentLimit: BatteryCurrent?
+    public let motorCurrentLimit: PhaseCurrent?
+    public let lastFault: String?
+    public let inputApp: String?
+    public let canStatus: String?
+    public let logging: String?
+    public let writeGuardrail: VescWriteGuardrail
+
+    public init(
+        profileTitle: String,
+        transportDetail: String,
+        dutyCycle: DutyCycle? = nil,
+        maxSeenDutyCycle: DutyCycle? = nil,
+        packVoltage: Voltage? = nil,
+        batteryCurrentLimit: BatteryCurrent? = nil,
+        motorCurrentLimit: PhaseCurrent? = nil,
+        lastFault: String? = nil,
+        inputApp: String? = nil,
+        canStatus: String? = nil,
+        logging: String? = nil,
+        writeGuardrail: VescWriteGuardrail
+    ) {
+        self.profileTitle = profileTitle
+        self.transportDetail = transportDetail
+        self.dutyCycle = dutyCycle
+        self.maxSeenDutyCycle = maxSeenDutyCycle
+        self.packVoltage = packVoltage
+        self.batteryCurrentLimit = batteryCurrentLimit
+        self.motorCurrentLimit = motorCurrentLimit
+        self.lastFault = lastFault
+        self.inputApp = inputApp
+        self.canStatus = canStatus
+        self.logging = logging
+        self.writeGuardrail = writeGuardrail
+    }
+
+    fileprivate init(_ dto: MobileVescDebugSnapshotDto) {
+        self.init(
+            profileTitle: dto.profileTitle,
+            transportDetail: dto.transportDetail,
+            dutyCycle: dto.dutyCycle,
+            maxSeenDutyCycle: dto.maxSeenDutyCycle,
+            packVoltage: dto.packVoltage?.value,
+            batteryCurrentLimit: dto.batteryCurrentLimit?.value,
+            motorCurrentLimit: dto.motorCurrentLimit?.value,
+            lastFault: dto.lastFault,
+            inputApp: dto.inputApp,
+            canStatus: dto.canStatus,
+            logging: dto.logging,
+            writeGuardrail: VescWriteGuardrail(dto.writeGuardrail)
+        )
+    }
+}
+
 public enum ReadbackAvailability: Equatable, Hashable, Sendable {
     case available
     case unavailable

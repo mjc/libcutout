@@ -1795,6 +1795,172 @@ pub struct MobileTelemetrySnapshotDto {
     pub battery_level_estimated: Option<BatteryLevelReading>,
 }
 
+/// VESC controller state for ride UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescControllerStateDto {
+    /// Controller is armed and balancing/riding data is relevant.
+    Armed,
+
+    /// Controller is not armed.
+    Disarmed,
+
+    /// Controller state is not known from the current readback.
+    Unknown,
+}
+
+/// VESC ride warning state for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescRideWarningDto {
+    /// No ride warning is active.
+    None,
+
+    /// Duty or authority data indicates pushback soon.
+    PushbackSoon,
+
+    /// Warning state is unknown.
+    Unknown,
+}
+
+/// VESC vehicle category independent of the installed protocol package.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescVehicleKindDto {
+    /// Float/Onewheel-style VESC build.
+    Float,
+
+    /// E-bike or emoto VESC build.
+    Bike,
+
+    /// Skateboard VESC build.
+    Skateboard,
+
+    /// Electric unicycle VESC build.
+    ElectricUnicycle,
+
+    /// Vehicle category is not known yet.
+    Unknown,
+}
+
+/// VESC sub-protocol available on the device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescSubProtocolDto {
+    /// Refloat sub-protocol is present.
+    Refloat,
+
+    /// Bike/e-moto VESC sub-protocol is present.
+    Bike,
+
+    /// Electric-skateboard VESC sub-protocol is present.
+    Eskate,
+
+    /// Generic VESC telemetry/protocol only.
+    Generic,
+}
+
+/// VESC ride snapshot for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileVescRideSnapshotDto {
+    /// Vehicle/profile label.
+    pub title: String,
+
+    /// Vehicle category, independent of protocol package.
+    pub vehicle_kind: MobileVescVehicleKindDto,
+
+    /// VESC sub-protocol; vehicle category does not imply this value.
+    pub sub_protocol: MobileVescSubProtocolDto,
+
+    /// Controller state, kept separate from generic ride session state.
+    pub controller_state: MobileVescControllerStateDto,
+
+    /// Current ride warning state.
+    pub warning: MobileVescRideWarningDto,
+
+    /// Board speed.
+    pub board_speed: Option<SpeedReading>,
+
+    /// Current duty cycle.
+    pub duty_cycle: Option<DutyCycle>,
+
+    /// Remaining duty headroom.
+    pub duty_headroom: Option<BatteryLevel>,
+
+    /// Battery current.
+    pub battery_current: Option<BatteryCurrentReading>,
+
+    /// Motor/phase current.
+    pub motor_current: Option<PhaseCurrentReading>,
+
+    /// Board pitch/angle.
+    pub board_angle: Option<AngleReading>,
+
+    /// Controller temperature.
+    pub controller_temperature: Option<TemperatureReading>,
+
+    /// Motor temperature.
+    pub motor_temperature: Option<TemperatureReading>,
+}
+
+/// VESC write guardrail shown by the debug surface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescWriteGuardrailDto {
+    /// Debug screen is read-only for the current state.
+    ReadOnly,
+
+    /// Command is not supported by the product contract.
+    UnsupportedCommand,
+
+    /// Command was refused by safety policy.
+    PolicyRefusal,
+
+    /// Command passed policy, but no encoder/write path exists yet.
+    AuthorizedButUnimplemented,
+
+    /// Writes require parked state plus explicit confirmation.
+    ParkedAndConfirmed,
+
+    /// Guardrail state is unknown.
+    Unknown,
+}
+
+/// VESC debug/config snapshot for mobile UI.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileVescDebugSnapshotDto {
+    /// Profile or setup label.
+    pub profile_title: String,
+
+    /// VESC implementation and firmware label.
+    pub transport_detail: String,
+
+    /// Current duty cycle.
+    pub duty_cycle: Option<DutyCycle>,
+
+    /// Maximum duty observed in the session.
+    pub max_seen_duty_cycle: Option<DutyCycle>,
+
+    /// Pack voltage.
+    pub pack_voltage: Option<VoltageReading>,
+
+    /// Battery current limit.
+    pub battery_current_limit: Option<BatteryCurrentReading>,
+
+    /// Motor/phase current limit.
+    pub motor_current_limit: Option<PhaseCurrentReading>,
+
+    /// Last fault label from read-only state.
+    pub last_fault: Option<String>,
+
+    /// Input app label.
+    pub input_app: Option<String>,
+
+    /// CAN status label.
+    pub can_status: Option<String>,
+
+    /// Logging state label.
+    pub logging: Option<String>,
+
+    /// Current write guardrail.
+    pub write_guardrail: MobileVescWriteGuardrailDto,
+}
+
 /// Confidence level for BMS topology mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileBmsTopologyConfidenceDto {
@@ -5013,6 +5179,151 @@ mod tests {
     }
 
     #[test]
+    fn mobile_vesc_ride_snapshot_keeps_vehicle_kind_currents_and_duty_fields_distinct() {
+        let snapshot = MobileVescRideSnapshotDto {
+            title: "Fungineers X7".to_owned(),
+            vehicle_kind: MobileVescVehicleKindDto::Float,
+            sub_protocol: MobileVescSubProtocolDto::Refloat,
+            controller_state: MobileVescControllerStateDto::Armed,
+            warning: MobileVescRideWarningDto::PushbackSoon,
+            board_speed: Some(reported_speed(19_000)),
+            duty_cycle: Some(DutyCycle { permille: 820 }),
+            duty_headroom: Some(BatteryLevel { value: 18 }),
+            battery_current: Some(reported_battery_current(38_000)),
+            motor_current: Some(reported_phase_current(71_000)),
+            board_angle: Some(reported_angle(-18)),
+            controller_temperature: Some(reported_temperature(54_000)),
+            motor_temperature: Some(reported_temperature(49_000)),
+        };
+
+        assert_eq!(snapshot.vehicle_kind, MobileVescVehicleKindDto::Float);
+        assert_eq!(snapshot.sub_protocol, MobileVescSubProtocolDto::Refloat);
+        assert_eq!(
+            snapshot.controller_state,
+            MobileVescControllerStateDto::Armed
+        );
+        assert_eq!(snapshot.warning, MobileVescRideWarningDto::PushbackSoon);
+        assert_eq!(
+            snapshot.board_speed.map(|reading| reading.value.value),
+            Some(19_000)
+        );
+        assert_eq!(snapshot.duty_cycle.map(|duty| duty.permille), Some(820));
+        assert_eq!(
+            snapshot.duty_headroom.map(|headroom| headroom.value),
+            Some(18)
+        );
+        assert_eq!(
+            snapshot.battery_current.map(|reading| reading.value.value),
+            Some(38_000)
+        );
+        assert_eq!(
+            snapshot.motor_current.map(|reading| reading.value.value),
+            Some(71_000)
+        );
+        assert_eq!(
+            snapshot.board_angle.map(|reading| reading.value.value),
+            Some(-18)
+        );
+        assert_eq!(
+            snapshot
+                .controller_temperature
+                .map(|reading| reading.value.value),
+            Some(54_000)
+        );
+        assert_eq!(
+            snapshot
+                .motor_temperature
+                .map(|reading| reading.value.value),
+            Some(49_000)
+        );
+    }
+
+    #[test]
+    fn mobile_vesc_vehicle_kind_does_not_imply_sub_protocol() {
+        let snapshot = MobileVescRideSnapshotDto {
+            title: "VESC Bike".to_owned(),
+            vehicle_kind: MobileVescVehicleKindDto::Bike,
+            sub_protocol: MobileVescSubProtocolDto::Generic,
+            controller_state: MobileVescControllerStateDto::Armed,
+            warning: MobileVescRideWarningDto::None,
+            board_speed: Some(reported_speed(19_000)),
+            duty_cycle: Some(DutyCycle { permille: 320 }),
+            duty_headroom: Some(BatteryLevel { value: 68 }),
+            battery_current: Some(reported_battery_current(18_000)),
+            motor_current: Some(reported_phase_current(41_000)),
+            board_angle: None,
+            controller_temperature: Some(reported_temperature(44_000)),
+            motor_temperature: Some(reported_temperature(39_000)),
+        };
+
+        assert_eq!(snapshot.vehicle_kind, MobileVescVehicleKindDto::Bike);
+        assert_eq!(snapshot.sub_protocol, MobileVescSubProtocolDto::Generic);
+
+        let eskate = MobileVescRideSnapshotDto {
+            title: "VESC Skateboard".to_owned(),
+            vehicle_kind: MobileVescVehicleKindDto::Skateboard,
+            sub_protocol: MobileVescSubProtocolDto::Eskate,
+            controller_state: MobileVescControllerStateDto::Armed,
+            warning: MobileVescRideWarningDto::None,
+            board_speed: Some(reported_speed(19_000)),
+            duty_cycle: Some(DutyCycle { permille: 320 }),
+            duty_headroom: Some(BatteryLevel { value: 68 }),
+            battery_current: Some(reported_battery_current(18_000)),
+            motor_current: Some(reported_phase_current(41_000)),
+            board_angle: None,
+            controller_temperature: Some(reported_temperature(44_000)),
+            motor_temperature: Some(reported_temperature(39_000)),
+        };
+
+        assert_eq!(eskate.vehicle_kind, MobileVescVehicleKindDto::Skateboard);
+        assert_eq!(eskate.sub_protocol, MobileVescSubProtocolDto::Eskate);
+    }
+
+    #[test]
+    fn mobile_vesc_debug_snapshot_preserves_read_only_guardrail_state() {
+        let snapshot = MobileVescDebugSnapshotDto {
+            profile_title: "Profile: Street stable".to_owned(),
+            transport_detail: "VESC Express · FW 6.x · UART bridge".to_owned(),
+            duty_cycle: Some(DutyCycle { permille: 820 }),
+            max_seen_duty_cycle: Some(DutyCycle { permille: 870 }),
+            pack_voltage: Some(reported_voltage(75_400)),
+            battery_current_limit: Some(reported_battery_current(45_000)),
+            motor_current_limit: Some(reported_phase_current(90_000)),
+            last_fault: Some("FAULT_CODE_NONE".to_owned()),
+            input_app: Some("ADC + balance".to_owned()),
+            can_status: Some("single controller".to_owned()),
+            logging: Some("local CSV armed".to_owned()),
+            write_guardrail: MobileVescWriteGuardrailDto::PolicyRefusal,
+        };
+
+        assert_eq!(snapshot.duty_cycle.map(|duty| duty.permille), Some(820));
+        assert_eq!(
+            snapshot.max_seen_duty_cycle.map(|duty| duty.permille),
+            Some(870)
+        );
+        assert_eq!(
+            snapshot.pack_voltage.map(|reading| reading.value.value),
+            Some(75_400)
+        );
+        assert_eq!(
+            snapshot
+                .battery_current_limit
+                .map(|reading| reading.value.value),
+            Some(45_000)
+        );
+        assert_eq!(
+            snapshot
+                .motor_current_limit
+                .map(|reading| reading.value.value),
+            Some(90_000)
+        );
+        assert_eq!(
+            snapshot.write_guardrail,
+            MobileVescWriteGuardrailDto::PolicyRefusal
+        );
+    }
+
+    #[test]
     fn mobile_settings_readback_projects_known_euc_garage_settings() {
         let readback = SettingsReadback::available([
             Some(SettingsEntry {
@@ -5912,6 +6223,60 @@ mod tests {
             source: ValueSourceDto::Reported,
             quality: ValueQualityDto::Known,
             verification: VerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn reported_speed(value: i32) -> SpeedReading {
+        SpeedReading {
+            value: Speed { value },
+            source: MobileValueSourceDto::Reported,
+            quality: MobileValueQualityDto::Known,
+            verification: MobileVerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn reported_voltage(value: i32) -> VoltageReading {
+        VoltageReading {
+            value: Voltage { value },
+            source: MobileValueSourceDto::Reported,
+            quality: MobileValueQualityDto::Known,
+            verification: MobileVerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn reported_battery_current(value: i32) -> BatteryCurrentReading {
+        BatteryCurrentReading {
+            value: BatteryCurrent { value },
+            source: MobileValueSourceDto::Reported,
+            quality: MobileValueQualityDto::Known,
+            verification: MobileVerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn reported_phase_current(value: i32) -> PhaseCurrentReading {
+        PhaseCurrentReading {
+            value: PhaseCurrent { value },
+            source: MobileValueSourceDto::Reported,
+            quality: MobileValueQualityDto::Known,
+            verification: MobileVerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn reported_temperature(value: i32) -> TemperatureReading {
+        TemperatureReading {
+            value: Temperature { value },
+            source: MobileValueSourceDto::Reported,
+            quality: MobileValueQualityDto::Known,
+            verification: MobileVerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn reported_angle(value: i32) -> AngleReading {
+        AngleReading {
+            value: Angle { value },
+            source: MobileValueSourceDto::Reported,
+            quality: MobileValueQualityDto::Known,
+            verification: MobileVerificationStatusDto::SourceVerified,
         }
     }
 

@@ -104,6 +104,94 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
     }
 
+    func testVescRideSnapshotKeepsRideCriticalFieldsTyped() {
+        let snapshot = VescRideSnapshot(
+            title: "Fungineers X7",
+            vehicleKind: .float,
+            subProtocol: .refloat,
+            controllerState: .armed,
+            warning: .pushbackSoon,
+            boardSpeed: speedValue(19_000),
+            dutyCycle: dutyCycle(820),
+            dutyHeadroom: batteryLevelValue(18),
+            batteryCurrent: batteryCurrentValue(38_000),
+            motorCurrent: phaseCurrentValue(71_000),
+            boardAngle: angleValue(-18),
+            controllerTemperature: temperatureValue(54_000),
+            motorTemperature: temperatureValue(49_000)
+        )
+
+        XCTAssertEqual(snapshot.vehicleKind, .float)
+        XCTAssertEqual(snapshot.vehicleKind.displayName, "VESC Float")
+        XCTAssertEqual(snapshot.subProtocol, .refloat)
+        XCTAssertEqual(snapshot.subProtocol.displayName, "Refloat")
+        XCTAssertEqual(snapshot.controllerState, .armed)
+        XCTAssertEqual(snapshot.warning, .pushbackSoon)
+        XCTAssertEqual(snapshot.boardSpeed, speedValue(19_000))
+        XCTAssertEqual(snapshot.dutyCycle, dutyCycle(820))
+        XCTAssertEqual(snapshot.dutyHeadroom, batteryLevelValue(18))
+        XCTAssertEqual(snapshot.batteryCurrent, batteryCurrentValue(38_000))
+        XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
+        XCTAssertEqual(snapshot.boardAngle, angleValue(-18))
+        XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
+        XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
+    }
+
+    func testVescVehicleKindDoesNotImplySubProtocol() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC Bike",
+            vehicleKind: .bike,
+            subProtocol: .generic,
+            controllerState: .armed
+        )
+
+        XCTAssertEqual(snapshot.vehicleKind.displayName, "VESC Bike")
+        XCTAssertEqual(snapshot.subProtocol, .generic)
+        XCTAssertEqual(snapshot.subProtocol.displayName, "VESC")
+
+        let bike = VescRideSnapshot(
+            title: "VESC Bike",
+            vehicleKind: .bike,
+            subProtocol: .bike,
+            controllerState: .armed
+        )
+        XCTAssertEqual(bike.vehicleKind.displayName, "VESC Bike")
+        XCTAssertEqual(bike.subProtocol.displayName, "Bike")
+
+        let eskate = VescRideSnapshot(
+            title: "VESC Skateboard",
+            vehicleKind: .skateboard,
+            subProtocol: .eskate,
+            controllerState: .armed
+        )
+        XCTAssertEqual(eskate.vehicleKind.displayName, "VESC Skateboard")
+        XCTAssertEqual(eskate.subProtocol.displayName, "eSkate")
+    }
+
+    func testVescDebugSnapshotKeepsGuardrailAndReadOnlyStateTyped() {
+        let snapshot = VescDebugSnapshot(
+            profileTitle: "Profile: Street stable",
+            transportDetail: "VESC Express · FW 6.x · UART bridge",
+            dutyCycle: dutyCycle(820),
+            maxSeenDutyCycle: dutyCycle(870),
+            packVoltage: voltageValue(75_400),
+            batteryCurrentLimit: batteryCurrentValue(45_000),
+            motorCurrentLimit: phaseCurrentValue(90_000),
+            lastFault: "FAULT_CODE_NONE",
+            inputApp: "ADC + balance",
+            canStatus: "single controller",
+            logging: "local CSV armed",
+            writeGuardrail: .policyRefusal
+        )
+
+        XCTAssertEqual(snapshot.dutyCycle, dutyCycle(820))
+        XCTAssertEqual(snapshot.maxSeenDutyCycle, dutyCycle(870))
+        XCTAssertEqual(snapshot.packVoltage, voltageValue(75_400))
+        XCTAssertEqual(snapshot.batteryCurrentLimit, batteryCurrentValue(45_000))
+        XCTAssertEqual(snapshot.motorCurrentLimit, phaseCurrentValue(90_000))
+        XCTAssertEqual(snapshot.writeGuardrail, .policyRefusal)
+    }
+
     func testSpeedObservationRemainsStickyAcrossTelemetryWithoutSpeed() {
         let core = CutoutSessionCore()
         let speedSnapshot = TelemetrySnapshot(
@@ -1529,12 +1617,20 @@ private func batteryCurrentValue(_ value: Int32) -> BatteryCurrent {
     BatteryCurrent(value: value)
 }
 
+private func phaseCurrentValue(_ value: Int32) -> PhaseCurrent {
+    PhaseCurrent(value: value)
+}
+
 private func powerValue(_ value: Int64) -> Power {
     Power(value: value)
 }
 
 private func temperatureValue(_ value: Int32) -> Temperature {
     Temperature(value: value)
+}
+
+private func angleValue(_ value: Int32) -> Angle {
+    Angle(value: value)
 }
 
 private func batteryLevelValue(_ value: UInt8) -> BatteryLevel {
