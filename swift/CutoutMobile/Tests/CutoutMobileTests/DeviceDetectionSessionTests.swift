@@ -136,6 +136,32 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
     }
 
+    func testVeteranFamilyOnlyDetectionResolutionProjectsRecordOnlyCandidate() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
+            platformIdentifier: "ios-local-veteran-family",
+            displayName: "Veteran stream",
+            resolution: DeviceDetectionResolutionRecord(
+                protocolFamily: .veteranLeaperkimNosfet,
+                protocolConflict: false,
+                veteranProtocolModelId: nil,
+                advertisedName: nil,
+                modelBanner: nil,
+                firmwareBanner: nil,
+                imuBanner: nil,
+                missingProbeResponse: nil,
+                malformedProbeResponse: nil
+            )
+        ))
+
+        XCTAssertEqual(
+            candidate.support,
+            .unknownRecordable(disabledReason: "Veteran/NOSFET model not confirmed")
+        )
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertEqual(candidate.pickerRow.section, .recordOnly)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testMixedProtocolFamiliesProjectConflictingCandidate() {
         let session = DeviceDetectionSession()
         let begodeFrame = Data([
