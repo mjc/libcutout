@@ -104,8 +104,9 @@ extension MockupScreenCatalogTests {
             "Little FOCer BT",
             "NINEBOT-7A31",
             "HX Hoverboard",
+            "Manual add / record unknown device",
         ])
-        XCTAssertEqual(Array(picker.pickerRows.prefix(4)), picker.discoveryCandidates.map(\.pickerRow))
+        XCTAssertEqual(picker.pickerRows, picker.discoveryCandidates.map(\.pickerRow))
     }
 
     func testDevicePickerSectionsHideEmptyGroups() {
@@ -169,6 +170,15 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(supported.pickerRow.connectionRoute, .electricUnicycle)
         XCTAssertEqual(unsupported.pickerRow.state, .unsupported(action: "Record"))
         XCTAssertNil(unsupported.pickerRow.connectionRoute)
+    }
+
+    func testManualDiscoveryCandidateMapsToManualPickerRow() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileManualDiscoveryCandidate())
+
+        XCTAssertEqual(candidate.support, .manualPlaceholder(disabledReason: "Capture flow later"))
+        XCTAssertEqual(candidate.pickerRow.title, "Manual add / record unknown device")
+        XCTAssertEqual(candidate.pickerRow.state, .manual(action: "later"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
     func testCoreBluetoothAdvertisementMapsToPickerCandidateWithoutMacAddress() {

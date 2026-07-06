@@ -415,6 +415,7 @@ public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case unknownRecordable(disabledReason: String)
     case knownUnsupported(disabledReason: String)
     case rejectedNoise(disabledReason: String)
+    case manualPlaceholder(disabledReason: String)
     case unsupported(disabledReason: String)
 }
 
@@ -437,6 +438,8 @@ public extension DevicePickerCandidateSupport {
             self = .knownUnsupported(disabledReason: dto.disabledReason ?? dto.detail)
         case .rejectedNoise:
             self = .rejectedNoise(disabledReason: dto.disabledReason ?? dto.detail)
+        case .manualPlaceholder:
+            self = .manualPlaceholder(disabledReason: dto.disabledReason ?? dto.detail)
         case .unsupported:
             self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
         }
@@ -518,7 +521,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported, .provisionalRoute:
             true
-        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .unsupported:
+        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .manualPlaceholder, .unsupported:
             false
         }
     }
@@ -527,7 +530,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(let connectionRoute, _), .provisionalRoute(let connectionRoute, _):
             connectionRoute
-        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .unsupported:
+        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .manualPlaceholder, .unsupported:
             nil
         }
     }
@@ -536,7 +539,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(_, let electricUnicycleModel), .provisionalRoute(_, let electricUnicycleModel):
             electricUnicycleModel
-        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .unsupported:
+        case .unknownRecordable, .knownUnsupported, .rejectedNoise, .manualPlaceholder, .unsupported:
             nil
         }
     }
@@ -551,6 +554,8 @@ public extension DevicePickerCandidateSupport {
             .unsupported(action: "Record")
         case .rejectedNoise:
             .unsupported(action: "Record")
+        case .manualPlaceholder:
+            .manual(action: "later")
         case .unsupported:
             .unsupported(action: "Record")
         }
@@ -823,6 +828,9 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         ),
     ]
 
+    private static let manualDiscoveryCandidate =
+        DevicePickerDiscoveryCandidate(candidate: mobileManualDiscoveryCandidate())
+
     private static let bmsOverviewSnapshot = BmsSnapshot(
         topology: BmsTopology(
             layoutLabel: "20S4P split pack",
@@ -970,16 +978,8 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "Unsupported", value: "HX Hoverboard"),
                 MockupMetric(label: "Manual add", value: "disabled"),
             ],
-            pickerRows: devicePickerDiscoveryCandidates.map(\.pickerRow) + [
-                MockupPickerRow(
-                    title: "Manual add / record unknown device",
-                    subtitle: "",
-                    detail: "",
-                    state: .manual(action: "later"),
-                    symbolName: "plus"
-                ),
-            ],
-            discoveryCandidates: devicePickerDiscoveryCandidates
+            pickerRows: (devicePickerDiscoveryCandidates + [manualDiscoveryCandidate]).map(\.pickerRow),
+            discoveryCandidates: devicePickerDiscoveryCandidates + [manualDiscoveryCandidate]
         ),
         MockupScreen(
             id: .eucRide,

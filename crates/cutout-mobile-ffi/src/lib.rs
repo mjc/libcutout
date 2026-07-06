@@ -59,6 +59,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate is unrelated Bluetooth noise.
     RejectedNoise,
 
+    /// Manual add / record placeholder until capture flow is available.
+    ManualPlaceholder,
+
     /// Candidate is not supported for launch.
     Unsupported,
 }
@@ -538,6 +541,23 @@ pub fn mobile_discovery_candidate_from_advertisement(
         connection_route: None,
         electric_unicycle_model: None,
         disabled_reason: Some("Rejected noise".to_owned()),
+    }
+}
+
+/// Manual picker placeholder for future record/capture flow.
+#[uniffi::export]
+pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
+    DiscoveryCandidate {
+        platform_identifier: "manual-add".to_owned(),
+        display_name: "Manual add / record unknown device".to_owned(),
+        product_category: "Unknown rideable".to_owned(),
+        evidence: "Manual placeholder".to_owned(),
+        detail: "Capture flow later".to_owned(),
+        is_picker_candidate: true,
+        support: DiscoveryCandidateSupport::ManualPlaceholder,
+        connection_route: None,
+        electric_unicycle_model: None,
+        disabled_reason: Some("Capture flow later".to_owned()),
     }
 }
 
@@ -4773,6 +4793,24 @@ mod tests {
         assert_eq!(candidate.support, DiscoveryCandidateSupport::RejectedNoise);
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
+    }
+
+    #[test]
+    fn mobile_manual_discovery_candidate_is_typed_placeholder() {
+        let candidate = mobile_manual_discovery_candidate();
+
+        assert!(candidate.is_picker_candidate);
+        assert_eq!(candidate.display_name, "Manual add / record unknown device");
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::ManualPlaceholder
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Capture flow later".to_owned())
+        );
     }
 
     #[test]
