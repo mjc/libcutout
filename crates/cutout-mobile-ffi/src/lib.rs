@@ -833,7 +833,7 @@ fn mobile_begode_identity_probe_support(
         None if reported_code_name.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
         None if missing_probe_response.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
         None if malformed_probe_response.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
-        None => DiscoveryCandidateSupport::Unsupported,
+        None => DiscoveryCandidateSupport::UnknownRecordable,
     }
 }
 
@@ -864,6 +864,9 @@ fn mobile_begode_identity_probe_disabled_reason(
         }
         (DiscoveryCandidateSupport::UnknownRecordable, _, _, Some(_)) => {
             Some("Malformed Begode probe response".to_owned())
+        }
+        (DiscoveryCandidateSupport::UnknownRecordable, None, None, None) => {
+            Some("Begode model not confirmed".to_owned())
         }
         _ => Some("Not yet supported".to_owned()),
     }
@@ -3990,6 +3993,35 @@ mod tests {
         assert_eq!(
             candidate.evidence,
             "malformed_probe_response=BegodeName".to_owned()
+        );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_keeps_family_only_begode_probe_recordable() {
+        let candidate = mobile_discovery_candidate_from_begode_identity_probe(
+            "ios-local-begode".to_owned(),
+            "GotWay_002441".to_owned(),
+            MobileBegodeIdentityProbeDto {
+                reported_model: None,
+                reported_code_name: None,
+                reported_imu: None,
+                reported_firmware_version: None,
+                reported_serial: None,
+                nominal_voltage_hint_mv: None,
+                missing_probe_response: None,
+                malformed_probe_response: None,
+            },
+        );
+
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Begode model not confirmed".to_owned())
         );
     }
 
