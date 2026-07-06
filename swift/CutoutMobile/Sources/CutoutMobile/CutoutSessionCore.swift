@@ -52,6 +52,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
+        _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
         scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
         onScanStateChange?(scanState)
@@ -257,6 +258,28 @@ public final class CutoutSessionCore: NSObject {
         onProtocolIdentityCandidateChange?(nil)
     }
 
+    private func publishDetectionIdentityCandidate(_ resolution: DeviceDetectionResolution) {
+        let discovery = rustSessionState.discoverySnapshot()
+        guard let advertisement = advertisement ?? discovery.selectedAdvertisement ?? discovery.lastAdvertisement else {
+            return
+        }
+        let candidate = resolution.discoveryCandidate(
+            platformIdentifier: advertisement.peripheralIdentifier.rawValue,
+            displayName: advertisement.localName ?? "Begode device"
+        )
+        guard candidate.isPickerCandidate else {
+            return
+        }
+        let pickerCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
+        guard pickerCandidate != protocolIdentityCandidate else {
+            return
+        }
+        protocolIdentityCandidate = pickerCandidate
+        onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
+        record("protocol_identity=\(candidate.detail)")
+        updateCaptureIdentity()
+    }
+
     private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
         onPhaseChange?(phase)
@@ -273,6 +296,7 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = model
         deviceDetectionSession = DeviceDetectionSession()
+        _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "pair", annotations: ["route=electric_unicycle"])
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -292,6 +316,7 @@ public final class CutoutSessionCore: NSObject {
         selectedModel = nil
         liveOwner = nil
         deviceDetectionSession = DeviceDetectionSession()
+        _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "record-only", annotations: ["route=record_only"] + annotations + (note.map { ["user_note=\($0)"] } ?? []))
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -857,6 +882,7 @@ extension CutoutSessionCore {
             pendingBegodeProbeResponses.remove(.begodeImu)
             annotateDetection("begode_probe_response=imu")
         }
+        publishDetectionIdentityCandidate(current)
         guard current.malformedProbeResponse != previous.malformedProbeResponse else {
             return
         }
@@ -884,15 +910,16 @@ extension CutoutSessionCore {
         ]
             .filter { pendingBegodeProbeResponses.contains($0.0) }
             .forEach { probe, label in
-                switch probe {
+                let current = switch probe {
                 case .begodeName:
-                    _ = deviceDetectionSession.observeBegodeNameProbeTimeout()
+                    deviceDetectionSession.observeBegodeNameProbeTimeout()
                 case .begodeFirmware:
-                    _ = deviceDetectionSession.observeBegodeFirmwareProbeTimeout()
+                    deviceDetectionSession.observeBegodeFirmwareProbeTimeout()
                 case .begodeImu:
-                    _ = deviceDetectionSession.observeBegodeImuProbeTimeout()
+                    deviceDetectionSession.observeBegodeImuProbeTimeout()
                 }
                 annotateDetection("begode_probe_missing=\(label)")
+                publishDetectionIdentityCandidate(current)
             }
         pendingBegodeProbeResponses.removeAll()
     }

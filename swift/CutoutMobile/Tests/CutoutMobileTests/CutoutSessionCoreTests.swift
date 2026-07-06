@@ -722,6 +722,32 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.records.contains("begode_probe_response=imu"))
     }
 
+    func testBegodeProbeResponseUpdatesProtocolIdentityCandidate() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+        var observedCandidates: [DevicePickerDiscoveryCandidate?] = []
+        core.onProtocolIdentityCandidateChange = { observedCandidates.append($0) }
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
+                localName: "Typed Begode Falcon",
+                advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+            )
+        )
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+
+        XCTAssertEqual(core.protocolIdentityCandidate?.displayName, "Typed Begode Falcon")
+        XCTAssertEqual(core.protocolIdentityCandidate?.detail, "Begode/Falcon confirmed by reported model Falcon")
+        XCTAssertEqual(core.protocolIdentityCandidate?.support.electricUnicycleModel, .falcon)
+        XCTAssertEqual(
+            observedCandidates.compactMap { $0?.detail },
+            ["Begode/Falcon confirmed by reported model Falcon"]
+        )
+        XCTAssertEqual(core.records.last, "protocol_identity=Begode/Falcon confirmed by reported model Falcon")
+    }
+
     func testMalformedBegodeProbeResponseIsLabeledFromDetectionSession() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)
