@@ -388,6 +388,10 @@ public extension DevicePickerRow {
     var isManual: Bool {
         if case .manual = state { true } else { false }
     }
+
+    var captureActionTitle: String {
+        state.actionTitle == "Probe" ? "Start probe" : "Start capture"
+    }
 }
 
 public extension DevicePickerRowState {

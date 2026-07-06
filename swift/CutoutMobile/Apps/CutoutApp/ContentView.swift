@@ -1414,7 +1414,7 @@ private struct DevicePickerView: View {
                                     Button {
                                         recordOnly(row, recordOnlyDeviceKind)
                                     } label: {
-                                        RecordOnlyButtonLabel(scale: scale, isEnabled: hasRecordOnlyDeviceKind)
+                                        RecordOnlyButtonLabel(title: row.captureActionTitle, scale: scale, isEnabled: hasRecordOnlyDeviceKind)
                                     }
                                     .buttonStyle(.plain)
                                     .disabled(!hasRecordOnlyDeviceKind)
@@ -1434,7 +1434,7 @@ private struct DevicePickerView: View {
                                     Button {
                                         recordOnly(row, recordOnlyDeviceKind)
                                     } label: {
-                                        RecordOnlyButtonLabel(scale: scale, isEnabled: hasRecordOnlyDeviceKind)
+                                        RecordOnlyButtonLabel(title: row.captureActionTitle, scale: scale, isEnabled: hasRecordOnlyDeviceKind)
                                     }
                                     .buttonStyle(.plain)
                                     .disabled(!hasRecordOnlyDeviceKind)
@@ -1684,6 +1684,7 @@ private struct PickerDeviceRow: View {
 }
 
 private struct RecordOnlyButtonLabel: View {
+    let title: String
     let scale: CGFloat
     let isEnabled: Bool
 
@@ -1691,7 +1692,7 @@ private struct RecordOnlyButtonLabel: View {
         HStack(spacing: 8 * scale) {
             Image(systemName: "record.circle")
                 .font(.system(size: 14 * scale, weight: .bold))
-            Text("Start capture")
+            Text(title)
                 .font(.system(size: 13 * scale, weight: .bold))
         }
         .foregroundStyle(isEnabled ? MockupColors.yellow : MockupColors.muted)

@@ -508,6 +508,7 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(candidate.support, .probeRecommended(disabledReason: "Read-only probe recommended"))
         XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Probe"))
+        XCTAssertEqual(candidate.pickerRow.captureActionTitle, "Start probe")
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
@@ -528,6 +529,7 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Model not confirmed"))
         XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertEqual(candidate.pickerRow.captureActionTitle, "Start capture")
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
