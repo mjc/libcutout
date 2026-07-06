@@ -482,6 +482,9 @@ pub struct DeviceDetectionResolutionRecord {
     /// Strong wire evidence reported incompatible protocol families.
     pub protocol_conflict: bool,
 
+    /// Veteran/NOSFET protocol-native model id, when decoded.
+    pub veteran_protocol_model_id: Option<u16>,
+
     /// Raw advertised-name bytes retained by the detector.
     pub advertised_name: Option<Vec<u8>>,
 
@@ -864,7 +867,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
     reason = "UniFFI exports owned records"
 )]
 #[uniffi::export]
-pub fn mobile_discovery_candidate_from_begode_detection_resolution(
+pub fn mobile_discovery_candidate_from_detection_resolution(
     platform_identifier: String,
     display_name: String,
     resolution: DeviceDetectionResolutionRecord,
@@ -885,6 +888,15 @@ pub fn mobile_discovery_candidate_from_begode_detection_resolution(
             disabled_reason: Some("Conflicting identity evidence".to_owned()),
         };
     }
+
+    if let Some(model_id) = resolution.veteran_protocol_model_id {
+        return mobile_discovery_candidate_from_veteran_protocol_identity(
+            platform_identifier,
+            display_name,
+            model_id,
+        );
+    }
+
     mobile_discovery_candidate_from_begode_identity_probe(
         platform_identifier,
         display_name,
@@ -931,6 +943,25 @@ pub fn mobile_discovery_candidate_from_begode_detection_resolution(
             missing_probe_response: resolution.missing_probe_response,
             malformed_probe_response: resolution.malformed_probe_response,
         },
+    )
+}
+
+/// Build a mobile discovery candidate from caller-owned Begode detection output.
+#[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned records"
+)]
+#[uniffi::export]
+pub fn mobile_discovery_candidate_from_begode_detection_resolution(
+    platform_identifier: String,
+    display_name: String,
+    resolution: DeviceDetectionResolutionRecord,
+) -> DiscoveryCandidate {
+    mobile_discovery_candidate_from_detection_resolution(
+        platform_identifier,
+        display_name,
+        resolution,
     )
 }
 
@@ -2604,6 +2635,16 @@ impl From<&DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
         Self {
             protocol_family: mobile_protocol_family_from_detection(resolution.protocol),
             protocol_conflict: resolution.protocol == ProtocolFamilyState::Conflict,
+            veteran_protocol_model_id: match resolution.staged.protocol_model {
+                ProtocolModelIdentityEvidence::ModelId(identity)
+                    if identity.family == ProtocolFamily::VeteranLeaperkimNosfet =>
+                {
+                    Some(identity.model_id)
+                }
+                ProtocolModelIdentityEvidence::Missing
+                | ProtocolModelIdentityEvidence::Malformed
+                | ProtocolModelIdentityEvidence::ModelId(_) => None,
+            },
             advertised_name: resolution
                 .advertised_name
                 .as_ref()
@@ -4360,6 +4401,31 @@ mod tests {
         assert_eq!(
             resolution.protocol_family,
             Some(MobileProtocolFamilyDto::BegodeGotway)
+        );
+    }
+
+    #[test]
+    fn mobile_device_detection_resolution_projects_veteran_model_id() {
+        let session = DeviceDetectionSessionHandle::new();
+        let veteran_frame = synthetic_veteran_frame_with_model_id(43);
+
+        let resolution = session.observe_notification(veteran_frame.to_vec());
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-aero".to_owned(),
+            "NF2557".to_owned(),
+            resolution,
+        );
+
+        assert_eq!(candidate.evidence, "Veteran protocol model id");
+        assert_eq!(candidate.detail, "NOSFET Aero confirmed by model id 43");
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Supported);
+        assert_eq!(
+            candidate.connection_route,
+            Some("electric_unicycle".to_owned())
+        );
+        assert_eq!(
+            candidate.electric_unicycle_model,
+            Some(DiscoveryElectricUnicycleModel::Aero)
         );
     }
 

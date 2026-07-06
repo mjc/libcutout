@@ -880,7 +880,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(
             observedCandidates.compactMap { $0?.detail },
             [
-                "Begode/GotWay identity probe collected; model not confirmed",
+                "NOSFET Aero confirmed by model id 43",
                 "Conflicting protocol family evidence",
             ]
         )

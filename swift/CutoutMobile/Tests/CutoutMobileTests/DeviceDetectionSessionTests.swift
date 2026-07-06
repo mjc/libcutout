@@ -109,6 +109,22 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testVeteranDetectionResolutionProjectsSupportedCandidate() {
+        let session = DeviceDetectionSession()
+
+        let resolution = session.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
+        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
+            platformIdentifier: "ios-local-aero",
+            displayName: "NF2557"
+        ))
+
+        XCTAssertEqual(
+            candidate.support,
+            .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero)
+        )
+        XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
+    }
+
     func testMixedProtocolFamiliesProjectConflictingCandidate() {
         let session = DeviceDetectionSession()
         let begodeFrame = Data([

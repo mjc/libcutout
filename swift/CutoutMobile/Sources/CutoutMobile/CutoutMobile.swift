@@ -83,6 +83,7 @@ public enum DeviceDetectionPendingProbe: Equatable, Hashable, Sendable {
 public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     public let protocolFamily: DeviceDetectionProtocolFamily?
     public let protocolConflict: Bool
+    public let veteranProtocolModelID: UInt16?
     public let advertisedName: Data?
     public let modelBanner: Data?
     public let firmwareBanner: Data?
@@ -93,6 +94,7 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     fileprivate init(_ record: DeviceDetectionResolutionRecord) {
         self.protocolFamily = record.protocolFamily.map(DeviceDetectionProtocolFamily.init)
         self.protocolConflict = record.protocolConflict
+        self.veteranProtocolModelID = record.veteranProtocolModelId
         self.advertisedName = record.advertisedName
         self.modelBanner = record.modelBanner
         self.firmwareBanner = record.firmwareBanner
@@ -107,12 +109,13 @@ public extension DeviceDetectionResolution {
         platformIdentifier: String,
         displayName: String
     ) -> DiscoveryCandidate {
-        mobileDiscoveryCandidateFromBegodeDetectionResolution(
+        mobileDiscoveryCandidateFromDetectionResolution(
             platformIdentifier: platformIdentifier,
             displayName: displayName,
             resolution: DeviceDetectionResolutionRecord(
                 protocolFamily: protocolFamily.map(\.dto),
                 protocolConflict: protocolConflict,
+                veteranProtocolModelId: veteranProtocolModelID,
                 advertisedName: advertisedName,
                 modelBanner: modelBanner,
                 firmwareBanner: firmwareBanner,
