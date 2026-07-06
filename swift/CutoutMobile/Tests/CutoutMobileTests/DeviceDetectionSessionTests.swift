@@ -162,6 +162,30 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testVescFamilyOnlyDetectionResolutionProjectsKnownUnsupportedCandidate() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromDetectionResolution(
+            platformIdentifier: "ios-local-vesc-family",
+            displayName: "VESC stream",
+            resolution: DeviceDetectionResolutionRecord(
+                protocolFamily: .vesc,
+                protocolConflict: false,
+                veteranProtocolModelId: nil,
+                advertisedName: nil,
+                modelBanner: nil,
+                firmwareBanner: nil,
+                imuBanner: nil,
+                missingProbeResponse: nil,
+                malformedProbeResponse: nil
+            )
+        ))
+
+        XCTAssertEqual(candidate.productCategory, "VESC Onewheel")
+        XCTAssertEqual(candidate.support, .knownUnsupported(disabledReason: "Not yet supported"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertEqual(candidate.pickerRow.section, .recordOnly)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testMixedProtocolFamiliesProjectConflictingCandidate() {
         let session = DeviceDetectionSession()
         let begodeFrame = Data([

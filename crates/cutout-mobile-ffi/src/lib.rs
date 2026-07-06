@@ -943,6 +943,26 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
         };
     }
 
+    if matches!(
+        resolution.protocol_family.as_ref(),
+        Some(MobileProtocolFamilyDto::Vesc)
+    ) {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "VESC Onewheel".to_owned(),
+            evidence: "VESC protocol family".to_owned(),
+            detail: "Not yet supported".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::KnownUnsupported,
+            recommended_action: DiscoveryCandidateSupport::KnownUnsupported.recommended_action(),
+            section: DiscoveryCandidateSupport::KnownUnsupported.picker_section(),
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Not yet supported".to_owned()),
+        };
+    }
+
     mobile_discovery_candidate_from_begode_identity_probe(
         platform_identifier,
         display_name,
@@ -4505,6 +4525,39 @@ mod tests {
         assert_eq!(
             candidate.disabled_reason,
             Some("Veteran/NOSFET model not confirmed".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_device_detection_resolution_keeps_vesc_family_only_unsupported() {
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-vesc-family".to_owned(),
+            "VESC stream".to_owned(),
+            DeviceDetectionResolutionRecord {
+                protocol_family: Some(MobileProtocolFamilyDto::Vesc),
+                protocol_conflict: false,
+                veteran_protocol_model_id: None,
+                advertised_name: None,
+                model_banner: None,
+                firmware_banner: None,
+                imu_banner: None,
+                missing_probe_response: None,
+                malformed_probe_response: None,
+            },
+        );
+
+        assert_eq!(candidate.product_category, "VESC Onewheel");
+        assert_eq!(candidate.evidence, "VESC protocol family");
+        assert_eq!(candidate.detail, "Not yet supported");
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::KnownUnsupported
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Not yet supported".to_owned())
         );
     }
 
