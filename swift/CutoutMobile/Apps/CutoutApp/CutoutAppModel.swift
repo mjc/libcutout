@@ -33,7 +33,7 @@ final class CutoutAppModel: ObservableObject {
             self?.displayState = displayState
         }
         core.onPhaseChange = { [weak self] phase in
-            self?.phase = phase
+            self?.handlePhaseChange(phase)
         }
         core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
@@ -144,6 +144,13 @@ final class CutoutAppModel: ObservableObject {
         guard let platformIdentifier = selectedDeviceStore.platformIdentifier else { return }
         guard scanState.storedSupportedRow(platformIdentifier: platformIdentifier) != nil else { return }
         _ = pair(platformIdentifier: platformIdentifier)
+    }
+
+    private func handlePhaseChange(_ phase: SessionConnectionPhase) {
+        self.phase = phase
+        guard case .failed = phase else { return }
+        let rows = devicePickerScanState?.rows ?? []
+        devicePickerScanState = .failed(phase.displayText, rows: rows)
     }
 
     private func updateCaptureStatus(from message: String) {

@@ -63,6 +63,10 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MockupColors.pageBackground.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
+            if case .failed = phase {
+                route = .devicePicker
+                return
+            }
             openRideScreen(ifNeededFor: phase)
         }
     }

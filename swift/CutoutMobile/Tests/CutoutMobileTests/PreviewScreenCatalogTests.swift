@@ -155,6 +155,13 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(empty.sections.manual)
     }
 
+    func testDevicePickerScanStateCoversConnectionFailure() {
+        let failed = DevicePickerScanState.failed("Connect failed: timeout")
+
+        XCTAssertEqual(failed.statusText, "Connect failed: timeout")
+        XCTAssertTrue(failed.rows.isEmpty)
+    }
+
     func testDevicePickerScanStateFindsStoredSupportedPickerRow() {
         let supported = DevicePickerRow(
             id: "ios-local-aero",

@@ -590,6 +590,7 @@ public enum DevicePickerScanStatus: Equatable, Hashable, Sendable {
     case idle
     case bluetoothUnavailable
     case permissionDenied
+    case failed(message: String)
 }
 
 public struct DevicePickerScanState: Equatable, Hashable, Sendable {
@@ -633,12 +634,18 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
             "Bluetooth unavailable"
         case .permissionDenied:
             "Bluetooth permission denied"
+        case .failed(let message):
+            message
         }
     }
 
     public static let scanning = DevicePickerScanState(status: .scanning, rows: [])
     public static let bluetoothUnavailable = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
     public static let permissionDenied = DevicePickerScanState(status: .permissionDenied, rows: [])
+
+    public static func failed(_ message: String, rows: [DevicePickerRow] = []) -> DevicePickerScanState {
+        DevicePickerScanState(status: .failed(message: message), rows: rows)
+    }
 }
 
 public extension DevicePickerScanState {
