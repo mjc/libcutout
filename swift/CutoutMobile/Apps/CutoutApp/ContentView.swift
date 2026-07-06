@@ -18,7 +18,22 @@ struct ContentView: View {
             MockupColors.pageBackground
                 .ignoresSafeArea()
 
-            if let screen = screen(for: route) {
+            if route == .devicePicker {
+                DevicePickerView(
+                    scanState: model.devicePickerScanState,
+                    captureStatusText: model.captureStatusText,
+                    isRecordOnlyCapture: model.isRecordOnlyCapture,
+                    pair: pair,
+                    recordOnly: { row, deviceKind in
+                        if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
+                            route = .capture
+                        }
+                    },
+                    startCaptureLabel: model.startCaptureLabel,
+                    stopCaptureLabel: model.stopCaptureLabel
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else if let screen = screen(for: route) {
                 MockupScreenContainer(
                     screen: screen,
                     devicePickerScanState: model.devicePickerScanState,
@@ -92,7 +107,7 @@ struct ContentView: View {
     private func screen(for route: CutoutAppRoute) -> MockupScreen? {
         switch route {
         case .devicePicker:
-            catalog.screen(id: .devicePicker)
+            nil
         case .ride:
             catalog.screen(id: .eucRide)
         case .pack:
@@ -176,7 +191,6 @@ private struct MockupScreenContainer: View {
         switch screen.id {
         case .devicePicker:
             DevicePickerView(
-                screen: screen,
                 scanState: devicePickerScanState,
                 captureStatusText: captureStatusText,
                 isRecordOnlyCapture: isRecordOnlyCapture,
@@ -1336,7 +1350,6 @@ private struct EucRideTabs: View {
 }
 
 private struct DevicePickerView: View {
-    let screen: MockupScreen
     let scanState: DevicePickerScanState?
     let captureStatusText: String?
     let isRecordOnlyCapture: Bool
