@@ -30,9 +30,12 @@ final class CutoutAppModel: ObservableObject {
     private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
     private let selectedDeviceStore = DevicePickerSelectionStore()
     private var liveActivityModel: ElectricUnicycleModel?
+    private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
+    private var lastLiveActivityUpdate: MonotonicMilliseconds?
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     init() {
         core.onDisplayStateChange = { [weak self] displayState in
@@ -64,7 +67,7 @@ final class CutoutAppModel: ObservableObject {
             if let model = candidate?.support.electricUnicycleModel {
                 self?.liveActivityModel = model
             }
-            guard case .supported = candidate?.support else {
+            guard candidate?.support.isSupported == true else {
                 self?.syncLiveActivity()
                 return
             }
@@ -173,6 +176,8 @@ final class CutoutAppModel: ObservableObject {
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
         liveActivityCoordinator.end(reason: reason)
+        lastLiveActivitySnapshot = nil
+        lastLiveActivityUpdate = nil
     }
 
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
@@ -201,7 +206,32 @@ final class CutoutAppModel: ObservableObject {
         default:
             .sessionEnded
         }
+        guard shouldReconcileLiveActivity(snapshot: snapshot, shouldBeActive: shouldBeActive) else { return }
         liveActivityCoordinator.reconcile(snapshot: snapshot, shouldBeActive: shouldBeActive, endReason: endReason)
+    }
+
+    private func shouldReconcileLiveActivity(
+        snapshot: LiveActivityRideSnapshot?,
+        shouldBeActive: Bool
+    ) -> Bool {
+        let now = core.now()
+        guard shouldBeActive else {
+            lastLiveActivitySnapshot = nil
+            lastLiveActivityUpdate = nil
+            return true
+        }
+        guard let snapshot else { return false }
+        guard snapshot != lastLiveActivitySnapshot else { return false }
+        let previousSnapshot = lastLiveActivitySnapshot
+        guard
+            previousSnapshot == nil
+                || snapshot.connectionState != previousSnapshot?.connectionState
+                || lastLiveActivityUpdate.map({ now.rawValue >= $0.rawValue + Self.liveActivityUpdateIntervalMilliseconds }) != false
+        else { return false }
+
+        lastLiveActivitySnapshot = snapshot
+        lastLiveActivityUpdate = now
+        return true
     }
 
     private func updateCaptureStatus(from message: String) {

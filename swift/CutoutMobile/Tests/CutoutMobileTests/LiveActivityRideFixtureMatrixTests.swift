@@ -35,4 +35,14 @@ final class LiveActivityRideFixtureMatrixTests: XCTestCase {
 
         XCTAssertEqual(duplicatedUnits, [])
     }
+
+    func testFixtureMatrixUsesProductionRideLabelsAndStatusValues() {
+        let snapshots = LiveActivityRideFixtureMatrix.v1.fixtures.map(\.snapshot)
+
+        XCTAssertEqual(snapshots.map(\.packVoltage.label).allSatisfy { $0 == "Voltage" }, true)
+        XCTAssertEqual(snapshots.map(\.temperature.label).allSatisfy { $0 == "Temp" }, true)
+        XCTAssertEqual(snapshots.first?.headroom.value, "Headroom good")
+        XCTAssertEqual(snapshots.first?.headroom.unit, nil)
+        XCTAssertEqual(snapshots.first?.beeps.value, "Beeps armed")
+    }
 }
