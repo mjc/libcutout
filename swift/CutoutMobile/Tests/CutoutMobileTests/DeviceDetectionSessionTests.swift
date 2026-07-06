@@ -2,6 +2,13 @@ import XCTest
 @testable import CutoutMobile
 
 final class DeviceDetectionSessionTests: XCTestCase {
+    private func syntheticVeteranFrameWithModelId43() -> Data {
+        var bytes = Array(repeating: UInt8(0), count: 42)
+        bytes.replaceSubrange(0..<4, with: [0xdc, 0x5a, 0x5c, 38])
+        bytes.replaceSubrange(28..<30, with: [0xa7, 0xf8])
+        return Data(bytes)
+    }
+
     func testAdvertisementRetainsRawBytes() {
         let session = DeviceDetectionSession()
 
@@ -61,6 +68,27 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Missing Begode probe response"))
         XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
         XCTAssertEqual(candidate.pickerRow.section, .recordOnly)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
+    func testMixedProtocolFamiliesProjectConflictingCandidate() {
+        let session = DeviceDetectionSession()
+        let begodeFrame = Data([
+            0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76,
+            0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81,
+            0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a,
+        ])
+        _ = session.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
+
+        let resolution = session.observeNotification(bytes: begodeFrame)
+        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
+            platformIdentifier: "ios-local-conflict",
+            displayName: "Conflicting wheel"
+        ))
+
+        XCTAssertTrue(resolution.protocolConflict)
+        XCTAssertEqual(candidate.support, .conflicting(disabledReason: "Conflicting identity evidence"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Review"))
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 

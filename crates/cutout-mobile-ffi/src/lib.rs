@@ -479,6 +479,9 @@ pub struct DeviceDetectionResolutionRecord {
     /// Resolved protocol family, when known.
     pub protocol_family: Option<MobileProtocolFamilyDto>,
 
+    /// Strong wire evidence reported incompatible protocol families.
+    pub protocol_conflict: bool,
+
     /// Raw advertised-name bytes retained by the detector.
     pub advertised_name: Option<Vec<u8>>,
 
@@ -866,6 +869,22 @@ pub fn mobile_discovery_candidate_from_begode_detection_resolution(
     display_name: String,
     resolution: DeviceDetectionResolutionRecord,
 ) -> DiscoveryCandidate {
+    if resolution.protocol_conflict {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "Conflicting protocol family evidence".to_owned(),
+            detail: "Conflicting protocol family evidence".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::Conflicting,
+            recommended_action: DiscoveryCandidateSupport::Conflicting.recommended_action(),
+            section: DiscoveryCandidateSupport::Conflicting.picker_section(),
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Conflicting identity evidence".to_owned()),
+        };
+    }
     mobile_discovery_candidate_from_begode_identity_probe(
         platform_identifier,
         display_name,
@@ -2563,6 +2582,7 @@ impl From<&DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
     fn from(resolution: &DeviceDetectionResolution) -> Self {
         Self {
             protocol_family: mobile_protocol_family_from_detection(resolution.protocol),
+            protocol_conflict: resolution.protocol == ProtocolFamilyState::Conflict,
             advertised_name: resolution
                 .advertised_name
                 .as_ref()
@@ -2604,6 +2624,7 @@ const fn mobile_protocol_family_from_detection(
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         }
         ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
+        ProtocolFamilyState::Conflict => None,
     }
 }
 
@@ -3963,6 +3984,13 @@ mod tests {
     use super::*;
     use cutout_protocols::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL};
 
+    fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
+        let mut bytes = [0_u8; 42];
+        bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
+        bytes[28..30].copy_from_slice(&(model_id * 1_000).to_be_bytes());
+        bytes
+    }
+
     #[test]
     fn mobile_discovery_candidate_preserves_ios_local_id_without_mac() {
         let candidate = mobile_discovery_candidate_from_advertisement(
@@ -4311,6 +4339,33 @@ mod tests {
         assert_eq!(
             resolution.protocol_family,
             Some(MobileProtocolFamilyDto::BegodeGotway)
+        );
+    }
+
+    #[test]
+    fn mobile_device_detection_session_projects_mixed_family_conflict() {
+        let session = DeviceDetectionSessionHandle::new();
+        let veteran_frame = synthetic_veteran_frame_with_model_id(43);
+        let begode_frame = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
+        let _ = session.observe_notification(veteran_frame.to_vec());
+
+        let resolution = session.observe_notification(begode_frame.to_vec());
+        let candidate = mobile_discovery_candidate_from_begode_detection_resolution(
+            "ios-local-conflict".to_owned(),
+            "Conflicting wheel".to_owned(),
+            resolution,
+        );
+
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Conflicting);
+        assert_eq!(
+            candidate.recommended_action,
+            DiscoveryCandidateAction::Review
+        );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Conflicting identity evidence".to_owned())
         );
     }
 

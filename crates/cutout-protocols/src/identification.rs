@@ -346,6 +346,9 @@ pub enum ProtocolFamilyState {
 
     /// Begode / `GotWay` has been confirmed.
     BegodeGotway,
+
+    /// Strong wire evidence reported incompatible protocol families.
+    Conflict,
 }
 
 /// Owned resolution produced by the caller-owned detection session.
@@ -573,8 +576,20 @@ impl DeviceDetectionSession {
             banner_model,
             protocol_model,
         };
+        let staged = match protocol {
+            ProtocolFamilyState::Conflict => StagedIdentityResolution {
+                model: None,
+                outcome: StagedIdentityOutcome::Conflict,
+                confidence: IdentityConfidence::NoMatch,
+                evidence: IdentityEvidence::empty().with_passive_family_match(),
+                protocol_model: ProtocolModelIdentityEvidence::Missing,
+            },
+            ProtocolFamilyState::Unknown
+            | ProtocolFamilyState::VeteranLeaperkimNosfet
+            | ProtocolFamilyState::BegodeGotway => identify_known_model(&input),
+        };
         self.resolution = DeviceDetectionResolution {
-            staged: identify_known_model(&input),
+            staged,
             protocol,
             advertised_name: self.resolution.advertised_name.clone(),
             model_banner: match banner_model {
@@ -627,7 +642,7 @@ impl<'a> NotificationDecision<'a> {
             ),
             Some(PendingProbe::BegodeName | PendingProbe::BegodeFirmware) | None => false,
         };
-        let (protocol, protocol_model) = match VeteranFrame::try_from_slice(bytes) {
+        let (observed_protocol, protocol_model) = match VeteranFrame::try_from_slice(bytes) {
             Ok(frame) => (
                 ProtocolFamilyState::VeteranLeaperkimNosfet,
                 VeteranTelemetry::decode(&frame)
@@ -639,7 +654,17 @@ impl<'a> NotificationDecision<'a> {
                 ProtocolFamilyState::BegodeGotway,
                 ProtocolModelIdentityEvidence::Missing,
             ),
-            Err(_) => (current_protocol, ProtocolModelIdentityEvidence::Missing),
+            Err(_) => (
+                ProtocolFamilyState::Unknown,
+                ProtocolModelIdentityEvidence::Missing,
+            ),
+        };
+        let protocol = current_protocol.merge_observed(observed_protocol);
+        let protocol_model = match protocol {
+            ProtocolFamilyState::Conflict => ProtocolModelIdentityEvidence::Missing,
+            ProtocolFamilyState::Unknown
+            | ProtocolFamilyState::VeteranLeaperkimNosfet
+            | ProtocolFamilyState::BegodeGotway => protocol_model,
         };
 
         NotificationDecision {
@@ -668,9 +693,22 @@ impl Default for DeviceDetectionSession {
 }
 
 impl ProtocolFamilyState {
+    fn merge_observed(self, observed: Self) -> Self {
+        match (self, observed) {
+            (Self::Conflict, _) | (_, Self::Conflict) => Self::Conflict,
+            (current, Self::Unknown) => current,
+            (Self::Unknown, observed) => observed,
+            (current, observed) if current == observed => current,
+            (
+                Self::VeteranLeaperkimNosfet | Self::BegodeGotway,
+                Self::VeteranLeaperkimNosfet | Self::BegodeGotway,
+            ) => Self::Conflict,
+        }
+    }
+
     fn into_classification(self) -> ProtocolFamilyClassification {
         match self {
-            Self::Unknown => ProtocolFamilyClassification::Pending,
+            Self::Unknown | Self::Conflict => ProtocolFamilyClassification::Pending,
             Self::VeteranLeaperkimNosfet => {
                 ProtocolFamilyClassification::Known(DeviceFamily::NosfetAero)
             }
@@ -1483,7 +1521,7 @@ mod tests {
     }
 
     #[test]
-    fn caller_owned_detection_session_clears_protocol_model_when_protocol_changes() {
+    fn caller_owned_detection_session_reports_conflict_when_protocol_family_changes() {
         let mut session = DeviceDetectionSession::new();
         let frame = synthetic_veteran_frame_with_model_id(43);
         let _ = session.observe(DeviceDetectionEvent::Notification { bytes: &frame });
@@ -1492,8 +1530,9 @@ mod tests {
             bytes: &BEGODE_LIVE_A_FRAME,
         });
 
-        assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
-        assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::Conflict);
+        assert_eq!(update.staged.confidence, IdentityConfidence::NoMatch);
+        assert_eq!(update.staged.outcome, StagedIdentityOutcome::Conflict);
         assert_eq!(update.staged.model, None);
         assert_eq!(
             update.staged.protocol_model,
