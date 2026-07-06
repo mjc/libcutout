@@ -476,11 +476,10 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func pevcapResolvedIdentity() -> MobileResolvedIdentityDto? {
-        if let candidate = protocolIdentityCandidate,
-           let model = candidate.support.electricUnicycleModel {
-            return model.pevcapResolvedIdentity(verification: .hardwareVerified)
-        }
-        return selectedModel?.pevcapResolvedIdentity(verification: .inferred)
+        captureResolvedIdentity(
+            protocolIdentityCandidate: protocolIdentityCandidate,
+            selectedModel: selectedModel
+        )
     }
 
     private func pevcapServiceUuid(for characteristic: BluetoothUuid) -> BluetoothUuid? {
@@ -502,6 +501,16 @@ private extension UInt64 {
     func saturatingSubtracting(_ other: UInt64) -> UInt64 {
         self >= other ? self - other : 0
     }
+}
+
+func captureResolvedIdentity(
+    protocolIdentityCandidate: DevicePickerDiscoveryCandidate?,
+    selectedModel _: ElectricUnicycleModel?
+) -> MobileResolvedIdentityDto? {
+    protocolIdentityCandidate?
+        .support
+        .electricUnicycleModel?
+        .pevcapResolvedIdentity(verification: .hardwareVerified)
 }
 
 private extension ElectricUnicycleModel {

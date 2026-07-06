@@ -629,6 +629,24 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.records.last, "protocol_identity=NOSFET Aero confirmed by model id 43")
     }
 
+    func testPevcapIdentityDoesNotUseProvisionalSelectedModel() {
+        XCTAssertNil(captureResolvedIdentity(protocolIdentityCandidate: nil, selectedModel: .falcon))
+    }
+
+    func testPevcapIdentityUsesProtocolConfirmedCandidate() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromVeteranProtocolIdentity(
+            platformIdentifier: "ios-local-aero",
+            displayName: "NF2557",
+            modelId: 43
+        ))
+
+        let identity = captureResolvedIdentity(protocolIdentityCandidate: candidate, selectedModel: .falcon)
+
+        XCTAssertEqual(identity?.protocolFamily, .veteranLeaperkimNosfet)
+        XCTAssertEqual(identity?.model?.value, "NOSFET Aero")
+        XCTAssertEqual(identity?.model?.verification, .hardwareVerified)
+    }
+
     func testBegodeProbeWritesAreLabeledForDetectionCapture() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)
