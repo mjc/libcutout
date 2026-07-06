@@ -1,6 +1,21 @@
 import CoreBluetooth
 import Foundation
 
+func protocolIdentityFallbackDisplayName(
+    protocolFamily: DeviceDetectionProtocolFamily?
+) -> String {
+    switch protocolFamily {
+    case .veteranLeaperkimNosfet:
+        "Veteran/NOSFET device"
+    case .begodeGotway:
+        "Begode device"
+    case .vesc:
+        "VESC device"
+    case nil:
+        "Detected rideable"
+    }
+}
+
 public final class CutoutSessionCore: NSObject {
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
@@ -213,7 +228,8 @@ public final class CutoutSessionCore: NSObject {
         case let (.some(modelId), .some(advertisement)):
             let candidate = mobileDiscoveryCandidateFromVeteranProtocolIdentity(
                 platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-                displayName: advertisement.localName ?? "Veteran/NOSFET device",
+                displayName: advertisement.localName
+                    ?? protocolIdentityFallbackDisplayName(protocolFamily: .veteranLeaperkimNosfet),
                 modelId: modelId
             )
             protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
@@ -275,7 +291,8 @@ public final class CutoutSessionCore: NSObject {
         }
         let candidate = resolution.discoveryCandidate(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
-            displayName: advertisement.localName ?? "Begode device"
+            displayName: advertisement.localName
+                ?? protocolIdentityFallbackDisplayName(protocolFamily: resolution.protocolFamily)
         )
         guard candidate.isPickerCandidate else {
             return

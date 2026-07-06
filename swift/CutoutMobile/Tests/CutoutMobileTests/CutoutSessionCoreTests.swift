@@ -629,6 +629,25 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.records.last, "protocol_identity=NOSFET Aero confirmed by model id 43")
     }
 
+    func testProtocolIdentityFallbackDisplayNameUsesDetectedFamily() {
+        XCTAssertEqual(
+            protocolIdentityFallbackDisplayName(protocolFamily: .veteranLeaperkimNosfet),
+            "Veteran/NOSFET device"
+        )
+        XCTAssertEqual(
+            protocolIdentityFallbackDisplayName(protocolFamily: .begodeGotway),
+            "Begode device"
+        )
+        XCTAssertEqual(
+            protocolIdentityFallbackDisplayName(protocolFamily: .vesc),
+            "VESC device"
+        )
+        XCTAssertEqual(
+            protocolIdentityFallbackDisplayName(protocolFamily: nil),
+            "Detected rideable"
+        )
+    }
+
     func testPevcapIdentityDoesNotUseProvisionalSelectedModel() {
         XCTAssertNil(captureResolvedIdentity(protocolIdentityCandidate: nil, selectedModel: .falcon))
     }
