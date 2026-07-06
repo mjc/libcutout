@@ -346,6 +346,13 @@ public enum DevicePickerRowState: Equatable, Hashable, Sendable {
 
 public typealias MockupPickerRowState = DevicePickerRowState
 
+public enum DevicePickerRowSection: Equatable, Hashable, Sendable {
+    case supported
+    case probeFirst
+    case recordOnly
+    case manual
+}
+
 public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let id: String
 
@@ -353,6 +360,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let subtitle: String
     public let detail: String
     public let state: DevicePickerRowState
+    public let section: DevicePickerRowSection
     public let symbolName: String
     public let connectionRoute: DevicePickerConnectionRoute?
 
@@ -362,6 +370,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         subtitle: String,
         detail: String,
         state: DevicePickerRowState,
+        section: DevicePickerRowSection? = nil,
         symbolName: String,
         connectionRoute: DevicePickerConnectionRoute? = nil
     ) {
@@ -370,6 +379,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         self.subtitle = subtitle
         self.detail = detail
         self.state = state
+        self.section = section ?? DevicePickerRowSection(state: state)
         self.symbolName = symbolName
         self.connectionRoute = connectionRoute
     }
@@ -379,19 +389,19 @@ public typealias MockupPickerRow = DevicePickerRow
 
 public extension DevicePickerRow {
     var isSupported: Bool {
-        if case .supported = state { true } else { false }
+        section == .supported
     }
 
     var isUnsupported: Bool {
-        if case .unsupported = state { true } else { false }
+        section == .recordOnly
     }
 
     var isManual: Bool {
-        if case .manual = state { true } else { false }
+        section == .manual
     }
 
     var isProbeRecommended: Bool {
-        if case .probeRecommended = state { true } else { false }
+        section == .probeFirst
     }
 
     var captureActionTitle: String {
@@ -429,6 +439,34 @@ public extension DevicePickerRowState {
     }
 }
 
+public extension DevicePickerRowSection {
+    init(state: DevicePickerRowState) {
+        switch state {
+        case .supported:
+            self = .supported
+        case .probeRecommended:
+            self = .probeFirst
+        case .unsupported:
+            self = .recordOnly
+        case .manual:
+            self = .manual
+        }
+    }
+
+    init(section: DiscoveryCandidateSection) {
+        switch section {
+        case .supported:
+            self = .supported
+        case .probeFirst:
+            self = .probeFirst
+        case .recordOnly:
+            self = .recordOnly
+        case .manual:
+            self = .manual
+        }
+    }
+}
+
 public struct DevicePickerSections: Equatable, Hashable, Sendable {
     public let supported: [DevicePickerRow]
     public let probeRecommended: [DevicePickerRow]
@@ -436,10 +474,10 @@ public struct DevicePickerSections: Equatable, Hashable, Sendable {
     public let manual: DevicePickerRow?
 
     public init(rows: [DevicePickerRow]) {
-        supported = rows.filter { $0.isSupported }
-        probeRecommended = rows.filter { $0.isProbeRecommended }
-        unsupported = rows.filter { $0.isUnsupported && !$0.isProbeRecommended }
-        manual = rows.first { $0.isManual }
+        supported = rows.filter { $0.section == .supported }
+        probeRecommended = rows.filter { $0.section == .probeFirst }
+        unsupported = rows.filter { $0.section == .recordOnly }
+        manual = rows.first { $0.section == .manual }
     }
 }
 
@@ -500,6 +538,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     public let support: DevicePickerCandidateSupport
     public let symbolName: String
     public let rowState: DevicePickerRowState
+    public let section: DevicePickerRowSection
 
     public init(
         platformIdentifier: String,
@@ -509,8 +548,10 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         detail: String,
         support: DevicePickerCandidateSupport,
         symbolName: String,
-        rowState: DevicePickerRowState? = nil
+        rowState: DevicePickerRowState? = nil,
+        section: DevicePickerRowSection? = nil
     ) {
+        let state = rowState ?? support.pickerRowState
         self.platformIdentifier = platformIdentifier
         self.displayName = displayName
         self.productCategory = productCategory
@@ -518,7 +559,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         self.detail = detail
         self.support = support
         self.symbolName = symbolName
-        self.rowState = rowState ?? support.pickerRowState
+        self.rowState = state
+        self.section = section ?? DevicePickerRowSection(state: state)
     }
 
     public init(advertisement: CoreBluetoothAdvertisement) {
@@ -538,7 +580,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             detail: candidate.detail,
             support: DevicePickerCandidateSupport(candidate),
             symbolName: candidate.support == .supported ? "circle.hexagongrid.circle" : "questionmark.circle",
-            rowState: DevicePickerRowState(action: candidate.recommendedAction)
+            rowState: DevicePickerRowState(action: candidate.recommendedAction),
+            section: DevicePickerRowSection(section: candidate.section)
         )
     }
 
@@ -559,6 +602,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             subtitle: "\(productCategory) - \(evidence)",
             detail: detail,
             state: rowState,
+            section: section,
             symbolName: symbolName,
             connectionRoute: support.connectionRoute
         )

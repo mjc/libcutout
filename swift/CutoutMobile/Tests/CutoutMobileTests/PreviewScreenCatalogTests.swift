@@ -406,6 +406,7 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: true,
             support: .supported,
             recommendedAction: .use,
+            section: .supported,
             connectionRoute: "future_route",
             electricUnicycleModel: nil,
             disabledReason: nil
@@ -430,6 +431,7 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: true,
             support: .provisionalRoute,
             recommendedAction: .use,
+            section: .supported,
             connectionRoute: "electric_unicycle",
             electricUnicycleModel: .falcon,
             disabledReason: nil
@@ -454,6 +456,7 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: true,
             support: .unsupported,
             recommendedAction: .record,
+            section: .recordOnly,
             connectionRoute: nil,
             electricUnicycleModel: nil,
             disabledReason: "Model not confirmed"
@@ -475,6 +478,7 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: false,
             support: .rejectedNoise,
             recommendedAction: .record,
+            section: .recordOnly,
             connectionRoute: nil,
             electricUnicycleModel: nil,
             disabledReason: "Rejected noise"
@@ -496,6 +500,7 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: true,
             support: .knownUnsupported,
             recommendedAction: .record,
+            section: .recordOnly,
             connectionRoute: nil,
             electricUnicycleModel: nil,
             disabledReason: "Not yet supported"
@@ -517,6 +522,7 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: true,
             support: .probeRecommended,
             recommendedAction: .probe,
+            section: .probeFirst,
             connectionRoute: nil,
             electricUnicycleModel: nil,
             disabledReason: "Read-only probe recommended"
@@ -524,8 +530,10 @@ extension MockupScreenCatalogTests {
         let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
 
         XCTAssertEqual(dto.recommendedAction, .probe)
+        XCTAssertEqual(dto.section, .probeFirst)
         XCTAssertEqual(candidate.support, .probeRecommended(disabledReason: "Read-only probe recommended"))
         XCTAssertEqual(candidate.pickerRow.state, .probeRecommended(action: "Probe"))
+        XCTAssertEqual(candidate.pickerRow.section, .probeFirst)
         XCTAssertEqual(candidate.pickerRow.captureActionTitle, "Start probe")
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
@@ -540,6 +548,7 @@ extension MockupScreenCatalogTests {
             isPickerCandidate: true,
             support: .unknownRecordable,
             recommendedAction: .record,
+            section: .recordOnly,
             connectionRoute: nil,
             electricUnicycleModel: nil,
             disabledReason: "Model not confirmed"
