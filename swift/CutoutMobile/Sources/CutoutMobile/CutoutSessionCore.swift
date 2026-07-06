@@ -857,6 +857,23 @@ extension CutoutSessionCore {
             pendingBegodeProbeResponses.remove(.begodeImu)
             annotateDetection("begode_probe_response=imu")
         }
+        guard current.malformedProbeResponse != previous.malformedProbeResponse else {
+            return
+        }
+        guard let malformedProbeResponse = current.malformedProbeResponse else {
+            return
+        }
+        switch malformedProbeResponse {
+        case .begodeName:
+            pendingBegodeProbeResponses.remove(.begodeName)
+            annotateDetection("begode_probe_malformed=model")
+        case .begodeFirmware:
+            pendingBegodeProbeResponses.remove(.begodeFirmware)
+            annotateDetection("begode_probe_malformed=firmware")
+        case .begodeImu:
+            pendingBegodeProbeResponses.remove(.begodeImu)
+            annotateDetection("begode_probe_malformed=imu")
+        }
     }
 
     func markOutstandingBegodeProbeResponsesMissing() {

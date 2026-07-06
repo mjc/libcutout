@@ -65,6 +65,7 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     public let firmwareBanner: Data?
     public let imuBanner: Data?
     public let missingProbeResponse: DeviceDetectionPendingProbe?
+    public let malformedProbeResponse: DeviceDetectionPendingProbe?
 
     fileprivate init(_ record: DeviceDetectionResolutionRecord) {
         self.protocolFamily = record.protocolFamily.map(DeviceDetectionProtocolFamily.init)
@@ -73,6 +74,7 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
         self.firmwareBanner = record.firmwareBanner
         self.imuBanner = record.imuBanner
         self.missingProbeResponse = record.missingProbeResponse.map(DeviceDetectionPendingProbe.init)
+        self.malformedProbeResponse = record.malformedProbeResponse.map(DeviceDetectionPendingProbe.init)
     }
 }
 

@@ -722,6 +722,17 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.records.contains("begode_probe_response=imu"))
     }
 
+    func testMalformedBegodeProbeResponseIsLabeledFromDetectionSession() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data([0x4e, 0x41, 0x4d, 0x45, 0x3d, 0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00]))
+
+        XCTAssertTrue(core.records.contains("begode_probe_malformed=model"))
+        XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
+    }
+
     func testOutstandingBegodeProbeResponsesAreLabeledMissing() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)
