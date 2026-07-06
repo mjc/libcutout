@@ -26,7 +26,7 @@ use cutout_core::{
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
     Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
     TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
@@ -2273,6 +2273,25 @@ impl MobilePevcapCaptureBuilder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(PevcapRecord::link_down(monotonic_ms.into_core()));
+    }
+
+    /// Records outbound write-without-response bytes.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn record_write_without_response(
+        &self,
+        monotonic_ms: MobileMonotonicMillisDto,
+        characteristic: Vec<u8>,
+        bytes: Vec<u8>,
+    ) {
+        self.records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(PevcapRecord::outbound_write(
+                monotonic_ms.into_core(),
+                mobile_gatt_channel(&characteristic),
+                WriteMode::WithoutResponse,
+                bytes,
+            ));
     }
 
     /// Records inbound notification bytes.
@@ -5048,6 +5067,34 @@ mod tests {
         );
         assert_eq!(capture.records.len(), 2);
         assert_eq!(capture.records[1].bytes.as_ref(), [0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn mobile_capture_builder_exports_probe_write_bytes() {
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            Some(mobile_write_len(23)),
+        );
+
+        builder.record_write_without_response(ms(3), vec![0x11; 16], vec![0x4e]);
+
+        let bytes = builder
+            .export(MobilePevcapEncodingDto::Jsonl)
+            .expect("JSONL export succeeds");
+        let capture =
+            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
+
+        assert_eq!(capture.records.len(), 1);
+        assert_eq!(
+            capture.records[0].direction,
+            cutout_core::PevcapDirection::Outbound
+        );
+        assert_eq!(
+            capture.records[0].write_mode,
+            Some(WriteMode::WithoutResponse)
+        );
+        assert_eq!(capture.records[0].bytes.as_ref(), [0x4e]);
     }
 
     #[test]

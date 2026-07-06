@@ -29,14 +29,35 @@ struct ContentView: View {
                     settingsReadback: model.settingsReadback,
                     faultHistoryReadback: model.faultHistoryReadback,
                     bmsSnapshot: model.bmsSnapshot,
+                    captureStatusText: model.captureStatusText,
+                    isRecordOnlyCapture: model.isRecordOnlyCapture,
                     disconnect: {
                         model.disconnectAndSearch()
                         route = .devicePicker
                     },
                     pair: pair,
+                    recordOnly: { row, deviceKind in
+                        if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
+                            route = .capture
+                        }
+                    },
+                    startCaptureLabel: model.startCaptureLabel,
+                    stopCaptureLabel: model.stopCaptureLabel,
                     selectScreen: selectScreen
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else if route == .capture {
+                CaptureRecordingScreen(
+                    deviceKind: model.recordOnlyDeviceKind,
+                    captureStatusText: model.captureStatusText,
+                    activeLabels: model.activeCaptureLabels,
+                    disconnect: {
+                        model.disconnectAndSearch()
+                        route = .devicePicker
+                    },
+                    startCaptureLabel: model.startCaptureLabel,
+                    stopCaptureLabel: model.stopCaptureLabel
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -47,11 +68,14 @@ struct ContentView: View {
     }
 
     private func pair(_ row: MockupPickerRow) {
+        guard row.isSupported else { return }
+
         guard model.pair(platformIdentifier: row.id) else { return }
         route = Self.route(for: row.connectionRoute)
     }
 
     private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
+        guard !model.isRecordOnlyCapture else { return }
         guard phase.opensRideScreen else { return }
         guard route == .devicePicker else { return }
         route = .ride
@@ -71,6 +95,8 @@ struct ContentView: View {
             catalog.screen(id: .bmsOverview).map {
                 catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot, fixtureFallback: false)
             }
+        case .capture:
+            nil
         case .mockup(let screenID):
             catalog.screen(id: screenID)
         }
@@ -121,6 +147,7 @@ private enum CutoutAppRoute: Equatable {
     case devicePicker
     case ride
     case pack
+    case capture
     case mockup(MockupScreenID)
 }
 
@@ -132,19 +159,34 @@ private struct MockupScreenContainer: View {
     let settingsReadback: SettingsReadback?
     let faultHistoryReadback: FaultHistoryReadback?
     let bmsSnapshot: BmsSnapshot?
+    let captureStatusText: String?
+    let isRecordOnlyCapture: Bool
     let disconnect: () -> Void
     let pair: (MockupPickerRow) -> Void
+    let recordOnly: (MockupPickerRow, String) -> Void
+    let startCaptureLabel: (CaptureQuickLabel) -> Void
+    let stopCaptureLabel: (CaptureQuickLabel) -> Void
     let selectScreen: (MockupScreenID) -> Void
 
     var body: some View {
         switch screen.id {
         case .devicePicker:
-            DevicePickerMockupView(screen: screen, scanState: devicePickerScanState, pair: pair)
+            DevicePickerMockupView(
+                screen: screen,
+                scanState: devicePickerScanState,
+                captureStatusText: captureStatusText,
+                isRecordOnlyCapture: isRecordOnlyCapture,
+                pair: pair,
+                recordOnly: recordOnly,
+                startCaptureLabel: startCaptureLabel,
+                stopCaptureLabel: stopCaptureLabel
+            )
         case .eucRide:
             EucRideScreenView(
                 screen: screen,
                 rideState: rideState,
                 rideTitle: rideTitle,
+                captureStatusText: captureStatusText,
                 disconnect: disconnect,
                 selectScreen: selectScreen
             )
@@ -903,6 +945,7 @@ private struct EucRideScreenView: View {
     let screen: MockupScreen
     let rideState: EucRideScreenState?
     let rideTitle: String?
+    let captureStatusText: String?
     let disconnect: () -> Void
     let selectScreen: (MockupScreenID) -> Void
 
@@ -993,6 +1036,10 @@ private struct EucRideScreenView: View {
                 EucStatusBadge(title: phaseText, scale: scale)
             }
             .padding(.top, 8 * scale)
+
+            if let captureStatusText {
+                CaptureStatusPill(text: captureStatusText, scale: scale)
+            }
 
             VStack(alignment: .center, spacing: 2 * scale) {
                 HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
@@ -1287,7 +1334,13 @@ private struct EucRideTabs: View {
 private struct DevicePickerMockupView: View {
     let screen: MockupScreen
     let scanState: DevicePickerScanState?
+    let captureStatusText: String?
+    let isRecordOnlyCapture: Bool
     let pair: (MockupPickerRow) -> Void
+    let recordOnly: (MockupPickerRow, String) -> Void
+    let startCaptureLabel: (CaptureQuickLabel) -> Void
+    let stopCaptureLabel: (CaptureQuickLabel) -> Void
+    @State private var recordOnlyDeviceKind = ""
 
     private var renderedScanState: DevicePickerScanState {
         scanState ?? DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
@@ -1306,11 +1359,11 @@ private struct DevicePickerMockupView: View {
             horizontalPadding: 18
         ) { scale, _ in
             VStack(alignment: .leading, spacing: 7 * scale) {
-                Text("Pick your device(s)")
+                Text("Choose device")
                     .font(.system(size: 34 * scale, weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
-                Text("Nearby devices that look rideable. Pair supported ones.")
+                Text("Nearby Bluetooth devices")
                     .font(.system(size: 15 * scale, weight: .semibold))
                     .foregroundStyle(MockupColors.muted)
                     .lineLimit(2)
@@ -1324,6 +1377,20 @@ private struct DevicePickerMockupView: View {
             )
                 .padding(.top, 4 * scale)
 
+            if let captureStatusText {
+                CaptureStatusPill(text: captureStatusText, scale: scale)
+            }
+
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                SectionLabel("Device kind for capture", scale: scale)
+                TextField("euc nosfet aeon", text: $recordOnlyDeviceKind)
+                    .font(.system(size: 17 * scale, weight: .semibold))
+                    .foregroundStyle(MockupColors.primaryText)
+                    .padding(.horizontal, 14 * scale)
+                    .frame(height: 46 * scale)
+                    .background(CardBackground(cornerRadius: 8 * scale))
+            }
+
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18 * scale) {
                     if !sections.supported.isEmpty {
@@ -1331,23 +1398,43 @@ private struct DevicePickerMockupView: View {
                             .padding(.top, 8 * scale)
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.supported) { row in
-                                Button {
-                                    pair(row)
-                                } label: {
-                                    PickerDeviceRow(row: row, scale: scale)
+                                VStack(spacing: 8 * scale) {
+                                    Button {
+                                        pair(row)
+                                    } label: {
+                                        PickerDeviceRow(row: row, scale: scale)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contentShape(Rectangle())
+
+                                    Button {
+                                        recordOnly(row, recordOnlyDeviceKind)
+                                    } label: {
+                                        RecordOnlyButtonLabel(scale: scale, isEnabled: hasRecordOnlyDeviceKind)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(!hasRecordOnlyDeviceKind)
                                 }
-                                .buttonStyle(.plain)
-                                .contentShape(Rectangle())
                             }
                         }
                     }
 
                     if !sections.unsupported.isEmpty {
-                        SectionLabel("Looks like a PEV, unsupported for launch", scale: scale)
+                        SectionLabel("Record only", scale: scale)
                             .padding(.top, 8 * scale)
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.unsupported) { row in
-                                PickerDeviceRow(row: row, scale: scale)
+                                VStack(spacing: 8 * scale) {
+                                    PickerDeviceRow(row: row, scale: scale)
+
+                                    Button {
+                                        recordOnly(row, recordOnlyDeviceKind)
+                                    } label: {
+                                        RecordOnlyButtonLabel(scale: scale, isEnabled: hasRecordOnlyDeviceKind)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(!hasRecordOnlyDeviceKind)
+                                }
                             }
                         }
                     }
@@ -1362,6 +1449,144 @@ private struct DevicePickerMockupView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .foregroundStyle(.white)
+    }
+
+    private var hasRecordOnlyDeviceKind: Bool {
+        !recordOnlyDeviceKind.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+private struct CaptureStatusPill: View {
+    let text: String
+    let scale: CGFloat
+
+    var body: some View {
+        HStack(spacing: 10 * scale) {
+            Circle()
+                .fill(MockupColors.green)
+                .frame(width: 10 * scale, height: 10 * scale)
+            Text(text)
+                .font(.system(size: 13 * scale, weight: .semibold))
+                .foregroundStyle(MockupColors.primaryText)
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16 * scale)
+        .frame(minHeight: 42 * scale)
+        .frame(maxWidth: .infinity)
+        .background(CardBackground(cornerRadius: 18 * scale))
+    }
+}
+
+private struct CaptureRecordingScreen: View {
+    let deviceKind: String?
+    let captureStatusText: String?
+    let activeLabels: Set<CaptureQuickLabel>
+    let disconnect: () -> Void
+    let startCaptureLabel: (CaptureQuickLabel) -> Void
+    let stopCaptureLabel: (CaptureQuickLabel) -> Void
+
+    var body: some View {
+        MockupScreenScaffold(
+            sectionTitle: "record",
+            bottomPadding: 24,
+            allowsVerticalScroll: false,
+            contentSpacing: 16,
+            horizontalPadding: 18
+        ) { scale, _ in
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 7 * scale) {
+                    Text(deviceKind ?? "Capture session")
+                        .font(.system(size: 34 * scale, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text("Capture session")
+                        .font(.system(size: 15 * scale, weight: .semibold))
+                        .foregroundStyle(MockupColors.muted)
+                }
+                Spacer(minLength: 12 * scale)
+                Button {
+                    disconnect()
+                } label: {
+                    Text("Stop")
+                        .font(.system(size: 18 * scale, weight: .bold))
+                        .foregroundStyle(MockupColors.yellow)
+                }
+                .buttonStyle(.plain)
+            }
+
+            CaptureStatusPill(text: captureStatusText ?? "Recording locally", scale: scale)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                CaptureLabelControls(
+                    scale: scale,
+                    activeLabels: activeLabels,
+                    startCaptureLabel: startCaptureLabel,
+                    stopCaptureLabel: stopCaptureLabel
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .foregroundStyle(.white)
+    }
+}
+
+private struct CaptureLabelControls: View {
+    let scale: CGFloat
+    let activeLabels: Set<CaptureQuickLabel>
+    let startCaptureLabel: (CaptureQuickLabel) -> Void
+    let stopCaptureLabel: (CaptureQuickLabel) -> Void
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 10),
+    ]
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 10 * scale) {
+            ForEach(CaptureQuickLabel.allCases) { label in
+                HStack(spacing: 10 * scale) {
+                    VStack(alignment: .leading, spacing: 3 * scale) {
+                        Text(label.title)
+                            .font(.system(size: 16 * scale, weight: .bold))
+                            .foregroundStyle(MockupColors.primaryText)
+                            .lineLimit(1)
+                        Text(activeLabels.contains(label) ? "active" : "idle")
+                            .font(.system(size: 11 * scale, weight: .semibold))
+                            .foregroundStyle(activeLabels.contains(label) ? MockupColors.green : MockupColors.muted)
+                    }
+                    Spacer(minLength: 8 * scale)
+                    captureLabelButton("Start", scale: scale) {
+                        startCaptureLabel(label)
+                    }
+                    captureLabelButton("Stop", scale: scale) {
+                        stopCaptureLabel(label)
+                    }
+                }
+                .padding(.horizontal, 14 * scale)
+                .frame(minHeight: 58 * scale)
+                .background(CardBackground(cornerRadius: 8 * scale))
+            }
+        }
+    }
+
+    private func captureLabelButton(_ title: String, scale: CGFloat, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12 * scale, weight: .bold))
+                .lineLimit(1)
+                .foregroundStyle(MockupColors.yellow)
+                .frame(width: 58 * scale, height: 32 * scale)
+                .background(
+                    RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
+                        .fill(MockupColors.warningFill)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
+                                .stroke(MockupColors.warningStroke, lineWidth: 1 * scale)
+                        )
+                )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -1451,6 +1676,32 @@ private struct PickerDeviceRow: View {
         .frame(height: 92 * scale)
         .frame(maxWidth: .infinity)
         .background(CardBackground(cornerRadius: 26 * scale))
+    }
+}
+
+private struct RecordOnlyButtonLabel: View {
+    let scale: CGFloat
+    let isEnabled: Bool
+
+    var body: some View {
+        HStack(spacing: 8 * scale) {
+            Image(systemName: "record.circle")
+                .font(.system(size: 14 * scale, weight: .bold))
+            Text("Start capture")
+                .font(.system(size: 13 * scale, weight: .bold))
+        }
+        .foregroundStyle(isEnabled ? MockupColors.yellow : MockupColors.muted)
+        .frame(maxWidth: .infinity)
+        .frame(height: 36 * scale)
+        .background(
+            RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
+                .fill(isEnabled ? MockupColors.warningFill : MockupColors.disabledFill)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
+                        .stroke(isEnabled ? MockupColors.warningStroke : MockupColors.cardStroke, lineWidth: 1 * scale)
+                )
+        )
+        .contentShape(Rectangle())
     }
 }
 

@@ -29,6 +29,7 @@ public final class CutoutSessionCore: NSObject {
     private var discoveredPeripherals: [CoreBluetoothPeripheralIdentifier: CBPeripheral] = [:]
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var selectedModel: ElectricUnicycleModel?
+    private var isRecordOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
@@ -82,8 +83,29 @@ public final class CutoutSessionCore: NSObject {
         )
     }
 
+    @discardableResult
+    public func recordOnly(platformIdentifier: String, note: String? = nil, annotations: [String] = []) -> Bool {
+        let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
+        let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+        guard
+            let peripheral = discoveredPeripherals[identifier],
+            let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
+        else {
+            return false
+        }
+        connectRecordOnly(to: peripheral, using: advertisement, note: note, annotations: annotations)
+        return true
+    }
+
+    public func annotateCapture(label: String) {
+        captureBuilder?.addAnnotation(annotation: "capture_label=\(label)")
+        record("capture_label=\(label)")
+        writeCapture()
+    }
+
     public func disconnectAndScan() {
         suppressReconnect = true
+        isRecordOnly = false
         selectedModel = nil
         liveOwner = nil
         subscribedCharacteristics.removeAll()
@@ -110,6 +132,13 @@ public final class CutoutSessionCore: NSObject {
 
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
         record("link_operations=\(step.operations.map(String.init(describing:)).joined(separator: ","))")
+        captureBuilder?.recordLinkUp(
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
+            maxWriteLen: peripheral.map {
+                MobileTransportWriteLimitDto(bytes: UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse)))
+            }
+        )
+        writeCapture()
         if let snapshot = step.snapshot {
             hasObservedSpeedSnapshot = snapshot.speed?.value != nil
         }
@@ -235,16 +264,35 @@ public final class CutoutSessionCore: NSObject {
         model: ElectricUnicycleModel
     ) {
         suppressReconnect = false
+        isRecordOnly = false
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = model
-        startCapture(reason: "pair")
+        startCapture(reason: "pair", annotations: ["route=electric_unicycle"])
         clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
         peripheral.delegate = self
         setPhase(.connecting(model: model))
+        central?.stopScan()
+        central?.connect(peripheral)
+    }
+
+    private func connectRecordOnly(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?, annotations: [String]) {
+        suppressReconnect = false
+        isRecordOnly = true
+        self.peripheral = peripheral
+        self.advertisement = advertisement
+        selectedModel = nil
+        liveOwner = nil
+        startCapture(reason: "record-only", annotations: ["route=record_only"] + annotations + (note.map { ["user_note=\($0)"] } ?? []))
+        clearSettingsReadback()
+        clearFaultHistoryReadback()
+        clearBmsSnapshot()
+        clearProtocolIdentityCandidate()
+        peripheral.delegate = self
+        setPhase(.discoveringServices)
         central?.stopScan()
         central?.connect(peripheral)
     }
@@ -291,6 +339,10 @@ public final class CutoutSessionCore: NSObject {
         guard self.peripheral?.identifier == peripheral.identifier else {
             return
         }
+        captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
+        writeCapture()
+        let wasRecordOnly = isRecordOnly
+        isRecordOnly = false
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -300,13 +352,19 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
+        guard !wasRecordOnly else {
+            setPhase(.scanning)
+            central?.scanForPeripherals(withServices: nil)
+            return
+        }
+
         guard let selectedModel else {
             setPhase(.failed(.connectFailed(error.sessionMessage)))
             return
         }
 
         setPhase(.connecting(model: selectedModel))
-        startCapture(reason: "reconnect")
+        startCapture(reason: "reconnect", annotations: ["route=electric_unicycle"])
         central?.connect(peripheral)
     }
 
@@ -320,20 +378,31 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
-        guard direction == "notify", let service = pevcapServiceUuid(for: channel) else {
+        switch direction {
+        case "notify":
+            guard let service = pevcapServiceUuid(for: channel) else {
+                return
+            }
+            captureBuilder?.recordNotification(
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
+                characteristic: channel.bytes,
+                service: service.bytes,
+                bytes: bytes
+            )
+        case "write_without_response":
+            captureBuilder?.recordWriteWithoutResponse(
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
+                characteristic: channel.bytes,
+                bytes: bytes
+            )
+        default:
             return
         }
 
-        captureBuilder?.recordNotification(
-            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
-            characteristic: channel.bytes,
-            service: service.bytes,
-            bytes: bytes
-        )
         writeCapture()
     }
 
-    private func startCapture(reason: String) {
+    private func startCapture(reason: String, annotations extraAnnotations: [String] = []) {
         try? captureHandle?.close()
         captureHandle = nil
         captureStartedAt = clock.now()
@@ -355,6 +424,7 @@ public final class CutoutSessionCore: NSObject {
             "capture_privacy=private",
             "capture_evidence=hardware_tested",
         ].forEach { builder.addAnnotation(annotation: $0) }
+        extraAnnotations.forEach { builder.addAnnotation(annotation: $0) }
         captureBuilder = builder
         updateCaptureIdentity()
         writeCapture()
@@ -550,11 +620,19 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         setPhase(.discoveringServices)
         peripheral.delegate = self
-        peripheral.discoverServices(CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
+        if isRecordOnly {
+            captureBuilder?.recordLinkUp(
+                monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
+                maxWriteLen: MobileTransportWriteLimitDto(bytes: UInt16(clamping: peripheral.maximumWriteValueLength(for: .withoutResponse)))
+            )
+            writeCapture()
+        }
+        peripheral.discoverServices(isRecordOnly ? nil : CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
     }
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
+        isRecordOnly = false
         setPhase(.failed(.connectFailed(error.sessionMessage)))
     }
 
@@ -595,7 +673,15 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 subscribedCharacteristics[channel] = characteristic
             }
         }
+        recordGattFingerprints(service: service)
         pendingServiceDiscoveries.remove(service.uuid)
+        if isRecordOnly {
+            subscribeRecordOnlyCharacteristics(service.characteristics ?? [], on: peripheral)
+            if pendingServiceDiscoveries.isEmpty {
+                setPhase(.live)
+            }
+            return
+        }
         if pendingServiceDiscoveries.isEmpty {
             buildOwner(for: peripheral)
         }
@@ -612,12 +698,18 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         guard
             let value = characteristic.value,
-            let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid),
-            let liveOwner
+            let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid)
         else {
             return
         }
         captureFrame(direction: "notify", characteristic: characteristic.uuid, bytes: value)
+        if isRecordOnly {
+            record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
+            return
+        }
+        guard let liveOwner else {
+            return
+        }
         do {
             let receivedAt = clock.now()
             let step = try liveOwner.handleNotification(
@@ -657,6 +749,54 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             return
         }
         central?.cancelPeripheralConnection(peripheral)
+    }
+}
+
+private extension CutoutSessionCore {
+    func recordGattFingerprints(service: CBService) {
+        guard let serviceUuid = BluetoothUuid(coreBluetoothUuid: service.uuid) else {
+            return
+        }
+        service.characteristics?.forEach { characteristic in
+            guard let characteristicUuid = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
+                return
+            }
+            captureBuilder?.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
+                service: serviceUuid.bytes,
+                characteristic: characteristicUuid.bytes,
+                roles: characteristic.mobileGattRoles,
+                verification: .hardwareVerified
+            ))
+        }
+        writeCapture()
+    }
+
+    func subscribeRecordOnlyCharacteristics(_ characteristics: [CBCharacteristic], on peripheral: CBPeripheral) {
+        characteristics
+            .filter { $0.properties.contains(.notify) || $0.properties.contains(.indicate) }
+            .forEach { peripheral.setNotifyValue(true, for: $0) }
+    }
+}
+
+private extension CBCharacteristic {
+    var mobileGattRoles: [MobileGattRoleDto] {
+        var roles: [MobileGattRoleDto] = []
+        if properties.contains(.read) {
+            roles.append(.read)
+        }
+        if properties.contains(.write) {
+            roles.append(.write)
+        }
+        if properties.contains(.writeWithoutResponse) {
+            roles.append(.writeWithoutResponse)
+        }
+        if properties.contains(.notify) {
+            roles.append(.notify)
+        }
+        if properties.contains(.indicate) {
+            roles.append(.indicate)
+        }
+        return roles
     }
 }
 

@@ -84,8 +84,8 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(picker.pickerRows.map(\.state), [
             .supported(action: "Pair"),
             .supported(action: "Pair"),
-            .unsupported(action: "Not yet"),
-            .unsupported(action: "Not yet"),
+            .unsupported(action: "Record"),
+            .unsupported(action: "Record"),
             .manual(action: "later"),
         ])
         XCTAssertEqual(picker.pickerRows.map(\.connectionRoute), [
@@ -167,7 +167,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(supported.pickerRow.state, .supported(action: "Pair"))
         XCTAssertEqual(supported.pickerRow.subtitle, "Electric unicycle - telemetry profile found")
         XCTAssertEqual(supported.pickerRow.connectionRoute, .electricUnicycle)
-        XCTAssertEqual(unsupported.pickerRow.state, .unsupported(action: "Not yet"))
+        XCTAssertEqual(unsupported.pickerRow.state, .unsupported(action: "Record"))
         XCTAssertNil(unsupported.pickerRow.connectionRoute)
     }
 
@@ -211,6 +211,26 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testUnsupportedDiscoveryCandidateOffersRecordOnlyPickerAction() {
+        let dto = DiscoveryCandidate(
+            platformIdentifier: "ios-local-unknown",
+            displayName: "Unknown rideable",
+            productCategory: "Rideable",
+            evidence: "probable PEV advertisement",
+            detail: "unsupported model",
+            isPickerCandidate: true,
+            support: .unsupported,
+            connectionRoute: nil,
+            electricUnicycleModel: nil,
+            disabledReason: "Model not confirmed"
+        )
+        let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
+
+        XCTAssertEqual(candidate.support, .unsupported(disabledReason: "Model not confirmed"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testCoreBluetoothAdvertisementsMapToScanningPickerState() {
         let state = DevicePickerScanState(
             status: .scanning,
@@ -248,7 +268,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, nil])
         XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557"])
         XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
-        XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Not yet supported"))
+        XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Record"))
         XCTAssertNil(state.sections.manual)
     }
 

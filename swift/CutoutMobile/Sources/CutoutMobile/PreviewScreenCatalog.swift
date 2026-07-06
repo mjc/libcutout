@@ -515,8 +515,8 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported:
             .supported(action: "Pair")
-        case .unsupported(let disabledReason):
-            .unsupported(action: disabledReason)
+        case .unsupported:
+            .unsupported(action: "Record")
         }
     }
 }

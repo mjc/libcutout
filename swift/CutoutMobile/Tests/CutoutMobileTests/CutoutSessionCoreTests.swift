@@ -49,6 +49,12 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
     }
 
+    func testRecordOnlyMissingCandidateReturnsFalse() {
+        let core = CutoutSessionCore()
+
+        XCTAssertFalse(core.recordOnly(platformIdentifier: "ios-local-missing", note: "unknown wheel"))
+    }
+
     func testObservedAdvertisementsReplaceDuplicatePeripheralRows() {
         let core = CutoutSessionCore()
 
