@@ -2330,8 +2330,11 @@ pub enum RideOperatingState {
     /// No live evidence has established whether the EUC is parked, riding, or charging.
     Unknown,
 
-    /// Telemetry indicates the EUC is stationary.
+    /// Explicit telemetry indicates the EUC is parked.
     Parked,
+
+    /// Live telemetry indicates the EUC is stationary without explicit parked/off evidence.
+    Standing,
 
     /// Telemetry indicates the EUC is moving under ride context.
     Riding,
@@ -3779,9 +3782,9 @@ fn power_flow_from_signed_current(
         std::cmp::Ordering::Less => match operating_state {
             RideOperatingState::Charging => PowerFlowDirection::Charging,
             RideOperatingState::Riding => PowerFlowDirection::Regeneration,
-            RideOperatingState::Parked | RideOperatingState::Unknown => {
-                PowerFlowDirection::NegativeUnknown
-            }
+            RideOperatingState::Parked
+            | RideOperatingState::Standing
+            | RideOperatingState::Unknown => PowerFlowDirection::NegativeUnknown,
         },
     }
 }
@@ -3793,7 +3796,7 @@ fn ride_operating_state(
     match charge_mode.map(|mode| mode.value) {
         Some(ChargeModeDto::Charging) => RideOperatingState::Charging,
         Some(ChargeModeDto::NotCharging) | None => match speed.map(|speed| speed.value.cmp(&0)) {
-            Some(std::cmp::Ordering::Equal) => RideOperatingState::Parked,
+            Some(std::cmp::Ordering::Equal) => RideOperatingState::Standing,
             Some(_) => RideOperatingState::Riding,
             None => RideOperatingState::Unknown,
         },
@@ -5867,7 +5870,7 @@ mod tests {
         );
         assert_eq!(
             ride_operating_state(None, Some(measured_i32(0))),
-            RideOperatingState::Parked
+            RideOperatingState::Standing
         );
         assert_eq!(
             ride_operating_state(None, Some(measured_i32(1_000))),
@@ -6205,7 +6208,7 @@ mod tests {
                 verification: MobileVerificationStatusDto::HardwareVerified,
             })
         );
-        assert_eq!(snapshot.operating_state, RideOperatingState::Parked);
+        assert_eq!(snapshot.operating_state, RideOperatingState::Standing);
         assert!(matches!(
             snapshot.battery_current,
             Some(BatteryCurrentReading {

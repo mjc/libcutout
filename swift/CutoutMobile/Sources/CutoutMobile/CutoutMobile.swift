@@ -1788,7 +1788,12 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
             return .unavailable
         }
 
-        return operatingState == .riding ? .available : .notApplicable
+        return switch operatingState {
+        case .riding, .standing:
+            .available
+        case .parked, .charging, .unknown:
+            .notApplicable
+        }
     }
 
     public var pwmHeadroomPermille: Int? {
@@ -1932,6 +1937,8 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         switch operatingState {
         case .parked:
             return "Parked"
+        case .standing:
+            return "Standing"
         case .riding:
             return "Riding"
         case .charging:

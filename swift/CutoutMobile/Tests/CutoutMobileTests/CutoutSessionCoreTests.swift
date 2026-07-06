@@ -1057,16 +1057,24 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(rideState.telemetry?.speed, Speed(value: 1_234))
     }
 
-    func testRideStateExposesPwmHeadroomOnlyWhileRiding() {
-        let rideState = EucRideScreenState(
+    func testRideStateExposesPwmHeadroomWhileStandingOrRiding() {
+        let riding = EucRideScreenState(
             phase: .live,
             displayState: RideDisplayState(
                 telemetry: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(230))
             )
         )
+        let standing = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .standing, pwm: dutyCycle(230))
+            )
+        )
 
-        XCTAssertEqual(rideState.pwmHeadroomApplicability, .available)
-        XCTAssertEqual(rideState.pwmHeadroomPermille, 770)
+        XCTAssertEqual(riding.pwmHeadroomApplicability, .available)
+        XCTAssertEqual(riding.pwmHeadroomPermille, 770)
+        XCTAssertEqual(standing.pwmHeadroomApplicability, .available)
+        XCTAssertEqual(standing.pwmHeadroomPermille, 770)
     }
 
     func testRideStateStatusUsesOperatingStateWhenLive() {
@@ -1082,6 +1090,12 @@ final class CutoutSessionCoreTests: XCTestCase {
                 telemetry: TelemetrySnapshot(operatingState: .riding)
             )
         )
+        let standing = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .standing)
+            )
+        )
         let charging = EucRideScreenState(
             phase: .live,
             displayState: RideDisplayState(
@@ -1091,6 +1105,7 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(parked.statusText, "Parked")
         XCTAssertEqual(riding.statusText, "Riding")
+        XCTAssertEqual(standing.statusText, "Standing")
         XCTAssertEqual(charging.statusText, "Charging")
     }
 
