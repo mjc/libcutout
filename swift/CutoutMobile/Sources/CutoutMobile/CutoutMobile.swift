@@ -2302,6 +2302,22 @@ public enum CutoutModelHint: Equatable, Hashable, Sendable {
     case aero
     case falcon
     case unknown
+
+    public init(deviceKind: String?) {
+        let normalizedName = deviceKind?.lowercased() ?? ""
+        if normalizedName.contains("falcon")
+            || normalizedName.contains("begode")
+            || normalizedName.contains("gotway") {
+            self = .falcon
+        } else if normalizedName.contains("aero")
+            || normalizedName.contains("nosfet")
+            || normalizedName.contains("veteran")
+            || normalizedName.hasPrefix("nf") {
+            self = .aero
+        } else {
+            self = .unknown
+        }
+    }
 }
 
 public struct CoreBluetoothManufacturerDataSummary: Equatable, Hashable, Sendable {
@@ -2336,19 +2352,7 @@ public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
     }
 
     public var modelHint: CutoutModelHint {
-        let normalizedName = localName?.lowercased() ?? ""
-        if normalizedName.contains("falcon")
-            || normalizedName.contains("begode")
-            || normalizedName.contains("gotway") {
-            return .falcon
-        }
-        if normalizedName.contains("aero")
-            || normalizedName.contains("nosfet")
-            || normalizedName.contains("veteran")
-            || normalizedName.hasPrefix("nf") {
-            return .aero
-        }
-        return .unknown
+        CutoutModelHint(deviceKind: localName)
     }
 }
 

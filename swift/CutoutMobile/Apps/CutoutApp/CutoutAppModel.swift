@@ -80,13 +80,24 @@ final class CutoutAppModel: ObservableObject {
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
         let annotations = ["device_kind=\(annotationKind)"]
-        let didStart = core.recordOnly(
-            platformIdentifier: platformIdentifier,
-            note: "unsupported picker row",
-            annotations: annotations
-        )
+        let modelHint = CutoutModelHint(deviceKind: annotationKind)
+        let didStart = switch modelHint {
+        case .falcon:
+            core.pair(platformIdentifier: platformIdentifier, model: .falcon)
+        case .aero:
+            core.pair(platformIdentifier: platformIdentifier, model: .aero)
+        case .unknown:
+            core.recordOnly(
+                platformIdentifier: platformIdentifier,
+                note: "unsupported picker row",
+                annotations: annotations
+            )
+        }
         if didStart {
-            isRecordOnlyCapture = true
+            if modelHint != .unknown {
+                core.annotateCapture(label: "device_kind=\(annotationKind)")
+            }
+            isRecordOnlyCapture = modelHint == .unknown
             recordOnlyDeviceKind = annotationKind
         }
         return didStart

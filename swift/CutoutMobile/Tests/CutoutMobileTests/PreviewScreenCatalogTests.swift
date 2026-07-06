@@ -188,6 +188,21 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
     }
 
+    func testTypedFalconDeviceKindMapsToFalconHint() {
+        XCTAssertEqual(CutoutModelHint(deviceKind: "EUC falcon"), .falcon)
+        XCTAssertEqual(CutoutModelHint(deviceKind: "scooter foo bar"), .unknown)
+    }
+
+    func testAdvertisementModelHintUsesTypedDeviceKindParser() {
+        let advertisement = CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-gotway"),
+            localName: "GotWay_002441",
+            advertisedServiceUuids: [.bluetooth16(0xFFE0)]
+        )
+
+        XCTAssertEqual(advertisement.modelHint, .falcon)
+    }
+
     func testUnknownSupportedConnectionRouteStillPairsWithoutMockupDestination() {
         let dto = DiscoveryCandidate(
             platformIdentifier: "ios-local-supported-future",
