@@ -14,10 +14,12 @@ public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable 
     case vescDebug
 }
 
-public enum MockupConnectionRoute: String, Equatable, Hashable, Sendable {
+public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
     case electricUnicycle = "electric_unicycle"
     case vescOnewheel = "vesc_onewheel"
 }
+
+public typealias MockupConnectionRoute = DevicePickerConnectionRoute
 
 public struct MockupMetric: Equatable, Hashable, Sendable {
     public let label: String
@@ -335,30 +337,32 @@ private extension MockupBmsScreenKind {
         }
     }
 }
-public enum MockupPickerRowState: Equatable, Hashable, Sendable {
+public enum DevicePickerRowState: Equatable, Hashable, Sendable {
     case supported(action: String)
     case unsupported(action: String)
     case manual(action: String)
 }
 
-public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
+public typealias MockupPickerRowState = DevicePickerRowState
+
+public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let id: String
 
     public let title: String
     public let subtitle: String
     public let detail: String
-    public let state: MockupPickerRowState
+    public let state: DevicePickerRowState
     public let symbolName: String
-    public let connectionRoute: MockupConnectionRoute?
+    public let connectionRoute: DevicePickerConnectionRoute?
 
     public init(
         id: String? = nil,
         title: String,
         subtitle: String,
         detail: String,
-        state: MockupPickerRowState,
+        state: DevicePickerRowState,
         symbolName: String,
-        connectionRoute: MockupConnectionRoute? = nil
+        connectionRoute: DevicePickerConnectionRoute? = nil
     ) {
         self.id = id ?? title
         self.title = title
@@ -370,7 +374,9 @@ public struct MockupPickerRow: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public extension MockupPickerRow {
+public typealias MockupPickerRow = DevicePickerRow
+
+public extension DevicePickerRow {
     var isSupported: Bool {
         if case .supported = state { true } else { false }
     }
@@ -384,7 +390,7 @@ public extension MockupPickerRow {
     }
 }
 
-public extension MockupPickerRowState {
+public extension DevicePickerRowState {
     var actionTitle: String {
         switch self {
         case .supported(let action), .unsupported(let action), .manual(let action):
@@ -397,21 +403,23 @@ public extension MockupPickerRowState {
     }
 }
 
-public struct MockupPickerSections: Equatable, Hashable, Sendable {
-    public let supported: [MockupPickerRow]
-    public let unsupported: [MockupPickerRow]
-    public let manual: MockupPickerRow?
+public struct DevicePickerSections: Equatable, Hashable, Sendable {
+    public let supported: [DevicePickerRow]
+    public let unsupported: [DevicePickerRow]
+    public let manual: DevicePickerRow?
 
-    public init(rows: [MockupPickerRow]) {
+    public init(rows: [DevicePickerRow]) {
         supported = rows.filter { $0.isSupported }
         unsupported = rows.filter { $0.isUnsupported }
         manual = rows.first { $0.isManual }
     }
 }
 
+public typealias MockupPickerSections = DevicePickerSections
+
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
-    case supported(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
-    case provisionalRoute(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
+    case supported(connectionRoute: DevicePickerConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
+    case provisionalRoute(connectionRoute: DevicePickerConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case unknownRecordable(disabledReason: String)
     case knownUnsupported(disabledReason: String)
     case ambiguous(disabledReason: String)
@@ -426,12 +434,12 @@ public extension DevicePickerCandidateSupport {
         switch dto.support {
         case .supported:
             self = .supported(
-                connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)),
+                connectionRoute: dto.connectionRoute.flatMap(DevicePickerConnectionRoute.init(rawValue:)),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
         case .provisionalRoute:
             self = .provisionalRoute(
-                connectionRoute: dto.connectionRoute.flatMap(MockupConnectionRoute.init(rawValue:)),
+                connectionRoute: dto.connectionRoute.flatMap(DevicePickerConnectionRoute.init(rawValue:)),
                 electricUnicycleModel: dto.electricUnicycleModel.map(ElectricUnicycleModel.init)
             )
         case .unknownRecordable:
@@ -499,7 +507,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         )
     }
 
-    public static func pickerRow(advertisement: CoreBluetoothAdvertisement) -> MockupPickerRow? {
+    public static func pickerRow(advertisement: CoreBluetoothAdvertisement) -> DevicePickerRow? {
         let candidate = mobileDiscoveryCandidateFromAdvertisement(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             localName: advertisement.localName,
@@ -509,8 +517,8 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         return DevicePickerDiscoveryCandidate(candidate: candidate).pickerRow
     }
 
-    public var pickerRow: MockupPickerRow {
-        MockupPickerRow(
+    public var pickerRow: DevicePickerRow {
+        DevicePickerRow(
             id: platformIdentifier,
             title: displayName,
             subtitle: "\(productCategory) - \(evidence)",
@@ -532,7 +540,7 @@ public extension DevicePickerCandidateSupport {
         }
     }
 
-    var connectionRoute: MockupConnectionRoute? {
+    var connectionRoute: DevicePickerConnectionRoute? {
         switch self {
         case .supported(let connectionRoute, _), .provisionalRoute(let connectionRoute, _):
             connectionRoute
@@ -550,7 +558,7 @@ public extension DevicePickerCandidateSupport {
         }
     }
 
-    var pickerRowState: MockupPickerRowState {
+    var pickerRowState: DevicePickerRowState {
         switch self {
         case .supported, .provisionalRoute:
             .supported(action: "Pair")
@@ -581,9 +589,9 @@ public enum DevicePickerScanStatus: Equatable, Hashable, Sendable {
 
 public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     public let status: DevicePickerScanStatus
-    public let rows: [MockupPickerRow]
+    public let rows: [DevicePickerRow]
 
-    public init(status: DevicePickerScanStatus, rows: [MockupPickerRow]) {
+    public init(status: DevicePickerScanStatus, rows: [DevicePickerRow]) {
         self.status = status
         self.rows = rows
     }
@@ -604,8 +612,8 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
         )
     }
 
-    public var sections: MockupPickerSections {
-        MockupPickerSections(rows: rows)
+    public var sections: DevicePickerSections {
+        DevicePickerSections(rows: rows)
     }
 
     public var statusText: String {

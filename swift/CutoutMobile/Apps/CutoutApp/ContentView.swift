@@ -67,7 +67,7 @@ struct ContentView: View {
         }
     }
 
-    private func pair(_ row: MockupPickerRow) {
+    private func pair(_ row: DevicePickerRow) {
         guard row.isSupported else { return }
 
         guard model.pair(platformIdentifier: row.id) else { return }
@@ -131,7 +131,7 @@ struct ContentView: View {
         }
     }
 
-    private static func route(for connectionRoute: MockupConnectionRoute?) -> CutoutAppRoute {
+    private static func route(for connectionRoute: DevicePickerConnectionRoute?) -> CutoutAppRoute {
         switch connectionRoute {
         case .electricUnicycle?:
             .ride
@@ -162,8 +162,8 @@ private struct MockupScreenContainer: View {
     let captureStatusText: String?
     let isRecordOnlyCapture: Bool
     let disconnect: () -> Void
-    let pair: (MockupPickerRow) -> Void
-    let recordOnly: (MockupPickerRow, String) -> Void
+    let pair: (DevicePickerRow) -> Void
+    let recordOnly: (DevicePickerRow, String) -> Void
     let startCaptureLabel: (CaptureQuickLabel) -> Void
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
     let selectScreen: (MockupScreenID) -> Void
@@ -171,7 +171,7 @@ private struct MockupScreenContainer: View {
     var body: some View {
         switch screen.id {
         case .devicePicker:
-            DevicePickerMockupView(
+            DevicePickerView(
                 screen: screen,
                 scanState: devicePickerScanState,
                 captureStatusText: captureStatusText,
@@ -1331,13 +1331,13 @@ private struct EucRideTabs: View {
     }
 }
 
-private struct DevicePickerMockupView: View {
+private struct DevicePickerView: View {
     let screen: MockupScreen
     let scanState: DevicePickerScanState?
     let captureStatusText: String?
     let isRecordOnlyCapture: Bool
-    let pair: (MockupPickerRow) -> Void
-    let recordOnly: (MockupPickerRow, String) -> Void
+    let pair: (DevicePickerRow) -> Void
+    let recordOnly: (DevicePickerRow, String) -> Void
     let startCaptureLabel: (CaptureQuickLabel) -> Void
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
     @State private var recordOnlyDeviceKind = ""
@@ -1346,7 +1346,7 @@ private struct DevicePickerMockupView: View {
         scanState ?? DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
     }
 
-    private var sections: MockupPickerSections {
+    private var sections: DevicePickerSections {
         renderedScanState.sections
     }
 
@@ -1641,7 +1641,7 @@ private struct SectionLabel: View {
 }
 
 private struct PickerDeviceRow: View {
-    let row: MockupPickerRow
+    let row: DevicePickerRow
     let scale: CGFloat
 
     var body: some View {
@@ -1706,7 +1706,7 @@ private struct RecordOnlyButtonLabel: View {
 }
 
 private struct ManualPickerRow: View {
-    let row: MockupPickerRow
+    let row: DevicePickerRow
     let scale: CGFloat
 
     var body: some View {
@@ -1728,7 +1728,7 @@ private struct ManualPickerRow: View {
 }
 
 private struct ActionBadge: View {
-    let state: MockupPickerRowState
+    let state: DevicePickerRowState
     let scale: CGFloat
 
     var body: some View {
@@ -1749,7 +1749,7 @@ private struct ActionBadge: View {
 }
 
 private struct DeviceGlyph: View {
-    let row: MockupPickerRow
+    let row: DevicePickerRow
 
     var body: some View {
         GeometryReader { proxy in
@@ -1905,7 +1905,7 @@ private struct CardBackground: View {
     }
 }
 
-private extension MockupPickerRow {
+private extension DevicePickerRow {
     var glyphColor: Color {
         switch title {
         case "NINEBOT-7A31":
@@ -1970,7 +1970,7 @@ private extension MockupAccent {
     }
 }
 
-private extension MockupPickerRowState {
+private extension DevicePickerRowState {
     var actionTitle: String {
         switch self {
         case .supported(let action), .unsupported(let action), .manual(let action):
