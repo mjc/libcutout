@@ -636,6 +636,7 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
         }
     }
 
+    public static let scanning = DevicePickerScanState(status: .scanning, rows: [])
     public static let bluetoothUnavailable = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
     public static let permissionDenied = DevicePickerScanState(status: .permissionDenied, rows: [])
 }

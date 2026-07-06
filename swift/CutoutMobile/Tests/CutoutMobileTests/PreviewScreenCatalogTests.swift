@@ -71,6 +71,16 @@ final class MockupScreenCatalogTests: XCTestCase {
 }
 
 extension MockupScreenCatalogTests {
+    func testDevicePickerScanningFallbackDoesNotRenderFixtureRows() {
+        let state = DevicePickerScanState.scanning
+
+        XCTAssertEqual(state.status, .scanning)
+        XCTAssertTrue(state.rows.isEmpty)
+        XCTAssertTrue(state.sections.supported.isEmpty)
+        XCTAssertTrue(state.sections.unsupported.isEmpty)
+        XCTAssertNil(state.sections.manual)
+    }
+
     func testDevicePickerFixtureCarriesRowsAndActionsFromMockup() throws {
         let picker = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .devicePicker))
 

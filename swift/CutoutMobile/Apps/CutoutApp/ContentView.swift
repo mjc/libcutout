@@ -1343,7 +1343,7 @@ private struct DevicePickerView: View {
     @State private var recordOnlyDeviceKind = ""
 
     private var renderedScanState: DevicePickerScanState {
-        scanState ?? DevicePickerScanState(status: .scanning, rows: screen.pickerRows)
+        scanState ?? .scanning
     }
 
     private var sections: DevicePickerSections {
