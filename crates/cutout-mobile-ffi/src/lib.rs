@@ -723,17 +723,11 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         support,
         connection_route: supported.then(|| "electric_unicycle".to_owned()),
         electric_unicycle_model: supported.then_some(DiscoveryElectricUnicycleModel::Falcon),
-        disabled_reason: match support {
-            DiscoveryCandidateSupport::Supported => None,
-            DiscoveryCandidateSupport::Conflicting => {
-                Some("Conflicting identity evidence".to_owned())
-            }
-            DiscoveryCandidateSupport::Ambiguous => Some("Needs user confirmation".to_owned()),
-            DiscoveryCandidateSupport::UnknownRecordable => {
-                Some("Missing Begode probe response".to_owned())
-            }
-            _ => Some("Not yet supported".to_owned()),
-        },
+        disabled_reason: mobile_begode_identity_probe_disabled_reason(
+            support,
+            reported_code_name,
+            missing_probe_response,
+        ),
     }
 }
 
@@ -807,7 +801,7 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
 
 fn mobile_begode_identity_probe_support(
     reported_model: Option<&str>,
-    _reported_code_name: Option<&str>,
+    reported_code_name: Option<&str>,
     missing_probe_response: Option<MobilePendingProbeDto>,
 ) -> DiscoveryCandidateSupport {
     let resolution = reported_model.map(|model| {
@@ -825,8 +819,30 @@ fn mobile_begode_identity_probe_support(
         Some(StagedIdentityOutcome::Ambiguous) => DiscoveryCandidateSupport::Ambiguous,
         Some(StagedIdentityOutcome::Conflict) => DiscoveryCandidateSupport::Conflicting,
         Some(_) => DiscoveryCandidateSupport::Unsupported,
+        None if reported_code_name.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
         None if missing_probe_response.is_some() => DiscoveryCandidateSupport::UnknownRecordable,
         None => DiscoveryCandidateSupport::Unsupported,
+    }
+}
+
+fn mobile_begode_identity_probe_disabled_reason(
+    support: DiscoveryCandidateSupport,
+    reported_code_name: Option<&str>,
+    missing_probe_response: Option<MobilePendingProbeDto>,
+) -> Option<String> {
+    match (support, reported_code_name, missing_probe_response) {
+        (DiscoveryCandidateSupport::Supported, _, _) => None,
+        (DiscoveryCandidateSupport::Conflicting, _, _) => {
+            Some("Conflicting identity evidence".to_owned())
+        }
+        (DiscoveryCandidateSupport::Ambiguous, _, _) => Some("Needs user confirmation".to_owned()),
+        (DiscoveryCandidateSupport::UnknownRecordable, Some(_), _) => {
+            Some("Unresolved Begode code banner".to_owned())
+        }
+        (DiscoveryCandidateSupport::UnknownRecordable, _, Some(_)) => {
+            Some("Missing Begode probe response".to_owned())
+        }
+        _ => Some("Not yet supported".to_owned()),
     }
 }
 
@@ -3861,12 +3877,15 @@ mod tests {
             },
         );
 
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason,
-            Some("Not yet supported".to_owned())
+            Some("Unresolved Begode code banner".to_owned())
         );
     }
 
