@@ -109,6 +109,17 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testEmptyDetectionResolutionDoesNotProjectPickerCandidate() {
+        let session = DeviceDetectionSession()
+
+        let candidate = session.resolution.discoveryCandidate(
+            platformIdentifier: "ios-local-empty",
+            displayName: "Unknown peripheral"
+        )
+
+        XCTAssertFalse(candidate.isPickerCandidate)
+    }
+
     func testVeteranDetectionResolutionProjectsSupportedCandidate() {
         let session = DeviceDetectionSession()
 

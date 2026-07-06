@@ -872,6 +872,32 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
     display_name: String,
     resolution: DeviceDetectionResolutionRecord,
 ) -> DiscoveryCandidate {
+    let has_detection_evidence = resolution.protocol_family.is_some()
+        || resolution.protocol_conflict
+        || resolution.veteran_protocol_model_id.is_some()
+        || resolution.model_banner.is_some()
+        || resolution.firmware_banner.is_some()
+        || resolution.imu_banner.is_some()
+        || resolution.missing_probe_response.is_some()
+        || resolution.malformed_probe_response.is_some();
+
+    if !has_detection_evidence {
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Unknown rideable".to_owned(),
+            evidence: "No protocol identity evidence".to_owned(),
+            detail: "No protocol identity evidence".to_owned(),
+            is_picker_candidate: false,
+            support: DiscoveryCandidateSupport::RejectedNoise,
+            recommended_action: DiscoveryCandidateSupport::RejectedNoise.recommended_action(),
+            section: DiscoveryCandidateSupport::RejectedNoise.picker_section(),
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Rejected noise".to_owned()),
+        };
+    }
+
     if resolution.protocol_conflict {
         return DiscoveryCandidate {
             platform_identifier,
@@ -4557,6 +4583,28 @@ mod tests {
             candidate.disabled_reason,
             Some("Missing Begode probe response".to_owned())
         );
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_rejects_empty_detection_resolution() {
+        let session = DeviceDetectionSessionHandle::new();
+        let resolution = session.resolution();
+
+        let candidate = mobile_discovery_candidate_from_detection_resolution(
+            "ios-local-empty".to_owned(),
+            "Unknown peripheral".to_owned(),
+            resolution,
+        );
+
+        assert!(!candidate.is_picker_candidate);
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::RejectedNoise);
+        assert_eq!(
+            candidate.recommended_action,
+            DiscoveryCandidateAction::Record
+        );
+        assert_eq!(candidate.section, DiscoveryCandidateSection::RecordOnly);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
     }
 
     #[test]
