@@ -704,6 +704,31 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(core.records.contains("begode_probe_response=imu"))
     }
 
+    func testOutstandingBegodeProbeResponsesAreLabeledMissing() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("V".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
+        core.markOutstandingBegodeProbeResponsesMissing()
+
+        XCTAssertTrue(core.records.contains("begode_probe_missing=model"))
+        XCTAssertTrue(core.records.contains("begode_probe_missing=firmware"))
+        XCTAssertTrue(core.records.contains("begode_probe_missing=imu"))
+    }
+
+    func testAnsweredBegodeProbeIsNotLabeledMissing() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+        core.markOutstandingBegodeProbeResponsesMissing()
+
+        XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
+    }
+
     func testProtocolIdentityCandidatePrefersSelectedAdvertisement() {
         let core = CutoutSessionCore()
         core.observeAdvertisement(

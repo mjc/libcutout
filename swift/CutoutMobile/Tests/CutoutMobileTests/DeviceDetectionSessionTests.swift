@@ -38,6 +38,16 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertEqual(resolution.imuBanner, Data("MPU6500".utf8))
     }
 
+    func testBegodeNameProbeTimeoutIsExposed() {
+        let session = DeviceDetectionSession()
+
+        _ = session.observeBegodeNameProbe()
+        let resolution = session.observeBegodeNameProbeTimeout()
+
+        XCTAssertEqual(resolution.missingProbeResponse, .begodeName)
+        XCTAssertNil(resolution.modelBanner)
+    }
+
     func testMalformedBegodeNameProbeRetainsRawControlByte() {
         let session = DeviceDetectionSession()
 

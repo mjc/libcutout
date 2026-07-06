@@ -389,6 +389,22 @@ pub struct DeviceDetectionResolutionRecord {
 
     /// Raw IMU-banner bytes retained by the detector.
     pub imu_banner: Option<Vec<u8>>,
+
+    /// Probe that was issued but did not produce a matching response.
+    pub missing_probe_response: Option<MobilePendingProbeDto>,
+}
+
+/// Pending probe state exposed across the `UniFFI` boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePendingProbeDto {
+    /// Begode `N` probe awaiting a model/name response.
+    BegodeName,
+
+    /// Begode `V` probe awaiting a firmware response.
+    BegodeFirmware,
+
+    /// Begode `M` probe awaiting an IMU response.
+    BegodeImu,
 }
 
 /// `UniFFI` handle for a caller-owned device detection session.
@@ -453,6 +469,27 @@ impl DeviceDetectionSessionHandle {
     /// Records that the caller issued a Begode `M` IMU probe.
     pub fn observe_begode_imu_probe(&self) -> DeviceDetectionResolutionRecord {
         self.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeImu,
+        })
+    }
+
+    /// Records that the Begode `N` name probe did not produce a matching response.
+    pub fn observe_begode_name_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
+        self.observe(DeviceDetectionEvent::ProbeTimeout {
+            probe: PendingProbe::BegodeName,
+        })
+    }
+
+    /// Records that the Begode `V` firmware probe did not produce a matching response.
+    pub fn observe_begode_firmware_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
+        self.observe(DeviceDetectionEvent::ProbeTimeout {
+            probe: PendingProbe::BegodeFirmware,
+        })
+    }
+
+    /// Records that the Begode `M` IMU probe did not produce a matching response.
+    pub fn observe_begode_imu_probe_timeout(&self) -> DeviceDetectionResolutionRecord {
+        self.observe(DeviceDetectionEvent::ProbeTimeout {
             probe: PendingProbe::BegodeImu,
         })
     }
@@ -2319,6 +2356,9 @@ impl From<&DeviceDetectionResolution> for DeviceDetectionResolutionRecord {
                 .imu_banner
                 .as_ref()
                 .map(|banner| banner.as_bytes().to_vec()),
+            missing_probe_response: resolution
+                .missing_probe_response
+                .map(MobilePendingProbeDto::from),
         }
     }
 }
@@ -2338,6 +2378,16 @@ const fn mobile_protocol_family_from_detection(
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         }
         ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
+    }
+}
+
+impl From<PendingProbe> for MobilePendingProbeDto {
+    fn from(probe: PendingProbe) -> Self {
+        match probe {
+            PendingProbe::BegodeName => Self::BegodeName,
+            PendingProbe::BegodeFirmware => Self::BegodeFirmware,
+            PendingProbe::BegodeImu => Self::BegodeImu,
+        }
     }
 }
 
@@ -3913,6 +3963,20 @@ mod tests {
         let resolution = session.observe_notification(b"MPU6500".to_vec());
 
         assert_eq!(resolution.imu_banner, Some(b"MPU6500".to_vec()));
+    }
+
+    #[test]
+    fn mobile_device_detection_session_exposes_missing_begode_probe_response() {
+        let session = DeviceDetectionSessionHandle::new();
+        let _ = session.observe_begode_name_probe();
+
+        let resolution = session.observe_begode_name_probe_timeout();
+
+        assert_eq!(
+            resolution.missing_probe_response,
+            Some(MobilePendingProbeDto::BegodeName)
+        );
+        assert_eq!(resolution.model_banner, None);
     }
 
     #[test]

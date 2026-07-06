@@ -366,6 +366,9 @@ pub struct DeviceDetectionResolution {
 
     /// Latest raw IMU banner retained as probe provenance.
     pub imu_banner: Option<ImuBanner>,
+
+    /// Latest probe that was issued but did not produce a matching response.
+    pub missing_probe_response: Option<PendingProbe>,
 }
 
 /// Incremental device-detection event.
@@ -394,6 +397,12 @@ pub enum DeviceDetectionEvent<'a> {
         /// Probe kind.
         probe: PendingProbe,
     },
+
+    /// Probe timeout reported by the caller.
+    ProbeTimeout {
+        /// Probe kind.
+        probe: PendingProbe,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -418,6 +427,7 @@ impl DeviceDetectionSession {
                 model_banner: None,
                 firmware_banner: None,
                 imu_banner: None,
+                missing_probe_response: None,
             },
             gatt: ArrayVec::new(),
         }
@@ -457,6 +467,7 @@ impl DeviceDetectionSession {
                     || decision.imu_banner
                 {
                     self.pending_probe = None;
+                    self.resolution.missing_probe_response = None;
                 }
                 let firmware_banner = decision
                     .firmware_banner
@@ -490,6 +501,12 @@ impl DeviceDetectionSession {
                 }
             }
             DeviceDetectionEvent::ProbeWrite { probe } => self.pending_probe = Some(probe),
+            DeviceDetectionEvent::ProbeTimeout { probe } => {
+                if self.pending_probe == Some(probe) {
+                    self.pending_probe = None;
+                }
+                self.resolution.missing_probe_response = Some(probe);
+            }
         }
 
         self.resolution.clone()
@@ -543,6 +560,7 @@ impl DeviceDetectionSession {
             },
             firmware_banner: self.resolution.firmware_banner.clone(),
             imu_banner: self.resolution.imu_banner.clone(),
+            missing_probe_response: self.resolution.missing_probe_response,
         };
     }
 }
@@ -1373,6 +1391,25 @@ mod tests {
             update.model_banner.as_ref().and_then(|banner| banner.get()),
             Some("Falcon")
         );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_records_missing_begode_model_probe_response() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+
+        let resolution = session.observe(DeviceDetectionEvent::ProbeTimeout {
+            probe: PendingProbe::BegodeName,
+        });
+
+        assert_eq!(
+            resolution.missing_probe_response,
+            Some(PendingProbe::BegodeName)
+        );
+        assert_eq!(resolution.model_banner, None);
+        assert_eq!(resolution.staged.model, None);
     }
 
     #[test]

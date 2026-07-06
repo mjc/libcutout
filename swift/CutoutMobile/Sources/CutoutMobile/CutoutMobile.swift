@@ -41,12 +41,30 @@ public enum DeviceDetectionProtocolFamily: Equatable, Hashable, Sendable {
     }
 }
 
+public enum DeviceDetectionPendingProbe: Equatable, Hashable, Sendable {
+    case begodeName
+    case begodeFirmware
+    case begodeImu
+
+    fileprivate init(_ dto: MobilePendingProbeDto) {
+        switch dto {
+        case .begodeName:
+            self = .begodeName
+        case .begodeFirmware:
+            self = .begodeFirmware
+        case .begodeImu:
+            self = .begodeImu
+        }
+    }
+}
+
 public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     public let protocolFamily: DeviceDetectionProtocolFamily?
     public let advertisedName: Data?
     public let modelBanner: Data?
     public let firmwareBanner: Data?
     public let imuBanner: Data?
+    public let missingProbeResponse: DeviceDetectionPendingProbe?
 
     fileprivate init(_ record: DeviceDetectionResolutionRecord) {
         self.protocolFamily = record.protocolFamily.map(DeviceDetectionProtocolFamily.init)
@@ -54,6 +72,7 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
         self.modelBanner = record.modelBanner
         self.firmwareBanner = record.firmwareBanner
         self.imuBanner = record.imuBanner
+        self.missingProbeResponse = record.missingProbeResponse.map(DeviceDetectionPendingProbe.init)
     }
 }
 
@@ -137,6 +156,18 @@ public final class DeviceDetectionSession {
 
     public func observeBegodeImuProbe() -> DeviceDetectionResolution {
         DeviceDetectionResolution(inner.observeBegodeImuProbe())
+    }
+
+    public func observeBegodeNameProbeTimeout() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeNameProbeTimeout())
+    }
+
+    public func observeBegodeFirmwareProbeTimeout() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeFirmwareProbeTimeout())
+    }
+
+    public func observeBegodeImuProbeTimeout() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeImuProbeTimeout())
     }
 
     public var resolution: DeviceDetectionResolution {

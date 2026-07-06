@@ -40,6 +40,7 @@ public final class CutoutSessionCore: NSObject {
     private var didRecordCaptureFile = false
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private var deviceDetectionSession = DeviceDetectionSession()
+    private var pendingBegodeProbeResponses = Set<DeviceDetectionPendingProbe>()
 
     public override init() {}
 
@@ -110,6 +111,7 @@ public final class CutoutSessionCore: NSObject {
         selectedModel = nil
         liveOwner = nil
         deviceDetectionSession = DeviceDetectionSession()
+        pendingBegodeProbeResponses.removeAll()
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
         displayState = RideDisplayState()
@@ -343,6 +345,7 @@ public final class CutoutSessionCore: NSObject {
         guard self.peripheral?.identifier == peripheral.identifier else {
             return
         }
+        markOutstandingBegodeProbeResponsesMissing()
         captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
         writeCapture()
         let wasRecordOnly = isRecordOnly
@@ -350,6 +353,7 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
+        pendingBegodeProbeResponses.removeAll()
 
         guard !suppressReconnect else {
             suppressReconnect = false
@@ -799,12 +803,15 @@ extension CutoutSessionCore {
         switch bytes.first {
         case UInt8(ascii: "N")?:
             _ = deviceDetectionSession.observeBegodeNameProbe()
+            pendingBegodeProbeResponses.insert(.begodeName)
             annotateDetection("begode_probe_write=model")
         case UInt8(ascii: "V")?:
             _ = deviceDetectionSession.observeBegodeFirmwareProbe()
+            pendingBegodeProbeResponses.insert(.begodeFirmware)
             annotateDetection("begode_probe_write=firmware")
         case UInt8(ascii: "M")?:
             _ = deviceDetectionSession.observeBegodeImuProbe()
+            pendingBegodeProbeResponses.insert(.begodeImu)
             annotateDetection("begode_probe_write=imu")
         default:
             break
@@ -830,14 +837,38 @@ extension CutoutSessionCore {
         let previous = deviceDetectionSession.resolution
         let current = deviceDetectionSession.observeNotification(bytes: bytes)
         if current.modelBanner != nil, current.modelBanner != previous.modelBanner {
+            pendingBegodeProbeResponses.remove(.begodeName)
             annotateDetection("begode_probe_response=model")
         }
         if current.firmwareBanner != nil, current.firmwareBanner != previous.firmwareBanner {
+            pendingBegodeProbeResponses.remove(.begodeFirmware)
             annotateDetection("begode_probe_response=firmware")
         }
         if current.imuBanner != nil, current.imuBanner != previous.imuBanner {
+            pendingBegodeProbeResponses.remove(.begodeImu)
             annotateDetection("begode_probe_response=imu")
         }
+    }
+
+    func markOutstandingBegodeProbeResponsesMissing() {
+        [
+            (DeviceDetectionPendingProbe.begodeName, "model"),
+            (.begodeFirmware, "firmware"),
+            (.begodeImu, "imu"),
+        ]
+            .filter { pendingBegodeProbeResponses.contains($0.0) }
+            .forEach { probe, label in
+                switch probe {
+                case .begodeName:
+                    _ = deviceDetectionSession.observeBegodeNameProbeTimeout()
+                case .begodeFirmware:
+                    _ = deviceDetectionSession.observeBegodeFirmwareProbeTimeout()
+                case .begodeImu:
+                    _ = deviceDetectionSession.observeBegodeImuProbeTimeout()
+                }
+                annotateDetection("begode_probe_missing=\(label)")
+            }
+        pendingBegodeProbeResponses.removeAll()
     }
 
     func annotateDetection(_ annotation: String) {
