@@ -45,11 +45,15 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     public let protocolFamily: DeviceDetectionProtocolFamily?
     public let advertisedName: Data?
     public let modelBanner: Data?
+    public let firmwareBanner: Data?
+    public let imuBanner: Data?
 
     fileprivate init(_ record: DeviceDetectionResolutionRecord) {
         self.protocolFamily = record.protocolFamily.map(DeviceDetectionProtocolFamily.init)
         self.advertisedName = record.advertisedName
         self.modelBanner = record.modelBanner
+        self.firmwareBanner = record.firmwareBanner
+        self.imuBanner = record.imuBanner
     }
 }
 
@@ -125,6 +129,14 @@ public final class DeviceDetectionSession {
 
     public func observeBegodeNameProbe() -> DeviceDetectionResolution {
         DeviceDetectionResolution(inner.observeBegodeNameProbe())
+    }
+
+    public func observeBegodeFirmwareProbe() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeFirmwareProbe())
+    }
+
+    public func observeBegodeImuProbe() -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeImuProbe())
     }
 
     public var resolution: DeviceDetectionResolution {

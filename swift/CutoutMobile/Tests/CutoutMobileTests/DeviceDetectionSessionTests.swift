@@ -20,6 +20,24 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertEqual(resolution.modelBanner, Data("Falcon".utf8))
     }
 
+    func testBegodeFirmwareProbeRetainsFirmwareBannerBytes() {
+        let session = DeviceDetectionSession()
+
+        _ = session.observeBegodeFirmwareProbe()
+        let resolution = session.observeNotification(bytes: Data("GW FALCON 1.0".utf8))
+
+        XCTAssertEqual(resolution.firmwareBanner, Data("GW FALCON 1.0".utf8))
+    }
+
+    func testBegodeImuProbeRetainsImuBannerBytes() {
+        let session = DeviceDetectionSession()
+
+        _ = session.observeBegodeImuProbe()
+        let resolution = session.observeNotification(bytes: Data("MPU6500".utf8))
+
+        XCTAssertEqual(resolution.imuBanner, Data("MPU6500".utf8))
+    }
+
     func testMalformedBegodeNameProbeRetainsRawControlByte() {
         let session = DeviceDetectionSession()
 
