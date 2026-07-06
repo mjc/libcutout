@@ -205,6 +205,25 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testBegodeProbeConflictMapsToReviewRow() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromBegodeIdentityProbe(
+            platformIdentifier: "ios-local-master",
+            displayName: "GotWay_002441",
+            probe: MobileBegodeIdentityProbeDto(
+                reportedModel: "Master",
+                reportedCodeName: "GW-MASTER",
+                reportedImu: nil,
+                reportedFirmwareVersion: nil,
+                reportedSerial: nil,
+                nominalVoltageHintMv: nil
+            )
+        ))
+
+        XCTAssertEqual(candidate.support, .conflicting(disabledReason: "Conflicting identity evidence"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Review"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testCoreBluetoothAdvertisementMapsToPickerCandidateWithoutMacAddress() {
         let advertisement = CoreBluetoothAdvertisement(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),

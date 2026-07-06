@@ -31,7 +31,7 @@ use cutout_core::{
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
     ConcreteFalconReadOnlySession, ConcreteSessionErrorDto, ConcreteSessionStepResultDto,
-    DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession,
+    DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily,
     IdentityBannerEvidence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
     VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
@@ -655,7 +655,8 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
     let reported_imu = probe.reported_imu.as_deref();
     let reported_firmware_version = probe.reported_firmware_version.as_deref();
     let reported_serial = probe.reported_serial.as_deref();
-    let supported = mobile_begode_identity_probe_support(reported_model, reported_code_name);
+    let support = mobile_begode_identity_probe_support(reported_model, reported_code_name);
+    let supported = support == DiscoveryCandidateSupport::Supported;
     let detail = mobile_begode_identity_probe_detail(
         supported,
         reported_model,
@@ -673,14 +674,17 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         evidence,
         detail,
         is_picker_candidate: true,
-        support: if supported {
-            DiscoveryCandidateSupport::Supported
-        } else {
-            DiscoveryCandidateSupport::Unsupported
-        },
+        support,
         connection_route: supported.then(|| "electric_unicycle".to_owned()),
         electric_unicycle_model: supported.then_some(DiscoveryElectricUnicycleModel::Falcon),
-        disabled_reason: (!supported).then(|| "Not yet supported".to_owned()),
+        disabled_reason: match support {
+            DiscoveryCandidateSupport::Supported => None,
+            DiscoveryCandidateSupport::Conflicting => {
+                Some("Conflicting identity evidence".to_owned())
+            }
+            DiscoveryCandidateSupport::Ambiguous => Some("Needs user confirmation".to_owned()),
+            _ => Some("Not yet supported".to_owned()),
+        },
     }
 }
 
@@ -755,9 +759,27 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
 fn mobile_begode_identity_probe_support(
     reported_model: Option<&str>,
     reported_code_name: Option<&str>,
-) -> bool {
-    mobile_begode_identity_probe_matches_falcon(reported_model)
-        || mobile_begode_identity_probe_matches_falcon(reported_code_name)
+) -> DiscoveryCandidateSupport {
+    let resolution = reported_model.map(|model| {
+        identify_known_model(&StagedIdentityInput {
+            advertised_name: None,
+            gatt: &[] as &[GattFingerprint],
+            stream_family: ProtocolFamilyClassification::Known(DeviceFamily::BegodeFalcon),
+            banner_model: IdentityBannerEvidence::model(model),
+            protocol_model: ProtocolModelIdentityEvidence::Missing,
+        })
+    });
+
+    match resolution.map(|resolution| resolution.outcome) {
+        Some(StagedIdentityOutcome::Matched) => DiscoveryCandidateSupport::Supported,
+        Some(StagedIdentityOutcome::Ambiguous) => DiscoveryCandidateSupport::Ambiguous,
+        Some(StagedIdentityOutcome::Conflict) => DiscoveryCandidateSupport::Conflicting,
+        Some(_) => DiscoveryCandidateSupport::Unsupported,
+        None if mobile_begode_identity_probe_matches_falcon(reported_code_name) => {
+            DiscoveryCandidateSupport::Supported
+        }
+        None => DiscoveryCandidateSupport::Unsupported,
+    }
 }
 
 fn mobile_begode_identity_probe_matches_falcon(value: Option<&str>) -> bool {
@@ -3731,6 +3753,30 @@ mod tests {
             Some(DiscoveryElectricUnicycleModel::Falcon)
         );
         assert_eq!(candidate.disabled_reason, None);
+    }
+
+    #[test]
+    fn mobile_discovery_candidate_marks_non_falcon_begode_model_conflicting() {
+        let candidate = mobile_discovery_candidate_from_begode_identity_probe(
+            "ios-local-master".to_owned(),
+            "GotWay_002441".to_owned(),
+            MobileBegodeIdentityProbeDto {
+                reported_model: Some("Master".to_owned()),
+                reported_code_name: Some("GW-MASTER".to_owned()),
+                reported_imu: None,
+                reported_firmware_version: None,
+                reported_serial: None,
+                nominal_voltage_hint_mv: None,
+            },
+        );
+
+        assert_eq!(candidate.support, DiscoveryCandidateSupport::Conflicting);
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(
+            candidate.disabled_reason,
+            Some("Conflicting identity evidence".to_owned())
+        );
     }
 
     #[test]
