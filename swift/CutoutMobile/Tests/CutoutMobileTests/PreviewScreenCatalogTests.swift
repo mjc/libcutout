@@ -245,6 +245,28 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testCodeOnlyBegodeProbeMapsToRecordRow() {
+        let candidate = DevicePickerDiscoveryCandidate(candidate: mobileDiscoveryCandidateFromBegodeIdentityProbe(
+            platformIdentifier: "ios-local-falcon-code",
+            displayName: "GotWay_002441",
+            probe: MobileBegodeIdentityProbeDto(
+                reportedModel: nil,
+                reportedCodeName: "GW-FALCON",
+                reportedImu: nil,
+                reportedFirmwareVersion: nil,
+                reportedSerial: nil,
+                nominalVoltageHintMv: nil,
+                missingProbeResponse: nil
+            )
+        ))
+
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Unresolved Begode code banner"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertNil(candidate.support.connectionRoute)
+        XCTAssertNil(candidate.support.electricUnicycleModel)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testCoreBluetoothAdvertisementMapsToPickerCandidateWithoutMacAddress() {
         let advertisement = CoreBluetoothAdvertisement(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
