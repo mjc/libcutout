@@ -30,7 +30,7 @@ public extension LiveActivityRideFixtureMatrix {
     static let v1 = Self(fixtures: [
         .init(kind: .demo, snapshot: .fixture(
             identity: .fixture(label: "Demo ride"),
-            speed: .available(label: "Speed", value: "19", unit: "mph", source: .fixture),
+            speed: .available(label: "Speed", value: "19.8", unit: "mph", source: .fixture),
             battery: .available(label: "Battery", value: "82", unit: "%", source: .fixture),
             packVoltage: .available(label: "Voltage", value: "112.4", unit: "V", source: .fixture),
             pwm: .available(label: "PWM", value: "41", unit: "%", source: .fixture),
@@ -43,7 +43,7 @@ public extension LiveActivityRideFixtureMatrix {
         )),
         .init(kind: .populated, snapshot: .fixture(
             identity: .fixture(label: "Aero-126V"),
-            speed: .available(label: "Speed", value: "31", unit: "mph", source: .fixture),
+            speed: .available(label: "Speed", value: "31.2", unit: "mph", source: .fixture),
             battery: .available(label: "Battery", value: "74", unit: "%", source: .fixture),
             packVoltage: .available(label: "Voltage", value: "115.8", unit: "V", source: .fixture),
             pwm: .available(label: "PWM", value: "77", unit: "%", source: .fixture),
@@ -58,7 +58,7 @@ public extension LiveActivityRideFixtureMatrix {
             identity: .fixture(label: "Partial ride"),
             connectionState: .fixture,
             sessionStatus: .available(label: "Status", value: "Live", unit: nil, source: .fixture),
-            speed: .available(label: "Speed", value: "13", unit: "mph", source: .fixture),
+            speed: .available(label: "Speed", value: "13.4", unit: "mph", source: .fixture),
             battery: .deferred(label: "Battery", unit: "%"),
             packVoltage: .available(label: "Voltage", value: "109.2", unit: "V", source: .fixture),
             pwm: .available(label: "PWM", value: "48", unit: "%", source: .fixture),
@@ -88,7 +88,7 @@ public extension LiveActivityRideFixtureMatrix {
             identity: .fixture(label: "Stale ride"),
             connectionState: .stale,
             sessionStatus: .available(label: "Status", value: "Stale", unit: nil, source: .fixture),
-            speed: .stale(label: "Speed", value: "21", unit: "mph", source: .fixture),
+            speed: .stale(label: "Speed", value: "21.6", unit: "mph", source: .fixture),
             battery: .stale(label: "Battery", value: "67", unit: "%", source: .fixture),
             packVoltage: .stale(label: "Voltage", value: "107.9", unit: "V", source: .fixture),
             pwm: .stale(label: "PWM", value: "52", unit: "%", source: .fixture),

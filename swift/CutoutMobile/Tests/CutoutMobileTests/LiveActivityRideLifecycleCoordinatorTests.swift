@@ -5,8 +5,8 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
     func testReconcileStartsUpdatesAndEndsOnce() {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
-        let first = fixtureSnapshot(label: "Demo ride", speedMph: 19)
-        let second = fixtureSnapshot(label: "Demo ride", speedMph: 21)
+        let first = fixtureSnapshot(label: "Demo ride", speedMph: 19.8)
+        let second = fixtureSnapshot(label: "Demo ride", speedMph: 21.6)
 
         coordinator.reconcile(snapshot: first, shouldBeActive: true)
         coordinator.reconcile(snapshot: first, shouldBeActive: true)
@@ -33,7 +33,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
     func testEndStopsActiveActivityOnce() {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
-        let snapshot = fixtureSnapshot(label: "Demo ride", speedMph: 19)
+        let snapshot = fixtureSnapshot(label: "Demo ride", speedMph: 19.8)
 
         coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
         coordinator.end(reason: .sessionEnded)
@@ -68,10 +68,13 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
     }
 
     func testFixtureHelperKeepsSpeedUnitSeparate() {
-        let snapshot = fixtureSnapshot(label: "Demo ride", speedMph: 19)
+        let snapshot = fixtureSnapshot(label: "Demo ride", speedMph: 19.8)
+        let fastSnapshot = fixtureSnapshot(label: "Demo ride", speedMph: 123.4)
 
-        XCTAssertEqual(snapshot.speed.value, "19")
+        XCTAssertEqual(snapshot.speed.value, "19.8")
         XCTAssertEqual(snapshot.speed.unit, "mph")
+        XCTAssertEqual(fastSnapshot.speed.value, "123.4")
+        XCTAssertEqual(fastSnapshot.speed.unit, "mph")
     }
 }
 
@@ -97,10 +100,10 @@ private final class RecordingLiveActivityRideLifecycleManager: LiveActivityRideL
     }
 }
 
-private func fixtureSnapshot(label: String, speedMph: Int) -> LiveActivityRideSnapshot {
+private func fixtureSnapshot(label: String, speedMph: Double) -> LiveActivityRideSnapshot {
     LiveActivityRideSnapshot.fixture(
         identity: .fixture(label: label),
-        speed: .available(label: "Speed", value: String(speedMph), unit: "mph", source: .fixture),
+        speed: .available(label: "Speed", value: String(format: "%.1f", speedMph), unit: "mph", source: .fixture),
         battery: .available(label: "Battery", value: "68", unit: "%", source: .fixture),
         packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .fixture),
         pwm: .available(label: "PWM", value: "54", unit: "%", source: .fixture),
