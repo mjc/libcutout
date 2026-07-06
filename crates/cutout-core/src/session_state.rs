@@ -239,6 +239,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate can be paired through the current mobile route.
     Supported,
 
+    /// Candidate is relevant enough to capture but has no supported route yet.
+    UnknownRecordable,
+
     /// Candidate is recognized but not currently supported.
     Unsupported,
 }
@@ -309,7 +312,7 @@ impl DiscoveryCandidateSnapshot {
                     product_category: "Electric unicycle".to_owned(),
                     evidence: "FFE0/FFE1 transport hint".to_owned(),
                     detail: "Model not confirmed".to_owned(),
-                    support: DiscoveryCandidateSupport::Unsupported,
+                    support: DiscoveryCandidateSupport::UnknownRecordable,
                     electric_unicycle_model: None,
                 },
             }),
@@ -564,7 +567,7 @@ mod tests {
         assert_eq!(picker_candidates[2].platform_identifier, "unknown-euc-id");
         assert_eq!(
             picker_candidates[2].support,
-            DiscoveryCandidateSupport::Unsupported
+            DiscoveryCandidateSupport::UnknownRecordable
         );
         assert_eq!(picker_candidates[2].detail, "Model not confirmed");
         assert_eq!(picker_candidates[2].electric_unicycle_model, None);

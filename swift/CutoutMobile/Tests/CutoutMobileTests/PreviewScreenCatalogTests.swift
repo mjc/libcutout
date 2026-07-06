@@ -246,6 +246,26 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testUnknownRecordableDiscoveryCandidateOffersRecordOnlyPickerAction() {
+        let dto = DiscoveryCandidate(
+            platformIdentifier: "ios-local-unknown-euc",
+            displayName: "EUC-unknown",
+            productCategory: "Electric unicycle",
+            evidence: "FFE0/FFE1 transport hint",
+            detail: "Model not confirmed",
+            isPickerCandidate: true,
+            support: .unknownRecordable,
+            connectionRoute: nil,
+            electricUnicycleModel: nil,
+            disabledReason: "Model not confirmed"
+        )
+        let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
+
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Model not confirmed"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testCoreBluetoothAdvertisementsMapToScanningPickerState() {
         let state = DevicePickerScanState(
             status: .scanning,

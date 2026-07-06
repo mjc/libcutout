@@ -47,6 +47,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate has a supported read-only route.
     Supported,
 
+    /// Candidate is relevant enough to record for future support.
+    UnknownRecordable,
+
     /// Candidate looks relevant but is not supported for launch.
     Unsupported,
 }
@@ -269,14 +272,17 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
             display_name: candidate.display_name,
             product_category: candidate.product_category,
             evidence: candidate.evidence,
-            detail: candidate.detail,
+            detail: candidate.detail.clone(),
             is_picker_candidate: true,
             support,
             connection_route: (candidate.support == CoreDiscoveryCandidateSupport::Supported)
                 .then(|| "electric_unicycle".to_owned()),
             electric_unicycle_model,
-            disabled_reason: (candidate.support == CoreDiscoveryCandidateSupport::Unsupported)
-                .then(|| "Not yet supported".to_owned()),
+            disabled_reason: match candidate.support {
+                CoreDiscoveryCandidateSupport::Supported => None,
+                CoreDiscoveryCandidateSupport::UnknownRecordable => Some(candidate.detail.clone()),
+                CoreDiscoveryCandidateSupport::Unsupported => Some("Not yet supported".to_owned()),
+            },
         }
     }
 }
@@ -294,6 +300,7 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
     fn from(support: CoreDiscoveryCandidateSupport) -> Self {
         match support {
             CoreDiscoveryCandidateSupport::Supported => Self::Supported,
+            CoreDiscoveryCandidateSupport::UnknownRecordable => Self::UnknownRecordable,
             CoreDiscoveryCandidateSupport::Unsupported => Self::Unsupported,
         }
     }
@@ -473,7 +480,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
                 evidence: "FFE0/FFE1 transport hint".to_owned(),
                 detail: "Model not confirmed".to_owned(),
                 is_picker_candidate: true,
-                support: DiscoveryCandidateSupport::Unsupported,
+                support: DiscoveryCandidateSupport::UnknownRecordable,
                 connection_route: None,
                 electric_unicycle_model: None,
                 disabled_reason: Some("Model not confirmed".to_owned()),
@@ -617,10 +624,10 @@ pub fn mobile_discovery_candidate_from_veteran_protocol_identity(
             evidence: "Veteran protocol model id".to_owned(),
             detail: format!("Unknown Veteran/NOSFET model id {model_id}"),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::Unsupported,
+            support: DiscoveryCandidateSupport::UnknownRecordable,
             connection_route: None,
             electric_unicycle_model: None,
-            disabled_reason: Some("Model not supported".to_owned()),
+            disabled_reason: Some(format!("Unknown Veteran/NOSFET model id {model_id}")),
         };
     };
 
@@ -3829,12 +3836,15 @@ mod tests {
         assert_eq!(candidate.evidence, "Veteran protocol model id");
         assert_eq!(candidate.detail, "Unknown Veteran/NOSFET model id 99");
         assert!(candidate.is_picker_candidate);
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason.as_deref(),
-            Some("Model not supported")
+            Some("Unknown Veteran/NOSFET model id 99")
         );
     }
 
@@ -4689,7 +4699,10 @@ mod tests {
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "FFE0/FFE1 transport hint");
         assert_eq!(candidate.detail, "Model not confirmed");
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::UnknownRecordable
+        );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
