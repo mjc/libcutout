@@ -629,6 +629,35 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.records.last, "protocol_identity=NOSFET Aero confirmed by model id 43")
     }
 
+    func testBegodeProbeWritesAreLabeledForDetectionCapture() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("V".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
+
+        XCTAssertTrue(core.records.contains("begode_probe_write=model"))
+        XCTAssertTrue(core.records.contains("begode_probe_write=firmware"))
+        XCTAssertTrue(core.records.contains("begode_probe_write=imu"))
+    }
+
+    func testBegodeProbeResponsesAreLabeledFromDetectionSession() {
+        let core = CutoutSessionCore()
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("V".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("GW FALCON 1.0".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("MPU6500".utf8))
+
+        XCTAssertTrue(core.records.contains("begode_probe_response=model"))
+        XCTAssertTrue(core.records.contains("begode_probe_response=firmware"))
+        XCTAssertTrue(core.records.contains("begode_probe_response=imu"))
+    }
+
     func testProtocolIdentityCandidatePrefersSelectedAdvertisement() {
         let core = CutoutSessionCore()
         core.observeAdvertisement(

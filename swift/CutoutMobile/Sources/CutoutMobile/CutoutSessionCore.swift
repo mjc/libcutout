@@ -39,6 +39,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureBuilder: MobilePevcapCaptureBuilder?
     private var didRecordCaptureFile = false
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
+    private var deviceDetectionSession = DeviceDetectionSession()
 
     public override init() {}
 
@@ -108,6 +109,7 @@ public final class CutoutSessionCore: NSObject {
         isRecordOnly = false
         selectedModel = nil
         liveOwner = nil
+        deviceDetectionSession = DeviceDetectionSession()
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
         displayState = RideDisplayState()
@@ -268,6 +270,7 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = model
+        deviceDetectionSession = DeviceDetectionSession()
         startCapture(reason: "pair", annotations: ["route=electric_unicycle"])
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -286,6 +289,7 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = nil
         liveOwner = nil
+        deviceDetectionSession = DeviceDetectionSession()
         startCapture(reason: "record-only", annotations: ["route=record_only"] + annotations + (note.map { ["user_note=\($0)"] } ?? []))
         clearSettingsReadback()
         clearFaultHistoryReadback()
@@ -703,6 +707,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         captureFrame(direction: "notify", characteristic: characteristic.uuid, bytes: value)
+        observeDetectionNotification(channel: channel, bytes: value)
         if isRecordOnly {
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             return
@@ -740,6 +745,7 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
     }
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        observeDetectionProbeWrite(channel: channel, bytes: bytes)
         captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
         setPhase(.failed(.skippedReadOnlyWrite))
     }
@@ -752,7 +758,7 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
     }
 }
 
-private extension CutoutSessionCore {
+extension CutoutSessionCore {
     func recordGattFingerprints(service: CBService) {
         guard let serviceUuid = BluetoothUuid(coreBluetoothUuid: service.uuid) else {
             return
@@ -775,6 +781,48 @@ private extension CutoutSessionCore {
         characteristics
             .filter { $0.properties.contains(.notify) || $0.properties.contains(.indicate) }
             .forEach { peripheral.setNotifyValue(true, for: $0) }
+    }
+
+    func observeDetectionProbeWrite(channel: BluetoothUuid, bytes: Data) {
+        guard channel.bluetooth16Value == 0xffe1 else {
+            return
+        }
+        switch bytes.first {
+        case UInt8(ascii: "N")?:
+            _ = deviceDetectionSession.observeBegodeNameProbe()
+            annotateDetection("begode_probe_write=model")
+        case UInt8(ascii: "V")?:
+            _ = deviceDetectionSession.observeBegodeFirmwareProbe()
+            annotateDetection("begode_probe_write=firmware")
+        case UInt8(ascii: "M")?:
+            _ = deviceDetectionSession.observeBegodeImuProbe()
+            annotateDetection("begode_probe_write=imu")
+        default:
+            break
+        }
+    }
+
+    func observeDetectionNotification(channel: BluetoothUuid, bytes: Data) {
+        guard channel.bluetooth16Value == 0xffe1 else {
+            return
+        }
+        let previous = deviceDetectionSession.resolution
+        let current = deviceDetectionSession.observeNotification(bytes: bytes)
+        if current.modelBanner != nil, current.modelBanner != previous.modelBanner {
+            annotateDetection("begode_probe_response=model")
+        }
+        if current.firmwareBanner != nil, current.firmwareBanner != previous.firmwareBanner {
+            annotateDetection("begode_probe_response=firmware")
+        }
+        if current.imuBanner != nil, current.imuBanner != previous.imuBanner {
+            annotateDetection("begode_probe_response=imu")
+        }
+    }
+
+    func annotateDetection(_ annotation: String) {
+        captureBuilder?.addAnnotation(annotation: annotation)
+        record(annotation)
+        writeCapture()
     }
 }
 
