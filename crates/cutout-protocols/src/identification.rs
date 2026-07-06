@@ -420,6 +420,7 @@ struct NotificationDecision<'a> {
     protocol_model: ProtocolModelIdentityEvidence,
     firmware_banner: bool,
     imu_banner: bool,
+    malformed_probe: Option<PendingProbe>,
 }
 
 impl DeviceDetectionSession {
@@ -458,7 +459,6 @@ impl DeviceDetectionSession {
                 self.refresh_resolution(None, None, self.resolution.protocol);
             }
             DeviceDetectionEvent::Notification { bytes } => {
-                let pending_probe = self.pending_probe;
                 let begode_frame = bytes
                     .iter()
                     .filter_map(|byte| self.begode_reassembler.feed_byte_result(*byte).ok())
@@ -469,11 +469,7 @@ impl DeviceDetectionSession {
                 let bytes = begode_frame
                     .as_ref()
                     .map_or(bytes, |frame| frame.as_slice());
-                let decision = NotificationDecision::from_bytes(
-                    self.resolution.protocol,
-                    pending_probe,
-                    bytes,
-                );
+                let decision = NotificationDecision::from_bytes(self.resolution.protocol, bytes);
                 let malformed_model_banner =
                     match (decision.banner_model, self.resolution.staged.model) {
                         (IdentityBannerEvidence::Malformed, None) => {
@@ -491,7 +487,7 @@ impl DeviceDetectionSession {
                     self.resolution.missing_probe_response = None;
                 }
                 self.resolution.malformed_probe_response =
-                    match (decision.banner_model, pending_probe) {
+                    match (decision.banner_model, decision.malformed_probe) {
                         (IdentityBannerEvidence::Malformed, probe) => probe,
                         (IdentityBannerEvidence::Model(_), _) => None,
                         (IdentityBannerEvidence::Missing, _) => {
@@ -615,32 +611,25 @@ fn model_banner_bytes(bytes: &[u8]) -> &[u8] {
 }
 
 impl<'a> NotificationDecision<'a> {
-    fn from_bytes(
-        current_protocol: ProtocolFamilyState,
-        pending_probe: Option<PendingProbe>,
-        bytes: &[u8],
-    ) -> NotificationDecision<'_> {
-        let banner_model = match pending_probe {
-            Some(PendingProbe::BegodeName) => parse_model_banner(bytes),
-            Some(PendingProbe::BegodeFirmware | PendingProbe::BegodeImu) | None => {
-                IdentityBannerEvidence::Missing
-            }
+    fn from_bytes(current_protocol: ProtocolFamilyState, bytes: &[u8]) -> NotificationDecision<'_> {
+        let banner = classify_begode_ascii_banner(bytes);
+        let banner_model = match banner {
+            BegodeBannerParse::Banner(BegodeBanner::ModelName(_)) => parse_model_banner(bytes),
+            BegodeBannerParse::NonAscii if bytes.starts_with(b"NAME") => parse_model_banner(bytes),
+            BegodeBannerParse::Banner(BegodeBanner::Firmware { .. } | BegodeBanner::Imu(_))
+            | BegodeBannerParse::Empty
+            | BegodeBannerParse::BinaryFrame
+            | BegodeBannerParse::NonAscii
+            | BegodeBannerParse::UnknownText => IdentityBannerEvidence::Missing,
         };
-        let firmware_banner = match pending_probe {
-            Some(PendingProbe::BegodeFirmware) => {
-                matches!(
-                    classify_begode_ascii_banner(bytes),
-                    BegodeBannerParse::Banner(BegodeBanner::Firmware { .. })
-                )
-            }
-            Some(PendingProbe::BegodeName | PendingProbe::BegodeImu) | None => false,
-        };
-        let imu_banner = match pending_probe {
-            Some(PendingProbe::BegodeImu) => matches!(
-                classify_begode_ascii_banner(bytes),
-                BegodeBannerParse::Banner(BegodeBanner::Imu(_))
-            ),
-            Some(PendingProbe::BegodeName | PendingProbe::BegodeFirmware) | None => false,
+        let firmware_banner = matches!(
+            banner,
+            BegodeBannerParse::Banner(BegodeBanner::Firmware { .. })
+        );
+        let imu_banner = matches!(banner, BegodeBannerParse::Banner(BegodeBanner::Imu(_)));
+        let malformed_probe = match banner_model {
+            IdentityBannerEvidence::Malformed => Some(PendingProbe::BegodeName),
+            IdentityBannerEvidence::Missing | IdentityBannerEvidence::Model(_) => None,
         };
         let (observed_protocol, protocol_model) = match VeteranFrame::try_from_slice(bytes) {
             Ok(frame) => (
@@ -673,6 +662,7 @@ impl<'a> NotificationDecision<'a> {
             protocol_model,
             firmware_banner,
             imu_banner,
+            malformed_probe,
         }
     }
 
@@ -1678,6 +1668,36 @@ mod tests {
         assert_eq!(
             update.imu_banner.as_ref().map(super::ImuBanner::as_bytes),
             Some(&b"MPU6500"[..])
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_labels_malformed_name_after_queued_probe_writes() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeFirmware,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeImu,
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME=Falcon\0",
+        });
+
+        assert_eq!(
+            update.malformed_probe_response,
+            Some(PendingProbe::BegodeName)
+        );
+        assert_eq!(
+            update
+                .model_banner
+                .as_ref()
+                .map(super::ModelBanner::as_bytes),
+            Some(&b"Falcon\0"[..])
         );
     }
 
