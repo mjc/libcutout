@@ -253,11 +253,45 @@ impl ModelBanner {
     }
 }
 
+/// Raw firmware-banner bytes retained as probe-response provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirmwareBanner(Bytes);
+
+impl FirmwareBanner {
+    /// Copies borrowed firmware-banner bytes into owned provenance.
+    #[must_use]
+    pub fn copy_from_slice(bytes: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(bytes))
+    }
+
+    /// Returns the original firmware-banner bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+
+    /// Returns the firmware banner only when the bytes are valid banner text.
+    #[must_use]
+    pub fn get(&self) -> Option<&str> {
+        match classify_begode_ascii_banner(self.as_bytes()) {
+            BegodeBannerParse::Banner(BegodeBanner::Firmware { banner, .. }) => Some(banner),
+            BegodeBannerParse::Banner(BegodeBanner::ModelName(_) | BegodeBanner::Imu(_))
+            | BegodeBannerParse::Empty
+            | BegodeBannerParse::BinaryFrame
+            | BegodeBannerParse::NonAscii
+            | BegodeBannerParse::UnknownText => None,
+        }
+    }
+}
+
 /// Pending probe state remembered by the detection session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PendingProbe {
     /// Begode `N` probe awaiting a `NAME...` response.
     BegodeName,
+
+    /// Begode `V` probe awaiting a firmware/code banner response.
+    BegodeFirmware,
 }
 
 /// Current protocol-family state for the detection session.
@@ -288,6 +322,9 @@ pub struct DeviceDetectionResolution {
 
     /// Latest raw model banner retained as probe provenance.
     pub model_banner: Option<ModelBanner>,
+
+    /// Latest raw firmware banner retained as probe provenance.
+    pub firmware_banner: Option<FirmwareBanner>,
 }
 
 /// Incremental device-detection event.
@@ -323,6 +360,7 @@ struct NotificationDecision<'a> {
     protocol: ProtocolFamilyState,
     banner_model: IdentityBannerEvidence<'a>,
     protocol_model: ProtocolModelIdentityEvidence,
+    firmware_banner: bool,
 }
 
 impl DeviceDetectionSession {
@@ -336,6 +374,7 @@ impl DeviceDetectionSession {
                 protocol: ProtocolFamilyState::Unknown,
                 advertised_name: None,
                 model_banner: None,
+                firmware_banner: None,
             },
             gatt: ArrayVec::new(),
         }
@@ -371,9 +410,13 @@ impl DeviceDetectionSession {
                 if matches!(
                     decision.banner_model,
                     IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
-                ) {
+                ) || decision.firmware_banner
+                {
                     self.pending_probe = None;
                 }
+                let firmware_banner = decision
+                    .firmware_banner
+                    .then(|| FirmwareBanner::copy_from_slice(bytes));
                 let banner_model = match (decision.banner_model, self.resolution.staged.model) {
                     (IdentityBannerEvidence::Malformed, Some(_)) => None,
                     _ => decision.banner_model_update(),
@@ -391,6 +434,9 @@ impl DeviceDetectionSession {
                 self.refresh_resolution(banner_model, protocol_model, decision.protocol);
                 if let Some(model_banner) = malformed_model_banner {
                     self.resolution.model_banner = Some(model_banner);
+                }
+                if let Some(firmware_banner) = firmware_banner {
+                    self.resolution.firmware_banner = Some(firmware_banner);
                 }
             }
             DeviceDetectionEvent::ProbeWrite { probe } => self.pending_probe = Some(probe),
@@ -445,6 +491,7 @@ impl DeviceDetectionSession {
                 IdentityBannerEvidence::Missing => self.resolution.model_banner.clone(),
                 IdentityBannerEvidence::Malformed => None,
             },
+            firmware_banner: self.resolution.firmware_banner.clone(),
         };
     }
 }
@@ -464,7 +511,16 @@ impl<'a> NotificationDecision<'a> {
     ) -> NotificationDecision<'_> {
         let banner_model = match pending_probe {
             Some(PendingProbe::BegodeName) => parse_model_banner(bytes),
-            None => IdentityBannerEvidence::Missing,
+            Some(PendingProbe::BegodeFirmware) | None => IdentityBannerEvidence::Missing,
+        };
+        let firmware_banner = match pending_probe {
+            Some(PendingProbe::BegodeFirmware) => {
+                matches!(
+                    classify_begode_ascii_banner(bytes),
+                    BegodeBannerParse::Banner(BegodeBanner::Firmware { .. })
+                )
+            }
+            Some(PendingProbe::BegodeName) | None => false,
         };
         let (protocol, protocol_model) = match VeteranFrame::try_from_slice(bytes) {
             Ok(frame) => (
@@ -485,6 +541,7 @@ impl<'a> NotificationDecision<'a> {
             protocol,
             banner_model,
             protocol_model,
+            firmware_banner,
         }
     }
 
@@ -1353,6 +1410,39 @@ mod tests {
         assert_eq!(
             update.model_banner.as_ref().and_then(|banner| banner.get()),
             Some("Falcon")
+        );
+    }
+
+    #[test]
+    fn caller_owned_detection_session_preserves_begode_firmware_banner_after_probe() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: &BEGODE_LIVE_A_FRAME,
+        });
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeFirmware,
+        });
+
+        let update = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"GW FALCON 1.0",
+        });
+
+        assert_eq!(update.protocol, crate::ProtocolFamilyState::BegodeGotway);
+        assert_eq!(update.staged.confidence, IdentityConfidence::FamilyOnly);
+        assert_eq!(update.staged.model, None);
+        assert_eq!(
+            update
+                .firmware_banner
+                .as_ref()
+                .and_then(|banner| banner.get()),
+            Some("GW FALCON 1.0")
+        );
+        assert_eq!(
+            update
+                .firmware_banner
+                .as_ref()
+                .map(super::FirmwareBanner::as_bytes),
+            Some(&b"GW FALCON 1.0"[..])
         );
     }
 
