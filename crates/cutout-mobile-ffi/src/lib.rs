@@ -50,7 +50,10 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate is relevant enough to record for future support.
     UnknownRecordable,
 
-    /// Candidate looks relevant but is not supported for launch.
+    /// Candidate category is known, but no route exists yet.
+    KnownUnsupported,
+
+    /// Candidate is not supported for launch.
     Unsupported,
 }
 
@@ -281,6 +284,9 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
                 CoreDiscoveryCandidateSupport::UnknownRecordable => Some(candidate.detail.clone()),
+                CoreDiscoveryCandidateSupport::KnownUnsupported => {
+                    Some("Not yet supported".to_owned())
+                }
                 CoreDiscoveryCandidateSupport::Unsupported => Some("Not yet supported".to_owned()),
             },
         }
@@ -301,6 +307,7 @@ impl From<CoreDiscoveryCandidateSupport> for DiscoveryCandidateSupport {
         match support {
             CoreDiscoveryCandidateSupport::Supported => Self::Supported,
             CoreDiscoveryCandidateSupport::UnknownRecordable => Self::UnknownRecordable,
+            CoreDiscoveryCandidateSupport::KnownUnsupported => Self::KnownUnsupported,
             CoreDiscoveryCandidateSupport::Unsupported => Self::Unsupported,
         }
     }
@@ -501,7 +508,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
             evidence: "VESC advertisement hint".to_owned(),
             detail: "Not yet supported".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::Unsupported,
+            support: DiscoveryCandidateSupport::KnownUnsupported,
             connection_route: None,
             electric_unicycle_model: None,
             disabled_reason: Some("Not yet supported".to_owned()),
@@ -4721,7 +4728,10 @@ mod tests {
 
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.product_category, "VESC Onewheel");
-        assert_eq!(candidate.support, DiscoveryCandidateSupport::Unsupported);
+        assert_eq!(
+            candidate.support,
+            DiscoveryCandidateSupport::KnownUnsupported
+        );
         assert_eq!(candidate.connection_route, None);
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(

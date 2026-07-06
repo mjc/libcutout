@@ -412,6 +412,7 @@ public struct MockupPickerSections: Equatable, Hashable, Sendable {
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case supported(connectionRoute: MockupConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
     case unknownRecordable(disabledReason: String)
+    case knownUnsupported(disabledReason: String)
     case unsupported(disabledReason: String)
 }
 
@@ -425,6 +426,8 @@ public extension DevicePickerCandidateSupport {
             )
         case .unknownRecordable:
             self = .unknownRecordable(disabledReason: dto.disabledReason ?? dto.detail)
+        case .knownUnsupported:
+            self = .knownUnsupported(disabledReason: dto.disabledReason ?? dto.detail)
         case .unsupported:
             self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
         }
@@ -519,6 +522,8 @@ public extension DevicePickerCandidateSupport {
         case .supported:
             .supported(action: "Pair")
         case .unknownRecordable:
+            .unsupported(action: "Record")
+        case .knownUnsupported:
             .unsupported(action: "Record")
         case .unsupported:
             .unsupported(action: "Record")

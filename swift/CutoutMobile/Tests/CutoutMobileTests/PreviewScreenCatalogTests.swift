@@ -246,6 +246,26 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testKnownUnsupportedDiscoveryCandidateOffersRecordOnlyPickerAction() {
+        let dto = DiscoveryCandidate(
+            platformIdentifier: "ios-local-vesc",
+            displayName: "Little FOCer",
+            productCategory: "VESC Onewheel",
+            evidence: "VESC advertisement hint",
+            detail: "Not yet supported",
+            isPickerCandidate: true,
+            support: .knownUnsupported,
+            connectionRoute: nil,
+            electricUnicycleModel: nil,
+            disabledReason: "Not yet supported"
+        )
+        let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
+
+        XCTAssertEqual(candidate.support, .knownUnsupported(disabledReason: "Not yet supported"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testUnknownRecordableDiscoveryCandidateOffersRecordOnlyPickerAction() {
         let dto = DiscoveryCandidate(
             platformIdentifier: "ios-local-unknown-euc",

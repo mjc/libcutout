@@ -242,7 +242,10 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate is relevant enough to capture but has no supported route yet.
     UnknownRecordable,
 
-    /// Candidate is recognized but not currently supported.
+    /// Candidate category is known, but no route exists yet.
+    KnownUnsupported,
+
+    /// Candidate is not currently supported.
     Unsupported,
 }
 
@@ -322,7 +325,7 @@ impl DiscoveryCandidateSnapshot {
                 product_category: "VESC Onewheel".to_owned(),
                 evidence: "VESC advertisement hint".to_owned(),
                 detail: "Not yet supported".to_owned(),
-                support: DiscoveryCandidateSupport::Unsupported,
+                support: DiscoveryCandidateSupport::KnownUnsupported,
                 electric_unicycle_model: None,
             }),
             (false, false) => None,
@@ -562,7 +565,7 @@ mod tests {
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
-            DiscoveryCandidateSupport::Unsupported
+            DiscoveryCandidateSupport::KnownUnsupported
         );
         assert_eq!(picker_candidates[2].platform_identifier, "unknown-euc-id");
         assert_eq!(
