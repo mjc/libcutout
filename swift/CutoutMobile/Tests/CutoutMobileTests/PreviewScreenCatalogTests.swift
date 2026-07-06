@@ -92,8 +92,8 @@ extension MockupScreenCatalogTests {
             "Manual add / record unknown device",
         ])
         XCTAssertEqual(picker.pickerRows.map(\.state), [
-            .supported(action: "Pair"),
-            .supported(action: "Pair"),
+            .supported(action: "Use"),
+            .supported(action: "Use"),
             .unsupported(action: "Record"),
             .unsupported(action: "Record"),
             .manual(action: "later"),
@@ -124,7 +124,7 @@ extension MockupScreenCatalogTests {
             title: "Aero-126V",
             subtitle: "Electric unicycle",
             detail: "strong signal",
-            state: .supported(action: "Pair"),
+            state: .supported(action: "Use"),
             symbolName: "circle"
         )
         let unsupported = MockupPickerRow(
@@ -175,7 +175,7 @@ extension MockupScreenCatalogTests {
             symbolName: "scooter"
         )
 
-        XCTAssertEqual(supported.pickerRow.state, .supported(action: "Pair"))
+        XCTAssertEqual(supported.pickerRow.state, .supported(action: "Use"))
         XCTAssertEqual(supported.pickerRow.subtitle, "Electric unicycle - telemetry profile found")
         XCTAssertEqual(supported.pickerRow.connectionRoute, .electricUnicycle)
         XCTAssertEqual(unsupported.pickerRow.state, .unsupported(action: "Record"))
@@ -335,7 +335,7 @@ extension MockupScreenCatalogTests {
         XCTAssertEqual(candidate.productCategory, "Electric unicycle")
         XCTAssertEqual(candidate.support, .provisionalRoute(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero))
         XCTAssertEqual(candidate.pickerRow.id, "ios-local-aero")
-        XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
+        XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Use"))
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
     }
 
@@ -373,11 +373,11 @@ extension MockupScreenCatalogTests {
             candidate.support,
             DevicePickerCandidateSupport.supported(connectionRoute: nil, electricUnicycleModel: nil)
         )
-        XCTAssertEqual(candidate.pickerRow.state, MockupPickerRowState.supported(action: "Pair"))
+        XCTAssertEqual(candidate.pickerRow.state, MockupPickerRowState.supported(action: "Use"))
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
-    func testProvisionalRouteDiscoveryCandidateOffersPairPickerAction() {
+    func testProvisionalRouteDiscoveryCandidateOffersUsePickerAction() {
         let dto = DiscoveryCandidate(
             platformIdentifier: "ios-local-gotway",
             displayName: "GotWay_002441",
@@ -396,7 +396,7 @@ extension MockupScreenCatalogTests {
             candidate.support,
             .provisionalRoute(connectionRoute: .electricUnicycle, electricUnicycleModel: .falcon)
         )
-        XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Pair"))
+        XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Use"))
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
     }
 

@@ -564,7 +564,7 @@ public extension DevicePickerCandidateSupport {
     var pickerRowState: DevicePickerRowState {
         switch self {
         case .supported, .provisionalRoute:
-            .supported(action: "Pair")
+            .supported(action: "Use")
         case .probeRecommended:
             .unsupported(action: "Probe")
         case .unknownRecordable:
