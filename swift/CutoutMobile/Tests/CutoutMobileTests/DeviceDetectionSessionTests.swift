@@ -90,6 +90,25 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
+    func testMissingBegodeDetectionResolutionDoesNotUseStaleModelBanner() {
+        let session = DeviceDetectionSession()
+
+        _ = session.observeBegodeNameProbe()
+        _ = session.observeNotification(bytes: Data("NAME=Falcon".utf8))
+        _ = session.observeBegodeNameProbe()
+        let resolution = session.observeBegodeNameProbeTimeout()
+        let candidate = DevicePickerDiscoveryCandidate(candidate: resolution.discoveryCandidate(
+            platformIdentifier: "ios-local-falcon-missing",
+            displayName: "GotWay_002441"
+        ))
+
+        XCTAssertEqual(resolution.missingProbeResponse, .begodeName)
+        XCTAssertEqual(candidate.support, .unknownRecordable(disabledReason: "Missing Begode probe response"))
+        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Record"))
+        XCTAssertEqual(candidate.pickerRow.section, .recordOnly)
+        XCTAssertNil(candidate.pickerRow.connectionRoute)
+    }
+
     func testMixedProtocolFamiliesProjectConflictingCandidate() {
         let session = DeviceDetectionSession()
         let begodeFrame = Data([
