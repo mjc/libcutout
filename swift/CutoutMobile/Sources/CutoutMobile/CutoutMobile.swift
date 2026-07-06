@@ -907,6 +907,27 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.motorTemperature = motorTemperature
     }
 
+    public init?(displayState: RideDisplayState, title: String?) {
+        guard let telemetry = displayState.telemetry, telemetry.hasVisibleRideValues else {
+            return nil
+        }
+        self.init(
+            title: title ?? "VESC Onewheel",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .armed,
+            warning: .unknown,
+            boardSpeed: telemetry.speed,
+            dutyCycle: telemetry.pwm,
+            dutyHeadroom: nil,
+            batteryCurrent: telemetry.batteryCurrent,
+            motorCurrent: telemetry.motorCurrent,
+            boardAngle: telemetry.pitch,
+            controllerTemperature: telemetry.controllerTemperature,
+            motorTemperature: telemetry.motorTemperature
+        )
+    }
+
     fileprivate init(_ dto: MobileVescRideSnapshotDto) {
         self.init(
             title: dto.title,
@@ -2579,12 +2600,60 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
     }
 }
 
+public final class VescOnewheelSession: @unchecked Sendable {
+    private let inner: VescReadOnlySession
+
+    public init() {
+        self.inner = VescReadOnlySession()
+    }
+
+    public var diagnostics: ParserDiagnostics {
+        ParserDiagnostics(inner.diagnostics())
+    }
+
+    public var currentSnapshot: TelemetrySnapshot {
+        TelemetrySnapshot(inner.currentSnapshot())
+    }
+
+    public func linkUp(
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes
+    ) throws -> [SessionAction] {
+        try step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
+    }
+
+    public func ingestNotificationActions(
+        _ bytes: Data,
+        channel: Data,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
+    }
+
+    private func step(
+        _ kind: MobileSessionInputKindDto,
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes? = nil,
+        channel: Data = Data(),
+        bytes: Data = Data()
+    ) throws -> [SessionAction] {
+        try inner.step(
+            kind,
+            at: monotonicMilliseconds,
+            writeLimit: writeLimit,
+            channel: channel,
+            bytes: bytes
+        )
+    }
+}
+
 private protocol MobileReadOnlySession {
     func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResultDto
 }
 
 extension AeroReadOnlySession: MobileReadOnlySession {}
 extension FalconReadOnlySession: MobileReadOnlySession {}
+extension VescReadOnlySession: MobileReadOnlySession {}
 
 private extension MobileReadOnlySession {
     func step(
@@ -2741,14 +2810,21 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
 
 public enum CoreBluetoothSession: Sendable {
     case electricUnicycle(ElectricUnicycleSession)
+    case vescOnewheel(VescOnewheelSession)
 
     public static func electricUnicycle(model: ElectricUnicycleModel) throws -> CoreBluetoothSession {
         try .electricUnicycle(ElectricUnicycleSession(model: model))
     }
 
+    public static func vescOnewheel() -> CoreBluetoothSession {
+        .vescOnewheel(VescOnewheelSession())
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
+            session.currentSnapshot
+        case .vescOnewheel(let session):
             session.currentSnapshot
         }
     }
@@ -2763,6 +2839,8 @@ public enum CoreBluetoothSession: Sendable {
             ]
         case .electricUnicycle:
             []
+        case .vescOnewheel:
+            []
         }
     }
 
@@ -2772,6 +2850,8 @@ public enum CoreBluetoothSession: Sendable {
     ) throws -> [SessionAction] {
         switch self {
         case .electricUnicycle(let session):
+            try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
+        case .vescOnewheel(let session):
             try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
         }
     }
@@ -2783,6 +2863,8 @@ public enum CoreBluetoothSession: Sendable {
     ) throws -> [SessionAction] {
         switch self {
         case .electricUnicycle(let session):
+            try session.ingestNotificationActions(bytes, channel: channel.bytes, at: monotonicMilliseconds)
+        case .vescOnewheel(let session):
             try session.ingestNotificationActions(bytes, channel: channel.bytes, at: monotonicMilliseconds)
         }
     }

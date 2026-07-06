@@ -61,6 +61,7 @@ pub use identification::{
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
+mod refloat_codec;
 mod registry;
 pub use registry::{
     BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_FALCON_SESSION_KEY, BEGODE_PARSER_KEY, MODEL_CATALOG,
@@ -75,6 +76,13 @@ mod vesc_codec;
 mod veteran_bms;
 mod veteran_frame;
 mod veteran_telemetry;
+pub use refloat_codec::{
+    REFLOAT_COMMAND_INFO, REFLOAT_COMMAND_REALTIME_DATA, REFLOAT_COMMAND_REALTIME_DATA_IDS,
+    REFLOAT_MAX_FIELD_ID_LEN, REFLOAT_MAX_REALTIME_FIELDS, REFLOAT_PACKAGE_INTERFACE_ID,
+    RefloatCodecError, RefloatInfo, RefloatReadOnlyRequest, RefloatRealtimeData,
+    RefloatRealtimeFieldIds, RefloatRealtimeValue, RefloatReply, RefloatStreamDecoder,
+    RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
+};
 pub use request_encoder::{
     AeroRequestEncoder, EncodedRequest, FalconRequestEncoder, RequestDisposition, VescCanTarget,
     VescRequestEncoder,

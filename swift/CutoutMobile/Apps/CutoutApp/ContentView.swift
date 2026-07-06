@@ -44,6 +44,7 @@ struct ContentView: View {
                     settingsReadback: model.settingsReadback,
                     faultHistoryReadback: model.faultHistoryReadback,
                     bmsSnapshot: model.bmsSnapshot,
+                    vescRideSnapshot: model.vescRideSnapshot,
                     captureStatusText: model.captureStatusText,
                     isRecordOnlyCapture: model.isRecordOnlyCapture,
                     disconnect: {
@@ -193,6 +194,7 @@ private struct MockupScreenContainer: View {
     let settingsReadback: SettingsReadback?
     let faultHistoryReadback: FaultHistoryReadback?
     let bmsSnapshot: BmsSnapshot?
+    let vescRideSnapshot: VescRideSnapshot?
     let captureStatusText: String?
     let isRecordOnlyCapture: Bool
     let disconnect: () -> Void
@@ -233,7 +235,7 @@ private struct MockupScreenContainer: View {
                 bmsSnapshot: bmsSnapshot
             )
         case .vescOnewheelRide:
-            VescOnewheelRideMockupView(screen: screen)
+            VescOnewheelRideMockupView(screen: screen, liveSnapshot: vescRideSnapshot)
         case .vescDebug:
             VescDebugMockupView(screen: screen)
         }
@@ -836,22 +838,67 @@ private struct VescGuardrailCard: View {
 
 private struct VescOnewheelRideMockupView: View {
     let screen: MockupScreen
+    let liveSnapshot: VescRideSnapshot?
+
+    private var title: String {
+        liveSnapshot?.title ?? screen.title
+    }
+
+    private var subtitle: String {
+        liveSnapshot.map { "\($0.vehicleKind.displayName) · \($0.subProtocol.displayName)" } ?? screen.subtitle
+    }
+
+    private var speedText: String {
+        liveSnapshot?.boardSpeed.map { SpeedReadout(millimetersPerSecond: $0.value).displayValue } ?? screen.primaryValue
+    }
+
+    private var dashboardTiles: [MockupDashboardTile] {
+        guard let liveSnapshot else {
+            return screen.dashboardTiles
+        }
+        return screen.dashboardTiles.map { tile in
+            switch tile.label {
+            case "battery current":
+                return tile.replacing(
+                    value: currentText(liveSnapshot.batteryCurrent),
+                    detail: liveSnapshot.batteryCurrent == nil ? tile.detail : "live VESC"
+                )
+            case "motor current":
+                return tile.replacing(
+                    value: phaseCurrentText(liveSnapshot.motorCurrent),
+                    detail: liveSnapshot.motorCurrent == nil ? tile.detail : "live VESC"
+                )
+            case "board angle":
+                return tile.replacing(
+                    value: angleText(liveSnapshot.boardAngle),
+                    detail: liveSnapshot.boardAngle == nil ? tile.detail : "live pitch"
+                )
+            case "controller":
+                return tile.replacing(
+                    value: temperatureText(liveSnapshot.controllerTemperature),
+                    detail: liveSnapshot.motorTemperature.map { "motor \(temperatureText($0)) °C" } ?? tile.detail
+                )
+            default:
+                return tile
+            }
+        }
+    }
 
     var body: some View {
         MockupScreenScaffold(sectionTitle: "OW ride", bottomPadding: 20, allowsVerticalScroll: false) { scale, columns in
             HStack(alignment: .center, spacing: 12 * scale) {
-                Text(screen.title)
+                Text(title)
                     .font(.system(size: 18 * scale, weight: .bold))
                     .foregroundStyle(MockupColors.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                 Spacer(minLength: 8 * scale)
-                VescArmedBadge(title: screen.subtitle, scale: scale)
+                VescArmedBadge(title: subtitle, scale: scale)
             }
 
             VStack(alignment: .center, spacing: 2 * scale) {
                 HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
-                    Text(screen.primaryValue)
+                    Text(speedText)
                         .font(.system(size: 92 * scale, weight: .black))
                         .monospacedDigit()
                         .lineLimit(1)
@@ -878,7 +925,7 @@ private struct VescOnewheelRideMockupView: View {
             }
 
             LazyVGrid(columns: columns, spacing: 20 * scale) {
-                ForEach(screen.dashboardTiles) { tile in
+                ForEach(dashboardTiles) { tile in
                     EucDashboardTile(tile: tile, scale: scale)
                 }
             }
@@ -3466,6 +3513,14 @@ private func currentText(_ value: BatteryCurrent?) -> String {
     value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
 }
 
+private func phaseCurrentText(_ value: PhaseCurrent?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
+private func angleText(_ value: CutoutMobile.Angle?) -> String {
+    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+}
+
 private func millivoltsText(_ value: VoltageDelta?) -> String {
     value.map { String($0.value) } ?? "--"
 }
@@ -3487,6 +3542,19 @@ private func groupVoltageText(_ group: BmsGroupSnapshot?) -> String {
 private func groupVoltageText(_ voltage: Voltage?) -> String {
     guard let value = voltage?.value else { return "--" }
     return String(format: "%.3f", Double(value) / 1_000.0)
+}
+
+private extension MockupDashboardTile {
+    func replacing(value: String, detail: String) -> MockupDashboardTile {
+        MockupDashboardTile(
+            kind: kind,
+            label: label,
+            value: value,
+            unit: unit,
+            detail: detail,
+            accent: accent
+        )
+    }
 }
 
 private extension MockupScreen {

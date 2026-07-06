@@ -4,10 +4,11 @@ use cutout_core::{
     TelemetrySnapshotDto,
 };
 
-use crate::{BegodeFalconModel, NosfetAeroModel, ReadOnlySession};
+use crate::{BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VescGenericModel};
 
 type AeroReadOnlyHost = HostSession<ReadOnlySession<NosfetAeroModel, false>>;
 type FalconReadOnlyHost = HostSession<ReadOnlySession<BegodeFalconModel, true>>;
+type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel, true>>;
 
 /// Owned result of one concrete mobile session step.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -172,6 +173,62 @@ impl Default for ConcreteFalconReadOnlySession {
     }
 }
 
+/// Concrete mobile-binding read-only session wrapper for generic VESC telemetry.
+#[derive(Debug)]
+pub struct VescReadOnlySession {
+    host: VescReadOnlyHost,
+}
+
+impl VescReadOnlySession {
+    /// Creates a read-only session wrapper.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            host: HostSession::new(ReadOnlySession::<VescGenericModel, true>::default()),
+        }
+    }
+
+    /// Drives one owned DTO input through the wrapped protocol reactor.
+    pub fn ingest(&mut self, input: &SessionInputDto) {
+        self.host.ingest(input.as_session_input());
+    }
+
+    /// Drives one DTO input and returns owned outputs plus any stable error DTO.
+    #[must_use]
+    pub fn ingest_checked(&mut self, input: &SessionInputDto) -> ConcreteSessionStepResultDto {
+        self.ingest(input);
+        checked_drain_outputs(
+            &mut self.host,
+            input,
+            ReadOnlySession::<VescGenericModel, true>::capabilities(),
+        )
+    }
+
+    /// Drains owned output DTOs accumulated since the previous drain.
+    #[must_use]
+    pub fn drain_outputs(&mut self) -> Vec<SessionOutputDto> {
+        drain_host_outputs(&mut self.host)
+    }
+
+    /// Returns the latest telemetry snapshot as an owned DTO.
+    #[must_use]
+    pub fn current_snapshot(&self) -> TelemetrySnapshotDto {
+        self.host.current_snapshot().into()
+    }
+
+    /// Returns accumulated parser diagnostics as an owned DTO.
+    #[must_use]
+    pub fn diagnostics(&self) -> ParserDiagnosticsDto {
+        self.host.diagnostics().into()
+    }
+}
+
+impl Default for VescReadOnlySession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Creates a NOSFET Aero read-only session wrapper.
 #[must_use]
 pub fn new_nosfet_aero_read_only_session() -> ConcreteAeroReadOnlySession {
@@ -198,6 +255,12 @@ pub fn try_new_begode_falcon_read_only_session(
     profile: ConcreteFalconProfileDto,
 ) -> Result<ConcreteFalconReadOnlySession, ConcreteSessionErrorDto> {
     ConcreteFalconReadOnlySession::try_new(profile)
+}
+
+/// Creates a generic VESC read-only session wrapper.
+#[must_use]
+pub fn new_vesc_read_only_session() -> VescReadOnlySession {
+    VescReadOnlySession::new()
 }
 
 fn checked_drain_outputs<S>(
@@ -272,11 +335,12 @@ mod tests {
         TransportWriteLimit, TransportWriteLimitDto,
     };
 
-    use crate::{BEGODE_DATA_CHANNEL, VETERAN_DATA_CHANNEL};
+    use crate::{BEGODE_DATA_CHANNEL, VESC_NOTIFY_CHANNEL, VETERAN_DATA_CHANNEL};
 
     use super::{
         ConcreteFalconProfileDto, ConcreteSessionErrorDto, new_begode_falcon_read_only_session,
-        new_nosfet_aero_read_only_session, try_new_begode_falcon_read_only_session,
+        new_nosfet_aero_read_only_session, new_vesc_read_only_session,
+        try_new_begode_falcon_read_only_session,
     };
 
     const fn ms(value: u64) -> MonotonicMillisDto {
@@ -324,6 +388,23 @@ mod tests {
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
                 if *channel == BEGODE_DATA_CHANNEL.as_bytes() && bytes == b"N"
+        )));
+    }
+
+    #[test]
+    fn vesc_read_only_session_subscribes_on_link_up() {
+        let mut session = new_vesc_read_only_session();
+
+        let result = session.ingest_checked(&SessionInputDto::LinkUp {
+            monotonic_ms: ms(1),
+            max_write_len: Some(write_len_dto(185)),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Subscribe { channel })
+                if *channel == VESC_NOTIFY_CHANNEL.as_bytes()
         )));
     }
 

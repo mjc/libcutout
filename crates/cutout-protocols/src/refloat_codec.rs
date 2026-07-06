@@ -1,0 +1,1171 @@
+use arrayvec::{ArrayString, ArrayVec};
+use thiserror::Error;
+
+use crate::VESC_MAX_FRAME_LEN;
+
+/// VESC command id for custom package app data.
+pub const VESC_COMM_CUSTOM_APP_DATA: u8 = 36;
+
+/// Refloat package interface id used inside VESC custom app data.
+pub const REFLOAT_PACKAGE_INTERFACE_ID: u8 = 101;
+
+/// Refloat INFO command id.
+pub const REFLOAT_COMMAND_INFO: u8 = 0;
+
+/// Refloat realtime data command id.
+pub const REFLOAT_COMMAND_REALTIME_DATA: u8 = 31;
+
+/// Refloat realtime data id discovery command id.
+pub const REFLOAT_COMMAND_REALTIME_DATA_IDS: u8 = 32;
+
+/// Maximum Refloat field ids kept by the read-only adapter.
+pub const REFLOAT_MAX_REALTIME_FIELDS: usize = 32;
+
+/// Maximum bytes retained for a Refloat realtime field id.
+pub const REFLOAT_MAX_FIELD_ID_LEN: usize = 48;
+
+const FRAME_END: u8 = 3;
+const FRAME_START_SHORT: u8 = 2;
+const FRAME_START_LONG: u8 = 3;
+const REFLOAT_MAX_FRAME_LEN: usize = 512;
+const INFO_STRING_LEN: usize = 20;
+const INFO_V2_BODY_LEN: usize = 58;
+
+/// Refloat read-only package request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefloatReadOnlyRequest {
+    /// Request package information with the current full response shape.
+    Info,
+
+    /// Request dynamic realtime field ids.
+    RealtimeDataIds,
+
+    /// Request one realtime data sample.
+    RealtimeData,
+}
+
+/// Parser-owned result for one Refloat stream feed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RefloatStreamResult {
+    /// The decoder accepted bytes but is still waiting for a complete reply.
+    Buffered,
+
+    /// The decoder completed one or more bounded read-only replies.
+    Replies(ArrayVec<RefloatReply, 4>),
+}
+
+/// Refloat package reply.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RefloatReply {
+    /// Package information.
+    Info(RefloatInfo),
+
+    /// Dynamic realtime field ids.
+    RealtimeFieldIds(RefloatRealtimeFieldIds),
+
+    /// Dynamic realtime data.
+    RealtimeData(RefloatRealtimeData),
+}
+
+/// Refloat INFO v2 package information.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefloatInfo {
+    /// Actual INFO response version.
+    pub info_version: u8,
+
+    /// Echoed INFO flags.
+    pub flags: u8,
+
+    /// Package name.
+    pub package_name: ArrayString<INFO_STRING_LEN>,
+
+    /// Package major version.
+    pub package_major: u8,
+
+    /// Package minor version.
+    pub package_minor: u8,
+
+    /// Package patch version.
+    pub package_patch: u8,
+
+    /// Package version suffix.
+    pub package_version_suffix: ArrayString<INFO_STRING_LEN>,
+
+    /// First four bytes of the source git hash.
+    pub git_hash: u32,
+
+    /// System tick rate in Hz.
+    pub tick_rate_hz: u32,
+
+    /// Package capability bitmask.
+    pub capabilities: u32,
+
+    /// Extra INFO flags.
+    pub extra_flags: u8,
+}
+
+/// Dynamic Refloat realtime field ids.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefloatRealtimeFieldIds {
+    /// Fields always present in realtime data.
+    pub always: ArrayVec<ArrayString<REFLOAT_MAX_FIELD_ID_LEN>, REFLOAT_MAX_REALTIME_FIELDS>,
+
+    /// Fields present only when the board is running.
+    pub runtime: ArrayVec<ArrayString<REFLOAT_MAX_FIELD_ID_LEN>, REFLOAT_MAX_REALTIME_FIELDS>,
+}
+
+/// One named Refloat realtime value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RefloatRealtimeValue {
+    /// Dynamic field id.
+    pub id: ArrayString<REFLOAT_MAX_FIELD_ID_LEN>,
+
+    /// Decoded float16 value.
+    pub value: f32,
+}
+
+/// Refloat realtime data sample.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RefloatRealtimeData {
+    /// Refloat payload mask.
+    pub mask: u8,
+
+    /// Extra state flags.
+    pub extra_flags: u8,
+
+    /// Refloat system time in ticks.
+    pub time_ticks: u32,
+
+    /// Package state nibble.
+    pub package_state: u8,
+
+    /// Package mode nibble.
+    pub package_mode: u8,
+
+    /// Footpad state.
+    pub footpad_state: u8,
+
+    /// Charging flag.
+    pub charging: bool,
+
+    /// Darkride flag.
+    pub darkride: bool,
+
+    /// Wheelslip flag.
+    pub wheelslip: bool,
+
+    /// Stop condition nibble.
+    pub stop_condition: u8,
+
+    /// Setpoint adjustment type nibble.
+    pub sat: u8,
+
+    /// Last alert reason.
+    pub alert_reason: u8,
+
+    /// Always-present dynamic values.
+    pub values: ArrayVec<RefloatRealtimeValue, REFLOAT_MAX_REALTIME_FIELDS>,
+
+    /// Runtime dynamic values, present when mask bit 0 is set.
+    pub runtime_values: ArrayVec<RefloatRealtimeValue, REFLOAT_MAX_REALTIME_FIELDS>,
+
+    /// Charging current, present when mask bit 1 is set.
+    pub charging_current: Option<f32>,
+
+    /// Charging voltage, present when mask bit 1 is set.
+    pub charging_voltage: Option<f32>,
+
+    /// Low 32 bits of the active alert mask, present when mask bit 2 is set.
+    pub active_alert_mask_low: Option<u32>,
+
+    /// High 32 bits of the active alert mask, present when mask bit 2 is set.
+    pub active_alert_mask_high: Option<u32>,
+
+    /// VESC firmware fault code, present when mask bit 2 is set.
+    pub firmware_fault_code: Option<u8>,
+}
+
+/// Refloat codec failure.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum RefloatCodecError {
+    /// Output frame was too large for the bounded buffer.
+    #[error("Refloat frame exceeded bounded output")]
+    FrameTooLong,
+
+    /// The VESC frame was incomplete.
+    #[error("incomplete Refloat VESC frame")]
+    IncompleteFrame,
+
+    /// The VESC frame was malformed.
+    #[error("malformed Refloat VESC frame")]
+    MalformedFrame,
+
+    /// The VESC frame checksum did not match.
+    #[error("bad Refloat VESC frame checksum")]
+    BadChecksum,
+
+    /// The VESC frame was not a custom-app packet.
+    #[error("unexpected Refloat VESC command")]
+    UnexpectedVescCommand,
+
+    /// The custom-app packet did not target Refloat.
+    #[error("unexpected Refloat package interface")]
+    UnexpectedPackageInterface,
+
+    /// The Refloat command id is not supported by this read-only adapter.
+    #[error("unsupported Refloat command")]
+    UnsupportedCommand,
+
+    /// The Refloat payload ended before all required fields were present.
+    #[error("short Refloat payload")]
+    ShortPayload,
+
+    /// The Refloat payload exceeded a bounded collection.
+    #[error("Refloat payload exceeded bounded collection")]
+    TooManyItems,
+
+    /// The Refloat payload contained invalid UTF-8.
+    #[error("invalid Refloat string")]
+    InvalidString,
+
+    /// Realtime data arrived before dynamic field ids were discovered.
+    #[error("Refloat realtime data arrived before field ids")]
+    MissingRealtimeFieldIds,
+}
+
+/// Stateful decoder for VESC custom-app Refloat replies.
+#[derive(Clone, Debug, Default)]
+pub struct RefloatStreamDecoder {
+    buffer: ArrayVec<u8, REFLOAT_MAX_FRAME_LEN>,
+    field_ids: Option<RefloatRealtimeFieldIds>,
+}
+
+impl RefloatStreamDecoder {
+    /// Creates an empty Refloat stream decoder.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            buffer: ArrayVec::new_const(),
+            field_ids: None,
+        }
+    }
+
+    /// Returns the discovered realtime field ids, if present.
+    #[must_use]
+    pub const fn field_ids(&self) -> Option<&RefloatRealtimeFieldIds> {
+        self.field_ids.as_ref()
+    }
+
+    /// Feeds BLE UART bytes and returns decoded Refloat replies.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RefloatCodecError`] if framing, checksums, or bounded parsing
+    /// fail.
+    pub fn feed_result(&mut self, bytes: &[u8]) -> Result<RefloatStreamResult, RefloatCodecError> {
+        for byte in bytes {
+            self.buffer
+                .try_push(*byte)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+        }
+
+        let mut replies = ArrayVec::new();
+        while let Some(frame) = self.take_next_frame()? {
+            let reply = self.decode_frame(&frame)?;
+            if let RefloatReply::RealtimeFieldIds(ids) = &reply {
+                self.field_ids = Some(ids.clone());
+            }
+            replies
+                .try_push(reply)
+                .map_err(|_reply| RefloatCodecError::TooManyItems)?;
+        }
+
+        Ok(if replies.is_empty() {
+            RefloatStreamResult::Buffered
+        } else {
+            RefloatStreamResult::Replies(replies)
+        })
+    }
+
+    fn take_next_frame(
+        &mut self,
+    ) -> Result<Option<ArrayVec<u8, REFLOAT_MAX_FRAME_LEN>>, RefloatCodecError> {
+        while self
+            .buffer
+            .first()
+            .is_some_and(|byte| !matches!(*byte, FRAME_START_SHORT | FRAME_START_LONG))
+        {
+            self.buffer.remove(0);
+        }
+
+        let Some(start) = self.buffer.first().copied() else {
+            return Ok(None);
+        };
+        let (payload_len, header_len, frame_len_extra) = match start {
+            FRAME_START_SHORT => {
+                let Some(payload_len) = self.buffer.get(1).copied().map(usize::from) else {
+                    return Ok(None);
+                };
+                (payload_len, 2, 5)
+            }
+            FRAME_START_LONG => {
+                let Some(msb) = self.buffer.get(1).copied() else {
+                    return Ok(None);
+                };
+                let Some(lsb) = self.buffer.get(2).copied() else {
+                    return Ok(None);
+                };
+                (usize::from(u16::from_be_bytes([msb, lsb])), 3, 6)
+            }
+            _ => unreachable!("non-frame starts are discarded above"),
+        };
+        let frame_len = payload_len
+            .checked_add(frame_len_extra)
+            .ok_or(RefloatCodecError::FrameTooLong)?;
+        if payload_len == 0 || header_len >= frame_len || frame_len > REFLOAT_MAX_FRAME_LEN {
+            return Err(RefloatCodecError::FrameTooLong);
+        }
+        if self.buffer.len() < frame_len {
+            return Ok(None);
+        }
+        if self.buffer.get(frame_len - 1).copied() != Some(FRAME_END) {
+            self.buffer.remove(0);
+            return Err(RefloatCodecError::MalformedFrame);
+        }
+
+        let mut frame = ArrayVec::new();
+        for byte in self.buffer.drain(0..frame_len) {
+            frame
+                .try_push(byte)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+        }
+        Ok(Some(frame))
+    }
+
+    fn decode_frame(&self, frame: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
+        let start = frame
+            .first()
+            .copied()
+            .ok_or(RefloatCodecError::IncompleteFrame)?;
+        let (payload_len, payload_start): (usize, usize) = match start {
+            FRAME_START_SHORT => {
+                let payload_len = frame
+                    .get(1)
+                    .copied()
+                    .map(usize::from)
+                    .ok_or(RefloatCodecError::IncompleteFrame)?;
+                (payload_len, 2)
+            }
+            FRAME_START_LONG => {
+                let msb = frame
+                    .get(1)
+                    .copied()
+                    .ok_or(RefloatCodecError::IncompleteFrame)?;
+                let lsb = frame
+                    .get(2)
+                    .copied()
+                    .ok_or(RefloatCodecError::IncompleteFrame)?;
+                (usize::from(u16::from_be_bytes([msb, lsb])), 3)
+            }
+            _ => return Err(RefloatCodecError::MalformedFrame),
+        };
+        let payload_end = payload_start
+            .checked_add(payload_len)
+            .ok_or(RefloatCodecError::FrameTooLong)?;
+        let payload = frame
+            .get(payload_start..payload_end)
+            .ok_or(RefloatCodecError::IncompleteFrame)?;
+        let checksum = read_u16_at(frame, payload_end)?;
+        if crc16_xmodem(payload) != checksum {
+            return Err(RefloatCodecError::BadChecksum);
+        }
+
+        let mut cursor = Cursor::new(payload);
+        if cursor.read_u8()? != VESC_COMM_CUSTOM_APP_DATA {
+            return Err(RefloatCodecError::UnexpectedVescCommand);
+        }
+        if cursor.read_u8()? != REFLOAT_PACKAGE_INTERFACE_ID {
+            return Err(RefloatCodecError::UnexpectedPackageInterface);
+        }
+        match cursor.read_u8()? {
+            REFLOAT_COMMAND_INFO => parse_info(cursor.remaining()),
+            REFLOAT_COMMAND_REALTIME_DATA_IDS => parse_realtime_ids(cursor.remaining()),
+            REFLOAT_COMMAND_REALTIME_DATA => {
+                let ids = self
+                    .field_ids
+                    .as_ref()
+                    .ok_or(RefloatCodecError::MissingRealtimeFieldIds)?;
+                parse_realtime_data(cursor.remaining(), ids)
+            }
+            _ => Err(RefloatCodecError::UnsupportedCommand),
+        }
+    }
+}
+
+/// Encodes a Refloat read-only request as a complete VESC UART frame.
+///
+/// # Errors
+///
+/// Returns [`RefloatCodecError::FrameTooLong`] if the bounded output cannot hold
+/// the request.
+pub fn encode_refloat_request(
+    request: RefloatReadOnlyRequest,
+    output: &mut ArrayVec<u8, VESC_MAX_FRAME_LEN>,
+) -> Result<(), RefloatCodecError> {
+    let mut app_data = ArrayVec::<u8, 8>::new();
+    app_data
+        .try_push(REFLOAT_PACKAGE_INTERFACE_ID)
+        .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+    match request {
+        RefloatReadOnlyRequest::Info => {
+            app_data
+                .try_push(REFLOAT_COMMAND_INFO)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+            app_data
+                .try_push(2)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+            app_data
+                .try_push(0)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+        }
+        RefloatReadOnlyRequest::RealtimeDataIds => {
+            app_data
+                .try_push(REFLOAT_COMMAND_REALTIME_DATA_IDS)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+        }
+        RefloatReadOnlyRequest::RealtimeData => {
+            app_data
+                .try_push(REFLOAT_COMMAND_REALTIME_DATA)
+                .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+        }
+    }
+    encode_custom_app_frame(&app_data, output)
+}
+
+fn encode_custom_app_frame(
+    app_data: &[u8],
+    output: &mut ArrayVec<u8, VESC_MAX_FRAME_LEN>,
+) -> Result<(), RefloatCodecError> {
+    let payload_len = app_data
+        .len()
+        .checked_add(1)
+        .ok_or(RefloatCodecError::FrameTooLong)?;
+    let payload_len_u8 =
+        u8::try_from(payload_len).map_err(|_len| RefloatCodecError::FrameTooLong)?;
+    let total_len = payload_len
+        .checked_add(5)
+        .ok_or(RefloatCodecError::FrameTooLong)?;
+    if total_len > output.capacity() {
+        return Err(RefloatCodecError::FrameTooLong);
+    }
+
+    let mut payload = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+    payload
+        .try_push(VESC_COMM_CUSTOM_APP_DATA)
+        .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+    payload
+        .try_extend_from_slice(app_data)
+        .map_err(|_err| RefloatCodecError::FrameTooLong)?;
+    let crc = crc16_xmodem(&payload);
+
+    output.clear();
+    output
+        .try_push(FRAME_START_SHORT)
+        .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+    output
+        .try_push(payload_len_u8)
+        .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+    output
+        .try_extend_from_slice(&payload)
+        .map_err(|_err| RefloatCodecError::FrameTooLong)?;
+    output
+        .try_extend_from_slice(&crc.to_be_bytes())
+        .map_err(|_err| RefloatCodecError::FrameTooLong)?;
+    output
+        .try_push(FRAME_END)
+        .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
+    Ok(())
+}
+
+fn parse_info(bytes: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
+    if bytes.len() < INFO_V2_BODY_LEN {
+        return Err(RefloatCodecError::ShortPayload);
+    }
+    let mut cursor = Cursor::new(bytes);
+    let info_version = cursor.read_u8()?;
+    if info_version != 2 {
+        return Err(RefloatCodecError::UnsupportedCommand);
+    }
+    let flags = cursor.read_u8()?;
+    let package_name = read_fixed_string(cursor.read_bytes(INFO_STRING_LEN)?)?;
+    let package_major = cursor.read_u8()?;
+    let package_minor = cursor.read_u8()?;
+    let package_patch = cursor.read_u8()?;
+    let package_version_suffix = read_fixed_string(cursor.read_bytes(INFO_STRING_LEN)?)?;
+    let git_hash = cursor.read_u32()?;
+    let tick_rate_hz = cursor.read_u32()?;
+    let capabilities = cursor.read_u32()?;
+    let extra_flags = cursor.read_u8()?;
+
+    Ok(RefloatReply::Info(RefloatInfo {
+        info_version,
+        flags,
+        package_name,
+        package_major,
+        package_minor,
+        package_patch,
+        package_version_suffix,
+        git_hash,
+        tick_rate_hz,
+        capabilities,
+        extra_flags,
+    }))
+}
+
+fn parse_realtime_ids(bytes: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
+    let mut cursor = Cursor::new(bytes);
+    let always = read_id_list(&mut cursor)?;
+    let runtime = read_id_list(&mut cursor)?;
+    Ok(RefloatReply::RealtimeFieldIds(RefloatRealtimeFieldIds {
+        always,
+        runtime,
+    }))
+}
+
+fn parse_realtime_data(
+    bytes: &[u8],
+    ids: &RefloatRealtimeFieldIds,
+) -> Result<RefloatReply, RefloatCodecError> {
+    let mut cursor = Cursor::new(bytes);
+    let mask = cursor.read_u8()?;
+    let extra_flags = cursor.read_u8()?;
+    let time_ticks = cursor.read_u32()?;
+    let state_and_mode = cursor.read_u8()?;
+    let flags_and_footpad = cursor.read_u8()?;
+    let stop_cond_and_sat = cursor.read_u8()?;
+    let alert_reason = cursor.read_u8()?;
+    let values = read_values(&mut cursor, &ids.always)?;
+    let runtime_values = if mask & 0x1 == 0x1 {
+        read_values(&mut cursor, &ids.runtime)?
+    } else {
+        ArrayVec::new()
+    };
+    let (charging_current, charging_voltage) = if mask & 0x2 == 0x2 {
+        (
+            Some(read_float16(&mut cursor)?),
+            Some(read_float16(&mut cursor)?),
+        )
+    } else {
+        (None, None)
+    };
+    let (active_alert_mask_low, active_alert_mask_high, firmware_fault_code) = if mask & 0x4 == 0x4
+    {
+        (
+            Some(cursor.read_u32()?),
+            Some(cursor.read_u32()?),
+            Some(cursor.read_u8()?),
+        )
+    } else {
+        (None, None, None)
+    };
+
+    Ok(RefloatReply::RealtimeData(RefloatRealtimeData {
+        mask,
+        extra_flags,
+        time_ticks,
+        package_state: state_and_mode & 0x03,
+        package_mode: (state_and_mode >> 4) & 0x03,
+        footpad_state: flags_and_footpad >> 6,
+        charging: flags_and_footpad & 0x20 == 0x20,
+        darkride: flags_and_footpad & 0x02 == 0x02,
+        wheelslip: flags_and_footpad & 0x01 == 0x01,
+        stop_condition: stop_cond_and_sat & 0x0f,
+        sat: stop_cond_and_sat >> 4,
+        alert_reason,
+        values,
+        runtime_values,
+        charging_current,
+        charging_voltage,
+        active_alert_mask_low,
+        active_alert_mask_high,
+        firmware_fault_code,
+    }))
+}
+
+fn read_id_list(
+    cursor: &mut Cursor<'_>,
+) -> Result<
+    ArrayVec<ArrayString<REFLOAT_MAX_FIELD_ID_LEN>, REFLOAT_MAX_REALTIME_FIELDS>,
+    RefloatCodecError,
+> {
+    let count = cursor.read_u8()?;
+    let mut output = ArrayVec::new();
+    for _ in 0..count {
+        output
+            .try_push(cursor.read_string()?)
+            .map_err(|_id| RefloatCodecError::TooManyItems)?;
+    }
+    Ok(output)
+}
+
+fn read_values(
+    cursor: &mut Cursor<'_>,
+    ids: &ArrayVec<ArrayString<REFLOAT_MAX_FIELD_ID_LEN>, REFLOAT_MAX_REALTIME_FIELDS>,
+) -> Result<ArrayVec<RefloatRealtimeValue, REFLOAT_MAX_REALTIME_FIELDS>, RefloatCodecError> {
+    let mut output = ArrayVec::new();
+    for id in ids {
+        output
+            .try_push(RefloatRealtimeValue {
+                id: id.clone(),
+                value: read_float16(cursor)?,
+            })
+            .map_err(|_value| RefloatCodecError::TooManyItems)?;
+    }
+    Ok(output)
+}
+
+fn read_float16(cursor: &mut Cursor<'_>) -> Result<f32, RefloatCodecError> {
+    Ok(float16_to_f32(cursor.read_u16()?))
+}
+
+fn read_fixed_string(bytes: &[u8]) -> Result<ArrayString<INFO_STRING_LEN>, RefloatCodecError> {
+    let len = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    let string = core::str::from_utf8(bytes.get(..len).ok_or(RefloatCodecError::ShortPayload)?)
+        .map_err(|_err| RefloatCodecError::InvalidString)?;
+    let mut output = ArrayString::new();
+    output
+        .try_push_str(string)
+        .map_err(|_err| RefloatCodecError::InvalidString)?;
+    Ok(output)
+}
+
+fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, RefloatCodecError> {
+    let pair = bytes
+        .get(offset..offset + 2)
+        .ok_or(RefloatCodecError::IncompleteFrame)?;
+    let array = <[u8; 2]>::try_from(pair).map_err(|_err| RefloatCodecError::IncompleteFrame)?;
+    Ok(u16::from_be_bytes(array))
+}
+
+fn crc16_xmodem(bytes: &[u8]) -> u16 {
+    let mut crc = 0_u16;
+    for byte in bytes {
+        crc ^= u16::from(*byte) << 8;
+        for _ in 0..8 {
+            if crc & 0x8000 != 0 {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    crc
+}
+
+fn float16_to_f32(bits: u16) -> f32 {
+    let sign = (u32::from(bits & 0x8000)) << 16;
+    let exponent = u32::from((bits >> 10) & 0x1f);
+    let fraction = u32::from(bits & 0x03ff);
+    let output = match exponent {
+        0 if fraction == 0 => sign,
+        0 => {
+            let mut frac = fraction;
+            let mut exp = -14_i32;
+            while frac & 0x0400 == 0 {
+                frac <<= 1;
+                exp -= 1;
+            }
+            frac &= 0x03ff;
+            sign | (u32::try_from(exp + 127).unwrap_or(0) << 23) | (frac << 13)
+        }
+        0x1f => sign | 0x7f80_0000 | (fraction << 13),
+        _ => sign | ((exponent + 112) << 23) | (fraction << 13),
+    };
+    f32::from_bits(output)
+}
+
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> Cursor<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn remaining(&self) -> &'a [u8] {
+        self.bytes.get(self.offset..).unwrap_or_default()
+    }
+
+    fn read_bytes(&mut self, len: usize) -> Result<&'a [u8], RefloatCodecError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or(RefloatCodecError::ShortPayload)?;
+        let slice = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(RefloatCodecError::ShortPayload)?;
+        self.offset = end;
+        Ok(slice)
+    }
+
+    fn read_u8(&mut self) -> Result<u8, RefloatCodecError> {
+        let byte = self
+            .bytes
+            .get(self.offset)
+            .copied()
+            .ok_or(RefloatCodecError::ShortPayload)?;
+        self.offset += 1;
+        Ok(byte)
+    }
+
+    fn read_u16(&mut self) -> Result<u16, RefloatCodecError> {
+        let bytes = self.read_bytes(2)?;
+        let array = <[u8; 2]>::try_from(bytes).map_err(|_err| RefloatCodecError::ShortPayload)?;
+        Ok(u16::from_be_bytes(array))
+    }
+
+    fn read_u32(&mut self) -> Result<u32, RefloatCodecError> {
+        let bytes = self.read_bytes(4)?;
+        let array = <[u8; 4]>::try_from(bytes).map_err(|_err| RefloatCodecError::ShortPayload)?;
+        Ok(u32::from_be_bytes(array))
+    }
+
+    fn read_string(&mut self) -> Result<ArrayString<REFLOAT_MAX_FIELD_ID_LEN>, RefloatCodecError> {
+        let len = usize::from(self.read_u8()?);
+        let bytes = self.read_bytes(len)?;
+        let string =
+            core::str::from_utf8(bytes).map_err(|_err| RefloatCodecError::InvalidString)?;
+        let mut output = ArrayString::new();
+        output
+            .try_push_str(string)
+            .map_err(|_err| RefloatCodecError::InvalidString)?;
+        Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encodes_refloat_info_request_as_vesc_custom_app_data() {
+        let mut frame = ArrayVec::new();
+
+        encode_refloat_request(RefloatReadOnlyRequest::Info, &mut frame).expect("request encodes");
+
+        assert_eq!(frame.as_slice(), &[2, 5, 36, 101, 0, 2, 0, 2, 71, 3]);
+    }
+
+    #[test]
+    fn decodes_refloat_info_v2_frame() {
+        let frame = custom_app_frame(&info_payload());
+        let mut decoder = RefloatStreamDecoder::new();
+
+        let replies = decoder.feed_result(&frame).expect("decode succeeds");
+
+        let RefloatStreamResult::Replies(replies) = replies else {
+            panic!("expected reply");
+        };
+        assert_eq!(
+            replies.as_slice(),
+            &[RefloatReply::Info(RefloatInfo {
+                info_version: 2,
+                flags: 0,
+                package_name: fixed_string("Refloat"),
+                package_major: 1,
+                package_minor: 2,
+                package_patch: 3,
+                package_version_suffix: fixed_string("dev"),
+                git_hash: 0x1234_5678,
+                tick_rate_hz: 10_000,
+                capabilities: 0x8000_0001,
+                extra_flags: 0,
+            })]
+        );
+    }
+
+    #[test]
+    fn discovers_realtime_ids_without_static_layout() {
+        let frame = custom_app_frame(&ids_payload());
+        let mut decoder = RefloatStreamDecoder::new();
+
+        let replies = decoder.feed_result(&frame).expect("decode succeeds");
+
+        let RefloatStreamResult::Replies(replies) = replies else {
+            panic!("expected reply");
+        };
+        assert!(matches!(
+            replies.as_slice(),
+            [RefloatReply::RealtimeFieldIds(_)]
+        ));
+        let ids = decoder.field_ids().expect("ids retained");
+        assert_eq!(
+            ids.always.as_slice(),
+            &[field_id("motor.speed"), field_id("imu.roll")]
+        );
+        assert_eq!(ids.runtime.as_slice(), &[field_id("setpoint")]);
+    }
+
+    #[test]
+    fn decodes_live_realtime_ids_long_frame() {
+        let mut decoder = RefloatStreamDecoder::new();
+        let mut result = RefloatStreamResult::Buffered;
+        for chunk in live_realtime_ids_chunks() {
+            result = decoder.feed_result(chunk).expect("live ids chunk decodes");
+        }
+
+        let RefloatStreamResult::Replies(replies) = result else {
+            panic!("expected live ids reply");
+        };
+        assert!(matches!(
+            replies.as_slice(),
+            [RefloatReply::RealtimeFieldIds(_)]
+        ));
+        let ids = decoder.field_ids().expect("ids retained");
+        assert_eq!(ids.always.len(), 16);
+        assert_eq!(ids.runtime.len(), 10);
+        assert_eq!(
+            ids.always.first().map(ArrayString::as_str),
+            Some("motor.speed")
+        );
+        assert_eq!(
+            ids.always.last().map(ArrayString::as_str),
+            Some("remote.input")
+        );
+        assert_eq!(
+            ids.runtime.first().map(ArrayString::as_str),
+            Some("setpoint")
+        );
+        assert_eq!(
+            ids.runtime.last().map(ArrayString::as_str),
+            Some("booster.current")
+        );
+    }
+
+    #[test]
+    fn live_refloat_replay_chunk_modes_are_equivalent() {
+        let captured = decode_live_refloat_captured_chunks();
+        let whole = decode_live_refloat_whole_frames();
+        let one_byte = decode_live_refloat_one_byte_chunks();
+
+        assert_eq!(captured, whole);
+        assert_eq!(captured, one_byte);
+        assert!(matches!(
+            captured.as_slice(),
+            [
+                RefloatReply::RealtimeFieldIds(_),
+                RefloatReply::RealtimeData(_)
+            ]
+        ));
+        let RefloatReply::RealtimeData(data) = &captured[1] else {
+            panic!("expected realtime data");
+        };
+        assert_eq!(data.time_ticks, 3_111_813);
+        assert_eq!(data.package_state, 2);
+        assert_eq!(data.values.len(), 16);
+        assert_eq!(
+            data.values.get(6).map(|value| value.id.as_str()),
+            Some("motor.batt_voltage")
+        );
+    }
+
+    #[test]
+    fn decodes_realtime_data_using_discovered_ids() {
+        let mut decoder = RefloatStreamDecoder::new();
+        decoder
+            .feed_result(&custom_app_frame(&ids_payload()))
+            .expect("ids decode");
+
+        let replies = decoder
+            .feed_result(&custom_app_frame(&realtime_payload()))
+            .expect("data decode");
+
+        let RefloatStreamResult::Replies(replies) = replies else {
+            panic!("expected reply");
+        };
+        let [RefloatReply::RealtimeData(data)] = replies.as_slice() else {
+            panic!("expected realtime data");
+        };
+        assert_eq!(data.mask, 0x4);
+        assert_eq!(data.time_ticks, 42);
+        assert_eq!(data.package_state, 3);
+        assert_eq!(data.package_mode, 1);
+        assert_eq!(data.footpad_state, 3);
+        assert_eq!(data.stop_condition, 6);
+        assert_eq!(data.sat, 10);
+        assert_eq!(data.alert_reason, 8);
+        assert_eq!(data.values.len(), 2);
+        assert_eq!(
+            data.values.get(0).map(|value| value.id.as_str()),
+            Some("motor.speed")
+        );
+        assert_eq!(data.values.get(0).map(|value| value.value), Some(1.0));
+        assert_eq!(
+            data.values.get(1).map(|value| value.id.as_str()),
+            Some("imu.roll")
+        );
+        assert_eq!(data.values.get(1).map(|value| value.value), Some(-2.0));
+        assert!(data.runtime_values.is_empty());
+        assert_eq!(data.active_alert_mask_low, Some(0x0000_0004));
+        assert_eq!(data.active_alert_mask_high, Some(0));
+        assert_eq!(data.firmware_fault_code, Some(0));
+    }
+
+    #[test]
+    fn realtime_data_requires_discovered_ids() {
+        let mut decoder = RefloatStreamDecoder::new();
+
+        assert_eq!(
+            decoder.feed_result(&custom_app_frame(&realtime_payload())),
+            Err(RefloatCodecError::MissingRealtimeFieldIds)
+        );
+    }
+
+    fn custom_app_frame(app_data: &[u8]) -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut frame = ArrayVec::new();
+        encode_custom_app_frame(app_data, &mut frame).expect("frame encodes");
+        frame
+    }
+
+    fn info_payload() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut payload = ArrayVec::new();
+        payload
+            .try_extend_from_slice(&[101, 0, 2, 0])
+            .expect("header fits");
+        append_fixed(&mut payload, "Refloat");
+        payload
+            .try_extend_from_slice(&[1, 2, 3])
+            .expect("version fits");
+        append_fixed(&mut payload, "dev");
+        payload
+            .try_extend_from_slice(&0x1234_5678_u32.to_be_bytes())
+            .expect("git hash fits");
+        payload
+            .try_extend_from_slice(&10_000_u32.to_be_bytes())
+            .expect("tick rate fits");
+        payload
+            .try_extend_from_slice(&0x8000_0001_u32.to_be_bytes())
+            .expect("capabilities fit");
+        payload.try_push(0).expect("extra flags fit");
+        payload
+    }
+
+    fn ids_payload() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut payload = ArrayVec::new();
+        payload
+            .try_extend_from_slice(&[101, 32, 2])
+            .expect("header fits");
+        append_string(&mut payload, "motor.speed");
+        append_string(&mut payload, "imu.roll");
+        payload.try_push(1).expect("runtime count fits");
+        append_string(&mut payload, "setpoint");
+        payload
+    }
+
+    fn realtime_payload() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut payload = ArrayVec::new();
+        payload
+            .try_extend_from_slice(&[101, 31, 0x4, 0])
+            .expect("header fits");
+        payload
+            .try_extend_from_slice(&42_u32.to_be_bytes())
+            .expect("time fits");
+        payload
+            .try_extend_from_slice(&[0x13, 0xc1, 0xa6, 8])
+            .expect("state fits");
+        payload
+            .try_extend_from_slice(&0x3c00_u16.to_be_bytes())
+            .expect("value fits");
+        payload
+            .try_extend_from_slice(&0xc000_u16.to_be_bytes())
+            .expect("value fits");
+        payload
+            .try_extend_from_slice(&0x0000_0004_u32.to_be_bytes())
+            .expect("alerts fit");
+        payload
+            .try_extend_from_slice(&0_u32.to_be_bytes())
+            .expect("alerts fit");
+        payload.try_push(0).expect("fault fits");
+        payload
+    }
+
+    fn append_fixed(payload: &mut ArrayVec<u8, VESC_MAX_FRAME_LEN>, string: &str) {
+        let mut bytes = [0_u8; INFO_STRING_LEN];
+        for (slot, byte) in bytes.iter_mut().zip(string.as_bytes()) {
+            *slot = *byte;
+        }
+        payload.try_extend_from_slice(&bytes).expect("string fits");
+    }
+
+    fn append_string(payload: &mut ArrayVec<u8, VESC_MAX_FRAME_LEN>, string: &str) {
+        payload
+            .try_push(u8::try_from(string.len()).expect("fixture string length fits"))
+            .expect("string length fits");
+        payload
+            .try_extend_from_slice(string.as_bytes())
+            .expect("string fits");
+    }
+
+    fn fixed_string(value: &str) -> ArrayString<INFO_STRING_LEN> {
+        let mut output = ArrayString::new();
+        output.try_push_str(value).expect("fixture string fits");
+        output
+    }
+
+    fn field_id(value: &str) -> ArrayString<REFLOAT_MAX_FIELD_ID_LEN> {
+        let mut output = ArrayString::new();
+        output.try_push_str(value).expect("fixture string fits");
+        output
+    }
+
+    const LIVE_IDS_CHUNK_0: [u8; 3] = hex_literal::hex!("030196");
+    const LIVE_IDS_CHUNK_1: [u8; 20] =
+        hex_literal::hex!("246520100b6d6f746f722e73706565640a6d6f74");
+    const LIVE_IDS_CHUNK_2: [u8; 20] =
+        hex_literal::hex!("6f722e6572706d0d6d6f746f722e63757272656e");
+    const LIVE_IDS_CHUNK_3: [u8; 20] =
+        hex_literal::hex!("74116d6f746f722e6469725f63757272656e7412");
+    const LIVE_IDS_CHUNK_4: [u8; 20] =
+        hex_literal::hex!("6d6f746f722e66696c745f63757272656e74106d");
+    const LIVE_IDS_CHUNK_5: [u8; 20] =
+        hex_literal::hex!("6f746f722e647574795f6379636c65126d6f746f");
+    const LIVE_IDS_CHUNK_6: [u8; 20] =
+        hex_literal::hex!("722e626174745f766f6c74616765126d6f746f72");
+    const LIVE_IDS_CHUNK_7: [u8; 20] =
+        hex_literal::hex!("2e626174745f63757272656e74116d6f746f722e");
+    const LIVE_IDS_CHUNK_8: [u8; 20] =
+        hex_literal::hex!("6d6f736665745f74656d70106d6f746f722e6d6f");
+    const LIVE_IDS_CHUNK_9: [u8; 20] =
+        hex_literal::hex!("746f725f74656d7009696d752e70697463681169");
+    const LIVE_IDS_CHUNK_10: [u8; 20] =
+        hex_literal::hex!("6d752e62616c616e63655f706974636808696d75");
+    const LIVE_IDS_CHUNK_11: [u8; 20] =
+        hex_literal::hex!("2e726f6c6c0c666f6f747061642e616463310c66");
+    const LIVE_IDS_CHUNK_12: [u8; 20] =
+        hex_literal::hex!("6f6f747061642e616463320c72656d6f74652e69");
+    const LIVE_IDS_CHUNK_13: [u8; 20] =
+        hex_literal::hex!("6e7075740a08736574706f696e740c6174722e73");
+    const LIVE_IDS_CHUNK_14: [u8; 20] =
+        hex_literal::hex!("6574706f696e74136272616b655f74696c742e73");
+    const LIVE_IDS_CHUNK_15: [u8; 20] =
+        hex_literal::hex!("6574706f696e7414746f727175655f74696c742e");
+    const LIVE_IDS_CHUNK_16: [u8; 20] =
+        hex_literal::hex!("736574706f696e74127475726e5f74696c742e73");
+    const LIVE_IDS_CHUNK_17: [u8; 20] =
+        hex_literal::hex!("6574706f696e740f72656d6f74652e736574706f");
+    const LIVE_IDS_CHUNK_18: [u8; 20] =
+        hex_literal::hex!("696e740f62616c616e63655f63757272656e740e");
+    const LIVE_IDS_CHUNK_19: [u8; 20] =
+        hex_literal::hex!("6174722e616363656c5f646966660f6174722e73");
+    const LIVE_IDS_CHUNK_20: [u8; 20] =
+        hex_literal::hex!("706565645f626f6f73740f626f6f737465722e63");
+    const LIVE_IDS_CHUNK_21: [u8; 6] = hex_literal::hex!("757272656e74");
+    const LIVE_IDS_CHUNK_22: [u8; 3] = hex_literal::hex!("7b8503");
+
+    fn live_realtime_ids_chunks() -> [&'static [u8]; 23] {
+        [
+            &LIVE_IDS_CHUNK_0,
+            &LIVE_IDS_CHUNK_1,
+            &LIVE_IDS_CHUNK_2,
+            &LIVE_IDS_CHUNK_3,
+            &LIVE_IDS_CHUNK_4,
+            &LIVE_IDS_CHUNK_5,
+            &LIVE_IDS_CHUNK_6,
+            &LIVE_IDS_CHUNK_7,
+            &LIVE_IDS_CHUNK_8,
+            &LIVE_IDS_CHUNK_9,
+            &LIVE_IDS_CHUNK_10,
+            &LIVE_IDS_CHUNK_11,
+            &LIVE_IDS_CHUNK_12,
+            &LIVE_IDS_CHUNK_13,
+            &LIVE_IDS_CHUNK_14,
+            &LIVE_IDS_CHUNK_15,
+            &LIVE_IDS_CHUNK_16,
+            &LIVE_IDS_CHUNK_17,
+            &LIVE_IDS_CHUNK_18,
+            &LIVE_IDS_CHUNK_19,
+            &LIVE_IDS_CHUNK_20,
+            &LIVE_IDS_CHUNK_21,
+            &LIVE_IDS_CHUNK_22,
+        ]
+    }
+
+    const LIVE_DATA_CHUNK_0: [u8; 2] = hex_literal::hex!("0236");
+    const LIVE_DATA_CHUNK_1: [u8; 20] =
+        hex_literal::hex!("24651f0406002f7b850200000080008000000080");
+    const LIVE_DATA_CHUNK_2: [u8; 20] =
+        hex_literal::hex!("0000000bc553bc00004e834ddc4aea4ae73cdf1a");
+    const LIVE_DATA_CHUNK_3: [u8; 14] = hex_literal::hex!("9a1a9a0000000000000000000000");
+    const LIVE_DATA_CHUNK_4: [u8; 3] = hex_literal::hex!("9aca03");
+
+    fn live_realtime_data_chunks() -> [&'static [u8]; 5] {
+        [
+            &LIVE_DATA_CHUNK_0,
+            &LIVE_DATA_CHUNK_1,
+            &LIVE_DATA_CHUNK_2,
+            &LIVE_DATA_CHUNK_3,
+            &LIVE_DATA_CHUNK_4,
+        ]
+    }
+
+    fn decode_live_refloat_captured_chunks() -> Vec<RefloatReply> {
+        let mut decoder = RefloatStreamDecoder::new();
+        let mut output = Vec::new();
+        for chunk in live_realtime_ids_chunks()
+            .into_iter()
+            .chain(live_realtime_data_chunks())
+        {
+            collect_replies(&mut decoder, chunk, &mut output);
+        }
+        output
+    }
+
+    fn decode_live_refloat_whole_frames() -> Vec<RefloatReply> {
+        let ids = concat_chunks(&live_realtime_ids_chunks());
+        let data = concat_chunks(&live_realtime_data_chunks());
+        let mut decoder = RefloatStreamDecoder::new();
+        let mut output = Vec::new();
+        collect_replies(&mut decoder, ids.as_slice(), &mut output);
+        collect_replies(&mut decoder, data.as_slice(), &mut output);
+        output
+    }
+
+    fn decode_live_refloat_one_byte_chunks() -> Vec<RefloatReply> {
+        let ids = concat_chunks(&live_realtime_ids_chunks());
+        let data = concat_chunks(&live_realtime_data_chunks());
+        let mut decoder = RefloatStreamDecoder::new();
+        let mut output = Vec::new();
+        for byte in ids.iter().chain(data.iter()) {
+            collect_replies(&mut decoder, core::slice::from_ref(byte), &mut output);
+        }
+        output
+    }
+
+    fn collect_replies(
+        decoder: &mut RefloatStreamDecoder,
+        chunk: &[u8],
+        output: &mut Vec<RefloatReply>,
+    ) {
+        if let RefloatStreamResult::Replies(replies) =
+            decoder.feed_result(chunk).expect("live replay decodes")
+        {
+            output.extend(replies);
+        }
+    }
+
+    fn concat_chunks<const N: usize>(chunks: &[&[u8]; N]) -> ArrayVec<u8, REFLOAT_MAX_FRAME_LEN> {
+        let mut output = ArrayVec::new();
+        for chunk in chunks {
+            output
+                .try_extend_from_slice(chunk)
+                .expect("live frame fits");
+        }
+        output
+    }
+}

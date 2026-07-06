@@ -1547,6 +1547,27 @@ mod tests {
         ]
     }
 
+    const LIVE_VESC_VALUES_CHUNK_0: [u8; 2] = hex_literal::hex!("024a");
+    const LIVE_VESC_VALUES_CHUNK_1: [u8; 20] =
+        hex_literal::hex!("04010b00ea000000000000000000000000000000");
+    const LIVE_VESC_VALUES_CHUNK_2: [u8; 20] =
+        hex_literal::hex!("00000000000000026b0000000000000000000000");
+    const LIVE_VESC_VALUES_CHUNK_3: [u8; 20] =
+        hex_literal::hex!("0000000000fffffffe00000004000036ee861700");
+    const LIVE_VESC_VALUES_CHUNK_4: [u8; 14] = hex_literal::hex!("000000000000000007ffffffec00");
+    const LIVE_VESC_VALUES_CHUNK_5: [u8; 3] = hex_literal::hex!("e3be03");
+
+    fn live_vesc_values_ble_uart_chunks() -> [&'static [u8]; 6] {
+        [
+            &LIVE_VESC_VALUES_CHUNK_0,
+            &LIVE_VESC_VALUES_CHUNK_1,
+            &LIVE_VESC_VALUES_CHUNK_2,
+            &LIVE_VESC_VALUES_CHUNK_3,
+            &LIVE_VESC_VALUES_CHUNK_4,
+            &LIVE_VESC_VALUES_CHUNK_5,
+        ]
+    }
+
     fn telemetry_events(output: &[SessionOutput]) -> Vec<TelemetryDelta> {
         output
             .iter()
@@ -2180,6 +2201,45 @@ mod tests {
     #[test]
     fn generic_vesc_fragmented_values_preserves_read_only_responses() {
         assert_vesc_fragmented_read_only_responses_match(&vesc_selective_values_frame());
+    }
+
+    #[test]
+    fn generic_vesc_session_decodes_live_full_values_ble_uart_fragments() {
+        let output = vesc_output_for_notification_chunks(&live_vesc_values_ble_uart_chunks());
+
+        let telemetry = telemetry_events(&output);
+        let delta = telemetry.last().expect("VESC live values telemetry");
+        assert_eq!(
+            delta.voltage,
+            Some(Measured::reported(Voltage::from_millivolts(61_900),))
+        );
+        assert_eq!(
+            delta.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
+        );
+
+        let responses = read_only_response_events(&output);
+        let ReadOnlyResponse::RawTelemetry(raw) =
+            responses.last().expect("VESC live values raw telemetry")
+        else {
+            panic!("expected raw telemetry response");
+        };
+        assert_eq!(
+            raw.fields[0].expect("erpm"),
+            RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 0)
+        );
+        assert_eq!(
+            raw.fields[1].expect("tachometer"),
+            RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -2)
+        );
+        assert_eq!(
+            raw.fields[2].expect("controller id"),
+            RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 23)
+        );
+        assert_eq!(
+            raw.fields[3].expect("fault"),
+            RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
+        );
     }
 
     #[test]

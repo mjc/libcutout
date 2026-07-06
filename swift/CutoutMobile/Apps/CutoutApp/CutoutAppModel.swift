@@ -22,6 +22,10 @@ final class CutoutAppModel: ObservableObject {
         EucRideScreenState(phase: phase, displayState: displayState)
     }
 
+    var vescRideSnapshot: VescRideSnapshot? {
+        VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
+    }
+
     private let core = CutoutSessionCore()
     private let selectedDeviceStore = DevicePickerSelectionStore()
     private var captureFileName: String?

@@ -7,7 +7,7 @@ use cutout_core::{
 use thiserror::Error;
 
 /// Maximum VESC UART frame length supported by the read-only adapter.
-pub const VESC_MAX_FRAME_LEN: usize = 64;
+pub const VESC_MAX_FRAME_LEN: usize = 256;
 
 /// Maximum firmware hash string length carried by the private VESC adapter.
 pub const VESC_MAX_HASH_LEN: usize = 47;
@@ -867,6 +867,28 @@ mod tests {
         assert_eq!(replies.as_slice(), &[expected_values, expected_stats]);
     }
 
+    #[test]
+    fn stream_decoder_decodes_live_full_values_over_ble_uart_chunks() {
+        let frame = live_full_values_frame();
+        let expected =
+            VescReadOnlyCodec::decode_reply(frame.as_slice()).expect("live values decode");
+        let mut decoder = VescReadOnlyStreamDecoder::new();
+        let mut replies = ArrayVec::<VescReadOnlyReply, VESC_MAX_STREAM_REPLIES>::new();
+
+        for chunk in live_full_values_ble_uart_chunks() {
+            let feed_result = decoder.feed_result(chunk).expect("chunk feed succeeds");
+            if let VescReadOnlyStreamResult::Replies(feed_replies) = feed_result {
+                for reply in feed_replies {
+                    replies
+                        .try_push(reply)
+                        .expect("fixture emits bounded replies");
+                }
+            }
+        }
+
+        assert_eq!(replies.as_slice(), &[expected]);
+    }
+
     fn selective_values_frame() -> [u8; 28] {
         [
             2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43,
@@ -880,5 +902,36 @@ mod tests {
             160, 0, 0, 64, 192, 0, 0, 64, 224, 0, 0, 65, 0, 0, 0, 65, 16, 0, 0, 65, 32, 0, 0, 65,
             48, 0, 0, 213, 206, 3,
         ]
+    }
+
+    const LIVE_FULL_VALUES_CHUNK_0: [u8; 2] = hex_literal::hex!("024a");
+    const LIVE_FULL_VALUES_CHUNK_1: [u8; 20] =
+        hex_literal::hex!("04010b00ea000000000000000000000000000000");
+    const LIVE_FULL_VALUES_CHUNK_2: [u8; 20] =
+        hex_literal::hex!("00000000000000026b0000000000000000000000");
+    const LIVE_FULL_VALUES_CHUNK_3: [u8; 20] =
+        hex_literal::hex!("0000000000fffffffe00000004000036ee861700");
+    const LIVE_FULL_VALUES_CHUNK_4: [u8; 14] = hex_literal::hex!("000000000000000007ffffffec00");
+    const LIVE_FULL_VALUES_CHUNK_5: [u8; 3] = hex_literal::hex!("e3be03");
+
+    fn live_full_values_ble_uart_chunks() -> [&'static [u8]; 6] {
+        [
+            &LIVE_FULL_VALUES_CHUNK_0,
+            &LIVE_FULL_VALUES_CHUNK_1,
+            &LIVE_FULL_VALUES_CHUNK_2,
+            &LIVE_FULL_VALUES_CHUNK_3,
+            &LIVE_FULL_VALUES_CHUNK_4,
+            &LIVE_FULL_VALUES_CHUNK_5,
+        ]
+    }
+
+    fn live_full_values_frame() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut frame = ArrayVec::new();
+        for chunk in live_full_values_ble_uart_chunks() {
+            frame
+                .try_extend_from_slice(chunk)
+                .expect("fixture frame fits");
+        }
+        frame
     }
 }

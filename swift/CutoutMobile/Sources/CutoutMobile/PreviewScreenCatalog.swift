@@ -534,6 +534,8 @@ private extension DevicePickerConnectionRoute {
         switch route {
         case .electricUnicycle:
             self = .electricUnicycle
+        case .vescOnewheel:
+            self = .vescOnewheel
         }
     }
 }

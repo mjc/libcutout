@@ -16,8 +16,8 @@ use cutout_btle::{
     SessionBridgeEvent, SessionBridgeReport, SessionCapture, SessionCaptureRecord,
     SessionEndpoints, SessionPeripheral, SubscribeCount, TelemetryEventCount, TransportWriteCount,
     WriteProvenance, capture_raw_notifications, capture_reconnecting_session_with_commands,
-    capture_session_with_commands, connect_and_discover, drive_session,
-    drive_session_with_commands, read_battery_level, scan_peripherals,
+    capture_session_with_channel_pair, capture_session_with_commands, connect_and_discover,
+    drive_session, drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
     BatteryPageKind, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
@@ -26,9 +26,10 @@ use cutout_core::{
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
     ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
     PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
-    ProtocolFamily, ReadOnlyResponse, ReplayChunkComparison, SessionKey, SessionOutput,
-    SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
+    ProtocolFamily, ProtocolSession, ReadOnlyResponse, ReplayChunkComparison, SessionInput,
+    SessionKey, SessionOutput, SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot,
+    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
+    VerifiedValue, WallClockUnixTimestamp, WriteMode, WritePayload,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -37,17 +38,21 @@ use cutout_protocols::{
     BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFrameParseResult,
     BegodeFrameReassembler, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
     BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
-    NOSFET_AERO_SESSION_KEY, RegisteredReadOnlySession,
-    begode_falcon_read_only_session_with_voltage_profile, find_session_registration,
-    select_begode_pack_capacity_from_annotations, select_begode_pack_layout_from_annotations,
-    select_begode_pack_voltage_profile, select_begode_pack_voltage_profile_from_annotations,
-    validate_begode_pack_evidence,
+    NOSFET_AERO_SESSION_KEY, RefloatReadOnlyRequest, RefloatRealtimeValue, RefloatReply,
+    RefloatStreamDecoder, RefloatStreamResult, RegisteredReadOnlySession, VESC_NOTIFY_CHANNEL,
+    VESC_WRITE_CHANNEL, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask,
+    begode_falcon_read_only_session_with_voltage_profile, encode_refloat_request,
+    find_session_registration, select_begode_pack_capacity_from_annotations,
+    select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
+    select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
 };
 use tracing::{debug, info};
 
 use crate::cli::{
     CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
-    PevcapFormat, RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs,
+    PevcapFormat, RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs, VescProbe,
+    VescProbeArgs,
 };
 use crate::dashboard::{
     DashboardCaptureProvenance, DashboardState, DashboardUpdate, firmware_summary_string,
@@ -74,6 +79,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Validation => print!("{}", render_validation_report()),
         Command::Pevcap(args) => pevcap(args)?,
         Command::Dashboard(args) => dashboard(args).await?,
+        Command::VescProbe(args) => vesc_probe(args).await?,
     }
 
     Ok(())
@@ -400,7 +406,7 @@ fn falcon_bms_voltage_evidence_from_records<'a>(
 
 fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> Result<PevcapReplayReport>
 where
-    S: Clone + cutout_core::ProtocolSession,
+    S: Clone + ProtocolSession,
 {
     let comparison_session = session.clone();
     let mut host = HostSession::new(session);
@@ -1302,6 +1308,65 @@ async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     Ok(())
 }
 
+async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
+    let seconds = args.seconds();
+    let probes = vesc_probe_sequence(args.probes());
+    let diagnostics_jsonl = args.diagnostics_jsonl();
+    let read_only_jsonl = args.read_only_jsonl();
+    let raw_notifications_jsonl = args.raw_notifications_jsonl();
+    let connection =
+        connect_and_discover(&args.into_target(), ScanWindow::from_secs(seconds)).await?;
+    let endpoints = connection
+        .summary
+        .select_session_endpoints()
+        .context("no writable VESC BLE UART endpoints discovered")?;
+
+    info!("{}", connection.summary);
+    print_session_endpoints(endpoints);
+    let mut vesc_decoder = VescReadOnlyStreamDecoder::new();
+    let mut refloat_decoder = RefloatStreamDecoder::new();
+    for probe in probes {
+        info!(?probe, "running serialized VESC probe");
+        let refloat_request = refloat_probe_request(probe);
+        let (command, request_frame) = match refloat_request {
+            Some((command, request)) => {
+                let mut request_frame = arrayvec::ArrayVec::new();
+                encode_refloat_request(request, &mut request_frame)?;
+                (command, request_frame)
+            }
+            None => {
+                let (command, request) =
+                    direct_vesc_probe_request(probe).context("unsupported VESC probe")?;
+                let mut request_frame = arrayvec::ArrayVec::new();
+                VescReadOnlyCodec::encode_request(request, &mut request_frame)?;
+                (command, request_frame)
+            }
+        };
+        let mut session = OneShotVescRequestSession::new(request_frame.as_slice())?;
+        let capture = capture_session_with_channel_pair(
+            &connection.peripheral,
+            &mut session,
+            VESC_WRITE_CHANNEL,
+            VESC_NOTIFY_CHANNEL,
+            &connection.summary,
+            endpoints,
+            NotificationWindow::from_secs(seconds),
+            &[command],
+        )
+        .await?;
+        let report = &capture.report;
+        print_session_report(&report);
+        print_session_diagnostics_jsonl(report, diagnostics_jsonl)?;
+        if refloat_request.is_some() {
+            print_refloat_replies_jsonl(&capture, &mut refloat_decoder, read_only_jsonl)?;
+        } else {
+            print_vesc_replies_jsonl(&capture, &mut vesc_decoder, read_only_jsonl)?;
+        }
+        print_raw_notifications_jsonl(&capture, raw_notifications_jsonl)?;
+    }
+    Ok(())
+}
+
 async fn capture(args: CaptureArgs) -> Result<()> {
     let annotations = capture_annotations(&args);
     if args.reconnect_attempts.has_multiple_links() {
@@ -1476,7 +1541,7 @@ impl SessionMode {
         options: SessionRunOptions<'_>,
     ) -> Result<()>
     where
-        S: cutout_core::ProtocolSession + Send,
+        S: ProtocolSession + Send,
     {
         match self {
             Self::Drive => {
@@ -1524,6 +1589,13 @@ fn read_probe_commands(probes: &[ReadProbe]) -> Vec<DeviceCommand> {
     probes.iter().copied().map(read_probe_command).collect()
 }
 
+fn vesc_probe_sequence(probes: &[VescProbe]) -> Vec<VescProbe> {
+    if probes.is_empty() {
+        return vec![VescProbe::Firmware, VescProbe::Telemetry];
+    }
+    probes.to_vec()
+}
+
 const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
     match probe {
         ReadProbe::Identity => DeviceCommand::RequestIdentity,
@@ -1532,6 +1604,92 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
         ReadProbe::Battery => DeviceCommand::RequestBatteryInfo,
         ReadProbe::Diagnostics => DeviceCommand::RequestDiagnostics,
         ReadProbe::FaultHistory => DeviceCommand::RequestFaultHistory,
+    }
+}
+
+fn direct_vesc_probe_request(probe: VescProbe) -> Option<(DeviceCommand, VescReadOnlyRequest)> {
+    match probe {
+        VescProbe::Firmware => Some((
+            DeviceCommand::RequestFirmwareInfo,
+            VescReadOnlyRequest::FirmwareInfo,
+        )),
+        VescProbe::Telemetry => {
+            Some((DeviceCommand::RequestTelemetry, VescReadOnlyRequest::Values))
+        }
+        VescProbe::Diagnostics => Some((
+            DeviceCommand::RequestDiagnostics,
+            VescReadOnlyRequest::Stats(
+                VescStatsMask::SPEED_AVG
+                    | VescStatsMask::POWER_AVG
+                    | VescStatsMask::CURRENT_AVG
+                    | VescStatsMask::COUNT_TIME,
+            ),
+        )),
+        VescProbe::RefloatInfo | VescProbe::RefloatRealtimeIds | VescProbe::RefloatRealtime => None,
+    }
+}
+
+const fn refloat_probe_request(
+    probe: VescProbe,
+) -> Option<(DeviceCommand, RefloatReadOnlyRequest)> {
+    match probe {
+        VescProbe::RefloatInfo => {
+            Some((DeviceCommand::RequestIdentity, RefloatReadOnlyRequest::Info))
+        }
+        VescProbe::RefloatRealtimeIds => Some((
+            DeviceCommand::RequestDiagnostics,
+            RefloatReadOnlyRequest::RealtimeDataIds,
+        )),
+        VescProbe::RefloatRealtime => Some((
+            DeviceCommand::RequestTelemetry,
+            RefloatReadOnlyRequest::RealtimeData,
+        )),
+        VescProbe::Firmware | VescProbe::Telemetry | VescProbe::Diagnostics => None,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OneShotVescRequestSession {
+    request: WritePayload,
+    wrote: bool,
+}
+
+impl OneShotVescRequestSession {
+    fn new(request: &[u8]) -> Result<Self> {
+        Ok(Self {
+            request: WritePayload::try_from_slice(request)?,
+            wrote: false,
+        })
+    }
+}
+
+impl ProtocolSession for OneShotVescRequestSession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::LinkUp(info) => {
+                self.wrote = false;
+                output.push(SessionOutput::Event(DeviceEvent::LinkUp(info)));
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: VESC_NOTIFY_CHANNEL,
+                }));
+            }
+            SessionInput::LinkDown => {
+                self.wrote = false;
+                output.push(SessionOutput::Event(DeviceEvent::LinkDown));
+            }
+            SessionInput::Command(_command) if !self.wrote => {
+                self.wrote = true;
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: VESC_WRITE_CHANNEL,
+                    bytes: self.request.clone(),
+                    mode: WriteMode::WithoutResponse,
+                }));
+            }
+            SessionInput::Tick { monotonic_ms } => {
+                output.push(SessionOutput::Event(DeviceEvent::Tick { monotonic_ms }));
+            }
+            SessionInput::Notification { .. } | SessionInput::Command(_) => {}
+        }
     }
 }
 
@@ -2164,6 +2322,251 @@ fn print_session_read_only_jsonl(
         }
     }
     Ok(())
+}
+
+fn print_raw_notifications_jsonl(
+    capture: &SessionCapture,
+    enabled: bool,
+) -> Result<(), serde_json::Error> {
+    if enabled {
+        for (sequence, record) in capture.records.iter().enumerate() {
+            if let SessionCaptureRecord::Notification {
+                characteristic,
+                service,
+                bytes,
+                ..
+            } = record
+            {
+                info!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "type": "raw_notification",
+                        "sequence": sequence,
+                        "characteristic": characteristic.to_string(),
+                        "service": service.to_string(),
+                        "len": bytes.len().as_bytes(),
+                        "bytes_hex": encode_hex(bytes.as_raw_bytes()),
+                    }))?
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_vesc_replies_jsonl(
+    capture: &SessionCapture,
+    decoder: &mut VescReadOnlyStreamDecoder,
+    enabled: bool,
+) -> Result<()> {
+    for record in &capture.records {
+        let SessionCaptureRecord::Notification { bytes, .. } = record else {
+            continue;
+        };
+        match decoder.feed_result(bytes.as_raw_bytes()) {
+            Ok(VescReadOnlyStreamResult::Buffered) => {}
+            Ok(VescReadOnlyStreamResult::Replies(replies)) => {
+                for reply in replies {
+                    print_vesc_reply_summary(&reply);
+                    if enabled {
+                        info!("{}", serde_json::to_string(&vesc_reply_json(&reply))?);
+                    }
+                }
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(())
+}
+
+fn print_vesc_reply_summary(reply: &VescReadOnlyReply) {
+    match reply {
+        VescReadOnlyReply::FirmwareInfo {
+            major,
+            minor,
+            test_version_number,
+            commit_hash,
+            user_commit_hash,
+        } => info!(
+            major,
+            minor,
+            test_version_number,
+            commit_hash = commit_hash.as_str(),
+            user_commit_hash = user_commit_hash.as_str(),
+            "vesc firmware info"
+        ),
+        VescReadOnlyReply::Values(values) => info!(
+            voltage_mv = values.voltage.as_millivolts(),
+            input_current_ma = values.input_current.as_milliamps(),
+            erpm = values.rpm.as_erpm(),
+            tachometer = values.tachometer.as_counts(),
+            controller_id = ?values.controller_id,
+            fault_code = ?values.fault_code,
+            "vesc values"
+        ),
+        VescReadOnlyReply::Stats(stats) => info!(?stats, "vesc stats"),
+    }
+}
+
+fn vesc_reply_json(reply: &VescReadOnlyReply) -> serde_json::Value {
+    match reply {
+        VescReadOnlyReply::FirmwareInfo {
+            major,
+            minor,
+            test_version_number,
+            commit_hash,
+            user_commit_hash,
+        } => serde_json::json!({
+            "type": "vesc_firmware_info",
+            "major": major,
+            "minor": minor,
+            "test_version_number": test_version_number,
+            "commit_hash": commit_hash.as_str(),
+            "user_commit_hash": user_commit_hash.as_str(),
+        }),
+        VescReadOnlyReply::Values(values) => serde_json::json!({
+            "type": "vesc_values",
+            "voltage_mv": values.voltage.as_millivolts(),
+            "input_current_ma": values.input_current.as_milliamps(),
+            "erpm": values.rpm.as_erpm(),
+            "tachometer": values.tachometer.as_counts(),
+            "controller_id": format!("{:?}", values.controller_id),
+            "fault_code": format!("{:?}", values.fault_code),
+        }),
+        VescReadOnlyReply::Stats(stats) => serde_json::json!({
+            "type": "vesc_stats",
+            "stats": format!("{stats:?}"),
+        }),
+    }
+}
+
+fn print_refloat_replies_jsonl(
+    capture: &SessionCapture,
+    decoder: &mut RefloatStreamDecoder,
+    enabled: bool,
+) -> Result<()> {
+    for record in &capture.records {
+        let SessionCaptureRecord::Notification { bytes, .. } = record else {
+            continue;
+        };
+        match decoder.feed_result(bytes.as_raw_bytes()) {
+            Ok(RefloatStreamResult::Buffered) => {}
+            Ok(RefloatStreamResult::Replies(replies)) => {
+                for reply in replies {
+                    print_refloat_reply_summary(&reply);
+                    if enabled {
+                        info!("{}", serde_json::to_string(&refloat_reply_json(&reply))?);
+                    }
+                }
+            }
+            Err(
+                cutout_protocols::RefloatCodecError::UnexpectedVescCommand
+                | cutout_protocols::RefloatCodecError::UnexpectedPackageInterface,
+            ) => {
+                debug!("ignored non-Refloat custom app frame during Refloat probe");
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(())
+}
+
+fn print_refloat_reply_summary(reply: &RefloatReply) {
+    match reply {
+        RefloatReply::Info(info) => info!(
+            package = info.package_name.as_str(),
+            major = info.package_major,
+            minor = info.package_minor,
+            patch = info.package_patch,
+            tick_rate_hz = info.tick_rate_hz,
+            capabilities = info.capabilities,
+            "refloat info"
+        ),
+        RefloatReply::RealtimeFieldIds(ids) => info!(
+            always = ids.always.len(),
+            runtime = ids.runtime.len(),
+            "refloat realtime field ids"
+        ),
+        RefloatReply::RealtimeData(data) => info!(
+            time_ticks = data.time_ticks,
+            state = data.package_state,
+            mode = data.package_mode,
+            footpad = data.footpad_state,
+            stop_condition = data.stop_condition,
+            alert_reason = data.alert_reason,
+            values = data.values.len(),
+            runtime_values = data.runtime_values.len(),
+            active_alert_mask_low = data.active_alert_mask_low,
+            firmware_fault_code = data.firmware_fault_code,
+            "refloat realtime data"
+        ),
+    }
+}
+
+fn refloat_reply_json(reply: &RefloatReply) -> serde_json::Value {
+    match reply {
+        RefloatReply::Info(info) => serde_json::json!({
+            "type": "refloat_info",
+            "info_version": info.info_version,
+            "flags": info.flags,
+            "package_name": info.package_name.as_str(),
+            "package_major": info.package_major,
+            "package_minor": info.package_minor,
+            "package_patch": info.package_patch,
+            "package_version_suffix": info.package_version_suffix.as_str(),
+            "git_hash": info.git_hash,
+            "tick_rate_hz": info.tick_rate_hz,
+            "capabilities": info.capabilities,
+            "extra_flags": info.extra_flags,
+        }),
+        RefloatReply::RealtimeFieldIds(ids) => serde_json::json!({
+            "type": "refloat_realtime_field_ids",
+            "always": ids
+                .always
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+            "runtime": ids
+                .runtime
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>(),
+        }),
+        RefloatReply::RealtimeData(data) => serde_json::json!({
+            "type": "refloat_realtime_data",
+            "mask": data.mask,
+            "extra_flags": data.extra_flags,
+            "time_ticks": data.time_ticks,
+            "package_state": data.package_state,
+            "package_mode": data.package_mode,
+            "footpad_state": data.footpad_state,
+            "charging": data.charging,
+            "darkride": data.darkride,
+            "wheelslip": data.wheelslip,
+            "stop_condition": data.stop_condition,
+            "sat": data.sat,
+            "alert_reason": data.alert_reason,
+            "values": refloat_values_json(data.values.as_slice()),
+            "runtime_values": refloat_values_json(data.runtime_values.as_slice()),
+            "charging_current": data.charging_current,
+            "charging_voltage": data.charging_voltage,
+            "active_alert_mask_low": data.active_alert_mask_low,
+            "active_alert_mask_high": data.active_alert_mask_high,
+            "firmware_fault_code": data.firmware_fault_code,
+        }),
+    }
+}
+
+fn refloat_values_json(values: &[RefloatRealtimeValue]) -> Vec<serde_json::Value> {
+    values
+        .iter()
+        .map(|value| {
+            serde_json::json!({
+                "id": value.id.as_str(),
+                "value": value.value,
+            })
+        })
+        .collect()
 }
 
 fn render_session_diagnostics_jsonl(
@@ -2824,7 +3227,7 @@ mod tests {
     #[derive(Clone, Copy, Debug)]
     struct RecordingSession;
 
-    impl cutout_core::ProtocolSession for RecordingSession {
+    impl ProtocolSession for RecordingSession {
         fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
             match input {
                 SessionInput::LinkUp(link) => {
@@ -2855,7 +3258,7 @@ mod tests {
     #[derive(Clone, Copy, Debug)]
     struct OverflowingReplaySession;
 
-    impl cutout_core::ProtocolSession for OverflowingReplaySession {
+    impl ProtocolSession for OverflowingReplaySession {
         fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
             let SessionInput::Notification { .. } = input else {
                 return;

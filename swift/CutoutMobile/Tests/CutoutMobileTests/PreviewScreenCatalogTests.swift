@@ -595,10 +595,9 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(state.statusText, "Scanning Bluetooth")
         XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
-        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, nil])
-        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557"])
-        XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
-        XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Record"))
+        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, .vescOnewheel])
+        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
+        XCTAssertTrue(state.sections.unsupported.isEmpty)
         XCTAssertNil(state.sections.manual)
     }
 

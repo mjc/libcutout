@@ -9,6 +9,7 @@ use cutout_core::{
     BatteryInfoDto, BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
     ChargeModeDto, CommandKindDto, ControlRefusalReasonDto, CutoutSessionState, DeviceCommandDto,
     DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
     DiscoveryObservation as CoreDiscoveryObservation, FaultCode, FaultCodeDto,
@@ -35,7 +36,8 @@ use cutout_protocols::{
     IdentityBannerEvidence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
     VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, identify_known_model, new_nosfet_aero_read_only_session,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescReadOnlySession as CoreVescReadOnlySession,
+    identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 
@@ -158,6 +160,9 @@ pub enum DiscoveryElectricUnicycleModel {
 pub enum DiscoveryConnectionRoute {
     /// Electric unicycle read-only session route.
     ElectricUnicycle,
+
+    /// VESC/Onewheel read-only route.
+    VescOnewheel,
 }
 
 /// Begode/Gotway protocol identity probe evidence.
@@ -385,12 +390,9 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
             support,
             recommended_action: support.recommended_action(),
             section: support.picker_section(),
-            connection_route: matches!(
-                candidate.support,
-                CoreDiscoveryCandidateSupport::Supported
-                    | CoreDiscoveryCandidateSupport::ProvisionalRoute
-            )
-            .then_some(DiscoveryConnectionRoute::ElectricUnicycle),
+            connection_route: candidate
+                .connection_route
+                .map(DiscoveryConnectionRoute::from),
             electric_unicycle_model,
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
@@ -421,6 +423,15 @@ impl From<CoreDiscoveryElectricUnicycleModel> for DiscoveryElectricUnicycleModel
         match model {
             CoreDiscoveryElectricUnicycleModel::Aero => Self::Aero,
             CoreDiscoveryElectricUnicycleModel::Falcon => Self::Falcon,
+        }
+    }
+}
+
+impl From<CoreDiscoveryConnectionRoute> for DiscoveryConnectionRoute {
+    fn from(route: CoreDiscoveryConnectionRoute) -> Self {
+        match route {
+            CoreDiscoveryConnectionRoute::ElectricUnicycle => Self::ElectricUnicycle,
+            CoreDiscoveryConnectionRoute::VescOnewheel => Self::VescOnewheel,
         }
     }
 }
@@ -687,14 +698,14 @@ pub fn mobile_discovery_candidate_from_advertisement(
             display_name,
             product_category: "VESC Onewheel".to_owned(),
             evidence: "VESC advertisement hint".to_owned(),
-            detail: "Not yet supported".to_owned(),
+            detail: "VESC read-only route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::KnownUnsupported,
-            recommended_action: DiscoveryCandidateSupport::KnownUnsupported.recommended_action(),
-            section: DiscoveryCandidateSupport::KnownUnsupported.picker_section(),
-            connection_route: None,
+            support: DiscoveryCandidateSupport::ProvisionalRoute,
+            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
+            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
+            connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
-            disabled_reason: Some("Not yet supported".to_owned()),
+            disabled_reason: None,
         };
     }
 
@@ -959,14 +970,14 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             display_name,
             product_category: "VESC Onewheel".to_owned(),
             evidence: "VESC protocol family".to_owned(),
-            detail: "Not yet supported".to_owned(),
+            detail: "VESC read-only route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::KnownUnsupported,
-            recommended_action: DiscoveryCandidateSupport::KnownUnsupported.recommended_action(),
-            section: DiscoveryCandidateSupport::KnownUnsupported.picker_section(),
-            connection_route: None,
+            support: DiscoveryCandidateSupport::ProvisionalRoute,
+            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
+            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
+            connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
-            disabled_reason: Some("Not yet supported".to_owned()),
+            disabled_reason: None,
         };
     }
 
@@ -4283,6 +4294,55 @@ impl FalconReadOnlySession {
     }
 }
 
+/// Mobile-facing wrapper for a generic VESC read-only session.
+#[derive(Debug, uniffi::Object)]
+pub struct VescReadOnlySession {
+    inner: Mutex<CoreVescReadOnlySession>,
+}
+
+#[uniffi::export]
+impl VescReadOnlySession {
+    /// Creates a generic VESC read-only session.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreVescReadOnlySession::new()),
+        })
+    }
+
+    /// Drives one input and returns owned outputs plus any stable error DTO.
+    pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
+        let input = SessionInputDto::from(input);
+        MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
+    }
+
+    /// Drains owned output DTOs accumulated since the previous drain.
+    pub fn drain_outputs(&self) -> Vec<MobileSessionOutputDto> {
+        self.lock_inner()
+            .drain_outputs()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    /// Returns the latest telemetry snapshot as an owned DTO.
+    pub fn current_snapshot(&self) -> MobileTelemetrySnapshotDto {
+        self.lock_inner().current_snapshot().into()
+    }
+
+    /// Returns accumulated parser diagnostics as an owned DTO.
+    pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
+        self.lock_inner().diagnostics().into()
+    }
+}
+
+impl VescReadOnlySession {
+    fn lock_inner(&self) -> MutexGuard<'_, CoreVescReadOnlySession> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4705,7 +4765,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_device_detection_resolution_keeps_vesc_family_only_unsupported() {
+    fn mobile_device_detection_resolution_routes_vesc_family_provisionally() {
         let candidate = mobile_discovery_candidate_from_detection_resolution(
             "ios-local-vesc-family".to_owned(),
             "VESC stream".to_owned(),
@@ -4724,17 +4784,17 @@ mod tests {
 
         assert_eq!(candidate.product_category, "VESC Onewheel");
         assert_eq!(candidate.evidence, "VESC protocol family");
-        assert_eq!(candidate.detail, "Not yet supported");
+        assert_eq!(candidate.detail, "VESC read-only route");
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::KnownUnsupported
+            DiscoveryCandidateSupport::ProvisionalRoute
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason,
-            Some("Not yet supported".to_owned())
+            candidate.connection_route,
+            Some(DiscoveryConnectionRoute::VescOnewheel)
         );
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
@@ -6013,7 +6073,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_exposes_disabled_reason_for_unsupported() {
+    fn mobile_discovery_candidate_routes_vesc_advertisement_provisionally() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
@@ -6024,14 +6084,14 @@ mod tests {
         assert_eq!(candidate.product_category, "VESC Onewheel");
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::KnownUnsupported
+            DiscoveryCandidateSupport::ProvisionalRoute
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason,
-            Some("Not yet supported".to_owned())
+            candidate.connection_route,
+            Some(DiscoveryConnectionRoute::VescOnewheel)
         );
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
@@ -6135,6 +6195,7 @@ mod tests {
                 evidence: "resolver evidence".to_owned(),
                 detail: "resolver detail".to_owned(),
                 support: core_support,
+                connection_route: None,
                 electric_unicycle_model: None,
             });
 

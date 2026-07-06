@@ -24,8 +24,9 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(core.scanState.status, .scanning)
         XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero"])
-        XCTAssertEqual(core.scanState.sections.unsupported.map(\.title), ["Little FOCer"])
+        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [.electricUnicycle, .vescOnewheel])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero", "Little FOCer"])
+        XCTAssertTrue(core.scanState.sections.unsupported.isEmpty)
         XCTAssertEqual(observedStates.count, 2)
     }
 
@@ -168,6 +169,28 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(eskate.subProtocol.displayName, "eSkate")
     }
 
+    func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
+        let telemetry = TelemetrySnapshot(
+            voltage: voltageValue(75_400),
+            batteryCurrent: batteryCurrentValue(38_000),
+            motorCurrent: phaseCurrentValue(71_000),
+            controllerTemperature: temperatureValue(54_000),
+            motorTemperature: temperatureValue(49_000)
+        )
+        let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: "Little FOCer BT"))
+
+        XCTAssertEqual(snapshot.title, "Little FOCer BT")
+        XCTAssertEqual(snapshot.vehicleKind, .float)
+        XCTAssertEqual(snapshot.subProtocol, .generic)
+        XCTAssertNil(snapshot.boardSpeed)
+        XCTAssertEqual(snapshot.batteryCurrent, batteryCurrentValue(38_000))
+        XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
+        XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
+        XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
+    }
+
     func testVescDebugSnapshotKeepsGuardrailAndReadOnlyStateTyped() {
         let snapshot = VescDebugSnapshot(
             profileTitle: "Profile: Street stable",
@@ -242,6 +265,27 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
         XCTAssertEqual(core.displayState.notificationCount, 2)
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(99))
+    }
+
+    func testVescOnewheelCoreBluetoothSessionSubscribesOnLinkUp() throws {
+        let session = CoreBluetoothSession.vescOnewheel()
+        let runner = CoreBluetoothSessionRunner(
+            session: session,
+            writeLimit: TransportWriteLimitBytes(20)
+        )
+
+        let step = try runner.handle(.linkUp(at: MonotonicMilliseconds(7)))
+
+        let vescNotifyChannel = BluetoothUuid(Data([
+            0x6e, 0x40, 0x00, 0x03,
+            0xb5, 0xa3,
+            0xf3, 0x93,
+            0xe0, 0xa9,
+            0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+        ]))!
+
+        XCTAssertEqual(step.operations, [.subscribe(channel: vescNotifyChannel)])
+        XCTAssertNil(step.snapshot?.speed)
     }
 
     func testSettingsReadbackUpdatesCurrentSessionStateUntilDisconnect() {
