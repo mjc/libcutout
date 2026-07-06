@@ -339,6 +339,7 @@ private extension MockupBmsScreenKind {
 }
 public enum DevicePickerRowState: Equatable, Hashable, Sendable {
     case supported(action: String)
+    case probeRecommended(action: String)
     case unsupported(action: String)
     case manual(action: String)
 }
@@ -390,18 +391,18 @@ public extension DevicePickerRow {
     }
 
     var isProbeRecommended: Bool {
-        state.actionTitle == "Probe"
+        if case .probeRecommended = state { true } else { false }
     }
 
     var captureActionTitle: String {
-        state.actionTitle == "Probe" ? "Start probe" : "Start capture"
+        isProbeRecommended ? "Start probe" : "Start capture"
     }
 }
 
 public extension DevicePickerRowState {
     var actionTitle: String {
         switch self {
-        case .supported(let action), .unsupported(let action), .manual(let action):
+        case .supported(let action), .probeRecommended(let action), .unsupported(let action), .manual(let action):
             action
         }
     }
@@ -576,7 +577,7 @@ public extension DevicePickerCandidateSupport {
         case .supported, .provisionalRoute:
             .supported(action: "Use")
         case .probeRecommended:
-            .unsupported(action: "Probe")
+            .probeRecommended(action: "Probe")
         case .unknownRecordable:
             .unsupported(action: "Record")
         case .knownUnsupported:

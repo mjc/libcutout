@@ -138,7 +138,7 @@ extension MockupScreenCatalogTests {
             title: "EUC-unknown",
             subtitle: "Electric unicycle",
             detail: "read-only probe recommended",
-            state: .unsupported(action: "Probe"),
+            state: .probeRecommended(action: "Probe"),
             symbolName: "questionmark.circle"
         )
 
@@ -518,7 +518,7 @@ extension MockupScreenCatalogTests {
         let candidate = DevicePickerDiscoveryCandidate(candidate: dto)
 
         XCTAssertEqual(candidate.support, .probeRecommended(disabledReason: "Read-only probe recommended"))
-        XCTAssertEqual(candidate.pickerRow.state, .unsupported(action: "Probe"))
+        XCTAssertEqual(candidate.pickerRow.state, .probeRecommended(action: "Probe"))
         XCTAssertEqual(candidate.pickerRow.captureActionTitle, "Start probe")
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }

@@ -1998,7 +1998,7 @@ private extension MockupAccent {
 private extension DevicePickerRowState {
     var actionTitle: String {
         switch self {
-        case .supported(let action), .unsupported(let action), .manual(let action):
+        case .supported(let action), .probeRecommended(let action), .unsupported(let action), .manual(let action):
             action
         }
     }
