@@ -22,18 +22,30 @@ final class CutoutAppModel: ObservableObject {
         EucRideScreenState(phase: phase, displayState: displayState)
     }
 
+    var vescRideSnapshot: VescRideSnapshot? {
+        VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
+    }
+
     private let core = CutoutSessionCore()
+    private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
     private let selectedDeviceStore = DevicePickerSelectionStore()
+    private var liveActivityIdentity: LiveActivityRideIdentity?
+    private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
+    private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
+    private var lastLiveActivityUpdate: MonotonicMilliseconds?
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     init() {
         core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
+            self?.syncLiveActivity()
         }
         core.onPhaseChange = { [weak self] phase in
             self?.handlePhaseChange(phase)
+            self?.syncLiveActivity()
         }
         core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
@@ -48,9 +60,26 @@ final class CutoutAppModel: ObservableObject {
             self?.bmsSnapshot = bmsSnapshot
         }
         core.onProtocolIdentityCandidateChange = { [weak self] candidate in
-            guard self?.isRecordOnlyCapture != true else { return }
-            guard case .supported = candidate?.support else { return }
+            guard self?.isRecordOnlyCapture != true else {
+                self?.liveActivityIdentity = nil
+                self?.liveActivityGlyph = .electricUnicycle
+                self?.syncLiveActivity()
+                return
+            }
+            if let model = candidate?.support.electricUnicycleModel {
+                self?.liveActivityIdentity = .model(model)
+                self?.liveActivityGlyph = .electricUnicycle
+            }
+            guard candidate?.support.isSupported == true else {
+                self?.syncLiveActivity()
+                return
+            }
             self?.selectedRideTitle = candidate?.detail
+            if candidate?.support.connectionRoute == .vescOnewheel {
+                self?.liveActivityIdentity = .device(candidate?.detail ?? "VESC Onewheel")
+                self?.liveActivityGlyph = .floatwheelAtom
+            }
+            self?.syncLiveActivity()
         }
         core.onRecord = { [weak self] message in
             self?.updateCaptureStatus(from: message)
@@ -64,13 +93,17 @@ final class CutoutAppModel: ObservableObject {
     }
 
     func pair(platformIdentifier: String) -> Bool {
+        let selectedRow = devicePickerScanState?.rows.first { $0.id == platformIdentifier }
         let didPair = core.pair(platformIdentifier: platformIdentifier)
         if didPair {
             isRecordOnlyCapture = false
             captureLabel = nil
             recordOnlyDeviceKind = nil
             selectedDeviceStore.save(platformIdentifier: platformIdentifier)
-            selectedRideTitle = devicePickerScanState?.rows.first(where: { $0.id == platformIdentifier })?.title
+            liveActivityIdentity = liveActivityIdentity(for: selectedRow)
+            liveActivityGlyph = liveActivityGlyph(for: selectedRow)
+            selectedRideTitle = selectedRow?.title
+            syncLiveActivity()
         }
         return didPair
     }
@@ -83,6 +116,7 @@ final class CutoutAppModel: ObservableObject {
         let annotationKind = trimmedKind
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "=", with: " ")
         let annotations = ["device_kind=\(annotationKind)"]
         let modelHint = CutoutModelHint(deviceKind: annotationKind)
         let didStart = switch modelHint {
@@ -100,10 +134,15 @@ final class CutoutAppModel: ObservableObject {
         if didStart {
             selectedDeviceStore.clear()
             if modelHint != .unknown {
-                core.annotateCapture(label: "device_kind=\(annotationKind)")
+                core.annotateCapture(key: "device_kind", value: annotationKind)
             }
             isRecordOnlyCapture = modelHint == .unknown
             recordOnlyDeviceKind = annotationKind
+            if modelHint == .unknown {
+                liveActivityIdentity = nil
+                liveActivityGlyph = .electricUnicycle
+            }
+            syncLiveActivity()
         }
         return didStart
     }
@@ -131,13 +170,22 @@ final class CutoutAppModel: ObservableObject {
     }
 
     func disconnectAndSearch() {
+        endLiveActivity(reason: .disconnected)
         isRecordOnlyCapture = false
         activeCaptureLabels.removeAll()
         captureLabel = nil
         recordOnlyDeviceKind = nil
         selectedRideTitle = nil
+        liveActivityIdentity = nil
+        liveActivityGlyph = .electricUnicycle
         selectedDeviceStore.clear()
         core.disconnectAndScan()
+    }
+
+    func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
+        liveActivityCoordinator.end(reason: reason)
+        lastLiveActivitySnapshot = nil
+        lastLiveActivityUpdate = nil
     }
 
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
@@ -153,6 +201,70 @@ final class CutoutAppModel: ObservableObject {
         guard case .failed = phase else { return }
         let rows = devicePickerScanState?.rows ?? []
         devicePickerScanState = .failed(phase.displayText, rows: rows)
+    }
+
+    private func syncLiveActivity() {
+        let shouldBeActive = phase.supportsLiveActivity && liveActivityIdentity != nil && isRecordOnlyCapture == false
+        let snapshot = liveActivityIdentity.map {
+            LiveActivityRideSnapshot(identity: $0, glyph: liveActivityGlyph, rideState: rideState, now: core.now())
+        }
+        let endReason: LiveActivityRideLifecycleEndReason = switch phase {
+        case .scanning:
+            .disconnected
+        case .failed:
+            .unavailable
+        default:
+            .sessionEnded
+        }
+        guard shouldReconcileLiveActivity(snapshot: snapshot, shouldBeActive: shouldBeActive) else { return }
+        liveActivityCoordinator.reconcile(snapshot: snapshot, shouldBeActive: shouldBeActive, endReason: endReason)
+    }
+
+    private func liveActivityIdentity(for selectedRow: DevicePickerRow?) -> LiveActivityRideIdentity? {
+        if let model = selectedRow?.electricUnicycleModel
+            ?? core.protocolIdentityCandidate?.support.electricUnicycleModel
+            ?? phase.connectingModel {
+            return .model(model)
+        }
+        if selectedRow?.connectionRoute == .vescOnewheel {
+            return .device(selectedRow?.title ?? "VESC Onewheel")
+        }
+        if core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
+            return .device(core.protocolIdentityCandidate?.detail ?? "VESC Onewheel")
+        }
+        return nil
+    }
+
+    private func liveActivityGlyph(for selectedRow: DevicePickerRow?) -> LiveActivityRideGlyph {
+        if selectedRow?.connectionRoute == .vescOnewheel
+            || core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
+            return .floatwheelAtom
+        }
+        return .electricUnicycle
+    }
+
+    private func shouldReconcileLiveActivity(
+        snapshot: LiveActivityRideSnapshot?,
+        shouldBeActive: Bool
+    ) -> Bool {
+        let now = core.now()
+        guard shouldBeActive else {
+            lastLiveActivitySnapshot = nil
+            lastLiveActivityUpdate = nil
+            return true
+        }
+        guard let snapshot else { return false }
+        guard snapshot != lastLiveActivitySnapshot else { return false }
+        let previousSnapshot = lastLiveActivitySnapshot
+        guard
+            previousSnapshot == nil
+                || snapshot.connectionState != previousSnapshot?.connectionState
+                || lastLiveActivityUpdate.map({ now.rawValue >= $0.rawValue + Self.liveActivityUpdateIntervalMilliseconds }) != false
+        else { return false }
+
+        lastLiveActivitySnapshot = snapshot
+        lastLiveActivityUpdate = now
+        return true
     }
 
     private func updateCaptureStatus(from message: String) {
@@ -172,6 +284,22 @@ final class CutoutAppModel: ObservableObject {
         } else if message.hasPrefix("capture_error=") {
             captureStatusText = "Capture failed"
         }
+    }
+}
+
+private extension SessionConnectionPhase {
+    var supportsLiveActivity: Bool {
+        switch self {
+        case .connecting, .discoveringServices, .subscribing, .live:
+            true
+        case .starting, .bluetoothUnavailable, .scanning, .failed:
+            false
+        }
+    }
+
+    var connectingModel: ElectricUnicycleModel? {
+        guard case .connecting(let model) = self else { return nil }
+        return model
     }
 }
 

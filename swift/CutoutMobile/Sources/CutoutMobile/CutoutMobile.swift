@@ -672,6 +672,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let at: MonotonicMilliseconds?
     public let speed: Speed?
+    public let speedSource: ReadbackSource?
+    public let speedQuality: ReadbackQuality?
     public let operatingState: RideOperatingState
     public let voltage: Voltage?
     public let batteryCurrent: BatteryCurrent?
@@ -687,12 +689,15 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let limpHomeRange: Distance?
     public let pitch: Angle?
     public let roll: Angle?
+    public let footpad: FootpadTelemetry?
     public let batteryLevelReported: BatteryLevel?
     public let batteryLevelEstimated: BatteryLevel?
 
     public init(
         at: MonotonicMilliseconds? = nil,
         speed: Speed? = nil,
+        speedSource: ReadbackSource? = nil,
+        speedQuality: ReadbackQuality? = nil,
         operatingState: RideOperatingState = .unknown,
         voltage: Voltage? = nil,
         batteryCurrent: BatteryCurrent? = nil,
@@ -708,11 +713,14 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         limpHomeRange: Distance? = nil,
         pitch: Angle? = nil,
         roll: Angle? = nil,
+        footpad: FootpadTelemetry? = nil,
         batteryLevelReported: BatteryLevel? = nil,
         batteryLevelEstimated: BatteryLevel? = nil
     ) {
         self.at = at
         self.speed = speed
+        self.speedSource = speedSource
+        self.speedQuality = speedQuality
         self.operatingState = operatingState
         self.voltage = voltage
         self.batteryCurrent = batteryCurrent
@@ -728,6 +736,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.limpHomeRange = limpHomeRange
         self.pitch = pitch
         self.roll = roll
+        self.footpad = footpad
         self.batteryLevelReported = batteryLevelReported
         self.batteryLevelEstimated = batteryLevelEstimated
     }
@@ -736,6 +745,8 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.init(
             at: dto.atMs.map { MonotonicMilliseconds($0.milliseconds) },
             speed: dto.speed?.value,
+            speedSource: dto.speed.map { ReadbackSource($0.source) },
+            speedQuality: dto.speed.map { ReadbackQuality($0.quality) },
             operatingState: dto.operatingState,
             voltage: dto.voltage?.value,
             batteryCurrent: dto.batteryCurrent?.value,
@@ -751,8 +762,29 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             limpHomeRange: dto.limpHomeRange?.value,
             pitch: dto.pitch?.value,
             roll: dto.roll?.value,
+            footpad: dto.footpad.map(FootpadTelemetry.init),
             batteryLevelReported: dto.batteryLevelReported?.value,
             batteryLevelEstimated: dto.batteryLevelEstimated?.value
+        )
+    }
+}
+
+public struct FootpadTelemetry: Equatable, Hashable, Sendable {
+    public let state: UInt8
+    public let adc1Milliunits: Int32?
+    public let adc2Milliunits: Int32?
+
+    public init(state: UInt8, adc1Milliunits: Int32? = nil, adc2Milliunits: Int32? = nil) {
+        self.state = state
+        self.adc1Milliunits = adc1Milliunits
+        self.adc2Milliunits = adc2Milliunits
+    }
+
+    fileprivate init(_ dto: MobileFootpadTelemetryDto) {
+        self.init(
+            state: dto.state,
+            adc1Milliunits: dto.adc1Milliunits,
+            adc2Milliunits: dto.adc2Milliunits
         )
     }
 }
@@ -871,11 +903,15 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let boardSpeed: Speed?
     public let dutyCycle: DutyCycle?
     public let dutyHeadroom: BatteryLevel?
+    public let dutyHeadroomApplicability: EucRideMetricApplicability
+    public let batteryVoltage: Voltage?
     public let batteryCurrent: BatteryCurrent?
+    public let powerFlow: PowerFlowDirection?
     public let motorCurrent: PhaseCurrent?
     public let boardAngle: Angle?
     public let controllerTemperature: Temperature?
     public let motorTemperature: Temperature?
+    public let footpad: FootpadTelemetry?
 
     public init(
         title: String,
@@ -886,11 +922,15 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         boardSpeed: Speed? = nil,
         dutyCycle: DutyCycle? = nil,
         dutyHeadroom: BatteryLevel? = nil,
+        dutyHeadroomApplicability: EucRideMetricApplicability = .unavailable,
+        batteryVoltage: Voltage? = nil,
         batteryCurrent: BatteryCurrent? = nil,
+        powerFlow: PowerFlowDirection? = nil,
         motorCurrent: PhaseCurrent? = nil,
         boardAngle: Angle? = nil,
         controllerTemperature: Temperature? = nil,
-        motorTemperature: Temperature? = nil
+        motorTemperature: Temperature? = nil,
+        footpad: FootpadTelemetry? = nil
     ) {
         self.title = title
         self.vehicleKind = vehicleKind
@@ -900,29 +940,94 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.boardSpeed = boardSpeed
         self.dutyCycle = dutyCycle
         self.dutyHeadroom = dutyHeadroom
+        self.dutyHeadroomApplicability = dutyHeadroom == nil ? dutyHeadroomApplicability : .available
+        self.batteryVoltage = batteryVoltage
         self.batteryCurrent = batteryCurrent
+        self.powerFlow = powerFlow
         self.motorCurrent = motorCurrent
         self.boardAngle = boardAngle
         self.controllerTemperature = controllerTemperature
         self.motorTemperature = motorTemperature
+        self.footpad = footpad
     }
 
-    fileprivate init(_ dto: MobileVescRideSnapshotDto) {
+    public init?(displayState: RideDisplayState, title: String?) {
+        guard let telemetry = displayState.telemetry, telemetry.hasVisibleRideValues else {
+            return nil
+        }
         self.init(
-            title: dto.title,
-            vehicleKind: VescVehicleKind(dto.vehicleKind),
-            subProtocol: VescSubProtocol(dto.subProtocol),
-            controllerState: VescControllerState(dto.controllerState),
-            warning: VescRideWarning(dto.warning),
-            boardSpeed: dto.boardSpeed?.value,
-            dutyCycle: dto.dutyCycle,
-            dutyHeadroom: dto.dutyHeadroom,
-            batteryCurrent: dto.batteryCurrent?.value,
-            motorCurrent: dto.motorCurrent?.value,
-            boardAngle: dto.boardAngle?.value,
-            controllerTemperature: dto.controllerTemperature?.value,
-            motorTemperature: dto.motorTemperature?.value
+            title: title ?? "VESC Onewheel",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            warning: .unknown,
+            boardSpeed: telemetry.speed,
+            dutyCycle: telemetry.pwm,
+            dutyHeadroom: telemetry.dutyHeadroom,
+            dutyHeadroomApplicability: telemetry.pwmHeadroomApplicability,
+            batteryVoltage: telemetry.voltage,
+            batteryCurrent: nil,
+            powerFlow: telemetry.powerFlow,
+            motorCurrent: telemetry.motorCurrent,
+            boardAngle: telemetry.pitch,
+            controllerTemperature: telemetry.controllerTemperature,
+            motorTemperature: telemetry.motorTemperature,
+            footpad: telemetry.footpad
         )
+    }
+
+    public var displayedDutyHeadroom: BatteryLevel? {
+        switch dutyHeadroomApplicability {
+        case .available:
+            dutyHeadroom
+        case .notApplicable:
+            BatteryLevel(value: 100)
+        case .unavailable:
+            nil
+        }
+    }
+}
+
+private let dutyHeadroomIdleDeadbandPermille = 20
+
+private func dutyHeadroomPermille(from dutyCycle: DutyCycle) -> Int {
+    let rawUsedPermille = min(1_000, abs(Int(dutyCycle.permille)))
+    let usedPermille = rawUsedPermille <= dutyHeadroomIdleDeadbandPermille ? 0 : rawUsedPermille
+    return max(0, 1_000 - usedPermille)
+}
+
+private func dutyHeadroomBatteryLevel(from dutyCycle: DutyCycle) -> BatteryLevel {
+    BatteryLevel(value: UInt8(dutyHeadroomPermille(from: dutyCycle) / 10))
+}
+
+private extension TelemetrySnapshot {
+    var pwmHeadroomApplicability: EucRideMetricApplicability {
+        guard pwm != nil else {
+            return .unavailable
+        }
+
+        return switch operatingState {
+        case .riding, .standing:
+            .available
+        case .parked, .charging, .unknown:
+            .notApplicable
+        }
+    }
+
+    var dutyHeadroom: BatteryLevel? {
+        guard pwmHeadroomApplicability == .available, let pwm else {
+            return nil
+        }
+
+        return dutyHeadroomBatteryLevel(from: pwm)
+    }
+
+    var pwmHeadroomPermille: Int? {
+        guard pwmHeadroomApplicability == .available, let pwm else {
+            return nil
+        }
+
+        return dutyHeadroomPermille(from: pwm)
     }
 }
 
@@ -1178,28 +1283,37 @@ public struct EucGarageSnapshot: Equatable, Hashable, Sendable {
 }
 
 public struct SpeedReadout: Equatable, Hashable, Sendable {
-    private static let milesPerHourPerMillimeterPerSecond = 0.002_236_936_292_054_4
-
     public let millimetersPerSecond: Int32?
+    public let source: ReadbackSource?
+    public let quality: ReadbackQuality?
 
     public init(snapshot: TelemetrySnapshot?) {
-        self.init(millimetersPerSecond: snapshot?.speed?.value)
+        self.init(
+            millimetersPerSecond: snapshot?.speed?.value,
+            source: snapshot?.speedSource,
+            quality: snapshot?.speedQuality
+        )
     }
 
-    public init(millimetersPerSecond: Int32?) {
+    public init(
+        millimetersPerSecond: Int32?,
+        source: ReadbackSource? = nil,
+        quality: ReadbackQuality? = nil
+    ) {
         self.millimetersPerSecond = millimetersPerSecond
+        self.source = source
+        self.quality = quality
     }
 
     public var displayValue: String {
         guard let millimetersPerSecond else {
             return "--"
         }
-        let milesPerHour = Double(millimetersPerSecond) * Self.milesPerHourPerMillimeterPerSecond
-        return String(format: "%.1f", milesPerHour)
+        return RideUnits.speedText(millimetersPerSecond: millimetersPerSecond)
     }
 
     public var displayUnit: String {
-        "mph"
+        RideUnits.speedUnit
     }
 }
 
@@ -1791,7 +1905,7 @@ private func mergeGroups(_ updates: [BmsGroupSnapshot], into existing: [BmsGroup
 
 private func bmsPercentText(_ value: BatteryLevel?) -> String {
     guard let value else { return "--" }
-    return "\(value.value)%"
+    return RideUnits.percentText(value.value) + "%"
 }
 
 private func bmsPageText(selector: UInt8?, tag: UInt16?, kind: String?) -> String {
@@ -1809,11 +1923,11 @@ private func bmsPageText(selector: UInt8?, tag: UInt16?, kind: String?) -> Strin
 }
 
 private func bmsVoltageText(_ value: Voltage?) -> String {
-    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+    value.map { RideUnits.voltageText(millivolts: $0.value) } ?? "--"
 }
 
 private func bmsCurrentText(_ value: BatteryCurrent?) -> String {
-    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+    value.map { RideUnits.currentText(milliamps: $0.value) } ?? "--"
 }
 
 private func bmsMillivoltsText(_ value: VoltageDelta?) -> String {
@@ -1825,12 +1939,12 @@ private func bmsCountText(_ value: Int) -> String {
 }
 
 private func bmsTemperatureText(_ value: Temperature?) -> String {
-    value.map { String(format: "%.1f", Double($0.value) / 1_000.0) } ?? "--"
+    value.map { RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1) } ?? "--"
 }
 
 private func bmsGroupVoltageText(_ value: Voltage?) -> String {
     guard let value else { return "--" }
-    return String(format: "%.3f", Double(value.value) / 1_000.0)
+    return RideUnits.voltageText(millivolts: value.value, fractionDigits: 3)
 }
 
 public struct SessionDebugRow: Equatable, Hashable, Sendable {
@@ -1902,11 +2016,22 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
         _ step: CoreBluetoothSessionStep,
         receivedAt: MonotonicMilliseconds
     ) -> RideDisplayState {
-        let nextSpeed =
-            step.snapshot?.speed.map { SpeedReadout(millimetersPerSecond: $0.value) } ?? speed
+        reducing(snapshot: step.snapshot, receivedAt: receivedAt)
+    }
+
+    public func reducing(
+        snapshot: TelemetrySnapshot?,
+        receivedAt: MonotonicMilliseconds
+    ) -> RideDisplayState {
+        let nextSpeed: SpeedReadout
+        if let snapshot, snapshot.speed != nil {
+            nextSpeed = SpeedReadout(snapshot: snapshot)
+        } else {
+            nextSpeed = speed
+        }
         return RideDisplayState(
             speed: nextSpeed,
-            telemetry: step.snapshot ?? telemetry,
+            telemetry: snapshot ?? telemetry,
             notificationCount: notificationCount + 1,
             lastUpdate: receivedAt
         )
@@ -2039,25 +2164,11 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     }
 
     public var pwmHeadroomApplicability: EucRideMetricApplicability {
-        guard telemetry?.pwm != nil else {
-            return .unavailable
-        }
-
-        return switch operatingState {
-        case .riding, .standing:
-            .available
-        case .parked, .charging, .unknown:
-            .notApplicable
-        }
+        telemetry?.pwmHeadroomApplicability ?? .unavailable
     }
 
     public var pwmHeadroomPermille: Int? {
-        guard pwmHeadroomApplicability == .available, let pwm = telemetry?.pwm else {
-            return nil
-        }
-
-        let usedPermille = min(1_000, abs(Int(pwm.permille)))
-        return max(0, 1_000 - usedPermille)
+        telemetry?.pwmHeadroomPermille
     }
 
     public var regenerationPower: Power? {
@@ -2347,6 +2458,9 @@ private extension TelemetrySnapshot {
             || motorTemperature != nil
             || batteryTemperature != nil
             || pwm != nil
+            || footpad != nil
+            || pitch != nil
+            || roll != nil
             || batteryLevelReported != nil
             || batteryLevelEstimated != nil
     }
@@ -2358,6 +2472,7 @@ private extension TelemetrySnapshot {
 
 public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
     case missingNotifyChannel
+    case missingWriteChannel
     case sessionFailed(String)
     case connectFailed(String)
     case serviceDiscoveryFailed(String)
@@ -2370,6 +2485,8 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
         switch self {
         case .missingNotifyChannel:
             "Missing notify channel"
+        case .missingWriteChannel:
+            "Missing write channel"
         case .sessionFailed(let message):
             "Session failed: \(message)"
         case .connectFailed(let message):
@@ -2579,12 +2696,69 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
     }
 }
 
+public final class VescOnewheelSession: @unchecked Sendable {
+    private let inner: VescReadOnlySession
+
+    public init() {
+        self.inner = VescReadOnlySession()
+    }
+
+    public var diagnostics: ParserDiagnostics {
+        ParserDiagnostics(inner.diagnostics())
+    }
+
+    public var currentSnapshot: TelemetrySnapshot {
+        TelemetrySnapshot(inner.currentSnapshot())
+    }
+
+    public func linkUp(
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes
+    ) throws -> [SessionAction] {
+        try step(.linkUp, at: monotonicMilliseconds, writeLimit: writeLimit)
+    }
+
+    public func ingestNotificationActions(
+        _ bytes: Data,
+        channel: Data,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        try step(.notification, at: monotonicMilliseconds, channel: channel, bytes: bytes)
+    }
+
+    public func perform(
+        _ command: DeviceCommand,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        try step(.command, at: monotonicMilliseconds, command: command)
+    }
+
+    private func step(
+        _ kind: MobileSessionInputKindDto,
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        writeLimit: TransportWriteLimitBytes? = nil,
+        channel: Data = Data(),
+        bytes: Data = Data(),
+        command: DeviceCommand? = nil
+    ) throws -> [SessionAction] {
+        try inner.step(
+            kind,
+            at: monotonicMilliseconds,
+            writeLimit: writeLimit,
+            channel: channel,
+            bytes: bytes,
+            command: command
+        )
+    }
+}
+
 private protocol MobileReadOnlySession {
     func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResultDto
 }
 
 extension AeroReadOnlySession: MobileReadOnlySession {}
 extension FalconReadOnlySession: MobileReadOnlySession {}
+extension VescReadOnlySession: MobileReadOnlySession {}
 
 private extension MobileReadOnlySession {
     func step(
@@ -2619,6 +2793,22 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
         }
         self.bytes = bytes
     }
+
+    public static let vescNordicUartNotify = BluetoothUuid(Data([
+        0x6e, 0x40, 0x00, 0x03,
+        0xb5, 0xa3,
+        0xf3, 0x93,
+        0xe0, 0xa9,
+        0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+    ]))!
+
+    public static let vescNordicUartWrite = BluetoothUuid(Data([
+        0x6e, 0x40, 0x00, 0x02,
+        0xb5, 0xa3,
+        0xf3, 0x93,
+        0xe0, 0xa9,
+        0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+    ]))!
 
     public static func bluetooth16(_ value: UInt16) -> BluetoothUuid {
         let high = UInt8((value >> 8) & 0xff)
@@ -2741,14 +2931,21 @@ public struct CoreBluetoothTransportPlanner: Equatable, Hashable, Sendable {
 
 public enum CoreBluetoothSession: Sendable {
     case electricUnicycle(ElectricUnicycleSession)
+    case vescOnewheel(VescOnewheelSession)
 
     public static func electricUnicycle(model: ElectricUnicycleModel) throws -> CoreBluetoothSession {
         try .electricUnicycle(ElectricUnicycleSession(model: model))
     }
 
+    public static func vescOnewheel() -> CoreBluetoothSession {
+        .vescOnewheel(VescOnewheelSession())
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
+            session.currentSnapshot
+        case .vescOnewheel(let session):
             session.currentSnapshot
         }
     }
@@ -2763,6 +2960,8 @@ public enum CoreBluetoothSession: Sendable {
             ]
         case .electricUnicycle:
             []
+        case .vescOnewheel:
+            []
         }
     }
 
@@ -2773,6 +2972,9 @@ public enum CoreBluetoothSession: Sendable {
         switch self {
         case .electricUnicycle(let session):
             try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
+        case .vescOnewheel(let session):
+            try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
+                + session.perform(.requestTelemetry, at: monotonicMilliseconds)
         }
     }
 
@@ -2784,6 +2986,20 @@ public enum CoreBluetoothSession: Sendable {
         switch self {
         case .electricUnicycle(let session):
             try session.ingestNotificationActions(bytes, channel: channel.bytes, at: monotonicMilliseconds)
+        case .vescOnewheel(let session):
+            try session.ingestNotificationActions(bytes, channel: channel.bytes, at: monotonicMilliseconds)
+        }
+    }
+
+    fileprivate func perform(
+        _ command: DeviceCommand,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> [SessionAction] {
+        switch self {
+        case .electricUnicycle(let session):
+            try session.perform(command, at: monotonicMilliseconds)
+        case .vescOnewheel(let session):
+            try session.perform(command, at: monotonicMilliseconds)
         }
     }
 }
@@ -2791,6 +3007,7 @@ public enum CoreBluetoothSession: Sendable {
 public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
     case linkUp(at: MonotonicMilliseconds)
     case notification(bytes: Data, channel: BluetoothUuid, at: MonotonicMilliseconds)
+    case command(DeviceCommand, at: MonotonicMilliseconds)
     case linkDown(at: MonotonicMilliseconds)
 }
 
@@ -2848,6 +3065,15 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
                 channel: channel,
                 at: monotonicMilliseconds
             )
+            return CoreBluetoothSessionStep(
+                operations: actions.flatMap(planner.plan(action:)),
+                snapshot: session.currentSnapshot,
+                actions: actions,
+                captureContext: captureContext
+            )
+
+        case .command(let command, let monotonicMilliseconds):
+            let actions = try session.perform(command, at: monotonicMilliseconds)
             return CoreBluetoothSessionStep(
                 operations: actions.flatMap(planner.plan(action:)),
                 snapshot: session.currentSnapshot,
@@ -2935,13 +3161,19 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let runner: CoreBluetoothSessionRunner
     private let retainedSink: CoreBluetoothOperationSink
     private let executor: CoreBluetoothOperationExecutor
+    private let retryCommandOnLinkUp: DeviceCommand?
+    private let retryDelay: DispatchTimeInterval
     private var recorded: [CoreBluetoothLiveRecord] = []
+    private var pendingRetry: DispatchWorkItem?
+    private var pendingRetryTimestamp: MonotonicMilliseconds?
 
     public init(
         session: CoreBluetoothSession,
         advertisement: CoreBluetoothAdvertisement,
         writeLimit: TransportWriteLimitBytes,
-        operationSink: CoreBluetoothOperationSink
+        operationSink: CoreBluetoothOperationSink,
+        retryCommandOnLinkUp: DeviceCommand? = nil,
+        retryDelay: DispatchTimeInterval = .seconds(1)
     ) {
         self.platformIdentifier = advertisement.peripheralIdentifier
         self.runner = CoreBluetoothSessionRunner(
@@ -2955,6 +3187,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         )
         self.retainedSink = operationSink
         self.executor = CoreBluetoothOperationExecutor(sink: operationSink)
+        self.retryCommandOnLinkUp = retryCommandOnLinkUp
+        self.retryDelay = retryDelay
     }
 
     public var records: [CoreBluetoothLiveRecord] {
@@ -2963,12 +3197,14 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     @discardableResult
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+        cancelPendingRetry()
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
         recorded.append(.linkUp(
             platformIdentifier: platformIdentifier,
             writeLimit: step.captureContext?.writeLimit ?? TransportWriteLimitBytes(0)
         ))
         executeAndRecord(step.operations)
+        scheduleRetryIfNeeded(at: monotonicMilliseconds)
         return step
     }
 
@@ -2980,11 +3216,22 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     }
 
     @discardableResult
+    public func handleCommand(
+        _ command: DeviceCommand,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) throws -> CoreBluetoothSessionStep {
+        let step = try runner.handle(.command(command, at: monotonicMilliseconds))
+        executeAndRecord(step.operations)
+        return step
+    }
+
+    @discardableResult
     public func handleNotification(
         bytes: Data,
         channel: BluetoothUuid,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> CoreBluetoothSessionStep {
+        cancelPendingRetry()
         recorded.append(.notification(
             channel: channel,
             byteCount: CoreBluetoothPayloadByteCount(bytes.count),
@@ -3001,6 +3248,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     @discardableResult
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+        cancelPendingRetry()
         let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
         recorded.append(.linkDown(
             platformIdentifier: platformIdentifier,
@@ -3035,6 +3283,36 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
                 operation: operation
             ))
         }
+    }
+
+    private func scheduleRetryIfNeeded(at monotonicMilliseconds: MonotonicMilliseconds) {
+        guard let retryCommandOnLinkUp else {
+            return
+        }
+        pendingRetryTimestamp = monotonicMilliseconds
+        let retry = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+            guard self.pendingRetryTimestamp == monotonicMilliseconds else {
+                return
+            }
+            self.pendingRetry = nil
+            self.pendingRetryTimestamp = nil
+            do {
+                _ = try self.handleCommand(retryCommandOnLinkUp, at: monotonicMilliseconds)
+            } catch {
+                return
+            }
+        }
+        pendingRetry = retry
+        DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay, execute: retry)
+    }
+
+    private func cancelPendingRetry() {
+        pendingRetry?.cancel()
+        pendingRetry = nil
+        pendingRetryTimestamp = nil
     }
 }
 

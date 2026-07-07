@@ -67,9 +67,9 @@ impl CutoutSessionState {
     }
 
     pub(crate) fn observe_outputs(&mut self, outputs: &[SessionOutput]) {
-        outputs
-            .iter()
-            .for_each(|output| self.observe_output(output));
+        for output in outputs {
+            self.observe_output(output);
+        }
     }
 
     fn observe_output(&mut self, output: &SessionOutput) {
@@ -277,6 +277,16 @@ pub enum DiscoveryElectricUnicycleModel {
     Falcon,
 }
 
+/// Picker connection route derived from typed discovery evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscoveryConnectionRoute {
+    /// Electric unicycle read-only session route.
+    ElectricUnicycle,
+
+    /// VESC/Onewheel read-only route.
+    VescOnewheel,
+}
+
 /// Picker/discovery candidate derived from Rust-owned discovery evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveryCandidateSnapshot {
@@ -297,6 +307,9 @@ pub struct DiscoveryCandidateSnapshot {
 
     /// Candidate support state.
     pub support: DiscoveryCandidateSupport,
+
+    /// Route to use when the candidate can be picked.
+    pub connection_route: Option<DiscoveryConnectionRoute>,
 
     /// Electric-unicycle model hint for supported discovery routes.
     pub electric_unicycle_model: Option<DiscoveryElectricUnicycleModel>,
@@ -325,6 +338,7 @@ impl DiscoveryCandidateSnapshot {
                     evidence: "advertisement hint".to_owned(),
                     detail: discovery_electric_unicycle_detail(model).to_owned(),
                     support: DiscoveryCandidateSupport::ProvisionalRoute,
+                    connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
                     electric_unicycle_model: Some(model),
                 },
                 None => Self {
@@ -334,6 +348,7 @@ impl DiscoveryCandidateSnapshot {
                     evidence: "FFE0/FFE1 transport hint".to_owned(),
                     detail: "Read-only probe recommended".to_owned(),
                     support: DiscoveryCandidateSupport::ProbeRecommended,
+                    connection_route: None,
                     electric_unicycle_model: None,
                 },
             }),
@@ -342,8 +357,9 @@ impl DiscoveryCandidateSnapshot {
                 display_name: display_name.to_owned(),
                 product_category: "VESC Onewheel".to_owned(),
                 evidence: "VESC advertisement hint".to_owned(),
-                detail: "Not yet supported".to_owned(),
-                support: DiscoveryCandidateSupport::KnownUnsupported,
+                detail: "VESC read-only route".to_owned(),
+                support: DiscoveryCandidateSupport::ProvisionalRoute,
+                connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
                 electric_unicycle_model: None,
             }),
             (false, false) => None,
@@ -580,10 +596,18 @@ mod tests {
             picker_candidates[0].electric_unicycle_model,
             Some(DiscoveryElectricUnicycleModel::Falcon)
         );
+        assert_eq!(
+            picker_candidates[0].connection_route,
+            Some(DiscoveryConnectionRoute::ElectricUnicycle)
+        );
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
-            DiscoveryCandidateSupport::KnownUnsupported
+            DiscoveryCandidateSupport::ProvisionalRoute
+        );
+        assert_eq!(
+            picker_candidates[1].connection_route,
+            Some(DiscoveryConnectionRoute::VescOnewheel)
         );
         assert_eq!(picker_candidates[2].platform_identifier, "unknown-euc-id");
         assert_eq!(
@@ -591,6 +615,7 @@ mod tests {
             DiscoveryCandidateSupport::ProbeRecommended
         );
         assert_eq!(picker_candidates[2].detail, "Read-only probe recommended");
+        assert_eq!(picker_candidates[2].connection_route, None);
         assert_eq!(picker_candidates[2].electric_unicycle_model, None);
     }
 }

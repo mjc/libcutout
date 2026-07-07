@@ -2,8 +2,8 @@ use arrayvec::ArrayVec;
 use cutout_core::{CommandKind, RequestKey, RequestTarget, VescControllerId, WriteMode};
 
 use crate::{
-    AeroProbe, FalconProbe, VESC_MAX_FRAME_LEN, VescCanReadOnlyRequest, VescReadOnlyCodec,
-    VescReadOnlyRequest,
+    AeroProbe, FalconProbe, RefloatReadOnlyRequest, VESC_MAX_FRAME_LEN, VescCanReadOnlyRequest,
+    VescReadOnlyCodec, VescReadOnlyRequest,
 };
 
 const MAX_REQUEST_LEN: usize = VESC_MAX_FRAME_LEN;
@@ -38,6 +38,9 @@ pub enum RequestDisposition<P> {
 
     /// A probe encoded as a bounded transport write.
     Write(EncodedRequest<P>),
+
+    /// A probe encoded as a bounded sequence of transport writes.
+    Writes(ArrayVec<EncodedRequest<P>, 4>),
 }
 
 /// Request encoder for NOSFET Aero/Veteran-family probes.
@@ -106,7 +109,26 @@ impl VescRequestEncoder {
     pub fn encode_command(kind: CommandKind) -> Option<RequestDisposition<VescReadOnlyRequest>> {
         let request = match kind {
             CommandKind::RequestFirmwareInfo => VescReadOnlyRequest::FirmwareInfo,
-            CommandKind::RequestTelemetry => VescReadOnlyRequest::Values,
+            CommandKind::RequestTelemetry => {
+                let mut requests = ArrayVec::new();
+                for request in [
+                    VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
+                    VescReadOnlyRequest::MotorConfig,
+                    VescReadOnlyRequest::Values,
+                ] {
+                    let mut payload = ArrayVec::new();
+                    VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
+                    requests
+                        .try_push(EncodedRequest {
+                            probe: request,
+                            command: kind,
+                            payload,
+                            mode: WriteMode::WithoutResponse,
+                        })
+                        .ok()?;
+                }
+                return Some(RequestDisposition::Writes(requests));
+            }
             CommandKind::RequestDiagnostics => VescReadOnlyRequest::Stats(
                 crate::VescStatsMask::SPEED_AVG
                     | crate::VescStatsMask::POWER_AVG
@@ -255,6 +277,7 @@ mod tests {
         assert_eq!(
             match identity {
                 RequestDisposition::Write(request) => request.payload,
+                RequestDisposition::Writes(_) => unreachable!(),
                 RequestDisposition::Passive { .. } => unreachable!(),
             }
             .as_slice(),
@@ -263,6 +286,7 @@ mod tests {
         assert_eq!(
             match firmware {
                 RequestDisposition::Write(request) => request.payload,
+                RequestDisposition::Writes(_) => unreachable!(),
                 RequestDisposition::Passive { .. } => unreachable!(),
             }
             .as_slice(),
@@ -322,6 +346,36 @@ mod tests {
         assert_eq!(encoded.command, CommandKind::RequestTelemetry);
         assert_eq!(encoded.mode, WriteMode::WithoutResponse);
         assert!(!encoded.payload.is_empty());
+    }
+
+    #[test]
+    fn vesc_telemetry_request_discovers_refloat_fields_and_motor_config_before_values() {
+        let request = VescRequestEncoder::encode_command(CommandKind::RequestTelemetry)
+            .expect("telemetry is supported");
+
+        let RequestDisposition::Writes(requests) = request else {
+            panic!("VESC telemetry should issue the Refloat realtime sequence");
+        };
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.probe)
+                .collect::<ArrayVec<_, 3>>()
+                .as_slice(),
+            &[
+                VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeDataIds),
+                VescReadOnlyRequest::MotorConfig,
+                VescReadOnlyRequest::Values,
+            ]
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.command == CommandKind::RequestTelemetry
+                    && request.mode == WriteMode::WithoutResponse
+                    && !request.payload.is_empty())
+        );
     }
 
     #[test]
@@ -411,6 +465,7 @@ mod tests {
         .into_iter()
         .filter_map(|disposition| match disposition {
             RequestDisposition::Write(request) => Some(request.payload.len()),
+            RequestDisposition::Writes(_) => None,
             RequestDisposition::Passive { .. } => None,
         })
         .collect::<Vec<_>>();
@@ -427,11 +482,12 @@ mod tests {
     fn request_encoder_types_remain_bounded_in_size() {
         assert_eq!(size_of::<AeroRequestEncoder>(), 0);
         assert!(
-            size_of::<RequestDisposition<AeroProbe>>() <= size_of::<EncodedRequest<AeroProbe>>()
+            size_of::<RequestDisposition<AeroProbe>>()
+                <= 2 * size_of::<[EncodedRequest<AeroProbe>; 4]>()
         );
         assert!(
             size_of::<RequestDisposition<FalconProbe>>()
-                <= size_of::<EncodedRequest<FalconProbe>>()
+                <= 2 * size_of::<[EncodedRequest<FalconProbe>; 4]>()
         );
     }
 }

@@ -1178,6 +1178,52 @@ async fn drive_session_subscribes_and_writes_matching_transport_channels() {
     );
 }
 
+#[tokio::test]
+async fn drive_session_accepts_split_write_and_notify_channels() {
+    let peripheral =
+        RecordingPeripheral::with_notification(crate::BtleNotification::from_raw_bytes(
+            Uuid::from_u128(0x0000_ffe2_0000_1000_8000_0080_5f9b_34fb),
+            Uuid::from_u128(0x0000_ffe0_0000_1000_8000_0080_5f9b_34fb),
+            Bytes::from_static(b"\x13\x37"),
+        ));
+    let mut session = SplitChannelSession::default();
+    let summary = shared_write_notify_summary("VESC BLE UART");
+
+    let report = crate::drive_session_with_channel_pair(
+        &peripheral,
+        &mut session,
+        GattChannel::from_bytes([0xA2; 16]),
+        GattChannel::from_bytes([0xA3; 16]),
+        &summary,
+        summary
+            .select_session_endpoints()
+            .expect("summary has session endpoints"),
+        crate::NotificationWindow::from_millis(10),
+        &[],
+    )
+    .await
+    .expect("bridge accepts split channel bindings");
+
+    assert_eq!(report.writes, writes(1));
+    assert_eq!(report.subscribes, subscribes(1));
+    assert_eq!(report.notifications, notifications(1));
+    assert_eq!(
+        *session
+            .last_notification_channel
+            .lock()
+            .expect("notification channel"),
+        Some(GattChannel::from_bytes([0xA3; 16]))
+    );
+    assert_eq!(
+        peripheral.writes.lock().expect("write log").as_slice(),
+        &[(
+            Uuid::from_u128(0x0000_ffe1_0000_1000_8000_0080_5f9b_34fb),
+            Bytes::from_static(b"split:write"),
+            WriteMode::WithoutResponse,
+        )]
+    );
+}
+
 #[allow(clippy::too_many_lines)]
 #[tokio::test]
 async fn drive_session_relays_notifications_back_into_session() {
@@ -2110,6 +2156,11 @@ struct BridgeSession {
     last_notification_channel: Arc<Mutex<Option<GattChannel>>>,
 }
 
+#[derive(Default)]
+struct SplitChannelSession {
+    last_notification_channel: Arc<Mutex<Option<GattChannel>>>,
+}
+
 struct SubscribeOnlySession;
 
 impl ProtocolSession for SubscribeOnlySession {
@@ -2389,6 +2440,33 @@ impl ProtocolSession for BridgeSession {
                 )));
             }
             SessionInput::LinkDown | SessionInput::Command(_) => {}
+        }
+    }
+}
+
+impl ProtocolSession for SplitChannelSession {
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::LinkUp(_) => {
+                output.push(SessionOutput::Transport(TransportAction::Subscribe {
+                    channel: GattChannel::from_bytes([0xA3; 16]),
+                }));
+            }
+            SessionInput::Tick { .. } => {
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: GattChannel::from_bytes([0xA2; 16]),
+                    bytes: cutout_core::WritePayload::try_from_slice(b"split:write")
+                        .expect("fixture payload fits"),
+                    mode: WriteMode::WithoutResponse,
+                }));
+            }
+            SessionInput::Notification { channel, .. } => {
+                *self
+                    .last_notification_channel
+                    .lock()
+                    .expect("notification channel") = Some(channel);
+            }
+            SessionInput::Command(_) | SessionInput::LinkDown => {}
         }
     }
 }

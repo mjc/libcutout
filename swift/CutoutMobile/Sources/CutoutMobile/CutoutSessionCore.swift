@@ -44,6 +44,7 @@ public final class CutoutSessionCore: NSObject {
     private var discoveredPeripherals: [CoreBluetoothPeripheralIdentifier: CBPeripheral] = [:]
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var selectedModel: ElectricUnicycleModel?
+    private var selectedRoute: DevicePickerConnectionRoute?
     private var isRecordOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
@@ -78,15 +79,14 @@ public final class CutoutSessionCore: NSObject {
         let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
         let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
         let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
-        let model = snapshot.pickerCandidates
-            .first { $0.platformIdentifier == platformIdentifier }
-            .map(DevicePickerDiscoveryCandidate.init(candidate:))?
-            .support
-            .electricUnicycleModel
+        let support = snapshot.pickerCandidates
+            .first(where: { $0.platformIdentifier == platformIdentifier })
+            .map(DevicePickerCandidateSupport.init)
         return connectIfReady(
             peripheral: discoveredPeripherals[identifier],
             advertisement: advertisement,
-            model: model
+            route: support?.connectionRoute,
+            model: support?.electricUnicycleModel
         )
     }
 
@@ -97,6 +97,7 @@ public final class CutoutSessionCore: NSObject {
         return connectIfReady(
             peripheral: discoveredPeripherals[identifier],
             advertisement: snapshot.advertisement(platformIdentifier: platformIdentifier),
+            route: .electricUnicycle,
             model: model
         )
     }
@@ -116,8 +117,13 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public func annotateCapture(label: String) {
-        captureBuilder?.addAnnotation(annotation: "capture_label=\(label)")
-        record("capture_label=\(label)")
+        annotateCapture(key: "capture_label", value: label)
+    }
+
+    public func annotateCapture(key: String, value: String) {
+        let annotation = pevcapAnnotation(key: key, value: value)
+        captureBuilder?.addAnnotation(annotation: annotation)
+        record(annotation)
         writeCapture()
     }
 
@@ -125,6 +131,7 @@ public final class CutoutSessionCore: NSObject {
         suppressReconnect = true
         isRecordOnly = false
         selectedModel = nil
+        selectedRoute = nil
         liveOwner = nil
         deviceDetectionSession = DeviceDetectionSession()
         pendingBegodeProbeResponses.removeAll()
@@ -150,6 +157,10 @@ public final class CutoutSessionCore: NSObject {
         central?.scanForPeripherals(withServices: nil)
     }
 
+    public func now() -> MonotonicMilliseconds {
+        clock.now()
+    }
+
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
         record("link_operations=\(step.operations.map(String.init(describing:)).joined(separator: ","))")
         captureBuilder?.recordLinkUp(
@@ -167,8 +178,9 @@ public final class CutoutSessionCore: NSObject {
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
         step.actions.forEach(applySessionAction)
-        displayState = displayState.reducing(step, receivedAt: receivedAt)
-        hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || step.snapshot?.speed?.value != nil
+        let snapshot = step.snapshot
+        displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
+        hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
         onDisplayStateChange?(displayState)
         setPhase(.live)
     }
@@ -322,6 +334,7 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = model
+        selectedRoute = .electricUnicycle
         deviceDetectionSession = DeviceDetectionSession()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "pair", annotations: ["route=electric_unicycle"])
@@ -341,10 +354,37 @@ public final class CutoutSessionCore: NSObject {
         self.peripheral = peripheral
         self.advertisement = advertisement
         selectedModel = nil
+        selectedRoute = nil
         liveOwner = nil
         deviceDetectionSession = DeviceDetectionSession()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        startCapture(reason: "record-only", annotations: ["route=record_only"] + annotations + (note.map { ["user_note=\($0)"] } ?? []))
+        startCapture(
+            reason: "record-only",
+            annotations: ["route=record_only"] + annotations + (note.map {
+                [pevcapAnnotation(key: "user_note", value: $0)]
+            } ?? [])
+        )
+        clearSettingsReadback()
+        clearFaultHistoryReadback()
+        clearBmsSnapshot()
+        clearProtocolIdentityCandidate()
+        peripheral.delegate = self
+        setPhase(.discoveringServices)
+        central?.stopScan()
+        central?.connect(peripheral)
+    }
+
+    private func connectVescOnewheel(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement) {
+        suppressReconnect = false
+        isRecordOnly = false
+        self.peripheral = peripheral
+        self.advertisement = advertisement
+        selectedModel = nil
+        selectedRoute = .vescOnewheel
+        liveOwner = nil
+        deviceDetectionSession = DeviceDetectionSession()
+        _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
+        startCapture(reason: "pair", annotations: ["route=vesc_onewheel"])
         clearSettingsReadback()
         clearFaultHistoryReadback()
         clearBmsSnapshot()
@@ -358,11 +398,16 @@ public final class CutoutSessionCore: NSObject {
     private func connectIfReady(
         peripheral: CBPeripheral?,
         advertisement: CoreBluetoothAdvertisement?,
+        route: DevicePickerConnectionRoute?,
         model: ElectricUnicycleModel?
     ) -> Bool {
-        switch (peripheral, advertisement, model) {
-        case let (.some(peripheral), .some(advertisement), .some(model)):
+        switch (peripheral, advertisement, route) {
+        case let (.some(peripheral), .some(advertisement), .electricUnicycle?):
+            guard let model else { return false }
             connect(to: peripheral, using: advertisement, model: model)
+            return true
+        case let (.some(peripheral), .some(advertisement), .vescOnewheel?):
+            connectVescOnewheel(to: peripheral, using: advertisement)
             return true
         case (.none, _, _), (_, .none, _), (_, _, .none):
             return false
@@ -370,15 +415,16 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func buildOwner(for peripheral: CBPeripheral) {
-        guard liveOwner == nil, let advertisement, let selectedModel else {
+        guard liveOwner == nil, let advertisement, let selectedRoute else {
             return
         }
         do {
             liveOwner = CoreBluetoothLiveSessionOwner(
-                session: try .electricUnicycle(model: selectedModel),
+                session: try liveSession(for: selectedRoute),
                 advertisement: advertisement,
                 writeLimit: TransportWriteLimitBytes(23),
-                operationSink: self
+                operationSink: self,
+                retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil
             )
             setPhase(.subscribing)
             let inventory = CoreBluetoothGattInventory(services: peripheral.services ?? [])
@@ -392,6 +438,32 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    private func liveSession(for route: DevicePickerConnectionRoute) throws -> CoreBluetoothSession {
+        switch route {
+        case .electricUnicycle:
+            guard let selectedModel else {
+                throw CutoutSessionError.unexpectedStepError("missing EUC model")
+            }
+            return try .electricUnicycle(model: selectedModel)
+        case .vescOnewheel:
+            return .vescOnewheel()
+        }
+    }
+
+    private var discoveryServiceUuidsForSelectedRoute: [CBUUID]? {
+        guard !isRecordOnly else {
+            return nil
+        }
+        switch selectedRoute {
+        case .electricUnicycle:
+            return CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
+        case .vescOnewheel:
+            return nil
+        case nil:
+            return CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
+        }
+    }
+
     private func handleDisconnect(from peripheral: CBPeripheral, error: Error?) {
         record("disconnected=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
         guard self.peripheral?.identifier == peripheral.identifier else {
@@ -401,7 +473,9 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
         writeCapture()
         let wasRecordOnly = isRecordOnly
+        let reconnectRoute = selectedRoute
         isRecordOnly = false
+        selectedRoute = nil
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -418,14 +492,23 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
-        guard let selectedModel else {
-            setPhase(.failed(.connectFailed(error.sessionMessage)))
-            return
-        }
+        switch reconnectRoute {
+        case .vescOnewheel:
+            selectedRoute = .vescOnewheel
+            setPhase(.discoveringServices)
+            startCapture(reason: "reconnect", annotations: ["route=vesc_onewheel"])
+            central?.connect(peripheral)
+        case .electricUnicycle, nil:
+            guard let selectedModel else {
+                setPhase(.failed(.connectFailed(error.sessionMessage)))
+                return
+            }
 
-        setPhase(.connecting(model: selectedModel))
-        startCapture(reason: "reconnect", annotations: ["route=electric_unicycle"])
-        central?.connect(peripheral)
+            selectedRoute = .electricUnicycle
+            setPhase(.connecting(model: selectedModel))
+            startCapture(reason: "reconnect", annotations: ["route=electric_unicycle"])
+            central?.connect(peripheral)
+        }
     }
 
     private func record(_ message: String) {
@@ -484,7 +567,7 @@ public final class CutoutSessionCore: NSObject {
             "capture_privacy=private",
             "capture_evidence=hardware_tested",
         ].forEach { builder.addAnnotation(annotation: $0) }
-        extraAnnotations.forEach { builder.addAnnotation(annotation: $0) }
+        extraAnnotations.forEach { builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
         updateCaptureIdentity()
         writeCapture()
@@ -521,17 +604,20 @@ public final class CutoutSessionCore: NSObject {
         }
         builder.setResolvedIdentity(identity: identity)
         if let protocolIdentityCandidate {
-            builder.addAnnotation(annotation: "resolved_evidence=\(protocolIdentityCandidate.evidence)")
-            builder.addAnnotation(annotation: "resolved_detail=\(protocolIdentityCandidate.detail)")
+            builder.addAnnotation(annotation: pevcapAnnotation(
+                key: "resolved_evidence",
+                value: protocolIdentityCandidate.evidence
+            ))
+            builder.addAnnotation(annotation: pevcapAnnotation(
+                key: "resolved_detail",
+                value: protocolIdentityCandidate.detail
+            ))
         }
         writeCapture()
     }
 
     private func pevcapResolvedIdentity() -> MobileResolvedIdentityDto? {
-        captureResolvedIdentity(
-            protocolIdentityCandidate: protocolIdentityCandidate,
-            selectedModel: selectedModel
-        )
+        captureResolvedIdentity(protocolIdentityCandidate: protocolIdentityCandidate)
     }
 
     private func pevcapServiceUuid(for characteristic: BluetoothUuid) -> BluetoothUuid? {
@@ -556,13 +642,35 @@ private extension UInt64 {
 }
 
 func captureResolvedIdentity(
-    protocolIdentityCandidate: DevicePickerDiscoveryCandidate?,
-    selectedModel _: ElectricUnicycleModel?
+    protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 ) -> MobileResolvedIdentityDto? {
     protocolIdentityCandidate?
         .support
         .electricUnicycleModel?
         .pevcapResolvedIdentity(verification: .hardwareVerified)
+}
+
+func pevcapAnnotation(key: String, value: String) -> String {
+    "\(sanitizePevcapAnnotationComponent(key))=\(sanitizePevcapAnnotationComponent(value))"
+}
+
+func sanitizedPevcapAnnotation(_ annotation: String) -> String {
+    let parts = annotation.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+    guard parts.count == 2 else {
+        return sanitizePevcapAnnotationComponent(annotation)
+    }
+    return pevcapAnnotation(key: String(parts[0]), value: String(parts[1]))
+}
+
+private func sanitizePevcapAnnotationComponent(_ value: String) -> String {
+    String(value.map { character in
+        switch character {
+        case "=", "\n", "\r":
+            " "
+        default:
+            character
+        }
+    })
 }
 
 private extension ElectricUnicycleModel {
@@ -696,12 +804,13 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
             writeCapture()
         }
-        peripheral.discoverServices(isRecordOnly ? nil : CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids)
+        peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
     }
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
         isRecordOnly = false
+        selectedRoute = nil
         setPhase(.failed(.connectFailed(error.sessionMessage)))
     }
 
@@ -812,12 +921,12 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
-        guard isReadOnlyBegodeProbeWrite(channel: channel, bytes: bytes) else {
+        guard isAllowedReadOnlyWrite(channel: channel, bytes: bytes) else {
             setPhase(.failed(.skippedReadOnlyWrite))
             return
         }
         guard let characteristic = subscribedCharacteristics[channel] else {
-            setPhase(.failed(.missingNotifyChannel))
+            setPhase(.failed(.missingWriteChannel))
             return
         }
         peripheral?.writeValue(bytes, for: characteristic, type: .withoutResponse)
@@ -889,6 +998,39 @@ extension CutoutSessionCore {
         default:
             false
         }
+    }
+
+    func isAllowedReadOnlyWrite(channel: BluetoothUuid, bytes: Data) -> Bool {
+        isReadOnlyBegodeProbeWrite(channel: channel, bytes: bytes)
+            || isReadOnlyVescRequest(channel: channel, bytes: bytes)
+    }
+
+    func isReadOnlyVescRequest(channel: BluetoothUuid, bytes: Data) -> Bool {
+        channel == .vescNordicUartWrite
+            && (
+                bytes == Data([0x02, 0x01, 0x04, 0x40, 0x84, 0x03])
+                    || isReadOnlyRefloatRequest(bytes: bytes)
+            )
+    }
+
+    func isReadOnlyRefloatRequest(bytes: Data) -> Bool {
+        guard bytes.count >= 7,
+              bytes.first == 0x02,
+              bytes.last == 0x03,
+              Int(bytes[bytes.index(after: bytes.startIndex)]) + 5 == bytes.count
+        else {
+            return false
+        }
+        let payloadStart = bytes.index(bytes.startIndex, offsetBy: 2)
+        let payloadLength = Int(bytes[bytes.index(after: bytes.startIndex)])
+        guard payloadLength >= 3,
+              bytes[payloadStart] == 36,
+              bytes[bytes.index(after: payloadStart)] == 101
+        else {
+            return false
+        }
+        let command = bytes[bytes.index(payloadStart, offsetBy: 2)]
+        return command == 31 || command == 32
     }
 
     func observeDetectionNotification(channel: BluetoothUuid, bytes: Data) {

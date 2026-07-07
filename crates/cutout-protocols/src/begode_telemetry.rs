@@ -1353,8 +1353,6 @@ mod tests {
                     cutout_core::Speed::from_millimetres_per_second(13_360,)
                 )),
                 voltage: Some(source_reported(Voltage::from_millivolts(90_075))),
-                battery_current: None,
-                charge_mode: None,
                 motor_current: Some(source_reported(cutout_core::PhaseCurrent::from_milliamps(
                     -11_800,
                 ))),
@@ -1364,18 +1362,14 @@ mod tests {
                 controller_temperature: Some(source_reported(
                     cutout_core::Temperature::from_millicelsius(27_930,)
                 )),
-                motor_temperature: None,
-                battery_temperature: None,
                 pwm: Some(source_reported(cutout_core::DutyCycle::from_permille(524))),
                 distance: Some(source_reported(cutout_core::Distance::from_millimetres(
                     750_000
                 ))),
-                pitch: None,
-                roll: None,
-                battery_level_reported: None,
                 battery_level_estimated: Some(source_estimated(
                     cutout_core::BatteryLevel::from_percent(50)
                 )),
+                ..TelemetryDelta::empty(ms(42))
             }
         );
     }

@@ -8,6 +8,7 @@ final class MockupScreenCatalogTests: XCTestCase {
             [
                 .devicePicker,
                 .eucRide,
+                .liveActivity,
                 .bmsOverview,
                 .bmsCellMap6S,
                 .bmsCellMap40S,
@@ -444,6 +445,7 @@ extension MockupScreenCatalogTests {
         )
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Use"))
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
+        XCTAssertEqual(candidate.pickerRow.symbolName, "circle.hexagongrid.circle")
     }
 
     func testUnsupportedDiscoveryCandidateOffersRecordOnlyPickerAction() {
@@ -595,10 +597,9 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(state.statusText, "Scanning Bluetooth")
         XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
-        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, nil])
-        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557"])
-        XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
-        XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Record"))
+        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, .vescOnewheel])
+        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
+        XCTAssertTrue(state.sections.unsupported.isEmpty)
         XCTAssertNil(state.sections.manual)
     }
 
@@ -701,10 +702,10 @@ extension MockupScreenCatalogTests {
             MockupWarningCard(title: "Pushback soon", detail: "Duty and pack sag are both climbing.")
         )
         XCTAssertEqual(ride.dashboardTiles, [
-            MockupDashboardTile(label: "battery current", value: "38", unit: "A", detail: "limit 45 A", accent: .yellow),
-            MockupDashboardTile(label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
-            MockupDashboardTile(label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
-            MockupDashboardTile(label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
+            MockupDashboardTile(kind: .batteryCurrent, label: "battery voltage", value: "75.5", unit: "V", detail: "current 0.0 A", accent: .yellow),
+            MockupDashboardTile(kind: .motorCurrent, label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
+            MockupDashboardTile(kind: .boardAngle, label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
+            MockupDashboardTile(kind: .controller, label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
         ])
         XCTAssertEqual(ride.tabs, [
             MockupScreenTab(title: "Ride", isSelected: true),
@@ -772,6 +773,14 @@ extension MockupScreenCatalogTests {
             .noData,
         ])
         XCTAssertTrue(screens.allSatisfy { $0.bmsContent?.snapshot != nil })
+    }
+
+    func testLiveActivityFixtureHarnessIsAvailableFromTheCatalog() throws {
+        let liveActivity = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .liveActivity))
+
+        XCTAssertEqual(liveActivity.title, "Live Activity")
+        XCTAssertTrue(liveActivity.isFixtureOnly)
+        XCTAssertEqual(liveActivity.metrics.map(\.label), ["fixture states", "render modes"])
     }
 
     func testBmsOverviewFixtureCapturesTopologyAndFaultSummary() throws {

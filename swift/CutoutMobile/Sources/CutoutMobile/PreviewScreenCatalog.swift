@@ -3,6 +3,7 @@ import Foundation
 public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case devicePicker
     case eucRide
+    case liveActivity
     case bmsOverview
     case bmsCellMap6S
     case bmsCellMap40S
@@ -82,6 +83,10 @@ public enum MockupDashboardTileKind: Equatable, Hashable, Sendable {
     case beepMargin
     case tiltback
     case pedalMode
+    case batteryCurrent
+    case motorCurrent
+    case boardAngle
+    case controller
 }
 
 public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
@@ -258,7 +263,7 @@ private extension MockupBmsScreenKind {
             self = .unknownTopology
         case .bmsNoData:
             self = .noData
-        case .devicePicker, .eucRide, .eucGarage, .vescOnewheelRide, .vescDebug:
+        case .devicePicker, .eucRide, .liveActivity, .eucGarage, .vescOnewheelRide, .vescDebug:
             return nil
         }
     }
@@ -353,6 +358,29 @@ public enum DevicePickerRowSection: Equatable, Hashable, Sendable {
     case manual
 }
 
+public enum DevicePickerGlyphKind: Equatable, Hashable, Sendable {
+    case electricUnicycle
+    case onewheel
+    case scooter
+    case hoverboard
+    case systemSymbol
+
+    public init(symbolName: String) {
+        switch symbolName {
+        case "circle.hexagongrid.circle":
+            self = .electricUnicycle
+        case "oval.portrait":
+            self = .onewheel
+        case "scooter":
+            self = .scooter
+        case "capsule":
+            self = .hoverboard
+        default:
+            self = .systemSymbol
+        }
+    }
+}
+
 public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let id: String
 
@@ -362,7 +390,9 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     public let state: DevicePickerRowState
     public let section: DevicePickerRowSection
     public let symbolName: String
+    public let glyphKind: DevicePickerGlyphKind
     public let connectionRoute: DevicePickerConnectionRoute?
+    public let electricUnicycleModel: ElectricUnicycleModel?
 
     public init(
         id: String? = nil,
@@ -372,7 +402,9 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         state: DevicePickerRowState,
         section: DevicePickerRowSection? = nil,
         symbolName: String,
-        connectionRoute: DevicePickerConnectionRoute? = nil
+        glyphKind: DevicePickerGlyphKind? = nil,
+        connectionRoute: DevicePickerConnectionRoute? = nil,
+        electricUnicycleModel: ElectricUnicycleModel? = nil
     ) {
         self.id = id ?? title
         self.title = title
@@ -381,7 +413,9 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
         self.state = state
         self.section = section ?? DevicePickerRowSection(state: state)
         self.symbolName = symbolName
+        self.glyphKind = glyphKind ?? DevicePickerGlyphKind(symbolName: symbolName)
         self.connectionRoute = connectionRoute
+        self.electricUnicycleModel = electricUnicycleModel
     }
 }
 
@@ -534,6 +568,8 @@ private extension DevicePickerConnectionRoute {
         switch route {
         case .electricUnicycle:
             self = .electricUnicycle
+        case .vescOnewheel:
+            self = .vescOnewheel
         }
     }
 }
@@ -546,6 +582,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     public let detail: String
     public let support: DevicePickerCandidateSupport
     public let symbolName: String
+    public let glyphKind: DevicePickerGlyphKind
     public let rowState: DevicePickerRowState
     public let section: DevicePickerRowSection
 
@@ -557,6 +594,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         detail: String,
         support: DevicePickerCandidateSupport,
         symbolName: String,
+        glyphKind: DevicePickerGlyphKind? = nil,
         rowState: DevicePickerRowState? = nil,
         section: DevicePickerRowSection? = nil
     ) {
@@ -568,6 +606,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         self.detail = detail
         self.support = support
         self.symbolName = symbolName
+        self.glyphKind = glyphKind ?? DevicePickerGlyphKind(symbolName: symbolName)
         self.rowState = state
         self.section = section ?? DevicePickerRowSection(state: state)
     }
@@ -581,14 +620,15 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
     }
 
     public init(candidate: DiscoveryCandidate) {
+        let support = DevicePickerCandidateSupport(candidate)
         self.init(
             platformIdentifier: candidate.platformIdentifier,
             displayName: candidate.displayName,
             productCategory: candidate.productCategory,
             evidence: candidate.evidence,
             detail: candidate.detail,
-            support: DevicePickerCandidateSupport(candidate),
-            symbolName: candidate.support == .supported ? "circle.hexagongrid.circle" : "questionmark.circle",
+            support: support,
+            symbolName: support.isSupported ? "circle.hexagongrid.circle" : "questionmark.circle",
             rowState: DevicePickerRowState(action: candidate.recommendedAction),
             section: DevicePickerRowSection(section: candidate.section)
         )
@@ -613,7 +653,9 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
             state: rowState,
             section: section,
             symbolName: symbolName,
-            connectionRoute: support.connectionRoute
+            glyphKind: glyphKind,
+            connectionRoute: support.connectionRoute,
+            electricUnicycleModel: support.electricUnicycleModel
         )
     }
 }
@@ -1115,7 +1157,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupMetric(label: "sag-adjusted energy", value: "62%"),
                 MockupMetric(label: "pack", value: "115.8 V"),
                 MockupMetric(label: "power", value: "4.2 kW"),
-                MockupMetric(label: "thermal", value: "61 C"),
+                MockupMetric(label: "thermal", value: "61 °C"),
                 MockupMetric(label: "limp-home", value: "14.2 mi"),
             ],
             safetyBars: [
@@ -1138,6 +1180,19 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 MockupScreenTab(title: "Map", isSelected: false),
                 MockupScreenTab(title: "Tune", isSelected: false),
             ]
+        ),
+        MockupScreen(
+            id: .liveActivity,
+            title: "Live Activity",
+            subtitle: "fixture harness for compact, expanded, and lock screen states",
+            primaryValue: "3 layouts",
+            secondaryValue: "matrix driven",
+            warning: nil,
+            metrics: [
+                MockupMetric(label: "fixture states", value: "demo, populated, partial, waiting, stale, disconnected, parked"),
+                MockupMetric(label: "render modes", value: "compact, expanded, lock screen"),
+            ],
+            isFixtureOnly: true
         ),
         MockupScreen(
             id: .bmsOverview,
@@ -1326,11 +1381,11 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "board speed",
             warning: "Pushback soon - duty and pack sag are both climbing.",
             metrics: [
-                MockupMetric(label: "battery current", value: "38 A"),
+                MockupMetric(label: "battery voltage", value: "75.5 V"),
                 MockupMetric(label: "motor current", value: "71 A"),
                 MockupMetric(label: "board angle", value: "-1.8 deg"),
-                MockupMetric(label: "controller", value: "54 C"),
-                MockupMetric(label: "motor", value: "49 C"),
+                MockupMetric(label: "controller", value: "54 °C"),
+                MockupMetric(label: "motor", value: "49 °C"),
             ],
             safetyBars: [
                 MockupSafetyBar(label: "Duty headroom", value: "18%", progress: 0.82, accent: .orange),
@@ -1340,10 +1395,10 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 detail: "Duty and pack sag are both climbing."
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "battery current", value: "38", unit: "A", detail: "limit 45 A", accent: .yellow),
-                MockupDashboardTile(label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
-                MockupDashboardTile(label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
-                MockupDashboardTile(label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
+                MockupDashboardTile(kind: .batteryCurrent, label: "battery voltage", value: "75.5", unit: "V", detail: "current 0.0 A", accent: .yellow),
+                MockupDashboardTile(kind: .motorCurrent, label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
+                MockupDashboardTile(kind: .boardAngle, label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
+                MockupDashboardTile(kind: .controller, label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
             ],
             tabs: [
                 MockupScreenTab(title: "Ride", isSelected: true),
@@ -1399,7 +1454,7 @@ private extension MockupScreenID {
         switch self {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             true
-        case .devicePicker, .eucRide, .eucGarage, .vescOnewheelRide, .vescDebug:
+        case .devicePicker, .eucRide, .liveActivity, .eucGarage, .vescOnewheelRide, .vescDebug:
             false
         }
     }
