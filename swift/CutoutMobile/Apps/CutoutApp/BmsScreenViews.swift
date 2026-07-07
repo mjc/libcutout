@@ -1,19 +1,19 @@
 import CutoutMobile
 import SwiftUI
 
-struct BmsMockupView: View {
-    let screen: MockupScreen
+struct BmsScreenView: View {
+    let screen: PevScreen
     let rideState: EucRideScreenState?
     let bmsSnapshot: BmsSnapshot?
-    let selectScreen: (MockupScreenID) -> Void
+    let selectScreen: (PevScreenID) -> Void
     @State private var showsDiagnostics = false
 
-    private var content: MockupBmsContent {
-        screen.bmsContent ?? MockupBmsContent(
+    private var content: PevBmsContent {
+        screen.bmsContent ?? PevBmsContent(
             kind: .unknownTopology,
             snapshot: BmsSnapshot(
                 topology: BmsTopology(
-                    layoutLabel: "missing fixture",
+                    layoutLabel: "missing data",
                     seriesGroupCount: nil,
                     parallelCount: nil,
                     packCount: 0,
@@ -59,14 +59,14 @@ struct BmsMockupView: View {
                             .padding(.horizontal, 23 * scale)
                             .padding(.top, 12 * scale)
                             .padding(.bottom, 18 * scale)
-                            .background(MockupColors.pageBackground)
+                            .background(PevColors.pageBackground)
                     }
                 }
             }
             .frame(width: designWidth, height: proxy.size.height, alignment: .topLeading)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(MockupColors.pageBackground)
-            .foregroundStyle(MockupColors.primaryText)
+            .background(PevColors.pageBackground)
+            .foregroundStyle(PevColors.primaryText)
         }
     }
 
@@ -92,7 +92,7 @@ struct BmsMockupView: View {
         VStack(alignment: .leading, spacing: 2 * scale) {
             Text("CutOut · BMS")
                 .font(.system(size: 15 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PevColors.muted)
             Text(screen.title)
                 .font(.system(size: 32 * scale, weight: .black))
                 .lineLimit(1)
@@ -149,4 +149,3 @@ struct BmsMockupView: View {
         )
     }
 }
-

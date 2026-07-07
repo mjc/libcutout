@@ -2,19 +2,19 @@ import CutoutMobile
 import SwiftUI
 
 struct BmsNoDataLayout: View {
-    let screen: MockupScreen
-    let content: MockupBmsContent
+    let screen: PevScreen
+    let content: PevBmsContent
     let rideState: EucRideScreenState?
     let liveSnapshot: BmsSnapshot?
     let scale: CGFloat
-    let selectScreen: (MockupScreenID) -> Void
+    let selectScreen: (PevScreenID) -> Void
     @State private var showsDiagnostics = false
 
     private var snapshot: BmsSnapshot { content.snapshot }
-    private var rideSagMetric: MockupMetric? {
+    private var rideSagMetric: PevMetric? {
         screen.metrics.first { $0.label == "ride sag" }
     }
-    private var loadNowMetric: MockupMetric? {
+    private var loadNowMetric: PevMetric? {
         screen.metrics.first { $0.label == "load now" }
     }
     private var controllerEstimatePercentText: String {
@@ -129,11 +129,11 @@ struct BmsNoDataLayout: View {
             .padding(.horizontal, 24 * scale)
             .padding(.top, 12 * scale)
             .padding(.bottom, 20 * scale)
-            .background(MockupColors.pageBackground)
+            .background(PevColors.pageBackground)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(MockupColors.pageBackground)
-        .foregroundStyle(MockupColors.primaryText)
+        .background(PevColors.pageBackground)
+        .foregroundStyle(PevColors.primaryText)
     }
 
     private func currentText(_ value: BatteryCurrent?) -> String? {
@@ -144,11 +144,11 @@ struct BmsNoDataLayout: View {
         value.map { _ in "A" }
     }
 
-    private func metricUnitText(_ metric: MockupMetric) -> String {
+    private func metricUnitText(_ metric: PevMetric) -> String {
         metric.value.split(separator: " ").dropFirst().first.map(String.init) ?? ""
     }
 
-    private func metricValueText(_ metric: MockupMetric) -> String {
+    private func metricValueText(_ metric: PevMetric) -> String {
         metric.value.split(separator: " ").first.map(String.init) ?? metric.value
     }
 }

@@ -1,13 +1,13 @@
 import CutoutMobile
 import SwiftUI
 
-struct EucGarageMockupView: View {
-    let screen: MockupScreen
+struct EucGarageScreenView: View {
+    let screen: PevScreen
     let settingsReadback: SettingsReadback?
     let faultHistoryReadback: FaultHistoryReadback?
     let bmsSnapshot: BmsSnapshot?
 
-    private var dashboardTiles: [MockupDashboardTile] {
+    private var dashboardTiles: [PevDashboardTile] {
         guard let settingsReadback else {
             return screen.dashboardTiles
         }
@@ -28,24 +28,38 @@ struct EucGarageMockupView: View {
     }
 
     var body: some View {
-        MockupScreenScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
-            VStack(alignment: .leading, spacing: 8 * scale) {
-                Text(screen.title)
-                    .font(.system(size: 31 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
-                Text(screen.subtitle)
-                    .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
+            PevScreenTitleBlock(
+                title: screen.title,
+                subtitle: screen.subtitle,
+                scale: scale,
+                titleFontSize: 31,
+                subtitleFontSize: 14,
+                titleMinimumScaleFactor: 0.76,
+                subtitleLineLimit: 2
+            )
 
             if let deviceCard = screen.deviceCard {
-                EucDeviceStatusCard(card: deviceCard, scale: scale)
+                PevDashboardIdentityCard(
+                    title: deviceCard.title,
+                    detail: deviceCard.detail,
+                    scale: scale,
+                    titleFontSize: 22,
+                    detailFontSize: 13,
+                    titleMinimumScaleFactor: 0.75,
+                    detailMinimumScaleFactor: 0.62,
+                    trailingStatus: deviceCard.status,
+                    trailingStatusFill: deviceCard.accent.color,
+                    trailingStatusForeground: .black,
+                    trailingStatusWidth: 18,
+                    trailingStatusHeight: 32,
+                    cornerRadius: 26,
+                    height: 104
+                )
                     .padding(.top, 10 * scale)
             }
 
-            LazyVGrid(columns: columns, spacing: 16 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 16 * scale) {
                 ForEach(dashboardTiles) { tile in
                     PevDashboardMetricTile(
                         label: tile.label,
@@ -64,27 +78,54 @@ struct EucGarageMockupView: View {
             if let summaryTitle = screen.summaryTitle {
                 Text(summaryTitle)
                     .font(.system(size: 18 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 2 * scale)
             }
 
             if !screen.summaryRows.isEmpty {
-                EucSummaryRows(rows: screen.summaryRows, scale: scale)
+                PevDashboardKeyValueRows(
+                    rows: screen.summaryRows.map { row in
+                        PevDashboardKeyValueRow(
+                            id: row.id,
+                            label: row.label,
+                            value: row.value,
+                            valueColor: row.accent?.color
+                        )
+                    },
+                    scale: scale,
+                    fill: PevColors.cardFill,
+                    stroke: PevColors.cardStroke,
+                    labelColor: PevColors.muted,
+                    valueColor: PevColors.primaryText
+                )
             }
 
             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
                 Text("Read-only pack health")
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 12 * scale)
 
-                BmsReadbackRows(snapshot: bmsSnapshot, scale: scale)
+                PevDashboardKeyValueRows(
+                    rows: bmsSnapshot.readbackRows
+                        .filter { $0.label != "page" && $0.label != "page verification" }
+                        .enumerated()
+                        .map { offset, row in
+                            PevDashboardKeyValueRow(id: "\(offset)-\(row.label)", label: row.label, value: row.value)
+                        },
+                    scale: scale,
+                    fill: PevColors.cardFill,
+                    stroke: PevColors.cardStroke,
+                    labelColor: PevColors.muted,
+                    valueColor: PevColors.primaryText,
+                    verticalPadding: 6
+                )
             }
 
             if let settingsReadback, settingsReadback.shouldRender {
                 Text("Read-only settings")
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 12 * scale)
 
                 SettingsReadbackRows(readback: settingsReadback, scale: scale)
@@ -93,7 +134,7 @@ struct EucGarageMockupView: View {
             if let faultHistoryReadback, faultHistoryReadback.shouldRender {
                 Text("Read-only fault history")
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 12 * scale)
 
                 FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: scale)
@@ -102,24 +143,34 @@ struct EucGarageMockupView: View {
             if let faultCard = screen.faultCard {
                 Text(faultCard.title)
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 12 * scale)
 
-                EucFaultStatusCard(card: faultCard, scale: scale)
+                PevDashboardFaultDetailCard(
+                    detail: faultCard.detail,
+                    accent: faultCard.accent.color,
+                    scale: scale,
+                    fontSize: 13,
+                    horizontalAlignment: .center,
+                    horizontalPadding: 20,
+                    height: 57,
+                    cornerRadius: 18,
+                    minimumScaleFactor: 0.72
+                )
             }
         }
     }
 
     private func settingsSpeedTile(
-        tile: MockupDashboardTile,
+        tile: PevDashboardTile,
         readback: ReadbackValue<Speed>
-    ) -> MockupDashboardTile {
+    ) -> PevDashboardTile {
         guard let speed = readback.value else {
             return unavailableTile(tile, availability: readback.availability)
         }
 
         let readout = SpeedReadout(millimetersPerSecond: speed.value)
-        return MockupDashboardTile(
+        return PevDashboardTile(
             label: tile.label,
             value: readout.displayValue,
             unit: readout.displayUnit,
@@ -129,9 +180,9 @@ struct EucGarageMockupView: View {
     }
 
     private func settingsPedalTile(
-        tile: MockupDashboardTile,
+        tile: PevDashboardTile,
         readback: ReadbackValue<PedalMode>
-    ) -> MockupDashboardTile {
+    ) -> PevDashboardTile {
         guard let mode = readback.value else {
             return unavailableTile(tile, availability: readback.availability)
         }
@@ -147,7 +198,7 @@ struct EucGarageMockupView: View {
             unit = "raw"
         }
 
-        return MockupDashboardTile(
+        return PevDashboardTile(
             label: tile.label,
             value: value,
             unit: unit,
@@ -157,49 +208,15 @@ struct EucGarageMockupView: View {
     }
 
     private func unavailableTile(
-        _ tile: MockupDashboardTile,
+        _ tile: PevDashboardTile,
         availability: ReadbackAvailability
-    ) -> MockupDashboardTile {
-        MockupDashboardTile(
+    ) -> PevDashboardTile {
+        PevDashboardTile(
             label: tile.label,
             value: "--",
             unit: tile.unit,
             detail: availability.displayText,
             accent: tile.accent
         )
-    }
-}
-
-struct EucDeviceStatusCard: View {
-    let card: MockupDeviceCard
-    let scale: CGFloat
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12 * scale) {
-            VStack(alignment: .leading, spacing: 8 * scale) {
-                Text(card.title)
-                    .font(.system(size: 22 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
-                Text(card.detail)
-                    .font(.system(size: 13 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-            }
-            .layoutPriority(1)
-
-            Text(card.status)
-                .font(.system(size: 14 * scale, weight: .black))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 18 * scale)
-                .frame(minWidth: 58 * scale, minHeight: 32 * scale)
-                .background(Capsule().fill(card.accent.color))
-        }
-        .padding(.horizontal, 22 * scale)
-        .frame(height: 104 * scale)
-        .frame(maxWidth: .infinity)
-        .background(CardBackground(cornerRadius: 26 * scale))
     }
 }

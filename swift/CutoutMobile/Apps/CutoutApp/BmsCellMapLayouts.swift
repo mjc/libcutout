@@ -2,7 +2,7 @@ import CutoutMobile
 import SwiftUI
 
 struct BmsInlineLayout: View {
-    let content: MockupBmsContent
+    let content: PevBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -13,11 +13,14 @@ struct BmsInlineLayout: View {
                 title: "topology fits inline",
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel,
-                accent: MockupColors.green,
+                accent: PevColors.green,
                 scale: scale
             )
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12 * scale), count: 3), spacing: 14 * scale) {
+            PevDashboardGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 12 * scale), count: 3),
+                spacing: 14 * scale
+            ) {
                 ForEach(snapshot.groups) { group in
                     BmsGroupCell(
                         group: group,
@@ -32,14 +35,14 @@ struct BmsInlineLayout: View {
                 title: "range of interest",
                 value: snapshot.cellMapSpreadSummary,
                 detail: snapshot.cellMapFocusSummary,
-                accent: MockupColors.cyan,
+                accent: PevColors.cyan,
                 scale: scale
             )
 
             VStack(alignment: .leading, spacing: 14 * scale) {
                 Text("controls")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
                 HStack(spacing: 10 * scale) {
                     ForEach(content.modeTitles, id: \.self) { title in
                         BmsModeChip(title: title, isSelected: title == content.modeTitles.first, scale: scale)
@@ -47,7 +50,7 @@ struct BmsInlineLayout: View {
                 }
                 Text(snapshot.cellMapInteractionHint)
                     .font(.system(size: 13 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
             }
             .padding(.horizontal, 18 * scale)
             .padding(.vertical, 18 * scale)
@@ -58,7 +61,7 @@ struct BmsInlineLayout: View {
 }
 
 struct BmsScrollableLayout: View {
-    let content: MockupBmsContent
+    let content: PevBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -73,11 +76,11 @@ struct BmsScrollableLayout: View {
                 title: "large packs use grouped overview first",
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel,
-                accent: MockupColors.cyan,
+                accent: PevColors.cyan,
                 scale: scale
             )
 
-            LazyVGrid(columns: columns, spacing: 8 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 8 * scale) {
                 ForEach(snapshot.groups) { group in
                     BmsStripCell(
                         group: group,
@@ -91,25 +94,25 @@ struct BmsScrollableLayout: View {
                 title: "interesting groups",
                 value: snapshot.cellMapFocusSummary,
                 detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
-                accent: MockupColors.orange,
-                stroke: MockupColors.orange,
+                accent: PevColors.orange,
+                stroke: PevColors.orange,
                 scale: scale
             )
 
             VStack(alignment: .leading, spacing: 10 * scale) {
                 Text("display modes")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
                 Text(content.modeTitles.joined(separator: " • "))
                     .font(.system(size: 19 * scale, weight: .black))
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
                 Text(snapshot.scrollableCellMapRule)
                     .font(.system(size: 13 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
                 Text(snapshot.scrollableCellMapFocusHint)
                     .font(.system(size: 13 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.yellow)
+                    .foregroundStyle(PevColors.yellow)
             }
             .padding(.horizontal, 18 * scale)
             .padding(.vertical, 18 * scale)
@@ -120,7 +123,7 @@ struct BmsScrollableLayout: View {
 }
 
 struct BmsDetailLayout: View {
-    let content: MockupBmsContent
+    let content: PevBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -134,7 +137,7 @@ struct BmsDetailLayout: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12 * scale) {
-            LazyVGrid(columns: columns, spacing: 10 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 10 * scale) {
                 ForEach(snapshot.groups) { group in
                     BmsGroupIndexCell(
                         group: group,
@@ -148,32 +151,38 @@ struct BmsDetailLayout: View {
                 VStack(alignment: .leading, spacing: 15 * scale) {
                     Text("group \(selectedGroup.index)")
                         .font(.system(size: 15 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PevColors.muted)
                     Text(groupVoltageText(selectedGroup))
                         .font(.system(size: 58 * scale, weight: .black))
                         .monospacedDigit()
                     Text(snapshot.detailGroupStatus(for: selectedGroup.index))
                         .font(.system(size: 14 * scale, weight: .black))
-                        .foregroundStyle(MockupColors.orange)
+                        .foregroundStyle(PevColors.orange)
 
-                    HStack(spacing: 14 * scale) {
+                    PevDashboardGrid(
+                        columns: [
+                            GridItem(.flexible(), spacing: 14 * scale),
+                            GridItem(.flexible(), spacing: 14 * scale),
+                        ],
+                        spacing: 14 * scale
+                    ) {
                         PevDashboardMetricTile(
                             label: "temp",
                             value: temperatureText(selectedGroup.temperature),
                             unit: "°C",
                             detail: "",
-                            accent: MockupColors.green,
+                            accent: PevColors.green,
                             scale: scale,
-                            detailColor: MockupColors.green
+                            detailColor: PevColors.green
                         )
                         PevDashboardMetricTile(
                             label: "IR est.",
                             value: selectedGroup.resistance.map { String($0.value) } ?? "--",
                             unit: "mΩ",
                             detail: "",
-                            accent: MockupColors.green,
+                            accent: PevColors.green,
                             scale: scale,
-                            detailColor: MockupColors.green
+                            detailColor: PevColors.green
                         )
                     }
 
@@ -181,14 +190,14 @@ struct BmsDetailLayout: View {
                         title: nil,
                         value: "trend: \(snapshot.detailGroupTrend(for: selectedGroup.index))",
                         detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index),
-                        accent: MockupColors.yellow,
+                        accent: PevColors.yellow,
                         scale: scale
                     )
                 }
                 .padding(.horizontal, 18 * scale)
                 .padding(.vertical, 20 * scale)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PevDashboardCardBackground(cornerRadius: 34 * scale, stroke: MockupColors.yellow, lineWidth: 1.2))
+                .background(PevDashboardCardBackground(cornerRadius: 34 * scale, stroke: PevColors.yellow, lineWidth: 1.2))
             }
         }
     }

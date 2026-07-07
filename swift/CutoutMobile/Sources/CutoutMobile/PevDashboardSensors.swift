@@ -46,40 +46,45 @@ public struct PevDashboardFootpadReadout: View {
         VStack(alignment: .leading, spacing: 8 * scale) {
             HStack {
                 Text(title)
-                    .font(.system(size: 13 * scale, weight: .bold))
+                    .font(.system(size: 12 * scale, weight: .bold))
                     .foregroundStyle(secondaryTextColor)
                 Spacer()
                 Text(detail)
-                    .font(.system(size: 12 * scale, weight: .bold))
+                    .font(.system(size: 11 * scale, weight: .bold))
                     .foregroundStyle(accent)
                     .lineLimit(1)
             }
 
             HStack(spacing: 10 * scale) {
-                footpadSide(label: leftLabel, value: leftValue)
-                footpadSide(label: rightLabel, value: rightValue)
+                footpadSide(label: leftLabel, value: leftValue, isActive: leftValue != "--")
+                footpadSide(label: rightLabel, value: rightValue, isActive: rightValue != "--")
             }
         }
-        .padding(.horizontal, 16 * scale)
-        .padding(.vertical, 12 * scale)
+        .padding(.horizontal, 14 * scale)
+        .padding(.vertical, 10 * scale)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: 16 * scale,
+                cornerRadius: 14 * scale,
                 fill: fill,
                 stroke: stroke
             )
         )
     }
 
-    private func footpadSide(label: String, value: String) -> some View {
+    private func footpadSide(label: String, value: String, isActive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3 * scale) {
-            Text(label)
-                .font(.system(size: 10 * scale, weight: .bold))
-                .foregroundStyle(secondaryTextColor)
-                .textCase(.uppercase)
+            HStack(spacing: 5 * scale) {
+                Circle()
+                    .fill(isActive ? accent : secondaryTextColor.opacity(0.45))
+                    .frame(width: 6 * scale, height: 6 * scale)
+                Text(label)
+                    .font(.system(size: 10 * scale, weight: .bold))
+                    .foregroundStyle(secondaryTextColor)
+                    .textCase(.uppercase)
+            }
             Text(value)
-                .font(.system(size: 22 * scale, weight: .black))
+                .font(.system(size: 20 * scale, weight: .black))
                 .foregroundStyle(textColor)
                 .monospacedDigit()
                 .lineLimit(1)

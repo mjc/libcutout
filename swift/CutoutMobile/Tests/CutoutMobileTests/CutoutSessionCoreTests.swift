@@ -190,7 +190,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.controllerState, .unknown)
         XCTAssertNil(snapshot.boardSpeed)
         XCTAssertEqual(snapshot.batteryVoltage, voltageValue(75_400))
-        XCTAssertNil(snapshot.batteryCurrent)
+        XCTAssertEqual(snapshot.batteryCurrent, batteryCurrentValue(38_000))
         XCTAssertEqual(snapshot.powerFlow, .discharge)
         XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
         XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
@@ -263,6 +263,14 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(snapshot.boardAngle)
     }
 
+    func testFootpadTelemetryExposesCompactDisplayText() {
+        let footpad = FootpadTelemetry(state: 3, adc1Milliunits: 1_250, adc2Milliunits: nil)
+
+        XCTAssertEqual(footpad.adc1DisplayText, "1.25")
+        XCTAssertEqual(footpad.adc2DisplayText, "--")
+        XCTAssertEqual(footpad.stateDisplayText, "state 3")
+    }
+
     func testVescRideSnapshotProjectsAngleOnlyTelemetry() throws {
         let telemetry = TelemetrySnapshot(pitch: angleValue(14_200))
         let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
@@ -273,7 +281,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(snapshot.batteryVoltage)
     }
 
-    func testVescRideSnapshotDoesNotUseMockupFactsForLiveDefaults() throws {
+    func testVescRideSnapshotDoesNotUsePreviewFactsForLiveDefaults() throws {
         let telemetry = TelemetrySnapshot(voltage: voltageValue(62_800))
         let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
 
@@ -409,13 +417,14 @@ final class CutoutSessionCoreTests: XCTestCase {
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
         XCTAssertEqual(sink.writes.count, 3)
 
-        let retryExpectation = expectation(description: "vesc telemetry retry")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50)) {
+        let retryExpectation = expectation(description: "vesc telemetry retries")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
             retryExpectation.fulfill()
         }
         wait(for: [retryExpectation], timeout: 1.0)
 
-        XCTAssertEqual(sink.writes.count, 6)
+        XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
+        XCTAssertEqual(sink.writes.count % 3, 0)
         XCTAssertEqual(sink.writes.prefix(3), sink.writes.suffix(3))
     }
 

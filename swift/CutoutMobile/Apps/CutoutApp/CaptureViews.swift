@@ -1,29 +1,6 @@
 import CutoutMobile
 import SwiftUI
 
-struct CaptureStatusPill: View {
-    let text: String
-    let scale: CGFloat
-
-    var body: some View {
-        HStack(spacing: 10 * scale) {
-            Circle()
-                .fill(MockupColors.green)
-                .frame(width: 10 * scale, height: 10 * scale)
-            Text(text)
-                .font(.system(size: 13 * scale, weight: .semibold))
-                .foregroundStyle(MockupColors.primaryText)
-                .lineLimit(2)
-                .minimumScaleFactor(0.78)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16 * scale)
-        .frame(minHeight: 42 * scale)
-        .frame(maxWidth: .infinity)
-        .background(CardBackground(cornerRadius: 18 * scale))
-    }
-}
-
 struct CaptureRecordingScreen: View {
     let deviceKind: String?
     let captureStatusText: String?
@@ -33,7 +10,7 @@ struct CaptureRecordingScreen: View {
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
 
     var body: some View {
-        MockupScreenScaffold(
+        PevDashboardScaffold(
             sectionTitle: "record",
             bottomPadding: 24,
             allowsVerticalScroll: false,
@@ -41,27 +18,45 @@ struct CaptureRecordingScreen: View {
             horizontalPadding: 18
         ) { scale, _ in
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 7 * scale) {
-                    Text(deviceKind ?? "Capture session")
-                        .font(.system(size: 34 * scale, weight: .bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                    Text("Capture session")
-                        .font(.system(size: 15 * scale, weight: .semibold))
-                        .foregroundStyle(MockupColors.muted)
-                }
+                PevScreenTitleBlock(
+                    title: deviceKind ?? "Capture session",
+                    subtitle: "Capture session",
+                    scale: scale,
+                    titleFontSize: 34,
+                    subtitleFontSize: 15,
+                    titleMinimumScaleFactor: 0.72,
+                    subtitleLineLimit: 1
+                )
                 Spacer(minLength: 12 * scale)
-                Button {
-                    disconnect()
-                } label: {
-                    Text("Stop")
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.yellow)
-                }
-                .buttonStyle(.plain)
+                PevActionButton(
+                    title: "Stop",
+                    systemImageName: nil,
+                    scale: scale,
+                    isEnabled: true,
+                    fillsAvailableWidth: false,
+                    width: nil,
+                    height: 30 * scale,
+                    cornerRadius: 8 * scale,
+                    horizontalPadding: 12 * scale,
+                    iconSpacing: 0,
+                    foregroundEnabled: PevColors.yellow,
+                    foregroundDisabled: PevColors.yellow,
+                    fillEnabled: PevDashboardColors.cardFill,
+                    fillDisabled: PevDashboardColors.cardFill,
+                    strokeEnabled: PevDashboardColors.cardStroke,
+                    strokeDisabled: PevDashboardColors.cardStroke,
+                    action: disconnect
+                )
             }
 
-            CaptureStatusPill(text: captureStatusText ?? "Recording locally", scale: scale)
+            PevStatusStrip(
+                text: captureStatusText ?? "Recording locally",
+                scale: scale,
+                indicatorColor: PevColors.green,
+                background: PevColors.cardFill,
+                foreground: PevColors.primaryText,
+                cornerRadius: 18
+            )
 
             ScrollView(.vertical, showsIndicators: false) {
                 CaptureLabelControls(
@@ -88,49 +83,65 @@ struct CaptureLabelControls: View {
     ]
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 10 * scale) {
+        PevDashboardGrid(columns: columns, spacing: 10 * scale) {
             ForEach(CaptureQuickLabel.allCases) { label in
                 HStack(spacing: 10 * scale) {
                     VStack(alignment: .leading, spacing: 3 * scale) {
                         Text(label.title)
                             .font(.system(size: 16 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.primaryText)
+                            .foregroundStyle(PevColors.primaryText)
                             .lineLimit(1)
                         Text(activeLabels.contains(label) ? "active" : "idle")
                             .font(.system(size: 11 * scale, weight: .semibold))
-                            .foregroundStyle(activeLabels.contains(label) ? MockupColors.green : MockupColors.muted)
+                            .foregroundStyle(activeLabels.contains(label) ? PevColors.green : PevColors.muted)
                     }
                     Spacer(minLength: 8 * scale)
-                    captureLabelButton("Start", scale: scale) {
+                    PevActionButton(
+                        title: "Start",
+                        systemImageName: nil,
+                        scale: scale,
+                        isEnabled: true,
+                        fillsAvailableWidth: false,
+                        width: 58 * scale,
+                        height: 32 * scale,
+                        cornerRadius: 8 * scale,
+                        horizontalPadding: 0,
+                        iconSpacing: 0,
+                        foregroundEnabled: PevColors.yellow,
+                        foregroundDisabled: PevColors.muted,
+                        fillEnabled: PevColors.warningFill,
+                        fillDisabled: PevColors.disabledFill,
+                        strokeEnabled: PevColors.warningStroke,
+                        strokeDisabled: PevColors.cardStroke
+                    ) {
                         startCaptureLabel(label)
                     }
-                    captureLabelButton("Stop", scale: scale) {
+
+                    PevActionButton(
+                        title: "Stop",
+                        systemImageName: nil,
+                        scale: scale,
+                        isEnabled: true,
+                        fillsAvailableWidth: false,
+                        width: 58 * scale,
+                        height: 32 * scale,
+                        cornerRadius: 8 * scale,
+                        horizontalPadding: 0,
+                        iconSpacing: 0,
+                        foregroundEnabled: PevColors.yellow,
+                        foregroundDisabled: PevColors.muted,
+                        fillEnabled: PevColors.warningFill,
+                        fillDisabled: PevColors.disabledFill,
+                        strokeEnabled: PevColors.warningStroke,
+                        strokeDisabled: PevColors.cardStroke
+                    ) {
                         stopCaptureLabel(label)
                     }
                 }
                 .padding(.horizontal, 14 * scale)
                 .frame(minHeight: 58 * scale)
-                .background(CardBackground(cornerRadius: 8 * scale))
+                .background(PevDashboardCardBackground(cornerRadius: 8 * scale))
             }
         }
-    }
-
-    private func captureLabelButton(_ title: String, scale: CGFloat, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12 * scale, weight: .bold))
-                .lineLimit(1)
-                .foregroundStyle(MockupColors.yellow)
-                .frame(width: 58 * scale, height: 32 * scale)
-                .background(
-                    RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
-                        .fill(MockupColors.warningFill)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
-                                .stroke(MockupColors.warningStroke, lineWidth: 1 * scale)
-                        )
-                )
-        }
-        .buttonStyle(.plain)
     }
 }

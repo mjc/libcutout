@@ -1,258 +1,195 @@
 import CutoutMobile
 import SwiftUI
 
-struct VescOnewheelRideMockupView: View {
-    let screen: MockupScreen
+struct VescRideScreenView: View {
     let liveSnapshot: VescRideSnapshot?
-    let allowsFixtureFallback: Bool
+    let captureStatusText: String?
     let disconnect: () -> Void
+    let selectScreen: (PevScreenID) -> Void
 
     private var title: String {
-        liveSnapshot?.title ?? (allowsFixtureFallback ? screen.title : "VESC Onewheel")
+        liveSnapshot?.title ?? "Refloat"
     }
 
     private var subtitle: String {
-        liveSnapshot.map { "\($0.vehicleKind.displayName) · \($0.subProtocol.displayName)" }
-            ?? (allowsFixtureFallback ? screen.subtitle : "VESC · live")
+        liveSnapshot?.screenSubtitle ?? "live"
     }
 
-    private var speedText: String {
-        liveSnapshot?.boardSpeed.map { SpeedReadout(millimetersPerSecond: $0.value).displayValue }
-            ?? (allowsFixtureFallback ? screen.primaryValue : "--")
-    }
-
-    private var speedUnit: String {
-        liveSnapshot?.boardSpeed == nil && !allowsFixtureFallback ? "" : "mph"
-    }
-
-    private var safetyBars: [MockupSafetyBar] {
-        guard let liveSnapshot else {
-            return allowsFixtureFallback ? screen.safetyBars : unavailableSafetyBars(from: screen.safetyBars)
+    private var speedParts: (value: String, unit: String) {
+        guard let boardSpeed = liveSnapshot?.boardSpeed else {
+            return ("--", "")
         }
-        guard let dutyHeadroom = liveSnapshot.displayedDutyHeadroom else {
-            return unavailableSafetyBars(from: screen.safetyBars)
-        }
-        return [
-            MockupSafetyBar(
-                label: "Duty headroom",
-                value: percentText(dutyHeadroom),
-                progress: Double(dutyHeadroom.value) / 100.0,
-                accent: .orange
-            ),
-        ]
+        let readout = SpeedReadout(millimetersPerSecond: boardSpeed.value)
+        return (readout.displayValue, readout.displayUnit)
     }
 
-    private var warningCard: MockupWarningCard? {
-        guard let liveSnapshot else {
-            return allowsFixtureFallback
-                ? screen.warningCard
-                : MockupWarningCard(title: "Telemetry pending", detail: "Waiting for live VESC values.")
-        }
+    private var warningCard: PevWarningCard? {
+        guard let liveSnapshot else { return nil }
         switch liveSnapshot.warning {
         case .pushbackSoon:
-            return MockupWarningCard(title: "Pushback soon", detail: footpadText ?? "Live VESC/ReFloat warning.")
+            return PevWarningCard(title: "Pushback soon", detail: footpadText ?? "Live telemetry.")
         case .none, .unknown:
             return nil
         }
     }
 
     private var footpadText: String? {
-        guard let footpad = liveSnapshot?.footpad else { return nil }
-        let hasLeft = footpad.adc1Milliunits != nil
-        let hasRight = footpad.adc2Milliunits != nil
-        guard let values = footpadValues else { return "footpad \(footpad.state)" }
-        switch (hasLeft, hasRight) {
-        case (true, true):
-            return "footpad \(footpad.state) · L \(values.left) / R \(values.right)"
-        case (true, false):
-            return "footpad \(footpad.state) · L \(values.left)"
-        case (false, true):
-            return "footpad \(footpad.state) · R \(values.right)"
-        case (false, false):
-            return "footpad \(footpad.state)"
+        liveSnapshot?.footpad.map {
+            "footpad \($0.stateDisplayText) · adc1 left \($0.adc1DisplayText) · adc2 right \($0.adc2DisplayText)"
         }
     }
 
-    private var footpadValues: (left: String, right: String, detail: String)? {
-        guard let footpad = liveSnapshot?.footpad else {
-            return nil
-        }
-        let left = footpad.adc1Milliunits.map(formatMilliunits) ?? "--"
-        let right = footpad.adc2Milliunits.map(formatMilliunits) ?? "--"
-        return (left, right, "state \(footpad.state)")
+    private var dutyHeadroom: BatteryLevel? {
+        liveSnapshot?.displayedDutyHeadroom
     }
 
-    private var dashboardTiles: [MockupDashboardTile] {
-        guard let liveSnapshot else {
-            return allowsFixtureFallback ? screen.dashboardTiles : unavailableDashboardTiles(from: screen.dashboardTiles)
+    private var boardAngleDetail: String? {
+        guard let angle = liveSnapshot?.boardAngle else { return nil }
+        if angle.value < 0 {
+            return "nose down"
         }
-        return screen.dashboardTiles.map { tile in
-            switch tile.kind {
-            case .batteryCurrent:
-                return tile.replacing(
-                    label: "battery voltage",
-                    value: voltageText(liveSnapshot.batteryVoltage),
-                    unit: "V",
-                    detail: batteryCurrentDetail(liveSnapshot.batteryCurrent)
-                )
-            case .motorCurrent:
-                return tile.replacing(
-                    value: phaseCurrentText(liveSnapshot.motorCurrent),
-                    detail: energyFlowText(liveSnapshot.powerFlow) ?? (liveSnapshot.motorCurrent == nil ? "unavailable" : "live VESC")
-                )
-            case .boardAngle:
-                return tile.replacing(
-                    value: angleText(liveSnapshot.boardAngle),
-                    detail: liveSnapshot.boardAngle == nil ? "unavailable" : "live pitch"
-                )
-            case .controller:
-                return tile.replacing(
-                    value: temperatureText(liveSnapshot.controllerTemperature),
-                    detail: liveSnapshot.motorTemperature.map { "motor \(temperatureText($0)) \(RideUnits.temperatureUnit)" } ?? "motor unavailable"
-                )
-            default:
-                return tile
-            }
+        if angle.value > 0 {
+            return "nose up"
         }
+        return "level"
     }
 
     var body: some View {
-        MockupScreenScaffold(
-            sectionTitle: "OW ride",
-            bottomPadding: 20,
+        PevRideDashboardShell(
+            sectionTitle: "Ride",
+            headerLeadingAccessory: { scale in AnyView(PevRideDisconnectButton(scale: scale, action: disconnect)) },
+            title: title,
+            subtitle: subtitle,
+            statusFill: PevColors.purple,
+            captureStatusText: captureStatusText,
+            speedValue: speedParts.value,
+            speedUnit: speedParts.unit,
+            speedCaption: "board speed",
             allowsVerticalScroll: false,
-            columnSpacing: 12
+            topLeadingAccessory: { _ in EmptyView() }
         ) { scale, columns in
-            HStack(alignment: .firstTextBaseline) {
-                if allowsFixtureFallback {
-                    Text("CutOut")
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.yellow)
-                } else {
-                    Button("Disconnect", action: disconnect)
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.yellow)
-                }
-                Spacer()
-            }
 
-            HStack(alignment: .center, spacing: 12 * scale) {
-                Text(title)
-                    .font(.system(size: 18 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-                Spacer(minLength: 8 * scale)
-                VescArmedBadge(title: subtitle, scale: scale)
-            }
-            .padding(.top, 8 * scale)
-
-            VStack(alignment: .center, spacing: 2 * scale) {
-                HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
-                    Text(speedText)
-                        .font(.system(size: 104 * scale, weight: .black))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                    if !speedUnit.isEmpty {
-                        Text(speedUnit)
-                            .font(.system(size: 27 * scale, weight: .bold))
-                            .foregroundStyle(MockupColors.muted)
-                    }
-                }
-                Text(screen.secondaryValue)
-                    .font(.system(size: 13 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
-            }
-            .frame(maxWidth: .infinity)
-            .foregroundStyle(MockupColors.primaryText)
-
-            if let duty = safetyBars.first {
+            if let dutyHeadroom {
                 PevDashboardProgressCard(
-                    label: duty.label,
-                    value: duty.value,
+                    label: "Duty headroom",
+                    value: percentText(dutyHeadroom),
                     detail: "Nose authority is the ride-critical value here.",
-                    progress: duty.progress,
-                    accent: duty.accent.color,
-                    fill: MockupColors.cardFill,
-                    stroke: MockupColors.cardStroke,
-                    track: MockupColors.cardStroke,
-                    labelColor: MockupColors.muted,
-                    valueColor: MockupColors.yellow,
-                    detailColor: MockupColors.muted,
+                    progress: Double(dutyHeadroom.value) / 100.0,
+                    accent: PevColors.orange,
+                    fill: PevColors.cardFill,
+                    stroke: PevColors.cardStroke,
+                    track: PevColors.cardStroke,
+                    labelColor: PevColors.muted,
+                    valueColor: PevColors.yellow,
+                    detailColor: PevColors.muted,
                     scale: scale
                 )
-                    .padding(.top, 16 * scale)
+                    .padding(.top, 12 * scale)
+            } else if liveSnapshot == nil {
+                PevDashboardWarningCard(
+                    title: "Telemetry pending",
+                    detail: "Waiting for live values.",
+                    accent: PevColors.purple,
+                    detailColor: PevColors.primaryText,
+                    fill: PevColors.purple.opacity(0.18),
+                    stroke: PevColors.purple.opacity(0.55),
+                    scale: scale,
+                    cornerRadius: 24
+                )
+                    .padding(.top, 12 * scale)
             }
 
             if let warningCard {
                 PevDashboardWarningCard(
                     title: warningCard.title,
                     detail: warningCard.detail,
-                    accent: MockupColors.purple,
-                    detailColor: MockupColors.primaryText,
-                    fill: MockupColors.purple.opacity(0.18),
-                    stroke: MockupColors.purple.opacity(0.55),
+                    accent: PevColors.purple,
+                    detailColor: PevColors.primaryText,
+                    fill: PevColors.purple.opacity(0.18),
+                    stroke: PevColors.purple.opacity(0.55),
                     scale: scale,
                     cornerRadius: 24
                 )
-                    .padding(.top, 14 * scale)
+                    .padding(.top, 10 * scale)
             }
 
-            if let footpadValues {
+            if let footpad = liveSnapshot?.footpad {
                 PevDashboardFootpadReadout(
-                    leftValue: footpadValues.left,
-                    rightValue: footpadValues.right,
-                    detail: footpadValues.detail,
-                    accent: MockupColors.cyan,
-                    fill: MockupColors.cardFill,
-                    stroke: MockupColors.cardStroke,
-                    textColor: MockupColors.primaryText,
-                    secondaryTextColor: MockupColors.muted,
+                    leftLabel: "left / adc1",
+                    leftValue: footpad.adc1DisplayText,
+                    rightLabel: "right / adc2",
+                    rightValue: footpad.adc2DisplayText,
+                    detail: footpad.stateDisplayText,
+                    accent: PevColors.cyan,
+                    fill: PevColors.cardFill,
+                    stroke: PevColors.cardStroke,
+                    textColor: PevColors.primaryText,
+                    secondaryTextColor: PevColors.muted,
                     scale: scale
                 )
-                .padding(.top, 12 * scale)
+                .padding(.top, 8 * scale)
             }
 
-            LazyVGrid(columns: columns, spacing: 12 * scale) {
-                ForEach(dashboardTiles) { tile in
+            PevDashboardGrid(columns: columns, spacing: 12 * scale) {
+                if let batteryVoltage = liveSnapshot?.batteryVoltage {
                     PevDashboardMetricTile(
-                        label: tile.label,
-                        value: tile.value,
-                        unit: tile.unit,
-                        detail: tile.detail,
-                        accent: tile.accent.color,
+                        label: "voltage",
+                        value: voltageText(batteryVoltage),
+                        unit: "V",
+                        detail: liveSnapshot?.batteryCurrent.map { "battery current \(currentText($0)) A" } ?? "pack voltage",
+                        accent: PevColors.yellow,
                         scale: scale,
                         cornerRadius: 16,
-                        minHeight: 104
+                        minHeight: 96
+                    )
+                }
+                if let motorCurrent = liveSnapshot?.motorCurrent {
+                    PevDashboardMetricTile(
+                        label: "motor current",
+                        value: phaseCurrentText(motorCurrent),
+                        unit: "A",
+                        detail: powerFlowDetail(liveSnapshot?.powerFlow, fallback: "phase estimate"),
+                        accent: PevColors.orange,
+                        scale: scale,
+                        cornerRadius: 16,
+                        minHeight: 96
+                    )
+                }
+                if let boardAngle = liveSnapshot?.boardAngle {
+                    PevDashboardMetricTile(
+                        label: "board angle",
+                        value: angleText(boardAngle),
+                        unit: "°",
+                        detail: boardAngleDetail ?? "board angle",
+                        accent: PevColors.cyan,
+                        scale: scale,
+                        cornerRadius: 16,
+                        minHeight: 96
+                    )
+                }
+                if let controllerTemperature = liveSnapshot?.controllerTemperature {
+                    PevDashboardMetricTile(
+                        label: "controller",
+                        value: temperatureText(controllerTemperature),
+                        unit: "°C",
+                        detail: liveSnapshot?.motorTemperature.map { "motor \(temperatureText($0)) \(RideUnits.temperatureUnit)" } ?? "motor unavailable",
+                        accent: PevColors.green,
+                        scale: scale,
+                        cornerRadius: 16,
+                        minHeight: 96
                     )
                 }
             }
-            .padding(.top, 12 * scale)
+            .padding(.top, 8 * scale)
 
-            EucRideTabs(tabs: screen.tabs, scale: scale)
-                .padding(.top, 48 * scale)
+            PevDashboardTabStrip(
+                tabs: PevRideTabs.vescRideTabs(),
+                scale: scale,
+                selectedColor: PevColors.purple,
+                unselectedColor: PevColors.muted,
+                selectScreen: selectScreen
+            )
+                .padding(.top, 24 * scale)
         }
-    }
-}
-
-private func formatMilliunits(_ value: Int32) -> String {
-    String(format: "%.2f", Double(value) / 1_000)
-}
-
-struct VescArmedBadge: View {
-    let title: String
-    let scale: CGFloat
-
-    var body: some View {
-        PevDashboardStatusPill(
-            title: title,
-            scale: scale,
-            fill: MockupColors.purple,
-            fontSize: 13,
-            horizontalPadding: 14,
-            height: 31,
-            fixedHorizontal: true
-        )
     }
 }

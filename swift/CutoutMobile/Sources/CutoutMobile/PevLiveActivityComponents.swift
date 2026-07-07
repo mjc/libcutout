@@ -57,11 +57,12 @@ public struct PevLiveActivityValueCell: View {
                     .font(.caption2)
                     .foregroundStyle(secondaryTextColor)
             } else {
-                ProgressView(value: progress ?? 0.0)
-                    .progressViewStyle(.linear)
-                    .tint(tint)
-                    .frame(height: progress != nil ? 2 : 0)
-                    .opacity(progress != nil && showProgress ? 1 : 0)
+                if showProgress, let progress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(tint)
+                        .frame(height: 2)
+                }
             }
         }
         .padding(.horizontal, compact ? 7 : 9)

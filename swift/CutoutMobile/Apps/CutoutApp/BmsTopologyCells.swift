@@ -3,7 +3,7 @@ import SwiftUI
 
 struct BmsChip: View {
     let title: String
-    let accent: MockupAccent
+    let accent: PevAccent
     let scale: CGFloat
     let maxWidth: CGFloat?
 
@@ -44,8 +44,8 @@ struct BmsBottomTab: View {
                 title: title,
                 isSelected: isSelected,
                 scale: scale,
-                selectedColor: MockupColors.yellow,
-                unselectedColor: MockupColors.muted,
+                selectedColor: PevColors.yellow,
+                unselectedColor: PevColors.muted,
                 fontSize: 15,
                 indicatorWidth: 24,
                 indicatorHeight: 3,
@@ -67,7 +67,7 @@ struct BmsGroupCell: View {
         VStack(spacing: 8 * scale) {
             Text("\(group.index)")
                 .font(.system(size: 14 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PevColors.muted)
             Text(groupVoltageText(group))
                 .font(.system(size: 20 * scale, weight: .black))
                 .monospacedDigit()
@@ -80,12 +80,12 @@ struct BmsGroupCell: View {
 
     private var strokeColor: Color {
         if isSelected {
-            return MockupColors.yellow
+            return PevColors.yellow
         }
         if isHighlighted {
-            return MockupColors.orange
+            return PevColors.orange
         }
-        return MockupColors.green
+        return PevColors.green
     }
 }
 
@@ -98,7 +98,7 @@ struct BmsStripCell: View {
         VStack(spacing: 2 * scale) {
             Text(String(format: "%02d", group.index))
                 .font(.system(size: 8 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PevColors.muted)
             Text(groupVoltageText(group))
                 .font(.system(size: 9 * scale, weight: .black))
                 .monospacedDigit()
@@ -111,11 +111,11 @@ struct BmsStripCell: View {
     private var strokeColor: Color {
         switch group.alertLevel {
         case .critical:
-            MockupColors.warningStroke
+            PevColors.warningStroke
         case .warning:
-            MockupColors.orange
+            PevColors.orange
         case .nominal, .unknown:
-            isHighlighted ? MockupColors.orange : MockupColors.green
+            isHighlighted ? PevColors.orange : PevColors.green
         }
     }
 }
@@ -128,10 +128,10 @@ struct BmsGroupIndexCell: View {
     var body: some View {
         Text("\(group.index)")
             .font(.system(size: 14 * scale, weight: .medium))
-            .foregroundStyle(MockupColors.muted)
+            .foregroundStyle(PevColors.muted)
             .frame(maxWidth: .infinity)
             .frame(height: 34 * scale)
-            .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? MockupColors.orange : MockupColors.green, lineWidth: 1.2))
+            .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
     }
 }
 
@@ -143,9 +143,9 @@ struct BmsModeChip: View {
     var body: some View {
         Text(title)
             .font(.system(size: 15 * scale, weight: .bold))
-            .foregroundStyle(isSelected ? .black : MockupColors.primaryText)
+            .foregroundStyle(isSelected ? .black : PevColors.primaryText)
             .padding(.horizontal, 16 * scale)
             .frame(height: 32 * scale)
-            .background(Capsule().fill(isSelected ? MockupColors.yellow : MockupColors.iconFill))
+            .background(Capsule().fill(isSelected ? PevColors.yellow : PevColors.iconFill))
     }
 }

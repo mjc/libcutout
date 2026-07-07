@@ -1,32 +1,6 @@
 import CutoutMobile
 import SwiftUI
 
-struct BmsReadbackRows: View {
-    let snapshot: BmsSnapshot
-    let scale: CGFloat
-    var includesPageCursor = true
-
-    private var rows: [SessionDebugRow] {
-        includesPageCursor
-            ? snapshot.readbackRows
-            : snapshot.readbackRows.filter { $0.label != "page" && $0.label != "page verification" }
-    }
-
-    var body: some View {
-        PevDashboardKeyValueRows(
-            rows: rows.enumerated().map { offset, row in
-                PevDashboardKeyValueRow(id: "\(offset)-\(row.label)", label: row.label, value: row.value)
-            },
-            scale: scale,
-            fill: MockupColors.cardFill,
-            stroke: MockupColors.cardStroke,
-            labelColor: MockupColors.muted,
-            valueColor: MockupColors.primaryText,
-            verticalPadding: 6
-        )
-    }
-}
-
 struct BmsDiagnosticsSection: View {
     let snapshot: BmsSnapshot
     let scale: CGFloat
@@ -34,19 +8,32 @@ struct BmsDiagnosticsSection: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
-            BmsReadbackRows(snapshot: snapshot, scale: scale, includesPageCursor: false)
+            PevDashboardKeyValueRows(
+                rows: snapshot.readbackRows
+                    .filter { $0.label != "page" && $0.label != "page verification" }
+                    .enumerated()
+                    .map { offset, row in
+                        PevDashboardKeyValueRow(id: "\(offset)-\(row.label)", label: row.label, value: row.value)
+                    },
+                scale: scale,
+                fill: PevColors.cardFill,
+                stroke: PevColors.cardStroke,
+                labelColor: PevColors.muted,
+                valueColor: PevColors.primaryText,
+                verticalPadding: 6
+            )
                 .padding(.top, 8 * scale)
         } label: {
             VStack(alignment: .leading, spacing: 3 * scale) {
                 Text("BMS diagnostics")
                     .font(.system(size: 15 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                 Text("raw readback, available when we need to debug")
                     .font(.system(size: 11 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
             }
         }
-        .tint(MockupColors.muted)
+        .tint(PevColors.muted)
         .padding(.horizontal, 16 * scale)
         .padding(.vertical, 14 * scale)
         .background(PevDashboardCardBackground(cornerRadius: 20 * scale))
@@ -63,11 +50,11 @@ struct SettingsReadbackRows: View {
                 HStack {
                     Text("settings")
                         .font(.system(size: 14 * scale, weight: .bold))
-                        .foregroundStyle(MockupColors.muted)
+                        .foregroundStyle(PevColors.muted)
                     Spacer()
                     Text(readback.availability.displayText)
                         .font(.system(size: 15 * scale, weight: .black))
-                        .foregroundStyle(MockupColors.primaryText)
+                        .foregroundStyle(PevColors.primaryText)
                 }
                 .frame(height: 31 * scale)
             } else {
@@ -76,17 +63,17 @@ struct SettingsReadbackRows: View {
                         HStack {
                             Text("setting \(entry.field.id)")
                                 .font(.system(size: 14 * scale, weight: .bold))
-                                .foregroundStyle(MockupColors.muted)
+                                .foregroundStyle(PevColors.muted)
                             Spacer()
                             Text("\(entry.field.value)")
                                 .font(.system(size: 15 * scale, weight: .black))
                                 .monospacedDigit()
-                                .foregroundStyle(MockupColors.primaryText)
+                                .foregroundStyle(PevColors.primaryText)
                         }
 
                         Text(entry.provenanceText)
                             .font(.system(size: 12 * scale, weight: .semibold))
-                            .foregroundStyle(MockupColors.muted)
+                            .foregroundStyle(PevColors.muted)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -94,7 +81,7 @@ struct SettingsReadbackRows: View {
 
                     if offset != readback.entries.indices.last {
                         Rectangle()
-                            .fill(MockupColors.cardStroke)
+                            .fill(PevColors.cardStroke)
                             .frame(height: 1)
                     }
                 }
@@ -102,7 +89,7 @@ struct SettingsReadbackRows: View {
         }
         .padding(.horizontal, 22 * scale)
         .padding(.vertical, 6 * scale)
-        .background(CardBackground(cornerRadius: 22 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 22 * scale))
     }
 }
 
@@ -115,23 +102,23 @@ struct FaultHistoryReadbackRows: View {
             HStack {
                 Text("fault")
                     .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
                 Spacer()
                 Text(readback.valueText)
                     .font(.system(size: 15 * scale, weight: .black))
                     .monospacedDigit()
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
             }
 
             Text(readback.detailText)
                 .font(.system(size: 12 * scale, weight: .semibold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PevColors.muted)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 22 * scale)
         .padding(.vertical, 16 * scale)
-        .background(CardBackground(cornerRadius: 22 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 22 * scale))
     }
 }
 

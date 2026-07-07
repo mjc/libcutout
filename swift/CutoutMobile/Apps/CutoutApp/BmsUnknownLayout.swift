@@ -2,7 +2,7 @@ import CutoutMobile
 import SwiftUI
 
 struct BmsUnknownLayout: View {
-    let content: MockupBmsContent
+    let content: PevBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -13,70 +13,73 @@ struct BmsUnknownLayout: View {
                 title: "do not pretend certainty",
                 value: snapshot.faultSummary ?? "--",
                 detail: snapshot.faultDetail ?? "",
-                accent: MockupColors.orange,
-                stroke: MockupColors.orange,
+                accent: PevColors.orange,
+                stroke: PevColors.orange,
                 scale: scale
             )
 
-            HStack(spacing: 14 * scale) {
+            PevDashboardGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 14 * scale),
+                    GridItem(.flexible(), spacing: 14 * scale),
+                ],
+                spacing: 14 * scale
+            ) {
                 PevDashboardMetricTile(
                     label: "reported voltage",
                     value: voltageText(snapshot.voltage),
                     unit: "V",
                     detail: snapshot.unknownTopologyVoltageDetail,
-                    accent: MockupColors.yellow,
+                    accent: PevColors.yellow,
                     scale: scale,
-                    detailColor: MockupColors.yellow
+                    detailColor: PevColors.yellow
                 )
                 PevDashboardMetricTile(
                     label: "cell count",
                     value: snapshot.unknownTopologyCellCountValue,
                     unit: "",
                     detail: snapshot.unknownTopologyCellCountDetail,
-                    accent: MockupColors.orange,
+                    accent: PevColors.orange,
                     scale: scale,
-                    detailColor: MockupColors.orange
+                    detailColor: PevColors.orange
                 )
-            }
-
-            HStack(spacing: 14 * scale) {
                 PevDashboardMetricTile(
                     label: "temps",
                     value: snapshot.unknownTopologyTemperatureValue,
                     unit: "sensors",
                     detail: snapshot.unknownTopologyTemperatureDetail,
-                    accent: MockupColors.green,
+                    accent: PevColors.green,
                     scale: scale,
-                    detailColor: MockupColors.green
+                    detailColor: PevColors.green
                 )
                 PevDashboardMetricTile(
                     label: "fault bits",
                     value: snapshot.faults.first?.code ?? "--",
                     unit: "",
                     detail: snapshot.faults.first?.label ?? "",
-                    accent: MockupColors.orange,
+                    accent: PevColors.orange,
                     scale: scale,
-                    detailColor: MockupColors.orange
+                    detailColor: PevColors.orange
                 )
             }
 
             VStack(alignment: .leading, spacing: 10 * scale) {
                 Text("next capture flow")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
                 Text(snapshot.captureActionTitle ?? "--")
                     .font(.system(size: 25 * scale, weight: .black))
                     .lineLimit(1)
                     .minimumScaleFactor(0.84)
                 Text(snapshot.unknownTopologyCaptureDetail)
                     .font(.system(size: 13 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
                 Text(snapshot.captureActionState ?? "")
                     .font(.system(size: 15 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.primaryText.opacity(0.82))
+                    .foregroundStyle(PevColors.primaryText.opacity(0.82))
                     .padding(.horizontal, 18 * scale)
                     .frame(height: 34 * scale)
-                    .background(Capsule().fill(MockupColors.muted.opacity(0.33)))
+                    .background(Capsule().fill(PevColors.muted.opacity(0.33)))
             }
             .padding(.horizontal, 18 * scale)
             .padding(.vertical, 18 * scale)

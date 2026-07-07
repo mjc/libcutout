@@ -60,26 +60,7 @@ final class CutoutAppModel: ObservableObject {
             self?.bmsSnapshot = bmsSnapshot
         }
         core.onProtocolIdentityCandidateChange = { [weak self] candidate in
-            guard self?.isRecordOnlyCapture != true else {
-                self?.liveActivityIdentity = nil
-                self?.liveActivityGlyph = .electricUnicycle
-                self?.syncLiveActivity()
-                return
-            }
-            if let model = candidate?.support.electricUnicycleModel {
-                self?.liveActivityIdentity = .model(model)
-                self?.liveActivityGlyph = .electricUnicycle
-            }
-            guard candidate?.support.isSupported == true else {
-                self?.syncLiveActivity()
-                return
-            }
-            self?.selectedRideTitle = candidate?.detail
-            if candidate?.support.connectionRoute == .vescOnewheel {
-                self?.liveActivityIdentity = .device(candidate?.detail ?? "VESC Onewheel")
-                self?.liveActivityGlyph = .floatwheelAtom
-            }
-            self?.syncLiveActivity()
+            self?.applyProtocolIdentityCandidate(candidate)
         }
         core.onRecord = { [weak self] message in
             self?.updateCaptureStatus(from: message)
@@ -188,6 +169,31 @@ final class CutoutAppModel: ObservableObject {
         lastLiveActivityUpdate = nil
     }
 
+    func applyProtocolIdentityCandidate(_ candidate: DevicePickerDiscoveryCandidate?) {
+        guard isRecordOnlyCapture != true else {
+            liveActivityIdentity = nil
+            liveActivityGlyph = .electricUnicycle
+            syncLiveActivity()
+            return
+        }
+        if let model = candidate?.support.electricUnicycleModel {
+            liveActivityIdentity = .model(model)
+            liveActivityGlyph = .electricUnicycle
+        }
+        guard candidate?.support.isSupported == true else {
+            syncLiveActivity()
+            return
+        }
+        if selectedRideTitle == nil {
+            selectedRideTitle = candidate?.detail
+        }
+        if candidate?.support.connectionRoute == .vescOnewheel {
+            liveActivityIdentity = .device(candidate?.detail ?? VescRideSnapshot.defaultTitle)
+            liveActivityGlyph = .floatwheelAtom
+        }
+        syncLiveActivity()
+    }
+
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
         devicePickerScanState = scanState
         guard phase == .starting else { return }
@@ -221,16 +227,16 @@ final class CutoutAppModel: ObservableObject {
     }
 
     private func liveActivityIdentity(for selectedRow: DevicePickerRow?) -> LiveActivityRideIdentity? {
+        if selectedRow?.connectionRoute == .vescOnewheel {
+            return .device(selectedRow?.title ?? VescRideSnapshot.defaultTitle)
+        }
+        if core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
+            return .device(core.protocolIdentityCandidate?.detail ?? VescRideSnapshot.defaultTitle)
+        }
         if let model = selectedRow?.electricUnicycleModel
             ?? core.protocolIdentityCandidate?.support.electricUnicycleModel
             ?? phase.connectingModel {
             return .model(model)
-        }
-        if selectedRow?.connectionRoute == .vescOnewheel {
-            return .device(selectedRow?.title ?? "VESC Onewheel")
-        }
-        if core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
-            return .device(core.protocolIdentityCandidate?.detail ?? "VESC Onewheel")
         }
         return nil
     }

@@ -14,7 +14,7 @@ struct DeviceGlyph: View {
                 case .electricUnicycle:
                     EucGlyph(color: row.glyphColor, lineWidth: line)
                 case .onewheel:
-                    OnewheelGlyph(color: row.glyphColor, accent: MockupColors.purple, lineWidth: line)
+                    OnewheelGlyph(color: row.glyphColor, accent: PevColors.purple, lineWidth: line)
                 case .scooter:
                     ScooterGlyph(color: row.glyphColor, lineWidth: line)
                 case .hoverboard:
@@ -41,11 +41,11 @@ struct EucGlyph: View {
             let side = min(proxy.size.width, proxy.size.height)
             ZStack {
                 Circle()
-                    .fill(MockupColors.iconFill)
+                    .fill(PevColors.iconFill)
                 Circle()
                     .stroke(color, lineWidth: lineWidth)
                 Circle()
-                    .fill(MockupColors.cardFill)
+                    .fill(PevColors.cardFill)
                     .frame(width: side * 0.42, height: side * 0.42)
                 ForEach(0..<8, id: \.self) { index in
                     Circle()
@@ -75,7 +75,7 @@ struct OnewheelGlyph: View {
                     .stroke(accent, lineWidth: lineWidth * 0.8)
                     .frame(width: side * 0.92, height: side * 0.34)
                 Circle()
-                    .fill(MockupColors.iconFill)
+                    .fill(PevColors.iconFill)
                     .frame(width: side * 0.46, height: side * 0.46)
                 Circle()
                     .stroke(color, lineWidth: lineWidth)

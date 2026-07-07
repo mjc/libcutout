@@ -2,7 +2,7 @@ import CutoutMobile
 import SwiftUI
 
 struct BmsOverviewLayout: View {
-    let content: MockupBmsContent
+    let content: PevBmsContent
     let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -12,16 +12,22 @@ struct BmsOverviewLayout: View {
             summaryCard
 
             if hasCellVoltageEvidence {
-                HStack(spacing: 14 * scale) {
+                PevDashboardGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 14 * scale),
+                        GridItem(.flexible(), spacing: 14 * scale),
+                    ],
+                    spacing: 14 * scale
+                ) {
                     if let averageGroupVoltage {
                         PevDashboardMetricTile(
                             label: "average group",
                             value: groupVoltageText(averageGroupVoltage),
                             unit: "V",
                             detail: "",
-                            accent: MockupColors.green,
+                            accent: PevColors.green,
                             scale: scale,
-                            detailColor: MockupColors.green
+                            detailColor: PevColors.green
                         )
                     }
                     if let lowestGroupVoltage {
@@ -30,9 +36,9 @@ struct BmsOverviewLayout: View {
                             value: groupVoltageText(lowestGroupVoltage),
                             unit: "V",
                             detail: snapshot.lowestGroupLabel ?? "",
-                            accent: MockupColors.orange,
+                            accent: PevColors.orange,
                             scale: scale,
-                            detailColor: MockupColors.orange
+                            detailColor: PevColors.orange
                         )
                     }
                 }
@@ -44,9 +50,9 @@ struct BmsOverviewLayout: View {
                     value: temperatureText(snapshot.highestTemperature),
                     unit: "°C",
                     detail: snapshot.highestTemperatureLabel ?? "",
-                    accent: MockupColors.green,
+                    accent: PevColors.green,
                     scale: scale,
-                    detailColor: MockupColors.green
+                    detailColor: PevColors.green
                 )
             }
 
@@ -55,7 +61,7 @@ struct BmsOverviewLayout: View {
                     title: "balancing",
                     value: balancingSummary,
                     detail: snapshot.balancingDetail ?? "",
-                    accent: MockupColors.orange,
+                    accent: PevColors.orange,
                     scale: scale
                 )
             }
@@ -65,7 +71,7 @@ struct BmsOverviewLayout: View {
                     title: "fault state",
                     value: faultSummary,
                     detail: snapshot.faultDetail ?? "",
-                    accent: MockupColors.orange,
+                    accent: PevColors.orange,
                     stroke: Color(red: 0.92, green: 0.33, blue: 0.35),
                     scale: scale
                 )
@@ -82,7 +88,7 @@ struct BmsOverviewLayout: View {
                 unit: snapshot.availability.displayText,
                 detail: snapshot.topology.layoutLabel,
                 progress: 0.72,
-                accent: MockupColors.yellow,
+                accent: PevColors.yellow,
                 scale: scale
             )
         } else {
@@ -90,7 +96,7 @@ struct BmsOverviewLayout: View {
                 title: "pack telemetry",
                 value: voltageText(snapshot.voltage) == "--" ? snapshot.availability.displayText : "\(voltageText(snapshot.voltage)) V",
                 detail: snapshot.topology.layoutLabel,
-                accent: MockupColors.green,
+                accent: PevColors.green,
                 scale: scale
             )
         }

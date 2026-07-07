@@ -106,7 +106,7 @@ private final class CutoutLiveValidator {
     }
 }
 
-private extension MockupPickerRow {
+private extension PevPickerRow {
     var isAeroProbeCandidate: Bool {
         let normalizedTitle = title.lowercased()
         return subtitle.hasPrefix("Electric unicycle")

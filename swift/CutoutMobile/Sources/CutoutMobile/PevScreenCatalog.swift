@@ -1,8 +1,10 @@
 import Foundation
 
-public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
+public enum PevScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case devicePicker
     case eucRide
+    case eucMap
+    case eucTune
     case liveActivity
     case bmsOverview
     case bmsCellMap6S
@@ -11,8 +13,9 @@ public enum MockupScreenID: String, CaseIterable, Equatable, Hashable, Sendable 
     case bmsUnknownTopology
     case bmsNoData
     case eucGarage
-    case vescOnewheelRide
     case vescDebug
+    case vescMap
+    case vescLogs
 }
 
 public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
@@ -20,9 +23,9 @@ public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
     case vescOnewheel = "vesc_onewheel"
 }
 
-public typealias MockupConnectionRoute = DevicePickerConnectionRoute
+public typealias PevConnectionRoute = DevicePickerConnectionRoute
 
-public struct MockupMetric: Equatable, Hashable, Sendable {
+public struct PevMetric: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
 
@@ -32,7 +35,7 @@ public struct MockupMetric: Equatable, Hashable, Sendable {
     }
 }
 
-public enum MockupAccent: String, Equatable, Hashable, Sendable {
+public enum PevAccent: String, Equatable, Hashable, Sendable {
     case cyan
     case green
     case orange
@@ -40,13 +43,13 @@ public enum MockupAccent: String, Equatable, Hashable, Sendable {
     case yellow
 }
 
-public struct MockupDeviceCard: Equatable, Hashable, Sendable {
+public struct PevDeviceCard: Equatable, Hashable, Sendable {
     public let title: String
     public let detail: String
     public let status: String
-    public let accent: MockupAccent
+    public let accent: PevAccent
 
-    public init(title: String, detail: String, status: String, accent: MockupAccent) {
+    public init(title: String, detail: String, status: String, accent: PevAccent) {
         self.title = title
         self.detail = detail
         self.status = status
@@ -54,13 +57,13 @@ public struct MockupDeviceCard: Equatable, Hashable, Sendable {
     }
 }
 
-public struct MockupSafetyBar: Equatable, Hashable, Sendable {
+public struct PevSafetyBar: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
     public let progress: Double
-    public let accent: MockupAccent
+    public let accent: PevAccent
 
-    public init(label: String, value: String, progress: Double, accent: MockupAccent) {
+    public init(label: String, value: String, progress: Double, accent: PevAccent) {
         self.label = label
         self.value = value
         self.progress = progress
@@ -68,7 +71,7 @@ public struct MockupSafetyBar: Equatable, Hashable, Sendable {
     }
 }
 
-public struct MockupWarningCard: Equatable, Hashable, Sendable {
+public struct PevWarningCard: Equatable, Hashable, Sendable {
     public let title: String
     public let detail: String
 
@@ -78,7 +81,7 @@ public struct MockupWarningCard: Equatable, Hashable, Sendable {
     }
 }
 
-public enum MockupDashboardTileKind: Equatable, Hashable, Sendable {
+public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
     case metric
     case beepMargin
     case tiltback
@@ -89,23 +92,23 @@ public enum MockupDashboardTileKind: Equatable, Hashable, Sendable {
     case controller
 }
 
-public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
+public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { label }
 
-    public let kind: MockupDashboardTileKind
+    public let kind: PevDashboardTileKind
     public let label: String
     public let value: String
     public let unit: String
     public let detail: String
-    public let accent: MockupAccent
+    public let accent: PevAccent
 
     public init(
-        kind: MockupDashboardTileKind = .metric,
+        kind: PevDashboardTileKind = .metric,
         label: String,
         value: String,
         unit: String,
         detail: String,
-        accent: MockupAccent
+        accent: PevAccent
     ) {
         self.kind = kind
         self.label = label
@@ -116,46 +119,57 @@ public struct MockupDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public struct MockupScreenTab: Equatable, Hashable, Sendable, Identifiable {
+public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { title }
 
     public let title: String
     public let isSelected: Bool
-    public let destinationScreenID: MockupScreenID?
+    public let destinationScreenID: PevScreenID?
+    public let disabledReason: String?
 
-    public init(title: String, isSelected: Bool, destinationScreenID: MockupScreenID? = nil) {
+    public var isEnabled: Bool {
+        disabledReason == nil
+    }
+
+    public init(
+        title: String,
+        isSelected: Bool,
+        destinationScreenID: PevScreenID? = nil,
+        disabledReason: String? = nil
+    ) {
         self.title = title
         self.isSelected = isSelected
         self.destinationScreenID = destinationScreenID
+        self.disabledReason = disabledReason
     }
 }
 
-public struct MockupSummaryRow: Equatable, Hashable, Sendable, Identifiable {
+public struct PevSummaryRow: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { label }
 
     public let label: String
     public let value: String
-    public let accent: MockupAccent?
+    public let accent: PevAccent?
 
-    public init(label: String, value: String, accent: MockupAccent?) {
+    public init(label: String, value: String, accent: PevAccent?) {
         self.label = label
         self.value = value
         self.accent = accent
     }
 }
 
-public struct MockupFaultCard: Equatable, Hashable, Sendable {
+public struct PevFaultCard: Equatable, Hashable, Sendable {
     public let title: String
     public let detail: String
-    public let accent: MockupAccent
+    public let accent: PevAccent
 
-    public init(title: String, detail: String, accent: MockupAccent) {
+    public init(title: String, detail: String, accent: PevAccent) {
         self.title = title
         self.detail = detail
         self.accent = accent
     }
 }
-public enum MockupBmsScreenKind: Equatable, Hashable, Sendable {
+public enum PevBmsScreenKind: Equatable, Hashable, Sendable {
     case overview
     case cellMapInline
     case cellMapScrollable
@@ -164,28 +178,28 @@ public enum MockupBmsScreenKind: Equatable, Hashable, Sendable {
     case noData
 }
 
-public struct MockupBmsChip: Equatable, Hashable, Sendable {
+public struct PevBmsChip: Equatable, Hashable, Sendable {
     public let title: String
-    public let accent: MockupAccent
+    public let accent: PevAccent
 
-    public init(title: String, accent: MockupAccent) {
+    public init(title: String, accent: PevAccent) {
         self.title = title
         self.accent = accent
     }
 }
 
-public struct MockupBmsContent: Equatable, Hashable, Sendable {
-    public let kind: MockupBmsScreenKind
+public struct PevBmsContent: Equatable, Hashable, Sendable {
+    public let kind: PevBmsScreenKind
     public let snapshot: BmsSnapshot
-    public let chips: [MockupBmsChip]
+    public let chips: [PevBmsChip]
     public let highlightedGroupIndices: [Int]
     public let selectedGroupIndex: Int?
     public let modeTitles: [String]
 
     public init(
-        kind: MockupBmsScreenKind,
+        kind: PevBmsScreenKind,
         snapshot: BmsSnapshot,
-        chips: [MockupBmsChip] = [],
+        chips: [PevBmsChip] = [],
         highlightedGroupIndices: [Int] = [],
         selectedGroupIndex: Int? = nil,
         modeTitles: [String] = []
@@ -198,8 +212,8 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
         self.modeTitles = modeTitles
     }
 
-    public func resolved(with liveSnapshot: BmsSnapshot, preferredScreenID: MockupScreenID) -> Self {
-        let resolvedKind = MockupBmsScreenKind(liveSnapshot: liveSnapshot, preferredScreenID: preferredScreenID)
+    public func resolved(with liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) -> Self {
+        let resolvedKind = PevBmsScreenKind(liveSnapshot: liveSnapshot, preferredScreenID: preferredScreenID)
         let selectedGroupIndex = resolvedKind == .cellDetail
             ? liveSnapshot.lowestGroupIndex ?? liveSnapshot.groups.first?.index
             : nil
@@ -207,7 +221,7 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
         let chips = resolvedKind.liveChips(snapshot: liveSnapshot, selectedGroupIndex: selectedGroupIndex)
         let modeTitles = resolvedKind.liveModeTitles(snapshot: liveSnapshot)
 
-        return MockupBmsContent(
+        return PevBmsContent(
             kind: resolvedKind,
             snapshot: liveSnapshot,
             chips: chips,
@@ -218,8 +232,8 @@ public struct MockupBmsContent: Equatable, Hashable, Sendable {
     }
 }
 
-private extension MockupBmsScreenKind {
-    init(liveSnapshot: BmsSnapshot, preferredScreenID: MockupScreenID) {
+private extension PevBmsScreenKind {
+    init(liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) {
         if let explicitKind = Self(explicitScreenID: preferredScreenID) {
             self = explicitKind
             return
@@ -249,7 +263,7 @@ private extension MockupBmsScreenKind {
         self = .overview
     }
 
-    init?(explicitScreenID: MockupScreenID) {
+    init?(explicitScreenID: PevScreenID) {
         switch explicitScreenID {
         case .bmsOverview:
             self = .overview
@@ -263,7 +277,7 @@ private extension MockupBmsScreenKind {
             self = .unknownTopology
         case .bmsNoData:
             self = .noData
-        case .devicePicker, .eucRide, .liveActivity, .eucGarage, .vescOnewheelRide, .vescDebug:
+        case .devicePicker, .eucRide, .eucMap, .eucTune, .liveActivity, .eucGarage, .vescDebug, .vescMap, .vescLogs:
             return nil
         }
     }
@@ -301,32 +315,32 @@ private extension MockupBmsScreenKind {
         }
     }
 
-    func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [MockupBmsChip] {
+    func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [PevBmsChip] {
         switch self {
         case .overview:
-            var chips = [MockupBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow)]
+            var chips = [PevBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow)]
             if snapshot.topology.bmsCount > 0 {
-                chips.append(MockupBmsChip(title: "\(snapshot.topology.bmsCount) BMS online", accent: .green))
+                chips.append(PevBmsChip(title: "\(snapshot.topology.bmsCount) BMS online", accent: .green))
             }
             return chips
         case .cellMapInline, .cellMapScrollable:
             return [
-                MockupBmsChip(title: "live readback", accent: .cyan),
-                MockupBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow),
+                PevBmsChip(title: "live readback", accent: .cyan),
+                PevBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow),
             ]
         case .cellDetail:
             return [
-                MockupBmsChip(title: "live readback", accent: .cyan),
-                MockupBmsChip(title: selectedGroupIndex.map { "group \($0)" } ?? "selected group", accent: .orange),
+                PevBmsChip(title: "live readback", accent: .cyan),
+                PevBmsChip(title: selectedGroupIndex.map { "group \($0)" } ?? "selected group", accent: .orange),
             ]
         case .unknownTopology:
             return [
-                MockupBmsChip(title: "partial data", accent: .orange),
-                MockupBmsChip(title: "topology unverified", accent: .green),
+                PevBmsChip(title: "partial data", accent: .orange),
+                PevBmsChip(title: "topology unverified", accent: .green),
             ]
         case .noData:
             return [
-                MockupBmsChip(title: snapshot.captureActionState ?? "limited data", accent: .yellow),
+                PevBmsChip(title: snapshot.captureActionState ?? "limited data", accent: .yellow),
             ]
         }
     }
@@ -349,7 +363,7 @@ public enum DevicePickerRowState: Equatable, Hashable, Sendable {
     case manual(action: String)
 }
 
-public typealias MockupPickerRowState = DevicePickerRowState
+public typealias PevPickerRowState = DevicePickerRowState
 
 public enum DevicePickerRowSection: Equatable, Hashable, Sendable {
     case supported
@@ -419,7 +433,7 @@ public struct DevicePickerRow: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public typealias MockupPickerRow = DevicePickerRow
+public typealias PevPickerRow = DevicePickerRow
 
 public extension DevicePickerRow {
     var isSupported: Bool {
@@ -515,7 +529,7 @@ public struct DevicePickerSections: Equatable, Hashable, Sendable {
     }
 }
 
-public typealias MockupPickerSections = DevicePickerSections
+public typealias PevPickerSections = DevicePickerSections
 
 public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case supported(connectionRoute: DevicePickerConnectionRoute?, electricUnicycleModel: ElectricUnicycleModel?)
@@ -782,49 +796,49 @@ public extension DevicePickerScanState {
     }
 }
 
-public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
-    public let id: MockupScreenID
+public struct PevScreen: Equatable, Hashable, Sendable, Identifiable {
+    public let id: PevScreenID
     public let title: String
     public let subtitle: String
     public let primaryValue: String
     public let secondaryValue: String
     public let warning: String?
-    public let metrics: [MockupMetric]
-    public let pickerRows: [MockupPickerRow]
+    public let metrics: [PevMetric]
+    public let pickerRows: [PevPickerRow]
     public let discoveryCandidates: [DevicePickerDiscoveryCandidate]
-    public let deviceCard: MockupDeviceCard?
-    public let safetyBars: [MockupSafetyBar]
-    public let warningCard: MockupWarningCard?
-    public let dashboardTiles: [MockupDashboardTile]
+    public let deviceCard: PevDeviceCard?
+    public let safetyBars: [PevSafetyBar]
+    public let warningCard: PevWarningCard?
+    public let dashboardTiles: [PevDashboardTile]
     public let summaryTitle: String?
-    public let summaryRows: [MockupSummaryRow]
-    public let faultCard: MockupFaultCard?
-    public let tabs: [MockupScreenTab]
-    public let bmsContent: MockupBmsContent?
+    public let summaryRows: [PevSummaryRow]
+    public let faultCard: PevFaultCard?
+    public let tabs: [PevScreenTab]
+    public let bmsContent: PevBmsContent?
     public let eucGarageSnapshot: EucGarageSnapshot?
-    public let isFixtureOnly: Bool
+    public let isPreviewOnly: Bool
 
     public init(
-        id: MockupScreenID,
+        id: PevScreenID,
         title: String,
         subtitle: String,
         primaryValue: String,
         secondaryValue: String,
         warning: String?,
-        metrics: [MockupMetric],
-        pickerRows: [MockupPickerRow] = [],
+        metrics: [PevMetric],
+        pickerRows: [PevPickerRow] = [],
         discoveryCandidates: [DevicePickerDiscoveryCandidate] = [],
-        deviceCard: MockupDeviceCard? = nil,
-        safetyBars: [MockupSafetyBar] = [],
-        warningCard: MockupWarningCard? = nil,
-        dashboardTiles: [MockupDashboardTile] = [],
+        deviceCard: PevDeviceCard? = nil,
+        safetyBars: [PevSafetyBar] = [],
+        warningCard: PevWarningCard? = nil,
+        dashboardTiles: [PevDashboardTile] = [],
         summaryTitle: String? = nil,
-        summaryRows: [MockupSummaryRow] = [],
-        faultCard: MockupFaultCard? = nil,
-        tabs: [MockupScreenTab] = [],
-        bmsContent: MockupBmsContent? = nil,
+        summaryRows: [PevSummaryRow] = [],
+        faultCard: PevFaultCard? = nil,
+        tabs: [PevScreenTab] = [],
+        bmsContent: PevBmsContent? = nil,
         eucGarageSnapshot: EucGarageSnapshot? = nil,
-        isFixtureOnly: Bool = true
+        isPreviewOnly: Bool = true
     ) {
         self.id = id
         self.title = title
@@ -845,10 +859,10 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
         self.tabs = tabs
         self.bmsContent = bmsContent
         self.eucGarageSnapshot = eucGarageSnapshot
-        self.isFixtureOnly = isFixtureOnly
+        self.isPreviewOnly = isPreviewOnly
     }
 
-    public func resolvedBmsContent(liveSnapshot: BmsSnapshot?) -> MockupBmsContent? {
+    public func resolvedBmsContent(liveSnapshot: BmsSnapshot?) -> PevBmsContent? {
         guard let bmsContent else {
             return nil
         }
@@ -859,37 +873,37 @@ public struct MockupScreen: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
-    public let screens: [MockupScreen]
+public struct PevScreenCatalog: Equatable, Hashable, Sendable {
+    public let screens: [PevScreen]
 
-    public init(screens: [MockupScreen]) {
+    public init(screens: [PevScreen]) {
         self.screens = screens
     }
 
-    public func screen(id: MockupScreenID) -> MockupScreen? {
+    public func screen(id: PevScreenID) -> PevScreen? {
         screens.first { $0.id == id }
     }
 
     public func presentedScreen(
-        for screen: MockupScreen,
+        for screen: PevScreen,
         liveBmsSnapshot: BmsSnapshot?,
-        fixtureFallback: Bool = true
-    ) -> MockupScreen {
+        previewFallback: Bool = true
+    ) -> PevScreen {
         guard let liveBmsSnapshot else {
-            guard !fixtureFallback, screen.id == .eucGarage || screen.id.isBmsScreen else {
+            guard !previewFallback, screen.id == .eucGarage || screen.id.isBmsScreen else {
                 return screen
             }
             return Self.noLiveBmsReadbackScreen()
         }
 
-        let preferredScreenID = screen.id == .eucGarage ? MockupScreenID.eucGarage : screen.id
+        let preferredScreenID = screen.id == .eucGarage ? PevScreenID.eucGarage : screen.id
         let isBmsPresentation = screen.id == .eucGarage || screen.id.isBmsScreen
 
         guard isBmsPresentation else {
             return screen
         }
 
-        let resolvedKind = MockupBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: preferredScreenID)
+        let resolvedKind = PevBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: preferredScreenID)
         let bmsScreenID = screen.id == .eucGarage ? resolvedKind.presentationScreenID : screen.id
 
         guard let fixtureScreen = self.screen(id: bmsScreenID) else {
@@ -898,7 +912,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
 
         let resolvedContent = fixtureScreen.resolvedBmsContent(liveSnapshot: liveBmsSnapshot)
 
-        return MockupScreen(
+        return PevScreen(
             id: fixtureScreen.id,
             title: resolvedKind.liveTitle(snapshot: liveBmsSnapshot),
             subtitle: resolvedKind.liveSubtitle(snapshot: liveBmsSnapshot, fallback: fixtureScreen.subtitle),
@@ -918,11 +932,11 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             tabs: fixtureScreen.tabs,
             bmsContent: resolvedContent,
             eucGarageSnapshot: fixtureScreen.eucGarageSnapshot,
-            isFixtureOnly: fixtureScreen.isFixtureOnly
+            isPreviewOnly: fixtureScreen.isPreviewOnly
         )
     }
 
-    private static func noLiveBmsReadbackScreen() -> MockupScreen {
+    private static func noLiveBmsReadbackScreen() -> PevScreen {
         let snapshot = BmsSnapshot(
             availability: .unavailable,
             topology: BmsTopology(
@@ -935,7 +949,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             )
         )
 
-        return MockupScreen(
+        return PevScreen(
             id: .bmsNoData,
             title: "Battery",
             subtitle: "live BMS readback unavailable",
@@ -943,20 +957,20 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "no live BMS",
             warning: nil,
             metrics: [],
-            bmsContent: MockupBmsContent(
+            bmsContent: PevBmsContent(
                 kind: .noData,
                 snapshot: snapshot,
                 chips: [
-                    MockupBmsChip(title: "no live BMS", accent: .yellow),
+                    PevBmsChip(title: "no live BMS", accent: .yellow),
                 ]
             ),
-            isFixtureOnly: false
+            isPreviewOnly: false
         )
     }
 
     private static let devicePickerDiscoveryCandidates = [
         DevicePickerDiscoveryCandidate(
-            platformIdentifier: "fixture:aero",
+            platformIdentifier: "demo:aero",
             displayName: "Aero-126V",
             productCategory: "Electric unicycle",
             evidence: "telemetry profile found",
@@ -965,7 +979,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             symbolName: "circle.hexagongrid.circle"
         ),
         DevicePickerDiscoveryCandidate(
-            platformIdentifier: "fixture:little-focer",
+            platformIdentifier: "demo:little-focer",
             displayName: "Little FOCer BT",
             productCategory: "VESC Onewheel",
             evidence: "UART bridge detected",
@@ -974,7 +988,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             symbolName: "oval.portrait"
         ),
         DevicePickerDiscoveryCandidate(
-            platformIdentifier: "fixture:ninebot",
+            platformIdentifier: "demo:ninebot",
             displayName: "NINEBOT-7A31",
             productCategory: "Electric scooter",
             evidence: "known BLE advertisement",
@@ -983,7 +997,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             symbolName: "scooter"
         ),
         DevicePickerDiscoveryCandidate(
-            platformIdentifier: "fixture:hx-hoverboard",
+            platformIdentifier: "demo:hx-hoverboard",
             displayName: "HX Hoverboard",
             productCategory: "Hoverboard / self-balancing board",
             evidence: "candidate",
@@ -1128,8 +1142,28 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
         captureActionState: "limited data"
     )
 
-    public static let v2 = MockupScreenCatalog(screens: [
-        MockupScreen(
+    private static func placeholderScreen(
+        id: PevScreenID,
+        title: String,
+        subtitle: String,
+        reason: String
+    ) -> PevScreen {
+        PevScreen(
+            id: id,
+            title: title,
+            subtitle: subtitle,
+            primaryValue: "not wired",
+            secondaryValue: "placeholder route",
+            warning: reason,
+            metrics: [
+                PevMetric(label: "status", value: "placeholder"),
+                PevMetric(label: "tracker", value: "LIBCU-423"),
+            ]
+        )
+    }
+
+    public static let v2 = PevScreenCatalog(screens: [
+        PevScreen(
             id: .devicePicker,
             title: "Device picker",
             subtitle: "Scanning Bluetooth",
@@ -1137,16 +1171,16 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "Little FOCer BT",
             warning: "Unsupported rows remain disabled fixtures.",
             metrics: [
-                MockupMetric(label: "Supported EUC", value: "Aero-126V"),
-                MockupMetric(label: "Supported VESC OW", value: "Little FOCer BT"),
-                MockupMetric(label: "Unsupported", value: "NINEBOT-7A31"),
-                MockupMetric(label: "Unsupported", value: "HX Hoverboard"),
-                MockupMetric(label: "Manual add", value: "disabled"),
+                PevMetric(label: "Supported EUC", value: "Aero-126V"),
+                PevMetric(label: "Supported VESC OW", value: "Little FOCer BT"),
+                PevMetric(label: "Unsupported", value: "NINEBOT-7A31"),
+                PevMetric(label: "Unsupported", value: "HX Hoverboard"),
+                PevMetric(label: "Manual add", value: "disabled"),
             ],
             pickerRows: (devicePickerDiscoveryCandidates + [manualDiscoveryCandidate]).map(\.pickerRow),
             discoveryCandidates: devicePickerDiscoveryCandidates + [manualDiscoveryCandidate]
         ),
-        MockupScreen(
+        PevScreen(
             id: .eucRide,
             title: "Aero-126V",
             subtitle: "EUC - riding",
@@ -1154,47 +1188,59 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "PWM headroom 23%",
             warning: "Reduce acceleration - voltage sag under load: 9.4 V",
             metrics: [
-                MockupMetric(label: "sag-adjusted energy", value: "62%"),
-                MockupMetric(label: "pack", value: "115.8 V"),
-                MockupMetric(label: "power", value: "4.2 kW"),
-                MockupMetric(label: "thermal", value: "61 °C"),
-                MockupMetric(label: "limp-home", value: "14.2 mi"),
+                PevMetric(label: "sag-adjusted energy", value: "62%"),
+                PevMetric(label: "pack", value: "115.8 V"),
+                PevMetric(label: "power", value: "4.2 kW"),
+                PevMetric(label: "thermal", value: "61 °C"),
+                PevMetric(label: "limp-home", value: "14.2 mi"),
             ],
             safetyBars: [
-                MockupSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
-                MockupSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
+                PevSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
+                PevSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
             ],
-            warningCard: MockupWarningCard(
+            warningCard: PevWarningCard(
                 title: "Reduce acceleration",
                 detail: "Voltage sag under load: 9.4 V"
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
-                MockupDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
-                MockupDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
-                MockupDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
+                PevDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
+                PevDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
+                PevDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
+                PevDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
             ],
             tabs: [
-                MockupScreenTab(title: "Ride", isSelected: true),
-                MockupScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
-                MockupScreenTab(title: "Map", isSelected: false),
-                MockupScreenTab(title: "Tune", isSelected: false),
+                PevScreenTab(title: "Ride", isSelected: true),
+                PevScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
+                PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-423"),
+                PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-423"),
             ]
         ),
-        MockupScreen(
+        placeholderScreen(
+            id: .eucMap,
+            title: "Map",
+            subtitle: "EUC map shell",
+            reason: "EUC map view is not wired yet."
+        ),
+        placeholderScreen(
+            id: .eucTune,
+            title: "Tune",
+            subtitle: "EUC tune/settings shell",
+            reason: "EUC tune/settings view is not wired yet."
+        ),
+        PevScreen(
             id: .liveActivity,
             title: "Live Activity",
-            subtitle: "fixture harness for compact, expanded, and lock screen states",
+            subtitle: "preview-only surface for compact, expanded, and lock screen states",
             primaryValue: "3 layouts",
             secondaryValue: "matrix driven",
             warning: nil,
             metrics: [
-                MockupMetric(label: "fixture states", value: "demo, populated, partial, waiting, stale, disconnected, parked"),
-                MockupMetric(label: "render modes", value: "compact, expanded, lock screen"),
+                PevMetric(label: "preview states", value: "demo, populated, partial, waiting, stale, disconnected, parked"),
+                PevMetric(label: "presentation modes", value: "compact, expanded, lock screen"),
             ],
-            isFixtureOnly: true
+            isPreviewOnly: true
         ),
-        MockupScreen(
+        PevScreen(
             id: .bmsOverview,
             title: "Pack overview",
             subtitle: "CutOut · BMS",
@@ -1202,21 +1248,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "sag adjusted",
             warning: nil,
             metrics: [
-                MockupMetric(label: "topology", value: "20S4P split pack"),
-                MockupMetric(label: "BMS online", value: "2"),
-                MockupMetric(label: "lowest group", value: "group 17"),
-                MockupMetric(label: "highest temp", value: "37.8 °C"),
+                PevMetric(label: "topology", value: "20S4P split pack"),
+                PevMetric(label: "BMS online", value: "2"),
+                PevMetric(label: "lowest group", value: "group 17"),
+                PevMetric(label: "highest temp", value: "37.8 °C"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PevBmsContent(
                 kind: .overview,
                 snapshot: bmsOverviewSnapshot,
                 chips: [
-                    MockupBmsChip(title: "20S4P split pack", accent: .yellow),
-                    MockupBmsChip(title: "2 BMS online", accent: .green),
+                    PevBmsChip(title: "20S4P split pack", accent: .yellow),
+                    PevBmsChip(title: "2 BMS online", accent: .green),
                 ]
             )
         ),
-        MockupScreen(
+        PevScreen(
             id: .bmsCellMap6S,
             title: "6S cell map",
             subtitle: "skateboard pack",
@@ -1224,21 +1270,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "no scrolling needed",
             warning: nil,
             metrics: [
-                MockupMetric(label: "topology", value: "6S2P"),
-                MockupMetric(label: "display", value: "all groups inline"),
+                PevMetric(label: "topology", value: "6S2P"),
+                PevMetric(label: "display", value: "all groups inline"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PevBmsContent(
                 kind: .cellMapInline,
                 snapshot: bmsInlineSnapshot,
                 chips: [
-                    MockupBmsChip(title: "skateboard pack", accent: .cyan),
-                    MockupBmsChip(title: "6S2P", accent: .yellow),
+                    PevBmsChip(title: "skateboard pack", accent: .cyan),
+                    PevBmsChip(title: "6S2P", accent: .yellow),
                 ],
                 highlightedGroupIndices: [3, 6],
                 modeTitles: ["balance view", "temps", "faults"]
             )
         ),
-        MockupScreen(
+        PevScreen(
             id: .bmsCellMap40S,
             title: "40S cell map",
             subtitle: "large EUC pack",
@@ -1246,22 +1292,22 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "scroll cells horizontally",
             warning: nil,
             metrics: [
-                MockupMetric(label: "topology", value: "40S4P"),
-                MockupMetric(label: "display", value: "overview first"),
+                PevMetric(label: "topology", value: "40S4P"),
+                PevMetric(label: "display", value: "overview first"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PevBmsContent(
                 kind: .cellMapScrollable,
                 snapshot: bmsScrollableSnapshot,
                 chips: [
-                    MockupBmsChip(title: "large EUC pack", accent: .cyan),
-                    MockupBmsChip(title: "40S4P", accent: .yellow),
-                    MockupBmsChip(title: "scroll cells horizontally", accent: .orange),
+                    PevBmsChip(title: "large EUC pack", accent: .cyan),
+                    PevBmsChip(title: "40S4P", accent: .yellow),
+                    PevBmsChip(title: "scroll cells horizontally", accent: .orange),
                 ],
                 highlightedGroupIndices: [17, 18, 19, 31],
                 modeTitles: ["overview", "strip", "full cell table", "popover"]
             )
         ),
-        MockupScreen(
+        PevScreen(
             id: .bmsCellDetail,
             title: "Cell detail",
             subtitle: "from any map",
@@ -1269,21 +1315,21 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "group 17",
             warning: nil,
             metrics: [
-                MockupMetric(label: "temp", value: "34.9 °C"),
-                MockupMetric(label: "IR est.", value: "21 mΩ"),
+                PevMetric(label: "temp", value: "34.9 °C"),
+                PevMetric(label: "IR est.", value: "21 mΩ"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PevBmsContent(
                 kind: .cellDetail,
                 snapshot: bmsDetailSnapshot,
                 chips: [
-                    MockupBmsChip(title: "from any map", accent: .cyan),
-                    MockupBmsChip(title: "group 17", accent: .orange),
+                    PevBmsChip(title: "from any map", accent: .cyan),
+                    PevBmsChip(title: "group 17", accent: .orange),
                 ],
                 highlightedGroupIndices: [17],
                 selectedGroupIndex: 17
             )
         ),
-        MockupScreen(
+        PevScreen(
             id: .bmsUnknownTopology,
             title: "Unknown BMS",
             subtitle: "partial data",
@@ -1291,20 +1337,20 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "topology unverified",
             warning: nil,
             metrics: [
-                MockupMetric(label: "reported voltage", value: "75.9 V"),
-                MockupMetric(label: "fault bits", value: "0x0040"),
-                MockupMetric(label: "capture flow", value: "disabled for launch"),
+                PevMetric(label: "reported voltage", value: "75.9 V"),
+                PevMetric(label: "fault bits", value: "0x0040"),
+                PevMetric(label: "capture flow", value: "disabled for launch"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PevBmsContent(
                 kind: .unknownTopology,
                 snapshot: bmsUnknownSnapshot,
                 chips: [
-                    MockupBmsChip(title: "partial data", accent: .orange),
-                    MockupBmsChip(title: "topology unverified", accent: .green),
+                    PevBmsChip(title: "partial data", accent: .orange),
+                    PevBmsChip(title: "topology unverified", accent: .green),
                 ]
             )
         ),
-        MockupScreen(
+        PevScreen(
             id: .bmsNoData,
             title: "Battery",
             subtitle: "EX30 · non-smart BMS · controller-only estimate",
@@ -1312,19 +1358,19 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "limited data",
             warning: nil,
             metrics: [
-                MockupMetric(label: "pack voltage", value: "117.6 V"),
-                MockupMetric(label: "ride sag", value: "4.8 V"),
-                MockupMetric(label: "load now", value: "38 A"),
+                PevMetric(label: "pack voltage", value: "117.6 V"),
+                PevMetric(label: "ride sag", value: "4.8 V"),
+                PevMetric(label: "load now", value: "38 A"),
             ],
-            bmsContent: MockupBmsContent(
+            bmsContent: PevBmsContent(
                 kind: .noData,
                 snapshot: bmsNoDataSnapshot,
                 chips: [
-                    MockupBmsChip(title: "limited data", accent: .yellow),
+                    PevBmsChip(title: "limited data", accent: .yellow),
                 ]
             )
         ),
-        MockupScreen(
+        PevScreen(
             id: .eucGarage,
             title: "EUC health",
             subtitle: "Stationary diagnostics for wheel-specific data",
@@ -1332,31 +1378,31 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "pack 115.8 V",
             warning: nil,
             metrics: [
-                MockupMetric(label: "beep margin", value: "11.6 mph"),
-                MockupMetric(label: "tiltback", value: "42 mph"),
-                MockupMetric(label: "pedal mode", value: "72%"),
-                MockupMetric(label: "cell delta", value: "0.018 V"),
-                MockupMetric(label: "last fault", value: "none"),
+                PevMetric(label: "beep margin", value: "11.6 mph"),
+                PevMetric(label: "tiltback", value: "42 mph"),
+                PevMetric(label: "pedal mode", value: "72%"),
+                PevMetric(label: "cell delta", value: "0.018 V"),
+                PevMetric(label: "last fault", value: "none"),
             ],
-            deviceCard: MockupDeviceCard(
+            deviceCard: PevDeviceCard(
                 title: "Aero-126V",
                 detail: "126 V nominal · 20s? mapped profile · BLE",
                 status: "Safe",
                 accent: .green
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
-                MockupDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
-                MockupDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
-                MockupDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+                PevDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
+                PevDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+                PevDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+                PevDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
             ],
             summaryTitle: "Cell / BMS summary",
             summaryRows: [
-                MockupSummaryRow(label: "high group", value: "4.18 V", accent: nil),
-                MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
-                MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
+                PevSummaryRow(label: "high group", value: "4.18 V", accent: nil),
+                PevSummaryRow(label: "low group", value: "4.13 V", accent: nil),
+                PevSummaryRow(label: "delta", value: "0.05 V", accent: .green),
             ],
-            faultCard: MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green),
+            faultCard: PevFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green),
             eucGarageSnapshot: EucGarageSnapshot(
                 pack: EucPackHealthSnapshot(
                     energyPercent: BatteryLevel(value: 85),
@@ -1373,41 +1419,7 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
                 faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
             )
         ),
-        MockupScreen(
-            id: .vescOnewheelRide,
-            title: "Fungineers X7",
-            subtitle: "VESC OW · armed",
-            primaryValue: "19",
-            secondaryValue: "board speed",
-            warning: "Pushback soon - duty and pack sag are both climbing.",
-            metrics: [
-                MockupMetric(label: "battery voltage", value: "75.5 V"),
-                MockupMetric(label: "motor current", value: "71 A"),
-                MockupMetric(label: "board angle", value: "-1.8 deg"),
-                MockupMetric(label: "controller", value: "54 °C"),
-                MockupMetric(label: "motor", value: "49 °C"),
-            ],
-            safetyBars: [
-                MockupSafetyBar(label: "Duty headroom", value: "18%", progress: 0.82, accent: .orange),
-            ],
-            warningCard: MockupWarningCard(
-                title: "Pushback soon",
-                detail: "Duty and pack sag are both climbing."
-            ),
-            dashboardTiles: [
-                MockupDashboardTile(kind: .batteryCurrent, label: "battery voltage", value: "75.5", unit: "V", detail: "current 0.0 A", accent: .yellow),
-                MockupDashboardTile(kind: .motorCurrent, label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
-                MockupDashboardTile(kind: .boardAngle, label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
-                MockupDashboardTile(kind: .controller, label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
-            ],
-            tabs: [
-                MockupScreenTab(title: "Ride", isSelected: true),
-                MockupScreenTab(title: "VESC", isSelected: false),
-                MockupScreenTab(title: "Map", isSelected: false),
-                MockupScreenTab(title: "Logs", isSelected: false),
-            ]
-        ),
-        MockupScreen(
+        PevScreen(
             id: .vescDebug,
             title: "VESC state",
             subtitle: "For tuning/debug. Not the riding screen",
@@ -1415,53 +1427,65 @@ public struct MockupScreenCatalog: Equatable, Hashable, Sendable {
             secondaryValue: "pack 75.4 V",
             warning: "Dangerous writes hidden until parked and confirmed.",
             metrics: [
-                MockupMetric(label: "battery limit", value: "45 A"),
-                MockupMetric(label: "motor limit", value: "90 A"),
-                MockupMetric(label: "last fault", value: "FAULT_CODE_NONE"),
-                MockupMetric(label: "input app", value: "ADC + balance"),
-                MockupMetric(label: "logging", value: "local CSV armed"),
+                PevMetric(label: "battery limit", value: "45 A"),
+                PevMetric(label: "motor limit", value: "90 A"),
+                PevMetric(label: "last fault", value: "FAULT_CODE_NONE"),
+                PevMetric(label: "input app", value: "ADC + balance"),
+                PevMetric(label: "logging", value: "local CSV armed"),
             ],
-            deviceCard: MockupDeviceCard(
+            deviceCard: PevDeviceCard(
                 title: "Profile: Street stable",
                 detail: "VESC Express · FW 6.x · UART bridge",
                 status: "",
                 accent: .cyan
             ),
             dashboardTiles: [
-                MockupDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
-                MockupDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
-                MockupDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
-                MockupDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
+                PevDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
+                PevDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
+                PevDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
+                PevDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
             ],
             summaryTitle: "Fault / app channels",
             summaryRows: [
-                MockupSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
-                MockupSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
-                MockupSummaryRow(label: "CAN status", value: "single controller", accent: nil),
-                MockupSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
+                PevSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
+                PevSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
+                PevSummaryRow(label: "CAN status", value: "single controller", accent: nil),
+                PevSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
             ],
-            faultCard: MockupFaultCard(
+            faultCard: PevFaultCard(
                 title: "Guardrails",
                 detail: "Hide dangerous writes until parked + confirmed.",
                 accent: .orange
             )
         ),
+        placeholderScreen(
+            id: .vescMap,
+            title: "Map",
+            subtitle: "VESC map shell",
+            reason: "VESC map view is not wired yet."
+        ),
+        placeholderScreen(
+            id: .vescLogs,
+            title: "Logs",
+            subtitle: "VESC logs shell",
+            reason: "VESC logs view is not wired yet."
+        ),
     ])
 }
 
-private extension MockupScreenID {
+private extension PevScreenID {
     var isBmsScreen: Bool {
         switch self {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             true
-        case .devicePicker, .eucRide, .liveActivity, .eucGarage, .vescOnewheelRide, .vescDebug:
+        case .devicePicker, .eucRide, .eucMap, .eucTune, .liveActivity, .eucGarage, .vescDebug, .vescMap, .vescLogs:
             false
         }
     }
 }
 
-private extension MockupBmsScreenKind {
-    var presentationScreenID: MockupScreenID {
+private extension PevBmsScreenKind {
+    var presentationScreenID: PevScreenID {
         switch self {
         case .overview:
             .bmsOverview

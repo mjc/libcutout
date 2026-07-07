@@ -1,6 +1,7 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
 use std::{
+    convert::TryFrom,
     fmt,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
@@ -39,7 +40,8 @@ use cutout_protocols::{
     IdentityBannerEvidence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
     VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescReadOnlySession as CoreVescReadOnlySession,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBoardProfile as CoreVescBoardProfile,
+    VescBatteryType as CoreVescBatteryType, VescReadOnlySession as CoreVescReadOnlySession,
     identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
@@ -4290,6 +4292,68 @@ impl FalconReadOnlySession {
     }
 }
 
+/// Mobile-facing VESC board profile used to preserve geometry and pack facts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct VescBoardProfile {
+    /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
+    pub motor_pole_pairs: u8,
+
+    /// Mechanical gear reduction denominator.
+    pub gear_ratio_denominator: u8,
+
+    /// Wheel circumference used for direct-drive speed calculations.
+    pub wheel_circumference: Distance,
+
+    /// VESC battery type used for voltage-derived pack level.
+    pub battery_type: VescBatteryType,
+
+    /// Number of series cells in the pack.
+    pub battery_cells: u8,
+
+    /// Whether the controller reports battery current directly.
+    pub reports_battery_current: bool,
+}
+
+impl From<VescBoardProfile> for CoreVescBoardProfile {
+    fn from(profile: VescBoardProfile) -> Self {
+        let battery_type = match profile.battery_type {
+            VescBatteryType::LiIon => CoreVescBatteryType::LiIon,
+            VescBatteryType::LiIron => CoreVescBatteryType::LiIron,
+            VescBatteryType::LeadAcid => CoreVescBatteryType::LeadAcid,
+            VescBatteryType::Other => CoreVescBatteryType::Other(0),
+        };
+        let mut core_profile = CoreVescBoardProfile::new(
+            cutout_protocols::MotorPolePairs::new(profile.motor_pole_pairs),
+            cutout_protocols::GearRatioDenominator::new(profile.gear_ratio_denominator),
+            cutout_core::Distance::from_millimetres(profile.wheel_circumference.value),
+        )
+        .with_vesc_battery_type(
+            battery_type,
+            cutout_core::SeriesCount::new(profile.battery_cells),
+        );
+        if profile.reports_battery_current {
+            core_profile = core_profile.with_reported_battery_current();
+        }
+        core_profile
+    }
+}
+
+/// VESC battery type from motor setup config.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum VescBatteryType {
+    /// Li-ion 3.0-4.2 V pack type.
+    LiIon,
+
+    /// LiFePO4 / lithium iron 2.6-3.6 V pack type.
+    LiIron,
+
+    /// Lead-acid 2.1-2.36 V cell model.
+    LeadAcid,
+
+    /// A battery type not modeled by libcutout yet.
+    Other,
+}
+
 /// Mobile-facing wrapper for a generic VESC read-only session.
 #[derive(Debug, uniffi::Object)]
 pub struct VescReadOnlySession {
@@ -4304,6 +4368,17 @@ impl VescReadOnlySession {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(CoreVescReadOnlySession::new()),
+        })
+    }
+
+    /// Creates a VESC read-only session with explicit board geometry and pack facts.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn with_board_profile(board_profile: VescBoardProfile) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreVescReadOnlySession::with_board_profile(
+                board_profile.into(),
+            )),
         })
     }
 
@@ -6777,6 +6852,51 @@ mod tests {
         assert!(snapshot.motor_temperature.is_some());
         assert_eq!(snapshot.pitch, refloat_snapshot.pitch);
         assert_eq!(snapshot.footpad, refloat_snapshot.footpad);
+    }
+
+    #[test]
+    fn vesc_wrapper_with_board_profile_uses_geometry_and_pack_facts() {
+        let session = VescReadOnlySession::with_board_profile(VescBoardProfile {
+            motor_pole_pairs: 15,
+            gear_ratio_denominator: 1,
+            wheel_circumference: Distance { value: 2_100 },
+            battery_type: VescBatteryType::LiIon,
+            battery_cells: 20,
+            reports_battery_current: true,
+        });
+
+        let link_result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: ms(1),
+            max_write_len: Some(mobile_write_len(185)),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert_eq!(link_result.error, None);
+
+        for (index, chunk) in [
+            LIVE_VESC_VALUES_CHUNK_0,
+            LIVE_VESC_VALUES_CHUNK_1,
+            LIVE_VESC_VALUES_CHUNK_2,
+            LIVE_VESC_VALUES_CHUNK_3,
+            LIVE_VESC_VALUES_CHUNK_4,
+            LIVE_VESC_VALUES_CHUNK_5,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            vesc_notification(
+                &session,
+                u64::try_from(index).expect("fixture index fits") + 2,
+                chunk,
+            );
+        }
+
+        let snapshot = session.current_snapshot();
+        assert!(snapshot.speed.is_some());
+        assert!(snapshot.battery_level_estimated.is_some());
+        assert!(snapshot.battery_current.is_some());
     }
 
     #[test]

@@ -15,13 +15,13 @@ private struct CutoutRideLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LiveActivityRideAttributes.self) { context in
             LockScreenRideActivityView(snapshot: context.state.snapshot)
-                .activityBackgroundTint(RideActivityPalette.background)
+                .activityBackgroundTint(PevLiveActivityPalette.background)
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
                     HStack(spacing: 5) {
-                        BrandMark(size: 15)
+                        PevLiveActivityBrandMark(size: 15)
                         Text("CUTOUT")
                             .font(.system(size: 12, weight: .bold))
                     }
@@ -30,11 +30,11 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     HStack(spacing: 5) {
                         Text(context.state.snapshot.identity.displayLabel)
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(RideActivityPalette.secondaryText)
+                            .foregroundStyle(PevLiveActivityPalette.secondaryText)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
                         Circle()
-                            .fill(context.state.snapshot.connectionState == .connected ? RideActivityPalette.connected : RideActivityPalette.warning)
+                            .fill(context.state.snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                             .frame(width: 6, height: 6)
                     }
                 }
@@ -43,7 +43,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
                 }
             } compactLeading: {
                 HStack(spacing: 4) {
-                    BrandMark(size: 18)
+                    PevLiveActivityBrandMark(size: 18)
                     Text(context.state.snapshot.speed.displayValue)
                         .font(.caption.weight(.bold))
                 }
@@ -52,11 +52,11 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     Text(context.state.snapshot.battery.displayValue)
                         .font(.caption.weight(.semibold))
                     Circle()
-                        .fill(context.state.snapshot.connectionState == .connected ? RideActivityPalette.connected : RideActivityPalette.warning)
+                        .fill(context.state.snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                         .frame(width: 5, height: 5)
                 }
             } minimal: {
-                BrandMark(size: 16)
+                PevLiveActivityBrandMark(size: 16)
             }
         }
     }

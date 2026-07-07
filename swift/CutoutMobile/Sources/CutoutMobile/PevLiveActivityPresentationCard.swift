@@ -1,19 +1,30 @@
-import CutoutMobile
 import SwiftUI
 
-enum LiveActivityPresentationStyle {
+public enum PevLiveActivityPresentationStyle {
     case compact
     case expanded
     case lockScreen
 }
 
-struct LiveActivityPresentationCard: View {
+public struct PevLiveActivityPresentationCard: View {
     let title: String
     let subtitle: String
-    let style: LiveActivityPresentationStyle
+    let style: PevLiveActivityPresentationStyle
     let snapshot: LiveActivityRideSnapshot
 
-    var body: some View {
+    public init(
+        title: String,
+        subtitle: String,
+        style: PevLiveActivityPresentationStyle,
+        snapshot: LiveActivityRideSnapshot
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.style = style
+        self.snapshot = snapshot
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
             switch style {
@@ -27,10 +38,10 @@ struct LiveActivityPresentationCard: View {
         }
         .padding(style == .compact ? 18 : 24)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LiveActivityMockupPalette.cardBackground)
+        .background(PevLiveActivityPalette.background)
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(LiveActivityMockupPalette.border, lineWidth: 1)
+                .stroke(PevLiveActivityPalette.border, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
@@ -39,10 +50,10 @@ struct LiveActivityPresentationCard: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.headline.weight(.semibold))
-                .foregroundStyle(LiveActivityMockupPalette.primaryText)
+                .foregroundStyle(PevLiveActivityPalette.primaryText)
             Text(subtitle)
                 .font(.caption)
-                .foregroundStyle(LiveActivityMockupPalette.secondaryText)
+                .foregroundStyle(PevLiveActivityPalette.secondaryText)
         }
     }
 
@@ -51,13 +62,13 @@ struct LiveActivityPresentationCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(snapshot.identity.displayLabel)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(LiveActivityMockupPalette.secondaryText)
+                    .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 Text(snapshot.speed.displayValue)
                     .font(.system(size: 34, weight: .bold, design: .rounded))
-                    .foregroundStyle(LiveActivityMockupPalette.primaryText)
+                    .foregroundStyle(PevLiveActivityPalette.primaryText)
                 Text(snapshot.connectionState.rawValue)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(LiveActivityMockupPalette.secondaryText)
+                    .foregroundStyle(PevLiveActivityPalette.secondaryText)
             }
 
             Spacer()
@@ -73,23 +84,23 @@ struct LiveActivityPresentationCard: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(snapshot.identity.displayLabel)
                 .font(.callout.weight(.semibold))
-                .foregroundStyle(LiveActivityMockupPalette.secondaryText)
+                .foregroundStyle(PevLiveActivityPalette.secondaryText)
 
             Text(snapshot.speed.displayValue)
                 .font(.system(size: 52, weight: .bold, design: .rounded))
-                .foregroundStyle(LiveActivityMockupPalette.primaryText)
+                .foregroundStyle(PevLiveActivityPalette.primaryText)
 
-            LazyVGrid(columns: [
+            PevDashboardGrid(columns: [
                 GridItem(.flexible(), spacing: 12),
                 GridItem(.flexible(), spacing: 12),
             ], spacing: 12) {
                 ForEach(snapshot.visibleValues, id: \.label) { value in
                     PevLiveActivityValueCell(
                         value: value,
-                        tint: LiveActivityMockupPalette.accent,
-                        textColor: LiveActivityMockupPalette.primaryText,
-                        secondaryTextColor: LiveActivityMockupPalette.secondaryText,
-                        background: LiveActivityMockupPalette.tileBackground,
+                        tint: PevLiveActivityPalette.accent,
+                        textColor: PevLiveActivityPalette.primaryText,
+                        secondaryTextColor: PevLiveActivityPalette.secondaryText,
+                        background: PevLiveActivityPalette.cellBackground,
                         showsStateText: true
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -104,15 +115,15 @@ struct LiveActivityPresentationCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(snapshot.identity.displayLabel)
                         .font(.headline.weight(.semibold))
-                        .foregroundStyle(LiveActivityMockupPalette.primaryText)
+                        .foregroundStyle(PevLiveActivityPalette.primaryText)
                     Text(snapshot.connectionState.rawValue)
                         .font(.caption)
-                        .foregroundStyle(LiveActivityMockupPalette.secondaryText)
+                        .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 }
                 Spacer()
                 Text(snapshot.speed.displayValue)
                     .font(.system(size: 48, weight: .bold, design: .rounded))
-                    .foregroundStyle(LiveActivityMockupPalette.primaryText)
+                    .foregroundStyle(PevLiveActivityPalette.primaryText)
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -140,23 +151,12 @@ struct LiveActivityPresentationCard: View {
     private func liveMetric(_ value: LiveActivityRideValue) -> some View {
         PevLiveActivityValueCell(
             value: value,
-            tint: LiveActivityMockupPalette.accent,
-            textColor: LiveActivityMockupPalette.primaryText,
-            secondaryTextColor: LiveActivityMockupPalette.secondaryText,
-            background: LiveActivityMockupPalette.tileBackground,
+            tint: PevLiveActivityPalette.accent,
+            textColor: PevLiveActivityPalette.primaryText,
+            secondaryTextColor: PevLiveActivityPalette.secondaryText,
+            background: PevLiveActivityPalette.cellBackground,
             showsStateText: true
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
-}
-
-enum LiveActivityMockupPalette {
-    static let background = Color(red: 0.06, green: 0.08, blue: 0.12)
-    static let cardBackground = Color(red: 0.10, green: 0.12, blue: 0.17)
-    static let tileBackground = Color(red: 0.14, green: 0.17, blue: 0.23)
-    static let border = Color.white.opacity(0.10)
-    static let accent = Color(red: 0.26, green: 0.70, blue: 0.96)
-    static let muted = Color.white.opacity(0.25)
-    static let primaryText = Color.white
-    static let secondaryText = Color.white.opacity(0.72)
 }

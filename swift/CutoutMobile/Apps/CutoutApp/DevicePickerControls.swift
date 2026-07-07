@@ -19,12 +19,12 @@ struct ScanStatusPill: View {
                         .opacity(!isScanning || index == phase ? 1 : 0.32)
                 }
             }
-            .foregroundStyle(MockupColors.yellow)
+            .foregroundStyle(PevColors.yellow)
         }
         .padding(.horizontal, 22 * scale)
         .frame(height: 64 * scale)
         .frame(maxWidth: .infinity)
-        .background(CardBackground(cornerRadius: 28 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
         .task(id: isScanning) {
             guard isScanning else { return }
             while !Task.isCancelled {
@@ -32,22 +32,6 @@ struct ScanStatusPill: View {
                 phase = (phase + 1) % 3
             }
         }
-    }
-}
-
-struct SectionLabel: View {
-    let title: String
-    let scale: CGFloat
-
-    init(_ title: String, scale: CGFloat) {
-        self.title = title
-        self.scale = scale
-    }
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 15 * scale, weight: .semibold))
-            .foregroundStyle(MockupColors.muted)
     }
 }
 
@@ -81,39 +65,23 @@ struct PickerDeviceRow: View {
 
             Spacer(minLength: 6 * scale)
 
-            ActionBadge(state: row.state, scale: scale)
+            PevDashboardStatusPill(
+                title: row.state.actionTitle,
+                scale: scale,
+                fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
+                foreground: row.state.isSupported ? .black : PevColors.muted,
+                stroke: row.state.isSupported ? nil : PevColors.cardStroke,
+                width: row.state.isSupported ? 76 : 64,
+                fontSize: 15,
+                horizontalPadding: row.state.isSupported ? 10 : 8,
+                height: row.state.isSupported ? 38 : 30,
+                fixedHorizontal: true
+            )
         }
         .padding(.horizontal, 18 * scale)
         .frame(height: 92 * scale)
         .frame(maxWidth: .infinity)
-        .background(CardBackground(cornerRadius: 26 * scale))
-    }
-}
-
-struct RecordOnlyButtonLabel: View {
-    let title: String
-    let scale: CGFloat
-    let isEnabled: Bool
-
-    var body: some View {
-        HStack(spacing: 8 * scale) {
-            Image(systemName: "record.circle")
-                .font(.system(size: 14 * scale, weight: .bold))
-            Text(title)
-                .font(.system(size: 13 * scale, weight: .bold))
-        }
-        .foregroundStyle(isEnabled ? MockupColors.yellow : MockupColors.muted)
-        .frame(maxWidth: .infinity)
-        .frame(height: 36 * scale)
-        .background(
-            RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
-                .fill(isEnabled ? MockupColors.warningFill : MockupColors.disabledFill)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8 * scale, style: .continuous)
-                        .stroke(isEnabled ? MockupColors.warningStroke : MockupColors.cardStroke, lineWidth: 1 * scale)
-                )
-        )
-        .contentShape(Rectangle())
+        .background(PevDashboardCardBackground(cornerRadius: 26 * scale))
     }
 }
 
@@ -125,37 +93,27 @@ struct ManualPickerRow: View {
         HStack {
             Text(row.title)
                 .font(.system(size: 15 * scale, weight: .semibold))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PevColors.muted)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Spacer()
-            ActionBadge(state: row.state, scale: scale)
+            PevDashboardStatusPill(
+                title: row.state.actionTitle,
+                scale: scale,
+                fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
+                foreground: row.state.isSupported ? .black : PevColors.muted,
+                stroke: row.state.isSupported ? nil : PevColors.cardStroke,
+                width: row.state.isSupported ? 76 : 64,
+                fontSize: 15,
+                horizontalPadding: row.state.isSupported ? 10 : 8,
+                height: row.state.isSupported ? 38 : 30,
+                fixedHorizontal: true
+            )
         }
         .padding(.horizontal, 22 * scale)
         .frame(height: 64 * scale)
         .frame(maxWidth: .infinity)
-        .background(CardBackground(cornerRadius: 24 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
         .padding(.top, 2 * scale)
-    }
-}
-
-struct ActionBadge: View {
-    let state: DevicePickerRowState
-    let scale: CGFloat
-
-    var body: some View {
-        Text(state.actionTitle)
-            .font(.system(size: 15 * scale, weight: .bold))
-            .foregroundStyle(state.isSupported ? .black : MockupColors.muted)
-            .frame(width: state.isSupported ? 76 * scale : 64 * scale)
-            .frame(height: state.isSupported ? 38 * scale : 30 * scale)
-            .background(
-                Capsule()
-                    .fill(state.isSupported ? MockupColors.yellow : MockupColors.disabledFill)
-            )
-            .overlay(
-                Capsule()
-                    .stroke(MockupColors.cardStroke, lineWidth: state.isSupported ? 0 : 1)
-            )
     }
 }

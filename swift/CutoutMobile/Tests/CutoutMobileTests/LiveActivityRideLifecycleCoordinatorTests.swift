@@ -57,18 +57,18 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
     func testFixtureSnapshotCanEnterThePipeline() {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
-        let snapshot = LiveActivityRideSnapshot.fixture(
-            identity: .fixture(label: "Lynx-S"),
-            speed: .available(label: "Speed", value: "27", unit: "mph", source: .fixture),
-            battery: .available(label: "Battery", value: "68", unit: "%", source: .fixture),
-            packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .fixture),
-            pwm: .available(label: "PWM", value: "54", unit: "%", source: .fixture),
-            mode: .available(label: "Mode", value: "Sport", unit: nil, source: .fixture),
-            duration: .available(label: "Duration", value: "18:42", unit: nil, source: .fixture),
-            distance: .available(label: "Distance", value: "7.8", unit: "mi", source: .fixture),
-            headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .fixture),
-            beeps: .available(label: "Beeps", value: "Beeps armed", unit: nil, source: .fixture),
-            temperature: .available(label: "Temp", value: "34", unit: "°C", source: .fixture)
+        let snapshot = LiveActivityRideSnapshot.demo(
+            identity: .demo(label: "Lynx-S"),
+            speed: .available(label: "Speed", value: "27", unit: "mph", source: .demo),
+            battery: .available(label: "Battery", value: "68", unit: "%", source: .demo),
+            packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .demo),
+            pwm: .available(label: "PWM", value: "54", unit: "%", source: .demo),
+            mode: .available(label: "Mode", value: "Sport", unit: nil, source: .demo),
+            duration: .available(label: "Duration", value: "18:42", unit: nil, source: .demo),
+            distance: .available(label: "Distance", value: "7.8", unit: "mi", source: .demo),
+            headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .demo),
+            beeps: .available(label: "Beeps", value: "Beeps armed", unit: nil, source: .demo),
+            temperature: .available(label: "Temp", value: "34", unit: "°C", source: .demo)
         )
 
         coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
@@ -110,17 +110,17 @@ private final class RecordingLiveActivityRideLifecycleManager: LiveActivityRideL
 }
 
 private func fixtureSnapshot(label: String, speedMph: Double) -> LiveActivityRideSnapshot {
-    LiveActivityRideSnapshot.fixture(
-        identity: .fixture(label: label),
-        speed: .available(label: "Speed", value: String(format: "%.1f", speedMph), unit: "mph", source: .fixture),
-        battery: .available(label: "Battery", value: "68", unit: "%", source: .fixture),
-        packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .fixture),
-        pwm: .available(label: "PWM", value: "54", unit: "%", source: .fixture),
-        mode: .available(label: "Mode", value: "Sport", unit: nil, source: .fixture),
-        duration: .available(label: "Duration", value: "18:42", unit: nil, source: .fixture),
-        distance: .available(label: "Distance", value: "7.8", unit: "mi", source: .fixture),
-        headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .fixture),
-        beeps: .available(label: "Beeps", value: "Beeps armed", unit: nil, source: .fixture),
-        temperature: .available(label: "Temp", value: "34", unit: "°C", source: .fixture)
+    LiveActivityRideSnapshot.demo(
+        identity: .demo(label: label),
+        speed: .available(label: "Speed", value: String(format: "%.1f", speedMph), unit: "mph", source: .demo),
+        battery: .available(label: "Battery", value: "68", unit: "%", source: .demo),
+        packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .demo),
+        pwm: .available(label: "PWM", value: "54", unit: "%", source: .demo),
+        mode: .available(label: "Mode", value: "Sport", unit: nil, source: .demo),
+        duration: .available(label: "Duration", value: "18:42", unit: nil, source: .demo),
+        distance: .available(label: "Distance", value: "7.8", unit: "mi", source: .demo),
+        headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .demo),
+        beeps: .available(label: "Beeps", value: "Beeps armed", unit: nil, source: .demo),
+        temperature: .available(label: "Temp", value: "34", unit: "°C", source: .demo)
     )
 }

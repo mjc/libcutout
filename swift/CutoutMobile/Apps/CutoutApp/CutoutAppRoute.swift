@@ -3,50 +3,55 @@ import Foundation
 
 enum CutoutAppRoute: Equatable {
     case devicePicker
-    case ride
+    case eucRide
+    case eucMap
+    case eucTune
     case liveActivity
-    case pack
+    case eucPack(PevScreenID)
     case vescRide
+    case vescDebug
+    case vescMap
+    case vescLogs
     case capture
-    case mockup(MockupScreenID)
-
-    var allowsFixtureFallback: Bool {
-        if case .mockup = self {
-            return true
-        }
-        return false
-    }
 
     static func initialRoute(
         arguments: [String] = CommandLine.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> CutoutAppRoute {
-        if let id = previewScreenID(arguments: arguments, environment: environment) {
-            return .mockup(id)
+        if let id = configuredScreenID(arguments: arguments, environment: environment) {
+            return route(for: id)
         }
 
         return .devicePicker
     }
 
-    static func route(for screenID: MockupScreenID) -> CutoutAppRoute {
+    static func route(for screenID: PevScreenID) -> CutoutAppRoute {
         switch screenID {
         case .devicePicker:
             .devicePicker
         case .eucRide:
-            .ride
+            .eucRide
+        case .eucMap:
+            .eucMap
+        case .eucTune:
+            .eucTune
         case .liveActivity:
-            .mockup(.liveActivity)
+            .liveActivity
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData, .eucGarage:
-            .pack
-        case .vescOnewheelRide, .vescDebug:
-            .mockup(screenID)
+            .eucPack(screenID)
+        case .vescDebug:
+            .vescDebug
+        case .vescMap:
+            .vescMap
+        case .vescLogs:
+            .vescLogs
         }
     }
 
     static func route(for connectionRoute: DevicePickerConnectionRoute?) -> CutoutAppRoute {
         switch connectionRoute {
         case .electricUnicycle?:
-            .ride
+            .eucRide
         case .vescOnewheel?:
             .vescRide
         case nil:
@@ -54,25 +59,19 @@ enum CutoutAppRoute: Equatable {
         }
     }
 
-    private static func previewScreenID(arguments: [String], environment: [String: String]) -> MockupScreenID? {
+    private static func configuredScreenID(arguments: [String], environment: [String: String]) -> PevScreenID? {
         if let id = screenID(after: "--preview-screen", in: arguments) {
             return id
         }
-        if let id = screenID(after: "--mockup-screen", in: arguments) {
-            return id
-        }
-        if let value = environment["CUTOUT_PREVIEW_SCREEN"], let id = MockupScreenID(rawValue: value) {
-            return id
-        }
-        if let value = environment["CUTOUT_MOCKUP_SCREEN"], let id = MockupScreenID(rawValue: value) {
+        if let value = environment["CUTOUT_PREVIEW_SCREEN"], let id = PevScreenID(rawValue: value) {
             return id
         }
         return nil
     }
 
-    private static func screenID(after flag: String, in arguments: [String]) -> MockupScreenID? {
+    private static func screenID(after flag: String, in arguments: [String]) -> PevScreenID? {
         guard let index = arguments.firstIndex(of: flag),
               arguments.indices.contains(index + 1) else { return nil }
-        return MockupScreenID(rawValue: arguments[index + 1])
+        return PevScreenID(rawValue: arguments[index + 1])
     }
 }

@@ -11,10 +11,9 @@
 			111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */; };
 			111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */; };
 			111111111111111111111129 /* Apps/CutoutApp/CutoutAppRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111128 /* Apps/CutoutApp/CutoutAppRoute.swift */; };
-			11111111111111111111112A /* Apps/CutoutApp/LiveActivityMockupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111127 /* Apps/CutoutApp/LiveActivityMockupView.swift */; };
 			300000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift */; };
 			300000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */; };
-			300000000000000000000003 /* Apps/CutoutApp/BmsMockupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000003 /* Apps/CutoutApp/BmsMockupViews.swift */; };
+			300000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */; };
 			300000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */; };
 			300000000000000000000005 /* Apps/CutoutApp/BmsNoDataComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000005 /* Apps/CutoutApp/BmsNoDataComponents.swift */; };
 			300000000000000000000006 /* Apps/CutoutApp/BmsNoDataLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000006 /* Apps/CutoutApp/BmsNoDataLayout.swift */; };
@@ -29,12 +28,16 @@
 			30000000000000000000000F /* Apps/CutoutApp/EucGarageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000F /* Apps/CutoutApp/EucGarageViews.swift */; };
 			300000000000000000000010 /* Apps/CutoutApp/EucReadbackViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000010 /* Apps/CutoutApp/EucReadbackViews.swift */; };
 			300000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */; };
-			300000000000000000000012 /* Apps/CutoutApp/LiveActivityPresentationCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000012 /* Apps/CutoutApp/LiveActivityPresentationCard.swift */; };
-			300000000000000000000013 /* Apps/CutoutApp/MockupScaffoldViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000013 /* Apps/CutoutApp/MockupScaffoldViews.swift */; };
-			300000000000000000000014 /* Apps/CutoutApp/MockupScreenContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000014 /* Apps/CutoutApp/MockupScreenContainer.swift */; };
-			300000000000000000000015 /* Apps/CutoutApp/MockupTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000015 /* Apps/CutoutApp/MockupTheme.swift */; };
+			300000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */; };
+			300000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */; };
+			300000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift */; };
+			300000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */; };
 			300000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */; };
 			300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */; };
+			300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */; };
+			300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */; };
+			30000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */; };
+			30000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift */; };
 		111111111111111111111114 /* Apps/CutoutApp/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */; };
 		25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 111111111111111111111181 /* CutoutMobile */; };
 		222222222222222222222111 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */; };
@@ -74,10 +77,9 @@
 			111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppModel.swift; sourceTree = SOURCE_ROOT; };
 			111111111111111111111124 /* CutoutApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CutoutApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 			111111111111111111111128 /* Apps/CutoutApp/CutoutAppRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppRoute.swift; sourceTree = SOURCE_ROOT; };
-			111111111111111111111127 /* Apps/CutoutApp/LiveActivityMockupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LiveActivityMockupView.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppDisplayFormatters.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsCellMapLayouts.swift; sourceTree = SOURCE_ROOT; };
-			400000000000000000000003 /* Apps/CutoutApp/BmsMockupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsMockupViews.swift; sourceTree = SOURCE_ROOT; };
+			400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsScreenViews.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsNoDataCards.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000005 /* Apps/CutoutApp/BmsNoDataComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsNoDataComponents.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000006 /* Apps/CutoutApp/BmsNoDataLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsNoDataLayout.swift; sourceTree = SOURCE_ROOT; };
@@ -92,12 +94,16 @@
 			40000000000000000000000F /* Apps/CutoutApp/EucGarageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/EucGarageViews.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000010 /* Apps/CutoutApp/EucReadbackViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/EucReadbackViews.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/EucRideViews.swift; sourceTree = SOURCE_ROOT; };
-			400000000000000000000012 /* Apps/CutoutApp/LiveActivityPresentationCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/LiveActivityPresentationCard.swift; sourceTree = SOURCE_ROOT; };
-			400000000000000000000013 /* Apps/CutoutApp/MockupScaffoldViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/MockupScaffoldViews.swift; sourceTree = SOURCE_ROOT; };
-			400000000000000000000014 /* Apps/CutoutApp/MockupScreenContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/MockupScreenContainer.swift; sourceTree = SOURCE_ROOT; };
-			400000000000000000000015 /* Apps/CutoutApp/MockupTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/MockupTheme.swift; sourceTree = SOURCE_ROOT; };
+			400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTitleBlock.swift; sourceTree = SOURCE_ROOT; };
+			400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardScaffoldViews.swift; sourceTree = SOURCE_ROOT; };
+			400000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenContainer.swift; sourceTree = SOURCE_ROOT; };
+			400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTheme.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescDebugViews.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideViews.swift; sourceTree = SOURCE_ROOT; };
+			400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideHeroSection.swift; sourceTree = SOURCE_ROOT; };
+			400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideDashboardShell.swift; sourceTree = SOURCE_ROOT; };
+			40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PlaceholderScreenViews.swift; sourceTree = SOURCE_ROOT; };
+			40000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideTabs.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Apps/CutoutApp/Assets.xcassets; sourceTree = SOURCE_ROOT; };
 		111111111111111111111126 /* Apps/CutoutApp/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/Info.plist; sourceTree = SOURCE_ROOT; };
 		222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift; sourceTree = SOURCE_ROOT; };
@@ -145,10 +151,9 @@
 					111111111111111111111122 /* Apps/CutoutApp/ContentView.swift */,
 					111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
 					111111111111111111111128 /* Apps/CutoutApp/CutoutAppRoute.swift */,
-					111111111111111111111127 /* Apps/CutoutApp/LiveActivityMockupView.swift */,
 					400000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift */,
 					400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */,
-					400000000000000000000003 /* Apps/CutoutApp/BmsMockupViews.swift */,
+					400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */,
 					400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */,
 					400000000000000000000005 /* Apps/CutoutApp/BmsNoDataComponents.swift */,
 					400000000000000000000006 /* Apps/CutoutApp/BmsNoDataLayout.swift */,
@@ -163,12 +168,16 @@
 					40000000000000000000000F /* Apps/CutoutApp/EucGarageViews.swift */,
 					400000000000000000000010 /* Apps/CutoutApp/EucReadbackViews.swift */,
 					400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */,
-					400000000000000000000012 /* Apps/CutoutApp/LiveActivityPresentationCard.swift */,
-					400000000000000000000013 /* Apps/CutoutApp/MockupScaffoldViews.swift */,
-					400000000000000000000014 /* Apps/CutoutApp/MockupScreenContainer.swift */,
-					400000000000000000000015 /* Apps/CutoutApp/MockupTheme.swift */,
+					400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */,
+					400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */,
+					400000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift */,
+					400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */,
 					400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */,
 					400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */,
+					400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */,
+					400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */,
+					40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */,
+					40000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift */,
 				);
 				path = Sources;
 				sourceTree = "<group>";
@@ -320,10 +329,9 @@
 					111111111111111111111112 /* Apps/CutoutApp/ContentView.swift in Sources */,
 					111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
 					111111111111111111111129 /* Apps/CutoutApp/CutoutAppRoute.swift in Sources */,
-					11111111111111111111112A /* Apps/CutoutApp/LiveActivityMockupView.swift in Sources */,
 					300000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift in Sources */,
 					300000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift in Sources */,
-					300000000000000000000003 /* Apps/CutoutApp/BmsMockupViews.swift in Sources */,
+					300000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift in Sources */,
 					300000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift in Sources */,
 					300000000000000000000005 /* Apps/CutoutApp/BmsNoDataComponents.swift in Sources */,
 					300000000000000000000006 /* Apps/CutoutApp/BmsNoDataLayout.swift in Sources */,
@@ -338,12 +346,16 @@
 					30000000000000000000000F /* Apps/CutoutApp/EucGarageViews.swift in Sources */,
 					300000000000000000000010 /* Apps/CutoutApp/EucReadbackViews.swift in Sources */,
 					300000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift in Sources */,
-					300000000000000000000012 /* Apps/CutoutApp/LiveActivityPresentationCard.swift in Sources */,
-					300000000000000000000013 /* Apps/CutoutApp/MockupScaffoldViews.swift in Sources */,
-					300000000000000000000014 /* Apps/CutoutApp/MockupScreenContainer.swift in Sources */,
-					300000000000000000000015 /* Apps/CutoutApp/MockupTheme.swift in Sources */,
+					300000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift in Sources */,
+					300000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift in Sources */,
+					300000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift in Sources */,
+					300000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift in Sources */,
 					300000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift in Sources */,
 					300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */,
+					300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */,
+					300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */,
+					30000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift in Sources */,
+					30000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};

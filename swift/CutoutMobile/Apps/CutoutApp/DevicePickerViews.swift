@@ -18,24 +18,22 @@ struct DevicePickerView: View {
     }
 
     var body: some View {
-        MockupScreenScaffold(
+        PevDashboardScaffold(
             sectionTitle: "setup",
             bottomPadding: 24,
             allowsVerticalScroll: false,
             contentSpacing: 18,
             horizontalPadding: 18
         ) { scale, _ in
-            VStack(alignment: .leading, spacing: 7 * scale) {
-                Text("Choose device")
-                    .font(.system(size: 34 * scale, weight: .bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                Text("Nearby Bluetooth devices")
-                    .font(.system(size: 15 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.muted)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            PevScreenTitleBlock(
+                title: "Choose device",
+                subtitle: "Nearby Bluetooth devices",
+                scale: scale,
+                titleFontSize: 34,
+                subtitleFontSize: 15,
+                titleMinimumScaleFactor: 0.78,
+                subtitleLineLimit: 2
+            )
 
             ScanStatusPill(
                 text: renderedScanState.statusText,
@@ -45,23 +43,30 @@ struct DevicePickerView: View {
                 .padding(.top, 4 * scale)
 
             if let captureStatusText {
-                CaptureStatusPill(text: captureStatusText, scale: scale)
+                PevStatusStrip(
+                    text: captureStatusText,
+                    scale: scale,
+                    indicatorColor: PevColors.green,
+                    background: PevColors.cardFill,
+                    foreground: PevColors.primaryText,
+                    cornerRadius: 18
+                )
             }
 
             VStack(alignment: .leading, spacing: 8 * scale) {
-                SectionLabel("Device kind for capture", scale: scale)
+                PevDashboardSectionLabel(title: "Device kind for capture", scale: scale)
                 TextField("euc nosfet aeon", text: $recordOnlyDeviceKind)
                     .font(.system(size: 17 * scale, weight: .semibold))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.horizontal, 14 * scale)
                     .frame(height: 46 * scale)
-                    .background(CardBackground(cornerRadius: 8 * scale))
+                    .background(PevDashboardCardBackground(cornerRadius: 8 * scale))
             }
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18 * scale) {
                     if !sections.supported.isEmpty {
-                        SectionLabel("Supported now", scale: scale)
+                        PevDashboardSectionLabel(title: "Supported now", scale: scale)
                             .padding(.top, 8 * scale)
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.supported) { row in
@@ -74,12 +79,26 @@ struct DevicePickerView: View {
                                     .buttonStyle(.plain)
                                     .contentShape(Rectangle())
 
-                                    Button {
+                                    PevActionButton(
+                                        title: row.captureActionTitle,
+                                        systemImageName: "record.circle",
+                                        scale: scale,
+                                        isEnabled: hasRecordOnlyDeviceKind,
+                                        fillsAvailableWidth: true,
+                                        width: nil,
+                                        height: 36 * scale,
+                                        cornerRadius: 8 * scale,
+                                        horizontalPadding: 0,
+                                        iconSpacing: 8 * scale,
+                                        foregroundEnabled: PevColors.yellow,
+                                        foregroundDisabled: PevColors.muted,
+                                        fillEnabled: PevColors.warningFill,
+                                        fillDisabled: PevColors.disabledFill,
+                                        strokeEnabled: PevColors.warningStroke,
+                                        strokeDisabled: PevColors.cardStroke
+                                    ) {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
-                                    } label: {
-                                        RecordOnlyButtonLabel(title: row.captureActionTitle, scale: scale, isEnabled: hasRecordOnlyDeviceKind)
                                     }
-                                    .buttonStyle(.plain)
                                     .disabled(!hasRecordOnlyDeviceKind)
                                 }
                             }
@@ -87,19 +106,33 @@ struct DevicePickerView: View {
                     }
 
                     if !sections.probeRecommended.isEmpty {
-                        SectionLabel("Probe first", scale: scale)
+                        PevDashboardSectionLabel(title: "Probe first", scale: scale)
                             .padding(.top, 8 * scale)
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.probeRecommended) { row in
                                 VStack(spacing: 8 * scale) {
                                     PickerDeviceRow(row: row, scale: scale)
 
-                                    Button {
+                                    PevActionButton(
+                                        title: row.captureActionTitle,
+                                        systemImageName: "record.circle",
+                                        scale: scale,
+                                        isEnabled: hasRecordOnlyDeviceKind,
+                                        fillsAvailableWidth: true,
+                                        width: nil,
+                                        height: 36 * scale,
+                                        cornerRadius: 8 * scale,
+                                        horizontalPadding: 0,
+                                        iconSpacing: 8 * scale,
+                                        foregroundEnabled: PevColors.yellow,
+                                        foregroundDisabled: PevColors.muted,
+                                        fillEnabled: PevColors.warningFill,
+                                        fillDisabled: PevColors.disabledFill,
+                                        strokeEnabled: PevColors.warningStroke,
+                                        strokeDisabled: PevColors.cardStroke
+                                    ) {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
-                                    } label: {
-                                        RecordOnlyButtonLabel(title: row.captureActionTitle, scale: scale, isEnabled: hasRecordOnlyDeviceKind)
                                     }
-                                    .buttonStyle(.plain)
                                     .disabled(!hasRecordOnlyDeviceKind)
                                 }
                             }
@@ -107,19 +140,33 @@ struct DevicePickerView: View {
                     }
 
                     if !sections.unsupported.isEmpty {
-                        SectionLabel("Record only", scale: scale)
+                        PevDashboardSectionLabel(title: "Record only", scale: scale)
                             .padding(.top, 8 * scale)
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.unsupported) { row in
                                 VStack(spacing: 8 * scale) {
                                     PickerDeviceRow(row: row, scale: scale)
 
-                                    Button {
+                                    PevActionButton(
+                                        title: row.captureActionTitle,
+                                        systemImageName: "record.circle",
+                                        scale: scale,
+                                        isEnabled: hasRecordOnlyDeviceKind,
+                                        fillsAvailableWidth: true,
+                                        width: nil,
+                                        height: 36 * scale,
+                                        cornerRadius: 8 * scale,
+                                        horizontalPadding: 0,
+                                        iconSpacing: 8 * scale,
+                                        foregroundEnabled: PevColors.yellow,
+                                        foregroundDisabled: PevColors.muted,
+                                        fillEnabled: PevColors.warningFill,
+                                        fillDisabled: PevColors.disabledFill,
+                                        strokeEnabled: PevColors.warningStroke,
+                                        strokeDisabled: PevColors.cardStroke
+                                    ) {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
-                                    } label: {
-                                        RecordOnlyButtonLabel(title: row.captureActionTitle, scale: scale, isEnabled: hasRecordOnlyDeviceKind)
                                     }
-                                    .buttonStyle(.plain)
                                     .disabled(!hasRecordOnlyDeviceKind)
                                 }
                             }

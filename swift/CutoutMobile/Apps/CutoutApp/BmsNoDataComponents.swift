@@ -1,16 +1,5 @@
 import SwiftUI
 
-struct BmsNoDataLabel: View {
-    let text: String
-    let scale: CGFloat
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 12 * scale, weight: .bold))
-            .foregroundStyle(MockupColors.muted)
-    }
-}
-
 struct BmsNoDataMetric: View {
     let value: String
     let unit: String
@@ -27,27 +16,12 @@ struct BmsNoDataMetric: View {
                     .minimumScaleFactor(0.7)
                 Text(unit)
                     .font(.system(size: 18 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
+                    .foregroundStyle(PevColors.muted)
             }
             Text(label)
                 .font(.system(size: 12 * scale, weight: .medium))
-                .foregroundStyle(MockupColors.muted)
+                .foregroundStyle(PevColors.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct BmsNoDataDashedCard: View {
-    let cornerRadius: CGFloat
-    let scale: CGFloat
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(MockupColors.cardFill)
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5 * scale, 5 * scale]))
-                    .foregroundStyle(MockupColors.cardStroke)
-            )
     }
 }

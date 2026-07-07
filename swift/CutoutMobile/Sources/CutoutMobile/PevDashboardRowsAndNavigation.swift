@@ -78,11 +78,43 @@ public struct PevDashboardKeyValueRows: View {
     }
 }
 
+public struct PevDashboardSectionLabel: View {
+    let title: String
+    let scale: CGFloat
+    let fontSize: CGFloat
+    let weight: Font.Weight
+    let color: Color
+
+    public init(
+        title: String,
+        scale: CGFloat,
+        fontSize: CGFloat = 15,
+        weight: Font.Weight = .semibold,
+        color: Color = PevDashboardColors.mutedText
+    ) {
+        self.title = title
+        self.scale = scale
+        self.fontSize = fontSize
+        self.weight = weight
+        self.color = color
+    }
+
+    public var body: some View {
+        Text(title)
+            .font(.system(size: fontSize * scale, weight: weight))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+}
+
 public struct PevDashboardStatusPill: View {
     let title: String
     let scale: CGFloat
     let fill: Color
     let foreground: Color
+    let stroke: Color?
+    let width: CGFloat?
     let fontSize: CGFloat
     let horizontalPadding: CGFloat
     let height: CGFloat
@@ -93,6 +125,8 @@ public struct PevDashboardStatusPill: View {
         scale: CGFloat,
         fill: Color,
         foreground: Color = .black,
+        stroke: Color? = nil,
+        width: CGFloat? = nil,
         fontSize: CGFloat = 14,
         horizontalPadding: CGFloat = 12,
         height: CGFloat = 30,
@@ -102,6 +136,8 @@ public struct PevDashboardStatusPill: View {
         self.scale = scale
         self.fill = fill
         self.foreground = foreground
+        self.stroke = stroke
+        self.width = width
         self.fontSize = fontSize
         self.horizontalPadding = horizontalPadding
         self.height = height
@@ -116,8 +152,15 @@ public struct PevDashboardStatusPill: View {
             .minimumScaleFactor(0.75)
             .fixedSize(horizontal: fixedHorizontal, vertical: false)
             .padding(.horizontal, horizontalPadding * scale)
+            .frame(width: width.map { $0 * scale })
             .frame(height: height * scale)
-            .background(Capsule().fill(fill))
+            .background(
+                Capsule()
+                    .fill(fill)
+                    .overlay(
+                        Capsule().stroke(stroke ?? .clear, lineWidth: stroke == nil ? 0 : 1)
+                    )
+            )
     }
 }
 
@@ -166,5 +209,84 @@ public struct PevDashboardTabLabel: View {
                 .frame(width: indicatorWidth * scale, height: indicatorHeight * scale)
         }
         .contentShape(Rectangle())
+    }
+}
+
+public struct PevDashboardTabStrip: View {
+    let tabs: [PevScreenTab]
+    let scale: CGFloat
+    let selectedColor: Color
+    let unselectedColor: Color
+    let selectScreen: (PevScreenID) -> Void
+
+    public init(
+        tabs: [PevScreenTab],
+        scale: CGFloat,
+        selectedColor: Color,
+        unselectedColor: Color,
+        selectScreen: @escaping (PevScreenID) -> Void
+    ) {
+        self.tabs = tabs
+        self.scale = scale
+        self.selectedColor = selectedColor
+        self.unselectedColor = unselectedColor
+        self.selectScreen = selectScreen
+    }
+
+    public var body: some View {
+        VStack(spacing: 12 * scale) {
+            Rectangle()
+                .fill(PevDashboardColors.cardStroke)
+                .frame(width: 254 * scale, height: 1)
+
+            HStack(spacing: 0) {
+                ForEach(tabs) { tab in
+                    tabContent(tab)
+                }
+            }
+            .frame(width: 254 * scale)
+        }
+        .frame(height: 58 * scale, alignment: .top)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func tabContent(_ tab: PevScreenTab) -> some View {
+        if tab.isEnabled, let destination = tab.destinationScreenID {
+            Button {
+                selectScreen(destination)
+            } label: {
+                tabLabel(tab)
+            }
+            .buttonStyle(.plain)
+        } else {
+            tabLabel(tab)
+        }
+    }
+
+    private func tabLabel(_ tab: PevScreenTab) -> some View {
+        VStack(spacing: 4 * scale) {
+            PevDashboardTabLabel(
+                title: tab.title,
+                isSelected: tab.isSelected,
+                scale: scale,
+                selectedColor: selectedColor,
+                unselectedColor: tab.isEnabled ? unselectedColor : unselectedColor.opacity(0.75)
+            )
+
+            if let disabledReason = tab.disabledReason {
+                if disabledReason.isEmpty {
+                    EmptyView()
+                } else {
+                Text(disabledReason)
+                    .font(.system(size: 8 * scale, weight: .semibold))
+                    .foregroundStyle(PevDashboardColors.mutedText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .opacity(tab.isEnabled ? 1 : 0.45)
     }
 }

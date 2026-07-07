@@ -1,27 +1,42 @@
 import CutoutMobile
 import SwiftUI
 
-struct VescDebugMockupView: View {
-    let screen: MockupScreen
+struct VescDebugScreenView: View {
+    let screen: PevScreen
 
     var body: some View {
-        MockupScreenScaffold(sectionTitle: "VESC debug", bottomPadding: 20) { scale, columns in
-            VStack(alignment: .leading, spacing: 8 * scale) {
-                Text(screen.title)
-                    .font(.system(size: 29 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
-                Text(screen.subtitle)
-                    .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(MockupColors.muted)
-                    .lineLimit(2)
-            }
+        PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20) { scale, columns in
+            PevScreenTitleBlock(
+                title: screen.title,
+                subtitle: screen.subtitle,
+                scale: scale,
+                titleFontSize: 29,
+                subtitleFontSize: 14,
+                titleMinimumScaleFactor: 0.8,
+                subtitleLineLimit: 2
+            )
 
             if let profile = screen.deviceCard {
-                VescProfileCard(card: profile, scale: scale)
+                PevDashboardIdentityCard(
+                    title: profile.title,
+                    detail: profile.detail,
+                    scale: scale,
+                    titleFontSize: 22,
+                    detailFontSize: 13,
+                    titleMinimumScaleFactor: 0.75,
+                    detailMinimumScaleFactor: 0.72,
+                    trailingStatus: nil,
+                    trailingStatusFill: PevColors.cardStroke,
+                    trailingStatusForeground: PevColors.primaryText,
+                    trailingStatusWidth: 18,
+                    trailingStatusHeight: 32,
+                    cornerRadius: 25,
+                    height: 87
+                )
                     .padding(.top, 10 * scale)
             }
 
-            LazyVGrid(columns: columns, spacing: 20 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 20 * scale) {
                 ForEach(screen.dashboardTiles) { tile in
                     PevDashboardMetricTile(
                         label: tile.label,
@@ -40,64 +55,46 @@ struct VescDebugMockupView: View {
             if let summaryTitle = screen.summaryTitle {
                 Text(summaryTitle)
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 0)
             }
 
             if !screen.summaryRows.isEmpty {
-                EucSummaryRows(rows: screen.summaryRows, scale: scale)
+                PevDashboardKeyValueRows(
+                    rows: screen.summaryRows.map { row in
+                        PevDashboardKeyValueRow(
+                            id: row.id,
+                            label: row.label,
+                            value: row.value,
+                            valueColor: row.accent?.color
+                        )
+                    },
+                    scale: scale,
+                    fill: PevColors.cardFill,
+                    stroke: PevColors.cardStroke,
+                    labelColor: PevColors.muted,
+                    valueColor: PevColors.primaryText
+                )
             }
 
             if let guardrail = screen.faultCard {
                 Text(guardrail.title)
                     .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(MockupColors.primaryText)
+                    .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 6 * scale)
 
-                VescGuardrailCard(card: guardrail, scale: scale)
+                PevDashboardFaultDetailCard(
+                    detail: guardrail.detail,
+                    accent: guardrail.accent.color,
+                    scale: scale,
+                    fontSize: 13,
+                    horizontalAlignment: .center,
+                    horizontalPadding: 20,
+                    height: 57,
+                    cornerRadius: 18,
+                    minimumScaleFactor: 0.72
+                )
             }
         }
-    }
-}
-
-struct VescProfileCard: View {
-    let card: MockupDeviceCard
-    let scale: CGFloat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
-            Text(card.title)
-                .font(.system(size: 22 * scale, weight: .black))
-                .foregroundStyle(MockupColors.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Text(card.detail)
-                .font(.system(size: 13 * scale, weight: .bold))
-                .foregroundStyle(MockupColors.muted)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
-        .padding(.horizontal, 22 * scale)
-        .frame(height: 87 * scale, alignment: .center)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(CardBackground(cornerRadius: 25 * scale))
-    }
-}
-
-struct VescGuardrailCard: View {
-    let card: MockupFaultCard
-    let scale: CGFloat
-
-    var body: some View {
-        MockupFaultDetailCard(
-            card: card,
-            scale: scale,
-            fontSize: 13,
-            horizontalAlignment: .center,
-            horizontalPadding: 20,
-            height: 57,
-            cornerRadius: 18,
-            minimumScaleFactor: 0.72
-        )
     }
 }

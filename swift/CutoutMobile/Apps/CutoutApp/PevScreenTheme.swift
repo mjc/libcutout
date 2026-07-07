@@ -1,31 +1,15 @@
 import CutoutMobile
 import SwiftUI
 
-struct CardBackground: View {
-    let cornerRadius: CGFloat
-
-    init(cornerRadius: CGFloat = 22) {
-        self.cornerRadius = cornerRadius
-    }
-
-    var body: some View {
-        PevDashboardCardBackground(
-            cornerRadius: cornerRadius,
-            fill: MockupColors.cardFill,
-            stroke: MockupColors.cardStroke
-        )
-    }
-}
-
 extension DevicePickerRow {
     var glyphColor: Color {
         switch glyphKind {
         case .scooter:
-            MockupColors.teal
+            PevColors.teal
         case .hoverboard:
-            MockupColors.brown
+            PevColors.brown
         case .electricUnicycle, .onewheel, .systemSymbol:
-            MockupColors.yellow
+            PevColors.yellow
         }
     }
 
@@ -34,15 +18,15 @@ extension DevicePickerRow {
     }
 
     var titleColor: Color {
-        isSupported ? MockupColors.primaryText : MockupColors.disabledText
+        isSupported ? PevColors.primaryText : PevColors.disabledText
     }
 
     var secondaryTextColor: Color {
-        isSupported ? MockupColors.muted : MockupColors.disabledSecondaryText
+        isSupported ? PevColors.muted : PevColors.disabledSecondaryText
     }
 }
 
-enum MockupColors {
+enum PevColors {
     static let pageBackground = Color(red: 0.027, green: 0.031, blue: 0.043)
     static let cardFill = Color(red: 0.067, green: 0.078, blue: 0.106)
     static let cardStroke = Color(red: 0.165, green: 0.188, blue: 0.239)
@@ -65,19 +49,19 @@ enum MockupColors {
     static let iconFill = Color(red: 0.043, green: 0.051, blue: 0.071)
 }
 
-extension MockupAccent {
+extension PevAccent {
     var color: Color {
         switch self {
         case .cyan:
-            MockupColors.cyan
+            PevColors.cyan
         case .green:
-            MockupColors.green
+            PevColors.green
         case .orange:
-            MockupColors.orange
+            PevColors.orange
         case .purple:
-            MockupColors.purple
+            PevColors.purple
         case .yellow:
-            MockupColors.yellow
+            PevColors.yellow
         }
     }
 }
@@ -95,30 +79,30 @@ extension DevicePickerRowState {
     }
 }
 
-func liveSafetyBars(for state: EucRideScreenState) -> [MockupSafetyBar] {
+func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
     [
         state.pwmHeadroomPermille.map { headroomPermille in
-            return MockupSafetyBar(
+            return PevSafetyBar(
                 label: "PWM headroom",
                 value: percentageString(fromPermille: headroomPermille),
                 progress: Double(headroomPermille) / 1_000.0,
                 accent: .yellow
             )
-        } ?? MockupSafetyBar(
+        } ?? PevSafetyBar(
             label: "PWM headroom",
             value: state.pwmHeadroomApplicability == .notApplicable ? "Not applicable" : "Unavailable",
             progress: 0,
             accent: .yellow
         ),
-        MockupSafetyBar(label: "sag-adjusted energy", value: "Unavailable", progress: 0, accent: .cyan),
+        PevSafetyBar(label: "sag-adjusted energy", value: "Unavailable", progress: 0, accent: .cyan),
     ]
 }
 
-func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [MockupDashboardTile] {
+func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [PevDashboardTile] {
     let distanceUnit = RideUnits.distanceUnit(forSpeedUnit: state.speedUnit)
     return [
         telemetry.voltage.map { voltage in
-            MockupDashboardTile(
+            PevDashboardTile(
                 label: "pack",
                 value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
@@ -127,35 +111,35 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
                 } ?? "sag unavailable",
                 accent: .cyan
             )
-        } ?? MockupDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
+        } ?? PevDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
         livePowerTile(from: telemetry),
         (telemetry.controllerTemperature != nil || telemetry.motorTemperature != nil || telemetry.batteryTemperature != nil)
-            ? MockupDashboardTile(
+            ? PevDashboardTile(
                 label: "thermal",
                 value: liveThermalValue(telemetry: telemetry),
                 unit: "°C",
                 detail: liveThermalDetail(telemetry: telemetry),
                 accent: .green
             )
-            : MockupDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
+            : PevDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
         state.limpHomeRange.map { range in
-            MockupDashboardTile(
+            PevDashboardTile(
                 label: "limp-home",
                 value: decimalString(fromMillimetres: range.value, unit: distanceUnit, fractionDigits: 1),
                 unit: distanceUnit,
                 detail: "typed range estimate",
                 accent: .cyan
             )
-        } ?? MockupDashboardTile(label: "limp-home", value: "--", unit: distanceUnit, detail: "unavailable", accent: .cyan),
+        } ?? PevDashboardTile(label: "limp-home", value: "--", unit: distanceUnit, detail: "unavailable", accent: .cyan),
     ]
 }
 
-func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboardTile {
+func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
     if let voltage = telemetry.voltage,
        let current = telemetry.batteryCurrent,
        current.value != 0 {
         let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
-        return MockupDashboardTile(
+        return PevDashboardTile(
             label: "power",
             value: decimalString(
                 fromMilliwatts: milliwatts,
@@ -168,7 +152,7 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboardTile {
     }
 
     if let power = telemetry.power {
-        return MockupDashboardTile(
+        return PevDashboardTile(
             label: "power",
             value: decimalString(
                 fromMilliwatts: power.value,
@@ -180,35 +164,35 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> MockupDashboardTile {
         )
     }
 
-    return MockupDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
+    return PevDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
 }
 
 func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> String {
     switch direction {
     case .discharge:
-        fallback
+        "discharging"
     case .zero:
-        "zero signed pack flow"
+        "idle"
     case .charging:
         "charging input"
     case .regeneration:
-        "regeneration"
+        "regen"
     case .negativeUnknown:
-        "negative signed flow; charge/regen unverified"
+        "regen/discharge unverified"
     case nil:
         fallback
     }
 }
 
-func unavailableSafetyBars(from bars: [MockupSafetyBar]) -> [MockupSafetyBar] {
+func unavailableSafetyBars(from bars: [PevSafetyBar]) -> [PevSafetyBar] {
     bars.map {
-        MockupSafetyBar(label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
+        PevSafetyBar(label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
     }
 }
 
-func unavailableDashboardTiles(from tiles: [MockupDashboardTile]) -> [MockupDashboardTile] {
+func unavailableDashboardTiles(from tiles: [PevDashboardTile]) -> [PevDashboardTile] {
     tiles.map {
-        MockupDashboardTile(label: $0.label, value: "--", unit: $0.unit, detail: "unavailable", accent: $0.accent)
+        PevDashboardTile(label: $0.label, value: "--", unit: $0.unit, detail: "unavailable", accent: $0.accent)
     }
 }
 

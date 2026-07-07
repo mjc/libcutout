@@ -789,6 +789,27 @@ public struct FootpadTelemetry: Equatable, Hashable, Sendable {
     }
 }
 
+public extension FootpadTelemetry {
+    var adc1DisplayText: String {
+        formatFootpadReading(adc1Milliunits)
+    }
+
+    var adc2DisplayText: String {
+        formatFootpadReading(adc2Milliunits)
+    }
+
+    var stateDisplayText: String {
+        "state \(state)"
+    }
+}
+
+private func formatFootpadReading(_ value: Int32?) -> String {
+    guard let value else {
+        return "--"
+    }
+    return String(format: "%.2f", Double(value) / 1_000)
+}
+
 public enum VescControllerState: Equatable, Hashable, Sendable {
     case armed
     case disarmed
@@ -831,15 +852,19 @@ public enum VescVehicleKind: Equatable, Hashable, Sendable {
     case unknown
 
     public var displayName: String {
+        self == .unknown ? "VESC" : "VESC \(shortDisplayName)"
+    }
+
+    public var shortDisplayName: String {
         switch self {
         case .float:
-            "VESC Float"
+            "Float"
         case .bike:
-            "VESC Bike"
+            "Bike"
         case .skateboard:
-            "VESC Skateboard"
+            "Skateboard"
         case .electricUnicycle:
-            "VESC EUC"
+            "EUC"
         case .unknown:
             "VESC"
         }
@@ -895,6 +920,8 @@ public enum VescSubProtocol: Equatable, Hashable, Sendable {
 }
 
 public struct VescRideSnapshot: Equatable, Hashable, Sendable {
+    public static let defaultTitle = "VESC Onewheel"
+
     public let title: String
     public let vehicleKind: VescVehicleKind
     public let subProtocol: VescSubProtocol
@@ -956,7 +983,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             return nil
         }
         self.init(
-            title: title ?? "VESC Onewheel",
+            title: title ?? Self.defaultTitle,
             vehicleKind: .float,
             subProtocol: .generic,
             controllerState: .unknown,
@@ -966,7 +993,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             dutyHeadroom: telemetry.dutyHeadroom,
             dutyHeadroomApplicability: telemetry.pwmHeadroomApplicability,
             batteryVoltage: telemetry.voltage,
-            batteryCurrent: nil,
+            batteryCurrent: telemetry.batteryCurrent,
             powerFlow: telemetry.powerFlow,
             motorCurrent: telemetry.motorCurrent,
             boardAngle: telemetry.pitch,
@@ -974,6 +1001,10 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             motorTemperature: telemetry.motorTemperature,
             footpad: telemetry.footpad
         )
+    }
+
+    public var screenSubtitle: String {
+        vehicleKind.shortDisplayName
     }
 
     public var displayedDutyHeadroom: BatteryLevel? {
@@ -2703,6 +2734,10 @@ public final class VescOnewheelSession: @unchecked Sendable {
         self.inner = VescReadOnlySession()
     }
 
+    public init(boardProfile: VescBoardProfile) {
+        self.inner = VescReadOnlySession.withBoardProfile(boardProfile: boardProfile)
+    }
+
     public var diagnostics: ParserDiagnostics {
         ParserDiagnostics(inner.diagnostics())
     }
@@ -2941,6 +2976,10 @@ public enum CoreBluetoothSession: Sendable {
         .vescOnewheel(VescOnewheelSession())
     }
 
+    public static func vescOnewheel(boardProfile: VescBoardProfile) -> CoreBluetoothSession {
+        .vescOnewheel(VescOnewheelSession(boardProfile: boardProfile))
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -3166,6 +3205,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
     private var pendingRetryTimestamp: MonotonicMilliseconds?
+    private var receivedNotificationSinceLinkUp = false
 
     public init(
         session: CoreBluetoothSession,
@@ -3198,6 +3238,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     @discardableResult
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelPendingRetry()
+        receivedNotificationSinceLinkUp = false
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
         recorded.append(.linkUp(
             platformIdentifier: platformIdentifier,
@@ -3231,6 +3272,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         channel: BluetoothUuid,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> CoreBluetoothSessionStep {
+        receivedNotificationSinceLinkUp = true
         cancelPendingRetry()
         recorded.append(.notification(
             channel: channel,
@@ -3302,8 +3344,13 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             do {
                 _ = try self.handleCommand(retryCommandOnLinkUp, at: monotonicMilliseconds)
             } catch {
+                self.scheduleRetryIfNeeded(at: monotonicMilliseconds)
                 return
             }
+            guard !self.receivedNotificationSinceLinkUp else {
+                return
+            }
+            self.scheduleRetryIfNeeded(at: monotonicMilliseconds)
         }
         pendingRetry = retry
         DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay, execute: retry)

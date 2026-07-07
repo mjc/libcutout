@@ -6,7 +6,7 @@ struct ContentView: View {
     @ObservedObject var model: CutoutAppModel
     @State private var route: CutoutAppRoute
 
-    private let catalog = MockupScreenCatalog.v2
+    private let catalog = PevScreenCatalog.v2
 
     init(model: CutoutAppModel) {
         self.model = model
@@ -15,7 +15,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            MockupColors.pageBackground
+            PevColors.pageBackground
                 .ignoresSafeArea()
 
             if route == .devicePicker {
@@ -26,13 +26,13 @@ struct ContentView: View {
                     pair: pair,
                     recordOnly: { row, deviceKind in
                         if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
-                            route = model.isRecordOnlyCapture ? .capture : .ride
+                            route = model.isRecordOnlyCapture ? .capture : .eucRide
                         }
                     }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else if let screen = screen(for: route) {
-                MockupScreenContainer(
+                PevScreenContainer(
                     screen: screen,
                     devicePickerScanState: model.devicePickerScanState,
                     rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
@@ -42,19 +42,26 @@ struct ContentView: View {
                     settingsReadback: model.settingsReadback,
                     faultHistoryReadback: model.faultHistoryReadback,
                     bmsSnapshot: model.bmsSnapshot,
-                    vescRideSnapshot: model.vescRideSnapshot,
-                    allowsFixtureFallback: route.allowsFixtureFallback,
                     captureStatusText: model.captureStatusText,
                     isRecordOnlyCapture: model.isRecordOnlyCapture,
                     disconnect: {
-                        model.disconnectAndSearch()
-                        route = .devicePicker
+                        disconnectAndReturnToPicker()
                     },
                     pair: pair,
                     recordOnly: { row, deviceKind in
                         if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
-                            route = model.isRecordOnlyCapture ? .capture : .ride
+                            route = model.isRecordOnlyCapture ? .capture : .eucRide
                         }
+                    },
+                    selectScreen: selectScreen
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else if route == .vescRide {
+                VescRideScreenView(
+                    liveSnapshot: model.vescRideSnapshot,
+                    captureStatusText: model.captureStatusText,
+                    disconnect: {
+                        disconnectAndReturnToPicker()
                     },
                     selectScreen: selectScreen
                 )
@@ -65,8 +72,7 @@ struct ContentView: View {
                     captureStatusText: model.captureStatusText,
                     activeLabels: model.activeCaptureLabels,
                     disconnect: {
-                        model.disconnectAndSearch()
-                        route = .devicePicker
+                        disconnectAndReturnToPicker()
                     },
                     startCaptureLabel: model.startCaptureLabel,
                     stopCaptureLabel: model.stopCaptureLabel
@@ -74,7 +80,7 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MockupColors.pageBackground.ignoresSafeArea())
+        .background(PevColors.pageBackground.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
             if case .failed = phase {
                 model.disconnectAndSearch()
@@ -96,31 +102,44 @@ struct ContentView: View {
         guard !model.isRecordOnlyCapture else { return }
         guard phase.opensRideScreen else { return }
         guard route == .devicePicker else { return }
-        route = .ride
+        route = .eucRide
     }
 
-    private func selectScreen(_ screenID: MockupScreenID) {
+    private func selectScreen(_ screenID: PevScreenID) {
         route = CutoutAppRoute.route(for: screenID)
     }
 
-    private func screen(for route: CutoutAppRoute) -> MockupScreen? {
+    private func disconnectAndReturnToPicker() {
+        model.disconnectAndSearch()
+        route = .devicePicker
+    }
+
+    private func screen(for route: CutoutAppRoute) -> PevScreen? {
         switch route {
         case .devicePicker:
             nil
-        case .ride:
+        case .eucRide:
             catalog.screen(id: .eucRide)
+        case .eucMap:
+            catalog.screen(id: .eucMap)
+        case .eucTune:
+            catalog.screen(id: .eucTune)
         case .liveActivity:
             catalog.screen(id: .liveActivity)
-        case .pack:
-            catalog.screen(id: .bmsOverview).map {
-                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot, fixtureFallback: false)
+        case .eucPack(let screenID):
+            catalog.screen(id: screenID).map {
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot, previewFallback: false)
             }
         case .vescRide:
-            catalog.screen(id: .vescOnewheelRide)
+            nil
+        case .vescDebug:
+            catalog.screen(id: .vescDebug)
+        case .vescMap:
+            catalog.screen(id: .vescMap)
+        case .vescLogs:
+            catalog.screen(id: .vescLogs)
         case .capture:
             nil
-        case .mockup(let screenID):
-            catalog.screen(id: screenID)
         }
     }
 

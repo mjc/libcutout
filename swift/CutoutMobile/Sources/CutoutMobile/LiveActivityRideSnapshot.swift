@@ -3,7 +3,7 @@ import Foundation
 public enum LiveActivityRideIdentitySource: String, Codable, Equatable, Hashable, Sendable {
     case productionModel
     case productionDevice
-    case fixture
+    case demo
     case unavailable
 }
 
@@ -24,8 +24,8 @@ public struct LiveActivityRideIdentity: Codable, Equatable, Hashable, Sendable {
         Self(label: label, source: .productionDevice)
     }
 
-    public static func fixture(label: String) -> Self {
-        Self(label: label, source: .fixture)
+    public static func demo(label: String) -> Self {
+        Self(label: label, source: .demo)
     }
 
     public static var unavailable: Self {
@@ -36,7 +36,7 @@ public struct LiveActivityRideIdentity: Codable, Equatable, Hashable, Sendable {
         switch source {
         case .productionModel, .productionDevice:
             "\(label) connected"
-        case .fixture:
+        case .demo:
             "\(label) demo"
         case .unavailable:
             label
@@ -50,7 +50,7 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
     case stale
     case waitingForFirstTelemetry
     case unavailable
-    case fixture
+    case demo
 }
 
 public enum LiveActivityRideGlyph: String, Codable, Equatable, Hashable, Sendable {
@@ -71,7 +71,7 @@ public enum LiveActivityRideValueSource: String, Codable, Equatable, Hashable, S
     case liveTelemetry
     case derivedTelemetry
     case appLifecycle
-    case fixture
+    case demo
     case explicitlyUnavailable
     case notApplicable
     case deferred
@@ -252,7 +252,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.temperature = temperature
     }
 
-    public static func fixture(
+    public static func demo(
         identity: LiveActivityRideIdentity,
         glyph: LiveActivityRideGlyph = .electricUnicycle,
         speed: LiveActivityRideValue,
@@ -269,8 +269,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         Self(
             identity: identity,
             glyph: glyph,
-            connectionState: .fixture,
-            sessionStatus: .available(label: "Status", value: "Fixture", unit: nil, source: .fixture),
+            connectionState: .demo,
+            sessionStatus: .available(label: "Status", value: "Demo", unit: nil, source: .demo),
             speed: speed,
             battery: battery,
             packVoltage: packVoltage,
@@ -308,8 +308,8 @@ extension LiveActivityRideSnapshot {
         staleAfter staleThreshold: MonotonicMilliseconds
     ) -> LiveActivityRideConnectionState {
         switch (identity.source, rideState.phase, rideState.telemetryAvailability) {
-        case (.fixture, _, _):
-            .fixture
+        case (.demo, _, _):
+            .demo
         case (_, .live, .populated):
             now
                 .map { rideState.updateAge(at: $0, staleAfter: staleThreshold).freshness }
@@ -501,7 +501,7 @@ extension LiveActivityRideSnapshot {
         if (source == .liveTelemetry || source == .derivedTelemetry)
             && connectionState != .connected
             && connectionState != .stale
-            && connectionState != .fixture {
+            && connectionState != .demo {
             return .unavailable(label: label, unit: unit)
         }
 
