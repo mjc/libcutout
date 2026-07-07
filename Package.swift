@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "CutoutMobile",
+    name: "CutoutSourceKitWorkspace",
     platforms: [
         .iOS("27.0"),
         .macOS("27.0"),
@@ -14,42 +14,38 @@ let package = Package(
     targets: [
         .systemLibrary(
             name: "cutout_mobile_ffiFFI",
-            path: "Sources/cutout_mobile_ffiFFI"
+            path: "swift/CutoutMobile/Sources/cutout_mobile_ffiFFI"
         ),
         .target(
             name: "CutoutMobile",
-            dependencies: ["cutout_mobile_ffiFFI"]
+            dependencies: ["cutout_mobile_ffiFFI"],
+            path: "swift/CutoutMobile/Sources/CutoutMobile"
         ),
         .testTarget(
             name: "CutoutMobileTests",
             dependencies: ["CutoutMobile"],
-            path: "Tests/CutoutMobileTests"
-        ),
-        .testTarget(
-            name: "CutoutAppTests",
-            dependencies: ["CutoutApp"],
-            path: "Tests/CutoutAppTests"
+            path: "swift/CutoutMobile/Tests/CutoutMobileTests"
         ),
         .executableTarget(
             name: "CutoutApp",
             dependencies: ["CutoutMobile"],
-            path: "Apps/CutoutApp"
+            path: "swift/CutoutMobile/Apps/CutoutApp"
         ),
         .executableTarget(
             name: "CutoutLiveActivityExtension",
             dependencies: ["CutoutMobile"],
-            path: "Apps/CutoutLiveActivityExtension",
+            path: "swift/CutoutMobile/Apps/CutoutLiveActivityExtension",
             resources: [.process("Assets.xcassets")]
         ),
         .executableTarget(
             name: "CutoutMobileSmoke",
             dependencies: ["CutoutMobile"],
-            path: "Tests/CutoutMobileSmoke"
+            path: "swift/CutoutMobile/Tests/CutoutMobileSmoke"
         ),
         .executableTarget(
             name: "CutoutMobileLiveValidator",
             dependencies: ["CutoutMobile"],
-            path: "Tests/CutoutMobileLiveValidator"
+            path: "swift/CutoutMobile/Tests/CutoutMobileLiveValidator"
         ),
     ]
 )
