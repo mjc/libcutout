@@ -35,8 +35,8 @@ struct DevicePickerView: View {
                 subtitleLineLimit: 2
             )
 
-            ScanStatusPill(
-                text: renderedScanState.statusText,
+            PevDashboardScanningPill(
+                title: renderedScanState.statusText,
                 isScanning: renderedScanState.status == .scanning,
                 scale: scale
             )

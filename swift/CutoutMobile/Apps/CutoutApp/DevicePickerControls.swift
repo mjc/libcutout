@@ -1,40 +1,6 @@
 import CutoutMobile
 import SwiftUI
 
-struct ScanStatusPill: View {
-    let text: String
-    let isScanning: Bool
-    let scale: CGFloat
-    @State private var phase = 0
-
-    var body: some View {
-        HStack {
-            Text(text)
-                .font(.system(size: 18 * scale, weight: .bold))
-            Spacer()
-            HStack(spacing: 9 * scale) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .frame(width: 13 * scale, height: 13 * scale)
-                        .opacity(!isScanning || index == phase ? 1 : 0.32)
-                }
-            }
-            .foregroundStyle(PevColors.yellow)
-        }
-        .padding(.horizontal, 22 * scale)
-        .frame(height: 64 * scale)
-        .frame(maxWidth: .infinity)
-        .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
-        .task(id: isScanning) {
-            guard isScanning else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(260))
-                phase = (phase + 1) % 3
-            }
-        }
-    }
-}
-
 struct PickerDeviceRow: View {
     let row: DevicePickerRow
     let scale: CGFloat
