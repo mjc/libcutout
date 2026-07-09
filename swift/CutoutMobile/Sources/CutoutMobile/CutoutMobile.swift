@@ -926,12 +926,15 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let vehicleKind: VescVehicleKind
     public let subProtocol: VescSubProtocol
     public let controllerState: VescControllerState
+    public let operatingState: RideOperatingState
     public let warning: VescRideWarning
     public let boardSpeed: Speed?
     public let dutyCycle: DutyCycle?
     public let dutyHeadroom: BatteryLevel?
     public let dutyHeadroomApplicability: EucRideMetricApplicability
     public let batteryVoltage: Voltage?
+    public let batteryLevelReported: BatteryLevel?
+    public let batteryLevelEstimated: BatteryLevel?
     public let batteryCurrent: BatteryCurrent?
     public let powerFlow: PowerFlowDirection?
     public let motorCurrent: PhaseCurrent?
@@ -939,36 +942,44 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let controllerTemperature: Temperature?
     public let motorTemperature: Temperature?
     public let footpad: FootpadTelemetry?
+    public let lastUpdate: MonotonicMilliseconds?
 
     public init(
         title: String,
         vehicleKind: VescVehicleKind,
         subProtocol: VescSubProtocol,
         controllerState: VescControllerState,
+        operatingState: RideOperatingState = .unknown,
         warning: VescRideWarning = .unknown,
         boardSpeed: Speed? = nil,
         dutyCycle: DutyCycle? = nil,
         dutyHeadroom: BatteryLevel? = nil,
         dutyHeadroomApplicability: EucRideMetricApplicability = .unavailable,
         batteryVoltage: Voltage? = nil,
+        batteryLevelReported: BatteryLevel? = nil,
+        batteryLevelEstimated: BatteryLevel? = nil,
         batteryCurrent: BatteryCurrent? = nil,
         powerFlow: PowerFlowDirection? = nil,
         motorCurrent: PhaseCurrent? = nil,
         boardAngle: Angle? = nil,
         controllerTemperature: Temperature? = nil,
         motorTemperature: Temperature? = nil,
-        footpad: FootpadTelemetry? = nil
+        footpad: FootpadTelemetry? = nil,
+        lastUpdate: MonotonicMilliseconds? = nil
     ) {
         self.title = title
         self.vehicleKind = vehicleKind
         self.subProtocol = subProtocol
         self.controllerState = controllerState
+        self.operatingState = operatingState
         self.warning = warning
         self.boardSpeed = boardSpeed
         self.dutyCycle = dutyCycle
         self.dutyHeadroom = dutyHeadroom
         self.dutyHeadroomApplicability = dutyHeadroom == nil ? dutyHeadroomApplicability : .available
         self.batteryVoltage = batteryVoltage
+        self.batteryLevelReported = batteryLevelReported
+        self.batteryLevelEstimated = batteryLevelEstimated
         self.batteryCurrent = batteryCurrent
         self.powerFlow = powerFlow
         self.motorCurrent = motorCurrent
@@ -976,6 +987,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.controllerTemperature = controllerTemperature
         self.motorTemperature = motorTemperature
         self.footpad = footpad
+        self.lastUpdate = lastUpdate
     }
 
     public init?(displayState: RideDisplayState, title: String?) {
@@ -987,24 +999,39 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             vehicleKind: .float,
             subProtocol: .generic,
             controllerState: .unknown,
+            operatingState: telemetry.operatingState,
             warning: .unknown,
             boardSpeed: telemetry.speed,
             dutyCycle: telemetry.pwm,
             dutyHeadroom: telemetry.dutyHeadroom,
             dutyHeadroomApplicability: telemetry.pwmHeadroomApplicability,
             batteryVoltage: telemetry.voltage,
+            batteryLevelReported: telemetry.batteryLevelReported,
+            batteryLevelEstimated: telemetry.batteryLevelEstimated,
             batteryCurrent: telemetry.batteryCurrent,
             powerFlow: telemetry.powerFlow,
             motorCurrent: telemetry.motorCurrent,
             boardAngle: telemetry.pitch,
             controllerTemperature: telemetry.controllerTemperature,
             motorTemperature: telemetry.motorTemperature,
-            footpad: telemetry.footpad
+            footpad: telemetry.footpad,
+            lastUpdate: telemetry.at ?? displayState.lastUpdate
         )
     }
 
     public var screenSubtitle: String {
-        vehicleKind.shortDisplayName
+        switch operatingState {
+        case .parked:
+            "Parked"
+        case .standing:
+            "Standing"
+        case .riding:
+            "Riding"
+        case .charging:
+            "Charging"
+        case .unknown:
+            vehicleKind.shortDisplayName
+        }
     }
 
     public var displayedDutyHeadroom: BatteryLevel? {
@@ -1016,6 +1043,15 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         case .unavailable:
             nil
         }
+    }
+}
+
+public extension VescRideSnapshot {
+    func updateAge(
+        at now: MonotonicMilliseconds,
+        staleAfter staleThreshold: MonotonicMilliseconds
+    ) -> EucRideUpdateAge {
+        rideUpdateAge(updatedAt: lastUpdate, at: now, staleAfter: staleThreshold)
     }
 }
 
@@ -2099,6 +2135,20 @@ public struct EucRideUpdateAge: Equatable, Hashable, Sendable {
         self.elapsed = elapsed
         self.freshness = freshness
     }
+}
+
+public func rideUpdateAge(
+    updatedAt: MonotonicMilliseconds?,
+    at now: MonotonicMilliseconds,
+    staleAfter staleThreshold: MonotonicMilliseconds
+) -> EucRideUpdateAge {
+    guard let updatedAt else {
+        return EucRideUpdateAge(elapsed: nil, freshness: .unavailable)
+    }
+
+    let elapsed = now.rawValue >= updatedAt.rawValue ? now.rawValue - updatedAt.rawValue : 0
+    let freshness: EucRideUpdateFreshness = elapsed > staleThreshold.rawValue ? .stale : .fresh
+    return EucRideUpdateAge(elapsed: MonotonicMilliseconds(elapsed), freshness: freshness)
 }
 
 public enum EucRideWarningSeverity: Equatable, Hashable, Sendable {
@@ -3205,7 +3255,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
     private var pendingRetryTimestamp: MonotonicMilliseconds?
-    private var receivedNotificationSinceLinkUp = false
+    private var receivedRealtimeTelemetrySinceLinkUp = false
 
     public init(
         session: CoreBluetoothSession,
@@ -3238,7 +3288,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     @discardableResult
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelPendingRetry()
-        receivedNotificationSinceLinkUp = false
+        receivedRealtimeTelemetrySinceLinkUp = false
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
         recorded.append(.linkUp(
             platformIdentifier: platformIdentifier,
@@ -3272,8 +3322,6 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         channel: BluetoothUuid,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> CoreBluetoothSessionStep {
-        receivedNotificationSinceLinkUp = true
-        cancelPendingRetry()
         recorded.append(.notification(
             channel: channel,
             byteCount: CoreBluetoothPayloadByteCount(bytes.count),
@@ -3284,6 +3332,14 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             channel: channel,
             at: monotonicMilliseconds
         ))
+        receivedRealtimeTelemetrySinceLinkUp =
+            receivedRealtimeTelemetrySinceLinkUp
+            || step.snapshot?.pitch != nil
+            || step.snapshot?.roll != nil
+            || step.snapshot?.footpad != nil
+        if receivedRealtimeTelemetrySinceLinkUp {
+            cancelPendingRetry()
+        }
         executeAndRecord(step.operations)
         return step
     }
@@ -3347,7 +3403,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
                 self.scheduleRetryIfNeeded(at: monotonicMilliseconds)
                 return
             }
-            guard !self.receivedNotificationSinceLinkUp else {
+            guard !self.receivedRealtimeTelemetrySinceLinkUp else {
                 return
             }
             self.scheduleRetryIfNeeded(at: monotonicMilliseconds)

@@ -265,28 +265,17 @@ public struct PevDashboardTabStrip: View {
     }
 
     private func tabLabel(_ tab: PevScreenTab) -> some View {
-        VStack(spacing: 4 * scale) {
-            PevDashboardTabLabel(
-                title: tab.title,
-                isSelected: tab.isSelected,
-                scale: scale,
-                selectedColor: selectedColor,
-                unselectedColor: tab.isEnabled ? unselectedColor : unselectedColor.opacity(0.75)
-            )
-
-            if let disabledReason = tab.disabledReason {
-                if disabledReason.isEmpty {
-                    EmptyView()
-                } else {
-                Text(disabledReason)
-                    .font(.system(size: 8 * scale, weight: .semibold))
-                    .foregroundStyle(PevDashboardColors.mutedText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                }
-            }
-        }
+        PevDashboardTabLabel(
+            title: tab.title,
+            isSelected: tab.isSelected,
+            scale: scale,
+            selectedColor: selectedColor,
+            unselectedColor: tab.isEnabled ? unselectedColor : unselectedColor.opacity(0.75)
+        )
         .frame(maxWidth: .infinity)
         .opacity(tab.isEnabled ? 1 : 0.45)
+        .accessibilityValue(tab.isEnabled ? "Available" : "Unavailable")
+        .accessibilityHint(tab.isEnabled ? "" : "This tab is unavailable.")
+        .accessibilityAddTraits(tab.isEnabled ? [] : .isButton)
     }
 }

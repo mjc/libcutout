@@ -18,6 +18,10 @@ final class CutoutAppModel: ObservableObject {
         displayState.speed
     }
 
+    var currentMonotonicTime: MonotonicMilliseconds {
+        core.now()
+    }
+
     var rideState: EucRideScreenState {
         EucRideScreenState(phase: phase, displayState: displayState)
     }
@@ -184,11 +188,9 @@ final class CutoutAppModel: ObservableObject {
             syncLiveActivity()
             return
         }
-        if selectedRideTitle == nil {
-            selectedRideTitle = candidate?.detail
-        }
+        maybeSetSelectedRideTitle(from: candidate)
         if candidate?.support.connectionRoute == .vescOnewheel {
-            liveActivityIdentity = .device(candidate?.detail ?? VescRideSnapshot.defaultTitle)
+            liveActivityIdentity = vescRideIdentity(using: candidate?.detail)
             liveActivityGlyph = .floatwheelAtom
         }
         syncLiveActivity()
@@ -226,12 +228,21 @@ final class CutoutAppModel: ObservableObject {
         liveActivityCoordinator.reconcile(snapshot: snapshot, shouldBeActive: shouldBeActive, endReason: endReason)
     }
 
+    private func maybeSetSelectedRideTitle(from candidate: DevicePickerDiscoveryCandidate?) {
+        guard selectedRideTitle == nil else { return }
+        selectedRideTitle = candidate?.detail
+    }
+
+    private func vescRideIdentity(using title: String?) -> LiveActivityRideIdentity {
+        .device(title ?? VescRideSnapshot.defaultTitle)
+    }
+
     private func liveActivityIdentity(for selectedRow: DevicePickerRow?) -> LiveActivityRideIdentity? {
         if selectedRow?.connectionRoute == .vescOnewheel {
-            return .device(selectedRow?.title ?? VescRideSnapshot.defaultTitle)
+            return vescRideIdentity(using: selectedRow?.title)
         }
         if core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
-            return .device(core.protocolIdentityCandidate?.detail ?? VescRideSnapshot.defaultTitle)
+            return vescRideIdentity(using: core.protocolIdentityCandidate?.detail)
         }
         if let model = selectedRow?.electricUnicycleModel
             ?? core.protocolIdentityCandidate?.support.electricUnicycleModel

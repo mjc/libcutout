@@ -523,8 +523,11 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         match self.refloat_stream.feed_result(bytes) {
             Ok(RefloatStreamResult::Replies(replies)) => {
                 self.stream = VescReadOnlyStreamDecoder::new();
+                let reports_battery_current = self
+                    .board_profile
+                    .is_some_and(|profile| profile.reports_battery_current);
                 for reply in &replies {
-                    push_refloat_reply(reply, monotonic_ms, output);
+                    push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
                 }
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
@@ -682,12 +685,13 @@ fn push_vesc_reply(
 fn push_refloat_reply(
     reply: &RefloatReply,
     monotonic_ms: MonotonicTimestamp,
+    reports_battery_current: bool,
     output: &mut Vec<SessionOutput>,
 ) {
     match reply {
         RefloatReply::RealtimeData(data) => {
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                data.to_delta(monotonic_ms),
+                data.to_delta(monotonic_ms, reports_battery_current),
             )));
             push_refloat_realtime_request(output);
         }
@@ -2477,6 +2481,10 @@ mod tests {
             Some(Measured::reported(cutout_core::Angle::from_millidegrees(
                 -2_000
             )))
+        );
+        assert_eq!(
+            delta.battery_current, None,
+            "default VESC sessions must not claim battery current without explicit profile evidence"
         );
         assert!(
             output

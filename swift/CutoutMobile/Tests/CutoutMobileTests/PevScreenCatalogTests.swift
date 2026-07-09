@@ -79,6 +79,16 @@ final class PevScreenCatalogTests: XCTestCase {
 
         XCTAssertTrue(PevScreenCatalog.v2.screens.allSatisfy(\.isPreviewOnly))
     }
+
+    func testVescRideTabsMarkMapAndLogsUnavailable() {
+        let tabs = PevRideTabs.vescRideTabs()
+
+        XCTAssertEqual(tabs.map(\.title), ["Ride", "Debug", "Map", "Logs"])
+        XCTAssertEqual(tabs[2].disabledReason, "LIBCU-423")
+        XCTAssertEqual(tabs[3].disabledReason, "LIBCU-423")
+        XCTAssertFalse(tabs[2].isEnabled)
+        XCTAssertFalse(tabs[3].isEnabled)
+    }
 }
 
 extension PevScreenCatalogTests {

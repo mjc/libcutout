@@ -197,6 +197,41 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
     }
 
+func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
+        let telemetry = TelemetrySnapshot(
+            operatingState: .parked,
+            voltage: voltageValue(61_000),
+            batteryLevelReported: batteryLevelValue(72),
+            batteryLevelEstimated: batteryLevelValue(70)
+        )
+        let displayState = RideDisplayState(
+            telemetry: telemetry,
+            notificationCount: 1,
+            lastUpdate: MonotonicMilliseconds(900)
+        )
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: nil))
+
+        XCTAssertEqual(snapshot.batteryLevelReported, batteryLevelValue(72))
+        XCTAssertEqual(snapshot.batteryLevelEstimated, batteryLevelValue(70))
+        XCTAssertEqual(snapshot.lastUpdate, MonotonicMilliseconds(900))
+        XCTAssertEqual(snapshot.screenSubtitle, "Parked")
+        XCTAssertEqual(
+            snapshot.updateAge(
+                at: MonotonicMilliseconds(1_000),
+                staleAfter: MonotonicMilliseconds(250)
+            ),
+            EucRideUpdateAge(elapsed: MonotonicMilliseconds(100), freshness: .fresh)
+        )
+        XCTAssertEqual(
+            snapshot.updateAge(
+                at: MonotonicMilliseconds(1_300),
+                staleAfter: MonotonicMilliseconds(250)
+            ),
+            EucRideUpdateAge(elapsed: MonotonicMilliseconds(400), freshness: .stale)
+        )
+    }
+
     func testVescRideSnapshotDerivesDutyHeadroomFromLiveDutyCycle() throws {
         let balancedTelemetry = TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(0))
         let idleNoiseTelemetry = TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(10))
@@ -426,6 +461,38 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
         XCTAssertEqual(sink.writes.count % 3, 0)
         XCTAssertEqual(sink.writes.prefix(3), sink.writes.suffix(3))
+    }
+
+
+    func testVescLiveOwnerKeepsRetryingAfterNonRealtimeNotification() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: .vescOnewheel(),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
+                localName: "Floatwheel Atom",
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink,
+            retryCommandOnLinkUp: .requestTelemetry,
+            retryDelay: .milliseconds(10)
+        )
+
+        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
+        _ = try owner.handleNotification(
+            bytes: Data([0x01]),
+            channel: .bluetooth16(0xffff),
+            at: MonotonicMilliseconds(2)
+        )
+
+        let retryExpectation = expectation(description: "vesc telemetry retries after generic notification")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
+            retryExpectation.fulfill()
+        }
+        wait(for: [retryExpectation], timeout: 1.0)
+
+        XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
     }
 
     func testSettingsReadbackUpdatesCurrentSessionStateUntilDisconnect() {

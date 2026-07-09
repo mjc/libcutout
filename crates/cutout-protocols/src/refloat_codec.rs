@@ -192,13 +192,18 @@ pub struct RefloatRealtimeData {
 impl RefloatRealtimeData {
     /// Converts decoded Refloat realtime values to shared telemetry.
     #[must_use]
-    pub fn to_delta(&self, at_ms: MonotonicTimestamp) -> TelemetryDelta {
+    pub fn to_delta(
+        &self,
+        at_ms: MonotonicTimestamp,
+        reports_battery_current: bool,
+    ) -> TelemetryDelta {
         TelemetryDelta {
             speed: self.value("motor.speed").map(|metres_per_second| {
                 Measured::reported(Speed::from_metres_per_second(metres_per_second))
             }),
-            battery_current: self
-                .value("motor.batt_current")
+            battery_current: reports_battery_current
+                .then(|| self.value("motor.batt_current"))
+                .flatten()
                 .map(|amps| Measured::reported(BatteryCurrent::from_milliamps(milliscale(amps)))),
             voltage: self
                 .value("motor.batt_voltage")
@@ -1037,7 +1042,7 @@ mod tests {
         };
 
         assert_eq!(
-            data.to_delta(MonotonicTimestamp::from_milliseconds(42))
+            data.to_delta(MonotonicTimestamp::from_milliseconds(42), true)
                 .speed,
             Some(Measured::reported(Speed::from_millimetres_per_second(
                 1_000
@@ -1061,7 +1066,11 @@ mod tests {
             panic!("expected realtime data");
         };
 
-        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42));
+        let without_battery_current =
+            data.to_delta(MonotonicTimestamp::from_milliseconds(42), false);
+        assert_eq!(without_battery_current.battery_current, None);
+
+        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), true);
 
         assert_eq!(
             delta
@@ -1133,7 +1142,7 @@ mod tests {
             firmware_fault_code: None,
         };
 
-        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42));
+        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), false);
 
         assert_eq!(delta.operating_state, Some(RideOperatingState::Parked));
     }

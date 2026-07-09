@@ -57,14 +57,17 @@ struct ContentView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else if route == .vescRide {
-                VescRideScreenView(
-                    liveSnapshot: model.vescRideSnapshot,
-                    captureStatusText: model.captureStatusText,
-                    disconnect: {
-                        disconnectAndReturnToPicker()
-                    },
-                    selectScreen: selectScreen
-                )
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    VescRideScreenView(
+                        liveSnapshot: model.vescRideSnapshot,
+                        now: model.currentMonotonicTime,
+                        captureStatusText: model.captureStatusText,
+                        disconnect: {
+                            disconnectAndReturnToPicker()
+                        },
+                        selectScreen: selectScreen
+                    )
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else if route == .capture {
                 CaptureRecordingScreen(
@@ -142,5 +145,4 @@ struct ContentView: View {
             nil
         }
     }
-
 }

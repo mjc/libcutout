@@ -1,12 +1,14 @@
 import Foundation
 
 public enum PevRideTabs {
+    private static let unavailableReason = "LIBCU-423"
+
     public static func eucRideTabs() -> [PevScreenTab] {
         [
             PevScreenTab(title: "Ride", isSelected: true),
             PevScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
-            PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-423"),
-            PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-423"),
+            unavailableTab(title: "Map"),
+            unavailableTab(title: "Tune"),
         ]
     }
 
@@ -14,8 +16,12 @@ public enum PevRideTabs {
         [
             PevScreenTab(title: "Ride", isSelected: true),
             PevScreenTab(title: "Debug", isSelected: false, destinationScreenID: .vescDebug),
-            PevScreenTab(title: "Map", isSelected: false),
-            PevScreenTab(title: "Logs", isSelected: false)
+            unavailableTab(title: "Map"),
+            unavailableTab(title: "Logs")
         ]
+    }
+
+    private static func unavailableTab(title: String) -> PevScreenTab {
+        PevScreenTab(title: title, isSelected: false, disabledReason: unavailableReason)
     }
 }

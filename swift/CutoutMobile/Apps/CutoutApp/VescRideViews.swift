@@ -3,6 +3,7 @@ import SwiftUI
 
 struct VescRideScreenView: View {
     let liveSnapshot: VescRideSnapshot?
+    let now: MonotonicMilliseconds
     let captureStatusText: String?
     let disconnect: () -> Void
     let selectScreen: (PevScreenID) -> Void
@@ -43,6 +44,59 @@ struct VescRideScreenView: View {
         liveSnapshot?.displayedDutyHeadroom
     }
 
+    private var telemetryAge: EucRideUpdateAge? {
+        liveSnapshot?.updateAge(
+            at: now,
+            staleAfter: MonotonicMilliseconds(2_000)
+        )
+    }
+
+    private var batteryDetail: String {
+        guard let liveSnapshot else { return "" }
+        let battery = liveSnapshot.batteryLevelReported.map {
+            "battery \(percentText($0)) reported"
+        } ?? liveSnapshot.batteryLevelEstimated.map {
+            "battery \(percentText($0)) estimated"
+        }
+        let details = [battery, liveSnapshot.batteryCurrent.map { "current \(currentText($0)) A" }]
+            .compactMap { $0 }
+        return details.joined(separator: " · ")
+    }
+
+    private var dashboardTiles: [PevDashboardTile] {
+        guard let liveSnapshot else { return [] }
+        return [
+            PevDashboardTile(
+                label: "voltage",
+                value: voltageText(liveSnapshot.batteryVoltage),
+                unit: "V",
+                detail: batteryDetail,
+                accent: .yellow
+            ),
+            PevDashboardTile(
+                label: "motor current",
+                value: phaseCurrentText(liveSnapshot.motorCurrent),
+                unit: "A",
+                detail: powerFlowDetail(liveSnapshot.powerFlow, fallback: "phase estimate"),
+                accent: .orange
+            ),
+            PevDashboardTile(
+                label: "board angle",
+                value: angleText(liveSnapshot.boardAngle),
+                unit: "°",
+                detail: boardAngleDetail ?? "board angle",
+                accent: .cyan
+            ),
+            PevDashboardTile(
+                label: "controller",
+                value: temperatureText(liveSnapshot.controllerTemperature),
+                unit: "°C",
+                detail: liveSnapshot.motorTemperature.map { "motor \(temperatureText($0)) \(RideUnits.temperatureUnit)" } ?? "motor unavailable",
+                accent: .green
+            ),
+        ]
+    }
+
     private var boardAngleDetail: String? {
         guard let angle = liveSnapshot?.boardAngle else { return nil }
         if angle.value < 0 {
@@ -69,7 +123,19 @@ struct VescRideScreenView: View {
             topLeadingAccessory: { _ in EmptyView() }
         ) { scale, columns in
 
-            if let dutyHeadroom {
+            if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
+                PevDashboardWarningCard(
+                    title: "Telemetry stale",
+                    detail: "Last update \(elapsed.rawValue) ms ago.",
+                    accent: PevColors.orange,
+                    detailColor: PevColors.primaryText,
+                    fill: PevColors.cardFill,
+                    stroke: PevColors.cardStroke,
+                    scale: scale,
+                    cornerRadius: 24
+                )
+                .padding(.top, 12 * scale)
+            } else if let dutyHeadroom {
                 PevDashboardProgressCard(
                     label: "Duty headroom",
                     value: percentText(dutyHeadroom),
@@ -131,53 +197,8 @@ struct VescRideScreenView: View {
             }
 
             PevDashboardGrid(columns: columns, spacing: 12 * scale) {
-                if let batteryVoltage = liveSnapshot?.batteryVoltage {
-                    PevDashboardMetricTile(
-                        label: "voltage",
-                        value: voltageText(batteryVoltage),
-                        unit: "V",
-                        detail: liveSnapshot?.batteryCurrent.map { "battery current \(currentText($0)) A" } ?? "pack voltage",
-                        accent: PevColors.yellow,
-                        scale: scale,
-                        cornerRadius: 16,
-                        minHeight: 96
-                    )
-                }
-                if let motorCurrent = liveSnapshot?.motorCurrent {
-                    PevDashboardMetricTile(
-                        label: "motor current",
-                        value: phaseCurrentText(motorCurrent),
-                        unit: "A",
-                        detail: powerFlowDetail(liveSnapshot?.powerFlow, fallback: "phase estimate"),
-                        accent: PevColors.orange,
-                        scale: scale,
-                        cornerRadius: 16,
-                        minHeight: 96
-                    )
-                }
-                if let boardAngle = liveSnapshot?.boardAngle {
-                    PevDashboardMetricTile(
-                        label: "board angle",
-                        value: angleText(boardAngle),
-                        unit: "°",
-                        detail: boardAngleDetail ?? "board angle",
-                        accent: PevColors.cyan,
-                        scale: scale,
-                        cornerRadius: 16,
-                        minHeight: 96
-                    )
-                }
-                if let controllerTemperature = liveSnapshot?.controllerTemperature {
-                    PevDashboardMetricTile(
-                        label: "controller",
-                        value: temperatureText(controllerTemperature),
-                        unit: "°C",
-                        detail: liveSnapshot?.motorTemperature.map { "motor \(temperatureText($0)) \(RideUnits.temperatureUnit)" } ?? "motor unavailable",
-                        accent: PevColors.green,
-                        scale: scale,
-                        cornerRadius: 16,
-                        minHeight: 96
-                    )
+                ForEach(dashboardTiles) { tile in
+                    PevDashboardMetricTile(tile, scale: scale, cornerRadius: 16, minHeight: 96)
                 }
             }
             .padding(.top, 8 * scale)

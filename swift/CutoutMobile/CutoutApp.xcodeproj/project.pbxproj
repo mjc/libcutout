@@ -37,7 +37,6 @@
 			300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */; };
 			300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */; };
 			30000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */; };
-			30000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift */; };
 		111111111111111111111114 /* Apps/CutoutApp/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */; };
 		25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 111111111111111111111181 /* CutoutMobile */; };
 		222222222222222222222111 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */; };
@@ -103,7 +102,6 @@
 			400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideHeroSection.swift; sourceTree = SOURCE_ROOT; };
 			400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideDashboardShell.swift; sourceTree = SOURCE_ROOT; };
 			40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PlaceholderScreenViews.swift; sourceTree = SOURCE_ROOT; };
-			40000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideTabs.swift; sourceTree = SOURCE_ROOT; };
 		111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Apps/CutoutApp/Assets.xcassets; sourceTree = SOURCE_ROOT; };
 		111111111111111111111126 /* Apps/CutoutApp/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutApp/Info.plist; sourceTree = SOURCE_ROOT; };
 		222222222222222222222121 /* Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutLiveActivityExtension/CutoutLiveActivityExtension.swift; sourceTree = SOURCE_ROOT; };
@@ -177,7 +175,6 @@
 					400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */,
 					400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */,
 					40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */,
-					40000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift */,
 				);
 				path = Sources;
 				sourceTree = "<group>";
@@ -355,7 +352,6 @@
 					300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */,
 					300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */,
 					30000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift in Sources */,
-					30000000000000000000001B /* Apps/CutoutApp/PevRideTabs.swift in Sources */,
 				);
 				runOnlyForDeploymentPostprocessing = 0;
 			};

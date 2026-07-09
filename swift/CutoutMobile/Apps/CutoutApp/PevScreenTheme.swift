@@ -66,6 +66,48 @@ extension PevAccent {
     }
 }
 
+extension PevDashboardMetricTile {
+    init(
+        _ tile: PevDashboardTile,
+        scale: CGFloat,
+        fill: Color = PevDashboardColors.cardFill,
+        stroke: Color = PevDashboardColors.cardStroke,
+        labelColor: Color = PevDashboardColors.mutedText,
+        valueColor: Color = PevDashboardColors.primaryText,
+        unitColor: Color? = nil,
+        detailColor: Color = PevDashboardColors.mutedText,
+        cornerRadius: CGFloat = 20,
+        minHeight: CGFloat = 106,
+        labelFontSize: CGFloat = 14,
+        valueFontSize: CGFloat = 25,
+        unitFontSize: CGFloat = 13,
+        detailFontSize: CGFloat = 13,
+        valueMinimumScaleFactor: CGFloat = 0.82
+    ) {
+        self.init(
+            label: tile.label,
+            value: tile.value,
+            unit: tile.unit,
+            detail: tile.detail,
+            accent: tile.accent.color,
+            scale: scale,
+            fill: fill,
+            stroke: stroke,
+            labelColor: labelColor,
+            valueColor: valueColor,
+            unitColor: unitColor,
+            detailColor: detailColor,
+            cornerRadius: cornerRadius,
+            minHeight: minHeight,
+            labelFontSize: labelFontSize,
+            valueFontSize: valueFontSize,
+            unitFontSize: unitFontSize,
+            detailFontSize: detailFontSize,
+            valueMinimumScaleFactor: valueMinimumScaleFactor
+        )
+    }
+}
+
 extension DevicePickerRowState {
     var actionTitle: String {
         switch self {

@@ -40,8 +40,8 @@ use cutout_protocols::{
     IdentityBannerEvidence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
     VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBoardProfile as CoreVescBoardProfile,
-    VescBatteryType as CoreVescBatteryType, VescReadOnlySession as CoreVescReadOnlySession,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
+    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
     identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
