@@ -9,6 +9,7 @@ struct PevDashboardScaffold<Content: View>: View {
     let columnSpacing: CGFloat
     let contentSpacing: CGFloat
     let horizontalPadding: CGFloat
+    let showsHeader: Bool
     private let content: (CGFloat, [GridItem]) -> Content
 
     init(
@@ -19,6 +20,7 @@ struct PevDashboardScaffold<Content: View>: View {
         columnSpacing: CGFloat = 26,
         contentSpacing: CGFloat = 16,
         horizontalPadding: CGFloat = 24,
+        showsHeader: Bool = true,
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
@@ -28,6 +30,7 @@ struct PevDashboardScaffold<Content: View>: View {
         self.columnSpacing = columnSpacing
         self.contentSpacing = contentSpacing
         self.horizontalPadding = horizontalPadding
+        self.showsHeader = showsHeader
         self.content = content
     }
 
@@ -57,13 +60,110 @@ struct PevDashboardScaffold<Content: View>: View {
 
     private func scaffoldContent(scale: CGFloat, columns: [GridItem], width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: contentSpacing * scale) {
-            PevDashboardHeader(sectionTitle: sectionTitle, scale: scale, leadingAccessory: headerLeadingAccessory.map { $0(scale) })
+            if showsHeader {
+                PevDashboardHeader(sectionTitle: sectionTitle, scale: scale, leadingAccessory: headerLeadingAccessory.map { $0(scale) })
+            }
 
             content(scale, columns)
         }
         .padding(.horizontal, horizontalPadding * scale)
         .padding(.bottom, bottomPadding * scale)
         .frame(width: width, alignment: .topLeading)
+    }
+}
+
+struct PevAppShell<Content: View>: View {
+    let sectionTitle: String
+    let tabs: [PevScreenTab]
+    let connectionPhase: SessionConnectionPhase
+    let selectedColor: Color
+    let unselectedColor: Color
+    let disconnect: () -> Void
+    let selectTarget: (PevNavigationTarget) -> Void
+    let content: Content
+
+    init(
+        sectionTitle: String,
+        tabs: [PevScreenTab],
+        connectionPhase: SessionConnectionPhase,
+        selectedColor: Color,
+        unselectedColor: Color,
+        disconnect: @escaping () -> Void,
+        selectTarget: @escaping (PevNavigationTarget) -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.sectionTitle = sectionTitle
+        self.tabs = tabs
+        self.connectionPhase = connectionPhase
+        self.selectedColor = selectedColor
+        self.unselectedColor = unselectedColor
+        self.disconnect = disconnect
+        self.selectTarget = selectTarget
+        self.content = content()
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
+
+            VStack(spacing: 0) {
+                PevDashboardHeader(
+                    sectionTitle: sectionTitle,
+                    scale: scale,
+                    leadingAccessory: AnyView(PevRideDisconnectButton(scale: scale, action: disconnect))
+                )
+                .padding(.horizontal, 24 * scale)
+
+                if let connectionStatus = connectionStatus {
+                    PevDashboardWarningCard(
+                        title: connectionStatus.title,
+                        detail: connectionStatus.detail,
+                        accent: connectionStatus.accent,
+                        detailColor: PevColors.primaryText,
+                        fill: connectionStatus.fill,
+                        stroke: connectionStatus.stroke,
+                        scale: scale,
+                        cornerRadius: 20
+                    )
+                    .padding(.horizontal, 24 * scale)
+                    .padding(.top, 8 * scale)
+                }
+
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                PevDashboardTabStrip(
+                    tabs: tabs,
+                    scale: scale,
+                    selectedColor: selectedColor,
+                    unselectedColor: unselectedColor,
+                    selectTarget: selectTarget
+                )
+                .padding(.horizontal, 24 * scale)
+                .padding(.top, 8 * scale)
+                .padding(.bottom, 8 * scale)
+                .background(PevColors.pageBackground)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(PevColors.pageBackground)
+        }
+    }
+
+    private var connectionStatus: (title: String, detail: String, accent: Color, fill: Color, stroke: Color)? {
+        switch connectionPhase {
+        case .starting:
+            ("Starting", "Preparing Bluetooth.", PevColors.muted, PevColors.cardFill, PevColors.cardStroke)
+        case .bluetoothUnavailable:
+            ("Bluetooth unavailable", "Turn on Bluetooth to reconnect.", PevColors.orange, PevColors.cardFill, PevColors.cardStroke)
+        case .scanning:
+            ("Retrying connection", "Searching for the selected device.", PevColors.orange, PevColors.cardFill, PevColors.cardStroke)
+        case .connecting, .discoveringServices, .subscribing:
+            ("Connecting", connectionPhase.displayText, PevColors.purple, PevColors.purple.opacity(0.18), PevColors.purple.opacity(0.55))
+        case .failed:
+            ("Connection lost", "Retrying the selected device.", PevColors.orange, PevColors.cardFill, PevColors.cardStroke)
+        case .live:
+            nil
+        }
     }
 }
 

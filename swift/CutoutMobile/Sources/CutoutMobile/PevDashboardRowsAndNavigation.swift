@@ -217,20 +217,20 @@ public struct PevDashboardTabStrip: View {
     let scale: CGFloat
     let selectedColor: Color
     let unselectedColor: Color
-    let selectScreen: (PevScreenID) -> Void
+    let selectTarget: (PevNavigationTarget) -> Void
 
     public init(
         tabs: [PevScreenTab],
         scale: CGFloat,
         selectedColor: Color,
         unselectedColor: Color,
-        selectScreen: @escaping (PevScreenID) -> Void
+        selectTarget: @escaping (PevNavigationTarget) -> Void
     ) {
         self.tabs = tabs
         self.scale = scale
         self.selectedColor = selectedColor
         self.unselectedColor = unselectedColor
-        self.selectScreen = selectScreen
+        self.selectTarget = selectTarget
     }
 
     public var body: some View {
@@ -252,9 +252,9 @@ public struct PevDashboardTabStrip: View {
 
     @ViewBuilder
     private func tabContent(_ tab: PevScreenTab) -> some View {
-        if tab.isEnabled, let destination = tab.destinationScreenID {
+        if tab.isEnabled, let destination = tab.destinationTarget {
             Button {
-                selectScreen(destination)
+                selectTarget(destination)
             } label: {
                 tabLabel(tab)
             }

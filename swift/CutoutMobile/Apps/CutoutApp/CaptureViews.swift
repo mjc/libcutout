@@ -15,7 +15,8 @@ struct CaptureRecordingScreen: View {
             bottomPadding: 24,
             allowsVerticalScroll: false,
             contentSpacing: 16,
-            horizontalPadding: 18
+            horizontalPadding: 18,
+            showsHeader: false
         ) { scale, _ in
             HStack(alignment: .top) {
                 PevScreenTitleBlock(

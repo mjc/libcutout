@@ -5,7 +5,7 @@ struct VescDebugScreenView: View {
     let screen: PevScreen
 
     var body: some View {
-        PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20) { scale, columns in
+        PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20, showsHeader: false) { scale, columns in
             PevScreenTitleBlock(
                 title: screen.title,
                 subtitle: screen.subtitle,

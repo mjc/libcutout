@@ -28,7 +28,7 @@ struct EucGarageScreenView: View {
     }
 
     var body: some View {
-        PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24) { scale, columns in
+        PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24, showsHeader: false) { scale, columns in
             PevScreenTitleBlock(
                 title: screen.title,
                 subtitle: screen.subtitle,

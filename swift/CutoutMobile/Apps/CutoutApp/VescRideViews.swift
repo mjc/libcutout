@@ -3,6 +3,7 @@ import SwiftUI
 
 struct VescRideScreenView: View {
     let liveSnapshot: VescRideSnapshot?
+    let phase: SessionConnectionPhase
     let now: MonotonicMilliseconds
     let captureStatusText: String?
     let disconnect: () -> Void
@@ -111,7 +112,6 @@ struct VescRideScreenView: View {
     var body: some View {
         PevRideDashboardShell(
             sectionTitle: "Ride",
-            headerLeadingAccessory: { scale in AnyView(PevRideDisconnectButton(scale: scale, action: disconnect)) },
             title: title,
             subtitle: subtitle,
             statusFill: PevColors.purple,
@@ -120,7 +120,6 @@ struct VescRideScreenView: View {
             speedUnit: speedParts.unit,
             speedCaption: "board speed",
             allowsVerticalScroll: false,
-            topLeadingAccessory: { _ in EmptyView() }
         ) { scale, columns in
 
             if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
@@ -151,7 +150,7 @@ struct VescRideScreenView: View {
                     scale: scale
                 )
                     .padding(.top, 12 * scale)
-            } else if liveSnapshot == nil {
+            } else if liveSnapshot == nil && phase == .live {
                 PevDashboardWarningCard(
                     title: "Telemetry pending",
                     detail: "Waiting for live values.",
@@ -202,15 +201,6 @@ struct VescRideScreenView: View {
                 }
             }
             .padding(.top, 8 * scale)
-
-            PevDashboardTabStrip(
-                tabs: PevRideTabs.vescRideTabs(),
-                scale: scale,
-                selectedColor: PevColors.purple,
-                unselectedColor: PevColors.muted,
-                selectScreen: selectScreen
-            )
-                .padding(.top, 24 * scale)
         }
     }
 }

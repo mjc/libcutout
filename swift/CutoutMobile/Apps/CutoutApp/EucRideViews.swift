@@ -76,15 +76,6 @@ struct EucRideScreenView: View {
             speedValue: speedParts.value,
             speedUnit: speedParts.unit,
             speedCaption: "speed",
-            topLeadingAccessory: { scale in
-                if rideState == nil {
-                    Text("CutOut")
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(PevColors.yellow)
-                } else {
-                    PevRideDisconnectButton(scale: scale, action: disconnect)
-                }
-            }
         ) { scale, columns in
             VStack(spacing: 10 * scale) {
                 ForEach(safetyBars, id: \.label) { bar in
@@ -121,15 +112,6 @@ struct EucRideScreenView: View {
                 }
             }
             .padding(.top, 12 * scale)
-
-            PevDashboardTabStrip(
-                tabs: PevRideTabs.eucRideTabs(),
-                scale: scale,
-                selectedColor: PevColors.yellow,
-                unselectedColor: PevColors.muted,
-                selectScreen: selectScreen
-            )
-                .padding(.top, 48 * scale)
         }
     }
 }

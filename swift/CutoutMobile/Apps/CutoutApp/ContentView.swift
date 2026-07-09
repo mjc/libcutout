@@ -31,55 +31,18 @@ struct ContentView: View {
                     }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            } else if let screen = screen(for: route) {
-                PevScreenContainer(
-                    screen: screen,
-                    devicePickerScanState: model.devicePickerScanState,
-                    rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
-                        ? nil
-                        : model.rideState,
-                    rideTitle: model.selectedRideTitle,
-                    settingsReadback: model.settingsReadback,
-                    faultHistoryReadback: model.faultHistoryReadback,
-                    bmsSnapshot: model.bmsSnapshot,
-                    captureStatusText: model.captureStatusText,
-                    isRecordOnlyCapture: model.isRecordOnlyCapture,
-                    disconnect: {
-                        disconnectAndReturnToPicker()
-                    },
-                    pair: pair,
-                    recordOnly: { row, deviceKind in
-                        if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
-                            route = model.isRecordOnlyCapture ? .capture : .eucRide
-                        }
-                    },
-                    selectScreen: selectScreen
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            } else if route == .vescRide {
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    VescRideScreenView(
-                        liveSnapshot: model.vescRideSnapshot,
-                        now: model.currentMonotonicTime,
-                        captureStatusText: model.captureStatusText,
-                        disconnect: {
-                            disconnectAndReturnToPicker()
-                        },
-                        selectScreen: selectScreen
-                    )
+            } else {
+                PevAppShell(
+                    sectionTitle: appSectionTitle,
+                    tabs: appTabs,
+                    connectionPhase: model.phase,
+                    selectedColor: appSelectedColor,
+                    unselectedColor: PevColors.muted,
+                    disconnect: disconnectAndReturnToPicker,
+                    selectTarget: selectTarget
+                ) {
+                    routedContent
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            } else if route == .capture {
-                CaptureRecordingScreen(
-                    deviceKind: model.recordOnlyDeviceKind,
-                    captureStatusText: model.captureStatusText,
-                    activeLabels: model.activeCaptureLabels,
-                    disconnect: {
-                        disconnectAndReturnToPicker()
-                    },
-                    startCaptureLabel: model.startCaptureLabel,
-                    stopCaptureLabel: model.stopCaptureLabel
-                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -87,7 +50,6 @@ struct ContentView: View {
         .onChange(of: model.phase) { _, phase in
             if case .failed = phase {
                 model.disconnectAndSearch()
-                route = .devicePicker
                 return
             }
             openRideScreen(ifNeededFor: phase)
@@ -112,9 +74,129 @@ struct ContentView: View {
         route = CutoutAppRoute.route(for: screenID)
     }
 
+    private func selectTarget(_ target: PevNavigationTarget) {
+        switch target {
+        case .screen(let screenID):
+            selectScreen(screenID)
+        case .vescRide:
+            route = .vescRide
+        }
+    }
+
     private func disconnectAndReturnToPicker() {
         model.disconnectAndSearch()
         route = .devicePicker
+    }
+
+    @ViewBuilder
+    private var routedContent: some View {
+        if let screen = screen(for: route) {
+            PevScreenContainer(
+                screen: screen,
+                devicePickerScanState: model.devicePickerScanState,
+                rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
+                    ? nil
+                    : model.rideState,
+                rideTitle: model.selectedRideTitle,
+                settingsReadback: model.settingsReadback,
+                faultHistoryReadback: model.faultHistoryReadback,
+                bmsSnapshot: model.bmsSnapshot,
+                captureStatusText: model.captureStatusText,
+                isRecordOnlyCapture: model.isRecordOnlyCapture,
+                disconnect: disconnectAndReturnToPicker,
+                pair: pair,
+                recordOnly: { row, deviceKind in
+                    if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
+                        route = model.isRecordOnlyCapture ? .capture : .eucRide
+                    }
+                },
+                selectScreen: selectScreen
+            )
+        } else if route == .vescRide {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                VescRideScreenView(
+                    liveSnapshot: model.vescRideSnapshot,
+                    phase: model.phase,
+                    now: model.currentMonotonicTime,
+                    captureStatusText: model.captureStatusText,
+                    disconnect: disconnectAndReturnToPicker,
+                    selectScreen: selectScreen
+                )
+            }
+        } else if route == .capture {
+            CaptureRecordingScreen(
+                deviceKind: model.recordOnlyDeviceKind,
+                captureStatusText: model.captureStatusText,
+                activeLabels: model.activeCaptureLabels,
+                disconnect: disconnectAndReturnToPicker,
+                startCaptureLabel: model.startCaptureLabel,
+                stopCaptureLabel: model.stopCaptureLabel
+            )
+        }
+    }
+
+    private var appSectionTitle: String {
+        switch route {
+        case .eucRide, .vescRide:
+            "Ride"
+        case .eucMap, .vescMap:
+            "Map"
+        case .eucTune:
+            "Tune"
+        case .eucPack:
+            "Pack"
+        case .vescDebug:
+            "Debug"
+        case .vescLogs:
+            "Logs"
+        case .liveActivity:
+            "Live Activity"
+        case .capture:
+            "Capture"
+        case .devicePicker:
+            "Ride"
+        }
+    }
+
+    private var appTabs: [PevScreenTab] {
+        switch route {
+        case .vescRide, .vescDebug, .vescMap, .vescLogs:
+            PevRideTabs.vescRideTabs(selected: selectedScreenID)
+        default:
+            PevRideTabs.eucRideTabs(selected: selectedScreenID)
+        }
+    }
+
+    private var selectedScreenID: PevScreenID? {
+        switch route {
+        case .eucRide:
+            .eucRide
+        case .eucMap:
+            .eucMap
+        case .eucTune:
+            .eucTune
+        case .eucPack(let screenID):
+            screenID
+        case .vescRide:
+            nil
+        case .vescDebug:
+            .vescDebug
+        case .vescMap:
+            .vescMap
+        case .vescLogs:
+            .vescLogs
+        case .devicePicker, .liveActivity, .capture:
+            nil
+        }
+    }
+
+    private var appSelectedColor: Color {
+        switch route {
+        case .vescRide, .vescDebug, .vescMap, .vescLogs:
+            PevColors.purple
+        default:
+            PevColors.yellow
+        }
     }
 
     private func screen(for route: CutoutAppRoute) -> PevScreen? {

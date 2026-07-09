@@ -89,6 +89,11 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertFalse(tabs[2].isEnabled)
         XCTAssertFalse(tabs[3].isEnabled)
     }
+
+    func testRideTabsNavigateBackToTheirRideModes() {
+        XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
+        XCTAssertEqual(PevRideTabs.vescRideTabs().first?.destinationTarget, .vescRide)
+    }
 }
 
 extension PevScreenCatalogTests {

@@ -1,9 +1,8 @@
 import CutoutMobile
 import SwiftUI
 
-struct PevRideDashboardShell<LeadingAccessory: View, Content: View>: View {
+struct PevRideDashboardShell<Content: View>: View {
     let sectionTitle: String
-    let headerLeadingAccessory: ((CGFloat) -> AnyView)?
     let title: String
     let subtitle: String
     let statusFill: Color
@@ -12,12 +11,10 @@ struct PevRideDashboardShell<LeadingAccessory: View, Content: View>: View {
     let speedUnit: String
     let speedCaption: String
     let allowsVerticalScroll: Bool
-    let topLeadingAccessory: (CGFloat) -> LeadingAccessory
     let content: (CGFloat, [GridItem]) -> Content
 
     init(
         sectionTitle: String,
-        headerLeadingAccessory: ((CGFloat) -> AnyView)? = nil,
         title: String,
         subtitle: String,
         statusFill: Color,
@@ -26,11 +23,9 @@ struct PevRideDashboardShell<LeadingAccessory: View, Content: View>: View {
         speedUnit: String,
         speedCaption: String,
         allowsVerticalScroll: Bool = false,
-        @ViewBuilder topLeadingAccessory: @escaping (CGFloat) -> LeadingAccessory,
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
-        self.headerLeadingAccessory = headerLeadingAccessory
         self.title = title
         self.subtitle = subtitle
         self.statusFill = statusFill
@@ -39,23 +34,17 @@ struct PevRideDashboardShell<LeadingAccessory: View, Content: View>: View {
         self.speedUnit = speedUnit
         self.speedCaption = speedCaption
         self.allowsVerticalScroll = allowsVerticalScroll
-        self.topLeadingAccessory = topLeadingAccessory
         self.content = content
     }
 
     var body: some View {
         PevDashboardScaffold(
             sectionTitle: sectionTitle,
-            headerLeadingAccessory: headerLeadingAccessory,
             bottomPadding: 20,
             allowsVerticalScroll: allowsVerticalScroll,
-            columnSpacing: 12
+            columnSpacing: 12,
+            showsHeader: false
         ) { scale, columns in
-            HStack(alignment: .firstTextBaseline) {
-                topLeadingAccessory(scale)
-                Spacer()
-            }
-
             PevRideHeroSection(
                 title: title,
                 subtitle: subtitle,

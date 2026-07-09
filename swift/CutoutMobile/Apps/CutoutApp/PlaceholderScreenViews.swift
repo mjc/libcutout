@@ -10,7 +10,8 @@ struct PevPlaceholderScreenView: View {
             bottomPadding: 20,
             allowsVerticalScroll: false,
             columnSpacing: 12,
-            contentSpacing: 14
+            contentSpacing: 14,
+            showsHeader: false
         ) { scale, columns in
             VStack(alignment: .leading, spacing: 12 * scale) {
                 HStack(spacing: 10 * scale) {

@@ -18,6 +18,11 @@ public enum PevScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case vescLogs
 }
 
+public enum PevNavigationTarget: Equatable, Hashable, Sendable {
+    case screen(PevScreenID)
+    case vescRide
+}
+
 public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
     case electricUnicycle = "electric_unicycle"
     case vescOnewheel = "vesc_onewheel"
@@ -125,6 +130,7 @@ public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
     public let title: String
     public let isSelected: Bool
     public let destinationScreenID: PevScreenID?
+    public let destinationTarget: PevNavigationTarget?
     public let disabledReason: String?
 
     public var isEnabled: Bool {
@@ -135,11 +141,13 @@ public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
         title: String,
         isSelected: Bool,
         destinationScreenID: PevScreenID? = nil,
+        destinationTarget: PevNavigationTarget? = nil,
         disabledReason: String? = nil
     ) {
         self.title = title
         self.isSelected = isSelected
         self.destinationScreenID = destinationScreenID
+        self.destinationTarget = destinationTarget ?? destinationScreenID.map { .screen($0) }
         self.disabledReason = disabledReason
     }
 }
