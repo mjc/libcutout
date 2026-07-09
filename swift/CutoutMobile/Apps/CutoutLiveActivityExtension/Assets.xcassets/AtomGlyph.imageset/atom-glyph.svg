@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="stroke" x1="120" y1="292" x2="910" y2="735" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B17CFF"/>
+      <stop offset="0.52" stop-color="#7F72FF"/>
+      <stop offset="1" stop-color="#5B54D7"/>
+    </linearGradient>
+    <linearGradient id="dim" x1="165" y1="330" x2="865" y2="704" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8C86FF" stop-opacity="0.82"/>
+      <stop offset="1" stop-color="#4B4AAE" stop-opacity="0.62"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.45  0 0 0 0 0.32  0 0 0 0 1  0 0 0 0.55 0" result="glow"/>
+      <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#glow)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- tire and hub -->
+    <circle cx="512" cy="522" r="118" stroke="url(#stroke)" stroke-width="34"/>
+    <circle cx="512" cy="522" r="66" stroke="url(#dim)" stroke-width="23" opacity="0.88"/>
+    <circle cx="512" cy="522" r="18" stroke="url(#stroke)" stroke-width="18" opacity="0.95"/>
+    <path d="M456 453 C493 432 542 434 579 458" stroke="url(#dim)" stroke-width="19" opacity="0.52"/>
+    <path d="M438 570 C483 607 545 609 588 574" stroke="url(#dim)" stroke-width="18" opacity="0.42"/>
+
+    <!-- high-arched deck silhouette -->
+    <path d="M122 505 C214 532 328 522 413 493 C450 481 476 472 512 472 C548 472 574 481 611 493 C696 522 810 532 902 505" stroke="url(#stroke)" stroke-width="36"/>
+    <path d="M117 569 C215 598 339 586 432 558 C466 548 490 542 512 542 C534 542 558 548 592 558 C685 586 809 598 907 569" stroke="url(#stroke)" stroke-width="34"/>
+
+    <!-- deck lips / end kick curves -->
+    <path d="M122 505 C126 543 149 571 189 585" stroke="url(#dim)" stroke-width="24" opacity="0.86"/>
+    <path d="M902 505 C898 543 875 571 835 585" stroke="url(#dim)" stroke-width="24" opacity="0.86"/>
+    <path d="M151 494 C232 512 330 502 407 477" stroke="url(#dim)" stroke-width="18" opacity="0.58"/>
+    <path d="M617 477 C694 502 792 512 873 494" stroke="url(#dim)" stroke-width="18" opacity="0.58"/>
+
+    <!-- truss plate pattern, simplified Atom visual cue -->
+    <path d="M174 548 L235 516 L294 566 L356 514 L420 548" stroke="url(#dim)" stroke-width="19" opacity="0.82"/>
+    <path d="M604 548 L668 514 L730 566 L789 516 L850 548" stroke="url(#dim)" stroke-width="19" opacity="0.82"/>
+    <path d="M220 586 L280 532 L346 585" stroke="url(#dim)" stroke-width="17" opacity="0.68"/>
+    <path d="M678 585 L744 532 L804 586" stroke="url(#dim)" stroke-width="17" opacity="0.68"/>
+
+    <!-- axle / rail across hub -->
+    <path d="M421 522 H603" stroke="url(#stroke)" stroke-width="28"/>
+    <path d="M469 522 H555" stroke="#0B0B10" stroke-width="16" opacity="0.55"/>
+    <circle cx="472" cy="522" r="8" fill="#0B0B10" opacity="0.82"/>
+    <circle cx="512" cy="522" r="8" fill="#0B0B10" opacity="0.82"/>
+    <circle cx="552" cy="522" r="8" fill="#0B0B10" opacity="0.82"/>
+
+    <!-- small upright side plates -->
+    <path d="M414 480 L437 416" stroke="url(#stroke)" stroke-width="24" opacity="0.92"/>
+    <path d="M610 480 L587 416" stroke="url(#stroke)" stroke-width="24" opacity="0.92"/>
+    <path d="M401 492 C391 468 392 446 411 424" stroke="url(#dim)" stroke-width="18" opacity="0.58"/>
+    <path d="M623 492 C633 468 632 446 613 424" stroke="url(#dim)" stroke-width="18" opacity="0.58"/>
+  </g>
+</svg>

@@ -193,7 +193,8 @@ where
             &peripheral,
             session,
             DriveSessionConfig {
-                channel,
+                write_channel: channel,
+                subscribe_channel: channel,
                 summary: &summary,
                 endpoints,
                 notification_window,

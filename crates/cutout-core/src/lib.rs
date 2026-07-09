@@ -5917,6 +5917,25 @@ impl ChargeMode {
     }
 }
 
+/// Conservative ride operating state decoded from protocol-specific status fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideOperatingState {
+    /// No live evidence has established whether the vehicle is parked, riding, or charging.
+    Unknown,
+
+    /// Explicit telemetry indicates the vehicle is parked or ready but not balancing.
+    Parked,
+
+    /// Live telemetry indicates the vehicle is stationary without explicit parked/off evidence.
+    Standing,
+
+    /// Telemetry indicates the vehicle is moving or balancing under ride context.
+    Riding,
+
+    /// Telemetry indicates charger-connected/charging state.
+    Charging,
+}
+
 impl core::fmt::Display for ChargeMode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -6326,6 +6345,9 @@ pub struct TelemetryDelta {
     /// Device charging state decoded from protocol-specific status fields.
     pub charge_mode: Option<Measured<ChargeMode>>,
 
+    /// Ride operating state decoded from protocol-specific status fields.
+    pub operating_state: Option<RideOperatingState>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
 
@@ -6353,6 +6375,9 @@ pub struct TelemetryDelta {
     /// Roll in millidegrees.
     pub roll: Option<Measured<Angle>>,
 
+    /// Footpad/sensor state for single-wheel boards.
+    pub footpad: Option<FootpadTelemetry>,
+
     /// Battery level reported by the device.
     pub battery_level_reported: Option<Measured<BatteryLevel>>,
 
@@ -6370,6 +6395,7 @@ impl TelemetryDelta {
             voltage: None,
             battery_current: None,
             charge_mode: None,
+            operating_state: None,
             motor_current: None,
             power: None,
             controller_temperature: None,
@@ -6379,10 +6405,24 @@ impl TelemetryDelta {
             distance: None,
             pitch: None,
             roll: None,
+            footpad: None,
             battery_level_reported: None,
             battery_level_estimated: None,
         }
     }
+}
+
+/// Latest known footpad sensor state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FootpadTelemetry {
+    /// Protocol-specific footpad state bitfield/nibble.
+    pub state: u8,
+
+    /// First footpad ADC reading in protocol units, scaled by 1000.
+    pub adc1_milliunits: Option<i32>,
+
+    /// Second footpad ADC reading in protocol units, scaled by 1000.
+    pub adc2_milliunits: Option<i32>,
 }
 
 /// Aggregated latest-known telemetry snapshot.
@@ -6402,6 +6442,9 @@ pub struct TelemetrySnapshot {
 
     /// Latest known device charging state.
     pub charge_mode: Option<Measured<ChargeMode>>,
+
+    /// Latest known ride operating state.
+    pub operating_state: Option<RideOperatingState>,
 
     /// Latest known motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
@@ -6430,6 +6473,9 @@ pub struct TelemetrySnapshot {
     /// Latest known roll in millidegrees.
     pub roll: Option<Measured<Angle>>,
 
+    /// Latest known footpad/sensor state.
+    pub footpad: Option<FootpadTelemetry>,
+
     /// Latest known battery level reported by the device.
     pub battery_level_reported: Option<Measured<BatteryLevel>>,
 
@@ -6453,6 +6499,9 @@ impl TelemetrySnapshot {
         }
         if delta.charge_mode.is_some() {
             self.charge_mode = delta.charge_mode;
+        }
+        if delta.operating_state.is_some() {
+            self.operating_state = delta.operating_state;
         }
         if delta.motor_current.is_some() {
             self.motor_current = delta.motor_current;
@@ -6480,6 +6529,9 @@ impl TelemetrySnapshot {
         }
         if delta.roll.is_some() {
             self.roll = delta.roll;
+        }
+        if delta.footpad.is_some() {
+            self.footpad = delta.footpad;
         }
         if delta.battery_level_reported.is_some() {
             self.battery_level_reported = delta.battery_level_reported;
@@ -7425,11 +7477,11 @@ mod tests {
     use crate::round_div_i32;
     use crate::{
         Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
-        DeviceEvent, Distance, Duration, DutyCycle, Energy, GattChannel, LinkInfo, Measured,
-        MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power, ProtocolSession,
-        SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta, TelemetrySnapshot,
-        Temperature, TransportAction, UnsupportedReason, ValueQuality, ValueSource,
-        VerificationStatus, Voltage, WriteMode, WritePayload,
+        DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry, GattChannel,
+        LinkInfo, Measured, MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power,
+        ProtocolSession, SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta,
+        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -7517,7 +7569,7 @@ mod tests {
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
         assert!(size_of::<crate::RawTelemetryReadback>() <= 96);
         assert!(size_of::<crate::ReadOnlyResponse>() <= 136);
-        assert_eq!(size_of::<SessionOutput>(), 144);
+        assert_eq!(size_of::<SessionOutput>(), 160);
         assert_eq!(size_of::<TransportAction>(), 64);
     }
 
@@ -7527,7 +7579,7 @@ mod tests {
         assert_eq!(crate::MAX_INLINE_TRANSPORT_WRITE_LEN, 32);
         assert_eq!(size_of::<WritePayload>(), 40);
         assert_eq!(size_of::<TransportAction>(), 64);
-        assert_eq!(size_of::<SessionOutput>(), 144);
+        assert_eq!(size_of::<SessionOutput>(), 160);
     }
 
     #[test]
@@ -8125,6 +8177,43 @@ mod tests {
         assert_eq!(
             snapshot.motor_temperature,
             Some(Measured::reported(Temperature::from_millicelsius(42_500)))
+        );
+    }
+
+    #[test]
+    fn telemetry_delta_updates_footpad_without_clearing_other_fields() {
+        let mut snapshot = TelemetrySnapshot::default();
+        snapshot.apply_delta(TelemetryDelta {
+            at_ms: ms(100),
+            speed: Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_500,
+            ))),
+            ..TelemetryDelta::empty(ms(100))
+        });
+        snapshot.apply_delta(TelemetryDelta {
+            at_ms: ms(150),
+            footpad: Some(FootpadTelemetry {
+                state: 3,
+                adc1_milliunits: Some(1_250),
+                adc2_milliunits: Some(875),
+            }),
+            ..TelemetryDelta::empty(ms(150))
+        });
+
+        assert_eq!(snapshot.at_ms, Some(ms(150)));
+        assert_eq!(
+            snapshot.speed,
+            Some(Measured::reported(Speed::from_millimetres_per_second(
+                1_500
+            )))
+        );
+        assert_eq!(
+            snapshot.footpad,
+            Some(FootpadTelemetry {
+                state: 3,
+                adc1_milliunits: Some(1_250),
+                adc2_milliunits: Some(875),
+            })
         );
     }
 

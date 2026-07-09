@@ -24,8 +24,9 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(core.scanState.status, .scanning)
         XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero"])
-        XCTAssertEqual(core.scanState.sections.unsupported.map(\.title), ["Little FOCer"])
+        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [.electricUnicycle, .vescOnewheel])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero", "Little FOCer"])
+        XCTAssertTrue(core.scanState.sections.unsupported.isEmpty)
         XCTAssertEqual(observedStates.count, 2)
     }
 
@@ -109,12 +110,13 @@ final class CutoutSessionCoreTests: XCTestCase {
             title: "Fungineers X7",
             vehicleKind: .float,
             subProtocol: .refloat,
-            controllerState: .armed,
+            controllerState: .unknown,
             warning: .pushbackSoon,
             boardSpeed: speedValue(19_000),
             dutyCycle: dutyCycle(820),
             dutyHeadroom: batteryLevelValue(18),
             batteryCurrent: batteryCurrentValue(38_000),
+            powerFlow: .discharge,
             motorCurrent: phaseCurrentValue(71_000),
             boardAngle: angleValue(-18),
             controllerTemperature: temperatureValue(54_000),
@@ -125,12 +127,13 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.vehicleKind.displayName, "VESC Float")
         XCTAssertEqual(snapshot.subProtocol, .refloat)
         XCTAssertEqual(snapshot.subProtocol.displayName, "Refloat")
-        XCTAssertEqual(snapshot.controllerState, .armed)
+        XCTAssertEqual(snapshot.controllerState, .unknown)
         XCTAssertEqual(snapshot.warning, .pushbackSoon)
         XCTAssertEqual(snapshot.boardSpeed, speedValue(19_000))
         XCTAssertEqual(snapshot.dutyCycle, dutyCycle(820))
         XCTAssertEqual(snapshot.dutyHeadroom, batteryLevelValue(18))
         XCTAssertEqual(snapshot.batteryCurrent, batteryCurrentValue(38_000))
+        XCTAssertEqual(snapshot.powerFlow, .discharge)
         XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
         XCTAssertEqual(snapshot.boardAngle, angleValue(-18))
         XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
@@ -142,7 +145,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             title: "VESC Bike",
             vehicleKind: .bike,
             subProtocol: .generic,
-            controllerState: .armed
+            controllerState: .unknown
         )
 
         XCTAssertEqual(snapshot.vehicleKind.displayName, "VESC Bike")
@@ -153,7 +156,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             title: "VESC Bike",
             vehicleKind: .bike,
             subProtocol: .bike,
-            controllerState: .armed
+            controllerState: .unknown
         )
         XCTAssertEqual(bike.vehicleKind.displayName, "VESC Bike")
         XCTAssertEqual(bike.subProtocol.displayName, "Bike")
@@ -162,10 +165,171 @@ final class CutoutSessionCoreTests: XCTestCase {
             title: "VESC Skateboard",
             vehicleKind: .skateboard,
             subProtocol: .eskate,
-            controllerState: .armed
+            controllerState: .unknown
         )
         XCTAssertEqual(eskate.vehicleKind.displayName, "VESC Skateboard")
         XCTAssertEqual(eskate.subProtocol.displayName, "eSkate")
+    }
+
+    func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
+        let telemetry = TelemetrySnapshot(
+            voltage: voltageValue(75_400),
+            batteryCurrent: batteryCurrentValue(38_000),
+            motorCurrent: phaseCurrentValue(71_000),
+            powerFlow: .discharge,
+            controllerTemperature: temperatureValue(54_000),
+            motorTemperature: temperatureValue(49_000)
+        )
+        let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: "Little FOCer BT"))
+
+        XCTAssertEqual(snapshot.title, "Little FOCer BT")
+        XCTAssertEqual(snapshot.vehicleKind, .float)
+        XCTAssertEqual(snapshot.subProtocol, .generic)
+        XCTAssertEqual(snapshot.controllerState, .unknown)
+        XCTAssertNil(snapshot.boardSpeed)
+        XCTAssertEqual(snapshot.batteryVoltage, voltageValue(75_400))
+        XCTAssertEqual(snapshot.batteryCurrent, batteryCurrentValue(38_000))
+        XCTAssertEqual(snapshot.powerFlow, .discharge)
+        XCTAssertEqual(snapshot.motorCurrent, phaseCurrentValue(71_000))
+        XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
+        XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
+    }
+
+func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
+        let telemetry = TelemetrySnapshot(
+            operatingState: .parked,
+            voltage: voltageValue(61_000),
+            batteryLevelReported: batteryLevelValue(72),
+            batteryLevelEstimated: batteryLevelValue(70)
+        )
+        let displayState = RideDisplayState(
+            telemetry: telemetry,
+            notificationCount: 1,
+            lastUpdate: MonotonicMilliseconds(900)
+        )
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: nil))
+
+        XCTAssertEqual(snapshot.batteryLevelReported, batteryLevelValue(72))
+        XCTAssertEqual(snapshot.batteryLevelEstimated, batteryLevelValue(70))
+        XCTAssertEqual(snapshot.lastUpdate, MonotonicMilliseconds(900))
+        XCTAssertEqual(snapshot.screenSubtitle, "Parked")
+        XCTAssertEqual(
+            snapshot.updateAge(
+                at: MonotonicMilliseconds(1_000),
+                staleAfter: MonotonicMilliseconds(250)
+            ),
+            EucRideUpdateAge(elapsed: MonotonicMilliseconds(100), freshness: .fresh)
+        )
+        XCTAssertEqual(
+            snapshot.updateAge(
+                at: MonotonicMilliseconds(1_300),
+                staleAfter: MonotonicMilliseconds(250)
+            ),
+            EucRideUpdateAge(elapsed: MonotonicMilliseconds(400), freshness: .stale)
+        )
+    }
+
+    func testVescRideSnapshotDerivesDutyHeadroomFromLiveDutyCycle() throws {
+        let balancedTelemetry = TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(0))
+        let idleNoiseTelemetry = TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(10))
+        let loadedTelemetry = TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(230))
+
+        let balanced = try XCTUnwrap(VescRideSnapshot(
+            displayState: RideDisplayState(telemetry: balancedTelemetry, notificationCount: 1),
+            title: nil
+        ))
+        let idleNoise = try XCTUnwrap(VescRideSnapshot(
+            displayState: RideDisplayState(telemetry: idleNoiseTelemetry, notificationCount: 1),
+            title: nil
+        ))
+        let loaded = try XCTUnwrap(VescRideSnapshot(
+            displayState: RideDisplayState(telemetry: loadedTelemetry, notificationCount: 1),
+            title: nil
+        ))
+
+        XCTAssertEqual(balanced.dutyCycle, dutyCycle(0))
+        XCTAssertEqual(balanced.dutyHeadroom, batteryLevelValue(100))
+        XCTAssertEqual(idleNoise.dutyCycle, dutyCycle(10))
+        XCTAssertEqual(idleNoise.dutyHeadroom, batteryLevelValue(100))
+        XCTAssertEqual(loaded.dutyCycle, dutyCycle(230))
+        XCTAssertEqual(loaded.dutyHeadroom, batteryLevelValue(77))
+    }
+
+    func testVescRideSnapshotShowsFullIdleHeadroomWhenParked() throws {
+        let telemetry = TelemetrySnapshot(operatingState: .parked, pwm: dutyCycle(10))
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(
+            displayState: RideDisplayState(telemetry: telemetry, notificationCount: 1),
+            title: nil
+        ))
+
+        XCTAssertEqual(snapshot.dutyCycle, dutyCycle(10))
+        XCTAssertNil(snapshot.dutyHeadroom)
+        XCTAssertEqual(snapshot.dutyHeadroomApplicability, .notApplicable)
+        XCTAssertEqual(snapshot.displayedDutyHeadroom, batteryLevelValue(100))
+    }
+
+    func testVescRideSnapshotKeepsMissingDutyHeadroomUnavailable() throws {
+        let telemetry = TelemetrySnapshot(operatingState: .parked, voltage: voltageValue(62_800))
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(
+            displayState: RideDisplayState(telemetry: telemetry, notificationCount: 1),
+            title: nil
+        ))
+
+        XCTAssertNil(snapshot.dutyCycle)
+        XCTAssertNil(snapshot.dutyHeadroom)
+        XCTAssertEqual(snapshot.dutyHeadroomApplicability, .unavailable)
+        XCTAssertNil(snapshot.displayedDutyHeadroom)
+    }
+
+    func testVescRideSnapshotProjectsFootpadFromSharedTelemetry() throws {
+        let footpad = FootpadTelemetry(state: 3, adc1Milliunits: 1_250, adc2Milliunits: 875)
+        let telemetry = TelemetrySnapshot(footpad: footpad)
+        let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: nil))
+
+        XCTAssertEqual(snapshot.footpad, footpad)
+        XCTAssertNil(snapshot.boardSpeed)
+        XCTAssertNil(snapshot.boardAngle)
+    }
+
+    func testFootpadTelemetryExposesCompactDisplayText() {
+        let footpad = FootpadTelemetry(state: 3, adc1Milliunits: 1_250, adc2Milliunits: nil)
+
+        XCTAssertEqual(footpad.adc1DisplayText, "1.25")
+        XCTAssertEqual(footpad.adc2DisplayText, "--")
+        XCTAssertEqual(footpad.stateDisplayText, "state 3")
+    }
+
+    func testVescRideSnapshotProjectsAngleOnlyTelemetry() throws {
+        let telemetry = TelemetrySnapshot(pitch: angleValue(14_200))
+        let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: nil))
+
+        XCTAssertEqual(snapshot.boardAngle, angleValue(14_200))
+        XCTAssertNil(snapshot.batteryVoltage)
+    }
+
+    func testVescRideSnapshotDoesNotUsePreviewFactsForLiveDefaults() throws {
+        let telemetry = TelemetrySnapshot(voltage: voltageValue(62_800))
+        let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
+
+        let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: nil))
+
+        XCTAssertEqual(snapshot.title, "VESC Onewheel")
+        XCTAssertEqual(snapshot.subProtocol, .generic)
+        XCTAssertNil(snapshot.boardSpeed)
+        XCTAssertNil(snapshot.dutyHeadroom)
+        XCTAssertNil(snapshot.boardAngle)
+        XCTAssertNil(snapshot.controllerTemperature)
+        XCTAssertNil(snapshot.motorTemperature)
+        XCTAssertNotEqual(snapshot.title, "Fungineers X7")
     }
 
     func testVescDebugSnapshotKeepsGuardrailAndReadOnlyStateTyped() {
@@ -242,6 +406,93 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 1_234)
         XCTAssertEqual(core.displayState.notificationCount, 2)
         XCTAssertEqual(core.displayState.lastUpdate, MonotonicMilliseconds(99))
+    }
+
+    func testVescOnewheelCoreBluetoothSessionSubscribesAndRequestsTelemetryOnLinkUp() throws {
+        let session = CoreBluetoothSession.vescOnewheel()
+        let runner = CoreBluetoothSessionRunner(
+            session: session,
+            writeLimit: TransportWriteLimitBytes(20)
+        )
+
+        let step = try runner.handle(.linkUp(at: MonotonicMilliseconds(7)))
+
+        assertVescTelemetryRequests(step.operations, includesSubscribe: true)
+        XCTAssertNil(step.snapshot?.speed)
+    }
+
+    func testVescOnewheelCoreBluetoothSessionRequestsTelemetryWithReadOnlyCommand() throws {
+        let session = CoreBluetoothSession.vescOnewheel()
+        let runner = CoreBluetoothSessionRunner(
+            session: session,
+            writeLimit: TransportWriteLimitBytes(20)
+        )
+
+        let step = try runner.handle(.command(.requestTelemetry, at: MonotonicMilliseconds(11)))
+
+        assertVescTelemetryRequests(step.operations, includesSubscribe: false)
+        XCTAssertNil(step.snapshot?.speed)
+    }
+
+    func testVescLiveOwnerRetriesTelemetryAfterLinkUp() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: .vescOnewheel(),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
+                localName: "Floatwheel Atom",
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink,
+            retryCommandOnLinkUp: .requestTelemetry,
+            retryDelay: .milliseconds(10)
+        )
+
+        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
+        XCTAssertEqual(sink.writes.count, 3)
+
+        let retryExpectation = expectation(description: "vesc telemetry retries")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
+            retryExpectation.fulfill()
+        }
+        wait(for: [retryExpectation], timeout: 1.0)
+
+        XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
+        XCTAssertEqual(sink.writes.count % 3, 0)
+        XCTAssertEqual(sink.writes.prefix(3), sink.writes.suffix(3))
+    }
+
+
+    func testVescLiveOwnerKeepsRetryingAfterNonRealtimeNotification() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: .vescOnewheel(),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
+                localName: "Floatwheel Atom",
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink,
+            retryCommandOnLinkUp: .requestTelemetry,
+            retryDelay: .milliseconds(10)
+        )
+
+        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
+        _ = try owner.handleNotification(
+            bytes: Data([0x01]),
+            channel: .bluetooth16(0xffff),
+            at: MonotonicMilliseconds(2)
+        )
+
+        let retryExpectation = expectation(description: "vesc telemetry retries after generic notification")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
+            retryExpectation.fulfill()
+        }
+        wait(for: [retryExpectation], timeout: 1.0)
+
+        XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
     }
 
     func testSettingsReadbackUpdatesCurrentSessionStateUntilDisconnect() {
@@ -737,7 +988,7 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testPevcapIdentityDoesNotUseProvisionalSelectedModel() {
-        XCTAssertNil(captureResolvedIdentity(protocolIdentityCandidate: nil, selectedModel: .falcon))
+        XCTAssertNil(captureResolvedIdentity(protocolIdentityCandidate: nil))
     }
 
     func testPevcapIdentityUsesProtocolConfirmedCandidate() {
@@ -747,11 +998,22 @@ final class CutoutSessionCoreTests: XCTestCase {
             modelId: 43
         ))
 
-        let identity = captureResolvedIdentity(protocolIdentityCandidate: candidate, selectedModel: .falcon)
+        let identity = captureResolvedIdentity(protocolIdentityCandidate: candidate)
 
         XCTAssertEqual(identity?.protocolFamily, .veteranLeaperkimNosfet)
         XCTAssertEqual(identity?.model?.value, "NOSFET Aero")
         XCTAssertEqual(identity?.model?.verification, .hardwareVerified)
+    }
+
+    func testPevcapAnnotationSanitizesDelimiterCharacters() {
+        XCTAssertEqual(
+            pevcapAnnotation(key: "device_kind", value: "foo=bar\nbaz\rqux"),
+            "device_kind=foo bar baz qux"
+        )
+        XCTAssertEqual(
+            sanitizedPevcapAnnotation("user_note=one=two\nthree"),
+            "user_note=one two three"
+        )
     }
 
     func testBegodeProbeWritesAreLabeledForDetectionCapture() {
@@ -772,8 +1034,19 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8))
 
-        XCTAssertEqual(core.phase, .failed(.missingNotifyChannel))
+        XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertTrue(core.records.contains("begode_probe_write=model"))
+    }
+
+    func testVescTelemetryRequestDoesNotUseSkippedWriteGuard() {
+        let core = CutoutSessionCore()
+
+        core.writeWithoutResponse(
+            channel: .vescNordicUartWrite,
+            bytes: Data([0x02, 0x01, 0x04, 0x40, 0x84, 0x03])
+        )
+
+        XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
     }
 
     func testFalconLinkUpPlansBegodeIdentityProbeWrites() throws {
@@ -1163,6 +1436,18 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(riding.pwmHeadroomPermille, 770)
         XCTAssertEqual(standing.pwmHeadroomApplicability, .available)
         XCTAssertEqual(standing.pwmHeadroomPermille, 770)
+    }
+
+    func testRideStateTreatsIdlePwmHeadroomAsFullHeadroom() {
+        let rideState = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .standing, pwm: dutyCycle(10))
+            )
+        )
+
+        XCTAssertEqual(rideState.pwmHeadroomApplicability, .available)
+        XCTAssertEqual(rideState.pwmHeadroomPermille, 1_000)
     }
 
     func testRideStateStatusUsesOperatingStateWhenLive() {
@@ -1603,6 +1888,50 @@ final class CutoutSessionCoreTests: XCTestCase {
             ]
         )
     }
+}
+
+private func assertVescTelemetryRequests(
+    _ operations: [CoreBluetoothPlannedOperation],
+    includesSubscribe: Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) {
+    let expectedWriteCount = 3
+    XCTAssertEqual(operations.count, expectedWriteCount + (includesSubscribe ? 1 : 0), file: file, line: line)
+    if includesSubscribe {
+        XCTAssertEqual(operations.first, .subscribe(channel: .vescNordicUartNotify), file: file, line: line)
+    }
+    let writes = operations.compactMap { operation -> Data? in
+        guard case .writeWithoutResponse(channel: .vescNordicUartWrite, bytes: let bytes) = operation else {
+            return nil
+        }
+        return bytes
+    }
+    XCTAssertEqual(writes.count, expectedWriteCount, file: file, line: line)
+    XCTAssertTrue(writes.first.map { isRefloatRequest($0, command: 32) } ?? false, file: file, line: line)
+    XCTAssertEqual(writes[1], Data([2, 1, 14, 225, 206, 3]), file: file, line: line)
+    XCTAssertEqual(writes[2], Data([2, 1, 4, 64, 132, 3]), file: file, line: line)
+}
+
+private func isRefloatRequest(_ bytes: Data, command: UInt8) -> Bool {
+    bytes.count >= 7
+        && bytes.first == 0x02
+        && bytes.last == 0x03
+        && bytes[bytes.index(bytes.startIndex, offsetBy: 2)] == 36
+        && bytes[bytes.index(bytes.startIndex, offsetBy: 3)] == 101
+        && bytes[bytes.index(bytes.startIndex, offsetBy: 4)] == command
+}
+
+private final class RecordingOperationSink: CoreBluetoothOperationSink {
+    var writes: [Data] = []
+
+    func subscribe(channel: BluetoothUuid) {}
+
+    func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
+        writes.append(bytes)
+    }
+
+    func disconnect() {}
 }
 
 private func speedValue(_ value: Int32) -> Speed {

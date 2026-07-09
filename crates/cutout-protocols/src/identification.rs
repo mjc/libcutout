@@ -529,8 +529,8 @@ impl DeviceDetectionSession {
             DeviceDetectionEvent::ProbeTimeout { probe } => {
                 if self.pending_probe == Some(probe) {
                     self.pending_probe = None;
+                    self.resolution.missing_probe_response = Some(probe);
                 }
-                self.resolution.missing_probe_response = Some(probe);
             }
         }
 
@@ -1058,9 +1058,10 @@ mod tests {
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL,
         DeviceDetectionEvent, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
-        IdentityConfidence, IdentityEvidence, NOSFET_AERO_REGISTRY_ENTRY, PendingProbe,
-        ProtocolFamilyClassification, ProtocolModelIdentityEvidence, StagedIdentityInput,
-        StagedIdentityOutcome, identify_known_model, identify_model, parse_model_banner,
+        IdentityConfidence, IdentityEvidence, ModelBanner, NOSFET_AERO_REGISTRY_ENTRY,
+        PendingProbe, ProtocolFamilyClassification, ProtocolModelIdentityEvidence,
+        StagedIdentityInput, StagedIdentityOutcome, identify_known_model, identify_model,
+        parse_model_banner,
     };
 
     const BEGODE_GATT: [GattFingerprint; 1] = [GattFingerprint {
@@ -1465,6 +1466,27 @@ mod tests {
         );
         assert_eq!(resolution.model_banner, None);
         assert_eq!(resolution.staged.model, None);
+    }
+
+    #[test]
+    fn caller_owned_detection_session_ignores_stale_begode_model_probe_timeout() {
+        let mut session = DeviceDetectionSession::new();
+        let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
+            probe: PendingProbe::BegodeName,
+        });
+        let _ = session.observe(DeviceDetectionEvent::Notification {
+            bytes: b"NAME:Falcon",
+        });
+
+        let resolution = session.observe(DeviceDetectionEvent::ProbeTimeout {
+            probe: PendingProbe::BegodeName,
+        });
+
+        assert_eq!(resolution.missing_probe_response, None);
+        assert_eq!(
+            resolution.model_banner.as_ref().and_then(ModelBanner::get),
+            Some("Falcon")
+        );
     }
 
     #[test]

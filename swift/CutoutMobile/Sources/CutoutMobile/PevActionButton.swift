@@ -1,0 +1,162 @@
+import SwiftUI
+
+public struct PevActionButton: View {
+    public let title: String
+    public let systemImageName: String?
+    public let scale: CGFloat
+    public let isEnabled: Bool
+    public let fillsAvailableWidth: Bool
+    public let width: CGFloat?
+    public let height: CGFloat
+    public let cornerRadius: CGFloat
+    public let horizontalPadding: CGFloat
+    public let iconSpacing: CGFloat
+    public let foregroundEnabled: Color
+    public let foregroundDisabled: Color
+    public let fillEnabled: Color
+    public let fillDisabled: Color
+    public let strokeEnabled: Color
+    public let strokeDisabled: Color
+    public let action: () -> Void
+
+    public init(
+        title: String,
+        systemImageName: String?,
+        scale: CGFloat,
+        isEnabled: Bool,
+        fillsAvailableWidth: Bool,
+        width: CGFloat?,
+        height: CGFloat,
+        cornerRadius: CGFloat,
+        horizontalPadding: CGFloat,
+        iconSpacing: CGFloat,
+        foregroundEnabled: Color,
+        foregroundDisabled: Color,
+        fillEnabled: Color,
+        fillDisabled: Color,
+        strokeEnabled: Color,
+        strokeDisabled: Color,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.systemImageName = systemImageName
+        self.scale = scale
+        self.isEnabled = isEnabled
+        self.fillsAvailableWidth = fillsAvailableWidth
+        self.width = width
+        self.height = height
+        self.cornerRadius = cornerRadius
+        self.horizontalPadding = horizontalPadding
+        self.iconSpacing = iconSpacing
+        self.foregroundEnabled = foregroundEnabled
+        self.foregroundDisabled = foregroundDisabled
+        self.fillEnabled = fillEnabled
+        self.fillDisabled = fillDisabled
+        self.strokeEnabled = strokeEnabled
+        self.strokeDisabled = strokeDisabled
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            PevActionButtonLabel(
+                title: title,
+                systemImageName: systemImageName,
+                scale: scale,
+                isEnabled: isEnabled,
+                fillsAvailableWidth: fillsAvailableWidth,
+                width: width,
+                height: height,
+                cornerRadius: cornerRadius,
+                horizontalPadding: horizontalPadding,
+                iconSpacing: iconSpacing,
+                foregroundEnabled: foregroundEnabled,
+                foregroundDisabled: foregroundDisabled,
+                fillEnabled: fillEnabled,
+                fillDisabled: fillDisabled,
+                strokeEnabled: strokeEnabled,
+                strokeDisabled: strokeDisabled
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+public struct PevActionButtonLabel: View {
+    public let title: String
+    public let systemImageName: String?
+    public let scale: CGFloat
+    public let isEnabled: Bool
+    public let fillsAvailableWidth: Bool
+    public let width: CGFloat?
+    public let height: CGFloat
+    public let cornerRadius: CGFloat
+    public let horizontalPadding: CGFloat
+    public let iconSpacing: CGFloat
+    public let foregroundEnabled: Color
+    public let foregroundDisabled: Color
+    public let fillEnabled: Color
+    public let fillDisabled: Color
+    public let strokeEnabled: Color
+    public let strokeDisabled: Color
+
+    public init(
+        title: String,
+        systemImageName: String?,
+        scale: CGFloat,
+        isEnabled: Bool,
+        fillsAvailableWidth: Bool,
+        width: CGFloat?,
+        height: CGFloat,
+        cornerRadius: CGFloat,
+        horizontalPadding: CGFloat,
+        iconSpacing: CGFloat,
+        foregroundEnabled: Color,
+        foregroundDisabled: Color,
+        fillEnabled: Color,
+        fillDisabled: Color,
+        strokeEnabled: Color,
+        strokeDisabled: Color
+    ) {
+        self.title = title
+        self.systemImageName = systemImageName
+        self.scale = scale
+        self.isEnabled = isEnabled
+        self.fillsAvailableWidth = fillsAvailableWidth
+        self.width = width
+        self.height = height
+        self.cornerRadius = cornerRadius
+        self.horizontalPadding = horizontalPadding
+        self.iconSpacing = iconSpacing
+        self.foregroundEnabled = foregroundEnabled
+        self.foregroundDisabled = foregroundDisabled
+        self.fillEnabled = fillEnabled
+        self.fillDisabled = fillDisabled
+        self.strokeEnabled = strokeEnabled
+        self.strokeDisabled = strokeDisabled
+    }
+
+    public var body: some View {
+        HStack(spacing: systemImageName == nil ? 0 : iconSpacing) {
+            if let systemImageName {
+                Image(systemName: systemImageName)
+                    .font(.system(size: 14 * scale, weight: .bold))
+            }
+            Text(title)
+                .font(.system(size: 13 * scale, weight: .bold))
+        }
+        .foregroundStyle(isEnabled ? foregroundEnabled : foregroundDisabled)
+        .padding(.horizontal, horizontalPadding)
+        .frame(maxWidth: fillsAvailableWidth ? .infinity : nil)
+        .frame(width: width, height: height)
+        .background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(isEnabled ? fillEnabled : fillDisabled)
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(isEnabled ? strokeEnabled : strokeDisabled, lineWidth: 1 * scale)
+                )
+        )
+        .contentShape(Rectangle())
+    }
+}

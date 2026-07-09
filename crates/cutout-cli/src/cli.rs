@@ -22,6 +22,7 @@ Examples:
   cutout capture --name-contains NF2557 --seconds 20
   cutout pevcap convert --input session.pevcap.jsonl --input-format jsonl --output session.pevcap --output-format binary
   cutout validation
+  cutout vesc-probe --name-contains \"VESC BLE UART\"
   cutout dashboard --demo --device \"Aero NF2557\"
 
 Target selection:
@@ -94,6 +95,14 @@ after the device connects.
 
 This command does not modify the device. It is a visualization and monitoring
 surface for the data Cutout already knows how to collect.";
+const VESC_PROBE_LONG_ABOUT: &str = "\
+Connect to a VESC BLE UART / Nordic UART target and run the shortest read-only
+probe path. The command bypasses model auto-selection, uses the private VESC
+codec backed by the external vesc crate for firmware and values requests, and
+prints the decoded session summary. Refloat package probes use the VESC custom
+app data path and stay read-only.
+
+No actuator commands are exposed.";
 
 /// Parsed command-line arguments for the `cutout` binary.
 #[derive(Debug, Parser)]
@@ -137,6 +146,10 @@ pub(crate) enum Command {
     /// Open the interactive read-only dashboard.
     #[command(long_about = DASHBOARD_LONG_ABOUT)]
     Dashboard(DashboardArgs),
+
+    /// Probe a VESC BLE UART target directly.
+    #[command(long_about = VESC_PROBE_LONG_ABOUT)]
+    VescProbe(VescProbeArgs),
 }
 
 impl Cli {
@@ -186,6 +199,57 @@ pub(crate) struct TargetedScanArgs {
     /// Emit read-only response DTOs as JSONL records.
     #[arg(long = "read-only-jsonl")]
     pub(crate) read_only_jsonl: bool,
+}
+
+#[derive(Clone, Debug, Args, PartialEq, Eq)]
+pub(crate) struct VescProbeArgs {
+    #[command(flatten)]
+    pub(crate) target: TargetArgs,
+
+    #[command(flatten)]
+    pub(crate) scan: ScanArgs,
+
+    /// Explicit VESC read-only probe to issue after subscribing.
+    #[arg(long = "probe", value_enum)]
+    pub(crate) probes: Vec<VescProbe>,
+
+    /// Emit aggregate session diagnostics as JSONL records.
+    #[arg(long = "diagnostics-jsonl")]
+    pub(crate) diagnostics_jsonl: bool,
+
+    /// Emit read-only response DTOs as JSONL records.
+    #[arg(long = "read-only-jsonl")]
+    pub(crate) read_only_jsonl: bool,
+
+    /// Emit raw notification bytes as JSONL records.
+    #[arg(long = "raw-notifications-jsonl")]
+    pub(crate) raw_notifications_jsonl: bool,
+}
+
+impl VescProbeArgs {
+    pub(crate) fn into_target(self) -> ConnectionTarget {
+        self.target.into()
+    }
+
+    pub(crate) const fn seconds(&self) -> u64 {
+        self.scan.seconds()
+    }
+
+    pub(crate) fn probes(&self) -> &[VescProbe] {
+        &self.probes
+    }
+
+    pub(crate) const fn diagnostics_jsonl(&self) -> bool {
+        self.diagnostics_jsonl
+    }
+
+    pub(crate) const fn read_only_jsonl(&self) -> bool {
+        self.read_only_jsonl
+    }
+
+    pub(crate) const fn raw_notifications_jsonl(&self) -> bool {
+        self.raw_notifications_jsonl
+    }
 }
 
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
@@ -394,6 +458,16 @@ pub(crate) enum ReadProbe {
     FaultHistory,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum VescProbe {
+    Firmware,
+    Telemetry,
+    Diagnostics,
+    RefloatInfo,
+    RefloatRealtimeIds,
+    RefloatRealtime,
+}
+
 #[derive(Clone, Debug, Args, PartialEq, Eq)]
 pub(crate) struct PevcapArgs {
     #[command(subcommand)]
@@ -524,7 +598,8 @@ mod tests {
         CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
         CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
         PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, RawSubscribeArgs,
-        ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
+        ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs, VescProbe,
+        VescProbeArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -770,6 +845,46 @@ mod tests {
                 probes: Vec::new(),
                 diagnostics_jsonl: false,
                 read_only_jsonl: false,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_vesc_probe_command_with_read_only_probes() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "vesc-probe",
+            "--name-contains",
+            "VESC BLE UART",
+            "--seconds",
+            "9",
+            "--probe",
+            "firmware",
+            "--probe",
+            "telemetry",
+            "--probe",
+            "refloat-info",
+            "--read-only-jsonl",
+        ])
+        .expect("parser accepts VESC probe");
+
+        assert_eq!(
+            cli.command,
+            Command::VescProbe(VescProbeArgs {
+                target: TargetArgs {
+                    address: None,
+                    identifier: None,
+                    name_contains: Some("VESC BLE UART".to_owned()),
+                },
+                scan: ScanArgs { seconds: 9 },
+                probes: vec![
+                    VescProbe::Firmware,
+                    VescProbe::Telemetry,
+                    VescProbe::RefloatInfo
+                ],
+                diagnostics_jsonl: false,
+                read_only_jsonl: true,
+                raw_notifications_jsonl: false,
             })
         );
     }
@@ -1617,6 +1732,7 @@ mod tests {
                 "capture",
                 "pevcap",
                 "validation",
+                "vesc-probe",
                 "dashboard",
             ],
         );
@@ -1666,6 +1782,7 @@ mod tests {
                 "cutout capture --name-contains NF2557 --seconds 20",
                 "cutout pevcap convert --input session.pevcap.jsonl",
                 "cutout validation",
+                "cutout vesc-probe --name-contains \"VESC BLE UART\"",
                 "cutout dashboard",
             ],
         );
@@ -1688,7 +1805,8 @@ mod tests {
                 "capture",
                 "validation",
                 "pevcap",
-                "dashboard"
+                "dashboard",
+                "vesc-probe"
             ]
         );
     }

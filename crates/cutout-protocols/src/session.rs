@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 use core::marker::PhantomData;
 use cutout_core::{
     BATTERY_TEMPERATURE_VALUES_PER_PAGE, BatteryCurrent, BatteryInfo, BatteryPageKind,
@@ -9,21 +10,23 @@ use cutout_core::{
     ProtocolSelector, ProtocolSession, Quantity, RawFieldValue, RawTelemetryReadback,
     ReadOnlyResponse, ReservedPayloadEvidence, RetainedNotificationPayload, SafetyClass,
     SemanticEventCount, SeriesCount, SessionInput, SessionOutput, Temperature, TransportAction,
-    Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WritePayload,
+    Unit, ValueQuality, VerificationStatus, VerifiedValue, Voltage, WriteMode, WritePayload,
 };
 
 use crate::{
     AeroProbe, AeroRequestEncoder, BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, BegodeBmsCellPage,
     BegodeBmsPageError, BegodeBmsSummary, BegodeFrame, BegodeFrameError, BegodeFrameParseResult,
     BegodeFrameReassembler, BegodeLiveATelemetry, BegodeLiveBTelemetry, BegodePackVoltageProfile,
-    BegodeTelemetryContext, BegodeTelemetryError, FalconProbe, FalconRequestEncoder,
-    RequestDisposition, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL,
-    VescBoardProfile, VescCodecError, VescFaultCode, VescReadOnlyReply, VescReadOnlyRequest,
-    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder, VescStatsTelemetry,
-    VescValuesTelemetry, VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence,
-    VeteranBmsTemperaturePage, VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler,
-    VeteranReassemblyError, VeteranTelemetry, VeteranTelemetryError,
-    begode_falcon_target_voltage_profile, decode_veteran_bms_page, util::u64_to_i64_saturating,
+    BegodeTelemetryContext, BegodeTelemetryError, EncodedRequest, FalconProbe,
+    FalconRequestEncoder, RefloatCodecError, RefloatReadOnlyRequest, RefloatReply,
+    RefloatStreamDecoder, RefloatStreamResult, RequestDisposition, VESC_NOTIFY_CHANNEL,
+    VESC_WRITE_CHANNEL, VETERAN_DATA_CHANNEL, VescBoardProfile, VescCodecError, VescFaultCode,
+    VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder,
+    VescReadOnlyStreamResult, VescRequestEncoder, VescStatsTelemetry, VescValuesTelemetry,
+    VeteranBmsCellPage, VeteranBmsMetadataPage, VeteranBmsPageEvidence, VeteranBmsTemperaturePage,
+    VeteranFrame, VeteranFrameParseResult, VeteranFrameReassembler, VeteranReassemblyError,
+    VeteranTelemetry, VeteranTelemetryError, begode_falcon_target_voltage_profile,
+    decode_veteran_bms_page, util::u64_to_i64_saturating,
 };
 
 /// Raw VESC electrical RPM telemetry field id.
@@ -487,6 +490,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 #[derive(Debug, Default)]
 pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
+    refloat_stream: RefloatStreamDecoder,
     board_profile: Option<VescBoardProfile>,
 }
 
@@ -496,6 +500,7 @@ impl VescNotificationDecoder {
     pub fn with_board_profile(board_profile: VescBoardProfile) -> Self {
         Self {
             stream: VescReadOnlyStreamDecoder::new(),
+            refloat_stream: RefloatStreamDecoder::new(),
             board_profile: Some(board_profile),
         }
     }
@@ -504,6 +509,7 @@ impl VescNotificationDecoder {
 impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
     fn reset(&mut self) {
         self.stream = VescReadOnlyStreamDecoder::new();
+        self.refloat_stream = RefloatStreamDecoder::new();
     }
 
     fn handle_notification(
@@ -514,6 +520,47 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) {
+        match self.refloat_stream.feed_result(bytes) {
+            Ok(RefloatStreamResult::Replies(replies)) => {
+                self.stream = VescReadOnlyStreamDecoder::new();
+                let reports_battery_current = self
+                    .board_profile
+                    .is_some_and(|profile| profile.reports_battery_current);
+                for reply in &replies {
+                    push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
+                }
+                output.push(SessionOutput::NotificationIngest(
+                    NotificationIngestOutcome::semantic_events(
+                        family,
+                        channel,
+                        NotificationByteLen::from_bytes(bytes.len()),
+                        monotonic_ms,
+                        SemanticEventCount::from_events(replies.len()),
+                    ),
+                ));
+                return;
+            }
+            Ok(RefloatStreamResult::Buffered) => {}
+            Err(
+                RefloatCodecError::UnexpectedVescCommand
+                | RefloatCodecError::UnexpectedPackageInterface
+                | RefloatCodecError::UnsupportedCommand,
+            ) => {}
+            Err(_) => {
+                push_parser_error(ParserError::MalformedFrame, output);
+                output.push(SessionOutput::NotificationIngest(
+                    NotificationIngestOutcome::parser_diagnostic(
+                        family,
+                        channel,
+                        NotificationByteLen::from_bytes(bytes.len()),
+                        monotonic_ms,
+                        ParserError::MalformedFrame,
+                    ),
+                ));
+                return;
+            }
+        }
+
         match self.stream.feed_result(bytes) {
             Ok(VescReadOnlyStreamResult::Replies(replies)) => {
                 let event_count = replies
@@ -522,6 +569,18 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         count.saturating_add(vesc_reply_event_count(reply))
                     });
                 for reply in &replies {
+                    match reply {
+                        VescReadOnlyReply::MotorConfig(config) => {
+                            self.board_profile = Some(VescBoardProfile::from_motor_config(*config));
+                        }
+                        VescReadOnlyReply::MotorSetupConfig(geometry) => {
+                            self.board_profile =
+                                Some(VescBoardProfile::from_speed_geometry(*geometry));
+                        }
+                        VescReadOnlyReply::FirmwareInfo { .. }
+                        | VescReadOnlyReply::Values(_)
+                        | VescReadOnlyReply::Stats(_) => {}
+                    }
                     push_vesc_reply(reply, monotonic_ms, self.board_profile, output);
                 }
                 output.push(SessionOutput::NotificationIngest(
@@ -578,9 +637,10 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
 
 const fn vesc_reply_event_count(reply: &VescReadOnlyReply) -> SemanticEventCount {
     match reply {
-        VescReadOnlyReply::FirmwareInfo { .. } | VescReadOnlyReply::Stats(_) => {
-            SemanticEventCount::from_events(1)
-        }
+        VescReadOnlyReply::FirmwareInfo { .. }
+        | VescReadOnlyReply::Stats(_)
+        | VescReadOnlyReply::MotorConfig(_)
+        | VescReadOnlyReply::MotorSetupConfig(_) => SemanticEventCount::from_events(1),
         VescReadOnlyReply::Values(_) => SemanticEventCount::from_events(2),
     }
 }
@@ -618,6 +678,42 @@ fn push_vesc_reply(
                 ReadOnlyResponse::Diagnostics(vesc_stats_to_diagnostics(*stats)),
             )));
         }
+        VescReadOnlyReply::MotorConfig(_) | VescReadOnlyReply::MotorSetupConfig(_) => {}
+    }
+}
+
+fn push_refloat_reply(
+    reply: &RefloatReply,
+    monotonic_ms: MonotonicTimestamp,
+    reports_battery_current: bool,
+    output: &mut Vec<SessionOutput>,
+) {
+    match reply {
+        RefloatReply::RealtimeData(data) => {
+            output.push(SessionOutput::Event(DeviceEvent::Telemetry(
+                data.to_delta(monotonic_ms, reports_battery_current),
+            )));
+            push_refloat_realtime_request(output);
+        }
+        RefloatReply::RealtimeFieldIds(_) => push_refloat_realtime_request(output),
+        RefloatReply::Info(_) => {}
+    }
+}
+
+fn push_refloat_realtime_request(output: &mut Vec<SessionOutput>) {
+    let mut payload = ArrayVec::new();
+    if VescReadOnlyCodec::encode_request(
+        VescReadOnlyRequest::Refloat(RefloatReadOnlyRequest::RealtimeData),
+        &mut payload,
+    )
+    .is_ok()
+    {
+        output.push(SessionOutput::Transport(TransportAction::Write {
+            channel: VESC_WRITE_CHANNEL,
+            bytes: WritePayload::try_from_slice(payload.as_slice())
+                .expect("encoded Refloat realtime request fits write payload"),
+            mode: WriteMode::WithoutResponse,
+        }));
     }
 }
 
@@ -632,7 +728,15 @@ fn vesc_values_to_delta(
             .and_then(|profile| profile.speed_from_erpm(values.rpm))
             .map(Measured::calculated),
         voltage: Some(Measured::reported(values.voltage)),
-        battery_current: Some(Measured::reported(values.input_current)),
+        battery_level_estimated: board_profile
+            .and_then(|profile| profile.battery_level_from_voltage(values.voltage))
+            .map(Measured::estimated),
+        battery_current: board_profile
+            .filter(|profile| profile.reports_battery_current)
+            .map(|_| Measured::reported(values.input_current)),
+        motor_current: Some(Measured::reported(values.motor_current)),
+        controller_temperature: Some(Measured::reported(values.controller_temperature)),
+        motor_temperature: Some(Measured::reported(values.motor_temperature)),
         ..cutout_core::TelemetryDelta::empty(monotonic_ms)
     }
 }
@@ -1209,12 +1313,11 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
 fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Vec<SessionOutput>) {
     match M::encode_read_command(kind) {
         Some(RequestDisposition::Write(request)) => {
-            if let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice()) {
-                output.push(SessionOutput::Transport(TransportAction::Write {
-                    channel: M::WRITE_CHANNEL,
-                    bytes,
-                    mode: request.mode,
-                }));
+            push_encoded_read_request::<M>(&request, output);
+        }
+        Some(RequestDisposition::Writes(requests)) => {
+            for request in &requests {
+                push_encoded_read_request::<M>(request, output);
             }
         }
         Some(RequestDisposition::Passive { command, .. }) => output.extend(
@@ -1227,6 +1330,19 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
                 .map(DeviceEvent::ReadOnlyResponse)
                 .map(SessionOutput::Event),
         ),
+    }
+}
+
+fn push_encoded_read_request<M: SupportsReadRequests>(
+    request: &EncodedRequest<M::Probe>,
+    output: &mut Vec<SessionOutput>,
+) {
+    if let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice()) {
+        output.push(SessionOutput::Transport(TransportAction::Write {
+            channel: M::WRITE_CHANNEL,
+            bytes,
+            mode: request.mode,
+        }));
     }
 }
 
@@ -1398,7 +1514,12 @@ mod tests {
     }
 
     use super::*;
-    use crate::{GearRatioDenominator, MotorPolePairs};
+    use crate::{
+        GearRatioDenominator, MotorPolePairs, REFLOAT_COMMAND_REALTIME_DATA,
+        REFLOAT_COMMAND_REALTIME_DATA_IDS, REFLOAT_PACKAGE_INTERFACE_ID, SAMSUNG_50S_PROFILE,
+        VESC_MAX_FRAME_LEN, refloat_codec::encode_custom_app_frame,
+    };
+    use arrayvec::ArrayVec;
     use core::mem::size_of;
     use cutout_core::{
         BatteryPageKind, LinkInfo, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse,
@@ -1545,6 +1666,89 @@ mod tests {
             160, 0, 0, 64, 192, 0, 0, 64, 224, 0, 0, 65, 0, 0, 0, 65, 16, 0, 0, 65, 32, 0, 0, 65,
             48, 0, 0, 213, 206, 3,
         ]
+    }
+
+    const LIVE_VESC_VALUES_CHUNK_0: [u8; 2] = hex_literal::hex!("024a");
+    const LIVE_VESC_VALUES_CHUNK_1: [u8; 20] =
+        hex_literal::hex!("04010b00ea000000000000000000000000000000");
+    const LIVE_VESC_VALUES_CHUNK_2: [u8; 20] =
+        hex_literal::hex!("00000000000000026b0000000000000000000000");
+    const LIVE_VESC_VALUES_CHUNK_3: [u8; 20] =
+        hex_literal::hex!("0000000000fffffffe00000004000036ee861700");
+    const LIVE_VESC_VALUES_CHUNK_4: [u8; 14] = hex_literal::hex!("000000000000000007ffffffec00");
+    const LIVE_VESC_VALUES_CHUNK_5: [u8; 3] = hex_literal::hex!("e3be03");
+
+    fn live_vesc_values_ble_uart_chunks() -> [&'static [u8]; 6] {
+        [
+            &LIVE_VESC_VALUES_CHUNK_0,
+            &LIVE_VESC_VALUES_CHUNK_1,
+            &LIVE_VESC_VALUES_CHUNK_2,
+            &LIVE_VESC_VALUES_CHUNK_3,
+            &LIVE_VESC_VALUES_CHUNK_4,
+            &LIVE_VESC_VALUES_CHUNK_5,
+        ]
+    }
+
+    fn refloat_realtime_ids_frame() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut payload = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+        payload
+            .try_extend_from_slice(&[
+                REFLOAT_PACKAGE_INTERFACE_ID,
+                REFLOAT_COMMAND_REALTIME_DATA_IDS,
+                2,
+            ])
+            .expect("header fits");
+        append_refloat_string(&mut payload, "motor.speed");
+        append_refloat_string(&mut payload, "imu.pitch");
+        payload.try_push(0).expect("runtime count fits");
+        custom_app_frame(&payload)
+    }
+
+    fn refloat_realtime_data_frame() -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut payload = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+        payload
+            .try_extend_from_slice(&[
+                REFLOAT_PACKAGE_INTERFACE_ID,
+                REFLOAT_COMMAND_REALTIME_DATA,
+                0x4,
+                0,
+            ])
+            .expect("header fits");
+        payload
+            .try_extend_from_slice(&42_u32.to_be_bytes())
+            .expect("time fits");
+        payload
+            .try_extend_from_slice(&[0x13, 0xc1, 0xa6, 8])
+            .expect("state fits");
+        payload
+            .try_extend_from_slice(&0x3c00_u16.to_be_bytes())
+            .expect("speed fits");
+        payload
+            .try_extend_from_slice(&0xc000_u16.to_be_bytes())
+            .expect("pitch fits");
+        payload
+            .try_extend_from_slice(&0x0000_0004_u32.to_be_bytes())
+            .expect("alerts fit");
+        payload
+            .try_extend_from_slice(&0_u32.to_be_bytes())
+            .expect("alerts fit");
+        payload.try_push(0).expect("fault fits");
+        custom_app_frame(&payload)
+    }
+
+    fn custom_app_frame(app_data: &[u8]) -> ArrayVec<u8, VESC_MAX_FRAME_LEN> {
+        let mut frame = ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+        encode_custom_app_frame(app_data, &mut frame).expect("frame encodes");
+        frame
+    }
+
+    fn append_refloat_string(payload: &mut ArrayVec<u8, VESC_MAX_FRAME_LEN>, string: &str) {
+        payload
+            .try_push(u8::try_from(string.len()).expect("fixture string length fits"))
+            .expect("string length fits");
+        payload
+            .try_extend_from_slice(string.as_bytes())
+            .expect("string fits");
     }
 
     fn telemetry_events(output: &[SessionOutput]) -> Vec<TelemetryDelta> {
@@ -2080,7 +2284,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_vesc_session_writes_values_request_for_telemetry() {
+    fn generic_vesc_session_writes_refloat_ids_motor_config_and_values_for_telemetry() {
         let mut session = ReadOnlySession::<VescGenericModel, true>::default();
         let mut output = Vec::new();
 
@@ -2091,12 +2295,26 @@ mod tests {
 
         assert_eq!(
             output,
-            vec![SessionOutput::Transport(TransportAction::Write {
-                channel: VESC_WRITE_CHANNEL,
-                bytes: WritePayload::try_from_slice(&[2, 1, 4, 64, 132, 3])
-                    .expect("VESC values request fits"),
-                mode: WriteMode::WithoutResponse,
-            })]
+            vec![
+                SessionOutput::Transport(TransportAction::Write {
+                    channel: VESC_WRITE_CHANNEL,
+                    bytes: WritePayload::try_from_slice(&[2, 3, 36, 101, 32, 138, 187, 3])
+                        .expect("Refloat ids request fits"),
+                    mode: WriteMode::WithoutResponse,
+                }),
+                SessionOutput::Transport(TransportAction::Write {
+                    channel: VESC_WRITE_CHANNEL,
+                    bytes: WritePayload::try_from_slice(&[2, 1, 14, 225, 206, 3])
+                        .expect("VESC motor config request fits"),
+                    mode: WriteMode::WithoutResponse,
+                }),
+                SessionOutput::Transport(TransportAction::Write {
+                    channel: VESC_WRITE_CHANNEL,
+                    bytes: WritePayload::try_from_slice(&[2, 1, 4, 64, 132, 3])
+                        .expect("VESC values request fits"),
+                    mode: WriteMode::WithoutResponse,
+                }),
+            ]
         );
     }
 
@@ -2147,9 +2365,20 @@ mod tests {
             delta.voltage,
             Some(Measured::reported(Voltage::from_millivolts(37_500),))
         );
+        assert_eq!(delta.battery_current, None);
         assert_eq!(
-            delta.battery_current,
-            Some(Measured::reported(BatteryCurrent::from_milliamps(40)))
+            delta.motor_current,
+            Some(Measured::reported(
+                cutout_core::PhaseCurrent::from_milliamps(0)
+            ))
+        );
+        assert_eq!(
+            delta.controller_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(0)))
+        );
+        assert_eq!(
+            delta.motor_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(0)))
         );
         assert_eq!(delta.speed, None);
 
@@ -2183,10 +2412,104 @@ mod tests {
     }
 
     #[test]
+    fn generic_vesc_session_decodes_live_full_values_ble_uart_fragments() {
+        let output = vesc_output_for_notification_chunks(&live_vesc_values_ble_uart_chunks());
+
+        let telemetry = telemetry_events(&output);
+        let delta = telemetry.last().expect("VESC live values telemetry");
+        assert_eq!(
+            delta.voltage,
+            Some(Measured::reported(Voltage::from_millivolts(61_900),))
+        );
+        assert_eq!(delta.battery_current, None);
+        assert_eq!(
+            delta.motor_current,
+            Some(Measured::reported(
+                cutout_core::PhaseCurrent::from_milliamps(0)
+            ))
+        );
+        assert_eq!(
+            delta.controller_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(26_700)))
+        );
+        assert_eq!(
+            delta.motor_temperature,
+            Some(Measured::reported(Temperature::from_millicelsius(23_400)))
+        );
+
+        let responses = read_only_response_events(&output);
+        let ReadOnlyResponse::RawTelemetry(raw) =
+            responses.last().expect("VESC live values raw telemetry")
+        else {
+            panic!("expected raw telemetry response");
+        };
+        assert_eq!(
+            raw.fields[0].expect("erpm"),
+            RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 0)
+        );
+        assert_eq!(
+            raw.fields[1].expect("tachometer"),
+            RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -2)
+        );
+        assert_eq!(
+            raw.fields[2].expect("controller id"),
+            RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 23)
+        );
+        assert_eq!(
+            raw.fields[3].expect("fault"),
+            RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_decodes_refloat_realtime_custom_app_frames() {
+        let output = vesc_output_for_notification_chunks(&[
+            refloat_realtime_ids_frame().as_slice(),
+            refloat_realtime_data_frame().as_slice(),
+        ]);
+
+        let telemetry = telemetry_events(&output);
+        let delta = telemetry.last().expect("Refloat realtime telemetry");
+        assert_eq!(
+            delta.speed,
+            Some(Measured::reported(
+                cutout_core::Speed::from_millimetres_per_second(1_000)
+            ))
+        );
+        assert_eq!(
+            delta.pitch,
+            Some(Measured::reported(cutout_core::Angle::from_millidegrees(
+                -2_000
+            )))
+        );
+        assert_eq!(
+            delta.battery_current, None,
+            "default VESC sessions must not claim battery current without explicit profile evidence"
+        );
+        assert!(
+            output
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    SessionOutput::Transport(TransportAction::Write {
+                        bytes,
+                        ..
+                    }) if bytes.as_slice() == [2, 3, 36, 101, 31, 77, 7, 3]
+                ))
+                .count()
+                >= 2,
+            "field ids should schedule realtime data, and realtime data should schedule the next sample"
+        );
+    }
+
+    #[test]
     fn generic_vesc_current_fault_code_stays_raw_telemetry_not_fault_history() {
         let mut output = Vec::new();
         push_vesc_reply(
             &VescReadOnlyReply::Values(VescValuesTelemetry {
+                controller_temperature: Temperature::from_millicelsius(0),
+                motor_temperature: Temperature::from_millicelsius(0),
+                motor_current: cutout_core::PhaseCurrent::from_milliamps(0),
                 rpm: cutout_core::RotationalSpeed::from_erpm(0),
                 voltage: Voltage::from_millivolts(0),
                 input_current: BatteryCurrent::from_milliamps(0),
@@ -2261,6 +2584,82 @@ mod tests {
         assert_eq!(
             raw.fields[0].expect("erpm"),
             RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 989)
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_emits_estimated_battery_level_when_profile_has_voltage_curve() {
+        let board_profile = VescBoardProfile::new(
+            MotorPolePairs::new(1),
+            GearRatioDenominator::new(1),
+            cutout_core::Distance::from_millimetres(60),
+        )
+        .with_battery_profile(&SAMSUNG_50S_PROFILE, SeriesCount::new(10));
+        let decoder = VescNotificationDecoder::with_board_profile(board_profile);
+        let mut session = ReadOnlySession::<VescGenericModel, true>::with_decoder(decoder);
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::LinkUp(LinkInfo {
+                monotonic_ms: ms(1),
+                max_write_len: Some(write_len(185)),
+            }),
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Notification {
+                channel: VESC_NOTIFY_CHANNEL,
+                bytes: &vesc_selective_values_frame(),
+                monotonic_ms: ms(42),
+            },
+            &mut output,
+        );
+
+        let telemetry = telemetry_events(&output);
+        let delta = telemetry.last().expect("VESC values telemetry");
+        assert_eq!(
+            delta.battery_level_estimated,
+            Some(Measured::estimated(
+                SAMSUNG_50S_PROFILE.estimate_level_from_pack_voltage(
+                    Voltage::from_millivolts(37_500),
+                    SeriesCount::new(10),
+                )
+            ))
+        );
+    }
+
+    #[test]
+    fn generic_vesc_session_emits_battery_current_when_profile_reports_it() {
+        let board_profile = VescBoardProfile::new(
+            MotorPolePairs::new(1),
+            GearRatioDenominator::new(1),
+            cutout_core::Distance::from_millimetres(60),
+        )
+        .with_reported_battery_current();
+        let mut output = Vec::new();
+
+        push_vesc_reply(
+            &VescReadOnlyReply::Values(VescValuesTelemetry {
+                controller_temperature: Temperature::from_millicelsius(0),
+                motor_temperature: Temperature::from_millicelsius(0),
+                motor_current: cutout_core::PhaseCurrent::from_milliamps(0),
+                rpm: cutout_core::RotationalSpeed::from_erpm(0),
+                voltage: Voltage::from_millivolts(37_500),
+                input_current: BatteryCurrent::from_milliamps(0),
+                tachometer: cutout_core::TachometerReading::from_counts(0),
+                controller_id: cutout_core::VescControllerId::new(7),
+                fault_code: VescFaultCode::None,
+            }),
+            ms(42),
+            Some(board_profile),
+            &mut output,
+        );
+
+        let telemetry = telemetry_events(&output);
+        let delta = telemetry.last().expect("VESC values telemetry");
+        assert_eq!(
+            delta.battery_current,
+            Some(Measured::reported(BatteryCurrent::from_milliamps(0)))
         );
     }
 

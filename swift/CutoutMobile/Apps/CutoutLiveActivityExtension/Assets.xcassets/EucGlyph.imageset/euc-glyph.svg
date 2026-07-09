@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="stroke" x1="184" y1="168" x2="842" y2="862" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B17CFF"/>
+      <stop offset="0.52" stop-color="#7F72FF"/>
+      <stop offset="1" stop-color="#5B54D7"/>
+    </linearGradient>
+    <linearGradient id="dim" x1="220" y1="180" x2="790" y2="860" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8C86FF" stop-opacity="0.82"/>
+      <stop offset="1" stop-color="#4B4AAE" stop-opacity="0.68"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.45  0 0 0 0 0.32  0 0 0 0 1  0 0 0 0.55 0" result="glow"/>
+      <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#glow)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- outer shell -->
+    <path d="M320 772 C266 720 238 636 240 520 C242 375 299 248 401 197 C467 164 568 163 644 199 C745 247 794 352 795 508 C796 646 749 743 669 787 C569 842 418 836 320 772 Z" stroke="url(#stroke)" stroke-width="36"/>
+
+    <!-- top face lip and upper vent -->
+    <path d="M358 289 C416 253 520 247 598 275 C641 291 672 314 697 350" stroke="url(#dim)" stroke-width="25" opacity="0.95"/>
+    <path d="M486 292 C532 291 578 303 609 325" stroke="url(#stroke)" stroke-width="24" opacity="0.9"/>
+    <path d="M664 386 C704 388 733 407 748 437" stroke="url(#stroke)" stroke-width="22" opacity="0.9"/>
+
+    <!-- tire -->
+    <ellipse cx="508" cy="565" rx="164" ry="255" stroke="url(#stroke)" stroke-width="34"/>
+    <path d="M542 340 C613 423 639 561 599 694 C579 758 545 805 505 831" stroke="url(#dim)" stroke-width="22" opacity="0.68"/>
+    <path d="M477 350 C539 455 550 650 493 805" stroke="url(#dim)" stroke-width="18" opacity="0.44"/>
+    <path d="M420 414 C460 501 463 629 425 727" stroke="url(#dim)" stroke-width="16" opacity="0.35"/>
+
+    <!-- side rails / bumpers -->
+    <rect x="265" y="488" width="100" height="226" rx="38" stroke="url(#stroke)" stroke-width="31"/>
+    <rect x="735" y="488" width="83" height="167" rx="36" stroke="url(#stroke)" stroke-width="31"/>
+    <path d="M285 423 C248 463 227 526 224 594" stroke="url(#dim)" stroke-width="26" opacity="0.82"/>
+    <path d="M784 671 C770 707 748 742 716 769" stroke="url(#dim)" stroke-width="25" opacity="0.82"/>
+
+    <!-- foot pads -->
+    <path d="M164 697 C213 676 263 678 310 702 C259 730 210 735 164 697 Z" stroke="url(#stroke)" stroke-width="29"/>
+    <path d="M700 716 C758 684 832 682 890 717 C837 753 760 756 700 716 Z" stroke="url(#stroke)" stroke-width="29"/>
+
+    <!-- small cut lines -->
+    <path d="M405 248 C444 232 489 226 538 231" stroke="url(#dim)" stroke-width="18" opacity="0.55"/>
+    <path d="M353 358 C393 342 440 339 485 351" stroke="url(#dim)" stroke-width="19" opacity="0.55"/>
+    <path d="M305 774 C349 807 397 827 451 834" stroke="url(#dim)" stroke-width="18" opacity="0.5"/>
+  </g>
+</svg>

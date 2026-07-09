@@ -1,0 +1,398 @@
+import SwiftUI
+
+public struct PevDashboardKeyValueRow: Identifiable {
+    public let id: String
+    public let label: String
+    public let value: String
+    public let valueColor: Color?
+
+    public init(id: String, label: String, value: String, valueColor: Color? = nil) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.valueColor = valueColor
+    }
+}
+
+public struct PevDashboardKeyValueRows: View {
+    let rows: [PevDashboardKeyValueRow]
+    let scale: CGFloat
+    let fill: Color
+    let stroke: Color
+    let labelColor: Color
+    let valueColor: Color
+    let cornerRadius: CGFloat
+    let verticalPadding: CGFloat
+
+    public init(
+        rows: [PevDashboardKeyValueRow],
+        scale: CGFloat,
+        fill: Color = PevDashboardColors.cardFill,
+        stroke: Color = PevDashboardColors.cardStroke,
+        labelColor: Color = PevDashboardColors.mutedText,
+        valueColor: Color = PevDashboardColors.primaryText,
+        cornerRadius: CGFloat = 22,
+        verticalPadding: CGFloat = 12
+    ) {
+        self.rows = rows
+        self.scale = scale
+        self.fill = fill
+        self.stroke = stroke
+        self.labelColor = labelColor
+        self.valueColor = valueColor
+        self.cornerRadius = cornerRadius
+        self.verticalPadding = verticalPadding
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                HStack {
+                    Text(row.label)
+                        .font(.system(size: 14 * scale, weight: .bold))
+                        .foregroundStyle(labelColor)
+                    Spacer()
+                    Text(row.value)
+                        .font(.system(size: 15 * scale, weight: .black))
+                        .foregroundStyle(row.valueColor ?? valueColor)
+                        .monospacedDigit()
+                }
+                .frame(height: 31 * scale)
+
+                if row.id != rows.last?.id {
+                    Rectangle()
+                        .fill(stroke)
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, 22 * scale)
+        .padding(.vertical, verticalPadding * scale)
+        .background(
+            PevDashboardCardBackground(
+                cornerRadius: cornerRadius * scale,
+                fill: fill,
+                stroke: stroke
+            )
+        )
+    }
+}
+
+
+public struct PevDashboardReadbackRow: Identifiable {
+    public let id: String
+    public let label: String
+    public let value: String
+    public let detail: String
+
+    public init(id: String, label: String, value: String, detail: String) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.detail = detail
+    }
+}
+
+public struct PevDashboardReadbackRows: View {
+    let rows: [PevDashboardReadbackRow]
+    let scale: CGFloat
+    let emptyLabel: String?
+    let emptyValue: String?
+
+    public init(
+        rows: [PevDashboardReadbackRow],
+        scale: CGFloat,
+        emptyLabel: String? = nil,
+        emptyValue: String? = nil
+    ) {
+        self.rows = rows
+        self.scale = scale
+        self.emptyLabel = emptyLabel
+        self.emptyValue = emptyValue
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            if rows.isEmpty, let emptyLabel, let emptyValue {
+                PevDashboardKeyValueRows(
+                    rows: [PevDashboardKeyValueRow(id: emptyLabel, label: emptyLabel, value: emptyValue)],
+                    scale: scale,
+                    verticalPadding: 6
+                )
+            } else {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 5 * scale) {
+                        HStack {
+                            Text(row.label)
+                                .font(.system(size: 14 * scale, weight: .bold))
+                                .foregroundStyle(PevDashboardColors.mutedText)
+                            Spacer()
+                            Text(row.value)
+                                .font(.system(size: 15 * scale, weight: .black))
+                                .monospacedDigit()
+                                .foregroundStyle(PevDashboardColors.primaryText)
+                        }
+                        Text(row.detail)
+                            .font(.system(size: 12 * scale, weight: .semibold))
+                            .foregroundStyle(PevDashboardColors.mutedText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 10 * scale)
+
+                    if row.id != rows.last?.id {
+                        Rectangle()
+                            .fill(PevDashboardColors.cardStroke)
+                            .frame(height: 1)
+                    }
+                }
+                .padding(.horizontal, 22 * scale)
+                .padding(.vertical, 6 * scale)
+                .background(PevDashboardCardBackground(cornerRadius: 22 * scale))
+            }
+        }
+    }
+}
+
+public struct PevDashboardSectionLabel: View {
+    let title: String
+    let scale: CGFloat
+    let fontSize: CGFloat
+    let weight: Font.Weight
+    let color: Color
+
+    public init(
+        title: String,
+        scale: CGFloat,
+        fontSize: CGFloat = 15,
+        weight: Font.Weight = .semibold,
+        color: Color = PevDashboardColors.mutedText
+    ) {
+        self.title = title
+        self.scale = scale
+        self.fontSize = fontSize
+        self.weight = weight
+        self.color = color
+    }
+
+    public var body: some View {
+        Text(title)
+            .font(.system(size: fontSize * scale, weight: weight))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+}
+
+public struct PevDashboardStatusPill: View {
+    let title: String
+    let scale: CGFloat
+    let fill: Color
+    let foreground: Color
+    let stroke: Color?
+    let width: CGFloat?
+    let fontSize: CGFloat
+    let horizontalPadding: CGFloat
+    let height: CGFloat
+    let fixedHorizontal: Bool
+
+    public init(
+        title: String,
+        scale: CGFloat,
+        fill: Color,
+        foreground: Color = .black,
+        stroke: Color? = nil,
+        width: CGFloat? = nil,
+        fontSize: CGFloat = 14,
+        horizontalPadding: CGFloat = 12,
+        height: CGFloat = 30,
+        fixedHorizontal: Bool = false
+    ) {
+        self.title = title
+        self.scale = scale
+        self.fill = fill
+        self.foreground = foreground
+        self.stroke = stroke
+        self.width = width
+        self.fontSize = fontSize
+        self.horizontalPadding = horizontalPadding
+        self.height = height
+        self.fixedHorizontal = fixedHorizontal
+    }
+
+    public var body: some View {
+        Text(title)
+            .font(.system(size: fontSize * scale, weight: .black))
+            .foregroundStyle(foreground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .fixedSize(horizontal: fixedHorizontal, vertical: false)
+            .padding(.horizontal, horizontalPadding * scale)
+            .frame(width: width.map { $0 * scale })
+            .frame(height: height * scale)
+            .background(
+                Capsule()
+                    .fill(fill)
+                    .overlay(
+                        Capsule().stroke(stroke ?? .clear, lineWidth: stroke == nil ? 0 : 1)
+                    )
+            )
+    }
+}
+
+
+public struct PevDashboardScanningPill: View {
+    let title: String
+    let isScanning: Bool
+    let scale: CGFloat
+    @State private var phase = 0
+
+    public init(title: String, isScanning: Bool, scale: CGFloat) {
+        self.title = title
+        self.isScanning = isScanning
+        self.scale = scale
+    }
+
+    public var body: some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 18 * scale, weight: .bold))
+            Spacer()
+            HStack(spacing: 9 * scale) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .frame(width: 13 * scale, height: 13 * scale)
+                        .opacity(!isScanning || index == phase ? 1 : 0.32)
+                }
+            }
+            .foregroundStyle(.yellow)
+        }
+        .padding(.horizontal, 22 * scale)
+        .frame(height: 64 * scale)
+        .frame(maxWidth: .infinity)
+        .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
+        .task(id: isScanning) {
+            guard isScanning else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(260))
+                phase = (phase + 1) % 3
+            }
+        }
+    }
+}
+
+public struct PevDashboardTabLabel: View {
+    let title: String
+    let isSelected: Bool
+    let scale: CGFloat
+    let selectedColor: Color
+    let unselectedColor: Color
+    let fontSize: CGFloat
+    let indicatorWidth: CGFloat
+    let indicatorHeight: CGFloat
+    let spacing: CGFloat
+
+    public init(
+        title: String,
+        isSelected: Bool,
+        scale: CGFloat,
+        selectedColor: Color,
+        unselectedColor: Color,
+        fontSize: CGFloat = 14,
+        indicatorWidth: CGFloat = 28,
+        indicatorHeight: CGFloat = 4,
+        spacing: CGFloat = 8
+    ) {
+        self.title = title
+        self.isSelected = isSelected
+        self.scale = scale
+        self.selectedColor = selectedColor
+        self.unselectedColor = unselectedColor
+        self.fontSize = fontSize
+        self.indicatorWidth = indicatorWidth
+        self.indicatorHeight = indicatorHeight
+        self.spacing = spacing
+    }
+
+    public var body: some View {
+        VStack(spacing: spacing * scale) {
+            Text(title)
+                .font(.system(size: fontSize * scale, weight: isSelected ? .black : .semibold))
+                .foregroundStyle(isSelected ? selectedColor : unselectedColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Capsule()
+                .fill(isSelected ? selectedColor : Color.clear)
+                .frame(width: indicatorWidth * scale, height: indicatorHeight * scale)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+public struct PevDashboardTabStrip: View {
+    let tabs: [PevScreenTab]
+    let scale: CGFloat
+    let selectedColor: Color
+    let unselectedColor: Color
+    let selectTarget: (PevNavigationTarget) -> Void
+
+    public init(
+        tabs: [PevScreenTab],
+        scale: CGFloat,
+        selectedColor: Color,
+        unselectedColor: Color,
+        selectTarget: @escaping (PevNavigationTarget) -> Void
+    ) {
+        self.tabs = tabs
+        self.scale = scale
+        self.selectedColor = selectedColor
+        self.unselectedColor = unselectedColor
+        self.selectTarget = selectTarget
+    }
+
+    public var body: some View {
+        VStack(spacing: 12 * scale) {
+            Rectangle()
+                .fill(PevDashboardColors.cardStroke)
+                .frame(width: 254 * scale, height: 1)
+
+            HStack(spacing: 0) {
+                ForEach(tabs) { tab in
+                    tabContent(tab)
+                }
+            }
+            .frame(width: 254 * scale)
+        }
+        .frame(height: 58 * scale, alignment: .top)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func tabContent(_ tab: PevScreenTab) -> some View {
+        if tab.isEnabled, let destination = tab.destinationTarget {
+            Button {
+                selectTarget(destination)
+            } label: {
+                tabLabel(tab)
+            }
+            .buttonStyle(.plain)
+        } else {
+            tabLabel(tab)
+        }
+    }
+
+    private func tabLabel(_ tab: PevScreenTab) -> some View {
+        PevDashboardTabLabel(
+            title: tab.title,
+            isSelected: tab.isSelected,
+            scale: scale,
+            selectedColor: selectedColor,
+            unselectedColor: tab.isEnabled ? unselectedColor : unselectedColor.opacity(0.75)
+        )
+        .frame(maxWidth: .infinity)
+        .opacity(tab.isEnabled ? 1 : 0.45)
+        .accessibilityValue(tab.isEnabled ? "Available" : "Unavailable")
+        .accessibilityHint(tab.isEnabled ? "" : "This tab is unavailable.")
+        .accessibilityAddTraits(tab.isEnabled ? [] : .isButton)
+    }
+}

@@ -70,7 +70,8 @@ where
         peripheral,
         session,
         DriveSessionConfig {
-            channel,
+            write_channel: channel,
+            subscribe_channel: channel,
             summary,
             endpoints,
             notification_window,
@@ -109,11 +110,45 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
+    drive_session_with_channel_pair(
+        peripheral,
+        session,
+        channel,
+        channel,
+        summary,
+        endpoints,
+        notification_window,
+        commands,
+    )
+    .await
+}
+
+/// Drives a protocol session whose write and notification channels differ.
+///
+/// # Errors
+///
+/// Returns the underlying Bluetooth transport error if subscribe, write, or
+/// notification streaming fails.
+pub async fn drive_session_with_channel_pair<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    write_channel: GattChannel,
+    subscribe_channel: GattChannel,
+    summary: &ConnectionSummary,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: NotificationWindow,
+    commands: &[DeviceCommand],
+) -> Result<SessionBridgeReport, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
     drive_session_inner(
         peripheral,
         session,
         DriveSessionConfig {
-            channel,
+            write_channel,
+            subscribe_channel,
             summary,
             endpoints,
             notification_window,
@@ -154,7 +189,8 @@ where
         peripheral,
         session,
         DriveSessionConfig {
-            channel,
+            write_channel: channel,
+            subscribe_channel: channel,
             summary,
             endpoints,
             notification_window,
@@ -191,12 +227,46 @@ where
     P: SessionPeripheral + Sync + ?Sized,
     S: ProtocolSession + Send,
 {
+    capture_session_with_channel_pair(
+        peripheral,
+        session,
+        channel,
+        channel,
+        summary,
+        endpoints,
+        notification_window,
+        commands,
+    )
+    .await
+}
+
+/// Captures a protocol session whose write and notification channels differ.
+///
+/// # Errors
+///
+/// Returns the underlying Bluetooth transport error if subscribe, write, or
+/// notification streaming fails.
+pub async fn capture_session_with_channel_pair<P, S>(
+    peripheral: &P,
+    session: &mut S,
+    write_channel: GattChannel,
+    subscribe_channel: GattChannel,
+    summary: &ConnectionSummary,
+    endpoints: SessionEndpoints<'_>,
+    notification_window: NotificationWindow,
+    commands: &[DeviceCommand],
+) -> Result<SessionCapture, BtleError>
+where
+    P: SessionPeripheral + Sync + ?Sized,
+    S: ProtocolSession + Send,
+{
     let mut records = Vec::new();
     let report = drive_session_inner(
         peripheral,
         session,
         DriveSessionConfig {
-            channel,
+            write_channel,
+            subscribe_channel,
             summary,
             endpoints,
             notification_window,
@@ -214,7 +284,8 @@ where
 }
 
 pub(crate) struct DriveSessionConfig<'a> {
-    pub(crate) channel: GattChannel,
+    pub(crate) write_channel: GattChannel,
+    pub(crate) subscribe_channel: GattChannel,
     pub(crate) summary: &'a ConnectionSummary,
     pub(crate) endpoints: SessionEndpoints<'a>,
     pub(crate) notification_window: NotificationWindow,
@@ -238,7 +309,8 @@ where
 {
     info!(
         window_ms = config.notification_window.as_duration().as_millis(),
-        channel = ?config.channel,
+        write_channel = ?config.write_channel,
+        subscribe_channel = ?config.subscribe_channel,
         "session bridge drive inner entered"
     );
     let mut report = SessionBridgeReport::default();
@@ -256,7 +328,8 @@ where
     process_link_up_outputs(
         LinkUpContext {
             peripheral,
-            channel: config.channel,
+            write_channel: config.write_channel,
+            subscribe_channel: config.subscribe_channel,
             bindings: &bindings,
             report: &mut report,
             capture: capture.as_deref_mut(),
@@ -274,7 +347,8 @@ where
         process_session_outputs(
             SessionOutputContext {
                 peripheral,
-                channel: config.channel,
+                write_channel: config.write_channel,
+                subscribe_channel: config.subscribe_channel,
                 write_characteristic: &bindings.write_characteristic,
                 notify_characteristic: bindings.notify_characteristic.as_ref(),
                 report: &mut report,
@@ -298,7 +372,8 @@ where
     process_session_outputs(
         SessionOutputContext {
             peripheral,
-            channel: config.channel,
+            write_channel: config.write_channel,
+            subscribe_channel: config.subscribe_channel,
             write_characteristic: &bindings.write_characteristic,
             notify_characteristic: bindings.notify_characteristic.as_ref(),
             report: &mut report,
@@ -318,7 +393,8 @@ where
     process_notification_window(
         NotificationLoopContext {
             peripheral,
-            channel: config.channel,
+            write_channel: config.write_channel,
+            subscribe_channel: config.subscribe_channel,
             bindings: &bindings,
             identity_observer,
             report: &mut report,
@@ -344,7 +420,8 @@ struct BridgeBindings {
 
 struct LinkUpContext<'a, P: ?Sized> {
     peripheral: &'a P,
-    channel: GattChannel,
+    write_channel: GattChannel,
+    subscribe_channel: GattChannel,
     bindings: &'a BridgeBindings,
     report: &'a mut SessionBridgeReport,
     capture: Option<&'a mut Vec<SessionCaptureRecord>>,
@@ -388,7 +465,8 @@ where
     process_session_outputs(
         SessionOutputContext {
             peripheral: context.peripheral,
-            channel: context.channel,
+            write_channel: context.write_channel,
+            subscribe_channel: context.subscribe_channel,
             write_characteristic: &context.bindings.write_characteristic,
             notify_characteristic: context.bindings.notify_characteristic.as_ref(),
             report: context.report,
@@ -407,7 +485,8 @@ where
 
 struct NotificationLoopContext<'a, 'observer, P: ?Sized> {
     peripheral: &'a P,
-    channel: GattChannel,
+    write_channel: GattChannel,
+    subscribe_channel: GattChannel,
     bindings: &'a BridgeBindings,
     identity_observer: Option<&'observer mut dyn BridgeIdentityObserver>,
     report: &'a mut SessionBridgeReport,
@@ -457,7 +536,8 @@ where
                 process_session_outputs(
                     SessionOutputContext {
                         peripheral: context.peripheral,
-                        channel: context.channel,
+                        write_channel: context.write_channel,
+                        subscribe_channel: context.subscribe_channel,
                         write_characteristic: &context.bindings.write_characteristic,
                         notify_characteristic: context.bindings.notify_characteristic.as_ref(),
                         report: context.report,
@@ -472,7 +552,7 @@ where
                 log_notification_decode_outcome(
                     decode_outcome.as_ref(),
                     &notification,
-                    context.channel,
+                    context.subscribe_channel,
                 );
                 context.report.notifications = context.report.notifications.increment();
                 let notification_len = notification.len();
@@ -549,7 +629,7 @@ where
     }
     session.handle(
         SessionInput::Notification {
-            channel: context.channel,
+            channel: context.subscribe_channel,
             bytes: notification.as_raw_bytes(),
             monotonic_ms: monotonic_ms.into_core(),
         },
@@ -741,7 +821,8 @@ fn log_notification_decode_outcome(
 
 struct SessionOutputContext<'a, P: ?Sized> {
     peripheral: &'a P,
-    channel: GattChannel,
+    write_channel: GattChannel,
+    subscribe_channel: GattChannel,
     write_characteristic: &'a Characteristic,
     notify_characteristic: Option<&'a Characteristic>,
     report: &'a mut SessionBridgeReport,
@@ -764,21 +845,21 @@ where
             match output {
                 SessionOutput::Transport(TransportAction::Subscribe { channel: observed }) => {
                     info!(
-                        expected = ?context.channel,
+                        expected = ?context.subscribe_channel,
                         observed = ?observed,
                         monotonic_ms = monotonic_ms.get(),
                         "session bridge processing subscribe output"
                     );
-                    if observed != context.channel {
+                    if observed != context.subscribe_channel {
                         return Err(SessionBridgeError::UnexpectedChannel {
-                            expected: context.channel,
+                            expected: context.subscribe_channel,
                             observed,
                         }
                         .into());
                     }
                     let Some(notify_characteristic) = context.notify_characteristic else {
                         return Err(SessionBridgeError::MissingNotifyEndpoint {
-                            channel: context.channel,
+                            channel: context.subscribe_channel,
                         }
                         .into());
                     };
@@ -841,9 +922,9 @@ async fn process_transport_write<P>(
 where
     P: SessionPeripheral + Sync + ?Sized,
 {
-    if observed != context.channel {
+    if observed != context.write_channel {
         return Err(SessionBridgeError::UnexpectedChannel {
-            expected: context.channel,
+            expected: context.write_channel,
             observed,
         }
         .into());

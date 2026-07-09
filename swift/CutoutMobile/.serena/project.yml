@@ -1,6 +1,0 @@
-project_name: "CutoutMobile"
-languages:
-- swift
-encoding: "utf-8"
-ignore_all_files_in_gitignore: true
-initial_prompt: "This Swift package depends on UniFFI bindings generated from the Rust mobile FFI crate. Before asking SourceKit for diagnostics, run `nix develop --command ./scripts/prepare-swift-sourcekit-workspace.sh` from the repository root so `Sources/CutoutMobile/Generated` and `Sources/cutout_mobile_ffiFFI` exist locally. Generated files are intentionally ignored by Git."

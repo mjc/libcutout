@@ -1,13 +1,16 @@
 import XCTest
 @testable import CutoutMobile
 
-final class MockupScreenCatalogTests: XCTestCase {
+final class PevScreenCatalogTests: XCTestCase {
     func testV2CatalogListsEveryScreenInDeviceInspectionOrder() {
         XCTAssertEqual(
-            MockupScreenCatalog.v2.screens.map(\.id),
+            PevScreenCatalog.v2.screens.map(\.id),
             [
                 .devicePicker,
                 .eucRide,
+                .eucMap,
+                .eucTune,
+                .liveActivity,
                 .bmsOverview,
                 .bmsCellMap6S,
                 .bmsCellMap40S,
@@ -15,14 +18,15 @@ final class MockupScreenCatalogTests: XCTestCase {
                 .bmsUnknownTopology,
                 .bmsNoData,
                 .eucGarage,
-                .vescOnewheelRide,
                 .vescDebug,
+                .vescMap,
+                .vescLogs,
             ]
         )
     }
 
     func testV2CatalogCarriesFixtureOnlyScreenData() {
-        let screens = Dictionary(uniqueKeysWithValues: MockupScreenCatalog.v2.screens.map { ($0.id, $0) })
+        let screens = Dictionary(uniqueKeysWithValues: PevScreenCatalog.v2.screens.map { ($0.id, $0) })
 
         XCTAssertEqual(screens[.devicePicker]?.title, "Device picker")
         XCTAssertEqual(screens[.devicePicker]?.subtitle, "Scanning Bluetooth")
@@ -33,6 +37,12 @@ final class MockupScreenCatalogTests: XCTestCase {
         XCTAssertEqual(screens[.eucRide]?.subtitle, "EUC - riding")
         XCTAssertEqual(screens[.eucRide]?.primaryValue, "31 mph")
         XCTAssertEqual(screens[.eucRide]?.secondaryValue, "PWM headroom 23%")
+
+        XCTAssertEqual(screens[.eucMap]?.title, "Map")
+        XCTAssertEqual(screens[.eucMap]?.subtitle, "EUC map shell")
+
+        XCTAssertEqual(screens[.eucTune]?.title, "Tune")
+        XCTAssertEqual(screens[.eucTune]?.subtitle, "EUC tune/settings shell")
 
         XCTAssertEqual(screens[.bmsOverview]?.title, "Pack overview")
         XCTAssertEqual(screens[.bmsOverview]?.primaryValue, "72%")
@@ -57,20 +67,36 @@ final class MockupScreenCatalogTests: XCTestCase {
         XCTAssertEqual(screens[.eucGarage]?.primaryValue, "battery 85%")
         XCTAssertEqual(screens[.eucGarage]?.secondaryValue, "pack 115.8 V")
 
-        XCTAssertEqual(screens[.vescOnewheelRide]?.title, "Fungineers X7")
-        XCTAssertEqual(screens[.vescOnewheelRide]?.subtitle, "VESC OW · armed")
-        XCTAssertEqual(screens[.vescOnewheelRide]?.primaryValue, "19")
-        XCTAssertEqual(screens[.vescOnewheelRide]?.secondaryValue, "board speed")
-
         XCTAssertEqual(screens[.vescDebug]?.title, "VESC state")
         XCTAssertEqual(screens[.vescDebug]?.primaryValue, "duty cycle 82%")
         XCTAssertEqual(screens[.vescDebug]?.secondaryValue, "pack 75.4 V")
 
-        XCTAssertTrue(MockupScreenCatalog.v2.screens.allSatisfy(\.isFixtureOnly))
+        XCTAssertEqual(screens[.vescMap]?.title, "Map")
+        XCTAssertEqual(screens[.vescMap]?.subtitle, "VESC map shell")
+
+        XCTAssertEqual(screens[.vescLogs]?.title, "Logs")
+        XCTAssertEqual(screens[.vescLogs]?.subtitle, "VESC logs shell")
+
+        XCTAssertTrue(PevScreenCatalog.v2.screens.allSatisfy(\.isPreviewOnly))
+    }
+
+    func testVescRideTabsMarkMapAndLogsUnavailable() {
+        let tabs = PevRideTabs.vescRideTabs()
+
+        XCTAssertEqual(tabs.map(\.title), ["Ride", "Debug", "Map", "Logs"])
+        XCTAssertEqual(tabs[2].disabledReason, "LIBCU-423")
+        XCTAssertEqual(tabs[3].disabledReason, "LIBCU-423")
+        XCTAssertFalse(tabs[2].isEnabled)
+        XCTAssertFalse(tabs[3].isEnabled)
+    }
+
+    func testRideTabsNavigateBackToTheirRideModes() {
+        XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
+        XCTAssertEqual(PevRideTabs.vescRideTabs().first?.destinationTarget, .vescRide)
     }
 }
 
-extension MockupScreenCatalogTests {
+extension PevScreenCatalogTests {
     func testDevicePickerScanningFallbackDoesNotRenderFixtureRows() {
         let state = DevicePickerScanState.scanning
 
@@ -81,8 +107,8 @@ extension MockupScreenCatalogTests {
         XCTAssertNil(state.sections.manual)
     }
 
-    func testDevicePickerFixtureCarriesRowsAndActionsFromMockup() throws {
-        let picker = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .devicePicker))
+    func testDevicePickerFixtureCarriesRowsAndActionsFromPreview() throws {
+        let picker = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .devicePicker))
 
         XCTAssertEqual(picker.pickerRows.map(\.title), [
             "Aero-126V",
@@ -107,7 +133,7 @@ extension MockupScreenCatalogTests {
         ])
     }
     func testDevicePickerFixtureRowsComeFromDiscoveryCandidates() throws {
-        let picker = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .devicePicker))
+        let picker = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .devicePicker))
 
         XCTAssertEqual(picker.discoveryCandidates.map(\.displayName), [
             "Aero-126V",
@@ -120,21 +146,21 @@ extension MockupScreenCatalogTests {
     }
 
     func testDevicePickerSectionsHideEmptyGroups() {
-        let supported = MockupPickerRow(
+        let supported = PevPickerRow(
             title: "Aero-126V",
             subtitle: "Electric unicycle",
             detail: "strong signal",
             state: .supported(action: "Use"),
             symbolName: "circle"
         )
-        let unsupported = MockupPickerRow(
+        let unsupported = PevPickerRow(
             title: "NINEBOT-7A31",
             subtitle: "Electric scooter",
             detail: "unsupported",
             state: .unsupported(action: "Not yet"),
             symbolName: "scooter"
         )
-        let probeRecommended = MockupPickerRow(
+        let probeRecommended = PevPickerRow(
             title: "EUC-unknown",
             subtitle: "Electric unicycle",
             detail: "read-only probe recommended",
@@ -142,12 +168,12 @@ extension MockupScreenCatalogTests {
             symbolName: "questionmark.circle"
         )
 
-        XCTAssertEqual(MockupPickerSections(rows: [supported]).supported, [supported])
-        XCTAssertTrue(MockupPickerSections(rows: [supported]).probeRecommended.isEmpty)
-        XCTAssertTrue(MockupPickerSections(rows: [supported]).unsupported.isEmpty)
-        XCTAssertNil(MockupPickerSections(rows: [supported]).manual)
+        XCTAssertEqual(PevPickerSections(rows: [supported]).supported, [supported])
+        XCTAssertTrue(PevPickerSections(rows: [supported]).probeRecommended.isEmpty)
+        XCTAssertTrue(PevPickerSections(rows: [supported]).unsupported.isEmpty)
+        XCTAssertNil(PevPickerSections(rows: [supported]).manual)
 
-        let unrouteable = MockupPickerSections(rows: [probeRecommended, unsupported])
+        let unrouteable = PevPickerSections(rows: [probeRecommended, unsupported])
         XCTAssertTrue(unrouteable.supported.isEmpty)
         XCTAssertEqual(unrouteable.probeRecommended, [probeRecommended])
         XCTAssertEqual(unrouteable.unsupported, [unsupported])
@@ -402,7 +428,7 @@ extension MockupScreenCatalogTests {
             displayName: "Future rideable",
             productCategory: "Rideable",
             evidence: "supported by core",
-            detail: "route not mapped in mockups yet",
+            detail: "route not mapped in previews yet",
             isPickerCandidate: true,
             support: .supported,
             recommendedAction: .use,
@@ -417,7 +443,7 @@ extension MockupScreenCatalogTests {
             candidate.support,
             DevicePickerCandidateSupport.supported(connectionRoute: nil, electricUnicycleModel: nil)
         )
-        XCTAssertEqual(candidate.pickerRow.state, MockupPickerRowState.supported(action: "Use"))
+        XCTAssertEqual(candidate.pickerRow.state, PevPickerRowState.supported(action: "Use"))
         XCTAssertNil(candidate.pickerRow.connectionRoute)
     }
 
@@ -444,6 +470,7 @@ extension MockupScreenCatalogTests {
         )
         XCTAssertEqual(candidate.pickerRow.state, .supported(action: "Use"))
         XCTAssertEqual(candidate.pickerRow.connectionRoute, .electricUnicycle)
+        XCTAssertEqual(candidate.pickerRow.symbolName, "circle.hexagongrid.circle")
     }
 
     func testUnsupportedDiscoveryCandidateOffersRecordOnlyPickerAction() {
@@ -595,44 +622,43 @@ extension MockupScreenCatalogTests {
 
         XCTAssertEqual(state.statusText, "Scanning Bluetooth")
         XCTAssertEqual(state.rows.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
-        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, nil])
-        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557"])
-        XCTAssertEqual(state.sections.unsupported.map(\.title), ["Little FOCer"])
-        XCTAssertEqual(state.sections.unsupported.first?.state, .unsupported(action: "Record"))
+        XCTAssertEqual(state.rows.map(\.connectionRoute), [.electricUnicycle, .electricUnicycle, .electricUnicycle, .vescOnewheel])
+        XCTAssertEqual(state.sections.supported.map(\.title), ["NOSFET Aero", "GotWay_002441", "NF2557", "Little FOCer"])
+        XCTAssertTrue(state.sections.unsupported.isEmpty)
         XCTAssertNil(state.sections.manual)
     }
 
-    func testEucRideFixtureCarriesDashboardStructureFromMockup() throws {
-        let ride = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucRide))
+    func testEucRideFixtureCarriesDashboardStructureFromPreview() throws {
+        let ride = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucRide))
 
         XCTAssertEqual(ride.safetyBars, [
-            MockupSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
-            MockupSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
+            PevSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
+            PevSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
         ])
         XCTAssertEqual(
             ride.warningCard,
-            MockupWarningCard(title: "Reduce acceleration", detail: "Voltage sag under load: 9.4 V")
+            PevWarningCard(title: "Reduce acceleration", detail: "Voltage sag under load: 9.4 V")
         )
         XCTAssertEqual(ride.dashboardTiles, [
-            MockupDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
-            MockupDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
-            MockupDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
-            MockupDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
+            PevDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
+            PevDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
+            PevDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
+            PevDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
         ])
         XCTAssertEqual(ride.tabs, [
-            MockupScreenTab(title: "Ride", isSelected: true),
-            MockupScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
-            MockupScreenTab(title: "Map", isSelected: false),
-            MockupScreenTab(title: "Tune", isSelected: false),
+            PevScreenTab(title: "Ride", isSelected: true),
+            PevScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
+            PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-423"),
+            PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-423"),
         ])
         XCTAssertEqual(ride.tabs.first { $0.title == "Pack" }?.destinationScreenID, .bmsOverview)
     }
-    func testEucGarageFixtureCarriesPackHealthStructureFromMockup() throws {
-        let garage = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+    func testEucGarageFixtureCarriesPackHealthStructureFromPreview() throws {
+        let garage = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucGarage))
 
         XCTAssertEqual(
             garage.deviceCard,
-            MockupDeviceCard(
+            PevDeviceCard(
                 title: "Aero-126V",
                 detail: "126 V nominal · 20s? mapped profile · BLE",
                 status: "Safe",
@@ -640,16 +666,16 @@ extension MockupScreenCatalogTests {
             )
         )
         XCTAssertEqual(garage.dashboardTiles, [
-            MockupDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
-            MockupDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
-            MockupDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
-            MockupDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
+            PevDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
+            PevDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
+            PevDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
+            PevDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
         ])
         XCTAssertEqual(garage.summaryTitle, "Cell / BMS summary")
         XCTAssertEqual(garage.summaryRows, [
-            MockupSummaryRow(label: "high group", value: "4.18 V", accent: nil),
-            MockupSummaryRow(label: "low group", value: "4.13 V", accent: nil),
-            MockupSummaryRow(label: "delta", value: "0.05 V", accent: .green),
+            PevSummaryRow(label: "high group", value: "4.18 V", accent: nil),
+            PevSummaryRow(label: "low group", value: "4.13 V", accent: nil),
+            PevSummaryRow(label: "delta", value: "0.05 V", accent: .green),
         ])
         XCTAssertEqual(
             garage.eucGarageSnapshot,
@@ -669,7 +695,7 @@ extension MockupScreenCatalogTests {
                 faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
             )
         )
-        XCTAssertEqual(garage.faultCard, MockupFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green))
+        XCTAssertEqual(garage.faultCard, PevFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green))
     }
 
     func testEucFaultHistoryCanRepresentStructuredUnknownFault() {
@@ -687,39 +713,12 @@ extension MockupScreenCatalogTests {
         )
     }
 
-    func testVescOnewheelRideFixtureCarriesRideCriticalStructureFromMockup() throws {
-        let ride = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .vescOnewheelRide))
-
-        XCTAssertEqual(ride.subtitle, "VESC OW · armed")
-        XCTAssertEqual(ride.primaryValue, "19")
-        XCTAssertEqual(ride.secondaryValue, "board speed")
-        XCTAssertEqual(ride.safetyBars, [
-            MockupSafetyBar(label: "Duty headroom", value: "18%", progress: 0.82, accent: .orange),
-        ])
-        XCTAssertEqual(
-            ride.warningCard,
-            MockupWarningCard(title: "Pushback soon", detail: "Duty and pack sag are both climbing.")
-        )
-        XCTAssertEqual(ride.dashboardTiles, [
-            MockupDashboardTile(label: "battery current", value: "38", unit: "A", detail: "limit 45 A", accent: .yellow),
-            MockupDashboardTile(label: "motor current", value: "71", unit: "A", detail: "phase estimate", accent: .orange),
-            MockupDashboardTile(label: "board angle", value: "-1.8", unit: "°", detail: "nose down", accent: .cyan),
-            MockupDashboardTile(label: "controller", value: "54", unit: "°C", detail: "motor 49 °C", accent: .green),
-        ])
-        XCTAssertEqual(ride.tabs, [
-            MockupScreenTab(title: "Ride", isSelected: true),
-            MockupScreenTab(title: "VESC", isSelected: false),
-            MockupScreenTab(title: "Map", isSelected: false),
-            MockupScreenTab(title: "Logs", isSelected: false),
-        ])
-    }
-
-    func testVescDebugFixtureCarriesGuardedReadOnlyStateFromMockup() throws {
-        let debug = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .vescDebug))
+    func testVescDebugFixtureCarriesGuardedReadOnlyStateFromPreview() throws {
+        let debug = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .vescDebug))
 
         XCTAssertEqual(
             debug.deviceCard,
-            MockupDeviceCard(
+            PevDeviceCard(
                 title: "Profile: Street stable",
                 detail: "VESC Express · FW 6.x · UART bridge",
                 status: "",
@@ -727,21 +726,21 @@ extension MockupScreenCatalogTests {
             )
         )
         XCTAssertEqual(debug.dashboardTiles, [
-            MockupDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
-            MockupDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
-            MockupDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
-            MockupDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
+            PevDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
+            PevDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
+            PevDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
+            PevDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
         ])
         XCTAssertEqual(debug.summaryTitle, "Fault / app channels")
         XCTAssertEqual(debug.summaryRows, [
-            MockupSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
-            MockupSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
-            MockupSummaryRow(label: "CAN status", value: "single controller", accent: nil),
-            MockupSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
+            PevSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
+            PevSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
+            PevSummaryRow(label: "CAN status", value: "single controller", accent: nil),
+            PevSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
         ])
         XCTAssertEqual(
             debug.faultCard,
-            MockupFaultCard(
+            PevFaultCard(
                 title: "Guardrails",
                 detail: "Hide dangerous writes until parked + confirmed.",
                 accent: .orange
@@ -750,7 +749,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testBmsFixturesCarryTypedSnapshotsForEveryBmsScreen() throws {
-        let screenIDs: [MockupScreenID] = [
+        let screenIDs: [PevScreenID] = [
             .bmsOverview,
             .bmsCellMap6S,
             .bmsCellMap40S,
@@ -760,7 +759,7 @@ extension MockupScreenCatalogTests {
         ]
 
         let screens = try screenIDs.map {
-            try XCTUnwrap(MockupScreenCatalog.v2.screen(id: $0))
+            try XCTUnwrap(PevScreenCatalog.v2.screen(id: $0))
         }
 
         XCTAssertEqual(screens.map(\.bmsContent?.kind), [
@@ -774,8 +773,16 @@ extension MockupScreenCatalogTests {
         XCTAssertTrue(screens.allSatisfy { $0.bmsContent?.snapshot != nil })
     }
 
+    func testLiveActivityFixtureHarnessIsAvailableFromTheCatalog() throws {
+        let liveActivity = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .liveActivity))
+
+        XCTAssertEqual(liveActivity.title, "Live Activity")
+        XCTAssertTrue(liveActivity.isPreviewOnly)
+        XCTAssertEqual(liveActivity.metrics.map(\.label), ["preview states", "presentation modes"])
+    }
+
     func testBmsOverviewFixtureCapturesTopologyAndFaultSummary() throws {
-        let overview = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let overview = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsOverview))
         let content = try XCTUnwrap(overview.bmsContent)
         let snapshot = content.snapshot
 
@@ -793,15 +800,15 @@ extension MockupScreenCatalogTests {
     }
 
     func testBmsCellFixturesPreserveHighlightedGroupsAndDetailSelection() throws {
-        let inline = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellMap6S)?.bmsContent)
+        let inline = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsCellMap6S)?.bmsContent)
         XCTAssertEqual(inline.snapshot.groups.map(\.index), [1, 2, 3, 4, 5, 6])
         XCTAssertEqual(inline.highlightedGroupIndices, [3, 6])
 
-        let scrollable = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellMap40S)?.bmsContent)
+        let scrollable = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsCellMap40S)?.bmsContent)
         XCTAssertEqual(scrollable.snapshot.groups.count, 40)
         XCTAssertEqual(scrollable.highlightedGroupIndices, [17, 18, 19, 31])
 
-        let detail = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellDetail)?.bmsContent)
+        let detail = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsCellDetail)?.bmsContent)
         let selectedGroup = detail.snapshot.groups.first { $0.index == 17 }
         XCTAssertEqual(detail.selectedGroupIndex, 17)
         XCTAssertEqual(selectedGroup?.voltage, Voltage(value: 4_071))
@@ -809,7 +816,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testResolvedBmsContentPrefersLiveSnapshotAndDerivesSmallPackLayout() throws {
-        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let screen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "6S1P pack",
@@ -831,7 +838,7 @@ extension MockupScreenCatalogTests {
             ]
         )
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(for: screen, liveBmsSnapshot: liveSnapshot)
+        let presented = PevScreenCatalog.v2.presentedScreen(for: screen, liveBmsSnapshot: liveSnapshot)
         let resolved = try XCTUnwrap(presented.bmsContent)
 
         XCTAssertEqual(resolved.kind, .cellMapInline)
@@ -842,7 +849,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testResolvedBmsContentDerivesScrollableLiveModeTitles() throws {
-        let screen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let screen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "large EUC pack",
@@ -861,7 +868,7 @@ extension MockupScreenCatalogTests {
             }
         )
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(for: screen, liveBmsSnapshot: liveSnapshot)
+        let presented = PevScreenCatalog.v2.presentedScreen(for: screen, liveBmsSnapshot: liveSnapshot)
         let resolved = try XCTUnwrap(presented.bmsContent)
 
         XCTAssertEqual(resolved.kind, .cellMapScrollable)
@@ -869,7 +876,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testPresentedScreenRoutesPackToLiveBmsScreen() throws {
-        let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let packScreen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "6S1P pack",
@@ -889,18 +896,18 @@ extension MockupScreenCatalogTests {
             ]
         )
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
+        let presented = PevScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
 
         XCTAssertEqual(presented.id, .bmsCellMap6S)
     }
 
     func testPresentedScreenRoutesPackWithoutLiveBmsToNoDataWithoutFixtureValues() throws {
-        let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let packScreen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucGarage))
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(
+        let presented = PevScreenCatalog.v2.presentedScreen(
             for: packScreen,
             liveBmsSnapshot: nil,
-            fixtureFallback: false
+            previewFallback: false
         )
 
         XCTAssertEqual(presented.id, .bmsNoData)
@@ -915,7 +922,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testPresentedScreenDerivesLiveBmsTitleAndChips() throws {
-        let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let packScreen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "6S1P pack",
@@ -935,14 +942,14 @@ extension MockupScreenCatalogTests {
             ]
         )
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
+        let presented = PevScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
 
         XCTAssertEqual(presented.title, "6S cell map")
         XCTAssertEqual(presented.bmsContent?.chips.map(\.title), ["live readback", "6S1P pack"])
     }
 
     func testPresentedScreenDerivesNoDataHeaderFromLiveSnapshot() throws {
-        let packScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .eucGarage))
+        let packScreen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .eucGarage))
         let liveSnapshot = BmsSnapshot(
             availability: .unsupported,
             topology: BmsTopology(
@@ -956,7 +963,7 @@ extension MockupScreenCatalogTests {
             captureActionState: "limited data"
         )
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
+        let presented = PevScreenCatalog.v2.presentedScreen(for: packScreen, liveBmsSnapshot: liveSnapshot)
 
         XCTAssertEqual(presented.id, .bmsNoData)
         XCTAssertEqual(presented.title, "Battery")
@@ -965,7 +972,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testPresentedScreenDerivesLiveBmsMetadataForDirectBmsScreen() throws {
-        let directScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsCellMap6S))
+        let directScreen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsCellMap6S))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "12S2P pack",
@@ -980,15 +987,15 @@ extension MockupScreenCatalogTests {
             }
         )
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(for: directScreen, liveBmsSnapshot: liveSnapshot)
+        let presented = PevScreenCatalog.v2.presentedScreen(for: directScreen, liveBmsSnapshot: liveSnapshot)
 
-        XCTAssertEqual(presented.id, MockupScreenID.bmsCellMap6S)
+        XCTAssertEqual(presented.id, PevScreenID.bmsCellMap6S)
         XCTAssertEqual(presented.title, "12S cell map")
         XCTAssertEqual(presented.bmsContent?.chips.map { $0.title }, ["live readback", "12S2P pack"])
     }
 
     func testPresentedOverviewScreenDoesNotMorphToUnknownTopology() throws {
-        let directScreen = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsOverview))
+        let directScreen = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsOverview))
         let liveSnapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "2 observed BMS groups",
@@ -1003,15 +1010,15 @@ extension MockupScreenCatalogTests {
             voltage: Voltage(value: 95_800),
         )
 
-        let presented = MockupScreenCatalog.v2.presentedScreen(for: directScreen, liveBmsSnapshot: liveSnapshot)
+        let presented = PevScreenCatalog.v2.presentedScreen(for: directScreen, liveBmsSnapshot: liveSnapshot)
 
-        XCTAssertEqual(presented.id, MockupScreenID.bmsOverview)
+        XCTAssertEqual(presented.id, PevScreenID.bmsOverview)
         XCTAssertEqual(presented.title, "Pack overview")
         XCTAssertEqual(presented.bmsContent?.kind, .overview)
     }
 
     func testUnknownTopologyFixtureKeepsConfidenceLowAndAvoidsFakeMapping() throws {
-        let unknown = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsUnknownTopology)?.bmsContent)
+        let unknown = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsUnknownTopology)?.bmsContent)
         let snapshot = unknown.snapshot
 
         XCTAssertEqual(snapshot.topology.confidence, .unverified)
@@ -1022,7 +1029,7 @@ extension MockupScreenCatalogTests {
     }
 
     func testNoDataFixtureMarksControllerOnlyEstimate() throws {
-        let noData = try XCTUnwrap(MockupScreenCatalog.v2.screen(id: .bmsNoData)?.bmsContent)
+        let noData = try XCTUnwrap(PevScreenCatalog.v2.screen(id: .bmsNoData)?.bmsContent)
         let snapshot = noData.snapshot
 
         XCTAssertEqual(snapshot.topology.layoutLabel, "non-smart BMS")

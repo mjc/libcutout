@@ -25,10 +25,21 @@ let package = Package(
             dependencies: ["CutoutMobile"],
             path: "Tests/CutoutMobileTests"
         ),
+        .testTarget(
+            name: "CutoutAppTests",
+            dependencies: ["CutoutApp"],
+            path: "Tests/CutoutAppTests"
+        ),
         .executableTarget(
             name: "CutoutApp",
             dependencies: ["CutoutMobile"],
             path: "Apps/CutoutApp"
+        ),
+        .executableTarget(
+            name: "CutoutLiveActivityExtension",
+            dependencies: ["CutoutMobile"],
+            path: "Apps/CutoutLiveActivityExtension",
+            resources: [.process("Assets.xcassets")]
         ),
         .executableTarget(
             name: "CutoutMobileSmoke",

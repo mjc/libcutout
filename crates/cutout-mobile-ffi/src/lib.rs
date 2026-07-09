@@ -1,32 +1,37 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
 use std::{
+    convert::TryFrom,
     fmt,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 use cutout_core::{
-    BatteryInfoDto, BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
-    ChargeModeDto, CommandKindDto, ControlRefusalReasonDto, CutoutSessionState, DeviceCommandDto,
-    DiscoveryCandidateSnapshot, DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    AngleReadingDto, BatteryCurrentReadingDto, BatteryInfoDto, BatteryLevelReadingDto,
+    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, ChargeModeDto,
+    ChargeModeReadingDto, CommandKindDto, ControlRefusalReasonDto, CutoutSessionState,
+    DeviceCommandDto, DiscoveryCandidateSnapshot,
+    DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
+    DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
-    DiscoveryObservation as CoreDiscoveryObservation, FaultCode, FaultCodeDto,
-    FaultHistoryAvailability, FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto,
-    FaultHistoryReadback, FaultHistoryReadbackDto, GattChannel, GattFingerprint, GattRoles,
-    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, MeasuredChargeModeDto,
-    MeasuredI16Dto, MeasuredI32Dto, MeasuredI64Dto, MeasuredU8Dto, MeasuredU64Dto,
-    MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
-    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
-    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapRecord,
-    PevcapResolvedIdentity, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RawFieldValue,
-    RawFieldValueDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, SemanticEventCountDto,
-    SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    DiscoveryObservation as CoreDiscoveryObservation, DistanceReadingDto, DutyCycleReadingDto,
+    FaultCode, FaultCodeDto, FaultHistoryAvailability, FaultHistoryAvailabilityDto,
+    FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback, FaultHistoryReadbackDto,
+    FootpadTelemetryDto, GattChannel, GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto,
+    IgnoredNotificationReasonDto, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
+    PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
+    ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, ReadOnlyOutputPayload,
+    ReservedPayloadEvidenceDto, RideOperatingStateDto, SemanticEventCountDto, SessionInputDto,
+    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
-    Speed as CoreSpeed, TelemetrySnapshotDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, WallClockUnixTimestamp, WriteMode,
+    Speed as CoreSpeed, SpeedReadingDto, TelemetrySnapshotDto, TemperatureReadingDto,
+    TransportActionDto, TransportWriteLimit, TransportWriteLimitDto, ValueQuality, ValueQualityDto,
+    ValueSource, ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    VoltageReadingDto, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
@@ -35,7 +40,9 @@ use cutout_protocols::{
     IdentityBannerEvidence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
     ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
     VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, identify_known_model, new_nosfet_aero_read_only_session,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
+    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
+    identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 
@@ -158,6 +165,9 @@ pub enum DiscoveryElectricUnicycleModel {
 pub enum DiscoveryConnectionRoute {
     /// Electric unicycle read-only session route.
     ElectricUnicycle,
+
+    /// VESC/Onewheel read-only route.
+    VescOnewheel,
 }
 
 /// Begode/Gotway protocol identity probe evidence.
@@ -385,12 +395,9 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
             support,
             recommended_action: support.recommended_action(),
             section: support.picker_section(),
-            connection_route: matches!(
-                candidate.support,
-                CoreDiscoveryCandidateSupport::Supported
-                    | CoreDiscoveryCandidateSupport::ProvisionalRoute
-            )
-            .then_some(DiscoveryConnectionRoute::ElectricUnicycle),
+            connection_route: candidate
+                .connection_route
+                .map(DiscoveryConnectionRoute::from),
             electric_unicycle_model,
             disabled_reason: match candidate.support {
                 CoreDiscoveryCandidateSupport::Supported => None,
@@ -421,6 +428,15 @@ impl From<CoreDiscoveryElectricUnicycleModel> for DiscoveryElectricUnicycleModel
         match model {
             CoreDiscoveryElectricUnicycleModel::Aero => Self::Aero,
             CoreDiscoveryElectricUnicycleModel::Falcon => Self::Falcon,
+        }
+    }
+}
+
+impl From<CoreDiscoveryConnectionRoute> for DiscoveryConnectionRoute {
+    fn from(route: CoreDiscoveryConnectionRoute) -> Self {
+        match route {
+            CoreDiscoveryConnectionRoute::ElectricUnicycle => Self::ElectricUnicycle,
+            CoreDiscoveryConnectionRoute::VescOnewheel => Self::VescOnewheel,
         }
     }
 }
@@ -687,14 +703,14 @@ pub fn mobile_discovery_candidate_from_advertisement(
             display_name,
             product_category: "VESC Onewheel".to_owned(),
             evidence: "VESC advertisement hint".to_owned(),
-            detail: "Not yet supported".to_owned(),
+            detail: "VESC read-only route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::KnownUnsupported,
-            recommended_action: DiscoveryCandidateSupport::KnownUnsupported.recommended_action(),
-            section: DiscoveryCandidateSupport::KnownUnsupported.picker_section(),
-            connection_route: None,
+            support: DiscoveryCandidateSupport::ProvisionalRoute,
+            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
+            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
+            connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
-            disabled_reason: Some("Not yet supported".to_owned()),
+            disabled_reason: None,
         };
     }
 
@@ -959,14 +975,14 @@ pub fn mobile_discovery_candidate_from_detection_resolution(
             display_name,
             product_category: "VESC Onewheel".to_owned(),
             evidence: "VESC protocol family".to_owned(),
-            detail: "Not yet supported".to_owned(),
+            detail: "VESC read-only route".to_owned(),
             is_picker_candidate: true,
-            support: DiscoveryCandidateSupport::KnownUnsupported,
-            recommended_action: DiscoveryCandidateSupport::KnownUnsupported.recommended_action(),
-            section: DiscoveryCandidateSupport::KnownUnsupported.picker_section(),
-            connection_route: None,
+            support: DiscoveryCandidateSupport::ProvisionalRoute,
+            recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
+            section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
+            connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
             electric_unicycle_model: None,
-            disabled_reason: Some("Not yet supported".to_owned()),
+            disabled_reason: None,
         };
     }
 
@@ -1788,11 +1804,27 @@ pub struct MobileTelemetrySnapshotDto {
     /// Reported roll.
     pub roll: Option<AngleReading>,
 
+    /// Footpad/sensor state.
+    pub footpad: Option<MobileFootpadTelemetryDto>,
+
     /// Reported battery level.
     pub battery_level_reported: Option<BatteryLevelReading>,
 
     /// Estimated battery percent.
     pub battery_level_estimated: Option<BatteryLevelReading>,
+}
+
+/// Mobile footpad telemetry DTO.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileFootpadTelemetryDto {
+    /// Protocol-specific footpad state bitfield/nibble.
+    pub state: u8,
+
+    /// First footpad ADC reading in protocol units, scaled by 1000.
+    pub adc1_milliunits: Option<i32>,
+
+    /// Second footpad ADC reading in protocol units, scaled by 1000.
+    pub adc2_milliunits: Option<i32>,
 }
 
 /// VESC controller state for ride UI.
@@ -1854,49 +1886,6 @@ pub enum MobileVescSubProtocolDto {
 
     /// Generic VESC telemetry/protocol only.
     Generic,
-}
-
-/// VESC ride snapshot for mobile UI.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileVescRideSnapshotDto {
-    /// Vehicle/profile label.
-    pub title: String,
-
-    /// Vehicle category, independent of protocol package.
-    pub vehicle_kind: MobileVescVehicleKindDto,
-
-    /// VESC sub-protocol; vehicle category does not imply this value.
-    pub sub_protocol: MobileVescSubProtocolDto,
-
-    /// Controller state, kept separate from generic ride session state.
-    pub controller_state: MobileVescControllerStateDto,
-
-    /// Current ride warning state.
-    pub warning: MobileVescRideWarningDto,
-
-    /// Board speed.
-    pub board_speed: Option<SpeedReading>,
-
-    /// Current duty cycle.
-    pub duty_cycle: Option<DutyCycle>,
-
-    /// Remaining duty headroom.
-    pub duty_headroom: Option<BatteryLevel>,
-
-    /// Battery current.
-    pub battery_current: Option<BatteryCurrentReading>,
-
-    /// Motor/phase current.
-    pub motor_current: Option<PhaseCurrentReading>,
-
-    /// Board pitch/angle.
-    pub board_angle: Option<AngleReading>,
-
-    /// Controller temperature.
-    pub controller_temperature: Option<TemperatureReading>,
-
-    /// Motor temperature.
-    pub motor_temperature: Option<TemperatureReading>,
 }
 
 /// VESC write guardrail shown by the debug surface.
@@ -2229,7 +2218,7 @@ fn bms_page_kind_label(kind: BatteryPageKindDto) -> &'static str {
 }
 
 fn bms_groups_from_cell_voltages(
-    cell_voltages: &[MeasuredI32Dto],
+    cell_voltages: &[VoltageReadingDto],
     page_identity: BmsPageIdentity,
 ) -> Vec<MobileBmsGroupSnapshotDto> {
     cell_voltages
@@ -2251,7 +2240,7 @@ fn bms_groups_from_cell_voltages(
         .collect()
 }
 
-fn bms_temperatures(temperatures: &[Option<MeasuredI32Dto>]) -> Vec<TemperatureReading> {
+fn bms_temperatures(temperatures: &[Option<TemperatureReadingDto>]) -> Vec<TemperatureReading> {
     temperatures
         .iter()
         .flatten()
@@ -2418,7 +2407,7 @@ impl fmt::Display for BmsGroupIndex {
     }
 }
 
-fn cell_voltage_delta(cell_voltages: &[MeasuredI32Dto]) -> Option<VoltageDeltaReading> {
+fn cell_voltage_delta(cell_voltages: &[VoltageReadingDto]) -> Option<VoltageDeltaReading> {
     let min = cell_voltages.iter().map(|voltage| voltage.value).min()?;
     let max = cell_voltages.iter().map(|voltage| voltage.value).max()?;
     let first = cell_voltages.first()?;
@@ -2433,7 +2422,7 @@ fn cell_voltage_delta(cell_voltages: &[MeasuredI32Dto]) -> Option<VoltageDeltaRe
 }
 
 fn lowest_cell_voltage_group_index(
-    cell_voltages: &[MeasuredI32Dto],
+    cell_voltages: &[VoltageReadingDto],
     page_identity: BmsPageIdentity,
 ) -> Option<u16> {
     cell_voltages
@@ -2536,57 +2525,51 @@ macro_rules! mobile_quantity {
     };
 }
 
-mobile_quantity!(Speed, SpeedReading, i32, "Speed.", "Measured speed.");
-mobile_quantity!(
-    Voltage,
-    VoltageReading,
-    i32,
-    "Voltage.",
-    "Measured voltage."
-);
+mobile_quantity!(Speed, SpeedReading, i32, "Speed.", "Speed reading.");
+mobile_quantity!(Voltage, VoltageReading, i32, "Voltage.", "Voltage reading.");
 mobile_quantity!(
     BatteryCurrent,
     BatteryCurrentReading,
     i32,
     "Battery current.",
-    "Measured battery current."
+    "Battery current reading."
 );
 mobile_quantity!(
     PhaseCurrent,
     PhaseCurrentReading,
     i32,
     "Phase current.",
-    "Measured phase current."
+    "Phase current reading."
 );
-mobile_quantity!(Power, PowerReading, i64, "Power.", "Measured power.");
+mobile_quantity!(Power, PowerReading, i64, "Power.", "Power reading.");
 mobile_quantity!(
     Temperature,
     TemperatureReading,
     i32,
     "Temperature.",
-    "Measured temperature."
+    "Temperature reading."
 );
 mobile_quantity!(
     Distance,
     DistanceReading,
     u64,
     "Distance.",
-    "Measured distance."
+    "Distance reading."
 );
-mobile_quantity!(Angle, AngleReading, i32, "Angle.", "Measured angle.");
+mobile_quantity!(Angle, AngleReading, i32, "Angle.", "Angle reading.");
 mobile_quantity!(
     BatteryLevel,
     BatteryLevelReading,
     u8,
     "Battery level.",
-    "Measured battery level."
+    "Battery level reading."
 );
 mobile_quantity!(
     VoltageDelta,
     VoltageDeltaReading,
     i32,
     "Voltage delta.",
-    "Measured voltage delta."
+    "Voltage delta reading."
 );
 
 /// Electrical resistance.
@@ -3500,7 +3483,7 @@ impl From<FaultHistoryReadback> for MobileFaultHistoryReadbackDto {
             last_fault: readback.last_fault().map(Into::into),
             since_distance: readback
                 .since_distance()
-                .map(MeasuredU64Dto::from)
+                .map(DistanceReadingDto::from)
                 .map(Into::into),
         }
     }
@@ -3891,45 +3874,48 @@ impl From<NotificationIngestOutcomeDto> for MobileNotificationIngestOutcomeDto {
     }
 }
 
-impl From<MeasuredI16Dto> for DutyCycle {
-    fn from(measured: MeasuredI16Dto) -> Self {
+impl From<DutyCycleReadingDto> for DutyCycle {
+    fn from(measured: DutyCycleReadingDto) -> Self {
         Self {
             permille: measured.value,
         }
     }
 }
 
-macro_rules! mobile_quantity_from_measured {
-    ($measured:ty, $quantity:ident, $reading:ident) => {
-        impl From<$measured> for $reading {
-            fn from(measured: $measured) -> Self {
+macro_rules! mobile_quantity_from_reading {
+    ($reading_dto:ty, $quantity:ident, $reading:ident) => {
+        impl From<$reading_dto> for $reading {
+            fn from(reading: $reading_dto) -> Self {
                 Self {
                     value: $quantity {
-                        value: measured.value,
+                        value: reading.value,
                     },
-                    source: measured.source.into(),
-                    quality: measured.quality.into(),
-                    verification: measured.verification.into(),
+                    source: reading.source.into(),
+                    quality: reading.quality.into(),
+                    verification: reading.verification.into(),
                 }
             }
         }
     };
 }
 
-mobile_quantity_from_measured!(MeasuredI32Dto, Speed, SpeedReading);
-mobile_quantity_from_measured!(MeasuredI32Dto, Voltage, VoltageReading);
-mobile_quantity_from_measured!(MeasuredI32Dto, BatteryCurrent, BatteryCurrentReading);
-mobile_quantity_from_measured!(MeasuredI32Dto, PhaseCurrent, PhaseCurrentReading);
-mobile_quantity_from_measured!(MeasuredI64Dto, Power, PowerReading);
-mobile_quantity_from_measured!(MeasuredI32Dto, Temperature, TemperatureReading);
-mobile_quantity_from_measured!(MeasuredU64Dto, Distance, DistanceReading);
-mobile_quantity_from_measured!(MeasuredI32Dto, Angle, AngleReading);
-mobile_quantity_from_measured!(MeasuredU8Dto, BatteryLevel, BatteryLevelReading);
-mobile_quantity_from_measured!(MeasuredI32Dto, VoltageDelta, VoltageDeltaReading);
+mobile_quantity_from_reading!(SpeedReadingDto, Speed, SpeedReading);
+mobile_quantity_from_reading!(VoltageReadingDto, Voltage, VoltageReading);
+mobile_quantity_from_reading!(
+    BatteryCurrentReadingDto,
+    BatteryCurrent,
+    BatteryCurrentReading
+);
+mobile_quantity_from_reading!(PhaseCurrentReadingDto, PhaseCurrent, PhaseCurrentReading);
+mobile_quantity_from_reading!(PowerReadingDto, Power, PowerReading);
+mobile_quantity_from_reading!(TemperatureReadingDto, Temperature, TemperatureReading);
+mobile_quantity_from_reading!(DistanceReadingDto, Distance, DistanceReading);
+mobile_quantity_from_reading!(AngleReadingDto, Angle, AngleReading);
+mobile_quantity_from_reading!(BatteryLevelReadingDto, BatteryLevel, BatteryLevelReading);
 
 fn highest_battery_temperature(
-    temperature: Option<MeasuredI32Dto>,
-    temperatures: Vec<Option<MeasuredI32Dto>>,
+    temperature: Option<TemperatureReadingDto>,
+    temperatures: Vec<Option<TemperatureReadingDto>>,
 ) -> Option<TemperatureReading> {
     temperature
         .into_iter()
@@ -3939,7 +3925,7 @@ fn highest_battery_temperature(
 }
 
 fn power_flow_from_signed_current(
-    current: MeasuredI32Dto,
+    current: BatteryCurrentReadingDto,
     operating_state: RideOperatingState,
 ) -> PowerFlowDirection {
     match current.value.cmp(&0) {
@@ -3956,9 +3942,17 @@ fn power_flow_from_signed_current(
 }
 
 fn ride_operating_state(
-    charge_mode: Option<MeasuredChargeModeDto>,
-    speed: Option<MeasuredI32Dto>,
+    operating_state: Option<RideOperatingStateDto>,
+    charge_mode: Option<ChargeModeReadingDto>,
+    speed: Option<SpeedReadingDto>,
 ) -> RideOperatingState {
+    match operating_state {
+        Some(RideOperatingStateDto::Parked) => return RideOperatingState::Parked,
+        Some(RideOperatingStateDto::Standing) => return RideOperatingState::Standing,
+        Some(RideOperatingStateDto::Riding) => return RideOperatingState::Riding,
+        Some(RideOperatingStateDto::Charging) => return RideOperatingState::Charging,
+        Some(RideOperatingStateDto::Unknown) | None => {}
+    }
     match charge_mode.map(|mode| mode.value) {
         Some(ChargeModeDto::Charging) => RideOperatingState::Charging,
         Some(ChargeModeDto::NotCharging) | None => match speed.map(|speed| speed.value.cmp(&0)) {
@@ -4143,7 +4137,11 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
 
 impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
     fn from(snapshot: TelemetrySnapshotDto) -> Self {
-        let operating_state = ride_operating_state(snapshot.charge_mode, snapshot.speed);
+        let operating_state = ride_operating_state(
+            snapshot.operating_state,
+            snapshot.charge_mode,
+            snapshot.speed,
+        );
         Self {
             at_ms: snapshot
                 .at_ms
@@ -4166,8 +4164,19 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             limp_home_range: None,
             pitch: snapshot.pitch.map(Into::into),
             roll: snapshot.roll.map(Into::into),
+            footpad: snapshot.footpad.map(Into::into),
             battery_level_reported: snapshot.battery_level_reported.map(Into::into),
             battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
+        }
+    }
+}
+
+impl From<FootpadTelemetryDto> for MobileFootpadTelemetryDto {
+    fn from(footpad: FootpadTelemetryDto) -> Self {
+        Self {
+            state: footpad.state,
+            adc1_milliunits: footpad.adc1_milliunits,
+            adc2_milliunits: footpad.adc2_milliunits,
         }
     }
 }
@@ -4283,10 +4292,134 @@ impl FalconReadOnlySession {
     }
 }
 
+/// Mobile-facing VESC board profile used to preserve geometry and pack facts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct VescBoardProfile {
+    /// Motor pole pairs used to convert electrical RPM to mechanical RPM.
+    pub motor_pole_pairs: u8,
+
+    /// Mechanical gear reduction denominator.
+    pub gear_ratio_denominator: u8,
+
+    /// Wheel circumference used for direct-drive speed calculations.
+    pub wheel_circumference: Distance,
+
+    /// VESC battery type used for voltage-derived pack level.
+    pub battery_type: VescBatteryType,
+
+    /// Number of series cells in the pack.
+    pub battery_cells: u8,
+
+    /// Whether the controller reports battery current directly.
+    pub reports_battery_current: bool,
+}
+
+impl From<VescBoardProfile> for CoreVescBoardProfile {
+    fn from(profile: VescBoardProfile) -> Self {
+        let battery_type = match profile.battery_type {
+            VescBatteryType::LiIon => CoreVescBatteryType::LiIon,
+            VescBatteryType::LiIron => CoreVescBatteryType::LiIron,
+            VescBatteryType::LeadAcid => CoreVescBatteryType::LeadAcid,
+            VescBatteryType::Other => CoreVescBatteryType::Other(0),
+        };
+        let mut core_profile = CoreVescBoardProfile::new(
+            cutout_protocols::MotorPolePairs::new(profile.motor_pole_pairs),
+            cutout_protocols::GearRatioDenominator::new(profile.gear_ratio_denominator),
+            cutout_core::Distance::from_millimetres(profile.wheel_circumference.value),
+        )
+        .with_vesc_battery_type(
+            battery_type,
+            cutout_core::SeriesCount::new(profile.battery_cells),
+        );
+        if profile.reports_battery_current {
+            core_profile = core_profile.with_reported_battery_current();
+        }
+        core_profile
+    }
+}
+
+/// VESC battery type from motor setup config.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum VescBatteryType {
+    /// Li-ion 3.0-4.2 V pack type.
+    LiIon,
+
+    /// LiFePO4 / lithium iron 2.6-3.6 V pack type.
+    LiIron,
+
+    /// Lead-acid 2.1-2.36 V cell model.
+    LeadAcid,
+
+    /// A battery type not modeled by libcutout yet.
+    Other,
+}
+
+/// Mobile-facing wrapper for a generic VESC read-only session.
+#[derive(Debug, uniffi::Object)]
+pub struct VescReadOnlySession {
+    inner: Mutex<CoreVescReadOnlySession>,
+}
+
+#[uniffi::export]
+impl VescReadOnlySession {
+    /// Creates a generic VESC read-only session.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreVescReadOnlySession::new()),
+        })
+    }
+
+    /// Creates a VESC read-only session with explicit board geometry and pack facts.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn with_board_profile(board_profile: VescBoardProfile) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(CoreVescReadOnlySession::with_board_profile(
+                board_profile.into(),
+            )),
+        })
+    }
+
+    /// Drives one input and returns owned outputs plus any stable error DTO.
+    pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
+        let input = SessionInputDto::from(input);
+        MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
+    }
+
+    /// Drains owned output DTOs accumulated since the previous drain.
+    pub fn drain_outputs(&self) -> Vec<MobileSessionOutputDto> {
+        self.lock_inner()
+            .drain_outputs()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    /// Returns the latest telemetry snapshot as an owned DTO.
+    pub fn current_snapshot(&self) -> MobileTelemetrySnapshotDto {
+        self.lock_inner().current_snapshot().into()
+    }
+
+    /// Returns accumulated parser diagnostics as an owned DTO.
+    pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
+        self.lock_inner().diagnostics().into()
+    }
+}
+
+impl VescReadOnlySession {
+    fn lock_inner(&self) -> MutexGuard<'_, CoreVescReadOnlySession> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cutout_protocols::{BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL};
+    use cutout_protocols::{
+        BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
+    };
 
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
@@ -4705,7 +4838,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_device_detection_resolution_keeps_vesc_family_only_unsupported() {
+    fn mobile_device_detection_resolution_routes_vesc_family_provisionally() {
         let candidate = mobile_discovery_candidate_from_detection_resolution(
             "ios-local-vesc-family".to_owned(),
             "VESC stream".to_owned(),
@@ -4724,17 +4857,17 @@ mod tests {
 
         assert_eq!(candidate.product_category, "VESC Onewheel");
         assert_eq!(candidate.evidence, "VESC protocol family");
-        assert_eq!(candidate.detail, "Not yet supported");
+        assert_eq!(candidate.detail, "VESC read-only route");
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::KnownUnsupported
+            DiscoveryCandidateSupport::ProvisionalRoute
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason,
-            Some("Not yet supported".to_owned())
+            candidate.connection_route,
+            Some(DiscoveryConnectionRoute::VescOnewheel)
         );
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
@@ -5179,107 +5312,6 @@ mod tests {
     }
 
     #[test]
-    fn mobile_vesc_ride_snapshot_keeps_vehicle_kind_currents_and_duty_fields_distinct() {
-        let snapshot = MobileVescRideSnapshotDto {
-            title: "Fungineers X7".to_owned(),
-            vehicle_kind: MobileVescVehicleKindDto::Float,
-            sub_protocol: MobileVescSubProtocolDto::Refloat,
-            controller_state: MobileVescControllerStateDto::Armed,
-            warning: MobileVescRideWarningDto::PushbackSoon,
-            board_speed: Some(reported_speed(19_000)),
-            duty_cycle: Some(DutyCycle { permille: 820 }),
-            duty_headroom: Some(BatteryLevel { value: 18 }),
-            battery_current: Some(reported_battery_current(38_000)),
-            motor_current: Some(reported_phase_current(71_000)),
-            board_angle: Some(reported_angle(-18)),
-            controller_temperature: Some(reported_temperature(54_000)),
-            motor_temperature: Some(reported_temperature(49_000)),
-        };
-
-        assert_eq!(snapshot.vehicle_kind, MobileVescVehicleKindDto::Float);
-        assert_eq!(snapshot.sub_protocol, MobileVescSubProtocolDto::Refloat);
-        assert_eq!(
-            snapshot.controller_state,
-            MobileVescControllerStateDto::Armed
-        );
-        assert_eq!(snapshot.warning, MobileVescRideWarningDto::PushbackSoon);
-        assert_eq!(
-            snapshot.board_speed.map(|reading| reading.value.value),
-            Some(19_000)
-        );
-        assert_eq!(snapshot.duty_cycle.map(|duty| duty.permille), Some(820));
-        assert_eq!(
-            snapshot.duty_headroom.map(|headroom| headroom.value),
-            Some(18)
-        );
-        assert_eq!(
-            snapshot.battery_current.map(|reading| reading.value.value),
-            Some(38_000)
-        );
-        assert_eq!(
-            snapshot.motor_current.map(|reading| reading.value.value),
-            Some(71_000)
-        );
-        assert_eq!(
-            snapshot.board_angle.map(|reading| reading.value.value),
-            Some(-18)
-        );
-        assert_eq!(
-            snapshot
-                .controller_temperature
-                .map(|reading| reading.value.value),
-            Some(54_000)
-        );
-        assert_eq!(
-            snapshot
-                .motor_temperature
-                .map(|reading| reading.value.value),
-            Some(49_000)
-        );
-    }
-
-    #[test]
-    fn mobile_vesc_vehicle_kind_does_not_imply_sub_protocol() {
-        let snapshot = MobileVescRideSnapshotDto {
-            title: "VESC Bike".to_owned(),
-            vehicle_kind: MobileVescVehicleKindDto::Bike,
-            sub_protocol: MobileVescSubProtocolDto::Generic,
-            controller_state: MobileVescControllerStateDto::Armed,
-            warning: MobileVescRideWarningDto::None,
-            board_speed: Some(reported_speed(19_000)),
-            duty_cycle: Some(DutyCycle { permille: 320 }),
-            duty_headroom: Some(BatteryLevel { value: 68 }),
-            battery_current: Some(reported_battery_current(18_000)),
-            motor_current: Some(reported_phase_current(41_000)),
-            board_angle: None,
-            controller_temperature: Some(reported_temperature(44_000)),
-            motor_temperature: Some(reported_temperature(39_000)),
-        };
-
-        assert_eq!(snapshot.vehicle_kind, MobileVescVehicleKindDto::Bike);
-        assert_eq!(snapshot.sub_protocol, MobileVescSubProtocolDto::Generic);
-
-        let eskate = MobileVescRideSnapshotDto {
-            title: "VESC Skateboard".to_owned(),
-            vehicle_kind: MobileVescVehicleKindDto::Skateboard,
-            sub_protocol: MobileVescSubProtocolDto::Eskate,
-            controller_state: MobileVescControllerStateDto::Armed,
-            warning: MobileVescRideWarningDto::None,
-            board_speed: Some(reported_speed(19_000)),
-            duty_cycle: Some(DutyCycle { permille: 320 }),
-            duty_headroom: Some(BatteryLevel { value: 68 }),
-            battery_current: Some(reported_battery_current(18_000)),
-            motor_current: Some(reported_phase_current(41_000)),
-            board_angle: None,
-            controller_temperature: Some(reported_temperature(44_000)),
-            motor_temperature: Some(reported_temperature(39_000)),
-        };
-
-        assert_eq!(eskate.vehicle_kind, MobileVescVehicleKindDto::Skateboard);
-        assert_eq!(eskate.sub_protocol, MobileVescSubProtocolDto::Eskate);
-    }
-
-    #[test]
     fn mobile_vesc_debug_snapshot_preserves_read_only_guardrail_state() {
         let snapshot = MobileVescDebugSnapshotDto {
             profile_title: "Profile: Street stable".to_owned(),
@@ -5507,7 +5539,7 @@ mod tests {
                 quality: ValueQualityDto::Known,
                 verification: VerificationStatusDto::HardwareVerified,
             }),
-            since_distance: Some(MeasuredU64Dto {
+            since_distance: Some(DistanceReadingDto {
                 value: 61_456_941,
                 source: ValueSourceDto::Reported,
                 quality: ValueQualityDto::Known,
@@ -5554,7 +5586,7 @@ mod tests {
                 quality: ValueQualityDto::Known,
                 verification: VerificationStatusDto::HardwareVerified,
             }),
-            since_distance: Some(MeasuredU64Dto {
+            since_distance: Some(DistanceReadingDto {
                 value: 61_456_941,
                 source: ValueSourceDto::Reported,
                 quality: ValueQualityDto::Known,
@@ -5576,7 +5608,7 @@ mod tests {
             command_kind: CommandKindDto::RequestFirmwareInfo,
             payload: ReadOnlyOutputPayload::Firmware(cutout_core::FirmwareInfoDto {
                 protocol_version: None,
-                firmware_major: Some(cutout_core::MeasuredU16Dto {
+                firmware_major: Some(cutout_core::VersionComponentDto {
                     value: 43,
                     source: ValueSourceDto::Reported,
                     quality: ValueQualityDto::Known,
@@ -5600,7 +5632,7 @@ mod tests {
             command_kind: CommandKindDto::RequestFirmwareInfo,
             payload: ReadOnlyOutputPayload::Firmware(cutout_core::FirmwareInfoDto {
                 protocol_version: None,
-                firmware_major: Some(cutout_core::MeasuredU16Dto {
+                firmware_major: Some(cutout_core::VersionComponentDto {
                     value: 43,
                     source: ValueSourceDto::Reported,
                     quality: ValueQualityDto::Known,
@@ -5741,7 +5773,25 @@ mod tests {
 
     #[test]
     fn mobile_session_output_maps_battery_readback_to_bms_snapshot() {
-        let reported = |value| MeasuredI32Dto {
+        let reported_voltage = |value| VoltageReadingDto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::HardwareVerified,
+        };
+        let reported_current = |value| BatteryCurrentReadingDto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::HardwareVerified,
+        };
+        let reported_temperature = |value| TemperatureReadingDto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::HardwareVerified,
+        };
+        let reported_level = |value| BatteryLevelReadingDto {
             value,
             source: ValueSourceDto::Reported,
             quality: ValueQualityDto::Known,
@@ -5760,20 +5810,23 @@ mod tests {
                         kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
-                    voltage: Some(reported(81_600)),
-                    current: Some(reported(-1_250)),
-                    bms_pack_current_0: Some(reported(-1_100)),
-                    bms_pack_current_1: Some(reported(-150)),
-                    level_reported: Some(MeasuredU8Dto {
-                        value: 72,
-                        source: ValueSourceDto::Reported,
-                        quality: ValueQualityDto::Known,
-                        verification: VerificationStatusDto::HardwareVerified,
-                    }),
+                    voltage: Some(reported_voltage(81_600)),
+                    current: Some(reported_current(-1_250)),
+                    bms_pack_current_0: Some(reported_current(-1_100)),
+                    bms_pack_current_1: Some(reported_current(-150)),
+                    level_reported: Some(reported_level(72)),
                     level_estimated: None,
-                    temperature: Some(reported(31_000)),
-                    temperatures: vec![None, Some(reported(37_800)), Some(reported(35_200))],
-                    cell_voltages: vec![reported(3_633), reported(3_626), reported(3_634)],
+                    temperature: Some(reported_temperature(31_000)),
+                    temperatures: vec![
+                        None,
+                        Some(reported_temperature(37_800)),
+                        Some(reported_temperature(35_200)),
+                    ],
+                    cell_voltages: vec![
+                        reported_voltage(3_633),
+                        reported_voltage(3_626),
+                        reported_voltage(3_634),
+                    ],
                     raw_state: None,
                 }),
             }),
@@ -5904,20 +5957,20 @@ mod tests {
                         kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
-                    voltage: Some(measured_i32(81_600)),
-                    current: Some(measured_i32(-1_250)),
+                    voltage: Some(voltage_reading(81_600)),
+                    current: Some(battery_current_reading(-1_250)),
                     bms_pack_current_0: None,
                     bms_pack_current_1: None,
-                    level_reported: Some(MeasuredU8Dto {
+                    level_reported: Some(BatteryLevelReadingDto {
                         value: 72,
                         source: ValueSourceDto::Reported,
                         quality: ValueQualityDto::Known,
                         verification: VerificationStatusDto::HardwareVerified,
                     }),
                     level_estimated: None,
-                    temperature: Some(measured_i32(31_000)),
-                    temperatures: vec![Some(measured_i32(37_800))],
-                    cell_voltages: vec![measured_i32(3_633)],
+                    temperature: Some(temperature_reading(31_000)),
+                    temperatures: vec![Some(temperature_reading(37_800))],
+                    cell_voltages: vec![voltage_reading(3_633)],
                     raw_state: None,
                 }),
             }),
@@ -5941,8 +5994,8 @@ mod tests {
 
     #[test]
     fn bms_group_projection_skips_unrepresentable_group_indices() {
-        let mut cell_voltages = vec![measured_i32(3_600); usize::from(u8::MAX) + 1];
-        cell_voltages[usize::from(u8::MAX)] = measured_i32(3_500);
+        let mut cell_voltages = vec![voltage_reading(3_600); usize::from(u8::MAX) + 1];
+        cell_voltages[usize::from(u8::MAX)] = voltage_reading(3_500);
         let page_identity = BmsPageIdentity::from_tag_and_selector(None, 0);
 
         let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
@@ -5960,7 +6013,7 @@ mod tests {
 
     #[test]
     fn begode_cell_pages_project_to_global_group_indices() {
-        let cell_voltages = vec![measured_i32(3_600), measured_i32(3_590)];
+        let cell_voltages = vec![voltage_reading(3_600), voltage_reading(3_590)];
         let page_identity = BmsPageIdentity::from_tag_and_selector(Some(ProtocolTag::new(0x03)), 2);
         let groups = bms_groups_from_cell_voltages(&cell_voltages, page_identity);
 
@@ -6013,7 +6066,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_exposes_disabled_reason_for_unsupported() {
+    fn mobile_discovery_candidate_routes_vesc_advertisement_provisionally() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
@@ -6024,14 +6077,14 @@ mod tests {
         assert_eq!(candidate.product_category, "VESC Onewheel");
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::KnownUnsupported
+            DiscoveryCandidateSupport::ProvisionalRoute
         );
-        assert_eq!(candidate.connection_route, None);
-        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.disabled_reason,
-            Some("Not yet supported".to_owned())
+            candidate.connection_route,
+            Some(DiscoveryConnectionRoute::VescOnewheel)
         );
+        assert_eq!(candidate.electric_unicycle_model, None);
+        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
@@ -6135,6 +6188,7 @@ mod tests {
                 evidence: "resolver evidence".to_owned(),
                 detail: "resolver detail".to_owned(),
                 support: core_support,
+                connection_route: None,
                 electric_unicycle_model: None,
             });
 
@@ -6148,27 +6202,49 @@ mod tests {
     #[test]
     fn power_flow_direction_uses_motion_and_charge_context_for_negative_current() {
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(2_000), RideOperatingState::Riding),
+            power_flow_from_signed_current(
+                battery_current_reading(2_000),
+                RideOperatingState::Riding
+            ),
             PowerFlowDirection::Discharge
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(0), RideOperatingState::Riding),
+            power_flow_from_signed_current(battery_current_reading(0), RideOperatingState::Riding),
             PowerFlowDirection::Zero
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Unknown),
+            power_flow_from_signed_current(
+                battery_current_reading(-2_000),
+                RideOperatingState::Unknown
+            ),
             PowerFlowDirection::NegativeUnknown
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Parked),
+            power_flow_from_signed_current(
+                battery_current_reading(-2_000),
+                RideOperatingState::Parked
+            ),
             PowerFlowDirection::NegativeUnknown
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Riding),
+            power_flow_from_signed_current(
+                battery_current_reading(-2_000),
+                RideOperatingState::Standing
+            ),
+            PowerFlowDirection::NegativeUnknown
+        );
+        assert_eq!(
+            power_flow_from_signed_current(
+                battery_current_reading(-2_000),
+                RideOperatingState::Riding
+            ),
             PowerFlowDirection::Regeneration
         );
         assert_eq!(
-            power_flow_from_signed_current(measured_i32(-2_000), RideOperatingState::Charging),
+            power_flow_from_signed_current(
+                battery_current_reading(-2_000),
+                RideOperatingState::Charging
+            ),
             PowerFlowDirection::Charging
         );
     }
@@ -6176,30 +6252,73 @@ mod tests {
     #[test]
     fn ride_operating_state_uses_charge_mode_before_speed() {
         assert_eq!(
-            ride_operating_state(None, None),
+            ride_operating_state(None, None, None),
             RideOperatingState::Unknown
         );
         assert_eq!(
-            ride_operating_state(None, Some(measured_i32(0))),
+            ride_operating_state(None, None, Some(speed_reading(0))),
             RideOperatingState::Standing
         );
         assert_eq!(
-            ride_operating_state(None, Some(measured_i32(1_000))),
+            ride_operating_state(None, None, Some(speed_reading(1_000))),
             RideOperatingState::Riding
         );
         assert_eq!(
-            ride_operating_state(None, Some(measured_i32(-1_000))),
+            ride_operating_state(None, None, Some(speed_reading(-1_000))),
             RideOperatingState::Riding
         );
         assert_eq!(
             ride_operating_state(
-                Some(MeasuredChargeModeDto {
+                None,
+                Some(ChargeModeReadingDto {
                     value: ChargeModeDto::Charging,
                     source: ValueSourceDto::Reported,
                     quality: ValueQualityDto::Known,
                     verification: VerificationStatusDto::HardwareVerified,
                 }),
-                Some(measured_i32(0)),
+                Some(speed_reading(0)),
+            ),
+            RideOperatingState::Charging
+        );
+    }
+
+    #[test]
+    fn ride_operating_state_prefers_explicit_protocol_state() {
+        assert_eq!(
+            ride_operating_state(
+                Some(RideOperatingStateDto::Parked),
+                Some(ChargeModeReadingDto {
+                    value: ChargeModeDto::NotCharging,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                Some(speed_reading(1_000)),
+            ),
+            RideOperatingState::Parked
+        );
+    }
+
+    #[test]
+    fn ride_operating_state_uses_fallbacks_when_explicit_state_is_unknown() {
+        assert_eq!(
+            ride_operating_state(
+                Some(RideOperatingStateDto::Unknown),
+                None,
+                Some(speed_reading(1_000))
+            ),
+            RideOperatingState::Riding
+        );
+        assert_eq!(
+            ride_operating_state(
+                Some(RideOperatingStateDto::Unknown),
+                Some(ChargeModeReadingDto {
+                    value: ChargeModeDto::Charging,
+                    source: ValueSourceDto::Reported,
+                    quality: ValueQualityDto::Known,
+                    verification: VerificationStatusDto::HardwareVerified,
+                }),
+                Some(speed_reading(1_000))
             ),
             RideOperatingState::Charging
         );
@@ -6217,8 +6336,8 @@ mod tests {
         }
     }
 
-    const fn measured_i32(value: i32) -> MeasuredI32Dto {
-        MeasuredI32Dto {
+    const fn speed_reading(value: i32) -> SpeedReadingDto {
+        SpeedReadingDto {
             value,
             source: ValueSourceDto::Reported,
             quality: ValueQualityDto::Known,
@@ -6226,12 +6345,30 @@ mod tests {
         }
     }
 
-    const fn reported_speed(value: i32) -> SpeedReading {
-        SpeedReading {
-            value: Speed { value },
-            source: MobileValueSourceDto::Reported,
-            quality: MobileValueQualityDto::Known,
-            verification: MobileVerificationStatusDto::SourceVerified,
+    const fn battery_current_reading(value: i32) -> BatteryCurrentReadingDto {
+        BatteryCurrentReadingDto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn voltage_reading(value: i32) -> VoltageReadingDto {
+        VoltageReadingDto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::SourceVerified,
+        }
+    }
+
+    const fn temperature_reading(value: i32) -> TemperatureReadingDto {
+        TemperatureReadingDto {
+            value,
+            source: ValueSourceDto::Reported,
+            quality: ValueQualityDto::Known,
+            verification: VerificationStatusDto::SourceVerified,
         }
     }
 
@@ -6256,24 +6393,6 @@ mod tests {
     const fn reported_phase_current(value: i32) -> PhaseCurrentReading {
         PhaseCurrentReading {
             value: PhaseCurrent { value },
-            source: MobileValueSourceDto::Reported,
-            quality: MobileValueQualityDto::Known,
-            verification: MobileVerificationStatusDto::SourceVerified,
-        }
-    }
-
-    const fn reported_temperature(value: i32) -> TemperatureReading {
-        TemperatureReading {
-            value: Temperature { value },
-            source: MobileValueSourceDto::Reported,
-            quality: MobileValueQualityDto::Known,
-            verification: MobileVerificationStatusDto::SourceVerified,
-        }
-    }
-
-    const fn reported_angle(value: i32) -> AngleReading {
-        AngleReading {
-            value: Angle { value },
             source: MobileValueSourceDto::Reported,
             quality: MobileValueQualityDto::Known,
             verification: MobileVerificationStatusDto::SourceVerified,
@@ -6318,6 +6437,86 @@ mod tests {
 
     const fn mobile_write_len(value: u16) -> MobileTransportWriteLimitDto {
         MobileTransportWriteLimitDto { bytes: value }
+    }
+
+    const LIVE_VESC_VALUES_CHUNK_0: &[u8] = &hex_literal::hex!("024a");
+    const LIVE_VESC_VALUES_CHUNK_1: &[u8] =
+        &hex_literal::hex!("04010b00ea000000000000000000000000000000");
+    const LIVE_VESC_VALUES_CHUNK_2: &[u8] =
+        &hex_literal::hex!("00000000000000026b0000000000000000000000");
+    const LIVE_VESC_VALUES_CHUNK_3: &[u8] =
+        &hex_literal::hex!("0000000000fffffffe00000004000036ee861700");
+    const LIVE_VESC_VALUES_CHUNK_4: &[u8] = &hex_literal::hex!("000000000000000007ffffffec00");
+    const LIVE_VESC_VALUES_CHUNK_5: &[u8] = &hex_literal::hex!("e3be03");
+
+    fn custom_app_frame(app_data: &[u8]) -> Vec<u8> {
+        let mut payload = Vec::with_capacity(app_data.len() + 1);
+        payload.push(VESC_COMM_CUSTOM_APP_DATA);
+        payload.extend_from_slice(app_data);
+        let crc = crc16_xmodem(&payload);
+
+        let mut frame = Vec::with_capacity(payload.len() + 5);
+        frame.push(2);
+        frame.push(u8::try_from(payload.len()).expect("test frame fits short VESC length"));
+        frame.extend_from_slice(&payload);
+        frame.extend_from_slice(&crc.to_be_bytes());
+        frame.push(3);
+        frame
+    }
+
+    fn crc16_xmodem(bytes: &[u8]) -> u16 {
+        let mut crc = 0_u16;
+        for byte in bytes {
+            crc ^= u16::from(*byte) << 8;
+            for _ in 0..8 {
+                if crc & 0x8000 != 0 {
+                    crc = (crc << 1) ^ 0x1021;
+                } else {
+                    crc <<= 1;
+                }
+            }
+        }
+        crc
+    }
+
+    fn refloat_realtime_ids_frame() -> Vec<u8> {
+        let mut payload = vec![101, 32, 4];
+        for id in ["motor.speed", "imu.pitch", "footpad.adc1", "footpad.adc2"] {
+            payload.push(u8::try_from(id.len()).expect("fixture id length fits"));
+            payload.extend_from_slice(id.as_bytes());
+        }
+        payload.push(0);
+        custom_app_frame(&payload)
+    }
+
+    fn refloat_realtime_data_frame() -> Vec<u8> {
+        let mut payload = vec![101, 31, 0x4, 0];
+        payload.extend_from_slice(&42_u32.to_be_bytes());
+        payload.extend_from_slice(&[0x13, 0xc1, 0xa6, 8]);
+        for half in [
+            0x3c00_u16, // 1.0 m/s
+            0x4400_u16, // 4 degrees pitch
+            0x3d00_u16, // 1.25 adc1
+            0x3b00_u16, // 0.875 adc2
+        ] {
+            payload.extend_from_slice(&half.to_be_bytes());
+        }
+        payload.extend_from_slice(&0_u32.to_be_bytes());
+        payload.extend_from_slice(&0_u32.to_be_bytes());
+        payload.push(0);
+        custom_app_frame(&payload)
+    }
+
+    fn vesc_notification(session: &VescReadOnlySession, monotonic_ms: u64, bytes: &[u8]) {
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Notification,
+            monotonic_ms: ms(monotonic_ms),
+            max_write_len: None,
+            channel: VESC_NOTIFY_CHANNEL.as_bytes().to_vec(),
+            bytes: bytes.to_vec(),
+            command: None,
+        });
+        assert_eq!(result.error, None);
     }
 
     fn notification_fixture() -> NotificationEvidenceDto {
@@ -6592,6 +6791,112 @@ mod tests {
         assert!(snapshot.controller_temperature.is_some() || snapshot.motor_temperature.is_some());
         assert!(snapshot.pwm.is_some());
         assert!(snapshot.battery_level_estimated.is_some());
+    }
+
+    #[test]
+    fn vesc_wrapper_current_snapshot_keeps_refloat_fields_after_values_frames() {
+        let session = VescReadOnlySession::new();
+        let link_result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: ms(1),
+            max_write_len: Some(mobile_write_len(185)),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert_eq!(link_result.error, None);
+
+        vesc_notification(&session, 2, &refloat_realtime_ids_frame());
+        vesc_notification(&session, 3, &refloat_realtime_data_frame());
+
+        let refloat_snapshot = session.current_snapshot();
+        assert_eq!(
+            refloat_snapshot.pitch,
+            Some(AngleReading {
+                value: Angle { value: 4_000 },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::HardwareVerified,
+            })
+        );
+        assert_eq!(
+            refloat_snapshot.footpad,
+            Some(MobileFootpadTelemetryDto {
+                state: 3,
+                adc1_milliunits: Some(1_250),
+                adc2_milliunits: Some(875),
+            })
+        );
+
+        for (index, chunk) in [
+            LIVE_VESC_VALUES_CHUNK_0,
+            LIVE_VESC_VALUES_CHUNK_1,
+            LIVE_VESC_VALUES_CHUNK_2,
+            LIVE_VESC_VALUES_CHUNK_3,
+            LIVE_VESC_VALUES_CHUNK_4,
+            LIVE_VESC_VALUES_CHUNK_5,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            vesc_notification(
+                &session,
+                u64::try_from(index).expect("fixture index fits") + 4,
+                chunk,
+            );
+        }
+
+        let snapshot = session.current_snapshot();
+        assert!(snapshot.voltage.is_some());
+        assert!(snapshot.controller_temperature.is_some());
+        assert!(snapshot.motor_temperature.is_some());
+        assert_eq!(snapshot.pitch, refloat_snapshot.pitch);
+        assert_eq!(snapshot.footpad, refloat_snapshot.footpad);
+    }
+
+    #[test]
+    fn vesc_wrapper_with_board_profile_uses_geometry_and_pack_facts() {
+        let session = VescReadOnlySession::with_board_profile(VescBoardProfile {
+            motor_pole_pairs: 15,
+            gear_ratio_denominator: 1,
+            wheel_circumference: Distance { value: 2_100 },
+            battery_type: VescBatteryType::LiIon,
+            battery_cells: 20,
+            reports_battery_current: true,
+        });
+
+        let link_result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::LinkUp,
+            monotonic_ms: ms(1),
+            max_write_len: Some(mobile_write_len(185)),
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert_eq!(link_result.error, None);
+
+        for (index, chunk) in [
+            LIVE_VESC_VALUES_CHUNK_0,
+            LIVE_VESC_VALUES_CHUNK_1,
+            LIVE_VESC_VALUES_CHUNK_2,
+            LIVE_VESC_VALUES_CHUNK_3,
+            LIVE_VESC_VALUES_CHUNK_4,
+            LIVE_VESC_VALUES_CHUNK_5,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            vesc_notification(
+                &session,
+                u64::try_from(index).expect("fixture index fits") + 2,
+                chunk,
+            );
+        }
+
+        let snapshot = session.current_snapshot();
+        assert!(snapshot.speed.is_some());
+        assert!(snapshot.battery_level_estimated.is_some());
+        assert!(snapshot.battery_current.is_some());
     }
 
     #[test]
