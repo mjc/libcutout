@@ -78,6 +78,82 @@ public struct PevDashboardKeyValueRows: View {
     }
 }
 
+
+public struct PevDashboardReadbackRow: Identifiable {
+    public let id: String
+    public let label: String
+    public let value: String
+    public let detail: String
+
+    public init(id: String, label: String, value: String, detail: String) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.detail = detail
+    }
+}
+
+public struct PevDashboardReadbackRows: View {
+    let rows: [PevDashboardReadbackRow]
+    let scale: CGFloat
+    let emptyLabel: String?
+    let emptyValue: String?
+
+    public init(
+        rows: [PevDashboardReadbackRow],
+        scale: CGFloat,
+        emptyLabel: String? = nil,
+        emptyValue: String? = nil
+    ) {
+        self.rows = rows
+        self.scale = scale
+        self.emptyLabel = emptyLabel
+        self.emptyValue = emptyValue
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            if rows.isEmpty, let emptyLabel, let emptyValue {
+                PevDashboardKeyValueRows(
+                    rows: [PevDashboardKeyValueRow(id: emptyLabel, label: emptyLabel, value: emptyValue)],
+                    scale: scale,
+                    verticalPadding: 6
+                )
+            } else {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 5 * scale) {
+                        HStack {
+                            Text(row.label)
+                                .font(.system(size: 14 * scale, weight: .bold))
+                                .foregroundStyle(PevDashboardColors.mutedText)
+                            Spacer()
+                            Text(row.value)
+                                .font(.system(size: 15 * scale, weight: .black))
+                                .monospacedDigit()
+                                .foregroundStyle(PevDashboardColors.primaryText)
+                        }
+                        Text(row.detail)
+                            .font(.system(size: 12 * scale, weight: .semibold))
+                            .foregroundStyle(PevDashboardColors.mutedText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 10 * scale)
+
+                    if row.id != rows.last?.id {
+                        Rectangle()
+                            .fill(PevDashboardColors.cardStroke)
+                            .frame(height: 1)
+                    }
+                }
+                .padding(.horizontal, 22 * scale)
+                .padding(.vertical, 6 * scale)
+                .background(PevDashboardCardBackground(cornerRadius: 22 * scale))
+            }
+        }
+    }
+}
+
 public struct PevDashboardSectionLabel: View {
     let title: String
     let scale: CGFloat

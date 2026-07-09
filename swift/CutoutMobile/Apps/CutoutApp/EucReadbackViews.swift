@@ -45,51 +45,19 @@ struct SettingsReadbackRows: View {
     let scale: CGFloat
 
     var body: some View {
-        VStack(spacing: 0) {
-            if readback.entries.isEmpty {
-                HStack {
-                    Text("settings")
-                        .font(.system(size: 14 * scale, weight: .bold))
-                        .foregroundStyle(PevColors.muted)
-                    Spacer()
-                    Text(readback.availability.displayText)
-                        .font(.system(size: 15 * scale, weight: .black))
-                        .foregroundStyle(PevColors.primaryText)
-                }
-                .frame(height: 31 * scale)
-            } else {
-                ForEach(Array(readback.entries.enumerated()), id: \.offset) { offset, entry in
-                    VStack(alignment: .leading, spacing: 5 * scale) {
-                        HStack {
-                            Text("setting \(entry.field.id)")
-                                .font(.system(size: 14 * scale, weight: .bold))
-                                .foregroundStyle(PevColors.muted)
-                            Spacer()
-                            Text("\(entry.field.value)")
-                                .font(.system(size: 15 * scale, weight: .black))
-                                .monospacedDigit()
-                                .foregroundStyle(PevColors.primaryText)
-                        }
-
-                        Text(entry.provenanceText)
-                            .font(.system(size: 12 * scale, weight: .semibold))
-                            .foregroundStyle(PevColors.muted)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.vertical, 10 * scale)
-
-                    if offset != readback.entries.indices.last {
-                        Rectangle()
-                            .fill(PevColors.cardStroke)
-                            .frame(height: 1)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 22 * scale)
-        .padding(.vertical, 6 * scale)
-        .background(PevDashboardCardBackground(cornerRadius: 22 * scale))
+        PevDashboardReadbackRows(
+            rows: readback.entries.enumerated().map { offset, entry in
+                PevDashboardReadbackRow(
+                    id: "\(offset)-\(entry.field.id)",
+                    label: "setting \(entry.field.id)",
+                    value: "\(entry.field.value)",
+                    detail: entry.provenanceText
+                )
+            },
+            scale: scale,
+            emptyLabel: "settings",
+            emptyValue: readback.availability.displayText
+        )
     }
 }
 
@@ -98,27 +66,17 @@ struct FaultHistoryReadbackRows: View {
     let scale: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5 * scale) {
-            HStack {
-                Text("fault")
-                    .font(.system(size: 14 * scale, weight: .bold))
-                    .foregroundStyle(PevColors.muted)
-                Spacer()
-                Text(readback.valueText)
-                    .font(.system(size: 15 * scale, weight: .black))
-                    .monospacedDigit()
-                    .foregroundStyle(PevColors.primaryText)
-            }
-
-            Text(readback.detailText)
-                .font(.system(size: 12 * scale, weight: .semibold))
-                .foregroundStyle(PevColors.muted)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 22 * scale)
-        .padding(.vertical, 16 * scale)
-        .background(PevDashboardCardBackground(cornerRadius: 22 * scale))
+        PevDashboardReadbackRows(
+            rows: [
+                PevDashboardReadbackRow(
+                    id: "fault",
+                    label: "fault",
+                    value: readback.valueText,
+                    detail: readback.detailText
+                ),
+            ],
+            scale: scale
+        )
     }
 }
 
