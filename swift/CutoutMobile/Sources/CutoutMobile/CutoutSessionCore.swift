@@ -516,20 +516,28 @@ public final class CutoutSessionCore: NSObject {
         onRecord?(message)
     }
 
-    private func captureFrame(direction: String, characteristic: CBUUID, bytes: Data) {
+    private func captureFrame(
+        direction: String,
+        characteristic: CBUUID,
+        service: CBUUID? = nil,
+        bytes: Data
+    ) {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
             return
         }
 
         switch direction {
         case "notify":
-            guard let service = pevcapServiceUuid(for: channel) else {
+            guard let serviceUuid = service.flatMap(BluetoothUuid.init(coreBluetoothUuid:)) else {
+                record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
+                writeCapture()
+                setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
                 return
             }
             captureBuilder?.recordNotification(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
-                service: service.bytes,
+                service: serviceUuid.bytes,
                 bytes: bytes
             )
         case "write_without_response":
@@ -618,20 +626,6 @@ public final class CutoutSessionCore: NSObject {
 
     private func pevcapResolvedIdentity() -> MobileResolvedIdentityDto? {
         captureResolvedIdentity(protocolIdentityCandidate: protocolIdentityCandidate)
-    }
-
-    private func pevcapServiceUuid(for characteristic: BluetoothUuid) -> BluetoothUuid? {
-        guard let shortUuid = characteristic.bluetooth16Value else {
-            return nil
-        }
-        switch shortUuid {
-        case 0xffe1:
-            return .bluetooth16(0xffe0)
-        case 0xfff1:
-            return .bluetooth16(0xfff0)
-        default:
-            return nil
-        }
     }
 }
 
@@ -880,7 +874,12 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         else {
             return
         }
-        captureFrame(direction: "notify", characteristic: characteristic.uuid, bytes: value)
+        captureFrame(
+            direction: "notify",
+            characteristic: characteristic.uuid,
+            service: characteristic.service?.uuid,
+            bytes: value
+        )
         observeDetectionNotification(channel: channel, bytes: value)
         if isRecordOnly {
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
