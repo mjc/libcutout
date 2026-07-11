@@ -5808,6 +5808,7 @@ pub type SeriesCount = Quantity<Count, Cell, u8>;
 pub type ParallelCount = Quantity<Count, Pack, u8>;
 
 /// Raw numeric field reported by a protocol-specific response.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RawFieldValue {
     /// Protocol-family field identifier.
@@ -5815,6 +5816,33 @@ pub struct RawFieldValue {
 
     /// Sign-extended raw field value.
     pub value: i64,
+}
+
+/// Protocol-native IEEE-754 single-precision field.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RawFloatFieldValue {
+    /// Protocol-family field identifier.
+    pub id: u16,
+    /// Exact IEEE-754 bits received or decoded from the protocol.
+    pub value_bits: u32,
+}
+
+impl RawFloatFieldValue {
+    /// Creates a field while retaining the exact `f32` bit pattern.
+    #[must_use]
+    pub const fn new(id: u16, value: f32) -> Self {
+        Self {
+            id,
+            value_bits: value.to_bits(),
+        }
+    }
+
+    /// Returns the retained floating-point value.
+    #[must_use]
+    pub const fn value(self) -> f32 {
+        f32::from_bits(self.value_bits)
+    }
 }
 
 impl RawFieldValue {
@@ -6069,10 +6097,14 @@ pub struct DiagnosticReadback {
 }
 
 /// Bounded protocol-native raw telemetry readback.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RawTelemetryReadback {
     /// Raw telemetry field slots.
-    pub fields: [Option<RawFieldValue>; 4],
+    pub fields: [Option<RawFieldValue>; 8],
+
+    /// Protocol-native float field slots, retained without narrowing.
+    pub float_fields: [Option<RawFloatFieldValue>; 32],
 }
 
 /// Generic read-only settings entry.
@@ -7567,9 +7599,9 @@ mod tests {
         assert_eq!(size_of::<crate::BatteryPageMetadata>(), 8);
         assert!(size_of::<crate::BatteryInfo>() <= 64);
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
-        assert!(size_of::<crate::RawTelemetryReadback>() <= 96);
-        assert!(size_of::<crate::ReadOnlyResponse>() <= 136);
-        assert_eq!(size_of::<SessionOutput>(), 160);
+        assert!(size_of::<crate::RawTelemetryReadback>() <= 512);
+        assert!(size_of::<crate::ReadOnlyResponse>() <= 512);
+        assert!(size_of::<SessionOutput>() <= 1024);
         assert_eq!(size_of::<TransportAction>(), 64);
     }
 
@@ -7579,7 +7611,7 @@ mod tests {
         assert_eq!(crate::MAX_INLINE_TRANSPORT_WRITE_LEN, 32);
         assert_eq!(size_of::<WritePayload>(), 40);
         assert_eq!(size_of::<TransportAction>(), 64);
-        assert_eq!(size_of::<SessionOutput>(), 160);
+        assert!(size_of::<SessionOutput>() <= 1024);
     }
 
     #[test]
@@ -7590,7 +7622,12 @@ mod tests {
                 Some(crate::RawFieldValue::new(0x8002, -21_973)),
                 Some(crate::RawFieldValue::new(0x8003, 20)),
                 Some(crate::RawFieldValue::new(0x8004, 0)),
+                None,
+                None,
+                None,
+                None,
             ],
+            float_fields: [None; 32],
         });
 
         assert_eq!(

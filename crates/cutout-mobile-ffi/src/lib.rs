@@ -3,7 +3,16 @@
 use std::{
     convert::TryFrom,
     fmt,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    fs::{self, File, OpenOptions},
+    io::{BufRead, BufReader, BufWriter, Write},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use cutout_core::{
@@ -22,16 +31,17 @@ use cutout_core::{
     IgnoredNotificationReasonDto, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
     NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapCapture, PevcapEncoding, PevcapHeader,
-    PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
-    ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingStateDto, SemanticEventCountDto, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
-    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
-    Speed as CoreSpeed, SpeedReadingDto, TelemetrySnapshotDto, TemperatureReadingDto,
-    TransportActionDto, TransportWriteLimit, TransportWriteLimitDto, ValueQuality, ValueQualityDto,
-    ValueSource, ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    VoltageReadingDto, WallClockUnixTimestamp, WriteMode,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation, PevcapRecord,
+    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
+    ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
+    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    RideOperatingStateDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry,
+    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
+    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
+    TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, VoltageReadingDto,
+    WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
@@ -171,7 +181,7 @@ pub enum DiscoveryConnectionRoute {
 }
 
 /// Begode/Gotway protocol identity probe evidence.
-#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, uniffi::Record)]
 pub struct MobileBegodeIdentityProbeDto {
     /// Model text returned by the `N` probe when available.
     pub reported_model: Option<String>,
@@ -1526,6 +1536,9 @@ pub struct MobileSessionOutputDto {
     /// Typed read-only BMS or pack-health response.
     pub bms_snapshot: Option<MobileBmsSnapshotDto>,
 
+    /// Full protocol-native raw telemetry.
+    pub raw_telemetry: Option<MobileRawTelemetryReadbackDto>,
+
     /// Veteran/NOSFET protocol model id when an Aero-family session decoded it.
     pub veteran_protocol_model_id: Option<u16>,
 }
@@ -1825,6 +1838,60 @@ pub struct MobileFootpadTelemetryDto {
 
     /// Second footpad ADC reading in protocol units, scaled by 1000.
     pub adc2_milliunits: Option<i32>,
+}
+
+/// Raw phone location sample forwarded by the mobile platform.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobilePhoneLocationSampleDto {
+    pub wall_clock_unix_ms: u64,
+    pub latitude_degrees: f64,
+    pub longitude_degrees: f64,
+    pub altitude_meters: f64,
+    pub horizontal_accuracy_meters: f64,
+    pub vertical_accuracy_meters: f64,
+    pub speed_meters_per_second: f64,
+    pub speed_accuracy_meters_per_second: f64,
+    pub course_degrees: f64,
+    pub course_accuracy_degrees: f64,
+}
+
+/// Rust-owned phone location snapshot returned to the mobile UI and capture path.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobilePhoneLocationSnapshotDto {
+    pub latest_sample: Option<MobilePhoneLocationSampleDto>,
+    pub gps_speed: Option<SpeedReading>,
+}
+
+/// Rust-owned phone location state. Swift only gathers and forwards Core Location values.
+#[derive(Debug, Default, uniffi::Object)]
+pub struct MobilePhoneLocationState {
+    latest_sample: Mutex<Option<MobilePhoneLocationSampleDto>>,
+}
+
+#[uniffi::export]
+impl MobilePhoneLocationState {
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub fn ingest(&self, sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSnapshotDto {
+        *self
+            .latest_sample
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(sample);
+        phone_location_snapshot(Some(sample))
+    }
+
+    #[must_use]
+    pub fn current_snapshot(&self) -> MobilePhoneLocationSnapshotDto {
+        let sample = *self
+            .latest_sample
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        phone_location_snapshot(sample)
+    }
 }
 
 /// VESC controller state for ride UI.
@@ -2621,16 +2688,6 @@ pub enum MobileFalconProfileDto {
     Unsupported,
 }
 
-/// Mobile PEVCAP export encoding.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobilePevcapEncodingDto {
-    /// JSON Lines PEVCAP stream.
-    Jsonl,
-
-    /// Binary PEVCAP container.
-    Binary,
-}
-
 /// Mobile protocol-family identifier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileProtocolFamilyDto {
@@ -2707,6 +2764,20 @@ pub struct MobileRawFieldValueDto {
 
     /// Sign-extended value exactly as reported by the protocol layer.
     pub value: i64,
+}
+
+/// Protocol-native floating field preserving its exact IEEE-754 bits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRawFloatFieldValueDto {
+    pub id: u16,
+    pub value_bits: u32,
+}
+
+/// Full protocol-native telemetry decoded from a notification.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRawTelemetryReadbackDto {
+    pub fields: Vec<MobileRawFieldValueDto>,
+    pub float_fields: Vec<MobileRawFloatFieldValueDto>,
 }
 
 /// Generic read-only settings entry for mobile UI.
@@ -2933,16 +3004,362 @@ pub enum MobileSessionConstructorError {
     UnsupportedFalconProfile,
 }
 
-/// Mobile PEVCAP export error.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
-pub enum MobileCaptureExportError {
-    /// Header metadata exceeded PEVCAP bounded fields.
-    #[error("invalid capture header")]
-    InvalidHeader,
+const CAPTURE_WRITER_QUEUE_CAPACITY: usize = 256;
+const CAPTURE_WRITER_BUFFER_BYTES: u64 = 128 * 1024;
+const CAPTURE_WRITER_FLUSH_INTERVAL: Duration = Duration::from_millis(500);
+const CAPTURE_WRITER_SYNC_INTERVAL: Duration = Duration::from_secs(3);
 
-    /// PEVCAP encoding failed.
-    #[error("capture encode failed")]
-    EncodeFailed,
+/// Rust-owned status for the bounded capture writer queue.
+#[derive(Clone, Debug, Default, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCaptureWriterStatusDto {
+    /// Messages accepted by the queue and not yet written.
+    pub queued_messages: u64,
+    /// Messages rejected because the queue was full or closed.
+    pub dropped_messages: u64,
+    /// Bytes written to the capture file.
+    pub bytes_written: u64,
+    /// Whether the writer has encountered an unrecoverable error.
+    pub failed: bool,
+    /// Last writer error, if one exists.
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug)]
+struct CaptureWriterState {
+    queued_messages: AtomicU64,
+    dropped_messages: AtomicU64,
+    bytes_written: AtomicU64,
+    failed: AtomicBool,
+    last_error: Mutex<Option<String>>,
+}
+
+impl Default for CaptureWriterState {
+    fn default() -> Self {
+        Self {
+            queued_messages: AtomicU64::new(0),
+            dropped_messages: AtomicU64::new(0),
+            bytes_written: AtomicU64::new(0),
+            failed: AtomicBool::new(false),
+            last_error: Mutex::new(None),
+        }
+    }
+}
+
+impl CaptureWriterState {
+    fn fail(&self, error: impl Into<String>) {
+        self.failed.store(true, Ordering::Release);
+        *self
+            .last_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(error.into());
+    }
+
+    fn status(&self) -> MobileCaptureWriterStatusDto {
+        MobileCaptureWriterStatusDto {
+            queued_messages: self.queued_messages.load(Ordering::Acquire),
+            dropped_messages: self.dropped_messages.load(Ordering::Acquire),
+            bytes_written: self.bytes_written.load(Ordering::Acquire),
+            failed: self.failed.load(Ordering::Acquire),
+            last_error: self
+                .last_error
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CaptureMetadata {
+    advertised_services: Vec<GattChannel>,
+    gatt_fingerprints: Vec<GattFingerprint>,
+    resolved_identity: Option<PevcapResolvedIdentity>,
+    annotations: Vec<String>,
+}
+
+enum CaptureWriterMessage {
+    Record(PevcapRecord),
+    Metadata(CaptureMetadata),
+    Flush,
+    Finish(SyncSender<Result<(), String>>),
+}
+
+#[derive(Debug)]
+struct CaptureWriter {
+    sender: SyncSender<CaptureWriterMessage>,
+    state: Arc<CaptureWriterState>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl CaptureWriter {
+    fn start(
+        path: PathBuf,
+        wall_clock_start_unix_ms: WallClockUnixTimestamp,
+        platform_id: String,
+        write_limit: Option<TransportWriteLimit>,
+        metadata: CaptureMetadata,
+    ) -> Result<Self, String> {
+        let header = capture_header(
+            wall_clock_start_unix_ms,
+            platform_id.as_str(),
+            write_limit,
+            &metadata,
+        )?;
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        let (sender, receiver) = sync_channel(CAPTURE_WRITER_QUEUE_CAPACITY);
+        let state = Arc::new(CaptureWriterState::default());
+        let thread_state = Arc::clone(&state);
+        let join = thread::Builder::new()
+            .name("cutout-pevcap-writer".into())
+            .spawn(move || run_capture_writer(path, header, receiver, thread_state))
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            sender,
+            state,
+            join: Some(join),
+        })
+    }
+
+    fn try_send(&self, message: CaptureWriterMessage) -> bool {
+        self.state.queued_messages.fetch_add(1, Ordering::AcqRel);
+        match self.sender.try_send(message) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) => {
+                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+                self.state.fail("capture writer queue is full");
+                false
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+                self.state.fail("capture writer stopped");
+                false
+            }
+        }
+    }
+
+    fn finish(mut self) -> Result<(), String> {
+        let (sender, receiver) = sync_channel(0);
+        if !self.try_send(CaptureWriterMessage::Finish(sender)) {
+            return Err(self
+                .state
+                .status()
+                .last_error
+                .unwrap_or_else(|| "capture writer finish failed".into()));
+        }
+        let result = receiver
+            .recv()
+            .map_err(|_| "capture writer stopped before finish".to_string())?;
+        if let Some(join) = self.join.take() {
+            join.join()
+                .map_err(|_| "capture writer thread panicked".to_string())?;
+        }
+        result
+    }
+}
+
+fn capture_header(
+    wall_clock_start_unix_ms: WallClockUnixTimestamp,
+    platform_id: &str,
+    write_limit: Option<TransportWriteLimit>,
+    metadata: &CaptureMetadata,
+) -> Result<PevcapHeader, String> {
+    let annotations = metadata
+        .annotations
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    PevcapHeader::new(
+        wall_clock_start_unix_ms,
+        platform_id,
+        write_limit,
+        &metadata.advertised_services,
+        &metadata.gatt_fingerprints,
+        None,
+        metadata.resolved_identity.clone(),
+        env!("CARGO_PKG_VERSION"),
+        [0; 32],
+        &annotations,
+    )
+    .map_err(|error| format!("invalid capture header: {error}"))
+}
+
+fn run_capture_writer(
+    path: PathBuf,
+    mut header: PevcapHeader,
+    receiver: Receiver<CaptureWriterMessage>,
+    state: Arc<CaptureWriterState>,
+) {
+    let result = write_capture_stream(&path, &mut header, receiver, &state);
+    if let Err(error) = result {
+        state.fail(error);
+    }
+}
+
+fn write_capture_stream(
+    path: &Path,
+    header: &mut PevcapHeader,
+    receiver: Receiver<CaptureWriterMessage>,
+    state: &CaptureWriterState,
+) -> Result<(), String> {
+    let file = File::create(path).map_err(|error| error.to_string())?;
+    let mut writer = BufWriter::new(file);
+    write_line(
+        &mut writer,
+        &header.to_jsonl_line().map_err(|error| error.to_string())?,
+    )?;
+    writer.flush().map_err(|error| error.to_string())?;
+    writer
+        .get_mut()
+        .sync_data()
+        .map_err(|error| error.to_string())?;
+    let mut bytes_since_flush = 0_u64;
+    let mut last_flush = Instant::now();
+    let mut last_sync = Instant::now();
+
+    while let Ok(message) = receiver.recv() {
+        state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+        match message {
+            CaptureWriterMessage::Record(record) => {
+                let line = record.to_jsonl_line().map_err(|error| error.to_string())?;
+                let bytes = write_line(&mut writer, &line)? as u64;
+                state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
+                bytes_since_flush = bytes_since_flush.saturating_add(bytes);
+                maybe_flush(
+                    &mut writer,
+                    &mut bytes_since_flush,
+                    &mut last_flush,
+                    &mut last_sync,
+                    false,
+                )?;
+            }
+            CaptureWriterMessage::Metadata(metadata) => {
+                *header = capture_header(
+                    header.wall_clock_start_unix_ms,
+                    header.platform_id.as_str(),
+                    header.write_limit,
+                    &metadata,
+                )?;
+                rewrite_capture_header(path, &mut writer, header)?;
+                bytes_since_flush = 0;
+                last_flush = Instant::now();
+                last_sync = last_flush;
+            }
+            CaptureWriterMessage::Flush => {
+                maybe_flush(
+                    &mut writer,
+                    &mut bytes_since_flush,
+                    &mut last_flush,
+                    &mut last_sync,
+                    true,
+                )?;
+            }
+            CaptureWriterMessage::Finish(reply) => {
+                let result = maybe_flush(
+                    &mut writer,
+                    &mut bytes_since_flush,
+                    &mut last_flush,
+                    &mut last_sync,
+                    true,
+                );
+                if let Err(error) = &result {
+                    state.fail(error.clone());
+                }
+                let _ = reply.send(result);
+                return Ok(());
+            }
+        }
+    }
+    writer.flush().map_err(|error| error.to_string())?;
+    writer
+        .get_mut()
+        .sync_data()
+        .map_err(|error| error.to_string())
+}
+
+fn write_line(writer: &mut BufWriter<File>, line: &str) -> Result<usize, String> {
+    writer
+        .write_all(line.as_bytes())
+        .and_then(|_| writer.write_all(b"\n"))
+        .map(|()| line.len() + 1)
+        .map_err(|error| error.to_string())
+}
+
+fn maybe_flush(
+    writer: &mut BufWriter<File>,
+    bytes_since_flush: &mut u64,
+    last_flush: &mut Instant,
+    last_sync: &mut Instant,
+    force_sync: bool,
+) -> Result<(), String> {
+    let now = Instant::now();
+    if *bytes_since_flush >= CAPTURE_WRITER_BUFFER_BYTES
+        || now.duration_since(*last_flush) >= CAPTURE_WRITER_FLUSH_INTERVAL
+        || force_sync
+    {
+        writer.flush().map_err(|error| error.to_string())?;
+        *bytes_since_flush = 0;
+        *last_flush = now;
+    }
+    if force_sync || now.duration_since(*last_sync) >= CAPTURE_WRITER_SYNC_INTERVAL {
+        writer
+            .get_mut()
+            .sync_data()
+            .map_err(|error| error.to_string())?;
+        *last_sync = now;
+    }
+    Ok(())
+}
+
+fn rewrite_capture_header(
+    path: &Path,
+    writer: &mut BufWriter<File>,
+    header: &PevcapHeader,
+) -> Result<(), String> {
+    writer.flush().map_err(|error| error.to_string())?;
+    writer
+        .get_mut()
+        .sync_data()
+        .map_err(|error| error.to_string())?;
+    let input = File::open(path).map_err(|error| error.to_string())?;
+    let mut reader = BufReader::new(input);
+    let mut old_header = Vec::new();
+    reader
+        .read_until(b'\n', &mut old_header)
+        .map_err(|error| error.to_string())?;
+    let temp_path = path.with_extension("jsonl.tmp");
+    let mut output = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temp_path)
+        .map_err(|error| error.to_string())?;
+    write_line_to_file(
+        &mut output,
+        &header.to_jsonl_line().map_err(|error| error.to_string())?,
+    )?;
+    std::io::copy(&mut reader, &mut output).map_err(|error| error.to_string())?;
+    output.sync_data().map_err(|error| error.to_string())?;
+    drop(output);
+    fs::rename(&temp_path, path).map_err(|error| error.to_string())?;
+    let file = OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(|error| error.to_string())?;
+    *writer = BufWriter::new(file);
+    Ok(())
+}
+
+fn write_line_to_file(file: &mut File, line: &str) -> Result<(), String> {
+    file.write_all(line.as_bytes())
+        .and_then(|_| file.write_all(b"\n"))
+        .map_err(|error| error.to_string())
 }
 
 /// Mobile-facing builder for a PEVCAP capture export.
@@ -2955,7 +3372,8 @@ pub struct MobilePevcapCaptureBuilder {
     gatt_fingerprints: Mutex<Vec<GattFingerprint>>,
     resolved_identity: Mutex<Option<PevcapResolvedIdentity>>,
     annotations: Mutex<Vec<String>>,
-    records: Mutex<Vec<PevcapRecord>>,
+    writer: Mutex<Option<CaptureWriter>>,
+    writer_state: Mutex<Option<Arc<CaptureWriterState>>>,
 }
 
 #[uniffi::export]
@@ -2976,41 +3394,125 @@ impl MobilePevcapCaptureBuilder {
             gatt_fingerprints: Mutex::new(Vec::new()),
             resolved_identity: Mutex::new(None),
             annotations: Mutex::new(Vec::new()),
-            records: Mutex::new(Vec::new()),
+            writer: Mutex::new(None),
+            writer_state: Mutex::new(None),
         })
     }
 
     /// Adds an advertised service UUID observed by the mobile BLE stack.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn add_advertised_service(&self, service: Vec<u8>) {
-        self.advertised_services
+    pub fn add_advertised_service(&self, service: Vec<u8>) -> bool {
+        let mut services = self
+            .advertised_services
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(mobile_gatt_channel(&service));
+            .unwrap_or_else(PoisonError::into_inner);
+        if services.len() < cutout_core::PEVCAP_MAX_ADVERTISED_SERVICES {
+            services.push(mobile_gatt_channel(&service));
+        }
+        drop(services);
+        self.send_metadata_update()
     }
 
     /// Adds an observed GATT service/characteristic fingerprint.
-    pub fn add_gatt_fingerprint(&self, fingerprint: MobileGattFingerprintDto) {
-        self.gatt_fingerprints
+    pub fn add_gatt_fingerprint(&self, fingerprint: MobileGattFingerprintDto) -> bool {
+        let mut fingerprints = self
+            .gatt_fingerprints
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(fingerprint.into());
+            .unwrap_or_else(PoisonError::into_inner);
+        if fingerprints.len() < cutout_core::PEVCAP_MAX_GATT_FINGERPRINTS {
+            fingerprints.push(fingerprint.into());
+        }
+        drop(fingerprints);
+        self.send_metadata_update()
     }
 
     /// Sets the resolved model/firmware identity for the capture.
-    pub fn set_resolved_identity(&self, identity: MobileResolvedIdentityDto) {
+    pub fn set_resolved_identity(&self, identity: MobileResolvedIdentityDto) -> bool {
         *self
             .resolved_identity
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(identity.into());
+        self.send_metadata_update()
     }
 
     /// Adds a capture annotation, preserving key/value text exactly.
-    pub fn add_annotation(&self, annotation: String) {
-        self.annotations
+    pub fn add_annotation(&self, annotation: String) -> bool {
+        let mut annotations = self
+            .annotations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if annotations.len() < cutout_core::PEVCAP_MAX_ANNOTATIONS {
+            annotations.push(annotation);
+        }
+        drop(annotations);
+        self.send_metadata_update()
+    }
+
+    /// Starts the Rust-owned streaming writer for a JSONL capture.
+    pub fn start_writer(&self, path: String) -> bool {
+        let metadata = self.metadata();
+        let writer = match CaptureWriter::start(
+            PathBuf::from(path),
+            self.wall_clock_start_unix_ms,
+            self.platform_id.clone(),
+            self.write_limit,
+            metadata,
+        ) {
+            Ok(writer) => writer,
+            Err(error) => {
+                let state = Arc::new(CaptureWriterState::default());
+                state.fail(error);
+                *self
+                    .writer_state
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(state);
+                return false;
+            }
+        };
+        *self
+            .writer_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&writer.state));
+        *self.writer.lock().unwrap_or_else(PoisonError::into_inner) = Some(writer);
+        true
+    }
+
+    /// Flushes buffered capture bytes and syncs them to durable storage.
+    pub fn flush_writer(&self) -> bool {
+        let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        writer
+            .as_ref()
+            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Flush))
+    }
+
+    /// Finishes the Rust-owned streaming writer.
+    pub fn finish_writer(&self) -> bool {
+        let writer = self
+            .writer
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .push(annotation);
+            .take();
+        writer.is_none_or(|writer| writer.finish().is_ok())
+    }
+
+    /// Returns bounded writer queue instrumentation.
+    #[must_use]
+    pub fn writer_status(&self) -> MobileCaptureWriterStatusDto {
+        if let Some(writer) = self
+            .writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            return writer.state.status();
+        }
+        self.writer_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map_or_else(MobileCaptureWriterStatusDto::default, |state| {
+                state.status()
+            })
     }
 
     /// Records a link-up lifecycle event.
@@ -3018,22 +3520,16 @@ impl MobilePevcapCaptureBuilder {
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
         max_write_len: Option<MobileTransportWriteLimitDto>,
-    ) {
-        self.records
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::link_up(
-                monotonic_ms.into_core(),
-                max_write_len.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
-            ));
+    ) -> bool {
+        self.send_record(PevcapRecord::link_up(
+            monotonic_ms.into_core(),
+            max_write_len.map(|value| TransportWriteLimit::from_bytes(value.bytes)),
+        ))
     }
 
     /// Records a link-down lifecycle event.
-    pub fn record_link_down(&self, monotonic_ms: MobileMonotonicMillisDto) {
-        self.records
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::link_down(monotonic_ms.into_core()));
+    pub fn record_link_down(&self, monotonic_ms: MobileMonotonicMillisDto) -> bool {
+        self.send_record(PevcapRecord::link_down(monotonic_ms.into_core()))
     }
 
     /// Records outbound write-without-response bytes.
@@ -3043,16 +3539,13 @@ impl MobilePevcapCaptureBuilder {
         monotonic_ms: MobileMonotonicMillisDto,
         characteristic: Vec<u8>,
         bytes: Vec<u8>,
-    ) {
-        self.records
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::outbound_write(
-                monotonic_ms.into_core(),
-                mobile_gatt_channel(&characteristic),
-                WriteMode::WithoutResponse,
-                bytes,
-            ));
+    ) -> bool {
+        self.send_record(PevcapRecord::outbound_write(
+            monotonic_ms.into_core(),
+            mobile_gatt_channel(&characteristic),
+            WriteMode::WithoutResponse,
+            bytes,
+        ))
     }
 
     /// Records inbound notification bytes.
@@ -3063,73 +3556,94 @@ impl MobilePevcapCaptureBuilder {
         characteristic: Vec<u8>,
         service: Vec<u8>,
         bytes: Vec<u8>,
-    ) {
-        self.records
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(PevcapRecord::inbound_notification(
-                monotonic_ms.into_core(),
-                mobile_gatt_channel(&characteristic),
-                mobile_gatt_channel(&service),
-                bytes,
-            ));
+    ) -> bool {
+        self.send_record(PevcapRecord::inbound_notification(
+            monotonic_ms.into_core(),
+            mobile_gatt_channel(&characteristic),
+            mobile_gatt_channel(&service),
+            bytes,
+        ))
     }
 
-    /// Exports the current capture as PEVCAP bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MobileCaptureExportError`] when metadata is outside PEVCAP
-    /// bounds or encoding fails.
-    pub fn export(
+    /// Records an inbound notification with Rust-decoded telemetry and phone location context.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn record_notification_with_context(
         &self,
-        encoding: MobilePevcapEncodingDto,
-    ) -> Result<Vec<u8>, MobileCaptureExportError> {
-        self.capture()?
-            .encode(encoding.into())
-            .map_err(|_err| MobileCaptureExportError::EncodeFailed)
+        monotonic_ms: MobileMonotonicMillisDto,
+        characteristic: Vec<u8>,
+        service: Vec<u8>,
+        bytes: Vec<u8>,
+        telemetry: Option<MobileRawTelemetryReadbackDto>,
+        phone_location: Option<MobilePhoneLocationSampleDto>,
+    ) -> bool {
+        let mut record = PevcapRecord::inbound_notification(
+            monotonic_ms.into_core(),
+            mobile_gatt_channel(&characteristic),
+            mobile_gatt_channel(&service),
+            bytes,
+        );
+        if let Some(telemetry) = telemetry {
+            record = record.with_telemetry(raw_telemetry_from_mobile(telemetry));
+        }
+        if let Some(location) = phone_location {
+            record = record.with_phone_location(PevcapPhoneLocation {
+                wall_clock_unix_ms: location.wall_clock_unix_ms,
+                latitude_degrees: location.latitude_degrees,
+                longitude_degrees: location.longitude_degrees,
+                altitude_meters: location.altitude_meters,
+                horizontal_accuracy_meters: location.horizontal_accuracy_meters,
+                vertical_accuracy_meters: location.vertical_accuracy_meters,
+                speed_meters_per_second: location.speed_meters_per_second,
+                speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
+                course_degrees: location.course_degrees,
+                course_accuracy_degrees: location.course_accuracy_degrees,
+            });
+        }
+        self.send_record(record)
     }
 }
 
 impl MobilePevcapCaptureBuilder {
-    fn capture(&self) -> Result<PevcapCapture, MobileCaptureExportError> {
-        let annotations = self
-            .annotations
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let advertised_services = self
-            .advertised_services
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let gatt_fingerprints = self
-            .gatt_fingerprints
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let resolved_identity = self
-            .resolved_identity
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        let annotation_refs = annotations.iter().map(String::as_str).collect::<Vec<_>>();
-        let header = PevcapHeader::new(
-            self.wall_clock_start_unix_ms,
-            self.platform_id.as_str(),
-            self.write_limit,
-            &advertised_services,
-            &gatt_fingerprints,
-            None,
-            resolved_identity,
-            env!("CARGO_PKG_VERSION"),
-            [0; 32],
-            &annotation_refs,
-        )
-        .map_err(|_err| MobileCaptureExportError::InvalidHeader)?;
-        let records = self
-            .records
+    fn metadata(&self) -> CaptureMetadata {
+        CaptureMetadata {
+            advertised_services: self
+                .advertised_services
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            gatt_fingerprints: self
+                .gatt_fingerprints
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            resolved_identity: self
+                .resolved_identity
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            annotations: self
+                .annotations
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        }
+    }
+
+    fn send_metadata_update(&self) -> bool {
+        let metadata = self.metadata();
+        self.writer
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        Ok(PevcapCapture::new(header, records))
+            .as_ref()
+            .is_none_or(|writer| writer.try_send(CaptureWriterMessage::Metadata(metadata)))
+    }
+
+    fn send_record(&self, record: PevcapRecord) -> bool {
+        self.writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Record(record)))
     }
 }
 
@@ -3247,6 +3761,40 @@ impl From<RawFieldValueDto> for MobileRawFieldValueDto {
     }
 }
 
+impl From<RawTelemetryReadbackDto> for MobileRawTelemetryReadbackDto {
+    fn from(raw: RawTelemetryReadbackDto) -> Self {
+        Self {
+            fields: raw.fields.into_iter().map(Into::into).collect(),
+            float_fields: raw
+                .float_fields
+                .into_iter()
+                .map(|field| MobileRawFloatFieldValueDto {
+                    id: field.id,
+                    value_bits: field.value_bits,
+                })
+                .collect(),
+        }
+    }
+}
+
+fn raw_telemetry_from_mobile(value: MobileRawTelemetryReadbackDto) -> RawTelemetryReadback {
+    let mut fields = [None; 8];
+    for (slot, field) in fields.iter_mut().zip(value.fields) {
+        *slot = Some(RawFieldValue::new(field.id, field.value));
+    }
+    let mut float_fields = [None; 32];
+    for (slot, field) in float_fields.iter_mut().zip(value.float_fields) {
+        *slot = Some(cutout_core::RawFloatFieldValue {
+            id: field.id,
+            value_bits: field.value_bits,
+        });
+    }
+    RawTelemetryReadback {
+        fields,
+        float_fields,
+    }
+}
+
 impl From<SettingsEntry> for MobileSettingsEntryDto {
     fn from(entry: SettingsEntry) -> Self {
         Self {
@@ -3330,6 +3878,42 @@ fn settings_speed(
             verification: entry.verification,
         })
     })
+}
+
+fn phone_location_snapshot(
+    sample: Option<MobilePhoneLocationSampleDto>,
+) -> MobilePhoneLocationSnapshotDto {
+    MobilePhoneLocationSnapshotDto {
+        latest_sample: sample,
+        gps_speed: sample.and_then(phone_location_speed),
+    }
+}
+
+fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedReading> {
+    if !sample.speed_meters_per_second.is_finite() || sample.speed_meters_per_second < 0.0 {
+        return None;
+    }
+    Some(SpeedReading {
+        value: Speed {
+            value: round_f64_to_i32(sample.speed_meters_per_second * 1_000.0),
+        },
+        source: MobileValueSourceDto::Reported,
+        quality: MobileValueQualityDto::Known,
+        verification: MobileVerificationStatusDto::SourceVerified,
+    })
+}
+
+fn round_f64_to_i32(value: f64) -> i32 {
+    if value.is_nan() {
+        return 0;
+    }
+    if value <= f64::from(i32::MIN) {
+        return i32::MIN;
+    }
+    if value >= f64::from(i32::MAX) {
+        return i32::MAX;
+    }
+    value.round() as i32
 }
 
 fn speed_from_deci_kmh(value: i64) -> Option<CoreSpeed> {
@@ -3564,15 +4148,6 @@ impl From<MobileResolvedIdentityDto> for PevcapResolvedIdentity {
     }
 }
 
-impl From<MobilePevcapEncodingDto> for PevcapEncoding {
-    fn from(encoding: MobilePevcapEncodingDto) -> Self {
-        match encoding {
-            MobilePevcapEncodingDto::Jsonl => Self::Jsonl,
-            MobilePevcapEncodingDto::Binary => Self::Binary,
-        }
-    }
-}
-
 fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
@@ -3709,6 +4284,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                raw_telemetry: None,
                 veteran_protocol_model_id: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
@@ -3719,6 +4295,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                raw_telemetry: None,
                 veteran_protocol_model_id: None,
             },
             SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
@@ -3729,6 +4306,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                raw_telemetry: None,
                 veteran_protocol_model_id: None,
             },
             SessionOutputDto::ReadOnly(response) => match response.payload {
@@ -3740,6 +4318,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: Some(settings.into()),
                     fault_history_readback: None,
                     bms_snapshot: None,
+                    raw_telemetry: None,
                     veteran_protocol_model_id: None,
                 },
                 ReadOnlyOutputPayload::FaultHistory(fault_history) => Self {
@@ -3750,6 +4329,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: None,
                     fault_history_readback: Some(fault_history.into()),
                     bms_snapshot: None,
+                    raw_telemetry: None,
                     veteran_protocol_model_id: None,
                 },
                 ReadOnlyOutputPayload::Battery(battery) => Self {
@@ -3760,11 +4340,10 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: None,
                     fault_history_readback: None,
                     bms_snapshot: Some(battery.into()),
+                    raw_telemetry: None,
                     veteran_protocol_model_id: None,
                 },
-                ReadOnlyOutputPayload::Firmware(_)
-                | ReadOnlyOutputPayload::Diagnostics(_)
-                | ReadOnlyOutputPayload::RawTelemetry(_) => Self {
+                ReadOnlyOutputPayload::RawTelemetry(raw) => Self {
                     kind: MobileSessionOutputKindDto::Event,
                     channel: Vec::new(),
                     bytes: Vec::new(),
@@ -3772,8 +4351,22 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                     settings_readback: None,
                     fault_history_readback: None,
                     bms_snapshot: None,
+                    raw_telemetry: Some(raw.into()),
                     veteran_protocol_model_id: None,
                 },
+                ReadOnlyOutputPayload::Firmware(_) | ReadOnlyOutputPayload::Diagnostics(_) => {
+                    Self {
+                        kind: MobileSessionOutputKindDto::Event,
+                        channel: Vec::new(),
+                        bytes: Vec::new(),
+                        ingest: None,
+                        settings_readback: None,
+                        fault_history_readback: None,
+                        bms_snapshot: None,
+                        raw_telemetry: None,
+                        veteran_protocol_model_id: None,
+                    }
+                }
             },
             SessionOutputDto::Event(_) => Self {
                 kind: MobileSessionOutputKindDto::Event,
@@ -3783,6 +4376,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                raw_telemetry: None,
                 veteran_protocol_model_id: None,
             },
             SessionOutputDto::NotificationIngest(outcome) => Self {
@@ -3793,6 +4387,7 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 settings_readback: None,
                 fault_history_readback: None,
                 bms_snapshot: None,
+                raw_telemetry: None,
                 veteran_protocol_model_id: None,
             },
         }
@@ -4417,6 +5012,7 @@ impl VescReadOnlySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cutout_core::{PevcapCapture, PevcapEncoding};
     use cutout_protocols::{
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
     };
@@ -6901,166 +7497,159 @@ mod tests {
 
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
-        let builder = MobilePevcapCaptureBuilder::new(
-            wc(1_700_000_000_000),
-            "ios-corebluetooth".into(),
-            Some(mobile_write_len(185)),
-        );
-        builder.add_annotation("capture_label=powered_on_stationary".into());
-        builder.add_annotation("capture_privacy=redacted".into());
-        builder.add_annotation("capture_distribution=redistributable".into());
-        builder.add_annotation("capture_evidence=hardware_tested".into());
-        builder.record_link_up(ms(1), Some(mobile_write_len(185)));
-        builder.record_notification(
-            ms(2),
-            vec![0x11; 16],
-            vec![0x22; 16],
-            vec![0xde, 0xad, 0xbe, 0xef],
-        );
-
-        let bytes = builder
-            .export(MobilePevcapEncodingDto::Jsonl)
-            .expect("JSONL export succeeds");
-        let capture =
-            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
-
-        assert_eq!(capture.header.platform_id, "ios-corebluetooth");
-        assert_eq!(
-            capture.header.annotations.as_slice(),
-            [
-                "capture_label=powered_on_stationary",
-                "capture_privacy=redacted",
-                "capture_distribution=redistributable",
-                "capture_evidence=hardware_tested",
-            ]
-        );
-        assert_eq!(capture.records.len(), 2);
-        assert_eq!(capture.records[1].bytes.as_ref(), [0xde, 0xad, 0xbe, 0xef]);
-    }
-
-    #[test]
-    fn mobile_capture_builder_exports_probe_write_bytes() {
-        let builder = MobilePevcapCaptureBuilder::new(
-            wc(1_700_000_000_000),
-            "ios-corebluetooth".into(),
-            Some(mobile_write_len(23)),
-        );
-
-        builder.record_write_without_response(ms(3), vec![0x11; 16], vec![0x4e]);
-
-        let bytes = builder
-            .export(MobilePevcapEncodingDto::Jsonl)
-            .expect("JSONL export succeeds");
-        let capture =
-            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
-
-        assert_eq!(capture.records.len(), 1);
-        assert_eq!(
-            capture.records[0].direction,
-            cutout_core::PevcapDirection::Outbound
-        );
-        assert_eq!(
-            capture.records[0].write_mode,
-            Some(WriteMode::WithoutResponse)
-        );
-        assert_eq!(capture.records[0].bytes.as_ref(), [0x4e]);
-    }
-
-    #[test]
-    fn mobile_capture_builder_exports_ble_inventory_metadata() {
-        let builder = MobilePevcapCaptureBuilder::new(
-            wc(1_700_000_000_000),
-            "ios-corebluetooth".into(),
-            None,
-        );
-        let service = vec![0x22; 16];
-        let characteristic = vec![0x11; 16];
-
-        builder.add_advertised_service(service.clone());
-        builder.add_gatt_fingerprint(MobileGattFingerprintDto {
-            service: service.clone(),
-            characteristic: characteristic.clone(),
-            roles: vec![
-                MobileGattRoleDto::Read,
-                MobileGattRoleDto::WriteWithoutResponse,
-                MobileGattRoleDto::Notify,
-            ],
-            verification: MobileVerificationStatusDto::HardwareVerified,
-        });
-
-        let bytes = builder
-            .export(MobilePevcapEncodingDto::Jsonl)
-            .expect("JSONL export succeeds");
-        let capture =
-            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
-        let [fingerprint] = capture.header.gatt_fingerprints.as_slice() else {
-            panic!("expected one GATT fingerprint");
-        };
-
-        assert_eq!(capture.header.advertised_services[0].as_bytes(), [0x22; 16]);
-        assert_eq!(fingerprint.service.as_bytes(), [0x22; 16]);
-        assert_eq!(fingerprint.characteristic.as_bytes(), [0x11; 16]);
-        assert!(fingerprint.roles.supports_read());
-        assert!(fingerprint.roles.supports_write_without_response());
-        assert!(fingerprint.roles.supports_notify());
-        assert_eq!(
-            fingerprint.verification,
-            VerificationStatus::HardwareVerified
-        );
-    }
-
-    #[test]
-    fn mobile_capture_builder_exports_resolved_identity_metadata() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
         let builder = MobilePevcapCaptureBuilder::new(
             wc(1_700_000_000_000),
             "ios-corebluetooth".into(),
             None,
         );
 
-        builder.set_resolved_identity(MobileResolvedIdentityDto {
-            protocol_family: Some(MobileProtocolFamilyDto::BegodeGotway),
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        let service = vec![
+            0x00, 0x00, 0xff, 0xe0, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+            0x34, 0xfb,
+        ];
+        let characteristic = vec![
+            0x00, 0x00, 0xff, 0xe1, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b,
+            0x34, 0xfb,
+        ];
+        assert!(builder.add_advertised_service(service.clone()));
+        assert!(builder.add_gatt_fingerprint(MobileGattFingerprintDto {
+            service,
+            characteristic,
+            roles: vec![MobileGattRoleDto::Notify],
+            verification: MobileVerificationStatusDto::SourceVerified,
+        }));
+        assert!(builder.set_resolved_identity(MobileResolvedIdentityDto {
+            protocol_family: Some(MobileProtocolFamilyDto::Vesc),
             model: Some(MobileVerifiedStringDto {
-                value: "Begode Falcon".into(),
+                value: "VESC Refloat".into(),
                 verification: MobileVerificationStatusDto::Inferred,
             }),
-            firmware: Some(MobileVerifiedStringDto {
-                value: "GW2015004".into(),
-                verification: MobileVerificationStatusDto::HardwareVerified,
+            firmware: None,
+        }));
+        assert!(builder.record_notification_with_context(
+            ms(8),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xaa, 0xbb],
+            Some(MobileRawTelemetryReadbackDto {
+                fields: vec![MobileRawFieldValueDto {
+                    id: 0x8001,
+                    value: 989
+                }],
+                float_fields: vec![MobileRawFloatFieldValueDto {
+                    id: 0x8100,
+                    value_bits: 0x3f80_0001,
+                }],
             }),
-        });
+            Some(MobilePhoneLocationSampleDto {
+                wall_clock_unix_ms: 1_700_000_000_008,
+                latitude_degrees: 39.739_235_8,
+                longitude_degrees: -104.990_251,
+                altitude_meters: 1_609.344,
+                horizontal_accuracy_meters: 0.8,
+                vertical_accuracy_meters: 1.2,
+                speed_meters_per_second: 4.470_400_25,
+                speed_accuracy_meters_per_second: 0.25,
+                course_degrees: 271.5,
+                course_accuracy_degrees: 3.0,
+            }),
+        ));
+        assert!(builder.record_link_down(ms(9)));
+        assert!(builder.add_annotation("route=vesc".into()));
+        assert!(builder.flush_writer());
+        assert!(builder.finish_writer());
+        let status = builder.writer_status();
+        assert_eq!(status.queued_messages, 0);
+        assert!(status.bytes_written > 0);
+        assert!(!status.failed);
 
-        let bytes = builder
-            .export(MobilePevcapEncodingDto::Jsonl)
-            .expect("JSONL export succeeds");
-        let capture =
-            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("JSONL is PEVCAP");
+        let bytes = fs::read(&path).expect("stream writer output exists");
+        let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
+            .expect("stream writer output is PEVCAP");
+        assert_eq!(capture.records.len(), 2);
+        let notification = &capture.records[0];
+        let telemetry = notification.telemetry.expect("raw telemetry is correlated");
+        assert_eq!(telemetry.fields[0].expect("integer field").value, 989);
+        assert_eq!(
+            telemetry.float_fields[0].expect("float field").value_bits,
+            0x3f80_0001
+        );
+        let location = notification.phone_location.expect("location is correlated");
+        assert_eq!(
+            location.latitude_degrees.to_bits(),
+            39.739_235_8_f64.to_bits()
+        );
+        assert_eq!(
+            location.speed_meters_per_second.to_bits(),
+            4.470_400_25_f64.to_bits()
+        );
+        assert_eq!(capture.header.advertised_services.len(), 1);
+        assert_eq!(capture.header.gatt_fingerprints.len(), 1);
         let identity = capture
             .header
             .resolved_identity
-            .expect("resolved identity should export");
-
-        assert_eq!(identity.protocol_family, Some(ProtocolFamily::BegodeGotway));
-        assert_eq!(identity.model.expect("model").value, "Begode Falcon");
-        assert_eq!(identity.firmware.expect("firmware").value, "GW2015004");
+            .as_ref()
+            .expect("late resolved identity is retained");
+        assert_eq!(identity.protocol_family, Some(ProtocolFamily::Vesc));
+        assert_eq!(
+            identity.model.as_ref().map(|model| model.value.as_str()),
+            Some("VESC Refloat")
+        );
+        assert!(
+            capture
+                .header
+                .annotations
+                .iter()
+                .any(|annotation| annotation == "route=vesc")
+        );
+        let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn mobile_capture_builder_exports_binary_container() {
+    fn mobile_capture_writer_reports_start_failure() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-missing-{}-{}/capture.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(path.parent().expect("missing capture parent"));
         let builder = MobilePevcapCaptureBuilder::new(
             wc(1_700_000_000_000),
             "ios-corebluetooth".into(),
             None,
         );
-        builder.record_link_down(ms(9));
 
-        let bytes = builder
-            .export(MobilePevcapEncodingDto::Binary)
-            .expect("binary export succeeds");
-        let capture =
-            PevcapCapture::decode(&bytes, PevcapEncoding::Binary).expect("binary is PEVCAP");
+        assert!(!builder.start_writer(path.to_string_lossy().into_owned()));
+        let status = builder.writer_status();
+        assert!(status.failed);
+        assert!(status.last_error.is_some());
+    }
 
-        assert_eq!(capture.header.platform_id, "ios-corebluetooth");
-        assert_eq!(capture.records.len(), 1);
-        assert_eq!(capture.records[0].monotonic_ms, MonotonicTimestamp::new(9));
+    #[test]
+    fn capture_writer_queue_overrun_is_nonblocking_and_instrumented() {
+        let (sender, _receiver) = sync_channel(0);
+        let state = Arc::new(CaptureWriterState::default());
+        let writer = CaptureWriter {
+            sender,
+            state: Arc::clone(&state),
+            join: None,
+        };
+
+        assert!(!writer.try_send(CaptureWriterMessage::Flush));
+        let status = state.status();
+        assert_eq!(status.queued_messages, 0);
+        assert_eq!(status.dropped_messages, 1);
+        assert!(status.failed);
+        assert_eq!(
+            status.last_error.as_deref(),
+            Some("capture writer queue is full")
+        );
     }
 }

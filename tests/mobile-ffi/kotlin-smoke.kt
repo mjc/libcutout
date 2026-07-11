@@ -1,3 +1,4 @@
+import java.io.File
 import uniffi.cutout_mobile_ffi.AeroReadOnlySession
 import uniffi.cutout_mobile_ffi.FalconReadOnlySession
 import uniffi.cutout_mobile_ffi.MobileCommandDto
@@ -6,7 +7,6 @@ import uniffi.cutout_mobile_ffi.MobileGattFingerprintDto
 import uniffi.cutout_mobile_ffi.MobileGattRoleDto
 import uniffi.cutout_mobile_ffi.MobileMonotonicMillisDto
 import uniffi.cutout_mobile_ffi.MobilePevcapCaptureBuilder
-import uniffi.cutout_mobile_ffi.MobilePevcapEncodingDto
 import uniffi.cutout_mobile_ffi.MobileProtocolFamilyDto
 import uniffi.cutout_mobile_ffi.MobileResolvedIdentityDto
 import uniffi.cutout_mobile_ffi.MobileSessionConstructorException
@@ -113,22 +113,26 @@ fun main() {
                 ),
             ),
         )
-        capture.recordLinkUp(
+        val captureFile = File.createTempFile("cutout-mobile-ffi-smoke", ".jsonl")
+        check(capture.startWriter(captureFile.path))
+        check(capture.recordLinkUp(
             monotonicMs = MobileMonotonicMillisDto(1UL),
             maxWriteLen = MobileTransportWriteLimitDto(185U),
-        )
-        capture.recordNotification(
+        ))
+        check(capture.recordNotification(
             monotonicMs = MobileMonotonicMillisDto(2UL),
             characteristic = ByteArray(16) { 0x11 },
             service = ByteArray(16) { 0x22 },
             bytes = byteArrayOf(0xde.toByte(), 0xad.toByte(), 0xbe.toByte(), 0xef.toByte()),
-        )
-        val exported = capture.export(MobilePevcapEncodingDto.JSONL).decodeToString()
+        ))
+        check(capture.finishWriter())
+        val exported = captureFile.readText()
         check(exported.contains("capture_label=powered_on_stationary"))
         check(exported.contains("\"protocol_family\":\"BegodeGotway\""))
         check(exported.contains("\"model\":{\"value\":\"Begode Falcon\",\"verification\":\"Inferred\"}"))
         check(exported.contains("\"roles\":[\"Read\",\"WriteWithoutResponse\",\"Notify\"]"))
         check(exported.contains("\"bytes\":[222,173,190,239]"))
+        check(captureFile.delete())
     }
 }
 

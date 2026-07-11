@@ -1,7 +1,7 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::{
-    BatteryCurrent, Distance, Duration, PeakCurrent, PhaseCurrent, Power, RotationalSpeed, Speed,
-    TachometerReading, Temperature, Voltage,
+    BatteryCurrent, Distance, Duration, PeakCurrent, PhaseCurrent, Power, RawFloatFieldValue,
+    RotationalSpeed, Speed, TachometerReading, Temperature, Voltage,
 };
 use cutout_core::{BatteryLevel, SeriesCount, VescControllerId};
 use thiserror::Error;
@@ -213,11 +213,20 @@ pub struct VescValuesTelemetry {
     /// Relative tachometer.
     pub tachometer: TachometerReading,
 
+    /// Absolute tachometer count.
+    pub tachometer_absolute: TachometerReading,
+
     /// Controller identifier.
     pub controller_id: VescControllerId,
 
     /// Current VESC fault code.
     pub fault_code: VescFaultCode,
+
+    /// Controller status byte.
+    pub status: u8,
+
+    /// Every floating-point field returned by COMM_GET_VALUES, preserving exact bits.
+    pub raw_float_fields: [Option<RawFloatFieldValue>; 32],
 }
 
 /// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
@@ -1003,10 +1012,43 @@ impl From<vesc::Values> for VescValuesTelemetry {
             voltage: Voltage::from_volts_f32(values.voltage_in),
             input_current: BatteryCurrent::from_amps_f32(values.avg_current_input),
             tachometer: TachometerReading::from_counts(values.tachometer),
+            tachometer_absolute: TachometerReading::from_counts(values.tachometer_abs),
             controller_id: VescControllerId::new(values.controller_id),
             fault_code: values.fault_code.into(),
+            status: values.status,
+            raw_float_fields: vesc_values_float_fields(values),
         }
     }
+}
+
+fn vesc_values_float_fields(values: vesc::Values) -> [Option<RawFloatFieldValue>; 32] {
+    let values = [
+        values.temp_mosfet,
+        values.temp_motor,
+        values.avg_current_motor,
+        values.avg_current_input,
+        values.avg_current_d,
+        values.avg_current_q,
+        values.duty_cycle,
+        values.rpm,
+        values.voltage_in,
+        values.amp_hours,
+        values.amp_hours_charged,
+        values.watt_hours,
+        values.watt_hours_charged,
+        values.pid_pos,
+        values.temp_mosfet1,
+        values.temp_mosfet2,
+        values.temp_mosfet3,
+        values.avg_voltage_d,
+        values.avg_voltage_q,
+    ];
+    let mut fields = [None; 32];
+    for (index, value) in values.into_iter().enumerate() {
+        let id = 0x8100 + u16::try_from(index).expect("VESC raw field index fits u16");
+        fields[index] = Some(RawFloatFieldValue::new(id, value));
+    }
+    fields
 }
 
 #[allow(clippy::cast_possible_truncation)]

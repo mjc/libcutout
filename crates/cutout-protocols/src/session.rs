@@ -41,6 +41,12 @@ pub const VESC_RAW_CONTROLLER_ID_FIELD_ID: u16 = 0x8003;
 /// Raw VESC current fault-code telemetry field id.
 pub const VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID: u16 = 0x8004;
 
+/// Raw VESC absolute tachometer telemetry field id.
+pub const VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID: u16 = 0x8005;
+
+/// Raw VESC controller status field id.
+pub const VESC_RAW_STATUS_FIELD_ID: u16 = 0x8006;
+
 /// Raw VESC average speed statistics field id.
 pub const VESC_RAW_STATS_SPEED_AVG_FIELD_ID: u16 = 0x8101;
 
@@ -760,7 +766,18 @@ fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryRead
                 VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID,
                 i64::from(vesc_fault_code_raw(values.fault_code)),
             )),
+            Some(RawFieldValue::new(
+                VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID,
+                i64::from(values.tachometer_absolute.as_counts()),
+            )),
+            Some(RawFieldValue::new(
+                VESC_RAW_STATUS_FIELD_ID,
+                i64::from(values.status),
+            )),
+            None,
+            None,
         ],
+        float_fields: values.raw_float_fields,
     }
 }
 
@@ -2404,6 +2421,12 @@ mod tests {
             raw.fields[3].expect("fault"),
             RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
         );
+        assert_eq!(
+            raw.fields[4].expect("absolute tachometer").id,
+            VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID
+        );
+        assert_eq!(raw.fields[5].expect("status").id, VESC_RAW_STATUS_FIELD_ID);
+        assert_eq!(raw.float_fields.iter().flatten().count(), 19);
     }
 
     #[test]
@@ -2450,6 +2473,11 @@ mod tests {
         assert_eq!(
             raw.fields[1].expect("tachometer"),
             RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -2)
+        );
+        assert_eq!(raw.float_fields.iter().flatten().count(), 19);
+        assert_eq!(
+            raw.float_fields[0].expect("MOSFET temperature").value_bits,
+            26.7_f32.to_bits()
         );
         assert_eq!(
             raw.fields[2].expect("controller id"),
@@ -2514,8 +2542,11 @@ mod tests {
                 voltage: Voltage::from_millivolts(0),
                 input_current: BatteryCurrent::from_milliamps(0),
                 tachometer: cutout_core::TachometerReading::from_counts(0),
+                tachometer_absolute: cutout_core::TachometerReading::from_counts(0),
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::AbsOverCurrent,
+                status: 0,
+                raw_float_fields: [None; 32],
             }),
             ms(42),
             None,
@@ -2647,8 +2678,11 @@ mod tests {
                 voltage: Voltage::from_millivolts(37_500),
                 input_current: BatteryCurrent::from_milliamps(0),
                 tachometer: cutout_core::TachometerReading::from_counts(0),
+                tachometer_absolute: cutout_core::TachometerReading::from_counts(0),
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::None,
+                status: 0,
+                raw_float_fields: [None; 32],
             }),
             ms(42),
             Some(board_profile),

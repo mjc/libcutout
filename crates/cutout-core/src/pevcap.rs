@@ -15,9 +15,9 @@ use crate::VescControllerId;
 use crate::{
     DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
     MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
-    ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput, SessionOutput,
-    SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp, WriteMode,
-    drain_semantic_events_checked,
+    RawTelemetryReadback, ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput,
+    SessionOutput, SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp,
+    WriteMode, drain_semantic_events_checked,
 };
 
 /// PEVCAP file format magic bytes.
@@ -400,6 +400,21 @@ impl PevcapHeader {
         )?;
         Ok(self)
     }
+
+    /// Serializes the PEVCAP JSONL header line.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header cannot be serialized as JSON.
+    #[cfg(feature = "serde")]
+    pub fn to_jsonl_line(&self) -> Result<String, PevcapJsonlError> {
+        serde_json::to_string(&PevcapJsonlLine::Header {
+            magic: PEVCAP_MAGIC,
+            version: PevcapFormatVersion::current(),
+            header: PevcapHeaderJson::from(self),
+        })
+        .map_err(PevcapJsonlError::Serialize)
+    }
 }
 
 /// PEVCAP header validation error.
@@ -506,9 +521,73 @@ pub struct PevcapRecord {
 
     /// Exact bytes captured for the record.
     pub bytes: Bytes,
+
+    /// Typed protocol-native telemetry decoded from the same inbound notification.
+    pub telemetry: Option<RawTelemetryReadback>,
+
+    /// Latest phone location sample when this BLE record was received.
+    pub phone_location: Option<PevcapPhoneLocation>,
 }
 
+/// Full-precision Core Location sample correlated with a PEVCAP record.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug)]
+pub struct PevcapPhoneLocation {
+    /// Sample timestamp reported by the mobile platform.
+    pub wall_clock_unix_ms: u64,
+    /// WGS84 latitude in degrees.
+    pub latitude_degrees: f64,
+    /// WGS84 longitude in degrees.
+    pub longitude_degrees: f64,
+    /// Altitude above mean sea level in meters.
+    pub altitude_meters: f64,
+    /// Horizontal accuracy in meters.
+    pub horizontal_accuracy_meters: f64,
+    /// Vertical accuracy in meters.
+    pub vertical_accuracy_meters: f64,
+    /// Platform-reported speed in meters per second.
+    pub speed_meters_per_second: f64,
+    /// Platform-reported speed accuracy in meters per second.
+    pub speed_accuracy_meters_per_second: f64,
+    /// Platform-reported direction of travel in degrees.
+    pub course_degrees: f64,
+    /// Platform-reported course accuracy in degrees.
+    pub course_accuracy_degrees: f64,
+}
+
+impl PartialEq for PevcapPhoneLocation {
+    fn eq(&self, other: &Self) -> bool {
+        self.wall_clock_unix_ms == other.wall_clock_unix_ms
+            && self.latitude_degrees.to_bits() == other.latitude_degrees.to_bits()
+            && self.longitude_degrees.to_bits() == other.longitude_degrees.to_bits()
+            && self.altitude_meters.to_bits() == other.altitude_meters.to_bits()
+            && self.horizontal_accuracy_meters.to_bits()
+                == other.horizontal_accuracy_meters.to_bits()
+            && self.vertical_accuracy_meters.to_bits() == other.vertical_accuracy_meters.to_bits()
+            && self.speed_meters_per_second.to_bits() == other.speed_meters_per_second.to_bits()
+            && self.speed_accuracy_meters_per_second.to_bits()
+                == other.speed_accuracy_meters_per_second.to_bits()
+            && self.course_degrees.to_bits() == other.course_degrees.to_bits()
+            && self.course_accuracy_degrees.to_bits() == other.course_accuracy_degrees.to_bits()
+    }
+}
+
+impl Eq for PevcapPhoneLocation {}
+
 impl PevcapRecord {
+    /// Attaches protocol-native telemetry decoded from this notification.
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: RawTelemetryReadback) -> Self {
+        self.telemetry = Some(telemetry);
+        self
+    }
+
+    /// Attaches the latest phone location sample to this notification.
+    #[must_use]
+    pub fn with_phone_location(mut self, location: PevcapPhoneLocation) -> Self {
+        self.phone_location = Some(location);
+        self
+    }
     /// Creates a link-up lifecycle record.
     #[must_use]
     pub fn link_up(
@@ -524,6 +603,8 @@ impl PevcapRecord {
             link_max_write_len: max_write_len,
             target: None,
             bytes: Bytes::new(),
+            telemetry: None,
+            phone_location: None,
         }
     }
 
@@ -539,6 +620,8 @@ impl PevcapRecord {
             link_max_write_len: None,
             target: None,
             bytes: Bytes::new(),
+            telemetry: None,
+            phone_location: None,
         }
     }
 
@@ -559,6 +642,8 @@ impl PevcapRecord {
             link_max_write_len: None,
             target: None,
             bytes: bytes.into(),
+            telemetry: None,
+            phone_location: None,
         }
     }
 
@@ -594,7 +679,22 @@ impl PevcapRecord {
             link_max_write_len: None,
             target: None,
             bytes: bytes.into(),
+            telemetry: None,
+            phone_location: None,
         }
+    }
+
+    /// Serializes this record as one PEVCAP JSONL line.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the record cannot be serialized as JSON.
+    #[cfg(feature = "serde")]
+    pub fn to_jsonl_line(&self) -> Result<String, PevcapJsonlError> {
+        serde_json::to_string(&PevcapJsonlLine::Record {
+            record: PevcapRecordJson::from(self),
+        })
+        .map_err(PevcapJsonlError::Serialize)
     }
 }
 
@@ -1746,6 +1846,10 @@ struct PevcapRecordJson {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PevcapRequestTargetJson>,
     bytes: Bytes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    telemetry: Option<RawTelemetryReadback>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    phone_location: Option<PevcapPhoneLocation>,
 }
 
 #[cfg(feature = "serde")]
@@ -1760,6 +1864,8 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             link_max_write_len: record.link_max_write_len.map(TransportWriteLimit::as_bytes),
             target: record.target.map(PevcapRequestTargetJson::from),
             bytes: record.bytes.clone(),
+            telemetry: record.telemetry,
+            phone_location: record.phone_location,
         }
     }
 }
@@ -1777,6 +1883,8 @@ impl PevcapRecordJson {
             link_max_write_len: self.link_max_write_len.map(TransportWriteLimit::from_bytes),
             target: self.target.map(PevcapRequestTargetJson::into_target),
             bytes: self.bytes,
+            telemetry: self.telemetry,
+            phone_location: self.phone_location,
         })
     }
 

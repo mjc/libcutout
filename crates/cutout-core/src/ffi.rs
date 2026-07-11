@@ -1189,12 +1189,32 @@ impl From<DiagnosticReadback> for DiagnosticReadbackDto {
 pub struct RawTelemetryReadbackDto {
     /// Present raw telemetry fields.
     pub fields: Vec<RawFieldValueDto>,
+    /// Present protocol-native floating fields, stored as exact IEEE-754 bits.
+    pub float_fields: Vec<RawFloatFieldValueDto>,
+}
+
+/// UniFFI-ready protocol-native floating field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RawFloatFieldValueDto {
+    /// Protocol-family field identifier.
+    pub id: u16,
+    /// Exact IEEE-754 bits.
+    pub value_bits: u32,
 }
 
 impl From<RawTelemetryReadback> for RawTelemetryReadbackDto {
     fn from(raw: RawTelemetryReadback) -> Self {
         Self {
             fields: raw.fields.into_iter().flatten().map(Into::into).collect(),
+            float_fields: raw
+                .float_fields
+                .into_iter()
+                .flatten()
+                .map(|field| RawFloatFieldValueDto {
+                    id: field.id,
+                    value_bits: field.value_bits,
+                })
+                .collect(),
         }
     }
 }
@@ -2393,7 +2413,12 @@ mod tests {
                 None,
                 Some(RawFieldValue::new(0x8002, -21_973)),
                 None,
+                None,
+                None,
+                None,
+                None,
             ],
+            float_fields: [None; 32],
         });
 
         let output = ReadOnlyOutput::from(response);

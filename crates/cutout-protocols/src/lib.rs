@@ -95,11 +95,12 @@ pub use session::{
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
     SupportsBenignControls, SupportsDangerousActuation, SupportsReadRequests,
-    SupportsSettingsWrites, VESC_RAW_CONTROLLER_ID_FIELD_ID, VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID,
-    VESC_RAW_ERPM_FIELD_ID, VESC_RAW_STATS_COUNT_TIME_FIELD_ID,
-    VESC_RAW_STATS_CURRENT_AVG_FIELD_ID, VESC_RAW_STATS_POWER_AVG_FIELD_ID,
-    VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel,
-    VescNotificationDecoder, VeteranNotificationDecoder,
+    SupportsSettingsWrites, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID, VESC_RAW_CONTROLLER_ID_FIELD_ID,
+    VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, VESC_RAW_ERPM_FIELD_ID,
+    VESC_RAW_STATS_COUNT_TIME_FIELD_ID, VESC_RAW_STATS_CURRENT_AVG_FIELD_ID,
+    VESC_RAW_STATS_POWER_AVG_FIELD_ID, VESC_RAW_STATS_SPEED_AVG_FIELD_ID, VESC_RAW_STATUS_FIELD_ID,
+    VESC_RAW_TACHOMETER_FIELD_ID, VescGenericModel, VescNotificationDecoder,
+    VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
     GearRatioDenominator, MotorPolePairs, VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN,

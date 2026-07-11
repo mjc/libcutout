@@ -1,4 +1,7 @@
 import XCTest
+#if canImport(CoreBluetooth)
+import CoreBluetooth
+#endif
 @testable import CutoutMobile
 
 final class CutoutSessionCoreTests: XCTestCase {

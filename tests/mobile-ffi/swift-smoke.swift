@@ -62,36 +62,40 @@ struct MobileFfiSmoke {
             platformId: "ios-corebluetooth",
             writeLimit: MobileTransportWriteLimitDto(bytes: 185)
         )
-        capture.addAnnotation(annotation: "capture_label=powered_on_stationary")
-        capture.addAnnotation(annotation: "capture_privacy=redacted")
-        capture.addAnnotation(annotation: "capture_distribution=redistributable")
-        capture.addAnnotation(annotation: "capture_evidence=hardware_tested")
+        _ = capture.addAnnotation(annotation: "capture_label=powered_on_stationary")
+        _ = capture.addAnnotation(annotation: "capture_privacy=redacted")
+        _ = capture.addAnnotation(annotation: "capture_distribution=redistributable")
+        _ = capture.addAnnotation(annotation: "capture_evidence=hardware_tested")
         let ffe0 = hexBytes("0000ffe000001000800000805f9b34fb")
         let ffe1 = hexBytes("0000ffe100001000800000805f9b34fb")
-        try capture.addAdvertisedService(service: ffe0)
-        try capture.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
+        _ = capture.addAdvertisedService(service: ffe0)
+        _ = capture.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
             service: ffe0,
             characteristic: ffe1,
             roles: [.read, .writeWithoutResponse, .notify],
             verification: .hardwareVerified
         ))
-        capture.setResolvedIdentity(identity: MobileResolvedIdentityDto(
+        _ = capture.setResolvedIdentity(identity: MobileResolvedIdentityDto(
             protocolFamily: .begodeGotway,
             model: MobileVerifiedStringDto(value: "Begode Falcon", verification: .inferred),
             firmware: MobileVerifiedStringDto(value: "GW2015004", verification: .hardwareVerified)
         ))
-        capture.recordLinkUp(
+        let captureFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cutout-mobile-ffi-smoke.jsonl")
+        defer { try? FileManager.default.removeItem(at: captureFile) }
+        precondition(capture.startWriter(path: captureFile.path))
+        precondition(capture.recordLinkUp(
             monotonicMs: MobileMonotonicMillisDto(milliseconds: 1),
             maxWriteLen: MobileTransportWriteLimitDto(bytes: 185)
-        )
-        try capture.recordNotification(
+        ))
+        precondition(capture.recordNotification(
             monotonicMs: MobileMonotonicMillisDto(milliseconds: 2),
             characteristic: Data(repeating: 0x11, count: 16),
             service: Data(repeating: 0x22, count: 16),
             bytes: Data([0xde, 0xad, 0xbe, 0xef])
-        )
-        let exported = try capture.export(encoding: .jsonl)
-        let exportedText = String(data: exported, encoding: .utf8)!
+        ))
+        precondition(capture.finishWriter())
+        let exportedText = try String(contentsOf: captureFile, encoding: .utf8)
         precondition(exportedText.contains("capture_label=powered_on_stationary"))
         precondition(exportedText.contains(#""protocol_family":"BegodeGotway""#))
         precondition(exportedText.contains(#""model":{"value":"Begode Falcon","verification":"Inferred"}"#))

@@ -265,6 +265,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let settingsReadback: SettingsReadback?
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
+    public let rawTelemetry: RawTelemetryReadback?
     public let veteranProtocolModelId: UInt16?
 
     private init(
@@ -274,6 +275,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         settingsReadback: SettingsReadback? = nil,
         faultHistoryReadback: FaultHistoryReadback? = nil,
         bmsSnapshot: BmsSnapshot? = nil,
+        rawTelemetry: RawTelemetryReadback? = nil,
         veteranProtocolModelId: UInt16? = nil
     ) {
         self.kind = kind
@@ -282,6 +284,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.settingsReadback = settingsReadback
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
+        self.rawTelemetry = rawTelemetry
         self.veteranProtocolModelId = veteranProtocolModelId
     }
 
@@ -348,6 +351,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.settingsReadback = dto.settingsReadback.map(SettingsReadback.init)
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
         self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
+        self.rawTelemetry = dto.rawTelemetry.map(RawTelemetryReadback.init)
         self.veteranProtocolModelId = dto.veteranProtocolModelId
     }
 }
@@ -364,6 +368,35 @@ public struct RawSettingField: Equatable, Hashable, Sendable {
     fileprivate init(_ dto: MobileRawFieldValueDto) {
         self.id = dto.id
         self.value = dto.value
+    }
+}
+
+public struct RawFloatField: Equatable, Hashable, Sendable {
+    public let id: UInt16
+    public let valueBits: UInt32
+
+    fileprivate init(_ dto: MobileRawFloatFieldValueDto) {
+        id = dto.id
+        valueBits = dto.valueBits
+    }
+}
+
+public struct RawTelemetryReadback: Equatable, Hashable, Sendable {
+    public let fields: [RawSettingField]
+    public let floatFields: [RawFloatField]
+
+    fileprivate init(_ dto: MobileRawTelemetryReadbackDto) {
+        fields = dto.fields.map(RawSettingField.init)
+        floatFields = dto.floatFields.map(RawFloatField.init)
+    }
+
+    var dto: MobileRawTelemetryReadbackDto {
+        MobileRawTelemetryReadbackDto(
+            fields: fields.map { MobileRawFieldValueDto(id: $0.id, value: $0.value) },
+            floatFields: floatFields.map {
+                MobileRawFloatFieldValueDto(id: $0.id, valueBits: $0.valueBits)
+            }
+        )
     }
 }
 
@@ -3241,10 +3274,6 @@ public enum CoreBluetoothLiveRecord: Equatable, Hashable, Sendable {
     )
 }
 
-public typealias CoreBluetoothCentralLifecycleNotificationHandler = (BluetoothUuid, Data) -> Void
-public typealias CoreBluetoothMonotonicClock = @Sendable () -> MonotonicMilliseconds
-public typealias CoreBluetoothLiveSessionErrorHandler = @Sendable (Error) -> Void
-
 public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let platformIdentifier: CoreBluetoothPeripheralIdentifier
     private let runner: CoreBluetoothSessionRunner
@@ -3290,7 +3319,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         cancelPendingRetry()
         receivedRealtimeTelemetrySinceLinkUp = false
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
-        recorded.append(.linkUp(
+        record(.linkUp(
             platformIdentifier: platformIdentifier,
             writeLimit: step.captureContext?.writeLimit ?? TransportWriteLimitBytes(0)
         ))
@@ -3300,7 +3329,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     }
 
     public func recordInventory(_ inventory: CoreBluetoothGattInventory) {
-        recorded.append(.gattInventory(
+        record(.gattInventory(
             platformIdentifier: platformIdentifier,
             inventory: inventory
         ))
@@ -3322,7 +3351,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         channel: BluetoothUuid,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> CoreBluetoothSessionStep {
-        recorded.append(.notification(
+        record(.notification(
             channel: channel,
             byteCount: CoreBluetoothPayloadByteCount(bytes.count),
             at: monotonicMilliseconds
@@ -3348,7 +3377,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelPendingRetry()
         let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
-        recorded.append(.linkDown(
+        record(.linkDown(
             platformIdentifier: platformIdentifier,
             at: monotonicMilliseconds
         ))
@@ -3356,31 +3385,19 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         return step
     }
 
-    public func notificationHandler(
-        clock: @escaping CoreBluetoothMonotonicClock,
-        onError: @escaping CoreBluetoothLiveSessionErrorHandler
-    ) -> CoreBluetoothCentralLifecycleNotificationHandler {
-        { [weak self] channel, bytes in
-            do {
-                try self?.handleNotification(
-                    bytes: bytes,
-                    channel: channel,
-                    at: clock()
-                )
-            } catch {
-                onError(error)
-            }
-        }
-    }
-
     private func executeAndRecord(_ operations: [CoreBluetoothPlannedOperation]) {
         operations.forEach { operation in
             executor.execute(operation)
-            recorded.append(.operation(
+            record(.operation(
                 platformIdentifier: platformIdentifier,
                 operation: operation
             ))
         }
+    }
+
+    private func record(_ value: CoreBluetoothLiveRecord) {
+        guard recorded.count < 2_048 else { return }
+        recorded.append(value)
     }
 
     private func scheduleRetryIfNeeded(at monotonicMilliseconds: MonotonicMilliseconds) {
@@ -3724,109 +3741,7 @@ public extension CoreBluetoothGattInventory {
     }
 }
 
-public final class CoreBluetoothCentralLifecycle: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    public typealias ActionHandler = (CoreBluetoothCentralAction) -> Void
-    public typealias NotificationHandler = CoreBluetoothCentralLifecycleNotificationHandler
 
-    private let coordinator: CoreBluetoothCentralCoordinator
-    private let onAction: ActionHandler
-    private let onNotification: NotificationHandler
-    private lazy var centralManager = CBCentralManager(delegate: self, queue: nil)
-
-    public init(
-        coordinator: CoreBluetoothCentralCoordinator,
-        onAction: @escaping ActionHandler,
-        onNotification: @escaping NotificationHandler
-    ) {
-        self.coordinator = coordinator
-        self.onAction = onAction
-        self.onNotification = onNotification
-        super.init()
-    }
-
-    public func start() {
-        _ = centralManager
-        if centralManager.state == .poweredOn {
-            scan()
-        }
-    }
-
-    public func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        guard central.state == .poweredOn else {
-            return
-        }
-        scan()
-    }
-
-    public func centralManager(
-        _ central: CBCentralManager,
-        didDiscover peripheral: CBPeripheral,
-        advertisementData: [String: Any],
-        rssi: NSNumber
-    ) {
-        let advertisement = CoreBluetoothAdvertisement(
-            peripheral: peripheral,
-            advertisementData: advertisementData,
-            rssi: rssi
-        )
-        guard case .connect = coordinator.handleDiscovered(advertisement) else {
-            return
-        }
-        onAction(.connect(peripheralIdentifier: advertisement.peripheralIdentifier))
-        peripheral.delegate = self
-        central.connect(peripheral)
-    }
-
-    public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        central.stopScan()
-        peripheral.delegate = self
-        let action = coordinator.discoverServices()
-        onAction(action)
-        peripheral.discoverServices(action.coreBluetoothServiceUuids)
-    }
-
-    public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard error == nil else {
-            return
-        }
-        (peripheral.services ?? []).forEach { service in
-            peripheral.discoverCharacteristics(nil, for: service)
-        }
-    }
-
-    public func peripheral(
-        _ peripheral: CBPeripheral,
-        didDiscoverCharacteristicsFor service: CBService,
-        error: Error?
-    ) {
-        guard error == nil else {
-            return
-        }
-        let inventory = CoreBluetoothGattInventory(services: [service])
-        coordinator.discoverCharacteristics(in: inventory).forEach(onAction)
-    }
-
-    public func peripheral(
-        _: CBPeripheral,
-        didUpdateValueFor characteristic: CBCharacteristic,
-        error: Error?
-    ) {
-        guard
-            error == nil,
-            let value = characteristic.value,
-            let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid)
-        else {
-            return
-        }
-        onNotification(channel, value)
-    }
-
-    private func scan() {
-        let action = coordinator.startScanning()
-        onAction(action)
-        centralManager.scanForPeripherals(withServices: action.coreBluetoothServiceUuids)
-    }
-}
 
 public extension CoreBluetoothLiveSessionOwner {
     convenience init(

@@ -143,6 +143,10 @@ final class CutoutAppModel: ObservableObject {
         }
     }
 
+    func flushCapture() {
+        core.flushCapture()
+    }
+
     func stopCaptureLabel(_ label: CaptureQuickLabel) {
         activeCaptureLabels.remove(label)
         captureLabel = label.title

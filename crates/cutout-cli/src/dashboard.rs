@@ -5267,7 +5267,12 @@ mod tests {
                 None,
                 Some(RawFieldValue::new(0x8002, -21_973)),
                 None,
+                None,
+                None,
+                None,
+                None,
             ],
+            float_fields: [None; 32],
         };
 
         assert_eq!(

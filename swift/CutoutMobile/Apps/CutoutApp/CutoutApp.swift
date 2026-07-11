@@ -9,6 +9,7 @@ struct CutoutApp: App {
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
     @StateObject private var model = CutoutAppModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         if CommandLine.arguments.contains("--smoke") {
@@ -22,6 +23,10 @@ struct CutoutApp: App {
             rootView
                 .task {
                     model.start()
+                }
+                .onChange(of: scenePhase) {
+                    guard scenePhase != .active else { return }
+                    model.flushCapture()
                 }
         }
     }

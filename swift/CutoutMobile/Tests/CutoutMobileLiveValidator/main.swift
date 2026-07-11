@@ -28,7 +28,7 @@ private final class CutoutLiveValidator {
             self?.appendRecord(record)
         }
         core.onPhaseChange = { [weak self] phase in
-            self?.records.append("phase=\(phase)")
+            self?.appendDiagnostic("phase=\(phase)")
         }
         core.onScanStateChange = { [weak self] state in
             self?.pairFirstSupportedCandidate(from: state)
@@ -44,7 +44,7 @@ private final class CutoutLiveValidator {
             didValidate = rideState.isLiveValidationReady && hasConfirmedAeroIdentity
         }
         if didValidate {
-            records.append("validation=ok")
+            appendDiagnostic("validation=ok")
             core.disconnect()
             printRecords()
         } else {
@@ -78,7 +78,7 @@ private final class CutoutLiveValidator {
         if let row = state.rows.first(where: \.isSupported) {
             didRequestPairing = true
             let didPair = core.pair(platformIdentifier: row.id)
-            records.append("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
+            appendDiagnostic("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
             return
         }
 
@@ -88,7 +88,7 @@ private final class CutoutLiveValidator {
 
         didRequestPairing = true
         let didPair = core.pair(platformIdentifier: row.id, model: .aero)
-        records.append("auto_pair_probe_aero=\(didPair) id=\(row.id) title=\(row.title)")
+        appendDiagnostic("auto_pair_probe_aero=\(didPair) id=\(row.id) title=\(row.title)")
     }
 
     private func appendRecord(_ record: String) {
@@ -97,6 +97,13 @@ private final class CutoutLiveValidator {
             return
         }
 
+        appendDiagnostic(record)
+    }
+
+    private func appendDiagnostic(_ record: String) {
+        guard records.count < 2_048 else {
+            return
+        }
         records.append(record)
     }
 

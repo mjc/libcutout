@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CoreLocation
 import Foundation
 
 func protocolIdentityFallbackDisplayName(
@@ -37,6 +38,8 @@ public final class CutoutSessionCore: NSObject {
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
     private let clock = MonotonicClock()
+    private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth", qos: .userInitiated)
+    private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState = CutoutSessionStateHandle()
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -49,29 +52,43 @@ public final class CutoutSessionCore: NSObject {
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
-    private var captureURL: URL?
-    private var captureHandle: FileHandle?
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureBuilder: MobilePevcapCaptureBuilder?
-    private var didRecordCaptureFile = false
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private var deviceDetectionSession = DeviceDetectionSession()
     private var pendingBegodeProbeResponses = Set<DeviceDetectionPendingProbe>()
+    private var pendingDisplayState: RideDisplayState?
+    private var displayPublishWorkItem: DispatchWorkItem?
+    private var lastDisplayPublication = Date.distantPast
+    private let phoneLocationState = MobilePhoneLocationState()
+    private lazy var locationManager: CLLocationManager = {
+        let manager = CLLocationManager()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        manager.activityType = .fitness
+        return manager
+    }()
 
-    public override init() {}
+    public override init() {
+        super.init()
+        bleQueue.setSpecific(key: bleQueueKey, value: ())
+    }
 
     public func start() {
         guard central == nil else {
             return
         }
-        central = CBCentralManager(delegate: self, queue: nil)
+        startLocationUpdates()
+        central = CBCentralManager(delegate: self, queue: bleQueue)
     }
 
     func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
-        _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
-        let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
-        scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
-        onScanStateChange?(scanState)
+        onBleQueue {
+            _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
+            let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
+            scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
+            publishScanState()
+        }
     }
 
     @discardableResult
@@ -104,16 +121,18 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func recordOnly(platformIdentifier: String, note: String? = nil, annotations: [String] = []) -> Bool {
-        let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-        let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
-        guard
-            let peripheral = discoveredPeripherals[identifier],
-            let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
-        else {
-            return false
+        onBleQueue {
+            let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
+            let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+            guard
+                let peripheral = discoveredPeripherals[identifier],
+                let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
+            else {
+                return false
+            }
+            connectRecordOnly(to: peripheral, using: advertisement, note: note, annotations: annotations)
+            return true
         }
-        connectRecordOnly(to: peripheral, using: advertisement, note: note, annotations: annotations)
-        return true
     }
 
     public func annotateCapture(label: String) {
@@ -122,12 +141,21 @@ public final class CutoutSessionCore: NSObject {
 
     public func annotateCapture(key: String, value: String) {
         let annotation = pevcapAnnotation(key: key, value: value)
-        captureBuilder?.addAnnotation(annotation: annotation)
+        _ = captureBuilder?.addAnnotation(annotation: annotation)
         record(annotation)
-        writeCapture()
+    }
+
+    public func flushCapture() {
+        onBleQueue {
+            _ = captureBuilder?.flushWriter()
+        }
     }
 
     public func disconnectAndScan() {
+        onBleQueue { disconnectAndScanOnBleQueue() }
+    }
+
+    private func disconnectAndScanOnBleQueue() {
         suppressReconnect = true
         isRecordOnly = false
         selectedModel = nil
@@ -143,7 +171,7 @@ public final class CutoutSessionCore: NSObject {
         clearFaultHistoryReadback()
         clearBmsSnapshot()
         clearProtocolIdentityCandidate()
-        onDisplayStateChange?(displayState)
+        publishDisplayState()
 
         if let peripheral {
             central?.cancelPeripheralConnection(peripheral)
@@ -152,7 +180,7 @@ public final class CutoutSessionCore: NSObject {
         advertisement = nil
 
         scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
-        onScanStateChange?(scanState)
+        publishScanState()
         setPhase(.scanning)
         central?.scanForPeripherals(withServices: nil)
     }
@@ -163,13 +191,12 @@ public final class CutoutSessionCore: NSObject {
 
     func applyLinkUpStep(_ step: CoreBluetoothSessionStep) {
         record("link_operations=\(step.operations.map(String.init(describing:)).joined(separator: ","))")
-        captureBuilder?.recordLinkUp(
+        guard acceptCaptureWrite(captureBuilder?.recordLinkUp(
             monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
             maxWriteLen: peripheral.map {
                 MobileTransportWriteLimitDto(bytes: UInt16(clamping: $0.maximumWriteValueLength(for: .withoutResponse)))
             }
-        )
-        writeCapture()
+        ) ?? false) else { return }
         if let snapshot = step.snapshot {
             hasObservedSpeedSnapshot = snapshot.speed?.value != nil
         }
@@ -189,17 +216,17 @@ public final class CutoutSessionCore: NSObject {
         switch action.kind {
         case .settingsReadback:
             settingsReadback = action.settingsReadback
-            onSettingsReadbackChange?(settingsReadback)
+            publishSettingsReadback()
         case .faultHistoryReadback:
             faultHistoryReadback = action.faultHistoryReadback
-            onFaultHistoryReadbackChange?(faultHistoryReadback)
+            publishFaultHistoryReadback()
         case .bmsSnapshot:
             let mergedSnapshot = mergedBmsSnapshot(with: action.bmsSnapshot)
             guard mergedSnapshot != bmsSnapshot else {
                 return
             }
             bmsSnapshot = mergedSnapshot
-            onBmsSnapshotChange?(bmsSnapshot)
+            publishBmsSnapshot()
         case .event:
             applyProtocolIdentityModelId(action.veteranProtocolModelId)
         case .subscribe, .write, .disconnect, .notificationIngest:
@@ -245,7 +272,7 @@ public final class CutoutSessionCore: NSObject {
                 modelId: modelId
             )
             protocolIdentityCandidate = DevicePickerDiscoveryCandidate(candidate: candidate)
-            onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
+            publishProtocolIdentityCandidate()
             record("protocol_identity=\(candidate.detail)")
             updateCaptureIdentity()
         case (.none, _), (_, .none):
@@ -258,7 +285,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         settingsReadback = nil
-        onSettingsReadbackChange?(nil)
+        publishSettingsReadback()
     }
 
     private func clearFaultHistoryReadback() {
@@ -266,7 +293,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         faultHistoryReadback = nil
-        onFaultHistoryReadbackChange?(nil)
+        publishFaultHistoryReadback()
     }
 
     private func clearBmsSnapshot() {
@@ -275,7 +302,7 @@ public final class CutoutSessionCore: NSObject {
         }
         bmsSnapshot = nil
         bmsPages.removeAll()
-        onBmsSnapshotChange?(nil)
+        publishBmsSnapshot()
     }
 
     private func clearProtocolIdentityCandidate() {
@@ -283,7 +310,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         protocolIdentityCandidate = nil
-        onProtocolIdentityCandidateChange?(nil)
+        publishProtocolIdentityCandidate()
     }
 
     private func publishDetectionIdentityCandidate(_ resolution: DeviceDetectionResolution) {
@@ -314,14 +341,14 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         protocolIdentityCandidate = pickerCandidate
-        onProtocolIdentityCandidateChange?(protocolIdentityCandidate)
+        publishProtocolIdentityCandidate()
         record("protocol_identity=\(candidate.detail)")
         updateCaptureIdentity()
     }
 
     private func setPhase(_ phase: SessionConnectionPhase) {
         self.phase = phase
-        onPhaseChange?(phase)
+        publishOnMain { self.onPhaseChange?(phase) }
     }
 
     private func connect(
@@ -470,8 +497,8 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         markOutstandingBegodeProbeResponsesMissing()
-        captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
-        writeCapture()
+        _ = captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
+        finishCaptureWriter()
         let wasRecordOnly = isRecordOnly
         let reconnectRoute = selectedRoute
         isRecordOnly = false
@@ -512,15 +539,88 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func record(_ message: String) {
-        records.append(message)
-        onRecord?(message)
+        if records.count < 2_048 {
+            records.append(message)
+        }
+        publishOnMain { self.onRecord?(message) }
+    }
+
+    private func publishOnMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: DispatchWorkItem(block: work))
+        }
+    }
+
+    private func onBleQueue<T>(_ work: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: bleQueueKey) != nil {
+            return work()
+        }
+        return bleQueue.sync(execute: work)
+    }
+
+    private func publishDisplayState() {
+        let value = displayState
+        publishOnMain { self.publishDisplayStateOnMain(value) }
+    }
+
+    private func publishDisplayStateOnMain(_ value: RideDisplayState) {
+        pendingDisplayState = value
+        let elapsed = Date().timeIntervalSince(lastDisplayPublication)
+        let interval = 0.333
+        guard elapsed >= interval else {
+            guard displayPublishWorkItem == nil else { return }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.displayPublishWorkItem = nil
+                if let pending = self.pendingDisplayState {
+                    self.publishDisplayStateOnMain(pending)
+                }
+            }
+            displayPublishWorkItem = work
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + interval - elapsed,
+                execute: work
+            )
+            return
+        }
+        pendingDisplayState = nil
+        lastDisplayPublication = Date()
+        onDisplayStateChange?(value)
+    }
+
+    private func publishScanState() {
+        let value = scanState
+        publishOnMain { self.onScanStateChange?(value) }
+    }
+
+    private func publishSettingsReadback() {
+        let value = settingsReadback
+        publishOnMain { self.onSettingsReadbackChange?(value) }
+    }
+
+    private func publishFaultHistoryReadback() {
+        let value = faultHistoryReadback
+        publishOnMain { self.onFaultHistoryReadbackChange?(value) }
+    }
+
+    private func publishBmsSnapshot() {
+        let value = bmsSnapshot
+        publishOnMain { self.onBmsSnapshotChange?(value) }
+    }
+
+    private func publishProtocolIdentityCandidate() {
+        let value = protocolIdentityCandidate
+        publishOnMain { self.onProtocolIdentityCandidateChange?(value) }
     }
 
     private func captureFrame(
         direction: String,
         characteristic: CBUUID,
         service: CBUUID? = nil,
-        bytes: Data
+        bytes: Data,
+        telemetry: RawTelemetryReadback? = nil
     ) {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
             return
@@ -530,72 +630,73 @@ public final class CutoutSessionCore: NSObject {
         case "notify":
             guard let serviceUuid = service.flatMap(BluetoothUuid.init(coreBluetoothUuid:)) else {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
-                writeCapture()
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
                 return
             }
-            captureBuilder?.recordNotification(
+            let location = phoneLocationState.currentSnapshot().latestSample
+            _ = captureBuilder?.recordNotificationWithContext(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 service: serviceUuid.bytes,
-                bytes: bytes
+                bytes: bytes,
+                telemetry: telemetry?.dto,
+                phoneLocation: location
             )
         case "write_without_response":
-            captureBuilder?.recordWriteWithoutResponse(
+            let accepted = captureBuilder?.recordWriteWithoutResponse(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 bytes: bytes
-            )
+            ) ?? false
+            guard acceptCaptureWrite(accepted) else { return }
         default:
             return
         }
-
-        writeCapture()
     }
 
     private func startCapture(reason: String, annotations extraAnnotations: [String] = []) {
-        try? captureHandle?.close()
-        captureHandle = nil
         captureStartedAt = clock.now()
-        didRecordCaptureFile = false
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        captureURL = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
+        let url = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
         let builder = MobilePevcapCaptureBuilder(
             wallClockStartUnixMs: MobileWallClockUnixMillisDto(milliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)),
             platformId: advertisement?.peripheralIdentifier.rawValue ?? "ios",
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         (advertisement?.advertisedServiceUuids ?? []).forEach { service in
-            builder.addAdvertisedService(service: service.bytes)
+            _ = builder.addAdvertisedService(service: service.bytes)
         }
         [
             "source=ios-app",
             "capture_reason=\(reason)",
             "capture_privacy=private",
             "capture_evidence=hardware_tested",
-        ].forEach { builder.addAnnotation(annotation: $0) }
-        extraAnnotations.forEach { builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
+        ].forEach { _ = builder.addAnnotation(annotation: $0) }
+        extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
+        guard builder.startWriter(path: url.path) else {
+            record("capture_error=writer_start_failed")
+            setPhase(.failed(.sessionFailed("capture writer failed to start")))
+            return
+        }
+        record("capture_file=\(url.path)")
         updateCaptureIdentity()
-        writeCapture()
     }
 
-    private func writeCapture() {
-        do {
-            guard let builder = captureBuilder else { return }
-            let url = captureURL ?? FileManager.default
-                .urls(for: .documentDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
-            captureURL = url
-            let bytes = try builder.export(encoding: .jsonl)
-            try bytes.write(to: url, options: [.atomic])
-            if !didRecordCaptureFile {
-                didRecordCaptureFile = true
-                record("capture_file=\(url.path)")
-            }
-        } catch {
-            record("capture_error=\(error)")
+    private func acceptCaptureWrite(_ accepted: Bool) -> Bool {
+        guard !accepted else { return true }
+        let status = captureBuilder?.writerStatus()
+        record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
+        setPhase(.failed(.sessionFailed("capture writer queue overrun")))
+        finishCaptureWriter()
+        return false
+    }
+
+    private func finishCaptureWriter() {
+        guard let builder = captureBuilder else { return }
+        DispatchQueue.global(qos: .utility).async {
+            _ = builder.finishWriter()
         }
     }
 
@@ -610,18 +711,19 @@ public final class CutoutSessionCore: NSObject {
         guard let builder = captureBuilder, let identity = pevcapResolvedIdentity() else {
             return
         }
-        builder.setResolvedIdentity(identity: identity)
+        guard acceptCaptureWrite(builder.setResolvedIdentity(identity: identity)) else {
+            return
+        }
         if let protocolIdentityCandidate {
-            builder.addAnnotation(annotation: pevcapAnnotation(
+            _ = builder.addAnnotation(annotation: pevcapAnnotation(
                 key: "resolved_evidence",
                 value: protocolIdentityCandidate.evidence
             ))
-            builder.addAnnotation(annotation: pevcapAnnotation(
+            _ = builder.addAnnotation(annotation: pevcapAnnotation(
                 key: "resolved_detail",
                 value: protocolIdentityCandidate.detail
             ))
         }
-        writeCapture()
     }
 
     private func pevcapResolvedIdentity() -> MobileResolvedIdentityDto? {
@@ -792,11 +894,10 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly {
-            captureBuilder?.recordLinkUp(
+            _ = captureBuilder?.recordLinkUp(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 maxWriteLen: MobileTransportWriteLimitDto(bytes: UInt16(clamping: peripheral.maximumWriteValueLength(for: .withoutResponse)))
             )
-            writeCapture()
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
     }
@@ -874,14 +975,14 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         else {
             return
         }
-        captureFrame(
-            direction: "notify",
-            characteristic: characteristic.uuid,
-            service: characteristic.service?.uuid,
-            bytes: value
-        )
         observeDetectionNotification(channel: channel, bytes: value)
         if isRecordOnly {
+            captureFrame(
+                direction: "notify",
+                characteristic: characteristic.uuid,
+                service: characteristic.service?.uuid,
+                bytes: value
+            )
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             return
         }
@@ -894,6 +995,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 bytes: value,
                 channel: channel,
                 at: receivedAt
+            )
+            captureFrame(
+                direction: "notify",
+                characteristic: characteristic.uuid,
+                service: characteristic.service?.uuid,
+                bytes: value,
+                telemetry: step.actions.compactMap(\.rawTelemetry).last
             )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             record("speed=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
@@ -945,18 +1053,22 @@ extension CutoutSessionCore {
         guard let serviceUuid = BluetoothUuid(coreBluetoothUuid: service.uuid) else {
             return
         }
-        service.characteristics?.forEach { characteristic in
+        guard let builder = captureBuilder else {
+            return
+        }
+        for characteristic in service.characteristics ?? [] {
             guard let characteristicUuid = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
-                return
+                continue
             }
-            captureBuilder?.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
+            guard acceptCaptureWrite(builder.addGattFingerprint(fingerprint: MobileGattFingerprintDto(
                 service: serviceUuid.bytes,
                 characteristic: characteristicUuid.bytes,
                 roles: characteristic.mobileGattRoles,
                 verification: .hardwareVerified
-            ))
+            ))) else {
+                return
+            }
         }
-        writeCapture()
     }
 
     func subscribeRecordOnlyCharacteristics(_ characteristics: [CBCharacteristic], on peripheral: CBPeripheral) {
@@ -1093,9 +1205,55 @@ extension CutoutSessionCore {
     }
 
     func annotateDetection(_ annotation: String) {
-        captureBuilder?.addAnnotation(annotation: annotation)
+        if let builder = captureBuilder {
+            guard acceptCaptureWrite(builder.addAnnotation(annotation: annotation)) else {
+                return
+            }
+        }
         record(annotation)
-        writeCapture()
+    }
+}
+
+extension CutoutSessionCore: CLLocationManagerDelegate {
+    private func startLocationUpdates() {
+        guard CLLocationManager.locationServicesEnabled() else { return }
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            locationManager.startUpdatingLocation()
+        case .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.startUpdatingLocation()
+        case .notDetermined, .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        _ = phoneLocationState.ingest(sample: MobilePhoneLocationSampleDto(
+            wallClockUnixMs: UInt64(max(0, location.timestamp.timeIntervalSince1970 * 1_000)),
+            latitudeDegrees: location.coordinate.latitude,
+            longitudeDegrees: location.coordinate.longitude,
+            altitudeMeters: location.altitude,
+            horizontalAccuracyMeters: location.horizontalAccuracy,
+            verticalAccuracyMeters: location.verticalAccuracy,
+            speedMetersPerSecond: location.speed,
+            speedAccuracyMetersPerSecond: location.speedAccuracy,
+            courseDegrees: location.course,
+            courseAccuracyDegrees: location.courseAccuracy
+        ))
     }
 }
 
