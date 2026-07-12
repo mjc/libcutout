@@ -223,6 +223,9 @@ impl RefloatRealtimeData {
             pitch: self
                 .value("imu.pitch")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
+            balance_angle: self
+                .value("imu.balance_pitch")
+                .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             roll: self
                 .value("imu.roll")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),

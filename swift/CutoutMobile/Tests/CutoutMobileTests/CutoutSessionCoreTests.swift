@@ -48,6 +48,21 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(observedStates.count, 2)
     }
 
+    func testUnnamedNordicUartAdvertisementRoutesAsVesc() {
+        let core = CutoutSessionCore()
+
+        core.observeAdvertisement(
+            CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc-unnamed"),
+                localName: nil,
+                advertisedServiceUuids: [.vescNordicUartService]
+            )
+        )
+
+        XCTAssertEqual(core.scanState.rows.map(\.title), ["VESC device"])
+        XCTAssertEqual(core.scanState.rows.first?.connectionRoute, .vescOnewheel)
+    }
+
     func testObservedAdvertisementsHideNonPevRows() {
         let core = CutoutSessionCore()
 
@@ -121,6 +136,24 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.telemetry?.powerFlow, .negativeUnknown)
         XCTAssertEqual(core.displayState.notificationCount, 1)
         XCTAssertEqual(core.displayState.lastUpdate, receivedAt)
+    }
+
+    func testApplyNotificationStepPublishesDisplayStateOnMainThread() {
+        nonisolated(unsafe) let core = CutoutSessionCore()
+        let published = expectation(description: "display state published")
+        core.onDisplayStateChange = { _ in
+            XCTAssertTrue(Thread.isMainThread)
+            published.fulfill()
+        }
+
+        DispatchQueue.global().async {
+            core.applyNotificationStep(
+                CoreBluetoothSessionStep(operations: [], snapshot: TelemetrySnapshot()),
+                receivedAt: MonotonicMilliseconds(42)
+            )
+        }
+
+        wait(for: [published], timeout: 1.0)
     }
 
     func testVescRideSnapshotKeepsRideCriticalFieldsTyped() {
@@ -469,6 +502,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
         XCTAssertEqual(sink.writes.count, 3)
+        owner.handleNotificationStateUpdate(
+            channel: .vescNordicUartNotify,
+            isNotifying: true,
+            error: nil
+        )
+        XCTAssertEqual(sink.writes.count, 3)
 
         let retryExpectation = expectation(description: "vesc telemetry retries")
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
@@ -498,6 +537,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
+        owner.handleNotificationStateUpdate(
+            channel: .vescNordicUartNotify,
+            isNotifying: true,
+            error: nil
+        )
         _ = try owner.handleNotification(
             bytes: Data([0x01]),
             channel: .bluetooth16(0xffff),

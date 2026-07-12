@@ -1869,6 +1869,9 @@ pub struct TelemetryDeltaDto {
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
+    /// Balance-loop target angle in millidegrees.
+    pub balance_angle: Option<AngleReadingDto>,
+
     /// Roll in millidegrees.
     pub roll: Option<AngleReadingDto>,
 
@@ -1899,6 +1902,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             pwm: delta.pwm.map(Into::into),
             distance: delta.distance.map(Into::into),
             pitch: delta.pitch.map(Into::into),
+            balance_angle: delta.balance_angle.map(Into::into),
             roll: delta.roll.map(Into::into),
             footpad: delta.footpad.map(Into::into),
             battery_level_reported: delta.battery_level_reported.map(Into::into),
@@ -1975,6 +1979,9 @@ pub struct TelemetrySnapshotDto {
     /// Pitch in millidegrees.
     pub pitch: Option<AngleReadingDto>,
 
+    /// Balance-loop target angle in millidegrees.
+    pub balance_angle: Option<AngleReadingDto>,
+
     /// Roll in millidegrees.
     pub roll: Option<AngleReadingDto>,
 
@@ -2005,6 +2012,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             pwm: snapshot.pwm.map(Into::into),
             distance: snapshot.distance.map(Into::into),
             pitch: snapshot.pitch.map(Into::into),
+            balance_angle: snapshot.balance_angle.map(Into::into),
             roll: snapshot.roll.map(Into::into),
             footpad: snapshot.footpad.map(Into::into),
             battery_level_reported: snapshot.battery_level_reported.map(Into::into),
@@ -2570,6 +2578,7 @@ mod tests {
             pwm: Some(Measured::reported(DutyCycle::from_permille(250))),
             distance: Some(Measured::reported(Distance::from_millimetres(12_345))),
             pitch: None,
+            balance_angle: None,
             roll: None,
             footpad: Some(FootpadTelemetry {
                 state: 2,

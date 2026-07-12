@@ -58,6 +58,7 @@ public final class CutoutSessionCore: NSObject {
     private var deviceDetectionSession = DeviceDetectionSession()
     private var pendingBegodeProbeResponses = Set<DeviceDetectionPendingProbe>()
     private var pendingDisplayState: RideDisplayState?
+    private var pendingDisplayStateQueuedAt: Date?
     private var displayPublishWorkItem: DispatchWorkItem?
     private var lastDisplayPublication = Date.distantPast
     private let phoneLocationState = MobilePhoneLocationState()
@@ -75,15 +76,18 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public func start() {
-        guard central == nil else {
-            return
-        }
         startLocationUpdates()
-        central = CBCentralManager(delegate: self, queue: bleQueue)
+        onBleQueue {
+            guard central == nil else {
+                return
+            }
+            central = CBCentralManager(delegate: self, queue: bleQueue)
+        }
     }
 
     func observeAdvertisement(_ advertisement: CoreBluetoothAdvertisement) {
         onBleQueue {
+            let advertisement = advertisement.withVescNordicUartFallbackName()
             _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
             let snapshot = rustSessionState.observeDiscovery(observation: DiscoveryObservation(advertisement))
             scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: snapshot)
@@ -93,30 +97,34 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func pair(platformIdentifier: String) -> Bool {
-        let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-        let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
-        let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
-        let support = snapshot.pickerCandidates
-            .first(where: { $0.platformIdentifier == platformIdentifier })
-            .map(DevicePickerCandidateSupport.init)
-        return connectIfReady(
-            peripheral: discoveredPeripherals[identifier],
-            advertisement: advertisement,
-            route: support?.connectionRoute,
-            model: support?.electricUnicycleModel
-        )
+        onBleQueue {
+            let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
+            let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+            let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
+            let support = snapshot.pickerCandidates
+                .first(where: { $0.platformIdentifier == platformIdentifier })
+                .map(DevicePickerCandidateSupport.init)
+            return connectIfReady(
+                peripheral: discoveredPeripherals[identifier],
+                advertisement: advertisement,
+                route: support?.connectionRoute,
+                model: support?.electricUnicycleModel
+            )
+        }
     }
 
     @discardableResult
     public func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
-        let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
-        let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
-        return connectIfReady(
-            peripheral: discoveredPeripherals[identifier],
-            advertisement: snapshot.advertisement(platformIdentifier: platformIdentifier),
-            route: .electricUnicycle,
-            model: model
-        )
+        onBleQueue {
+            let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
+            let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
+            return connectIfReady(
+                peripheral: discoveredPeripherals[identifier],
+                advertisement: snapshot.advertisement(platformIdentifier: platformIdentifier),
+                route: .electricUnicycle,
+                model: model
+            )
+        }
     }
 
     @discardableResult
@@ -140,9 +148,11 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public func annotateCapture(key: String, value: String) {
-        let annotation = pevcapAnnotation(key: key, value: value)
-        _ = captureBuilder?.addAnnotation(annotation: annotation)
-        record(annotation)
+        onBleQueue {
+            let annotation = pevcapAnnotation(key: key, value: value)
+            _ = captureBuilder?.addAnnotation(annotation: annotation)
+            record(annotation)
+        }
     }
 
     public func flushCapture() {
@@ -208,7 +218,7 @@ public final class CutoutSessionCore: NSObject {
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
-        onDisplayStateChange?(displayState)
+        publishDisplayState()
         setPhase(.live)
     }
 
@@ -451,7 +461,8 @@ public final class CutoutSessionCore: NSObject {
                 advertisement: advertisement,
                 writeLimit: TransportWriteLimitBytes(23),
                 operationSink: self,
-                retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil
+                retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil,
+                executionQueue: bleQueue
             )
             setPhase(.subscribing)
             let inventory = CoreBluetoothGattInventory(services: peripheral.services ?? [])
@@ -557,16 +568,28 @@ public final class CutoutSessionCore: NSObject {
         if DispatchQueue.getSpecific(key: bleQueueKey) != nil {
             return work()
         }
-        return bleQueue.sync(execute: work)
+        let queuedAt = Date()
+        return bleQueue.sync {
+            let result = work()
+            let waitMilliseconds = max(0, Int(Date().timeIntervalSince(queuedAt) * 1_000))
+            if waitMilliseconds > 0 {
+                record("ble_queue_wait_ms=\(waitMilliseconds)")
+            }
+            return result
+        }
     }
 
     private func publishDisplayState() {
         let value = displayState
-        publishOnMain { self.publishDisplayStateOnMain(value) }
+        let queuedAt = Date()
+        publishOnMain { self.publishDisplayStateOnMain(value, queuedAt: queuedAt) }
     }
 
-    private func publishDisplayStateOnMain(_ value: RideDisplayState) {
+    private func publishDisplayStateOnMain(_ value: RideDisplayState, queuedAt: Date? = nil) {
         pendingDisplayState = value
+        if let queuedAt {
+            pendingDisplayStateQueuedAt = queuedAt
+        }
         let elapsed = Date().timeIntervalSince(lastDisplayPublication)
         let interval = 0.333
         guard elapsed >= interval else {
@@ -586,8 +609,14 @@ public final class CutoutSessionCore: NSObject {
             return
         }
         pendingDisplayState = nil
+        let publicationDelayMilliseconds = max(
+            0,
+            Int(Date().timeIntervalSince(pendingDisplayStateQueuedAt ?? Date()) * 1_000)
+        )
+        pendingDisplayStateQueuedAt = nil
         lastDisplayPublication = Date()
         onDisplayStateChange?(value)
+        onRecord?("snapshot_publication_ms=\(publicationDelayMilliseconds)")
     }
 
     private func publishScanState() {
@@ -642,6 +671,7 @@ public final class CutoutSessionCore: NSObject {
                 telemetry: telemetry?.dto,
                 phoneLocation: location
             )
+            record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         case "write_without_response":
             let accepted = captureBuilder?.recordWriteWithoutResponse(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
@@ -649,6 +679,7 @@ public final class CutoutSessionCore: NSObject {
                 bytes: bytes
             ) ?? false
             guard acceptCaptureWrite(accepted) else { return }
+            record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         default:
             return
         }
@@ -854,8 +885,27 @@ private extension DiscoverySnapshot {
     }
 }
 
+private extension CoreBluetoothAdvertisement {
+    func withVescNordicUartFallbackName() -> Self {
+        guard
+            localName?.isEmpty != false,
+            advertisedServiceUuids.contains(.vescNordicUartService)
+        else {
+            return self
+        }
+        return Self(
+            peripheralIdentifier: peripheralIdentifier,
+            localName: "VESC device",
+            advertisedServiceUuids: advertisedServiceUuids,
+            manufacturerData: manufacturerData,
+            rssiDbm: rssiDbm
+        )
+    }
+}
+
 extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        assertOnBleQueue()
         record("central_state=\(central.state.rawValue)")
         guard central.state == .poweredOn else {
             setPhase(.bluetoothUnavailable(rawState: central.state.rawValue))
@@ -873,6 +923,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi: NSNumber
     ) {
+        assertOnBleQueue()
         let advertisement = CoreBluetoothAdvertisement(
             peripheral: peripheral,
             advertisementData: advertisementData
@@ -891,6 +942,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        assertOnBleQueue()
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly {
@@ -903,6 +955,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     }
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        assertOnBleQueue()
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
         isRecordOnly = false
         selectedRoute = nil
@@ -914,12 +967,14 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
+        assertOnBleQueue()
         handleDisconnect(from: peripheral, error: error)
     }
 }
 
 extension CutoutSessionCore: CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        assertOnBleQueue()
         if let error {
             setPhase(.failed(.serviceDiscoveryFailed(error.sessionMessage)))
             return
@@ -937,6 +992,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
+        assertOnBleQueue()
         if let error {
             setPhase(.failed(.characteristicDiscoveryFailed(error.sessionMessage)))
             return
@@ -965,6 +1021,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        assertOnBleQueue()
         if let error {
             setPhase(.failed(.notificationFailed(error.sessionMessage)))
             return
@@ -991,11 +1048,16 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         do {
             let receivedAt = clock.now()
+            let ingestStartedAt = receivedAt
             let step = try liveOwner.handleNotification(
                 bytes: value,
                 channel: channel,
                 at: receivedAt
             )
+            let ingestFinishedAt = clock.now()
+            let ingestMilliseconds = ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
+                ? ingestFinishedAt.rawValue - ingestStartedAt.rawValue
+                : 0
             captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
@@ -1008,11 +1070,38 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             record("voltage=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
             record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value) } ?? "nil")")
             record("live_records=\(liveOwner.records.count)")
+            record("notification_ingest_ms=\(ingestMilliseconds)")
+            record("rust_decode_ms=\(ingestMilliseconds)")
             applyNotificationStep(step, receivedAt: receivedAt)
         } catch {
             record("notification_ingest_error=\(error)")
             setPhase(.failed(.notificationIngestFailed(error.sessionMessage)))
         }
+    }
+
+    public func peripheral(
+        _: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        assertOnBleQueue()
+        guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
+            return
+        }
+        if let error {
+            setPhase(.failed(.notificationFailed(error.sessionMessage)))
+        }
+        liveOwner?.handleNotificationStateUpdate(
+            channel: channel,
+            isNotifying: characteristic.isNotifying,
+            error: error
+        )
+    }
+}
+
+private extension CutoutSessionCore {
+    func assertOnBleQueue() {
+        dispatchPrecondition(condition: .onQueue(bleQueue))
     }
 }
 
@@ -1046,6 +1135,7 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
         }
         central?.cancelPeripheralConnection(peripheral)
     }
+
 }
 
 extension CutoutSessionCore {

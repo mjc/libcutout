@@ -1814,6 +1814,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Reported pitch.
     pub pitch: Option<AngleReading>,
 
+    /// Reported balance-loop target angle.
+    pub balance_angle: Option<AngleReading>,
+
     /// Reported roll.
     pub roll: Option<AngleReading>,
 
@@ -4758,6 +4761,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             distance: snapshot.distance.map(Into::into),
             limp_home_range: None,
             pitch: snapshot.pitch.map(Into::into),
+            balance_angle: snapshot.balance_angle.map(Into::into),
             roll: snapshot.roll.map(Into::into),
             footpad: snapshot.footpad.map(Into::into),
             battery_level_reported: snapshot.battery_level_reported.map(Into::into),

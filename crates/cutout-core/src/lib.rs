@@ -6404,6 +6404,9 @@ pub struct TelemetryDelta {
     /// Pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
+    /// Balance-loop target angle in millidegrees.
+    pub balance_angle: Option<Measured<Angle>>,
+
     /// Roll in millidegrees.
     pub roll: Option<Measured<Angle>>,
 
@@ -6436,6 +6439,7 @@ impl TelemetryDelta {
             pwm: None,
             distance: None,
             pitch: None,
+            balance_angle: None,
             roll: None,
             footpad: None,
             battery_level_reported: None,
@@ -6502,6 +6506,9 @@ pub struct TelemetrySnapshot {
     /// Latest known pitch in millidegrees.
     pub pitch: Option<Measured<Angle>>,
 
+    /// Latest known balance-loop target angle in millidegrees.
+    pub balance_angle: Option<Measured<Angle>>,
+
     /// Latest known roll in millidegrees.
     pub roll: Option<Measured<Angle>>,
 
@@ -6558,6 +6565,9 @@ impl TelemetrySnapshot {
         }
         if delta.pitch.is_some() {
             self.pitch = delta.pitch;
+        }
+        if delta.balance_angle.is_some() {
+            self.balance_angle = delta.balance_angle;
         }
         if delta.roll.is_some() {
             self.roll = delta.roll;
@@ -7599,8 +7609,18 @@ mod tests {
         assert_eq!(size_of::<crate::BatteryPageMetadata>(), 8);
         assert!(size_of::<crate::BatteryInfo>() <= 64);
         assert!(size_of::<crate::BatteryPagePayload>() <= 128);
-        assert!(size_of::<crate::RawTelemetryReadback>() <= 512);
-        assert!(size_of::<crate::ReadOnlyResponse>() <= 512);
+        // Eight raw integer slots plus thirty-two lossless float slots keep this
+        // bounded while allowing the VESC read-only decoder to retain native data.
+        assert!(
+            size_of::<crate::RawTelemetryReadback>() <= 1_024,
+            "RawTelemetryReadback size={}",
+            size_of::<crate::RawTelemetryReadback>()
+        );
+        assert!(
+            size_of::<crate::ReadOnlyResponse>() <= 1_024,
+            "ReadOnlyResponse size={}",
+            size_of::<crate::ReadOnlyResponse>()
+        );
         assert!(size_of::<SessionOutput>() <= 1024);
         assert_eq!(size_of::<TransportAction>(), 64);
     }

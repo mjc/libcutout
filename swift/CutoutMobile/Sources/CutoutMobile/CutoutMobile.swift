@@ -721,6 +721,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let distance: Distance?
     public let limpHomeRange: Distance?
     public let pitch: Angle?
+    public let balanceAngle: Angle?
     public let roll: Angle?
     public let footpad: FootpadTelemetry?
     public let batteryLevelReported: BatteryLevel?
@@ -745,6 +746,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         distance: Distance? = nil,
         limpHomeRange: Distance? = nil,
         pitch: Angle? = nil,
+        balanceAngle: Angle? = nil,
         roll: Angle? = nil,
         footpad: FootpadTelemetry? = nil,
         batteryLevelReported: BatteryLevel? = nil,
@@ -768,6 +770,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.distance = distance
         self.limpHomeRange = limpHomeRange
         self.pitch = pitch
+        self.balanceAngle = balanceAngle
         self.roll = roll
         self.footpad = footpad
         self.batteryLevelReported = batteryLevelReported
@@ -794,6 +797,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             distance: dto.distance?.value,
             limpHomeRange: dto.limpHomeRange?.value,
             pitch: dto.pitch?.value,
+            balanceAngle: dto.balanceAngle?.value,
             roll: dto.roll?.value,
             footpad: dto.footpad.map(FootpadTelemetry.init),
             batteryLevelReported: dto.batteryLevelReported?.value,
@@ -972,6 +976,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let powerFlow: PowerFlowDirection?
     public let motorCurrent: PhaseCurrent?
     public let boardAngle: Angle?
+    public let balanceAngle: Angle?
     public let controllerTemperature: Temperature?
     public let motorTemperature: Temperature?
     public let footpad: FootpadTelemetry?
@@ -995,6 +1000,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         powerFlow: PowerFlowDirection? = nil,
         motorCurrent: PhaseCurrent? = nil,
         boardAngle: Angle? = nil,
+        balanceAngle: Angle? = nil,
         controllerTemperature: Temperature? = nil,
         motorTemperature: Temperature? = nil,
         footpad: FootpadTelemetry? = nil,
@@ -1017,6 +1023,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.powerFlow = powerFlow
         self.motorCurrent = motorCurrent
         self.boardAngle = boardAngle
+        self.balanceAngle = balanceAngle
         self.controllerTemperature = controllerTemperature
         self.motorTemperature = motorTemperature
         self.footpad = footpad
@@ -1045,6 +1052,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             powerFlow: telemetry.powerFlow,
             motorCurrent: telemetry.motorCurrent,
             boardAngle: telemetry.pitch,
+            balanceAngle: telemetry.balanceAngle,
             controllerTemperature: telemetry.controllerTemperature,
             motorTemperature: telemetry.motorTemperature,
             footpad: telemetry.footpad,
@@ -2920,6 +2928,14 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
         0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
     ]))!
 
+    public static let vescNordicUartService = BluetoothUuid(Data([
+        0x6e, 0x40, 0x00, 0x01,
+        0xb5, 0xa3,
+        0xf3, 0x93,
+        0xe0, 0xa9,
+        0xe5, 0x0e, 0x24, 0xdc, 0xca, 0x9e,
+    ]))!
+
     public static let vescNordicUartWrite = BluetoothUuid(Data([
         0x6e, 0x40, 0x00, 0x02,
         0xb5, 0xa3,
@@ -3095,8 +3111,8 @@ public enum CoreBluetoothSession: Sendable {
         case .electricUnicycle(let session):
             try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
         case .vescOnewheel(let session):
-            try session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
-                + session.perform(.requestTelemetry, at: monotonicMilliseconds)
+            try session.perform(.requestTelemetry, at: monotonicMilliseconds)
+                + session.linkUp(at: monotonicMilliseconds, writeLimit: writeLimit)
         }
     }
 
@@ -3279,12 +3295,15 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let runner: CoreBluetoothSessionRunner
     private let retainedSink: CoreBluetoothOperationSink
     private let executor: CoreBluetoothOperationExecutor
+    private let executionQueue: DispatchQueue?
     private let retryCommandOnLinkUp: DeviceCommand?
     private let retryDelay: DispatchTimeInterval
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
     private var pendingRetryTimestamp: MonotonicMilliseconds?
     private var receivedRealtimeTelemetrySinceLinkUp = false
+    private var pendingOperationsAfterSubscription: [CoreBluetoothPlannedOperation] = []
+    private var waitingForSubscriptionChannel: BluetoothUuid?
 
     public init(
         session: CoreBluetoothSession,
@@ -3292,7 +3311,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         writeLimit: TransportWriteLimitBytes,
         operationSink: CoreBluetoothOperationSink,
         retryCommandOnLinkUp: DeviceCommand? = nil,
-        retryDelay: DispatchTimeInterval = .seconds(1)
+        retryDelay: DispatchTimeInterval = .seconds(1),
+        executionQueue: DispatchQueue? = nil
     ) {
         self.platformIdentifier = advertisement.peripheralIdentifier
         self.runner = CoreBluetoothSessionRunner(
@@ -3306,6 +3326,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         )
         self.retainedSink = operationSink
         self.executor = CoreBluetoothOperationExecutor(sink: operationSink)
+        self.executionQueue = executionQueue
         self.retryCommandOnLinkUp = retryCommandOnLinkUp
         self.retryDelay = retryDelay
     }
@@ -3376,6 +3397,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     @discardableResult
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelPendingRetry()
+        pendingOperationsAfterSubscription.removeAll()
+        waitingForSubscriptionChannel = nil
         let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
         record(.linkDown(
             platformIdentifier: platformIdentifier,
@@ -3385,13 +3408,44 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         return step
     }
 
+    /// Completes link-up operations after CoreBluetooth confirms notifications are enabled.
+    public func handleNotificationStateUpdate(
+        channel: BluetoothUuid,
+        isNotifying: Bool,
+        error: Error?
+    ) {
+        guard waitingForSubscriptionChannel == channel else { return }
+        waitingForSubscriptionChannel = nil
+        guard error == nil, isNotifying else {
+            pendingOperationsAfterSubscription.removeAll()
+            return
+        }
+        let pending = pendingOperationsAfterSubscription
+        pendingOperationsAfterSubscription.removeAll()
+        executeAndRecord(pending)
+    }
+
     private func executeAndRecord(_ operations: [CoreBluetoothPlannedOperation]) {
+        if waitingForSubscriptionChannel != nil {
+            pendingOperationsAfterSubscription.append(contentsOf: operations)
+            return
+        }
+
+        var deferAfterSubscription = false
         operations.forEach { operation in
+            if deferAfterSubscription {
+                pendingOperationsAfterSubscription.append(operation)
+                return
+            }
             executor.execute(operation)
             record(.operation(
                 platformIdentifier: platformIdentifier,
                 operation: operation
             ))
+            if case let .subscribe(channel) = operation {
+                waitingForSubscriptionChannel = channel
+                deferAfterSubscription = true
+            }
         }
     }
 
@@ -3409,24 +3463,41 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             guard let self else {
                 return
             }
-            guard self.pendingRetryTimestamp == monotonicMilliseconds else {
-                return
+            let runRetry = {
+                self.runRetryCommandIfNeeded(
+                    retryCommandOnLinkUp,
+                    at: monotonicMilliseconds
+                )
             }
-            self.pendingRetry = nil
-            self.pendingRetryTimestamp = nil
-            do {
-                _ = try self.handleCommand(retryCommandOnLinkUp, at: monotonicMilliseconds)
-            } catch {
-                self.scheduleRetryIfNeeded(at: monotonicMilliseconds)
-                return
+            if let executionQueue = self.executionQueue {
+                executionQueue.async(execute: DispatchWorkItem(block: runRetry))
+            } else {
+                runRetry()
             }
-            guard !self.receivedRealtimeTelemetrySinceLinkUp else {
-                return
-            }
-            self.scheduleRetryIfNeeded(at: monotonicMilliseconds)
         }
         pendingRetry = retry
         DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay, execute: retry)
+    }
+
+    private func runRetryCommandIfNeeded(
+        _ retryCommandOnLinkUp: DeviceCommand,
+        at monotonicMilliseconds: MonotonicMilliseconds
+    ) {
+        guard pendingRetryTimestamp == monotonicMilliseconds else {
+            return
+        }
+        pendingRetry = nil
+        pendingRetryTimestamp = nil
+        do {
+            _ = try handleCommand(retryCommandOnLinkUp, at: monotonicMilliseconds)
+        } catch {
+            scheduleRetryIfNeeded(at: monotonicMilliseconds)
+            return
+        }
+        guard !receivedRealtimeTelemetrySinceLinkUp else {
+            return
+        }
+        scheduleRetryIfNeeded(at: monotonicMilliseconds)
     }
 
     private func cancelPendingRetry() {
