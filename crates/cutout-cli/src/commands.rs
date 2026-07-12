@@ -38,10 +38,10 @@ use cutout_protocols::{
     BegodeCapacityEvidence, BegodeCapacitySelection, BegodeFrameParseResult,
     BegodeFrameReassembler, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
     BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
-    NOSFET_AERO_SESSION_KEY, RefloatReadOnlyRequest, RefloatRealtimeValue, RefloatReply,
-    RefloatStreamDecoder, RefloatStreamResult, RegisteredReadOnlySession, VESC_NOTIFY_CHANNEL,
-    VESC_WRITE_CHANNEL, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
-    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask,
+    NOSFET_AERO_SESSION_KEY, ReadOnlySession, RefloatReadOnlyRequest, RefloatRealtimeValue,
+    RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredReadOnlySession,
+    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VescReadOnlyCodec, VescReadOnlyReply,
+    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask,
     begode_falcon_read_only_session_with_voltage_profile, encode_refloat_request,
     find_session_registration, select_begode_pack_capacity_from_annotations,
     select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
@@ -51,8 +51,8 @@ use tracing::{debug, info};
 
 use crate::cli::{
     CaptureArgs, Cli, Command, DashboardArgs, PevcapArgs, PevcapCommand, PevcapConvertArgs,
-    PevcapFormat, RawSubscribeArgs, ReadProbe, SessionProfile, TargetedScanArgs, VescProbe,
-    VescProbeArgs,
+    PevcapFormat, PevcapReplayProfile, RawSubscribeArgs, ReadProbe, SessionProfile,
+    TargetedScanArgs, VescProbe, VescProbeArgs,
 };
 use crate::dashboard::{
     DashboardCaptureProvenance, DashboardState, DashboardUpdate, firmware_summary_string,
@@ -172,10 +172,32 @@ const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
 fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
     let input = fs::read(&args.input)?;
     let capture = PevcapCapture::decode(&input, pevcap_encoding(args.input_format))?;
-    let report = replay_pevcap_capture(
-        &capture,
-        selected_pevcap_replay_profile(&capture, args.profile)?,
-    )?;
+    let replay_vesc = matches!(args.profile, PevcapReplayProfile::Vesc)
+        || (matches!(args.profile, PevcapReplayProfile::Auto)
+            && capture
+                .header
+                .annotations
+                .iter()
+                .any(|annotation| annotation == "route=vesc_onewheel"));
+    let report = if replay_vesc {
+        replay_pevcap_with_session(
+            &capture,
+            ReadOnlySession::<cutout_protocols::VescGenericModel, true>::default(),
+        )?
+    } else {
+        replay_pevcap_capture(
+            &capture,
+            selected_pevcap_replay_profile(
+                &capture,
+                match args.profile {
+                    PevcapReplayProfile::Auto => SessionProfile::Auto,
+                    PevcapReplayProfile::Aero => SessionProfile::Aero,
+                    PevcapReplayProfile::Falcon => SessionProfile::Falcon,
+                    PevcapReplayProfile::Vesc => unreachable!("VESC replay handled above"),
+                },
+            )?,
+        )?
+    };
     info!("{}", render_pevcap_replay_report(&report));
     if args.read_only_jsonl {
         for line in render_read_only_responses_jsonl(&report.read_only_response_events) {
@@ -5123,6 +5145,35 @@ mod tests {
         for case in PEVCAP_REPLAY_CORPUS {
             let capture = PevcapCapture::decode(case.jsonl.as_bytes(), PevcapEncoding::Jsonl)
                 .unwrap_or_else(|error| panic!("{} should decode: {error}", case.name));
+            if case.require_public_hardware_provenance {
+                assert!(
+                    capture
+                        .header
+                        .annotations
+                        .iter()
+                        .any(|annotation| annotation == "capture_privacy=public"),
+                    "{} must be sanitized for public replay",
+                    case.name
+                );
+                assert!(
+                    capture
+                        .header
+                        .annotations
+                        .iter()
+                        .any(|annotation| annotation == "capture_evidence=hardware_tested"),
+                    "{} must retain hardware evidence provenance",
+                    case.name
+                );
+                assert!(
+                    capture
+                        .records
+                        .iter()
+                        .any(|record| record.direction == PevcapDirection::Inbound
+                            && record.bytes.len() == 20),
+                    "{} must include a captured 20-byte BLE notification",
+                    case.name
+                );
+            }
             let profile = selected_pevcap_replay_profile(&capture, SessionProfile::Auto)
                 .unwrap_or_else(|error| panic!("{} should auto-select: {error}", case.name));
             let report = replay_pevcap_capture(&capture, profile)
@@ -5150,6 +5201,44 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn pevcap_replay_vesc_refloat_hardware_fixture_matches_chunk_modes() {
+        let capture = PevcapCapture::decode(
+            include_str!("../fixtures/pevcap/vesc-refloat-live.jsonl").as_bytes(),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("VESC Refloat fixture should decode");
+
+        let report = replay_pevcap_with_session(
+            &capture,
+            ReadOnlySession::<cutout_protocols::VescGenericModel, true>::default(),
+        )
+        .expect("VESC Refloat fixture should replay");
+
+        assert_eq!(report.replay_records, ReplayRecordCount::new(39));
+        assert_eq!(report.telemetry, ReplayTelemetryCount::new(2));
+        assert_eq!(
+            report.read_only_responses,
+            ReplayReadOnlyResponseCount::new(1)
+        );
+        assert!(report.chunk_one_byte_matches);
+        assert!(report.chunk_arbitrary_matches);
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .speed
+                .map(|speed| speed.value.get()),
+            Some(-359)
+        );
+        assert_eq!(
+            report
+                .telemetry_snapshot
+                .voltage
+                .map(|voltage| voltage.value.get()),
+            Some(61_500)
+        );
     }
 
     #[test]
@@ -5305,6 +5394,7 @@ mod tests {
         jsonl: &'static str,
         profile: SelectedSessionProfile,
         minimum_chunk_plan_len: ReplayChunkPlanLen,
+        require_public_hardware_provenance: bool,
     }
 
     const PEVCAP_REPLAY_CORPUS: &[PevcapReplayCorpusCase] = &[
@@ -5313,6 +5403,7 @@ mod tests {
             jsonl: include_str!("../fixtures/pevcap/aero-veteran-live.jsonl"),
             profile: selected_aero_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(5),
+            require_public_hardware_provenance: true,
         },
         PevcapReplayCorpusCase {
             name: "nf2557-dashboard-verification",
@@ -5321,12 +5412,14 @@ mod tests {
             ),
             profile: selected_aero_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(6),
+            require_public_hardware_provenance: false,
         },
         PevcapReplayCorpusCase {
             name: "falcon-begode-banner",
             jsonl: include_str!("../fixtures/pevcap/falcon-begode-banner.jsonl"),
             profile: selected_falcon_session_profile(),
             minimum_chunk_plan_len: ReplayChunkPlanLen::new(4),
+            require_public_hardware_provenance: true,
         },
     ];
 

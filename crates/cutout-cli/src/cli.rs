@@ -515,8 +515,8 @@ pub(crate) struct PevcapReplayArgs {
     pub(crate) input_format: PevcapFormat,
 
     /// Read-only protocol profile used for replay.
-    #[arg(long, value_enum, default_value_t = SessionProfile::Auto)]
-    pub(crate) profile: SessionProfile,
+    #[arg(long, value_enum, default_value_t = PevcapReplayProfile::Auto)]
+    pub(crate) profile: PevcapReplayProfile,
 
     /// Emit diagnostic snapshots as JSONL records after the replay summary.
     #[arg(long = "diagnostics-jsonl")]
@@ -525,6 +525,15 @@ pub(crate) struct PevcapReplayArgs {
     /// Emit read-only response DTOs as JSONL records after the replay summary.
     #[arg(long = "read-only-jsonl")]
     pub(crate) read_only_jsonl: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub(crate) enum PevcapReplayProfile {
+    #[default]
+    Auto,
+    Aero,
+    Falcon,
+    Vesc,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -597,9 +606,9 @@ mod tests {
     use super::{
         CaptureArgs, CaptureDistributionArg, CaptureEvidenceArg, CaptureLabelArg,
         CapturePrivacyArg, Cli, Command, DEFAULT_SCAN_SECONDS, DashboardArgs, PevcapArgs,
-        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, RawSubscribeArgs,
-        ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs, VescProbe,
-        VescProbeArgs,
+        PevcapCommand, PevcapConvertArgs, PevcapFormat, PevcapReplayArgs, PevcapReplayProfile,
+        RawSubscribeArgs, ReadProbe, ScanArgs, SessionProfile, TargetArgs, TargetedScanArgs,
+        VescProbe, VescProbeArgs,
     };
 
     fn assert_contains_all(haystack: &str, needles: &[&str]) {
@@ -1465,7 +1474,7 @@ mod tests {
                 command: PevcapCommand::Replay(PevcapReplayArgs {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Binary,
-                    profile: SessionProfile::Falcon,
+                    profile: PevcapReplayProfile::Falcon,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 })
@@ -1492,7 +1501,36 @@ mod tests {
                 command: PevcapCommand::Replay(PevcapReplayArgs {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Binary,
-                    profile: SessionProfile::Auto,
+                    profile: PevcapReplayProfile::Auto,
+                    diagnostics_jsonl: false,
+                    read_only_jsonl: false,
+                })
+            })
+        );
+    }
+
+    #[test]
+    fn parses_pevcap_replay_command_with_vesc_profile() {
+        let cli = Cli::try_parse_from([
+            "cutout",
+            "pevcap",
+            "replay",
+            "--input",
+            "vesc.jsonl",
+            "--input-format",
+            "jsonl",
+            "--profile",
+            "vesc",
+        ])
+        .expect("parser accepts VESC PEVCAP replay");
+
+        assert_eq!(
+            cli.command,
+            Command::Pevcap(PevcapArgs {
+                command: PevcapCommand::Replay(PevcapReplayArgs {
+                    input: PathBuf::from("vesc.jsonl"),
+                    input_format: PevcapFormat::Jsonl,
+                    profile: PevcapReplayProfile::Vesc,
                     diagnostics_jsonl: false,
                     read_only_jsonl: false,
                 })
@@ -1520,7 +1558,7 @@ mod tests {
                 command: PevcapCommand::Replay(PevcapReplayArgs {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Jsonl,
-                    profile: SessionProfile::Auto,
+                    profile: PevcapReplayProfile::Auto,
                     diagnostics_jsonl: true,
                     read_only_jsonl: false,
                 })
@@ -1548,7 +1586,7 @@ mod tests {
                 command: PevcapCommand::Replay(PevcapReplayArgs {
                     input: PathBuf::from("session.pevcap"),
                     input_format: PevcapFormat::Jsonl,
-                    profile: SessionProfile::Auto,
+                    profile: PevcapReplayProfile::Auto,
                     diagnostics_jsonl: false,
                     read_only_jsonl: true,
                 })

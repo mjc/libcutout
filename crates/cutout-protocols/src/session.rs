@@ -493,7 +493,7 @@ impl ReadOnlyNotificationDecoder for BegodeNotificationDecoder {
 }
 
 /// Generic VESC notification decoder for read-only UART replies.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct VescNotificationDecoder {
     stream: VescReadOnlyStreamDecoder,
     refloat_stream: RefloatStreamDecoder,

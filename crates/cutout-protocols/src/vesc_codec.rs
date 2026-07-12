@@ -640,7 +640,7 @@ impl VescReadOnlyCodec {
 }
 
 /// Bounded streaming VESC decoder with libcutout-owned output types.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct VescReadOnlyStreamDecoder {
     buffer: [u8; VESC_MAX_FRAME_LEN],
     read_position: usize,
