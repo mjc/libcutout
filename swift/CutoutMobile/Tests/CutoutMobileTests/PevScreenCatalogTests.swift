@@ -84,8 +84,8 @@ final class PevScreenCatalogTests: XCTestCase {
         let tabs = PevRideTabs.vescRideTabs()
 
         XCTAssertEqual(tabs.map(\.title), ["Ride", "Debug", "Map", "Logs"])
-        XCTAssertEqual(tabs[2].disabledReason, "LIBCU-423")
-        XCTAssertEqual(tabs[3].disabledReason, "LIBCU-423")
+        XCTAssertEqual(tabs[2].disabledReason, "LIBCU-517")
+        XCTAssertEqual(tabs[3].disabledReason, "LIBCU-518")
         XCTAssertFalse(tabs[2].isEnabled)
         XCTAssertFalse(tabs[3].isEnabled)
     }
@@ -648,8 +648,8 @@ extension PevScreenCatalogTests {
         XCTAssertEqual(ride.tabs, [
             PevScreenTab(title: "Ride", isSelected: true),
             PevScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
-            PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-423"),
-            PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-423"),
+            PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-517"),
+            PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-518"),
         ])
         XCTAssertEqual(ride.tabs.first { $0.title == "Pack" }?.destinationScreenID, .bmsOverview)
     }

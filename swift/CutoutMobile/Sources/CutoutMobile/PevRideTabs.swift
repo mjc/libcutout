@@ -1,14 +1,12 @@
 import Foundation
 
 public enum PevRideTabs {
-    private static let unavailableReason = "LIBCU-423"
-
     public static func eucRideTabs(selected: PevScreenID? = nil) -> [PevScreenTab] {
         [
             PevScreenTab(title: "Ride", isSelected: selected == nil || selected == .eucRide, destinationTarget: .screen(.eucRide)),
             PevScreenTab(title: "Pack", isSelected: selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData, destinationScreenID: .bmsOverview),
-            unavailableTab(title: "Map"),
-            unavailableTab(title: "Tune"),
+            unavailableTab(title: "Map", reason: "LIBCU-517"),
+            unavailableTab(title: "Tune", reason: "LIBCU-518"),
         ]
     }
 
@@ -16,12 +14,12 @@ public enum PevRideTabs {
         [
             PevScreenTab(title: "Ride", isSelected: selected == nil, destinationTarget: .vescRide),
             PevScreenTab(title: "Debug", isSelected: selected == .vescDebug, destinationScreenID: .vescDebug),
-            unavailableTab(title: "Map"),
-            unavailableTab(title: "Logs")
+            unavailableTab(title: "Map", reason: "LIBCU-517"),
+            unavailableTab(title: "Logs", reason: "LIBCU-423")
         ]
     }
 
-    private static func unavailableTab(title: String) -> PevScreenTab {
-        PevScreenTab(title: title, isSelected: false, disabledReason: unavailableReason)
+    private static func unavailableTab(title: String, reason: String) -> PevScreenTab {
+        PevScreenTab(title: title, isSelected: false, disabledReason: reason)
     }
 }

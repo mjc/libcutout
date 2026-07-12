@@ -1219,8 +1219,8 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
             tabs: [
                 PevScreenTab(title: "Ride", isSelected: true),
                 PevScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
-                PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-423"),
-                PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-423"),
+                PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-517"),
+                PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-518"),
             ]
         ),
         placeholderScreen(
