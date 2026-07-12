@@ -91,7 +91,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private var routedContent: some View {
-        if let screen = screen(for: route) {
+        if route == .vescDebug {
+            VescDebugScreenView(
+                snapshot: model.vescRideSnapshot,
+                phase: model.phase,
+                notificationCount: model.displayState.notificationCount,
+                captureStatusText: model.captureStatusText
+            )
+        } else if let screen = screen(for: route) {
             PevScreenContainer(
                 screen: screen,
                 devicePickerScanState: model.devicePickerScanState,

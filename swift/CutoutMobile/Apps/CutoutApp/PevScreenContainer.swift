@@ -48,7 +48,7 @@ struct PevScreenContainer: View {
                 bmsSnapshot: bmsSnapshot
             )
         case .vescDebug:
-            VescDebugScreenView(screen: screen)
+            EmptyView()
         }
     }
 }

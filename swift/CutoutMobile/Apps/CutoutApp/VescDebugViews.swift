@@ -2,13 +2,42 @@ import CutoutMobile
 import SwiftUI
 
 struct VescDebugScreenView: View {
-    let screen: PevScreen
+    let snapshot: VescRideSnapshot?
+    let phase: SessionConnectionPhase
+    let notificationCount: UInt64
+    let captureStatusText: String?
+
+    private var tiles: [PevDashboardTile] {
+        guard let snapshot else { return [] }
+        return [
+            PevDashboardTile(label: "duty", value: snapshot.dutyCycle.map { RideUnits.percentText(abs(Int($0.permille)) / 10) } ?? "--", unit: "%", detail: "motor duty cycle", accent: .orange),
+            PevDashboardTile(label: "headroom", value: percentText(snapshot.dutyHeadroom), unit: "%", detail: "remaining duty", accent: .yellow),
+            PevDashboardTile(label: "board", value: angleText(snapshot.boardAngle), unit: "°", detail: "balance \(angleText(snapshot.balanceAngle))°", accent: .cyan),
+            PevDashboardTile(label: "controller", value: temperatureText(snapshot.controllerTemperature), unit: "°C", detail: "motor \(temperatureText(snapshot.motorTemperature)) °C", accent: .green),
+        ]
+    }
+
+    private var rows: [PevDashboardKeyValueRow] {
+        guard let snapshot else {
+            return [PevDashboardKeyValueRow(id: "phase", label: "Session", value: phase.displayText)]
+        }
+        return [
+            PevDashboardKeyValueRow(id: "phase", label: "Session", value: phase.displayText),
+            PevDashboardKeyValueRow(id: "protocol", label: "Protocol", value: String(describing: snapshot.subProtocol)),
+            PevDashboardKeyValueRow(id: "state", label: "State", value: String(describing: snapshot.operatingState)),
+            PevDashboardKeyValueRow(id: "notifications", label: "Notifications", value: String(notificationCount)),
+            PevDashboardKeyValueRow(id: "voltage", label: "Pack voltage", value: "\(voltageText(snapshot.batteryVoltage)) V"),
+            PevDashboardKeyValueRow(id: "battery-current", label: "Battery current", value: "\(currentText(snapshot.batteryCurrent)) A"),
+            PevDashboardKeyValueRow(id: "motor-current", label: "Motor current", value: "\(phaseCurrentText(snapshot.motorCurrent)) A"),
+            PevDashboardKeyValueRow(id: "footpad", label: "Footpad", value: snapshot.footpad?.stateDisplayText ?? "--"),
+        ]
+    }
 
     var body: some View {
         PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20, showsHeader: false) { scale, columns in
             PevScreenTitleBlock(
-                title: screen.title,
-                subtitle: screen.subtitle,
+                title: snapshot?.title ?? "VESC Debug",
+                subtitle: captureStatusText ?? phase.displayText,
                 scale: scale,
                 titleFontSize: 29,
                 subtitleFontSize: 14,
@@ -16,85 +45,21 @@ struct VescDebugScreenView: View {
                 subtitleLineLimit: 2
             )
 
-            if let profile = screen.deviceCard {
-                PevDashboardIdentityCard(
-                    title: profile.title,
-                    detail: profile.detail,
-                    scale: scale,
-                    titleFontSize: 22,
-                    detailFontSize: 13,
-                    titleMinimumScaleFactor: 0.75,
-                    detailMinimumScaleFactor: 0.72,
-                    trailingStatus: nil,
-                    trailingStatusFill: PevColors.cardStroke,
-                    trailingStatusForeground: PevColors.primaryText,
-                    trailingStatusWidth: 18,
-                    trailingStatusHeight: 32,
-                    cornerRadius: 25,
-                    height: 87
-                )
-                    .padding(.top, 10 * scale)
-            }
-
             PevDashboardGrid(columns: columns, spacing: 20 * scale) {
-                ForEach(screen.dashboardTiles) { tile in
-                    PevDashboardMetricTile(
-                        label: tile.label,
-                        value: tile.value,
-                        unit: tile.unit,
-                        detail: tile.detail,
-                        accent: tile.accent.color,
-                        scale: scale,
-                        cornerRadius: 16,
-                        minHeight: 104
-                    )
+                ForEach(tiles) { tile in
+                    PevDashboardMetricTile(tile, scale: scale, cornerRadius: 16, minHeight: 104)
                 }
             }
             .padding(.top, 8 * scale)
 
-            if let summaryTitle = screen.summaryTitle {
-                Text(summaryTitle)
-                    .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(PevColors.primaryText)
-                    .padding(.top, 0)
-            }
-
-            if !screen.summaryRows.isEmpty {
-                PevDashboardKeyValueRows(
-                    rows: screen.summaryRows.map { row in
-                        PevDashboardKeyValueRow(
-                            id: row.id,
-                            label: row.label,
-                            value: row.value,
-                            valueColor: row.accent?.color
-                        )
-                    },
-                    scale: scale,
-                    fill: PevColors.cardFill,
-                    stroke: PevColors.cardStroke,
-                    labelColor: PevColors.muted,
-                    valueColor: PevColors.primaryText
-                )
-            }
-
-            if let guardrail = screen.faultCard {
-                Text(guardrail.title)
-                    .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(PevColors.primaryText)
-                    .padding(.top, 6 * scale)
-
-                PevDashboardFaultDetailCard(
-                    detail: guardrail.detail,
-                    accent: guardrail.accent.color,
-                    scale: scale,
-                    fontSize: 13,
-                    horizontalAlignment: .center,
-                    horizontalPadding: 20,
-                    height: 57,
-                    cornerRadius: 18,
-                    minimumScaleFactor: 0.72
-                )
-            }
+            PevDashboardKeyValueRows(
+                rows: rows,
+                scale: scale,
+                fill: PevColors.cardFill,
+                stroke: PevColors.cardStroke,
+                labelColor: PevColors.muted,
+                valueColor: PevColors.primaryText
+            )
         }
     }
 }
