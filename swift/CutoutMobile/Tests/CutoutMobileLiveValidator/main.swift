@@ -75,20 +75,15 @@ private final class CutoutLiveValidator {
             return
         }
 
-        if let row = state.rows.first(where: \.isSupported) {
-            didRequestPairing = true
-            let didPair = core.pair(platformIdentifier: row.id)
-            appendDiagnostic("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
-            return
-        }
-
         guard let row = state.rows.first(where: \.isAeroProbeCandidate) else {
             return
         }
 
         didRequestPairing = true
-        let didPair = core.pair(platformIdentifier: row.id, model: .aero)
-        appendDiagnostic("auto_pair_probe_aero=\(didPair) id=\(row.id) title=\(row.title)")
+        let didPair = row.isSupported
+            ? core.pair(platformIdentifier: row.id)
+            : core.pair(platformIdentifier: row.id, model: .aero)
+        appendDiagnostic("auto_pair_aero=\(didPair) id=\(row.id) title=\(row.title)")
     }
 
     private func appendRecord(_ record: String) {
