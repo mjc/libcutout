@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DevicePickerView: View {
     let scanState: DevicePickerScanState?
+    var connectionPhase: SessionConnectionPhase? = nil
     let captureStatusText: String?
     let isRecordOnlyCapture: Bool
     let pair: (DevicePickerRow) -> Void
@@ -36,8 +37,8 @@ struct DevicePickerView: View {
             )
 
             PevDashboardScanningPill(
-                title: renderedScanState.statusText,
-                isScanning: renderedScanState.status == .scanning,
+                title: connectionStatusText,
+                isScanning: renderedScanState.status == .scanning || isConnecting,
                 scale: scale
             )
                 .padding(.top, 4 * scale)
@@ -183,6 +184,19 @@ struct DevicePickerView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .foregroundStyle(.white)
+    }
+
+    private var isConnecting: Bool {
+        switch connectionPhase {
+        case .connecting, .discoveringServices, .subscribing:
+            true
+        default:
+            false
+        }
+    }
+
+    private var connectionStatusText: String {
+        isConnecting ? "Connecting…" : renderedScanState.statusText
     }
 
     private var hasRecordOnlyDeviceKind: Bool {

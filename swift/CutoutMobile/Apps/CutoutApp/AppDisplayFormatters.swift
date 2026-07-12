@@ -85,9 +85,9 @@ extension PevScreen {
 extension SessionConnectionPhase {
     var opensRideScreen: Bool {
         switch self {
-        case .connecting, .discoveringServices, .subscribing, .live:
+        case .live:
             true
-        case .starting, .bluetoothUnavailable, .scanning, .failed:
+        case .starting, .bluetoothUnavailable, .scanning, .connecting, .discoveringServices, .subscribing, .failed:
             false
         }
     }

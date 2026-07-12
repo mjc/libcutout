@@ -1,11 +1,13 @@
 import CutoutMobile
 import Foundation
 
+@MainActor
 final class CutoutAppModel: ObservableObject {
     @Published private(set) var displayState = RideDisplayState()
     @Published private(set) var phase = SessionConnectionPhase.starting
     @Published private(set) var devicePickerScanState: DevicePickerScanState?
     @Published private(set) var selectedRideTitle: String?
+    @Published private(set) var selectedConnectionRoute: DevicePickerConnectionRoute?
     @Published private(set) var settingsReadback: SettingsReadback?
     @Published private(set) var faultHistoryReadback: FaultHistoryReadback?
     @Published private(set) var bmsSnapshot: BmsSnapshot?
@@ -88,6 +90,7 @@ final class CutoutAppModel: ObservableObject {
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
             selectedRideTitle = selectedRow?.title
+            selectedConnectionRoute = selectedRow?.connectionRoute
             syncLiveActivity()
         }
         return didPair
@@ -95,6 +98,7 @@ final class CutoutAppModel: ObservableObject {
 
     func recordOnly(platformIdentifier: String, deviceKind: String) -> Bool {
         selectedRideTitle = nil
+        selectedConnectionRoute = nil
         captureLabel = nil
         let trimmedKind = deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKind.isEmpty else { return false }
@@ -165,6 +169,7 @@ final class CutoutAppModel: ObservableObject {
         captureLabel = nil
         recordOnlyDeviceKind = nil
         selectedRideTitle = nil
+        selectedConnectionRoute = nil
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         selectedDeviceStore.clear()
@@ -202,7 +207,7 @@ final class CutoutAppModel: ObservableObject {
 
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
         devicePickerScanState = scanState
-        guard phase == .starting else { return }
+        guard phase == .starting || phase == .scanning else { return }
         guard let platformIdentifier = selectedDeviceStore.platformIdentifier else { return }
         guard scanState.storedSupportedRow(platformIdentifier: platformIdentifier) != nil else { return }
         _ = pair(platformIdentifier: platformIdentifier)

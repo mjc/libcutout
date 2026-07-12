@@ -21,6 +21,7 @@ struct ContentView: View {
             if route == .devicePicker {
                 DevicePickerView(
                     scanState: model.devicePickerScanState,
+                    connectionPhase: model.phase,
                     captureStatusText: model.captureStatusText,
                     isRecordOnlyCapture: model.isRecordOnlyCapture,
                     pair: pair,
@@ -60,14 +61,14 @@ struct ContentView: View {
         guard row.isSupported else { return }
 
         guard model.pair(platformIdentifier: row.id) else { return }
-        route = CutoutAppRoute.route(for: row.connectionRoute)
     }
 
     private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
         guard !model.isRecordOnlyCapture else { return }
+        guard model.selectedRideTitle != nil else { return }
         guard phase.opensRideScreen else { return }
         guard route == .devicePicker else { return }
-        route = .eucRide
+        route = CutoutAppRoute.route(for: model.selectedConnectionRoute)
     }
 
     private func selectScreen(_ screenID: PevScreenID) {

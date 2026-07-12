@@ -3,6 +3,7 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppModelTests: XCTestCase {
+    @MainActor
     func testProtocolIdentityCandidateDoesNotOverwriteSelectedRideTitle() {
         let model = CutoutAppModel()
         let supported = DevicePickerCandidateSupport.supported(

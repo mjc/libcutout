@@ -15,14 +15,10 @@ enum CutoutAppRoute: Equatable {
     case capture
 
     static func initialRoute(
-        arguments: [String] = CommandLine.arguments,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        arguments _: [String] = CommandLine.arguments,
+        environment _: [String: String] = ProcessInfo.processInfo.environment
     ) -> CutoutAppRoute {
-        if let id = configuredScreenID(arguments: arguments, environment: environment) {
-            return route(for: id)
-        }
-
-        return .devicePicker
+        .devicePicker
     }
 
     static func route(for screenID: PevScreenID) -> CutoutAppRoute {
@@ -59,19 +55,4 @@ enum CutoutAppRoute: Equatable {
         }
     }
 
-    private static func configuredScreenID(arguments: [String], environment: [String: String]) -> PevScreenID? {
-        if let id = screenID(after: "--preview-screen", in: arguments) {
-            return id
-        }
-        if let value = environment["CUTOUT_PREVIEW_SCREEN"], let id = PevScreenID(rawValue: value) {
-            return id
-        }
-        return nil
-    }
-
-    private static func screenID(after flag: String, in arguments: [String]) -> PevScreenID? {
-        guard let index = arguments.firstIndex(of: flag),
-              arguments.indices.contains(index + 1) else { return nil }
-        return PevScreenID(rawValue: arguments[index + 1])
-    }
 }

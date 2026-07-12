@@ -2,7 +2,6 @@ import CutoutMobile
 import SwiftUI
 
 struct EucRideScreenView: View {
-    let screen: PevScreen
     let rideState: EucRideScreenState?
     let rideTitle: String?
     let captureStatusText: String?
@@ -13,23 +12,22 @@ struct EucRideScreenView: View {
         if let rideState {
             return (rideState.speedText, rideState.speedUnit)
         }
-        let parts = screen.primaryValue.split(separator: " ", maxSplits: 1).map(String.init)
-        return (parts.first ?? screen.primaryValue, parts.dropFirst().first ?? "")
+        return ("--", "")
     }
 
     private var phaseText: String {
-        rideState?.statusText ?? screen.displaySubtitle
+        rideState?.statusText ?? "Connecting"
     }
 
     private var titleText: String {
-        rideTitle ?? screen.title
+        rideTitle ?? "EUC"
     }
 
     private var warningCard: PevWarningCard? {
         if let warningState {
             return PevWarningCard(title: warningState.title, detail: warningState.detail)
         }
-        return screen.warningCard
+        return nil
     }
 
     private var warningSeverity: EucRideWarningSeverity {
@@ -51,9 +49,9 @@ struct EucRideScreenView: View {
             if rideState.telemetry != nil {
                 return liveSafetyBars(for: rideState)
             }
-            return unavailableSafetyBars(from: screen.safetyBars)
+            return []
         }
-        return screen.safetyBars
+        return []
     }
 
     private var dashboardTiles: [PevDashboardTile] {
@@ -61,9 +59,9 @@ struct EucRideScreenView: View {
             if let telemetry = rideState.telemetry {
                 return liveDashboardTiles(from: rideState, telemetry: telemetry)
             }
-            return unavailableDashboardTiles(from: screen.dashboardTiles)
+            return []
         }
-        return screen.dashboardTiles
+        return []
     }
 
     var body: some View {

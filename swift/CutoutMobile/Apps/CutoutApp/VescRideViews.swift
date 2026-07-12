@@ -100,13 +100,14 @@ struct VescRideScreenView: View {
 
     private var boardAngleDetail: String? {
         guard let angle = liveSnapshot?.boardAngle else { return nil }
+        let balance = liveSnapshot?.balanceAngle.map { " · balance \(angleText($0))°" } ?? ""
         if angle.value < 0 {
-            return "nose down"
+            return "nose down\(balance)"
         }
         if angle.value > 0 {
-            return "nose up"
+            return "nose up\(balance)"
         }
-        return "level"
+        return "level\(balance)"
     }
 
     var body: some View {
