@@ -957,7 +957,7 @@ public enum VescSubProtocol: Equatable, Hashable, Sendable {
 }
 
 public struct VescRideSnapshot: Equatable, Hashable, Sendable {
-    public static let defaultTitle = "VESC Onewheel"
+    public static let defaultTitle = "VESC"
 
     public let title: String
     public let vehicleKind: VescVehicleKind

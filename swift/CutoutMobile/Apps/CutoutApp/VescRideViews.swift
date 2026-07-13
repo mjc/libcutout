@@ -10,11 +10,14 @@ struct VescRideScreenView: View {
     let selectScreen: (PevScreenID) -> Void
 
     private var title: String {
-        liveSnapshot?.title ?? "Refloat"
+        liveSnapshot?.title ?? VescRideSnapshot.defaultTitle
     }
 
     private var subtitle: String {
-        liveSnapshot?.screenSubtitle ?? "live"
+        if let liveSnapshot {
+            return liveSnapshot.screenSubtitle
+        }
+        return phase == .live ? "Telemetry pending" : phase.displayText
     }
 
     private var speedParts: (value: String, unit: String) {
@@ -59,9 +62,21 @@ struct VescRideScreenView: View {
         } ?? liveSnapshot.batteryLevelEstimated.map {
             "battery \(percentText($0)) estimated"
         }
-        let details = [battery, liveSnapshot.batteryCurrent.map { "current \(currentText($0)) A" }]
-            .compactMap { $0 }
+        let details = [
+            battery ?? "battery level unavailable",
+            liveSnapshot.batteryCurrent.map { "current \(currentText($0)) A" } ?? "current unavailable",
+        ]
         return details.joined(separator: " · ")
+    }
+
+    private var motorCurrentDetail: String {
+        guard let liveSnapshot, liveSnapshot.motorCurrent != nil else {
+            return "current unavailable"
+        }
+        return powerFlowDetail(
+            liveSnapshot.powerFlow,
+            fallback: "phase current"
+        )
     }
 
     private var dashboardTiles: [PevDashboardTile] {
@@ -78,14 +93,14 @@ struct VescRideScreenView: View {
                 label: "motor current",
                 value: phaseCurrentText(liveSnapshot.motorCurrent),
                 unit: "A",
-                detail: powerFlowDetail(liveSnapshot.powerFlow, fallback: "phase estimate"),
+                detail: motorCurrentDetail,
                 accent: .orange
             ),
             PevDashboardTile(
                 label: "board angle",
                 value: angleText(liveSnapshot.boardAngle),
                 unit: "°",
-                detail: boardAngleDetail ?? "board angle",
+                detail: boardAngleDetail ?? "angle unavailable",
                 accent: .cyan
             ),
             PevDashboardTile(

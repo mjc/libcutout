@@ -373,7 +373,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         let snapshot = try XCTUnwrap(VescRideSnapshot(displayState: displayState, title: nil))
 
-        XCTAssertEqual(snapshot.title, "VESC Onewheel")
+        XCTAssertEqual(snapshot.title, VescRideSnapshot.defaultTitle)
         XCTAssertEqual(snapshot.subProtocol, .generic)
         XCTAssertNil(snapshot.boardSpeed)
         XCTAssertNil(snapshot.dutyHeadroom)
