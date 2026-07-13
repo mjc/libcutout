@@ -1,5 +1,4 @@
 import CutoutMobile
-import Foundation
 
 enum CutoutAppRoute: Equatable {
     case devicePicker
@@ -14,10 +13,7 @@ enum CutoutAppRoute: Equatable {
     case vescLogs
     case capture
 
-    static func initialRoute(
-        arguments _: [String] = CommandLine.arguments,
-        environment _: [String: String] = ProcessInfo.processInfo.environment
-    ) -> CutoutAppRoute {
+    static func initialRoute() -> CutoutAppRoute {
         .devicePicker
     }
 

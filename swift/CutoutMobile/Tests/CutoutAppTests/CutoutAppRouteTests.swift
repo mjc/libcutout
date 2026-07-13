@@ -5,46 +5,6 @@ import CutoutMobile
 final class CutoutAppRouteTests: XCTestCase {
     deinit {}
 
-    func testPreviewArgumentsResolveToPreviewRoute() {
-        XCTAssertEqual(
-            CutoutAppRoute.initialRoute(
-                arguments: ["CutoutApp", "--preview-screen", PevScreenID.vescDebug.rawValue],
-                environment: [:]
-            ),
-            .vescDebug
-        )
-    }
-
-    func testPreviewEnvironmentResolvesToPreviewRoute() {
-        XCTAssertEqual(
-            CutoutAppRoute.initialRoute(
-                arguments: ["CutoutApp"],
-                environment: ["CUTOUT_PREVIEW_SCREEN": PevScreenID.liveActivity.rawValue]
-            ),
-            .liveActivity
-        )
-    }
-
-    func testPreviewArgumentsWinOverEnvironment() {
-        XCTAssertEqual(
-            CutoutAppRoute.initialRoute(
-                arguments: ["CutoutApp", "--preview-screen", PevScreenID.vescDebug.rawValue],
-                environment: ["CUTOUT_PREVIEW_SCREEN": PevScreenID.liveActivity.rawValue]
-            ),
-            .vescDebug
-        )
-    }
-
-    func testInvalidPreviewInputFallsBackToDevicePicker() {
-        XCTAssertEqual(
-            CutoutAppRoute.initialRoute(
-                arguments: ["CutoutApp", "--preview-screen", "not-real"],
-                environment: ["CUTOUT_PREVIEW_SCREEN": "also-not-real"]
-            ),
-            .devicePicker
-        )
-    }
-
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .devicePicker), .devicePicker)
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)

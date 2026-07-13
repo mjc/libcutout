@@ -141,9 +141,7 @@ a focused XCTest filter while keeping the same generated workspace path.
 `scripts/run-cutout-app.sh --launch-smoke` builds and launches the native macOS
 SwiftUI `CutoutApp` executable from a generated SwiftPM workspace, exits from
 the app launch delegate, and prints `cutout_app_launch=ok`. Omit
-`--launch-smoke` to keep the Mac app running interactively. Use
-`--preview-screen SCREEN_ID` or `CUTOUT_PREVIEW_SCREEN=SCREEN_ID` for preview
-screen overrides.
+`--launch-smoke` to keep the Mac app running interactively.
 
 `scripts/smoke-ios-app-metadata.sh` builds the iPhone app bundle and checks the
 bundle metadata that previously drifted, including portrait orientation and
