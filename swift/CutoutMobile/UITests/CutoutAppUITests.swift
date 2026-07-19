@@ -145,7 +145,8 @@ final class CutoutAppUITests: XCTestCase {
     @discardableResult
     private func pairAvailableDevice(_ family: ConnectedDeviceFamily) -> Bool {
         if let screen = connectedScreen() {
-            return screen.identifier == family.screenIdentifier
+            if screen.identifier == family.screenIdentifier { return true }
+            disconnectIfConnected()
         }
 
         let useButtons = app.buttons.matching(
