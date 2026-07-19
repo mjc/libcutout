@@ -19,6 +19,7 @@ if [[ "${1:-}" == "--build-only" ]]; then
   mode="build-for-testing"
   shift
 fi
+xcodebuild_args=("$@")
 
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=iPhone 17 Pro,OS=latest}}"
 package_dir="${CUTOUT_IOS_APP_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
@@ -66,6 +67,7 @@ rm -rf "$derived_data"
     OTHER_LDFLAGS="$rust_lib -liconv" \
     "${signing_args[@]}" \
     "${provisioning_args[@]}" \
+    "${xcodebuild_args[@]}" \
     build-for-testing
 
   if [[ "$mode" == "test" ]]; then
@@ -79,6 +81,7 @@ rm -rf "$derived_data"
       -parallel-testing-enabled NO \
       ONLY_ACTIVE_ARCH=YES \
       ARCHS=arm64 \
+      "${xcodebuild_args[@]}" \
       test-without-building
   fi
 )

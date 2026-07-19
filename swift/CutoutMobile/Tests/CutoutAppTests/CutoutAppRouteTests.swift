@@ -24,4 +24,13 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: nil), .devicePicker)
     }
 
+    func testPairingProgressOpensTheRideSurface() {
+        XCTAssertTrue(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
+        XCTAssertTrue(SessionConnectionPhase.discoveringServices.opensRideScreen)
+        XCTAssertTrue(SessionConnectionPhase.subscribing.opensRideScreen)
+        XCTAssertTrue(SessionConnectionPhase.live.opensRideScreen)
+        XCTAssertFalse(SessionConnectionPhase.starting.opensRideScreen)
+        XCTAssertFalse(SessionConnectionPhase.scanning.opensRideScreen)
+    }
+
 }
