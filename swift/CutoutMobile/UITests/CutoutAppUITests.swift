@@ -157,7 +157,11 @@ final class CutoutAppUITests: XCTestCase {
         guard let button = vescButton ?? (buttons.count == 1 ? buttons.first : nil) else {
             return false
         }
-        button.tap()
+        guard button.isHittable else {
+            XCTFail("The visible Use button is not hittable")
+            return false
+        }
+        button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         return true
     }
 }
