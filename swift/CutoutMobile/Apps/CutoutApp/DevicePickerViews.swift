@@ -73,14 +73,7 @@ struct DevicePickerView: View {
                         VStack(spacing: 12 * scale) {
                             ForEach(sections.supported) { row in
                                 VStack(spacing: 8 * scale) {
-                                    Button {
-                                        pair(row)
-                                    } label: {
-                                        PickerDeviceRow(row: row, scale: scale)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contentShape(Rectangle())
-                                    .accessibilityIdentifier("device-picker.pair.\(row.id)")
+                                    PickerDeviceRow(row: row, scale: scale, action: { pair(row) })
 
                                     PevActionButton(
                                         title: row.captureActionTitle,

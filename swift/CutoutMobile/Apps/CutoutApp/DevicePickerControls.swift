@@ -4,6 +4,7 @@ import SwiftUI
 struct PickerDeviceRow: View {
     let row: DevicePickerRow
     let scale: CGFloat
+    var action: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 14 * scale) {
@@ -31,23 +32,40 @@ struct PickerDeviceRow: View {
 
             Spacer(minLength: 6 * scale)
 
-            PevDashboardStatusPill(
-                title: row.state.actionTitle,
-                scale: scale,
-                fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
-                foreground: row.state.isSupported ? .black : PevColors.muted,
-                stroke: row.state.isSupported ? nil : PevColors.cardStroke,
-                width: row.state.isSupported ? 76 : 64,
-                fontSize: 15,
-                horizontalPadding: row.state.isSupported ? 10 : 8,
-                height: row.state.isSupported ? 38 : 30,
-                fixedHorizontal: true
-            )
+            actionView
         }
         .padding(.horizontal, 18 * scale)
         .frame(height: 92 * scale)
         .frame(maxWidth: .infinity)
         .background(PevDashboardCardBackground(cornerRadius: 26 * scale))
+    }
+
+    @ViewBuilder
+    private var actionView: some View {
+        if let action, row.state.isSupported {
+            Button(action: action) {
+                statusPill
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("device-picker.use.\(row.id)")
+        } else {
+            statusPill
+        }
+    }
+
+    private var statusPill: some View {
+        PevDashboardStatusPill(
+            title: row.state.actionTitle,
+            scale: scale,
+            fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
+            foreground: row.state.isSupported ? .black : PevColors.muted,
+            stroke: row.state.isSupported ? nil : PevColors.cardStroke,
+            width: row.state.isSupported ? 76 : 64,
+            fontSize: 15,
+            horizontalPadding: row.state.isSupported ? 10 : 8,
+            height: row.state.isSupported ? 38 : 30,
+            fixedHorizontal: true
+        )
     }
 }
 
