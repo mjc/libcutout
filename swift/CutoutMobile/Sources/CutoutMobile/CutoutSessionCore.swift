@@ -64,6 +64,7 @@ public final class CutoutSessionCore: NSObject {
     private var displayPublishWorkItem: DispatchWorkItem?
     private var lastDisplayPublication = Date.distantPast
     private let phoneLocationState = MobilePhoneLocationState()
+    private var didRequestAlwaysLocationAuthorization = false
     private lazy var locationManager: CLLocationManager = {
         let manager = CLLocationManager()
         manager.delegate = self
@@ -1313,12 +1314,21 @@ extension CutoutSessionCore {
 }
 
 extension CutoutSessionCore: CLLocationManagerDelegate {
+    private func requestAlwaysLocationAuthorizationIfNeeded() {
+        guard !didRequestAlwaysLocationAuthorization else { return }
+        didRequestAlwaysLocationAuthorization = true
+        locationManager.requestAlwaysAuthorization()
+    }
+
     private func startLocationUpdates() {
         guard CLLocationManager.locationServicesEnabled() else { return }
         switch locationManager.authorizationStatus {
         case .notDetermined:
             locationManager.requestAlwaysAuthorization()
-        case .authorizedAlways, .authorizedWhenInUse:
+        case .authorizedAlways:
+            locationManager.startUpdatingLocation()
+        case .authorizedWhenInUse:
+            requestAlwaysLocationAuthorizationIfNeeded()
             locationManager.startUpdatingLocation()
         case .denied, .restricted:
             break
@@ -1329,7 +1339,10 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         switch manager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
+        case .authorizedAlways:
+            manager.startUpdatingLocation()
+        case .authorizedWhenInUse:
+            requestAlwaysLocationAuthorizationIfNeeded()
             manager.startUpdatingLocation()
         case .notDetermined, .denied, .restricted:
             break
