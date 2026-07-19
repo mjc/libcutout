@@ -124,13 +124,10 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
-        for screenID in ["dashboard.screen.eucRide", "dashboard.screen.vescRide", "dashboard.screen.vescDebug"] {
-            let screen = app.otherElements[screenID]
-            if screen.waitForExistence(timeout: timeout) {
-                return screen
-            }
-        }
-        return nil
+        let screen = app.otherElements.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "dashboard.screen.")
+        ).firstMatch
+        return screen.waitForExistence(timeout: timeout) ? screen : nil
     }
 
     private func disconnectIfConnected() {
