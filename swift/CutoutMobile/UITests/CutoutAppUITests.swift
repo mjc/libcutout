@@ -19,7 +19,15 @@ final class CutoutAppUITests: XCTestCase {
 
     private func allowDeviceAuthorizationAlerts() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allowLabels = Set(["allow", "allow once", "allow while using app", "allow bluetooth", "ok"])
+        let allowLabels = Set([
+            "allow",
+            "allow once",
+            "allow while using app",
+            "allow bluetooth",
+            "always allow",
+            "change to always allow",
+            "ok",
+        ])
 
         for _ in 0..<3 {
             let alert = springboard.alerts.firstMatch

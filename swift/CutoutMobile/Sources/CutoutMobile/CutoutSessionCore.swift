@@ -1324,7 +1324,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         guard CLLocationManager.locationServicesEnabled() else { return }
         switch locationManager.authorizationStatus {
         case .notDetermined:
-            locationManager.requestAlwaysAuthorization()
+            locationManager.requestWhenInUseAuthorization()
         case .authorizedAlways:
             locationManager.startUpdatingLocation()
         case .authorizedWhenInUse:
