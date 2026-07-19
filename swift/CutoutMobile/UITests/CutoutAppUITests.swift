@@ -85,9 +85,13 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testConnectedSurfaceHasOneCanonicalBottomNavigation() throws {
-        pairAvailableVescIfNeeded()
+        let pairingAttempted = pairAvailableVescIfNeeded()
 
         guard let screen = connectedScreen(timeout: 20) else {
+            if pairingAttempted {
+                XCTFail("The visible Use button was tapped, but no connected dashboard appeared")
+                return
+            }
             throw XCTSkip("Requires a connected EUC or VESC device")
         }
         defer { disconnectIfConnected() }
@@ -136,19 +140,24 @@ final class CutoutAppUITests: XCTestCase {
         _ = app.otherElements["device-picker.screen"].waitForExistence(timeout: 5)
     }
 
-    private func pairAvailableVescIfNeeded() {
-        guard connectedScreen() == nil else { return }
+    @discardableResult
+    private func pairAvailableVescIfNeeded() -> Bool {
+        guard connectedScreen() == nil else { return true }
 
-        let pairButtons = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.pair.")
+        let useButtons = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.use.")
         )
-        guard pairButtons.firstMatch.waitForExistence(timeout: 8) else { return }
+        guard useButtons.firstMatch.waitForExistence(timeout: 8) else { return false }
 
-        let buttons = pairButtons.allElementsBoundByIndex
+        let buttons = useButtons.allElementsBoundByIndex
         let vescButton = buttons.first {
             let label = $0.label.lowercased()
             return label.contains("vesc") || label.contains("refloat") || label.contains("onewheel")
         }
-        (vescButton ?? (buttons.count == 1 ? buttons.first : nil))?.tap()
+        guard let button = vescButton ?? (buttons.count == 1 ? buttons.first : nil) else {
+            return false
+        }
+        button.tap()
+        return true
     }
 }
