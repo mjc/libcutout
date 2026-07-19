@@ -29,5 +29,6 @@ public struct PevRideDisconnectButton: View {
             strokeDisabled: PevDashboardColors.cardStroke,
             action: action
         )
+        .accessibilityIdentifier("dashboard.disconnect")
     }
 }

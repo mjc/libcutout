@@ -5,7 +5,6 @@ struct BmsScreenView: View {
     let screen: PevScreen
     let rideState: EucRideScreenState?
     let bmsSnapshot: BmsSnapshot?
-    let selectScreen: (PevScreenID) -> Void
     @State private var showsDiagnostics = false
 
     private var content: PevBmsContent {
@@ -37,7 +36,6 @@ struct BmsScreenView: View {
                         rideState: rideState,
                         liveSnapshot: bmsSnapshot,
                         scale: scale,
-                        selectScreen: selectScreen
                     )
                 } else {
                     VStack(spacing: 0) {
@@ -55,11 +53,6 @@ struct BmsScreenView: View {
                             .padding(.bottom, 18 * scale)
                         }
 
-                        bottomTabs(scale: scale)
-                            .padding(.horizontal, 23 * scale)
-                            .padding(.top, 12 * scale)
-                            .padding(.bottom, 18 * scale)
-                            .background(PevColors.pageBackground)
                     }
                 }
             }
@@ -119,26 +112,6 @@ struct BmsScreenView: View {
                 )
             }
         }
-    }
-
-    private func bottomTabs(scale: CGFloat) -> some View {
-        HStack {
-            BmsBottomTab(title: "Ride", isSelected: false, scale: scale) {
-                selectScreen(.eucRide)
-            }
-            Spacer()
-            BmsBottomTab(title: "Pack", isSelected: true, scale: scale, action: nil)
-            Spacer()
-            BmsBottomTab(
-                title: "Cells",
-                isSelected: [.cellMapInline, .cellMapScrollable, .cellDetail].contains(content.kind),
-                scale: scale,
-                action: nil
-            )
-            Spacer()
-            BmsBottomTab(title: "Faults", isSelected: content.kind == .unknownTopology, scale: scale, action: nil)
-        }
-        .padding(.horizontal, 18 * scale)
     }
 
     private func liveReadbackSection(snapshot: BmsSnapshot, scale: CGFloat) -> some View {

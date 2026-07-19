@@ -1,12 +1,13 @@
 import CutoutMobile
+import Foundation
 import SwiftUI
 
 struct EucRideScreenView: View {
     let rideState: EucRideScreenState?
     let rideTitle: String?
     let captureStatusText: String?
+    let phoneLocationReadback: PhoneLocationReadback
     let disconnect: () -> Void
-    let selectScreen: (PevScreenID) -> Void
 
     private var speedParts: (value: String, unit: String) {
         if let rideState {
@@ -64,6 +65,17 @@ struct EucRideScreenView: View {
         return []
     }
 
+    private var gpsSpeedTile: PevDashboardTile {
+        let now = UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
+        return PevDashboardTile(
+            label: "GPS speed",
+            value: phoneLocationReadback.speed.displayValue,
+            unit: phoneLocationReadback.speed.millimetersPerSecond == nil ? "" : phoneLocationReadback.speed.displayUnit,
+            detail: phoneLocationReadback.detail(at: now),
+            accent: phoneLocationReadback.freshness(at: now) == .fresh ? .cyan : .yellow
+        )
+    }
+
     var body: some View {
         PevRideDashboardShell(
             sectionTitle: "EUC ride",
@@ -108,9 +120,11 @@ struct EucRideScreenView: View {
                 ForEach(dashboardTiles) { tile in
                     PevDashboardMetricTile(tile, scale: scale, cornerRadius: 16, minHeight: 104)
                 }
+                PevDashboardMetricTile(gpsSpeedTile, scale: scale, cornerRadius: 16, minHeight: 104)
             }
             .padding(.top, 12 * scale)
         }
+        .accessibilityElement(children: .contain)
     }
 }
 

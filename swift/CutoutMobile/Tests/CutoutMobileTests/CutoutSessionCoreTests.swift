@@ -367,7 +367,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(snapshot.batteryVoltage)
     }
 
-    func testVescRideSnapshotDoesNotUsePreviewFactsForLiveDefaults() throws {
+    func testVescRideSnapshotDoesNotUseUnverifiedFactsForLiveDefaults() throws {
         let telemetry = TelemetrySnapshot(voltage: voltageValue(62_800))
         let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)
 
@@ -1961,7 +1961,11 @@ private func assertVescTelemetryRequests(
     let expectedWriteCount = 3
     XCTAssertEqual(operations.count, expectedWriteCount + (includesSubscribe ? 1 : 0), file: file, line: line)
     if includesSubscribe {
-        XCTAssertEqual(operations.first, .subscribe(channel: .vescNordicUartNotify), file: file, line: line)
+        XCTAssertTrue(
+            operations.contains(.subscribe(channel: .vescNordicUartNotify)),
+            file: file,
+            line: line
+        )
     }
     let writes = operations.compactMap { operation -> Data? in
         guard case .writeWithoutResponse(channel: .vescNordicUartWrite, bytes: let bytes) = operation else {

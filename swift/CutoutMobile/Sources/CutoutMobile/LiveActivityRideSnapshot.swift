@@ -3,7 +3,6 @@ import Foundation
 public enum LiveActivityRideIdentitySource: String, Codable, Equatable, Hashable, Sendable {
     case productionModel
     case productionDevice
-    case demo
     case unavailable
 }
 
@@ -24,10 +23,6 @@ public struct LiveActivityRideIdentity: Codable, Equatable, Hashable, Sendable {
         Self(label: label, source: .productionDevice)
     }
 
-    public static func demo(label: String) -> Self {
-        Self(label: label, source: .demo)
-    }
-
     public static var unavailable: Self {
         Self(label: "Device unavailable", source: .unavailable)
     }
@@ -36,8 +31,6 @@ public struct LiveActivityRideIdentity: Codable, Equatable, Hashable, Sendable {
         switch source {
         case .productionModel, .productionDevice:
             "\(label) connected"
-        case .demo:
-            "\(label) demo"
         case .unavailable:
             label
         }
@@ -50,7 +43,6 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
     case stale
     case waitingForFirstTelemetry
     case unavailable
-    case demo
 }
 
 public enum LiveActivityRideGlyph: String, Codable, Equatable, Hashable, Sendable {
@@ -71,7 +63,6 @@ public enum LiveActivityRideValueSource: String, Codable, Equatable, Hashable, S
     case liveTelemetry
     case derivedTelemetry
     case appLifecycle
-    case demo
     case explicitlyUnavailable
     case notApplicable
     case deferred
@@ -252,38 +243,6 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.temperature = temperature
     }
 
-    public static func demo(
-        identity: LiveActivityRideIdentity,
-        glyph: LiveActivityRideGlyph = .electricUnicycle,
-        speed: LiveActivityRideValue,
-        battery: LiveActivityRideValue,
-        packVoltage: LiveActivityRideValue,
-        pwm: LiveActivityRideValue,
-        mode: LiveActivityRideValue,
-        duration: LiveActivityRideValue,
-        distance: LiveActivityRideValue,
-        headroom: LiveActivityRideValue,
-        beeps: LiveActivityRideValue,
-        temperature: LiveActivityRideValue
-    ) -> Self {
-        Self(
-            identity: identity,
-            glyph: glyph,
-            connectionState: .demo,
-            sessionStatus: .available(label: "Status", value: "Demo", unit: nil, source: .demo),
-            speed: speed,
-            battery: battery,
-            packVoltage: packVoltage,
-            pwm: pwm,
-            mode: mode,
-            duration: duration,
-            distance: distance,
-            headroom: headroom,
-            beeps: beeps,
-            temperature: temperature
-        )
-    }
-
     public var visibleValues: [LiveActivityRideValue] {
         [
             speed,
@@ -308,8 +267,6 @@ extension LiveActivityRideSnapshot {
         staleAfter staleThreshold: MonotonicMilliseconds
     ) -> LiveActivityRideConnectionState {
         switch (identity.source, rideState.phase, rideState.telemetryAvailability) {
-        case (.demo, _, _):
-            .demo
         case (_, .live, .populated):
             now
                 .map { rideState.updateAge(at: $0, staleAfter: staleThreshold).freshness }
@@ -501,7 +458,7 @@ extension LiveActivityRideSnapshot {
         if (source == .liveTelemetry || source == .derivedTelemetry)
             && connectionState != .connected
             && connectionState != .stale
-            && connectionState != .demo {
+        {
             return .unavailable(label: label, unit: unit)
         }
 

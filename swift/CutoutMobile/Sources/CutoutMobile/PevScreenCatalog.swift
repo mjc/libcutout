@@ -1,11 +1,7 @@
 import Foundation
 
 public enum PevScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
-    case devicePicker
     case eucRide
-    case eucMap
-    case eucTune
-    case liveActivity
     case bmsOverview
     case bmsCellMap6S
     case bmsCellMap40S
@@ -13,9 +9,8 @@ public enum PevScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case bmsUnknownTopology
     case bmsNoData
     case eucGarage
+    case vescRide
     case vescDebug
-    case vescMap
-    case vescLogs
 }
 
 public enum PevNavigationTarget: Equatable, Hashable, Sendable {
@@ -30,36 +25,12 @@ public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
 
 public typealias PevConnectionRoute = DevicePickerConnectionRoute
 
-public struct PevMetric: Equatable, Hashable, Sendable {
-    public let label: String
-    public let value: String
-
-    public init(label: String, value: String) {
-        self.label = label
-        self.value = value
-    }
-}
-
 public enum PevAccent: String, Equatable, Hashable, Sendable {
     case cyan
     case green
     case orange
     case purple
     case yellow
-}
-
-public struct PevDeviceCard: Equatable, Hashable, Sendable {
-    public let title: String
-    public let detail: String
-    public let status: String
-    public let accent: PevAccent
-
-    public init(title: String, detail: String, status: String, accent: PevAccent) {
-        self.title = title
-        self.detail = detail
-        self.status = status
-        self.accent = accent
-    }
 }
 
 public struct PevSafetyBar: Equatable, Hashable, Sendable {
@@ -152,31 +123,6 @@ public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public struct PevSummaryRow: Equatable, Hashable, Sendable, Identifiable {
-    public var id: String { label }
-
-    public let label: String
-    public let value: String
-    public let accent: PevAccent?
-
-    public init(label: String, value: String, accent: PevAccent?) {
-        self.label = label
-        self.value = value
-        self.accent = accent
-    }
-}
-
-public struct PevFaultCard: Equatable, Hashable, Sendable {
-    public let title: String
-    public let detail: String
-    public let accent: PevAccent
-
-    public init(title: String, detail: String, accent: PevAccent) {
-        self.title = title
-        self.detail = detail
-        self.accent = accent
-    }
-}
 public enum PevBmsScreenKind: Equatable, Hashable, Sendable {
     case overview
     case cellMapInline
@@ -221,6 +167,10 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
     }
 
     public func resolved(with liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) -> Self {
+        Self.live(with: liveSnapshot, preferredScreenID: preferredScreenID)
+    }
+
+    public static func live(with liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) -> Self {
         let resolvedKind = PevBmsScreenKind(liveSnapshot: liveSnapshot, preferredScreenID: preferredScreenID)
         let selectedGroupIndex = resolvedKind == .cellDetail
             ? liveSnapshot.lowestGroupIndex ?? liveSnapshot.groups.first?.index
@@ -229,7 +179,7 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
         let chips = resolvedKind.liveChips(snapshot: liveSnapshot, selectedGroupIndex: selectedGroupIndex)
         let modeTitles = resolvedKind.liveModeTitles(snapshot: liveSnapshot)
 
-        return PevBmsContent(
+        return Self(
             kind: resolvedKind,
             snapshot: liveSnapshot,
             chips: chips,
@@ -285,7 +235,7 @@ private extension PevBmsScreenKind {
             self = .unknownTopology
         case .bmsNoData:
             self = .noData
-        case .devicePicker, .eucRide, .eucMap, .eucTune, .liveActivity, .eucGarage, .vescDebug, .vescMap, .vescLogs:
+        case .eucRide, .eucGarage, .vescRide, .vescDebug:
             return nil
         }
     }
@@ -548,7 +498,7 @@ public enum DevicePickerCandidateSupport: Equatable, Hashable, Sendable {
     case ambiguous(disabledReason: String)
     case conflicting(disabledReason: String)
     case rejectedNoise(disabledReason: String)
-    case manualPlaceholder(disabledReason: String)
+    case manualEntry(disabledReason: String)
     case unsupported(disabledReason: String)
 }
 
@@ -578,7 +528,7 @@ public extension DevicePickerCandidateSupport {
         case .rejectedNoise:
             self = .rejectedNoise(disabledReason: dto.disabledReason ?? dto.detail)
         case .manualPlaceholder:
-            self = .manualPlaceholder(disabledReason: dto.disabledReason ?? dto.detail)
+            self = .manualEntry(disabledReason: dto.disabledReason ?? dto.detail)
         case .unsupported:
             self = .unsupported(disabledReason: dto.disabledReason ?? dto.detail)
         }
@@ -687,7 +637,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported, .provisionalRoute:
             true
-        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
             false
         }
     }
@@ -696,7 +646,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(let connectionRoute, _), .provisionalRoute(let connectionRoute, _):
             connectionRoute
-        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
             nil
         }
     }
@@ -705,7 +655,7 @@ public extension DevicePickerCandidateSupport {
         switch self {
         case .supported(_, let electricUnicycleModel), .provisionalRoute(_, let electricUnicycleModel):
             electricUnicycleModel
-        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualPlaceholder, .unsupported:
+        case .probeRecommended, .unknownRecordable, .knownUnsupported, .ambiguous, .conflicting, .rejectedNoise, .manualEntry, .unsupported:
             nil
         }
     }
@@ -726,7 +676,7 @@ public extension DevicePickerCandidateSupport {
             .unsupported(action: "Review")
         case .rejectedNoise:
             .unsupported(action: "Record")
-        case .manualPlaceholder:
+        case .manualEntry:
             .manual(action: "later")
         case .unsupported:
             .unsupported(action: "Record")
@@ -808,66 +758,21 @@ public struct PevScreen: Equatable, Hashable, Sendable, Identifiable {
     public let id: PevScreenID
     public let title: String
     public let subtitle: String
-    public let primaryValue: String
     public let secondaryValue: String
-    public let warning: String?
-    public let metrics: [PevMetric]
-    public let pickerRows: [PevPickerRow]
-    public let discoveryCandidates: [DevicePickerDiscoveryCandidate]
-    public let deviceCard: PevDeviceCard?
-    public let safetyBars: [PevSafetyBar]
-    public let warningCard: PevWarningCard?
-    public let dashboardTiles: [PevDashboardTile]
-    public let summaryTitle: String?
-    public let summaryRows: [PevSummaryRow]
-    public let faultCard: PevFaultCard?
-    public let tabs: [PevScreenTab]
     public let bmsContent: PevBmsContent?
-    public let eucGarageSnapshot: EucGarageSnapshot?
-    public let isPreviewOnly: Bool
 
     public init(
         id: PevScreenID,
         title: String,
         subtitle: String,
-        primaryValue: String,
         secondaryValue: String,
-        warning: String?,
-        metrics: [PevMetric],
-        pickerRows: [PevPickerRow] = [],
-        discoveryCandidates: [DevicePickerDiscoveryCandidate] = [],
-        deviceCard: PevDeviceCard? = nil,
-        safetyBars: [PevSafetyBar] = [],
-        warningCard: PevWarningCard? = nil,
-        dashboardTiles: [PevDashboardTile] = [],
-        summaryTitle: String? = nil,
-        summaryRows: [PevSummaryRow] = [],
-        faultCard: PevFaultCard? = nil,
-        tabs: [PevScreenTab] = [],
-        bmsContent: PevBmsContent? = nil,
-        eucGarageSnapshot: EucGarageSnapshot? = nil,
-        isPreviewOnly: Bool = true
+        bmsContent: PevBmsContent? = nil
     ) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
-        self.primaryValue = primaryValue
         self.secondaryValue = secondaryValue
-        self.warning = warning
-        self.metrics = metrics
-        self.pickerRows = pickerRows
-        self.discoveryCandidates = discoveryCandidates
-        self.deviceCard = deviceCard
-        self.safetyBars = safetyBars
-        self.warningCard = warningCard
-        self.dashboardTiles = dashboardTiles
-        self.summaryTitle = summaryTitle
-        self.summaryRows = summaryRows
-        self.faultCard = faultCard
-        self.tabs = tabs
         self.bmsContent = bmsContent
-        self.eucGarageSnapshot = eucGarageSnapshot
-        self.isPreviewOnly = isPreviewOnly
     }
 
     public func resolvedBmsContent(liveSnapshot: BmsSnapshot?) -> PevBmsContent? {
@@ -894,11 +799,10 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
 
     public func presentedScreen(
         for screen: PevScreen,
-        liveBmsSnapshot: BmsSnapshot?,
-        previewFallback: Bool = true
+        liveBmsSnapshot: BmsSnapshot?
     ) -> PevScreen {
         guard let liveBmsSnapshot else {
-            guard !previewFallback, screen.id == .eucGarage || screen.id.isBmsScreen else {
+            guard screen.id == .eucGarage || screen.id.isBmsScreen else {
                 return screen
             }
             return Self.noLiveBmsReadbackScreen()
@@ -914,33 +818,15 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
         let resolvedKind = PevBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: preferredScreenID)
         let bmsScreenID = screen.id == .eucGarage ? resolvedKind.presentationScreenID : screen.id
 
-        guard let fixtureScreen = self.screen(id: bmsScreenID) else {
-            return screen
-        }
-
-        let resolvedContent = fixtureScreen.resolvedBmsContent(liveSnapshot: liveBmsSnapshot)
+        let metadata = self.screen(id: bmsScreenID) ?? screen
+        let resolvedContent = PevBmsContent.live(with: liveBmsSnapshot, preferredScreenID: bmsScreenID)
 
         return PevScreen(
-            id: fixtureScreen.id,
+            id: metadata.id,
             title: resolvedKind.liveTitle(snapshot: liveBmsSnapshot),
-            subtitle: resolvedKind.liveSubtitle(snapshot: liveBmsSnapshot, fallback: fixtureScreen.subtitle),
-            primaryValue: fixtureScreen.primaryValue,
-            secondaryValue: resolvedKind.liveSecondaryValue(snapshot: liveBmsSnapshot, fallback: fixtureScreen.secondaryValue),
-            warning: fixtureScreen.warning,
-            metrics: fixtureScreen.metrics,
-            pickerRows: fixtureScreen.pickerRows,
-            discoveryCandidates: fixtureScreen.discoveryCandidates,
-            deviceCard: fixtureScreen.deviceCard,
-            safetyBars: fixtureScreen.safetyBars,
-            warningCard: fixtureScreen.warningCard,
-            dashboardTiles: fixtureScreen.dashboardTiles,
-            summaryTitle: fixtureScreen.summaryTitle,
-            summaryRows: fixtureScreen.summaryRows,
-            faultCard: fixtureScreen.faultCard,
-            tabs: fixtureScreen.tabs,
-            bmsContent: resolvedContent,
-            eucGarageSnapshot: fixtureScreen.eucGarageSnapshot,
-            isPreviewOnly: fixtureScreen.isPreviewOnly
+            subtitle: resolvedKind.liveSubtitle(snapshot: liveBmsSnapshot, fallback: metadata.subtitle),
+            secondaryValue: resolvedKind.liveSecondaryValue(snapshot: liveBmsSnapshot, fallback: "unavailable"),
+            bmsContent: resolvedContent
         )
     }
 
@@ -961,10 +847,7 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
             id: .bmsNoData,
             title: "Battery",
             subtitle: "live BMS readback unavailable",
-            primaryValue: "--",
             secondaryValue: "no live BMS",
-            warning: nil,
-            metrics: [],
             bmsContent: PevBmsContent(
                 kind: .noData,
                 snapshot: snapshot,
@@ -972,513 +855,30 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
                     PevBmsChip(title: "no live BMS", accent: .yellow),
                 ]
             ),
-            isPreviewOnly: false
         )
     }
 
-    private static let devicePickerDiscoveryCandidates = [
-        DevicePickerDiscoveryCandidate(
-            platformIdentifier: "demo:aero",
-            displayName: "Aero-126V",
-            productCategory: "Electric unicycle",
-            evidence: "telemetry profile found",
-            detail: "126.0 V - strong signal",
-            support: .supported(connectionRoute: .electricUnicycle, electricUnicycleModel: .aero),
-            symbolName: "circle.hexagongrid.circle"
-        ),
-        DevicePickerDiscoveryCandidate(
-            platformIdentifier: "demo:little-focer",
-            displayName: "Little FOCer BT",
-            productCategory: "VESC Onewheel",
-            evidence: "UART bridge detected",
-            detail: "75.4 V - moderate signal",
-            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
-            symbolName: "oval.portrait"
-        ),
-        DevicePickerDiscoveryCandidate(
-            platformIdentifier: "demo:ninebot",
-            displayName: "NINEBOT-7A31",
-            productCategory: "Electric scooter",
-            evidence: "known BLE advertisement",
-            detail: "We can learn this later",
-            support: .unsupported(disabledReason: "Not yet"),
-            symbolName: "scooter"
-        ),
-        DevicePickerDiscoveryCandidate(
-            platformIdentifier: "demo:hx-hoverboard",
-            displayName: "HX Hoverboard",
-            productCategory: "Hoverboard / self-balancing board",
-            evidence: "candidate",
-            detail: "Capture wizard later",
-            support: .unsupported(disabledReason: "Not yet"),
-            symbolName: "capsule"
-        ),
-    ]
+    public static let live = PevScreenCatalog(screens: [
+        liveScreen(id: .eucRide, title: "EUC ride", subtitle: "Live telemetry"),
+        liveScreen(id: .bmsOverview, title: "Battery", subtitle: "Live BMS readback"),
+        liveScreen(id: .bmsCellMap6S, title: "Cell map", subtitle: "Live BMS readback"),
+        liveScreen(id: .bmsCellMap40S, title: "Cell map", subtitle: "Live BMS readback"),
+        liveScreen(id: .bmsCellDetail, title: "Cell detail", subtitle: "Live BMS readback"),
+        liveScreen(id: .bmsUnknownTopology, title: "Battery", subtitle: "Topology unavailable"),
+        liveScreen(id: .bmsNoData, title: "Battery", subtitle: "Live BMS readback unavailable"),
+        liveScreen(id: .eucGarage, title: "EUC health", subtitle: "Live readbacks"),
+        liveScreen(id: .vescRide, title: "VESC ride", subtitle: "Live telemetry"),
+        liveScreen(id: .vescDebug, title: "VESC state", subtitle: "Live telemetry")
+    ])
 
-    private static let manualDiscoveryCandidate =
-        DevicePickerDiscoveryCandidate(candidate: mobileManualDiscoveryCandidate())
-
-    private static let bmsOverviewSnapshot = BmsSnapshot(
-        topology: BmsTopology(
-            layoutLabel: "20S4P split pack",
-            seriesGroupCount: 20,
-            parallelCount: 4,
-            packCount: 2,
-            bmsCount: 2,
-            confidence: .verified
-        ),
-        energyPercent: BatteryLevel(value: 72),
-        voltage: Voltage(value: 81_600),
-        cellDelta: VoltageDelta(value: 18),
-        lowestGroupIndex: 17,
-        highestTemperature: Temperature(value: 37_800),
-        highestTemperatureLabel: "right pack",
-        balancingSummary: "idle • top groups only",
-        balancingDetail: "3 groups bleeding: 03, 11, 19",
-        faultSummary: "no active faults",
-        faultDetail: "last: under-voltage warning · 3 days ago",
-        groups: (1...20).map { index in
-            let voltage = Voltage(value: 4_089 - Int32(index % 5) * 4)
-            return BmsGroupSnapshot(
-                index: index,
-                voltage: voltage,
-                alertLevel: index == 17 ? .warning : .nominal
-            )
-        }
-    )
-
-    private static let bmsInlineSnapshot = BmsSnapshot(
-        topology: BmsTopology(
-            layoutLabel: "skateboard pack",
-            seriesGroupCount: 6,
-            parallelCount: 2,
-            packCount: 1,
-            bmsCount: 1,
-            confidence: .verified
-        ),
-        cellDelta: VoltageDelta(value: 12),
-        groups: [
-            BmsGroupSnapshot(index: 1, voltage: Voltage(value: 4_104), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 2, voltage: Voltage(value: 4_101), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 3, voltage: Voltage(value: 4_096), alertLevel: .warning),
-            BmsGroupSnapshot(index: 4, voltage: Voltage(value: 4_099), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 5, voltage: Voltage(value: 4_103), alertLevel: .nominal),
-            BmsGroupSnapshot(index: 6, voltage: Voltage(value: 4_092), alertLevel: .warning),
-        ]
-    )
-
-    private static let bmsScrollableSnapshot = BmsSnapshot(
-        topology: BmsTopology(
-            layoutLabel: "large EUC pack",
-            seriesGroupCount: 40,
-            parallelCount: 4,
-            packCount: 1,
-            bmsCount: 1,
-            confidence: .verified
-        ),
-        cellDelta: VoltageDelta(value: 18),
-        highestTemperature: Temperature(value: 31_000),
-        highestTemperatureLabel: "group 31",
-        groups: (1...40).map { index in
-            let alertLevel: BmsAlertLevel = [17, 18, 19].contains(index) ? .warning : index == 31 ? .critical : .nominal
-            let base = 4_080 + Int32(index % 3) * 6
-            let value = [17, 18, 19].contains(index) ? 4_080 : (index == 31 ? 4_072 : base)
-            return BmsGroupSnapshot(index: index, voltage: Voltage(value: value), alertLevel: alertLevel)
-        },
-        faults: [
-            BmsFault(code: "temp-sensor", label: "31 has temp sensor mismatch", level: .warning)
-        ]
-    )
-
-    private static let bmsDetailSnapshot = BmsSnapshot(
-        topology: BmsTopology(
-            layoutLabel: "20S4P split pack",
-            seriesGroupCount: 20,
-            parallelCount: 4,
-            packCount: 2,
-            bmsCount: 2,
-            confidence: .verified
-        ),
-        cellDelta: VoltageDelta(value: 18),
-        groups: (1...20).map { index in
-            let voltage = Voltage(value: index == 17 ? 4_071 : 4_086)
-            let temperature = Temperature(value: index == 17 ? 34_900 : 33_000)
-            let resistance = Resistance(value: index == 17 ? 21 : 18)
-            return BmsGroupSnapshot(
-                index: index,
-                voltage: voltage,
-                temperature: temperature,
-                resistance: resistance,
-                alertLevel: index == 17 ? .warning : .nominal,
-                detail: index == 17 ? "drops first during acceleration" : nil
-            )
-        }
-    )
-
-    private static let bmsUnknownSnapshot = BmsSnapshot(
-        topology: BmsTopology(
-            layoutLabel: "topology unverified",
-            seriesGroupCount: nil,
-            parallelCount: nil,
-            packCount: 1,
-            bmsCount: 1,
-            confidence: .unverified
-        ),
-        voltage: Voltage(value: 75_900),
-        faultSummary: "BMS found, map unknown",
-        faultDetail: "show raw-safe info until topology is confirmed",
-        faults: [
-            BmsFault(code: "0x0040", label: "needs decoder", level: .critical)
-        ],
-        captureActionTitle: "record unsupported pack",
-        captureActionState: "disabled for launch"
-    )
-
-    private static let bmsNoDataSnapshot = BmsSnapshot(
-        topology: BmsTopology(
-            layoutLabel: "non-smart BMS",
-            seriesGroupCount: nil,
-            parallelCount: nil,
-            packCount: 1,
-            bmsCount: 0,
-            confidence: .inferred
-        ),
-        energyPercent: BatteryLevel(value: 71),
-        voltage: Voltage(value: 117_600),
-        current: BatteryCurrent(value: 38_000),
-        captureActionTitle: "Trust sag, alarms, and headroom more than percent.",
-        captureActionState: "limited data"
-    )
-
-    private static func placeholderScreen(
-        id: PevScreenID,
-        title: String,
-        subtitle: String,
-        reason: String
-    ) -> PevScreen {
+    private static func liveScreen(id: PevScreenID, title: String, subtitle: String) -> PevScreen {
         PevScreen(
             id: id,
             title: title,
             subtitle: subtitle,
-            primaryValue: "not wired",
-            secondaryValue: "placeholder route",
-            warning: reason,
-            metrics: [
-                PevMetric(label: "status", value: "placeholder"),
-                PevMetric(label: "tracker", value: "LIBCU-423"),
-            ]
+            secondaryValue: "unavailable"
         )
     }
-
-    public static let v2 = PevScreenCatalog(screens: [
-        PevScreen(
-            id: .devicePicker,
-            title: "Device picker",
-            subtitle: "Scanning Bluetooth",
-            primaryValue: "Aero-126V",
-            secondaryValue: "Little FOCer BT",
-            warning: "Unsupported rows remain disabled fixtures.",
-            metrics: [
-                PevMetric(label: "Supported EUC", value: "Aero-126V"),
-                PevMetric(label: "Supported VESC OW", value: "Little FOCer BT"),
-                PevMetric(label: "Unsupported", value: "NINEBOT-7A31"),
-                PevMetric(label: "Unsupported", value: "HX Hoverboard"),
-                PevMetric(label: "Manual add", value: "disabled"),
-            ],
-            pickerRows: (devicePickerDiscoveryCandidates + [manualDiscoveryCandidate]).map(\.pickerRow),
-            discoveryCandidates: devicePickerDiscoveryCandidates + [manualDiscoveryCandidate]
-        ),
-        PevScreen(
-            id: .eucRide,
-            title: "Aero-126V",
-            subtitle: "EUC - riding",
-            primaryValue: "31 mph",
-            secondaryValue: "PWM headroom 23%",
-            warning: "Reduce acceleration - voltage sag under load: 9.4 V",
-            metrics: [
-                PevMetric(label: "sag-adjusted energy", value: "62%"),
-                PevMetric(label: "pack", value: "115.8 V"),
-                PevMetric(label: "power", value: "4.2 kW"),
-                PevMetric(label: "thermal", value: "61 °C"),
-                PevMetric(label: "limp-home", value: "14.2 mi"),
-            ],
-            safetyBars: [
-                PevSafetyBar(label: "PWM headroom", value: "23%", progress: 0.77, accent: .yellow),
-                PevSafetyBar(label: "sag-adjusted energy", value: "62%", progress: 0.62, accent: .cyan),
-            ],
-            warningCard: PevWarningCard(
-                title: "Reduce acceleration",
-                detail: "Voltage sag under load: 9.4 V"
-            ),
-            dashboardTiles: [
-                PevDashboardTile(label: "pack", value: "115.8", unit: "V", detail: "-9.4 V sag", accent: .cyan),
-                PevDashboardTile(label: "power", value: "4.2", unit: "kW", detail: "regen -0.3 kW", accent: .yellow),
-                PevDashboardTile(label: "thermal", value: "61", unit: "°C", detail: "ESC 48 · motor 61", accent: .green),
-                PevDashboardTile(label: "limp-home", value: "14.2", unit: "mi", detail: "at this pace", accent: .cyan),
-            ],
-            tabs: [
-                PevScreenTab(title: "Ride", isSelected: true),
-                PevScreenTab(title: "Pack", isSelected: false, destinationScreenID: .bmsOverview),
-                PevScreenTab(title: "Map", isSelected: false, disabledReason: "LIBCU-517"),
-                PevScreenTab(title: "Tune", isSelected: false, disabledReason: "LIBCU-518"),
-            ]
-        ),
-        placeholderScreen(
-            id: .eucMap,
-            title: "Map",
-            subtitle: "EUC map shell",
-            reason: "EUC map view is not wired yet."
-        ),
-        placeholderScreen(
-            id: .eucTune,
-            title: "Tune",
-            subtitle: "EUC tune/settings shell",
-            reason: "EUC tune/settings view is not wired yet."
-        ),
-        PevScreen(
-            id: .liveActivity,
-            title: "Live Activity",
-            subtitle: "preview-only surface for compact, expanded, and lock screen states",
-            primaryValue: "3 layouts",
-            secondaryValue: "matrix driven",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "preview states", value: "demo, populated, partial, waiting, stale, disconnected, parked"),
-                PevMetric(label: "presentation modes", value: "compact, expanded, lock screen"),
-            ],
-            isPreviewOnly: true
-        ),
-        PevScreen(
-            id: .bmsOverview,
-            title: "Pack overview",
-            subtitle: "CutOut · BMS",
-            primaryValue: "72%",
-            secondaryValue: "sag adjusted",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "topology", value: "20S4P split pack"),
-                PevMetric(label: "BMS online", value: "2"),
-                PevMetric(label: "lowest group", value: "group 17"),
-                PevMetric(label: "highest temp", value: "37.8 °C"),
-            ],
-            bmsContent: PevBmsContent(
-                kind: .overview,
-                snapshot: bmsOverviewSnapshot,
-                chips: [
-                    PevBmsChip(title: "20S4P split pack", accent: .yellow),
-                    PevBmsChip(title: "2 BMS online", accent: .green),
-                ]
-            )
-        ),
-        PevScreen(
-            id: .bmsCellMap6S,
-            title: "6S cell map",
-            subtitle: "skateboard pack",
-            primaryValue: "12 mV spread",
-            secondaryValue: "no scrolling needed",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "topology", value: "6S2P"),
-                PevMetric(label: "display", value: "all groups inline"),
-            ],
-            bmsContent: PevBmsContent(
-                kind: .cellMapInline,
-                snapshot: bmsInlineSnapshot,
-                chips: [
-                    PevBmsChip(title: "skateboard pack", accent: .cyan),
-                    PevBmsChip(title: "6S2P", accent: .yellow),
-                ],
-                highlightedGroupIndices: [3, 6],
-                modeTitles: ["balance view", "temps", "faults"]
-            )
-        ),
-        PevScreen(
-            id: .bmsCellMap40S,
-            title: "40S cell map",
-            subtitle: "large EUC pack",
-            primaryValue: "17–19 sagging under load",
-            secondaryValue: "scroll cells horizontally",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "topology", value: "40S4P"),
-                PevMetric(label: "display", value: "overview first"),
-            ],
-            bmsContent: PevBmsContent(
-                kind: .cellMapScrollable,
-                snapshot: bmsScrollableSnapshot,
-                chips: [
-                    PevBmsChip(title: "large EUC pack", accent: .cyan),
-                    PevBmsChip(title: "40S4P", accent: .yellow),
-                    PevBmsChip(title: "scroll cells horizontally", accent: .orange),
-                ],
-                highlightedGroupIndices: [17, 18, 19, 31],
-                modeTitles: ["overview", "strip", "full cell table", "popover"]
-            )
-        ),
-        PevScreen(
-            id: .bmsCellDetail,
-            title: "Cell detail",
-            subtitle: "from any map",
-            primaryValue: "4.071 V",
-            secondaryValue: "group 17",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "temp", value: "34.9 °C"),
-                PevMetric(label: "IR est.", value: "21 mΩ"),
-            ],
-            bmsContent: PevBmsContent(
-                kind: .cellDetail,
-                snapshot: bmsDetailSnapshot,
-                chips: [
-                    PevBmsChip(title: "from any map", accent: .cyan),
-                    PevBmsChip(title: "group 17", accent: .orange),
-                ],
-                highlightedGroupIndices: [17],
-                selectedGroupIndex: 17
-            )
-        ),
-        PevScreen(
-            id: .bmsUnknownTopology,
-            title: "Unknown BMS",
-            subtitle: "partial data",
-            primaryValue: "BMS found, map unknown",
-            secondaryValue: "topology unverified",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "reported voltage", value: "75.9 V"),
-                PevMetric(label: "fault bits", value: "0x0040"),
-                PevMetric(label: "capture flow", value: "disabled for launch"),
-            ],
-            bmsContent: PevBmsContent(
-                kind: .unknownTopology,
-                snapshot: bmsUnknownSnapshot,
-                chips: [
-                    PevBmsChip(title: "partial data", accent: .orange),
-                    PevBmsChip(title: "topology unverified", accent: .green),
-                ]
-            )
-        ),
-        PevScreen(
-            id: .bmsNoData,
-            title: "Battery",
-            subtitle: "EX30 · non-smart BMS · controller-only estimate",
-            primaryValue: "71%",
-            secondaryValue: "limited data",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "pack voltage", value: "117.6 V"),
-                PevMetric(label: "ride sag", value: "4.8 V"),
-                PevMetric(label: "load now", value: "38 A"),
-            ],
-            bmsContent: PevBmsContent(
-                kind: .noData,
-                snapshot: bmsNoDataSnapshot,
-                chips: [
-                    PevBmsChip(title: "limited data", accent: .yellow),
-                ]
-            )
-        ),
-        PevScreen(
-            id: .eucGarage,
-            title: "EUC health",
-            subtitle: "Stationary diagnostics for wheel-specific data",
-            primaryValue: "battery 85%",
-            secondaryValue: "pack 115.8 V",
-            warning: nil,
-            metrics: [
-                PevMetric(label: "beep margin", value: "11.6 mph"),
-                PevMetric(label: "tiltback", value: "42 mph"),
-                PevMetric(label: "pedal mode", value: "72%"),
-                PevMetric(label: "cell delta", value: "0.018 V"),
-                PevMetric(label: "last fault", value: "none"),
-            ],
-            deviceCard: PevDeviceCard(
-                title: "Aero-126V",
-                detail: "126 V nominal · 20s? mapped profile · BLE",
-                status: "Safe",
-                accent: .green
-            ),
-            dashboardTiles: [
-                PevDashboardTile(label: "battery", value: "85", unit: "%", detail: "115.8 V", accent: .cyan),
-                PevDashboardTile(kind: .beepMargin, label: "beep margin", value: "11.6", unit: "mph", detail: "to configured alarm", accent: .yellow),
-                PevDashboardTile(kind: .tiltback, label: "tiltback", value: "42", unit: "mph", detail: "wheel setting", accent: .orange),
-                PevDashboardTile(kind: .pedalMode, label: "pedal mode", value: "72", unit: "%", detail: "hardness normalized", accent: .purple),
-            ],
-            summaryTitle: "Cell / BMS summary",
-            summaryRows: [
-                PevSummaryRow(label: "high group", value: "4.18 V", accent: nil),
-                PevSummaryRow(label: "low group", value: "4.13 V", accent: nil),
-                PevSummaryRow(label: "delta", value: "0.05 V", accent: .green),
-            ],
-            faultCard: PevFaultCard(title: "Last fault", detail: "none since 38.2 mi ago", accent: .green),
-            eucGarageSnapshot: EucGarageSnapshot(
-                pack: EucPackHealthSnapshot(
-                    energyPercent: BatteryLevel(value: 85),
-                    voltage: Voltage(value: 115_800),
-                    highGroupVoltage: Voltage(value: 4_180),
-                    lowGroupVoltage: Voltage(value: 4_130),
-                    cellDelta: VoltageDelta(value: 50)
-                ),
-                settings: EucGarageSettingsSnapshot(
-                    beepMargin: .available(Speed(value: 5_186)),
-                    tiltback: .available(Speed(value: 18_776)),
-                    pedalMode: .available(PedalMode(hardnessPercent: 72))
-                ),
-                faultHistory: .none(sinceDistance: Distance(value: 61_456_941))
-            )
-        ),
-        PevScreen(
-            id: .vescDebug,
-            title: "VESC state",
-            subtitle: "For tuning/debug. Not the riding screen",
-            primaryValue: "duty cycle 82%",
-            secondaryValue: "pack 75.4 V",
-            warning: "Dangerous writes hidden until parked and confirmed.",
-            metrics: [
-                PevMetric(label: "battery limit", value: "45 A"),
-                PevMetric(label: "motor limit", value: "90 A"),
-                PevMetric(label: "last fault", value: "FAULT_CODE_NONE"),
-                PevMetric(label: "input app", value: "ADC + balance"),
-                PevMetric(label: "logging", value: "local CSV armed"),
-            ],
-            deviceCard: PevDeviceCard(
-                title: "Profile: Street stable",
-                detail: "VESC Express · FW 6.x · UART bridge",
-                status: "",
-                accent: .cyan
-            ),
-            dashboardTiles: [
-                PevDashboardTile(label: "duty cycle", value: "82", unit: "%", detail: "max seen 87%", accent: .orange),
-                PevDashboardTile(label: "pack", value: "75.4", unit: "V", detail: "20s lithium", accent: .cyan),
-                PevDashboardTile(label: "battery limit", value: "45", unit: "A", detail: "current max", accent: .yellow),
-                PevDashboardTile(label: "motor limit", value: "90", unit: "A", detail: "phase current", accent: .orange),
-            ],
-            summaryTitle: "Fault / app channels",
-            summaryRows: [
-                PevSummaryRow(label: "last fault", value: "FAULT_CODE_NONE", accent: .green),
-                PevSummaryRow(label: "input app", value: "ADC + balance", accent: nil),
-                PevSummaryRow(label: "CAN status", value: "single controller", accent: nil),
-                PevSummaryRow(label: "logging", value: "local CSV armed", accent: .yellow),
-            ],
-            faultCard: PevFaultCard(
-                title: "Guardrails",
-                detail: "Hide dangerous writes until parked + confirmed.",
-                accent: .orange
-            )
-        ),
-        placeholderScreen(
-            id: .vescMap,
-            title: "Map",
-            subtitle: "VESC map shell",
-            reason: "VESC map view is not wired yet."
-        ),
-        placeholderScreen(
-            id: .vescLogs,
-            title: "Logs",
-            subtitle: "VESC logs shell",
-            reason: "VESC logs view is not wired yet."
-        ),
-    ])
 }
 
 private extension PevScreenID {
@@ -1486,7 +886,7 @@ private extension PevScreenID {
         switch self {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             true
-        case .devicePicker, .eucRide, .eucMap, .eucTune, .liveActivity, .eucGarage, .vescDebug, .vescMap, .vescLogs:
+        case .eucRide, .eucGarage, .vescRide, .vescDebug:
             false
         }
     }

@@ -7,7 +7,6 @@ struct VescRideScreenView: View {
     let now: MonotonicMilliseconds
     let captureStatusText: String?
     let disconnect: () -> Void
-    let selectScreen: (PevScreenID) -> Void
 
     private var title: String {
         liveSnapshot?.title ?? VescRideSnapshot.defaultTitle
@@ -135,7 +134,7 @@ struct VescRideScreenView: View {
             speedValue: speedParts.value,
             speedUnit: speedParts.unit,
             speedCaption: "board speed",
-            allowsVerticalScroll: false,
+            allowsVerticalScroll: true,
         ) { scale, columns in
 
             if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
@@ -218,5 +217,6 @@ struct VescRideScreenView: View {
             }
             .padding(.top, 8 * scale)
         }
+        .accessibilityElement(children: .contain)
     }
 }

@@ -1,0 +1,51 @@
+import XCTest
+@testable import CutoutMobile
+
+final class PhoneLocationReadbackTests: XCTestCase {
+    func testRustGpsSpeedIsAvailableAndFresh() {
+        let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: 2_500))
+
+        XCTAssertEqual(readback.speed.millimetersPerSecond, 2_500)
+        XCTAssertEqual(readback.freshness(at: 12_000), .fresh)
+        XCTAssertEqual(readback.detail(at: 12_000), "fresh GPS")
+    }
+
+    func testRustGpsSpeedBecomesExplicitlyStale() {
+        let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: 2_500))
+
+        XCTAssertEqual(readback.freshness(at: 13_001), .stale)
+        XCTAssertEqual(readback.detail(at: 13_001), "stale GPS")
+    }
+
+    func testMissingRustGpsSpeedIsExplicitlyUnavailable() {
+        let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: nil))
+
+        XCTAssertEqual(readback.freshness(at: 10_001), .unavailable)
+        XCTAssertEqual(readback.speed.displayValue, "--")
+        XCTAssertEqual(readback.detail(at: 10_001), "GPS unavailable")
+    }
+
+    private func snapshot(sampleTime: UInt64, speed: Int32?) -> MobilePhoneLocationSnapshotDto {
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: sampleTime,
+            latitudeDegrees: 39.7,
+            longitudeDegrees: -104.9,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: speed.map { Double($0) / 1_000 } ?? -1,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+        let reading = speed.map {
+            SpeedReading(
+                value: Speed(value: $0),
+                source: .reported,
+                quality: .known,
+                verification: .unverified
+            )
+        }
+        return MobilePhoneLocationSnapshotDto(latestSample: sample, gpsSpeed: reading)
+    }
+}

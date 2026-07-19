@@ -7,21 +7,14 @@ struct BmsNoDataLayout: View {
     let rideState: EucRideScreenState?
     let liveSnapshot: BmsSnapshot?
     let scale: CGFloat
-    let selectScreen: (PevScreenID) -> Void
     @State private var showsDiagnostics = false
 
     private var snapshot: BmsSnapshot { content.snapshot }
-    private var rideSagMetric: PevMetric? {
-        screen.metrics.first { $0.label == "ride sag" }
-    }
-    private var loadNowMetric: PevMetric? {
-        screen.metrics.first { $0.label == "load now" }
-    }
     private var controllerEstimatePercentText: String {
         if let percent = rideState?.controllerOnlyEstimatePercent ?? snapshot.energyPercent {
             return String(percent.value)
         }
-        return screen.primaryValue.replacingOccurrences(of: "%", with: "")
+        return "--"
     }
     private var controllerEstimateDetail: String {
         rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail
@@ -45,19 +38,19 @@ struct BmsNoDataLayout: View {
         rideState?.voltageSag.map { String(format: "%.1f", abs(Double($0.value)) / 1_000.0) }
     }
     private var fallbackEstimateDetail: String {
-        if snapshot.voltage != nil, snapshot.current != nil || rideSagMetric != nil {
+        if snapshot.voltage != nil, snapshot.current != nil {
             return "derived from voltage curve + recent sag"
         }
-        if snapshot.voltage != nil || !screen.primaryValue.isEmpty {
+        if snapshot.voltage != nil {
             return "derived from voltage curve only"
         }
         return "estimate unavailable"
     }
     private var fallbackConfidenceTitle: String {
-        if snapshot.voltage != nil, snapshot.current != nil || rideSagMetric != nil {
+        if snapshot.voltage != nil, snapshot.current != nil {
             return "medium"
         }
-        if snapshot.voltage != nil || snapshot.energyPercent != nil || !screen.primaryValue.isEmpty {
+        if snapshot.voltage != nil || snapshot.energyPercent != nil {
             return "low"
         }
         return "unknown"
@@ -91,10 +84,10 @@ struct BmsNoDataLayout: View {
 
                     BmsNoDataTelemetryCard(
                         voltageValue: voltageText(packVoltage),
-                        rideSagValue: rideSagText ?? rideSagMetric.map(metricValueText) ?? "--",
-                        rideSagUnit: rideSagText == nil ? rideSagMetric.map(metricUnitText) ?? "" : "V",
-                        loadValue: currentText(packCurrent) ?? loadNowMetric.map(metricValueText) ?? "--",
-                        loadUnit: currentUnitText(packCurrent) ?? loadNowMetric.map(metricUnitText) ?? "",
+                        rideSagValue: rideSagText ?? "--",
+                        rideSagUnit: rideSagText == nil ? "" : "V",
+                        loadValue: currentText(packCurrent) ?? "--",
+                        loadUnit: currentUnitText(packCurrent) ?? "",
                         scale: scale
                     )
 
@@ -119,17 +112,6 @@ struct BmsNoDataLayout: View {
                 .padding(.bottom, 20 * scale)
             }
 
-            HStack {
-                BmsBottomTab(title: "Ride", isSelected: false, scale: scale) {
-                    selectScreen(.eucRide)
-                }
-                Spacer()
-                BmsBottomTab(title: "Pack", isSelected: true, scale: scale, action: nil)
-            }
-            .padding(.horizontal, 24 * scale)
-            .padding(.top, 12 * scale)
-            .padding(.bottom, 20 * scale)
-            .background(PevColors.pageBackground)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(PevColors.pageBackground)
@@ -144,11 +126,4 @@ struct BmsNoDataLayout: View {
         value.map { _ in "A" }
     }
 
-    private func metricUnitText(_ metric: PevMetric) -> String {
-        metric.value.split(separator: " ").dropFirst().first.map(String.init) ?? ""
-    }
-
-    private func metricValueText(_ metric: PevMetric) -> String {
-        metric.value.split(separator: " ").first.map(String.init) ?? metric.value
-    }
 }

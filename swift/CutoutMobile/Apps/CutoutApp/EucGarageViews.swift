@@ -8,23 +8,42 @@ struct EucGarageScreenView: View {
     let bmsSnapshot: BmsSnapshot?
 
     private var dashboardTiles: [PevDashboardTile] {
-        guard let settingsReadback else {
-            return screen.dashboardTiles
-        }
-
-        let settings = settingsReadback.eucGarageSettings
-        return screen.dashboardTiles.map { tile in
-            switch tile.kind {
-            case .beepMargin:
-                return settingsSpeedTile(tile: tile, readback: settings.beepMargin)
-            case .tiltback:
-                return settingsSpeedTile(tile: tile, readback: settings.tiltback)
-            case .pedalMode:
-                return settingsPedalTile(tile: tile, readback: settings.pedalMode)
-            case .metric, .batteryCurrent, .motorCurrent, .boardAngle, .controller:
-                return tile
-            }
-        }
+        let settings = settingsReadback?.eucGarageSettings ?? EucGarageSettingsSnapshot()
+        return [
+            settingsSpeedTile(
+                tile: PevDashboardTile(
+                    kind: .beepMargin,
+                    label: "beep margin",
+                    value: "--",
+                    unit: "mph",
+                    detail: "read-only setting",
+                    accent: .yellow
+                ),
+                readback: settings.beepMargin
+            ),
+            settingsSpeedTile(
+                tile: PevDashboardTile(
+                    kind: .tiltback,
+                    label: "tiltback",
+                    value: "--",
+                    unit: "mph",
+                    detail: "read-only setting",
+                    accent: .orange
+                ),
+                readback: settings.tiltback
+            ),
+            settingsPedalTile(
+                tile: PevDashboardTile(
+                    kind: .pedalMode,
+                    label: "pedal mode",
+                    value: "--",
+                    unit: "%",
+                    detail: "read-only setting",
+                    accent: .purple
+                ),
+                readback: settings.pedalMode
+            )
+        ]
     }
 
     var body: some View {
@@ -38,26 +57,6 @@ struct EucGarageScreenView: View {
                 titleMinimumScaleFactor: 0.76,
                 subtitleLineLimit: 2
             )
-
-            if let deviceCard = screen.deviceCard {
-                PevDashboardIdentityCard(
-                    title: deviceCard.title,
-                    detail: deviceCard.detail,
-                    scale: scale,
-                    titleFontSize: 22,
-                    detailFontSize: 13,
-                    titleMinimumScaleFactor: 0.75,
-                    detailMinimumScaleFactor: 0.62,
-                    trailingStatus: deviceCard.status,
-                    trailingStatusFill: deviceCard.accent.color,
-                    trailingStatusForeground: .black,
-                    trailingStatusWidth: 18,
-                    trailingStatusHeight: 32,
-                    cornerRadius: 26,
-                    height: 104
-                )
-                    .padding(.top, 10 * scale)
-            }
 
             PevDashboardGrid(columns: columns, spacing: 16 * scale) {
                 ForEach(dashboardTiles) { tile in
@@ -74,31 +73,6 @@ struct EucGarageScreenView: View {
                 }
             }
             .padding(.top, 6 * scale)
-
-            if let summaryTitle = screen.summaryTitle {
-                Text(summaryTitle)
-                    .font(.system(size: 18 * scale, weight: .black))
-                    .foregroundStyle(PevColors.primaryText)
-                    .padding(.top, 2 * scale)
-            }
-
-            if !screen.summaryRows.isEmpty {
-                PevDashboardKeyValueRows(
-                    rows: screen.summaryRows.map { row in
-                        PevDashboardKeyValueRow(
-                            id: row.id,
-                            label: row.label,
-                            value: row.value,
-                            valueColor: row.accent?.color
-                        )
-                    },
-                    scale: scale,
-                    fill: PevColors.cardFill,
-                    stroke: PevColors.cardStroke,
-                    labelColor: PevColors.muted,
-                    valueColor: PevColors.primaryText
-                )
-            }
 
             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
                 Text("Read-only pack health")
@@ -140,24 +114,6 @@ struct EucGarageScreenView: View {
                 FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: scale)
             }
 
-            if let faultCard = screen.faultCard {
-                Text(faultCard.title)
-                    .font(.system(size: 16 * scale, weight: .black))
-                    .foregroundStyle(PevColors.primaryText)
-                    .padding(.top, 12 * scale)
-
-                PevDashboardFaultDetailCard(
-                    detail: faultCard.detail,
-                    accent: faultCard.accent.color,
-                    scale: scale,
-                    fontSize: 13,
-                    horizontalAlignment: .center,
-                    horizontalPadding: 20,
-                    height: 57,
-                    cornerRadius: 18,
-                    minimumScaleFactor: 0.72
-                )
-            }
         }
     }
 

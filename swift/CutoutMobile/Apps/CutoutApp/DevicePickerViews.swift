@@ -62,6 +62,7 @@ struct DevicePickerView: View {
                     .padding(.horizontal, 14 * scale)
                     .frame(height: 46 * scale)
                     .background(PevDashboardCardBackground(cornerRadius: 8 * scale))
+                    .accessibilityIdentifier("device-picker.capture-kind")
             }
 
             ScrollView(.vertical, showsIndicators: false) {
@@ -79,6 +80,7 @@ struct DevicePickerView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .contentShape(Rectangle())
+                                    .accessibilityIdentifier("device-picker.pair.\(row.id)")
 
                                     PevActionButton(
                                         title: row.captureActionTitle,
@@ -101,6 +103,7 @@ struct DevicePickerView: View {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
                                     }
                                     .disabled(!hasRecordOnlyDeviceKind)
+                                    .accessibilityIdentifier("device-picker.record.\(row.id)")
                                 }
                             }
                         }
@@ -135,6 +138,7 @@ struct DevicePickerView: View {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
                                     }
                                     .disabled(!hasRecordOnlyDeviceKind)
+                                    .accessibilityIdentifier("device-picker.record.\(row.id)")
                                 }
                             }
                         }
@@ -169,6 +173,7 @@ struct DevicePickerView: View {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
                                     }
                                     .disabled(!hasRecordOnlyDeviceKind)
+                                    .accessibilityIdentifier("device-picker.record.\(row.id)")
                                 }
                             }
                         }
@@ -184,6 +189,8 @@ struct DevicePickerView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .foregroundStyle(.white)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("device-picker.screen")
     }
 
     private var isConnecting: Bool {

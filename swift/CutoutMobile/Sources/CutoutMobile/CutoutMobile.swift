@@ -1425,6 +1425,46 @@ public struct SpeedReadout: Equatable, Hashable, Sendable {
     }
 }
 
+public enum PhoneLocationFreshness: String, Equatable, Hashable, Sendable {
+    case unavailable
+    case fresh
+    case stale
+}
+
+public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
+    public let speed: SpeedReadout
+    public let sampleWallClockUnixMilliseconds: UInt64?
+
+    public init(snapshot: MobilePhoneLocationSnapshotDto) {
+        self.speed = SpeedReadout(millimetersPerSecond: snapshot.gpsSpeed?.value.value)
+        self.sampleWallClockUnixMilliseconds = snapshot.latestSample?.wallClockUnixMs
+    }
+
+    public func freshness(
+        at wallClockUnixMilliseconds: UInt64,
+        staleAfterMilliseconds: UInt64 = 3_000
+    ) -> PhoneLocationFreshness {
+        guard speed.millimetersPerSecond != nil, let sampleWallClockUnixMilliseconds else {
+            return .unavailable
+        }
+        guard wallClockUnixMilliseconds >= sampleWallClockUnixMilliseconds else {
+            return .stale
+        }
+        return wallClockUnixMilliseconds - sampleWallClockUnixMilliseconds <= staleAfterMilliseconds ? .fresh : .stale
+    }
+
+    public func detail(at wallClockUnixMilliseconds: UInt64) -> String {
+        switch freshness(at: wallClockUnixMilliseconds) {
+        case .unavailable:
+            "GPS unavailable"
+        case .fresh:
+            "fresh GPS"
+        case .stale:
+            "stale GPS"
+        }
+    }
+}
+
 public enum BmsTopologyConfidence: Equatable, Hashable, Sendable {
     case verified
     case inferred

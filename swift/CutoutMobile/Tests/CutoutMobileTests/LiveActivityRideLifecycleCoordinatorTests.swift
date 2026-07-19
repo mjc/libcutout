@@ -5,19 +5,15 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
     func testReconcileStartsUpdatesAndEndsOnce() {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
-        let first = fixtureSnapshot(label: "Demo ride", speedMph: 19.8)
-        let second = fixtureSnapshot(label: "Demo ride", speedMph: 21.6)
+        let first = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+        let second = liveSnapshot(label: "Connected ride", speedMph: 21.6)
 
         coordinator.reconcile(snapshot: first, shouldBeActive: true)
         coordinator.reconcile(snapshot: first, shouldBeActive: true)
         coordinator.reconcile(snapshot: second, shouldBeActive: true)
         coordinator.reconcile(snapshot: second, shouldBeActive: false, endReason: .disconnected)
 
-        XCTAssertEqual(manager.events, [
-            .start(first),
-            .update(second),
-            .end(.disconnected),
-        ])
+        XCTAssertEqual(manager.events, [.start(first), .update(second), .end(.disconnected)])
     }
 
     func testReconcileDoesNotStartWithoutSnapshot() {
@@ -33,16 +29,13 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
     func testEndStopsActiveActivityOnce() {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
-        let snapshot = fixtureSnapshot(label: "Demo ride", speedMph: 19.8)
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
 
         coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
         coordinator.end(reason: .sessionEnded)
         coordinator.end(reason: .sessionEnded)
 
-        XCTAssertEqual(manager.events, [
-            .start(snapshot),
-            .end(.sessionEnded),
-        ])
+        XCTAssertEqual(manager.events, [.start(snapshot), .end(.sessionEnded)])
     }
 
     func testEndDoesNothingWithoutPriorStart() {
@@ -54,31 +47,19 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertTrue(manager.events.isEmpty)
     }
 
-    func testFixtureSnapshotCanEnterThePipeline() {
+    func testLiveSnapshotCanEnterThePipeline() {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
-        let snapshot = LiveActivityRideSnapshot.demo(
-            identity: .demo(label: "Lynx-S"),
-            speed: .available(label: "Speed", value: "27", unit: "mph", source: .demo),
-            battery: .available(label: "Battery", value: "68", unit: "%", source: .demo),
-            packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .demo),
-            pwm: .available(label: "PWM", value: "54", unit: "%", source: .demo),
-            mode: .available(label: "Mode", value: "Sport", unit: nil, source: .demo),
-            duration: .available(label: "Duration", value: "18:42", unit: nil, source: .demo),
-            distance: .available(label: "Distance", value: "7.8", unit: "mi", source: .demo),
-            headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .demo),
-            beeps: .available(label: "Beeps", value: "Beeps armed", unit: nil, source: .demo),
-            temperature: .available(label: "Temp", value: "34", unit: "°C", source: .demo)
-        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 27)
 
         coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
 
         XCTAssertEqual(manager.events, [.start(snapshot)])
     }
 
-    func testFixtureHelperKeepsSpeedUnitSeparate() {
-        let snapshot = fixtureSnapshot(label: "Demo ride", speedMph: 19.8)
-        let fastSnapshot = fixtureSnapshot(label: "Demo ride", speedMph: 123.4)
+    func testLiveSnapshotKeepsSpeedUnitSeparate() {
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+        let fastSnapshot = liveSnapshot(label: "Connected ride", speedMph: 123.4)
 
         XCTAssertEqual(snapshot.speed.value, "19.8")
         XCTAssertEqual(snapshot.speed.unit, "mph")
@@ -109,18 +90,21 @@ private final class RecordingLiveActivityRideLifecycleManager: LiveActivityRideL
     }
 }
 
-private func fixtureSnapshot(label: String, speedMph: Double) -> LiveActivityRideSnapshot {
-    LiveActivityRideSnapshot.demo(
-        identity: .demo(label: label),
-        speed: .available(label: "Speed", value: String(format: "%.1f", speedMph), unit: "mph", source: .demo),
-        battery: .available(label: "Battery", value: "68", unit: "%", source: .demo),
-        packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .demo),
-        pwm: .available(label: "PWM", value: "54", unit: "%", source: .demo),
-        mode: .available(label: "Mode", value: "Sport", unit: nil, source: .demo),
-        duration: .available(label: "Duration", value: "18:42", unit: nil, source: .demo),
-        distance: .available(label: "Distance", value: "7.8", unit: "mi", source: .demo),
-        headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .demo),
-        beeps: .available(label: "Beeps", value: "Beeps armed", unit: nil, source: .demo),
-        temperature: .available(label: "Temp", value: "34", unit: "°C", source: .demo)
+private func liveSnapshot(label: String, speedMph: Double) -> LiveActivityRideSnapshot {
+    let speed = Int32((speedMph * 447.04).rounded())
+    return LiveActivityRideSnapshot(
+        identity: .device(label),
+        rideState: EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                speed: SpeedReadout(millimetersPerSecond: speed),
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: speed),
+                    operatingState: .riding
+                )
+            )
+        ),
+        now: MonotonicMilliseconds(1_100)
     )
 }

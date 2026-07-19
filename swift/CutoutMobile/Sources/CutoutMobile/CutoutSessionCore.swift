@@ -26,6 +26,7 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var settingsReadback: SettingsReadback?
     public private(set) var faultHistoryReadback: FaultHistoryReadback?
     public private(set) var bmsSnapshot: BmsSnapshot?
+    public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
@@ -35,6 +36,7 @@ public final class CutoutSessionCore: NSObject {
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
+    public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
     private let clock = MonotonicClock()
@@ -67,6 +69,7 @@ public final class CutoutSessionCore: NSObject {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.activityType = .fitness
+        manager.allowsBackgroundLocationUpdates = true
         return manager
     }()
 
@@ -637,6 +640,11 @@ public final class CutoutSessionCore: NSObject {
     private func publishBmsSnapshot() {
         let value = bmsSnapshot
         publishOnMain { self.onBmsSnapshotChange?(value) }
+    }
+
+    private func publishPhoneLocationSnapshot() {
+        let value = phoneLocationSnapshot
+        publishOnMain { self.onPhoneLocationSnapshotChange?(value) }
     }
 
     private func publishProtocolIdentityCandidate() {
@@ -1309,7 +1317,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         guard CLLocationManager.locationServicesEnabled() else { return }
         switch locationManager.authorizationStatus {
         case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
+            locationManager.requestAlwaysAuthorization()
         case .authorizedAlways, .authorizedWhenInUse:
             locationManager.startUpdatingLocation()
         case .denied, .restricted:
@@ -1332,7 +1340,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        _ = phoneLocationState.ingest(sample: MobilePhoneLocationSampleDto(
+        phoneLocationSnapshot = phoneLocationState.ingest(sample: MobilePhoneLocationSampleDto(
             wallClockUnixMs: UInt64(max(0, location.timestamp.timeIntervalSince1970 * 1_000)),
             latitudeDegrees: location.coordinate.latitude,
             longitudeDegrees: location.coordinate.longitude,
@@ -1344,6 +1352,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             courseDegrees: location.course,
             courseAccuracyDegrees: location.courseAccuracy
         ))
+        publishPhoneLocationSnapshot()
     }
 }
 

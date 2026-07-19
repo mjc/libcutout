@@ -22,7 +22,7 @@ struct PevRideDashboardShell<Content: View>: View {
         speedValue: String,
         speedUnit: String,
         speedCaption: String,
-        allowsVerticalScroll: Bool = false,
+        allowsVerticalScroll: Bool = true,
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle

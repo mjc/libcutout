@@ -11,6 +11,9 @@ final class CutoutAppModel: ObservableObject {
     @Published private(set) var settingsReadback: SettingsReadback?
     @Published private(set) var faultHistoryReadback: FaultHistoryReadback?
     @Published private(set) var bmsSnapshot: BmsSnapshot?
+    @Published private(set) var phoneLocationReadback = PhoneLocationReadback(
+        snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
+    )
     @Published private(set) var captureStatusText: String?
     @Published private(set) var isRecordOnlyCapture = false
     @Published private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
@@ -64,6 +67,9 @@ final class CutoutAppModel: ObservableObject {
         }
         core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
             self?.bmsSnapshot = bmsSnapshot
+        }
+        core.onPhoneLocationSnapshotChange = { [weak self] snapshot in
+            self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot)
         }
         core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)

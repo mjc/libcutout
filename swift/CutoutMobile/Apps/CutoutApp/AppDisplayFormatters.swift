@@ -54,16 +54,8 @@ extension PevScreen {
 
     var tabTitle: String {
         switch id {
-        case .devicePicker:
-            "Picker"
         case .eucRide:
             "EUC"
-        case .eucMap:
-            "Map"
-        case .eucTune:
-            "Tune"
-        case .liveActivity:
-            "Live Activity"
         case .bmsOverview, .bmsNoData:
             "BMS"
         case .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail:
@@ -72,12 +64,10 @@ extension PevScreen {
             "Faults"
         case .eucGarage:
             "Pack"
+        case .vescRide:
+            "VESC"
         case .vescDebug:
             "VESC"
-        case .vescMap:
-            "Map"
-        case .vescLogs:
-            "Logs"
         }
     }
 }

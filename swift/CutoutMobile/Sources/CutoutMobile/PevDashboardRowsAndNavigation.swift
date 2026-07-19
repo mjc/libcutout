@@ -369,16 +369,15 @@ public struct PevDashboardTabStrip: View {
 
     @ViewBuilder
     private func tabContent(_ tab: PevScreenTab) -> some View {
-        if tab.isEnabled, let destination = tab.destinationTarget {
-            Button {
-                selectTarget(destination)
-            } label: {
-                tabLabel(tab)
-            }
-            .buttonStyle(.plain)
-        } else {
+        Button {
+            guard let destination = tab.destinationTarget else { return }
+            selectTarget(destination)
+        } label: {
             tabLabel(tab)
         }
+        .buttonStyle(.plain)
+        .disabled(!tab.isEnabled || tab.destinationTarget == nil)
+        .accessibilityIdentifier("dashboard.nav.\(tab.title.lowercased())")
     }
 
     private func tabLabel(_ tab: PevScreenTab) -> some View {
@@ -391,8 +390,8 @@ public struct PevDashboardTabStrip: View {
         )
         .frame(maxWidth: .infinity)
         .opacity(tab.isEnabled ? 1 : 0.45)
-        .accessibilityValue(tab.isEnabled ? "Available" : "Unavailable")
-        .accessibilityHint(tab.isEnabled ? "" : "This tab is unavailable.")
-        .accessibilityAddTraits(tab.isEnabled ? [] : .isButton)
+        .accessibilityValue(tab.isSelected ? "Selected" : tab.isEnabled ? "Available" : "Unavailable")
+        .accessibilityHint(tab.disabledReason ?? "")
+        .accessibilityAddTraits(tab.isSelected ? .isSelected : (tab.isEnabled ? [] : .isButton))
     }
 }

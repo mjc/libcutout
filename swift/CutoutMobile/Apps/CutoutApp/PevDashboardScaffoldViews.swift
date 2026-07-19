@@ -36,7 +36,7 @@ struct PevDashboardScaffold<Content: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
+            let scale = DashboardViewport.contentScale(width: proxy.size.width, height: proxy.size.height)
             let columns = [
                 GridItem(.flexible(), spacing: columnSpacing * scale),
                 GridItem(.flexible(), spacing: columnSpacing * scale),
@@ -104,7 +104,7 @@ struct PevAppShell<Content: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let scale = min(proxy.size.width / 390.0, proxy.size.height / 844.0)
+            let scale = DashboardViewport.contentScale(width: proxy.size.width, height: proxy.size.height)
 
             VStack(spacing: 0) {
                 PevDashboardHeader(
@@ -131,7 +131,10 @@ struct PevAppShell<Content: View>: View {
 
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(PevColors.pageBackground)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 PevDashboardTabStrip(
                     tabs: tabs,
                     scale: scale,
@@ -143,9 +146,9 @@ struct PevAppShell<Content: View>: View {
                 .padding(.top, 8 * scale)
                 .padding(.bottom, 8 * scale)
                 .background(PevColors.pageBackground)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dashboard.bottom.navigation")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(PevColors.pageBackground)
         }
     }
 
@@ -187,6 +190,8 @@ struct PevDashboardHeader: View {
                 .foregroundStyle(PevColors.muted)
         }
         .padding(.top, 10 * scale)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("dashboard.top.navigation")
     }
 }
 

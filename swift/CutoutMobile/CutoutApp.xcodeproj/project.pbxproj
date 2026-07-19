@@ -43,7 +43,7 @@
 		300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */; };
 		300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */; };
 		300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */; };
-		30000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */; };
+		444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444411 /* UITests/CutoutAppUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -108,7 +108,8 @@
 		400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideHeroSection.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideDashboardShell.swift; sourceTree = SOURCE_ROOT; };
-		40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PlaceholderScreenViews.swift; sourceTree = SOURCE_ROOT; };
+		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
+		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,6 +129,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		444444444444444444444431 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -139,6 +147,7 @@
 				111111111111111111111154 /* Resources */,
 				111111111111111111111152 /* Frameworks */,
 				111111111111111111111153 /* Products */,
+				444444444444444444444415 /* UITests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -174,7 +183,6 @@
 				400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */,
 				400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */,
 				400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */,
-				40000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -213,6 +221,14 @@
 				222222222222222222222127 /* Apps/CutoutLiveActivityExtension/Assets.xcassets */,
 			);
 			path = "Live Activity Extension";
+			sourceTree = "<group>";
+		};
+		444444444444444444444415 /* UITests */ = {
+			isa = PBXGroup;
+			children = (
+				444444444444444444444411 /* UITests/CutoutAppUITests.swift */,
+			);
+			path = UITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -260,6 +276,24 @@
 			productReference = 222222222222222222222124 /* CutoutLiveActivityExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		444444444444444444444461 /* CutoutAppUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 444444444444444444444471 /* Build configuration list for PBXNativeTarget "CutoutAppUITests" */;
+			buildPhases = (
+				444444444444444444444431 /* Frameworks */,
+				444444444444444444444432 /* Sources */,
+				444444444444444444444433 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				444444444444444444444502 /* PBXTargetDependency */,
+			);
+			name = CutoutAppUITests;
+			productName = CutoutAppUITests;
+			productReference = 444444444444444444444412 /* CutoutAppUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -273,6 +307,10 @@
 					};
 					222222222222222222222161 = {
 						CreatedOnToolsVersion = 27.0;
+					};
+					444444444444444444444461 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 111111111111111111111161;
 					};
 				};
 			};
@@ -294,6 +332,7 @@
 			targets = (
 				111111111111111111111161 /* CutoutApp */,
 				222222222222222222222161 /* CutoutLiveActivityExtension */,
+				444444444444444444444461 /* CutoutAppUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -312,6 +351,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				222222222222222222222114 /* Apps/CutoutLiveActivityExtension/Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		444444444444444444444433 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -351,7 +397,6 @@
 				300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */,
 				300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */,
 				300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */,
-				30000000000000000000001A /* Apps/CutoutApp/PlaceholderScreenViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -364,13 +409,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		444444444444444444444432 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		444444444444444444444501 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 111111111111111111111191 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 111111111111111111111161;
+			remoteInfo = CutoutApp;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXTargetDependency section */
 		222222222222222222222191 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 222222222222222222222161 /* CutoutLiveActivityExtension */;
 			targetProxy = 222222222222222222222192 /* PBXContainerItemProxy */;
+		};
+		444444444444444444444502 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 111111111111111111111161 /* CutoutApp */;
+			targetProxy = 444444444444444444444501 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -396,7 +464,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -421,7 +489,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -480,7 +548,7 @@
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -509,7 +577,49 @@
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		444444444444444444444421 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGET_APPLICATION = CutoutApp;
+				TEST_TARGET_NAME = CutoutApp;
+				USES_XCTRUNNER = YES;
+			};
+			name = Debug;
+		};
+		444444444444444444444422 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGET_APPLICATION = CutoutApp;
+				TEST_TARGET_NAME = CutoutApp;
+				USES_XCTRUNNER = YES;
 			};
 			name = Release;
 		};
@@ -539,6 +649,15 @@
 			buildConfigurations = (
 				222222222222222222222201 /* Debug */,
 				222222222222222222222202 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		444444444444444444444471 /* Build configuration list for PBXNativeTarget "CutoutAppUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				444444444444444444444421 /* Debug */,
+				444444444444444444444422 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

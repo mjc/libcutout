@@ -6,7 +6,7 @@ struct ContentView: View {
     @ObservedObject var model: CutoutAppModel
     @State private var route: CutoutAppRoute
 
-    private let catalog = PevScreenCatalog.v2
+    private let catalog = PevScreenCatalog.live
 
     init(model: CutoutAppModel) {
         self.model = model
@@ -91,17 +91,9 @@ struct ContentView: View {
 
     @ViewBuilder
     private var routedContent: some View {
-        if route == .vescDebug {
-            VescDebugScreenView(
-                snapshot: model.vescRideSnapshot,
-                phase: model.phase,
-                notificationCount: model.displayState.notificationCount,
-                captureStatusText: model.captureStatusText
-            )
-        } else if let screen = screen(for: route) {
+        if let screen = screen(for: route) {
             PevScreenContainer(
                 screen: screen,
-                devicePickerScanState: model.devicePickerScanState,
                 rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
                     ? nil
                     : model.rideState,
@@ -109,28 +101,14 @@ struct ContentView: View {
                 settingsReadback: model.settingsReadback,
                 faultHistoryReadback: model.faultHistoryReadback,
                 bmsSnapshot: model.bmsSnapshot,
+                phoneLocationReadback: model.phoneLocationReadback,
+                vescSnapshot: model.vescRideSnapshot,
+                now: model.currentMonotonicTime,
+                connectionPhase: model.phase,
+                notificationCount: model.displayState.notificationCount,
                 captureStatusText: model.captureStatusText,
-                isRecordOnlyCapture: model.isRecordOnlyCapture,
-                disconnect: disconnectAndReturnToPicker,
-                pair: pair,
-                recordOnly: { row, deviceKind in
-                    if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
-                        route = model.isRecordOnlyCapture ? .capture : .eucRide
-                    }
-                },
-                selectScreen: selectScreen
+                disconnect: disconnectAndReturnToPicker
             )
-        } else if route == .vescRide {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                VescRideScreenView(
-                    liveSnapshot: model.vescRideSnapshot,
-                    phase: model.phase,
-                    now: model.currentMonotonicTime,
-                    captureStatusText: model.captureStatusText,
-                    disconnect: disconnectAndReturnToPicker,
-                    selectScreen: selectScreen
-                )
-            }
         } else if route == .capture {
             CaptureRecordingScreen(
                 deviceKind: model.recordOnlyDeviceKind,
@@ -147,18 +125,10 @@ struct ContentView: View {
         switch route {
         case .eucRide, .vescRide:
             "Ride"
-        case .eucMap, .vescMap:
-            "Map"
-        case .eucTune:
-            "Tune"
         case .eucPack:
             "Pack"
         case .vescDebug:
             "Debug"
-        case .vescLogs:
-            "Logs"
-        case .liveActivity:
-            "Live Activity"
         case .capture:
             "Capture"
         case .devicePicker:
@@ -168,7 +138,7 @@ struct ContentView: View {
 
     private var appTabs: [PevScreenTab] {
         switch route {
-        case .vescRide, .vescDebug, .vescMap, .vescLogs:
+        case .vescRide, .vescDebug:
             PevRideTabs.vescRideTabs(selected: selectedScreenID)
         default:
             PevRideTabs.eucRideTabs(selected: selectedScreenID)
@@ -179,28 +149,20 @@ struct ContentView: View {
         switch route {
         case .eucRide:
             .eucRide
-        case .eucMap:
-            .eucMap
-        case .eucTune:
-            .eucTune
         case .eucPack(let screenID):
             screenID
         case .vescRide:
-            nil
+            .vescRide
         case .vescDebug:
             .vescDebug
-        case .vescMap:
-            .vescMap
-        case .vescLogs:
-            .vescLogs
-        case .devicePicker, .liveActivity, .capture:
+        case .devicePicker, .capture:
             nil
         }
     }
 
     private var appSelectedColor: Color {
         switch route {
-        case .vescRide, .vescDebug, .vescMap, .vescLogs:
+        case .vescRide, .vescDebug:
             PevColors.purple
         default:
             PevColors.yellow
@@ -213,24 +175,14 @@ struct ContentView: View {
             nil
         case .eucRide:
             catalog.screen(id: .eucRide)
-        case .eucMap:
-            catalog.screen(id: .eucMap)
-        case .eucTune:
-            catalog.screen(id: .eucTune)
-        case .liveActivity:
-            catalog.screen(id: .liveActivity)
         case .eucPack(let screenID):
             catalog.screen(id: screenID).map {
-                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot, previewFallback: false)
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
             }
         case .vescRide:
-            nil
+            catalog.screen(id: .vescRide)
         case .vescDebug:
             catalog.screen(id: .vescDebug)
-        case .vescMap:
-            catalog.screen(id: .vescMap)
-        case .vescLogs:
-            catalog.screen(id: .vescLogs)
         case .capture:
             nil
         }

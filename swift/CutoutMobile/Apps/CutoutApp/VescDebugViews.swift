@@ -61,5 +61,6 @@ struct VescDebugScreenView: View {
                 valueColor: PevColors.primaryText
             )
         }
+        .accessibilityElement(children: .contain)
     }
 }

@@ -59,6 +59,19 @@ cutout_build_ios_rust_ffi() {
     cargo build -p cutout-mobile-ffi --target aarch64-apple-ios
 }
 
+cutout_build_ios_simulator_rust_ffi() {
+  local root sdk clang
+  root="$(cutout_repo_root)"
+  sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+  clang="$(xcrun --sdk iphonesimulator --find clang)"
+
+  env \
+    SDKROOT="$sdk" \
+    CC_aarch64_apple_ios_sim="$clang" \
+    CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$clang" \
+    cargo build -p cutout-mobile-ffi --target aarch64-apple-ios-sim
+}
+
 cutout_xcode_auth_args() {
   if [[ -n "${CUTOUT_APPSTORE_AUTH_KEY_PATH:-}" ]]; then
     printf '%s\0' \

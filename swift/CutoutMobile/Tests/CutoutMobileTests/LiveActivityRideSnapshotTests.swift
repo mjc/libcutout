@@ -74,7 +74,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
     }
 
-    func testPartialLiveSnapshotMarksUnownedPreviewFieldsDeferred() {
+    func testPartialLiveSnapshotMarksUnownedFieldsDeferred() {
         let snapshot = LiveActivityRideSnapshot(
             identity: .model(.aero),
             rideState: liveRideState(
@@ -118,25 +118,6 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.glyph, .floatwheelAtom)
         XCTAssertEqual(snapshot.packVoltage, .available(label: "Voltage", value: "61.8", unit: "V", source: .liveTelemetry))
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "27", unit: "°C", source: .liveTelemetry))
-    }
-
-    func testFixtureSnapshotCanCarryFloatwheelAtomGlyph() {
-        let snapshot = LiveActivityRideSnapshot.demo(
-            identity: .demo(label: "Floatwheel Atom"),
-            glyph: .floatwheelAtom,
-            speed: .available(label: "Speed", value: "0.0", unit: "mph", source: .demo),
-            battery: .unavailable(label: "Battery", unit: "%"),
-            packVoltage: .available(label: "Voltage", value: "61.8", unit: "V", source: .demo),
-            pwm: .notApplicable(label: "PWM"),
-            mode: .deferred(label: "Mode"),
-            duration: .deferred(label: "Duration"),
-            distance: .unavailable(label: "Distance", unit: "mi"),
-            headroom: .notApplicable(label: "Headroom"),
-            beeps: .deferred(label: "Beeps"),
-            temperature: .available(label: "Temp", value: "27", unit: "°C", source: .demo)
-        )
-
-        XCTAssertEqual(snapshot.glyph, .floatwheelAtom)
     }
 
     func testConnectionStateDistinguishesDisconnectedWaitingAndStale() {
@@ -227,26 +208,6 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.connectionState, .connected)
         XCTAssertEqual(snapshot.pwm.state, .notApplicable)
         XCTAssertEqual(snapshot.headroom.state, .notApplicable)
-    }
-
-    func testFixtureSnapshotIsExplicitDemoData() {
-        let snapshot = LiveActivityRideSnapshot.demo(
-            identity: .demo(label: "Lynx-S"),
-            speed: .available(label: "Speed", value: "27", unit: "mph", source: .demo),
-            battery: .available(label: "Battery", value: "68", unit: "%", source: .demo),
-            packVoltage: .available(label: "Voltage", value: "118.4", unit: "V", source: .demo),
-            pwm: .available(label: "PWM", value: "54", unit: "%", source: .demo),
-            mode: .available(label: "Mode", value: "Sport", unit: nil, source: .demo),
-            duration: .available(label: "Duration", value: "18:42", unit: nil, source: .demo),
-            distance: .available(label: "Distance", value: "7.8", unit: "mi", source: .demo),
-            headroom: .available(label: "Headroom", value: "Headroom good", unit: nil, source: .demo),
-            beeps: .available(label: "Beeps", value: "Beeps armed", unit: nil, source: .demo),
-            temperature: .available(label: "Temp", value: "34", unit: "°C", source: .demo)
-        )
-
-        XCTAssertEqual(snapshot.connectionState, .demo)
-        XCTAssertEqual(snapshot.identity.displayLabel, "Lynx-S demo")
-        XCTAssertTrue(snapshot.visibleValues.allSatisfy { $0.source == .demo })
     }
 
     func testPercentProgressComesFromAvailableAndStaleValues() {
