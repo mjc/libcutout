@@ -145,9 +145,16 @@
             export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
             exec cargo fuzz "$@"
           '';
+          # Keep Xcode's clang away from Nix's incompatible linker and SDK shims.
+          appleXcodebuild = pkgs.writeShellScriptBin "xcodebuild" ''
+            exec env \
+              -u SDKROOT -u LD -u CC -u CXX -u AR -u RANLIB \
+              PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+              /usr/bin/xcodebuild "$@"
+          '';
         in
         {
-          default = pkgs.mkShell {
+          default = (if pkgs.stdenv.isDarwin then pkgs.mkShellNoCC else pkgs.mkShell) {
             packages = [
               stableRust
               cutoutCargoFuzz
@@ -163,6 +170,7 @@
               pkgs.mold
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+              appleXcodebuild
               pkgs.llvmPackages.lld
             ]
             ++ [
