@@ -1,5 +1,25 @@
 import SwiftUI
 
+public enum PevLiveActivityMetricRole: CaseIterable, Hashable, Sendable {
+    case battery
+    case packVoltage
+    case pwm
+    case mode
+    case duration
+    case distance
+    case chargeEstimate
+    case headroom
+    case temperature
+
+    public var isRepeatedInSafetyFooter: Bool {
+        self == .headroom || self == .temperature
+    }
+
+    public func accessibilitySortPriority(for severity: LiveActivityRideHeadroomSeverity?) -> Double {
+        self == .headroom && severity == .reduceAcceleration ? 2 : 0
+    }
+}
+
 public struct PevLiveActivityBrandMark: View {
     let size: CGFloat
 
@@ -111,19 +131,19 @@ public struct PevLiveActivityMetricGrid: View {
     public var body: some View {
         Grid(horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
-                metricCell(value: snapshot.battery, tint: PevLiveActivityPalette.connected, showProgress: true)
-                metricCell(value: snapshot.packVoltage, tint: PevLiveActivityPalette.primaryText)
-                metricCell(value: snapshot.pwm, tint: PevLiveActivityPalette.accent2, showProgress: true)
+                metricCell(role: .battery, value: snapshot.battery, tint: PevLiveActivityPalette.connected, showProgress: true)
+                metricCell(role: .packVoltage, value: snapshot.packVoltage, tint: PevLiveActivityPalette.primaryText)
+                metricCell(role: .pwm, value: snapshot.pwm, tint: PevLiveActivityPalette.accent2, showProgress: true)
             }
             GridRow {
-                metricCell(value: snapshot.mode, tint: PevLiveActivityPalette.orange)
-                metricCell(value: snapshot.duration, tint: PevLiveActivityPalette.primaryText)
-                metricCell(value: snapshot.distance, tint: PevLiveActivityPalette.primaryText)
+                metricCell(role: .mode, value: snapshot.mode, tint: PevLiveActivityPalette.orange)
+                metricCell(role: .duration, value: snapshot.duration, tint: PevLiveActivityPalette.primaryText)
+                metricCell(role: .distance, value: snapshot.distance, tint: PevLiveActivityPalette.primaryText)
             }
             GridRow {
-                metricCell(value: snapshot.chargeEstimate, tint: PevLiveActivityPalette.connected)
-                metricCell(value: snapshot.headroom, tint: PevLiveActivityPalette.orange)
-                metricCell(value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
+                metricCell(role: .chargeEstimate, value: snapshot.chargeEstimate, tint: PevLiveActivityPalette.connected)
+                metricCell(role: .headroom, value: snapshot.headroom, tint: PevLiveActivityPalette.orange)
+                metricCell(role: .temperature, value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
             }
         }
         .frame(maxWidth: .infinity)
@@ -135,6 +155,7 @@ public struct PevLiveActivityMetricGrid: View {
     }
 
     private func metricCell(
+        role: PevLiveActivityMetricRole,
         value: LiveActivityRideValue,
         tint: Color,
         showProgress: Bool = false
@@ -148,6 +169,7 @@ public struct PevLiveActivityMetricGrid: View {
             compact: compact,
             showProgress: showProgress
         )
+        .accessibilityHidden(role.isRepeatedInSafetyFooter)
     }
 }
 
@@ -179,6 +201,9 @@ public struct PevLiveActivitySafetyFooter: View {
                 systemName: headroomPresentation.systemName,
                 value: snapshot.headroom,
                 tint: headroomPresentation.tint
+            )
+            .accessibilitySortPriority(
+                PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
             )
             Divider().overlay(PevLiveActivityPalette.border)
                 .accessibilityHidden(true)

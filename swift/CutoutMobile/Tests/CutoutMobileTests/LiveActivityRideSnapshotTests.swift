@@ -254,6 +254,18 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
     }
 
+    func testExpandedMetricAccessibilityAvoidsFooterDuplicatesAndPrioritizesCriticalHeadroom() {
+        let footerDuplicates = Set(PevLiveActivityMetricRole.allCases.filter(\.isRepeatedInSafetyFooter))
+
+        XCTAssertEqual(footerDuplicates, [.headroom, .temperature])
+        XCTAssertEqual(
+            PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: .reduceAcceleration),
+            2
+        )
+        XCTAssertEqual(PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: .nominal), 0)
+        XCTAssertEqual(PevLiveActivityMetricRole.battery.accessibilitySortPriority(for: .reduceAcceleration), 0)
+    }
+
     func testDistanceValueConvertsToKilometresWhenSpeedUnitIsMetric() {
         let telemetry = TelemetrySnapshot(
             at: MonotonicMilliseconds(1_000),
