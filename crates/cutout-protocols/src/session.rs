@@ -782,7 +782,7 @@ fn vesc_values_to_raw_telemetry(values: &VescValuesTelemetry) -> RawTelemetryRea
                 VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID,
                 i64::from(values.tachometer_absolute.as_counts()),
             ),
-            RawFieldValue::new(VESC_RAW_STATUS_FIELD_ID, i64::from(values.status)),
+            RawFieldValue::new(VESC_RAW_STATUS_FIELD_ID, i64::from(values.status.as_u8())),
         ]
         .into_iter()
         .collect(),
@@ -2544,7 +2544,7 @@ mod tests {
                 tachometer_absolute: cutout_core::TachometerReading::from_counts(0),
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::AbsOverCurrent,
-                status: 0,
+                status: crate::VescStatus::new(0),
                 ..VescValuesTelemetry::default()
             }),
             ms(42),
@@ -2680,7 +2680,7 @@ mod tests {
                 tachometer_absolute: cutout_core::TachometerReading::from_counts(0),
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::None,
-                status: 0,
+                status: crate::VescStatus::new(0),
                 ..VescValuesTelemetry::default()
             }),
             ms(42),

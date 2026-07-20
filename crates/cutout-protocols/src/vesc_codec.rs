@@ -258,7 +258,7 @@ impl TransferredCharge {
     /// Returns transferred charge in microamp-hours.
     #[must_use]
     pub fn as_microamp_hours(self) -> i64 {
-        i64::from(self.0.get()).saturating_mul(100)
+        i64::from(self.0.get()) * 100
     }
 
     const fn from_vesc_counter(value: i32) -> Self {
@@ -281,7 +281,7 @@ impl TransferredEnergy {
     /// Returns transferred energy in microwatt-hours.
     #[must_use]
     pub fn as_microwatt_hours(self) -> i64 {
-        i64::from(self.0.get()).saturating_mul(100)
+        i64::from(self.0.get()) * 100
     }
 
     const fn from_vesc_counter(value: i32) -> Self {
@@ -305,6 +305,25 @@ impl MotorPosition {
     #[must_use]
     pub const fn as_microdegrees(self) -> i32 {
         self.0.get()
+    }
+}
+
+/// Controller status byte returned by VESC values replies.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VescStatus(u8);
+
+impl VescStatus {
+    /// Creates a controller status from its wire value.
+    #[must_use]
+    pub const fn new(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the controller status wire value.
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self.0
     }
 }
 
@@ -384,7 +403,7 @@ pub struct VescValuesTelemetry {
     pub controller_id: VescControllerId,
 
     /// Controller status byte.
-    pub status: u8,
+    pub status: VescStatus,
 }
 
 impl Default for VescValuesTelemetry {
@@ -414,7 +433,7 @@ impl Default for VescValuesTelemetry {
             duty_cycle: DutyCycle::from_permille(0),
             fault_code: VescFaultCode::None,
             controller_id: VescControllerId::new(0),
-            status: 0,
+            status: VescStatus::new(0),
         }
     }
 }
@@ -1075,7 +1094,8 @@ impl<'a> VescValuesReader<'a> {
 
 fn decode_selective_values(body: &[u8]) -> Result<VescValuesTelemetry, VescCodecError> {
     let mut reader = VescValuesReader::new(body);
-    let present_fields = VescValuesMask::from_bits_retain(reader.read_u32()?);
+    let present_fields =
+        VescValuesMask::from_bits(reader.read_u32()?).ok_or(VescCodecError::DecodeFailed)?;
     decode_values(reader.remaining(), present_fields)
 }
 
@@ -1096,16 +1116,16 @@ fn decode_values(
         values.motor_temperature = temperature_from_deci_celsius(reader.read_i16()?);
     }
     if present_fields.contains(VescValuesMask::AVG_CURRENT_MOTOR) {
-        values.motor_current = phase_current_from_centi_amps(reader.read_i32()?);
+        values.motor_current = phase_current_from_centi_amps(reader.read_i32()?)?;
     }
     if present_fields.contains(VescValuesMask::AVG_CURRENT_INPUT) {
-        values.input_current = battery_current_from_centi_amps(reader.read_i32()?);
+        values.input_current = battery_current_from_centi_amps(reader.read_i32()?)?;
     }
     if present_fields.contains(VescValuesMask::AVG_CURRENT_D) {
-        values.direct_axis_current = phase_current_from_centi_amps(reader.read_i32()?);
+        values.direct_axis_current = phase_current_from_centi_amps(reader.read_i32()?)?;
     }
     if present_fields.contains(VescValuesMask::AVG_CURRENT_Q) {
-        values.quadrature_axis_current = phase_current_from_centi_amps(reader.read_i32()?);
+        values.quadrature_axis_current = phase_current_from_centi_amps(reader.read_i32()?)?;
     }
     if present_fields.contains(VescValuesMask::DUTY_CYCLE) {
         values.duty_cycle = DutyCycle::from_permille(reader.read_i16()?);
@@ -1155,26 +1175,36 @@ fn decode_values(
         values.quadrature_axis_voltage = Voltage::from_millivolts(reader.read_i32()?);
     }
     if present_fields.contains(VescValuesMask::STATUS) {
-        values.status = reader.read_u8()?;
+        values.status = VescStatus::new(reader.read_u8()?);
+    }
+
+    if !reader.remaining().is_empty() {
+        return Err(VescCodecError::DecodeFailed);
     }
 
     Ok(values)
 }
 
 fn temperature_from_deci_celsius(value: i16) -> Temperature {
-    Temperature::from_millicelsius(i32::from(value).saturating_mul(100))
+    Temperature::from_millicelsius(i32::from(value) * 100)
 }
 
-const fn phase_current_from_centi_amps(value: i32) -> PhaseCurrent {
-    PhaseCurrent::from_milliamps(value.saturating_mul(10))
+fn phase_current_from_centi_amps(value: i32) -> Result<PhaseCurrent, VescCodecError> {
+    value
+        .checked_mul(10)
+        .map(PhaseCurrent::from_milliamps)
+        .ok_or(VescCodecError::DecodeFailed)
 }
 
-const fn battery_current_from_centi_amps(value: i32) -> BatteryCurrent {
-    BatteryCurrent::from_milliamps(value.saturating_mul(10))
+fn battery_current_from_centi_amps(value: i32) -> Result<BatteryCurrent, VescCodecError> {
+    value
+        .checked_mul(10)
+        .map(BatteryCurrent::from_milliamps)
+        .ok_or(VescCodecError::DecodeFailed)
 }
 
 fn voltage_from_deci_volts(value: i16) -> Voltage {
-    Voltage::from_millivolts(i32::from(value).saturating_mul(100))
+    Voltage::from_millivolts(i32::from(value) * 100)
 }
 
 fn frame_len(bytes: &[u8]) -> Result<Option<usize>, VescCodecError> {
@@ -1521,6 +1551,49 @@ mod tests {
     }
 
     #[test]
+    fn selective_values_reject_trailing_payload_bytes() {
+        let input = [
+            2, 23, 50, 0, 2, 161, 138, 0, 0, 0, 0, 0, 4, 0, 0, 3, 221, 1, 119, 255, 255, 170, 43,
+            0, 20, 45, 58, 3,
+        ];
+        let mut payload = input[2..25].to_vec();
+        payload.push(0xaa);
+
+        assert!(matches!(
+            VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload)),
+            Err(VescCodecError::DecodeFailed)
+        ));
+    }
+
+    #[test]
+    fn selective_values_reject_currents_outside_domain_storage() {
+        for (mask, raw_current) in [
+            (VescValuesMask::AVG_CURRENT_MOTOR, i32::MAX),
+            (VescValuesMask::AVG_CURRENT_INPUT, i32::MIN),
+        ] {
+            let mut payload = vec![VESC_COMM_GET_VALUES_SELECTIVE];
+            payload.extend_from_slice(&mask.bits().to_be_bytes());
+            payload.extend_from_slice(&raw_current.to_be_bytes());
+
+            assert!(matches!(
+                VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload)),
+                Err(VescCodecError::DecodeFailed)
+            ));
+        }
+    }
+
+    #[test]
+    fn selective_values_reject_unknown_mask_bits() {
+        let mut payload = vec![VESC_COMM_GET_VALUES_SELECTIVE];
+        payload.extend_from_slice(&(1_u32 << 31).to_be_bytes());
+
+        assert!(matches!(
+            VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload)),
+            Err(VescCodecError::DecodeFailed)
+        ));
+    }
+
+    #[test]
     fn full_values_decode_into_named_semantic_fields() {
         let mut payload = vec![4];
         payload.extend_from_slice(&267_i16.to_be_bytes());
@@ -1567,6 +1640,7 @@ mod tests {
         assert_eq!(values.mosfet_temperature_3.as_millicelsius(), 27_300);
         assert_eq!(values.direct_axis_voltage.as_millivolts(), 12_345);
         assert_eq!(values.quadrature_axis_voltage.as_millivolts(), -6_789);
+        assert_eq!(values.status, VescStatus::new(3));
         assert_eq!(values.present_fields, VescValuesMask::all());
     }
 
@@ -1574,11 +1648,13 @@ mod tests {
     fn values_reply_has_compact_semantic_storage() {
         let values_size = size_of::<VescValuesTelemetry>();
         let reply_size = size_of::<VescReadOnlyReply>();
+        let batch_size = size_of::<VescReadOnlyStreamResult>();
         assert!(
             values_size <= 112,
             "values telemetry is {values_size} bytes"
         );
         assert!(reply_size <= 112, "reply is {reply_size} bytes");
+        assert!(batch_size <= 464, "reply batch is {batch_size} bytes");
     }
 
     #[test]

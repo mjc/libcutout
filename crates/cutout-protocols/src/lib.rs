@@ -108,7 +108,7 @@ pub use vesc_codec::{
     VescBatteryProfile, VescBatteryType, VescBoardProfile, VescCanReadOnlyRequest, VescCodecError,
     VescFaultCode, VescMotorConfig, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
     VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescSpeedGeometry, VescStatsMask,
-    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
+    VescStatsTelemetry, VescStatus, VescValuesMask, VescValuesTelemetry,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,
