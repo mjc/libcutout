@@ -4,6 +4,26 @@ import CutoutMobile
 
 final class CutoutAppModelTests: XCTestCase {
     @MainActor
+    func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
+        let model = CutoutAppModel()
+
+        model.stopCaptureLabel(.ride)
+        XCTAssertNil(model.captureStatusText)
+        XCTAssertTrue(model.activeCaptureLabels.isEmpty)
+
+        model.startCaptureLabel(.ride)
+        XCTAssertEqual(model.captureStatusText, "Ride started")
+        XCTAssertEqual(model.activeCaptureLabels, [.ride])
+
+        model.stopCaptureLabel(.ride)
+        XCTAssertEqual(model.captureStatusText, "Ride stopped")
+        XCTAssertTrue(model.activeCaptureLabels.isEmpty)
+
+        model.stopCaptureLabel(.ride)
+        XCTAssertEqual(model.captureStatusText, "Ride stopped")
+    }
+
+    @MainActor
     func testProtocolIdentityCandidateDoesNotOverwriteSelectedRideTitle() {
         let model = CutoutAppModel()
         let supported = DevicePickerCandidateSupport.supported(

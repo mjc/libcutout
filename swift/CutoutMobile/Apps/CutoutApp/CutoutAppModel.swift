@@ -143,7 +143,7 @@ final class CutoutAppModel: ObservableObject {
     }
 
     func startCaptureLabel(_ label: CaptureQuickLabel) {
-        activeCaptureLabels.insert(label)
+        guard activeCaptureLabels.insert(label).inserted else { return }
         captureLabel = label.title
         core.annotateCapture(label: "\(label.annotationValue)_start")
         if let captureFileName {
@@ -158,7 +158,7 @@ final class CutoutAppModel: ObservableObject {
     }
 
     func stopCaptureLabel(_ label: CaptureQuickLabel) {
-        activeCaptureLabels.remove(label)
+        guard activeCaptureLabels.remove(label) != nil else { return }
         captureLabel = label.title
         core.annotateCapture(label: "\(label.annotationValue)_stop")
         if let captureFileName {
