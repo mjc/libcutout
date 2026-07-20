@@ -7,10 +7,13 @@ use std::sync::{
 };
 
 use cutout_core::{
-    CaptureRecord, CommandKind, GattChannel, HostSession, LinkInfo, ManufacturerKey, ModelCatalog,
-    ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, MonotonicTimestamp,
-    ParserKey, ProtocolFamily, ProtocolSession, RequestKey, RequestPolicy, RequestQueue,
-    RequestScheduler, RequestUrgency, SessionInput, SessionKey, SessionOutput, TransportWriteLimit,
+    BatteryCurrent, BatteryLevel, BatteryLevelBasis, Capacity, CapacitySource, CaptureRecord,
+    ChargeEstimateInput, ChargeEstimator, ChargeFlow, ChargeMode, ChargeProfileIdentity,
+    ChargeSessionIdentity, CommandKind, Duration, GattChannel, HostSession, LinkInfo,
+    ManufacturerKey, Measured, ModelCatalog, ModelCatalogEntry, ModelKey, ModelRegistryEntry,
+    ModelRuntimeRegistration, MonotonicTimestamp, ParserKey, ProtocolFamily, ProtocolSession,
+    RequestKey, RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency, SessionInput,
+    SessionKey, SessionOutput, TelemetryFreshness, TransportWriteLimit, UsablePackCapacity,
     VerificationStatus,
 };
 
@@ -155,6 +158,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
     with_allocation_lock(|| {
         hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked();
         large_catalog_lookup_does_not_allocate_after_setup_locked();
+        charge_estimator_update_does_not_allocate_locked();
     });
 }
 
@@ -259,6 +263,48 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked() {
         cutout_core::replay_capture_into(&mut replay_host, &replay_records, &mut replay_outputs);
 
         assert_eq!(replay_outputs.len(), 1);
+    });
+}
+
+fn charge_estimator_update_does_not_allocate_locked() {
+    let mut estimator = ChargeEstimator::new();
+    let capacity = UsablePackCapacity::new(
+        Capacity::from_milliamp_hours(10_000),
+        CapacitySource::ProtocolProfile,
+        VerificationStatus::SourceAndHardwareVerified,
+    );
+    let update = |estimator: &mut ChargeEstimator, at: u64| {
+        estimator.update(ChargeEstimateInput {
+            session: ChargeSessionIdentity::new(1),
+            profile: ChargeProfileIdentity::new(1),
+            at: ms(at),
+            observed_at: ms(at),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(-2_000))),
+            charge_mode: Measured::reported(ChargeMode::Charging),
+            flow: Measured::reported(ChargeFlow::Charging),
+            battery_level: BatteryLevelBasis::reported(Measured::reported(
+                BatteryLevel::from_percent(50),
+            )),
+            usable_capacity: capacity,
+            battery_temperature: None,
+            voltage_sag: None,
+            freshness: TelemetryFreshness::new(Duration::from_seconds(60)),
+        })
+    };
+
+    assert_no_allocations("charge estimator update", || {
+        assert!(matches!(
+            update(&mut estimator, 0),
+            cutout_core::ChargeEstimateState::CollectingSamples { .. }
+        ));
+        assert!(matches!(
+            update(&mut estimator, 15_000),
+            cutout_core::ChargeEstimateState::CollectingSamples { .. }
+        ));
+        assert!(matches!(
+            update(&mut estimator, 30_000),
+            cutout_core::ChargeEstimateState::Available(_)
+        ));
     });
 }
 

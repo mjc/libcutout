@@ -1,0 +1,1194 @@
+//! Conservative, allocation-free charging time estimates.
+
+use crate::{
+    BatteryCurrent, BatteryLevel, Capacity, ChargeMode, Duration, Measured, MonotonicTimestamp,
+    Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage,
+};
+use thiserror::Error;
+
+const MIN_SAMPLES: u16 = 3;
+const MIN_OBSERVATION_MILLISECONDS: u64 = 30_000;
+const MIN_CHARGE_CURRENT_MILLIAMPS: i64 = 100;
+const STABLE_VARIABILITY_PERMILLE: u64 = 100;
+const EWMA_SHIFT: i64 = 2;
+const MILLISECONDS_PER_MILLIAMP_HOUR: u128 = 3_600_000;
+
+/// Stable identity for the active device/profile session.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ChargeSessionIdentity(u64);
+
+impl ChargeSessionIdentity {
+    /// Creates an identity from a host-owned stable value.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the host-owned stable value.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Identity for a verified battery or charger charge profile.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ChargeProfileIdentity(u32);
+
+impl ChargeProfileIdentity {
+    /// Creates a profile identity.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the profile identity value.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Canonical direction of pack current after protocol interpretation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ChargeFlow {
+    /// Current is flowing into the battery pack.
+    Charging,
+
+    /// Current is flowing out of the battery pack.
+    Discharging,
+
+    /// Current is being returned during vehicle regeneration.
+    Regeneration,
+
+    /// Pack current is effectively zero.
+    Zero,
+
+    /// The protocol has not established a safe direction.
+    Unknown,
+}
+
+impl ChargeFlow {
+    /// Returns whether this is a canonical charging direction.
+    #[must_use]
+    pub const fn is_charging(self) -> bool {
+        matches!(self, Self::Charging)
+    }
+}
+
+/// Source of a usable charge capacity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CapacitySource {
+    /// Capacity comes from a protocol-confirmed battery profile.
+    ProtocolProfile,
+
+    /// Capacity comes from a measured pack characterization.
+    HardwareMeasured,
+
+    /// Capacity is an estimate rather than a verified pack value.
+    Estimated,
+}
+
+/// A charge capacity explicitly approved for time-to-full arithmetic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UsablePackCapacity {
+    /// Capacity in milliamp-hours.
+    pub value: Capacity,
+
+    /// Evidence source for this capacity.
+    pub source: CapacitySource,
+
+    /// Verification state for this capacity.
+    pub verification: VerificationStatus,
+}
+
+impl UsablePackCapacity {
+    /// Creates a usable pack capacity with explicit provenance.
+    #[must_use]
+    pub const fn new(
+        value: Capacity,
+        source: CapacitySource,
+        verification: VerificationStatus,
+    ) -> Self {
+        Self {
+            value,
+            source,
+            verification,
+        }
+    }
+
+    /// Returns the stored capacity in milliamp-hours.
+    #[must_use]
+    pub const fn as_milliamp_hours(self) -> u32 {
+        self.value.as_milliamp_hours()
+    }
+}
+
+/// The SOC evidence used by the estimator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum BatteryLevelBasis {
+    /// Device-reported SOC with its protocol provenance preserved.
+    Reported(Measured<BatteryLevel>),
+
+    /// Profile-derived SOC with the profile and confidence preserved.
+    ProfileEstimated {
+        /// Estimated SOC value.
+        level: Measured<BatteryLevel>,
+        /// Profile that produced the estimate.
+        profile: ChargeProfileIdentity,
+        /// Confidence in the profile-derived SOC.
+        confidence: EstimateConfidence,
+    },
+
+    /// No usable SOC evidence is available.
+    Unavailable,
+}
+
+impl BatteryLevelBasis {
+    /// Creates a reported-SOC basis.
+    #[must_use]
+    pub const fn reported(level: Measured<BatteryLevel>) -> Self {
+        Self::Reported(level)
+    }
+
+    /// Creates a profile-estimated SOC basis.
+    #[must_use]
+    pub const fn profile_estimated(
+        level: Measured<BatteryLevel>,
+        profile: ChargeProfileIdentity,
+        confidence: EstimateConfidence,
+    ) -> Self {
+        Self::ProfileEstimated {
+            level,
+            profile,
+            confidence,
+        }
+    }
+
+    /// Returns the SOC value when the basis contains one.
+    #[must_use]
+    pub const fn level(self) -> Option<BatteryLevel> {
+        match self {
+            Self::Reported(level) | Self::ProfileEstimated { level, .. } => Some(level.value),
+            Self::Unavailable => None,
+        }
+    }
+}
+
+/// Confidence assigned to an estimate or its evidence.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum EstimateConfidence {
+    /// Evidence is weak or substantially inferred.
+    Low,
+
+    /// Evidence is useful but has material uncertainty.
+    Medium,
+
+    /// Evidence is verified and stable enough for a narrow estimate.
+    High,
+}
+
+/// Freshness policy applied to each telemetry sample.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TelemetryFreshness {
+    /// Maximum allowed age of the sample.
+    pub max_age: Duration,
+}
+
+impl TelemetryFreshness {
+    /// Creates a freshness policy.
+    #[must_use]
+    pub const fn new(max_age: Duration) -> Self {
+        Self { max_age }
+    }
+}
+
+/// Signed loaded-versus-reference pack voltage difference in millivolts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoltageDelta(i32);
+
+impl VoltageDelta {
+    /// Creates a voltage delta in millivolts.
+    #[must_use]
+    pub const fn from_millivolts(value: i32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the signed voltage delta in millivolts.
+    #[must_use]
+    pub const fn as_millivolts(self) -> i32 {
+        self.0
+    }
+}
+
+/// Rust-owned recent voltage-sag evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoltageSagEstimate {
+    /// Loaded-minus-reference pack voltage.
+    pub delta: VoltageDelta,
+    /// Confidence in the sag evidence.
+    pub confidence: EstimateConfidence,
+    /// Timestamp at which this evidence was calculated.
+    pub calculated_at: MonotonicTimestamp,
+    /// Timestamp after which this evidence must be discarded.
+    pub valid_until: MonotonicTimestamp,
+}
+
+impl VoltageSagEstimate {
+    /// Creates typed sag evidence for consumption by energy estimates.
+    #[must_use]
+    pub const fn new(
+        delta: VoltageDelta,
+        confidence: EstimateConfidence,
+        calculated_at: MonotonicTimestamp,
+        valid_until: MonotonicTimestamp,
+    ) -> Self {
+        Self {
+            delta,
+            confidence,
+            calculated_at,
+            valid_until,
+        }
+    }
+}
+
+/// One loaded/reference voltage observation for sag estimation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoltageSagInput {
+    /// Host observation timestamp.
+    pub at: MonotonicTimestamp,
+    /// Voltage observed while the pack is loaded.
+    pub loaded_voltage: Measured<Voltage>,
+    /// Reference voltage from a rest/curve estimate.
+    pub reference_voltage: Measured<Voltage>,
+    /// Pack current that makes the loaded/reference comparison meaningful.
+    pub battery_current: Measured<BatteryCurrent>,
+    /// Freshness policy for the resulting evidence.
+    pub freshness: TelemetryFreshness,
+}
+
+/// Bounded recent voltage-sag estimator.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VoltageSagEstimator {
+    last_at: Option<MonotonicTimestamp>,
+    delta_q8: i64,
+}
+
+impl VoltageSagEstimator {
+    /// Creates an empty sag estimator.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            last_at: None,
+            delta_q8: 0,
+        }
+    }
+
+    /// Clears recent sag evidence.
+    pub fn reset(&mut self) {
+        self.last_at = None;
+        self.delta_q8 = 0;
+    }
+
+    /// Updates recent sag evidence without allocating or retaining samples.
+    #[must_use]
+    pub fn update(&mut self, input: VoltageSagInput) -> Option<VoltageSagEstimate> {
+        if !input.loaded_voltage.verification.is_trusted()
+            || !input.reference_voltage.verification.is_trusted()
+            || !input.battery_current.verification.is_trusted()
+            || input.loaded_voltage.quality == ValueQuality::Inferred
+            || input.reference_voltage.quality == ValueQuality::Inferred
+            || input.at < self.last_at.unwrap_or(input.at)
+        {
+            self.reset();
+            return None;
+        }
+        let current = input.battery_current.value.as_milliamps().unsigned_abs();
+        if u64::from(current) < MIN_CHARGE_CURRENT_MILLIAMPS as u64 {
+            return None;
+        }
+        let delta = i64::from(input.loaded_voltage.value.as_millivolts())
+            .saturating_sub(i64::from(input.reference_voltage.value.as_millivolts()));
+        let delta_q8 = delta.saturating_mul(256);
+        self.delta_q8 = if self.last_at.is_none() {
+            delta_q8
+        } else {
+            self.delta_q8
+                .saturating_add(delta_q8.saturating_sub(self.delta_q8) / 4)
+        };
+        self.last_at = Some(input.at);
+        let delta_millivolts = if self.delta_q8 < 0 {
+            self.delta_q8.saturating_sub(128) / 256
+        } else {
+            self.delta_q8.saturating_add(128) / 256
+        };
+        let delta_millivolts = i32::try_from(delta_millivolts).ok()?;
+        let confidence = if input.loaded_voltage.verification.is_hardware_verified()
+            && input.reference_voltage.verification.is_hardware_verified()
+        {
+            EstimateConfidence::High
+        } else {
+            EstimateConfidence::Medium
+        };
+        Some(VoltageSagEstimate::new(
+            VoltageDelta::from_millivolts(delta_millivolts),
+            confidence,
+            input.at,
+            input.at.saturating_add_duration(input.freshness.max_age),
+        ))
+    }
+}
+
+/// All typed evidence needed for one estimator update.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChargeEstimateInput {
+    /// Active device/profile session.
+    pub session: ChargeSessionIdentity,
+
+    /// Active charge profile identity.
+    pub profile: ChargeProfileIdentity,
+
+    /// Host evaluation timestamp.
+    pub at: MonotonicTimestamp,
+
+    /// Timestamp at which the measured values were observed.
+    pub observed_at: MonotonicTimestamp,
+
+    /// Signed protocol battery current.
+    pub battery_current: Option<Measured<BatteryCurrent>>,
+
+    /// Explicit protocol charge state.
+    pub charge_mode: Measured<ChargeMode>,
+
+    /// Canonical pack-current direction.
+    pub flow: Measured<ChargeFlow>,
+
+    /// Reported or profile-derived SOC evidence.
+    pub battery_level: BatteryLevelBasis,
+
+    /// Usable capacity selected by the Rust domain layer.
+    pub usable_capacity: UsablePackCapacity,
+
+    /// Optional battery temperature evidence.
+    pub battery_temperature: Option<Measured<Temperature>>,
+
+    /// Optional recent sag evidence used to widen confidence bounds.
+    pub voltage_sag: Option<VoltageSagEstimate>,
+
+    /// Freshness policy for this sample.
+    pub freshness: TelemetryFreshness,
+}
+
+/// Why a charge estimate is unavailable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ChargeEstimateUnavailableReason {
+    /// The device is not explicitly charging.
+    NotCharging,
+    /// No battery current was provided.
+    CurrentMissing,
+    /// Current direction or charge semantics are not verified.
+    CurrentDirectionUnverified,
+    /// Current is zero or below the useful threshold.
+    CurrentTooSmall,
+    /// No valid SOC evidence was provided.
+    BatteryLevelMissing,
+    /// No verified usable capacity was provided.
+    CapacityMissing,
+    /// A required profile is missing or not verified.
+    UnsupportedProfile,
+    /// Current observations are too variable for the model.
+    UnstableCurrent,
+    /// A sample is older than the supplied freshness policy.
+    StaleInput,
+    /// Temperature is outside the supported conservative model.
+    TemperatureOutOfModel,
+    /// The pack is full or close enough to full that charging may be balancing.
+    FullOrNearFull,
+    /// Independent fields disagree about the charging state.
+    ContradictoryInputs,
+}
+
+/// Why the estimator discarded its bounded accumulator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ChargeEstimateResetReason {
+    /// A new session identity was observed.
+    SessionChanged,
+    /// A session became terminal or stopped charging.
+    ChargingStopped,
+    /// A stale gap interrupted the sample sequence.
+    StaleGap,
+    /// A sample timestamp moved backwards.
+    TimestampOrder,
+    /// Current evidence changed provenance or verification.
+    CurrentEvidenceChanged,
+    /// The usable pack profile changed.
+    CapacityChanged,
+    /// The selected charge profile changed.
+    ProfileChanged,
+    /// The caller explicitly reset the estimator.
+    Manual,
+}
+
+/// Invariant or checked-arithmetic failures in the estimator.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum ChargeEstimateError {
+    /// The host supplied an impossible timestamp order.
+    #[error("charge estimate timestamp order is invalid")]
+    TimestampOrder,
+    /// A checked duration calculation exceeded the typed duration range.
+    #[error("charge estimate duration overflowed")]
+    ArithmeticOverflow,
+}
+
+/// Compact summary of the admitted charging-current rate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CurrentRateSummary {
+    /// EWMA charging current.
+    pub mean: BatteryCurrent,
+    /// Lowest admitted charging current magnitude.
+    pub minimum: BatteryCurrent,
+    /// Highest admitted charging current magnitude.
+    pub maximum: BatteryCurrent,
+    /// Range divided by mean, in permille.
+    pub variability_permille: u16,
+}
+
+impl CurrentRateSummary {
+    /// Returns whether the bounded current window is stable.
+    #[must_use]
+    pub const fn is_stable(self) -> bool {
+        self.variability_permille as u64 <= STABLE_VARIABILITY_PERMILLE
+    }
+}
+
+/// The kind of time-to-full estimate returned to presentation layers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum EstimateKind {
+    /// Duration assumes the current rate remains unchanged.
+    AtPresentCurrent,
+    /// Duration integrates a verified charge profile.
+    ProfileBackedTimeToFull,
+    /// Duration uses a bounded taper model derived from live history.
+    ObservedTaperTimeToFull,
+}
+
+/// A typed, uncertainty-aware time-to-full result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChargeTimeEstimate {
+    /// Conservative lower duration.
+    pub lower: Duration,
+    /// Expected duration at the admitted current rate.
+    pub expected: Duration,
+    /// Conservative upper duration.
+    pub upper: Duration,
+    /// Semantics of the estimate.
+    pub kind: EstimateKind,
+    /// Confidence after combining evidence and current stability.
+    pub confidence: EstimateConfidence,
+    /// Current-rate evidence used in the calculation.
+    pub current_rate: CurrentRateSummary,
+    /// SOC basis used in the calculation.
+    pub battery_level_basis: BatteryLevelBasis,
+    /// Capacity provenance used in the calculation.
+    pub capacity_source: CapacitySource,
+
+    /// Recent sag evidence used to widen confidence bounds.
+    pub voltage_sag: Option<VoltageSagEstimate>,
+    /// Host timestamp at which this result was calculated.
+    pub calculated_at: MonotonicTimestamp,
+    /// Timestamp after which this result must be treated as stale.
+    pub valid_until: MonotonicTimestamp,
+}
+
+/// Current state of the charge estimator.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum ChargeEstimateState {
+    /// The estimator has valid input but not enough observation history yet.
+    #[error("collecting charging samples")]
+    CollectingSamples {
+        /// Number of admitted samples.
+        samples: u16,
+        /// Duration covered by the admitted samples.
+        observed_for: Duration,
+    },
+    /// A usable estimate is available.
+    #[error("charge estimate available")]
+    Available(ChargeTimeEstimate),
+    /// The current input cannot produce an estimate.
+    #[error("charge estimate unavailable: {reason:?}")]
+    Unavailable {
+        /// Reason the estimate was withheld.
+        reason: ChargeEstimateUnavailableReason,
+    },
+    /// Telemetry freshness invalidated the current estimate.
+    #[error("charge estimate is stale")]
+    Stale,
+    /// An invariant or arithmetic error occurred.
+    #[error("charge estimate failed: {0}")]
+    Failed(ChargeEstimateError),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct CurrentRateWindow {
+    start: Option<MonotonicTimestamp>,
+    last: Option<MonotonicTimestamp>,
+    count: u16,
+    mean_q8: i64,
+    minimum: i64,
+    maximum: i64,
+    last_current: i64,
+    variability_q8: i64,
+}
+
+impl CurrentRateWindow {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn observe(&mut self, at: MonotonicTimestamp, current: i64) {
+        let current_q8 = current.saturating_mul(256);
+        if self.count == 0 {
+            self.start = Some(at);
+            self.mean_q8 = current_q8;
+            self.minimum = current;
+            self.maximum = current;
+        } else {
+            let delta_q8 = current_q8.saturating_sub(self.mean_q8);
+            self.mean_q8 = self
+                .mean_q8
+                .saturating_add(delta_q8 / (1_i64 << EWMA_SHIFT));
+            let difference = current.saturating_sub(self.last_current).unsigned_abs();
+            let difference_q8 = i64::try_from(difference)
+                .unwrap_or(i64::MAX)
+                .saturating_mul(256);
+            self.variability_q8 = self.variability_q8.saturating_add(
+                difference_q8.saturating_sub(self.variability_q8) / (1_i64 << EWMA_SHIFT),
+            );
+            self.minimum = self.minimum.min(current);
+            self.maximum = self.maximum.max(current);
+        }
+        self.last_current = current;
+        self.last = Some(at);
+        self.count = self.count.saturating_add(1);
+    }
+
+    fn summary(self) -> Option<CurrentRateSummary> {
+        if self.count == 0 || self.mean_q8 <= 0 {
+            return None;
+        }
+        let mean = (self.mean_q8.saturating_add(128)) / 256;
+        let span = self.maximum.saturating_sub(self.minimum);
+        let variability = span
+            .saturating_mul(1_000)
+            .checked_div(mean)
+            .unwrap_or(i64::MAX)
+            .clamp(0, i64::from(u16::MAX));
+        Some(CurrentRateSummary {
+            mean: BatteryCurrent::from_milliamps(i32::try_from(mean).ok()?),
+            minimum: BatteryCurrent::from_milliamps(i32::try_from(self.minimum).ok()?),
+            maximum: BatteryCurrent::from_milliamps(i32::try_from(self.maximum).ok()?),
+            variability_permille: u16::try_from(variability).ok()?,
+        })
+    }
+}
+
+/// Stateful, bounded charging-time estimator owned by the Rust domain layer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ChargeEstimator {
+    session: Option<ChargeSessionIdentity>,
+    window: CurrentRateWindow,
+    last_current_source: Option<ValueSource>,
+    last_current_verification: Option<VerificationStatus>,
+    last_charge_mode_source: Option<ValueSource>,
+    last_charge_mode_verification: Option<VerificationStatus>,
+    profile: Option<ChargeProfileIdentity>,
+    capacity: Option<UsablePackCapacity>,
+    last_reset_reason: Option<ChargeEstimateResetReason>,
+}
+
+impl ChargeEstimator {
+    /// Creates an empty estimator.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            session: None,
+            window: CurrentRateWindow {
+                start: None,
+                last: None,
+                count: 0,
+                mean_q8: 0,
+                minimum: 0,
+                maximum: 0,
+                last_current: 0,
+                variability_q8: 0,
+            },
+            last_current_source: None,
+            last_current_verification: None,
+            last_charge_mode_source: None,
+            last_charge_mode_verification: None,
+            profile: None,
+            capacity: None,
+            last_reset_reason: None,
+        }
+    }
+
+    /// Clears samples and records an explicit reset.
+    pub fn reset(&mut self) {
+        self.reset_with_reason(ChargeEstimateResetReason::Manual);
+    }
+
+    /// Returns the most recent reset reason, if the window has been reset.
+    #[must_use]
+    pub const fn last_reset_reason(&self) -> Option<ChargeEstimateResetReason> {
+        self.last_reset_reason
+    }
+
+    /// Admits one typed sample and returns the current estimator state.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn update(&mut self, input: ChargeEstimateInput) -> ChargeEstimateState {
+        if input.at < input.observed_at {
+            self.reset_with_reason(ChargeEstimateResetReason::TimestampOrder);
+            return ChargeEstimateState::Failed(ChargeEstimateError::TimestampOrder);
+        }
+        let age = input.at.saturating_duration_since(input.observed_at);
+        if age > input.freshness.max_age {
+            self.reset_with_reason(ChargeEstimateResetReason::StaleGap);
+            return ChargeEstimateState::Stale;
+        }
+
+        if self.session != Some(input.session) {
+            if self.session.is_some() {
+                self.reset_with_reason(ChargeEstimateResetReason::SessionChanged);
+            }
+            self.session = Some(input.session);
+        }
+        if self.profile.is_some_and(|profile| profile != input.profile) {
+            self.reset_with_reason(ChargeEstimateResetReason::ProfileChanged);
+        }
+        self.profile = Some(input.profile);
+
+        if !input.charge_mode.verification.is_trusted() || !input.charge_mode.value.is_active() {
+            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::NotCharging,
+            };
+        }
+        if !input.flow.verification.is_trusted() {
+            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
+            };
+        }
+        if !input.flow.value.is_charging() {
+            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::ContradictoryInputs,
+            };
+        }
+        let Some(battery_current) = input.battery_current else {
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::CurrentMissing,
+            };
+        };
+        if !battery_current.verification.is_trusted() {
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
+            };
+        }
+        let current = i64::from(battery_current.value.as_milliamps()).unsigned_abs();
+        let current = i64::try_from(current).unwrap_or(i64::MAX);
+        if current < MIN_CHARGE_CURRENT_MILLIAMPS {
+            self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::CurrentTooSmall,
+            };
+        }
+        if !input.usable_capacity.verification.is_trusted()
+            || input.usable_capacity.as_milliamp_hours() == 0
+        {
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::CapacityMissing,
+            };
+        }
+        let (level, level_confidence) = match input.battery_level {
+            BatteryLevelBasis::Reported(level) => {
+                if !level.verification.is_trusted() || level.quality != ValueQuality::Known {
+                    return ChargeEstimateState::Unavailable {
+                        reason: ChargeEstimateUnavailableReason::BatteryLevelMissing,
+                    };
+                }
+                (level.value, EstimateConfidence::High)
+            }
+            BatteryLevelBasis::ProfileEstimated {
+                level,
+                profile,
+                confidence,
+            } => {
+                if profile.get() == 0 || !level.verification.is_trusted() {
+                    return ChargeEstimateState::Unavailable {
+                        reason: ChargeEstimateUnavailableReason::UnsupportedProfile,
+                    };
+                }
+                (level.value, confidence)
+            }
+            BatteryLevelBasis::Unavailable => {
+                return ChargeEstimateState::Unavailable {
+                    reason: ChargeEstimateUnavailableReason::BatteryLevelMissing,
+                };
+            }
+        };
+        if level.as_percent() >= 99 {
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::FullOrNearFull,
+            };
+        }
+        if let Some(temperature) = input.battery_temperature {
+            let millicelsius = temperature.value.as_millicelsius();
+            if !(-10_000..=50_000).contains(&millicelsius) {
+                return ChargeEstimateState::Unavailable {
+                    reason: ChargeEstimateUnavailableReason::TemperatureOutOfModel,
+                };
+            }
+        }
+
+        if let Some(previous) = self.window.last {
+            if input.observed_at < previous {
+                self.reset_with_reason(ChargeEstimateResetReason::TimestampOrder);
+                return ChargeEstimateState::Failed(ChargeEstimateError::TimestampOrder);
+            }
+            if input.observed_at.saturating_duration_since(previous) > input.freshness.max_age {
+                self.reset_with_reason(ChargeEstimateResetReason::StaleGap);
+                return ChargeEstimateState::Stale;
+            }
+        }
+        if self
+            .last_current_source
+            .is_some_and(|source| source != battery_current.source)
+            || self
+                .last_current_verification
+                .is_some_and(|verification| verification != battery_current.verification)
+            || self
+                .last_charge_mode_source
+                .is_some_and(|source| source != input.charge_mode.source)
+            || self
+                .last_charge_mode_verification
+                .is_some_and(|verification| verification != input.charge_mode.verification)
+        {
+            self.reset_with_reason(ChargeEstimateResetReason::CurrentEvidenceChanged);
+        }
+        if self
+            .capacity
+            .is_some_and(|capacity| capacity != input.usable_capacity)
+        {
+            self.reset_with_reason(ChargeEstimateResetReason::CapacityChanged);
+        }
+
+        self.window.observe(input.observed_at, current);
+        self.last_current_source = Some(battery_current.source);
+        self.last_current_verification = Some(battery_current.verification);
+        self.last_charge_mode_source = Some(input.charge_mode.source);
+        self.last_charge_mode_verification = Some(input.charge_mode.verification);
+        self.capacity = Some(input.usable_capacity);
+
+        let observed_for = input
+            .observed_at
+            .saturating_duration_since(self.window.start.unwrap_or(input.observed_at));
+        if self.window.count < MIN_SAMPLES
+            || observed_for.as_milliseconds() < MIN_OBSERVATION_MILLISECONDS
+        {
+            return ChargeEstimateState::CollectingSamples {
+                samples: self.window.count,
+                observed_for,
+            };
+        }
+        let Some(current_rate) = self.window.summary() else {
+            return ChargeEstimateState::Failed(ChargeEstimateError::ArithmeticOverflow);
+        };
+        if !current_rate.is_stable() {
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::UnstableCurrent,
+            };
+        }
+        match calculate_estimate(input, current_rate, level_confidence) {
+            Ok(estimate) => ChargeEstimateState::Available(estimate),
+            Err(error) => ChargeEstimateState::Failed(error),
+        }
+    }
+
+    fn reset_with_reason(&mut self, reason: ChargeEstimateResetReason) {
+        self.window.reset();
+        self.last_current_source = None;
+        self.last_current_verification = None;
+        self.last_charge_mode_source = None;
+        self.last_charge_mode_verification = None;
+        self.profile = None;
+        self.capacity = None;
+        self.last_reset_reason = Some(reason);
+    }
+}
+
+fn calculate_estimate(
+    input: ChargeEstimateInput,
+    current_rate: CurrentRateSummary,
+    level_confidence: EstimateConfidence,
+) -> Result<ChargeTimeEstimate, ChargeEstimateError> {
+    let missing_percent = u128::from(
+        100_u8.saturating_sub(
+            input
+                .battery_level
+                .level()
+                .map_or(100, BatteryLevel::as_percent),
+        ),
+    );
+    let remaining_milliamp_hours = u128::from(input.usable_capacity.as_milliamp_hours())
+        .checked_mul(missing_percent)
+        .and_then(|value| value.checked_add(99))
+        .and_then(|value| value.checked_div(100))
+        .ok_or(ChargeEstimateError::ArithmeticOverflow)?;
+    let current_milliamps = u128::from(current_rate.mean.as_milliamps().unsigned_abs());
+    let expected_milliseconds = remaining_milliamp_hours
+        .checked_mul(MILLISECONDS_PER_MILLIAMP_HOUR)
+        .and_then(|value| value.checked_add(current_milliamps.saturating_sub(1)))
+        .and_then(|value| value.checked_div(current_milliamps))
+        .ok_or(ChargeEstimateError::ArithmeticOverflow)?;
+    let expected = u64::try_from(expected_milliseconds)
+        .map(Duration::from_milliseconds)
+        .map_err(|_| ChargeEstimateError::ArithmeticOverflow)?;
+
+    let mut widen_permille: u64 = 50;
+    if matches!(
+        input.battery_level,
+        BatteryLevelBasis::ProfileEstimated { .. }
+    ) {
+        widen_permille = widen_permille.saturating_add(200);
+    }
+    if input.usable_capacity.source == CapacitySource::Estimated {
+        widen_permille = widen_permille.saturating_add(150);
+    }
+    if let Some(sag) = input.voltage_sag {
+        if sag.valid_until < input.at {
+            widen_permille = widen_permille.saturating_add(200);
+        } else if sag.delta.as_millivolts().unsigned_abs() > 1_000 {
+            widen_permille = widen_permille.saturating_add(100);
+        }
+    }
+    widen_permille = widen_permille.saturating_add(
+        u64::from(current_rate.variability_permille)
+            .saturating_div(2)
+            .min(200),
+    );
+    let lower_factor = 1_000_u64.saturating_sub(widen_permille.min(900));
+    let upper_factor = 1_000_u64.saturating_add(widen_permille);
+    let lower = scaled_duration(expected_milliseconds, lower_factor)?;
+    let upper = scaled_duration(expected_milliseconds, upper_factor)?;
+
+    let confidence = if level_confidence == EstimateConfidence::High
+        && input.usable_capacity.source != CapacitySource::Estimated
+        && input.usable_capacity.verification.is_hardware_verified()
+        && input
+            .voltage_sag
+            .is_none_or(|sag| sag.confidence >= EstimateConfidence::Medium)
+    {
+        EstimateConfidence::High
+    } else if level_confidence == EstimateConfidence::Low
+        || input.usable_capacity.source == CapacitySource::Estimated
+    {
+        EstimateConfidence::Low
+    } else {
+        EstimateConfidence::Medium
+    };
+    let valid_until = input.at.saturating_add_duration(input.freshness.max_age);
+    Ok(ChargeTimeEstimate {
+        lower,
+        expected,
+        upper,
+        kind: EstimateKind::AtPresentCurrent,
+        confidence,
+        current_rate,
+        battery_level_basis: input.battery_level,
+        capacity_source: input.usable_capacity.source,
+        voltage_sag: input.voltage_sag,
+        calculated_at: input.at,
+        valid_until,
+    })
+}
+
+fn scaled_duration(value: u128, factor_permille: u64) -> Result<Duration, ChargeEstimateError> {
+    let scaled = value
+        .checked_mul(u128::from(factor_permille))
+        .and_then(|value| value.checked_add(999))
+        .and_then(|value| value.checked_div(1_000))
+        .ok_or(ChargeEstimateError::ArithmeticOverflow)?;
+    u64::try_from(scaled)
+        .map(Duration::from_milliseconds)
+        .map_err(|_| ChargeEstimateError::ArithmeticOverflow)
+}
+
+impl VerificationStatus {
+    fn is_trusted(self) -> bool {
+        matches!(
+            self,
+            Self::SourceVerified | Self::HardwareVerified | Self::SourceAndHardwareVerified
+        )
+    }
+
+    fn is_hardware_verified(self) -> bool {
+        matches!(
+            self,
+            Self::HardwareVerified | Self::SourceAndHardwareVerified
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(at: u64, current: i32, level: u8) -> ChargeEstimateInput {
+        ChargeEstimateInput {
+            session: ChargeSessionIdentity::new(1),
+            profile: ChargeProfileIdentity::new(1),
+            at: MonotonicTimestamp::new(at),
+            observed_at: MonotonicTimestamp::new(at),
+            battery_current: Some(Measured::reported(BatteryCurrent::from_milliamps(current))),
+            charge_mode: Measured::reported(ChargeMode::Charging),
+            flow: Measured::reported(ChargeFlow::Charging),
+            battery_level: BatteryLevelBasis::reported(Measured::reported(
+                BatteryLevel::from_percent(level),
+            )),
+            usable_capacity: UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(10_000),
+                CapacitySource::ProtocolProfile,
+                VerificationStatus::SourceAndHardwareVerified,
+            ),
+            battery_temperature: None,
+            voltage_sag: None,
+            freshness: TelemetryFreshness::new(Duration::from_seconds(60)),
+        }
+    }
+
+    fn available_estimate(mut sample: ChargeEstimateInput) -> ChargeTimeEstimate {
+        let mut estimator = ChargeEstimator::new();
+        for at in [0, 15_000, 30_000] {
+            sample.at = MonotonicTimestamp::new(at);
+            sample.observed_at = MonotonicTimestamp::new(at);
+            if at == 30_000 {
+                let ChargeEstimateState::Available(estimate) = estimator.update(sample) else {
+                    panic!("stable charging samples should produce an estimate");
+                };
+                return estimate;
+            }
+            assert!(matches!(
+                estimator.update(sample),
+                ChargeEstimateState::CollectingSamples { .. }
+            ));
+        }
+        unreachable!("the final sample returns an estimate")
+    }
+
+    #[test]
+    fn exact_arithmetic_matches_capacity_soc_and_current_table() {
+        let cases = [
+            (10_000, 50, -2_000, 150),
+            (2_000, 75, -1_000, 30),
+            (5_000, 20, -2_500, 96),
+        ];
+        for (capacity, level, current, expected_minutes) in cases {
+            let mut sample = input(0, current, level);
+            sample.usable_capacity = UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(capacity),
+                CapacitySource::ProtocolProfile,
+                VerificationStatus::SourceAndHardwareVerified,
+            );
+            let estimate = available_estimate(sample);
+            assert_eq!(estimate.expected.as_minutes(), expected_minutes);
+            assert!(estimate.lower <= estimate.expected);
+            assert!(estimate.expected <= estimate.upper);
+        }
+    }
+
+    #[test]
+    fn greater_soc_produces_no_longer_remaining_duration_at_fixed_current() {
+        let lower_soc = available_estimate(input(0, -2_000, 20));
+        let higher_soc = available_estimate(input(0, -2_000, 80));
+
+        assert!(higher_soc.expected < lower_soc.expected);
+        assert!(higher_soc.lower < lower_soc.lower);
+        assert!(higher_soc.upper < lower_soc.upper);
+    }
+
+    #[test]
+    fn uncertainty_widens_bounds_and_lowers_confidence() {
+        let baseline = available_estimate(input(0, -2_000, 50));
+        let mut uncertain_sample = input(0, -2_000, 50);
+        uncertain_sample.battery_level = BatteryLevelBasis::profile_estimated(
+            Measured::reported(BatteryLevel::from_percent(50)),
+            ChargeProfileIdentity::new(1),
+            EstimateConfidence::Low,
+        );
+        uncertain_sample.usable_capacity = UsablePackCapacity::new(
+            Capacity::from_milliamp_hours(10_000),
+            CapacitySource::Estimated,
+            VerificationStatus::HardwareVerified,
+        );
+        let uncertain = available_estimate(uncertain_sample);
+
+        assert!(uncertain.lower <= baseline.lower);
+        assert!(uncertain.upper >= baseline.upper);
+        assert_eq!(uncertain.confidence, EstimateConfidence::Low);
+    }
+
+    #[test]
+    fn stable_current_becomes_available_after_observation_window() {
+        let mut estimator = ChargeEstimator::new();
+        assert!(matches!(
+            estimator.update(input(0, -2_000, 50)),
+            ChargeEstimateState::CollectingSamples { samples: 1, .. }
+        ));
+        assert!(matches!(
+            estimator.update(input(15_000, -2_000, 50)),
+            ChargeEstimateState::CollectingSamples { samples: 2, .. }
+        ));
+        let ChargeEstimateState::Available(estimate) = estimator.update(input(30_000, -2_000, 50))
+        else {
+            panic!("stable charging samples should produce an estimate");
+        };
+        assert_eq!(estimate.expected.as_minutes(), 150);
+        assert!(estimate.lower < estimate.expected);
+        assert!(estimate.upper > estimate.expected);
+        assert_eq!(estimate.kind, EstimateKind::AtPresentCurrent);
+    }
+
+    #[test]
+    fn charging_requires_verified_direction_and_explicit_mode() {
+        let mut estimator = ChargeEstimator::new();
+        let mut sample = input(0, -2_000, 50);
+        sample.flow = Measured::estimated(ChargeFlow::Charging);
+        assert_eq!(
+            estimator.update(sample),
+            ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
+            }
+        );
+        let mut sample = input(1_000, -2_000, 50);
+        sample.charge_mode = Measured::reported(ChargeMode::NotCharging);
+        assert_eq!(
+            estimator.update(sample),
+            ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::NotCharging,
+            }
+        );
+    }
+
+    #[test]
+    fn sag_estimator_produces_typed_recent_evidence() {
+        let mut estimator = VoltageSagEstimator::new();
+        let evidence = estimator
+            .update(VoltageSagInput {
+                at: MonotonicTimestamp::new(10_000),
+                loaded_voltage: Measured::reported(Voltage::from_millivolts(95_000)),
+                reference_voltage: Measured::reported(Voltage::from_millivolts(96_200)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(20_000)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+            .expect("verified loaded/reference voltages should produce sag");
+        assert_eq!(evidence.delta.as_millivolts(), -1_200);
+        assert_eq!(evidence.confidence, EstimateConfidence::High);
+        assert_eq!(evidence.valid_until.get(), 40_000);
+    }
+
+    #[test]
+    fn stale_gap_resets_the_window() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(0, -2_000, 50));
+        assert_eq!(
+            estimator.update(input(61_000, -2_000, 50)),
+            ChargeEstimateState::Stale
+        );
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::StaleGap)
+        );
+    }
+
+    #[test]
+    fn identity_and_profile_changes_reset_samples_before_recollecting() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(0, -2_000, 50));
+        let _ = estimator.update(input(15_000, -2_000, 50));
+        assert!(matches!(
+            estimator.update(input(30_000, -2_000, 50)),
+            ChargeEstimateState::Available(_)
+        ));
+
+        let mut new_session = input(45_000, -2_000, 50);
+        new_session.session = ChargeSessionIdentity::new(2);
+        assert!(matches!(
+            estimator.update(new_session),
+            ChargeEstimateState::CollectingSamples { samples: 1, .. }
+        ));
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::SessionChanged)
+        );
+
+        let mut new_profile = input(60_000, -2_000, 50);
+        new_profile.session = ChargeSessionIdentity::new(2);
+        new_profile.profile = ChargeProfileIdentity::new(2);
+        assert!(matches!(
+            estimator.update(new_profile),
+            ChargeEstimateState::CollectingSamples { samples: 1, .. }
+        ));
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::ProfileChanged)
+        );
+    }
+
+    #[test]
+    fn full_and_unstable_inputs_remain_unavailable() {
+        let mut estimator = ChargeEstimator::new();
+        assert_eq!(
+            estimator.update(input(0, -2_000, 99)),
+            ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::FullOrNearFull,
+            }
+        );
+
+        let _ = estimator.update(input(0, -1_000, 50));
+        let _ = estimator.update(input(15_000, -2_000, 50));
+        assert_eq!(
+            estimator.update(input(30_000, -1_000, 50)),
+            ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::UnstableCurrent,
+            }
+        );
+    }
+
+    #[test]
+    fn timestamp_order_returns_failure_and_clears_history() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(10_000, -2_000, 50));
+        let mut out_of_order = input(20_000, -2_000, 50);
+        out_of_order.observed_at = MonotonicTimestamp::new(9_000);
+
+        assert_eq!(
+            estimator.update(out_of_order),
+            ChargeEstimateState::Failed(ChargeEstimateError::TimestampOrder)
+        );
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::TimestampOrder)
+        );
+    }
+}

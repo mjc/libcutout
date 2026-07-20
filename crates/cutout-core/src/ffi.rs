@@ -710,7 +710,7 @@ measured_reading_from_i32!(AngleReadingDto);
 impl From<Measured<i32>> for VersionComponentDto {
     fn from(measured: Measured<i32>) -> Self {
         Self {
-            value: measured.value as u16,
+            value: u16::try_from(measured.value.clamp(0, i32::from(u16::MAX))).unwrap_or_default(),
             source: measured.source.into(),
             quality: measured.quality.into(),
             verification: measured.verification.into(),
@@ -1791,6 +1791,7 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
+#[allow(clippy::large_enum_variant)]
 enum SessionEventProjection {
     Event(SessionEventDto),
     ReadOnly(ReadOnlyResponse),

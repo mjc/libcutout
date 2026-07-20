@@ -22,6 +22,8 @@ mod ffi;
 pub use ffi::*;
 mod session_state;
 pub use session_state::*;
+mod energy_estimate;
+pub use energy_estimate::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
@@ -6324,6 +6326,7 @@ impl FaultHistoryReadback {
 
 /// Generic read-only response payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ReadOnlyResponse {
     /// Firmware or protocol version response.
     Firmware(FirmwareInfo),
@@ -6727,6 +6730,7 @@ pub enum TransportAction {
 
 /// Semantic event emitted by a protocol session.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum DeviceEvent {
     /// Link-up event accepted by the session.
     LinkUp(LinkInfo),
@@ -6758,6 +6762,7 @@ pub enum DeviceEvent {
 
 /// Output emitted by a protocol session for the host to drain.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum SessionOutput {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportAction),
