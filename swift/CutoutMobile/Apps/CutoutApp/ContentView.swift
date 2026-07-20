@@ -5,22 +5,26 @@ import SwiftUI
 
 struct ContentView: View {
     let model: CutoutAppModel
-    @State private var route: CutoutAppRoute
+    @State private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
 
     private let catalog = PevScreenCatalog.live
 
     init(model: CutoutAppModel) {
         self.model = model
-        _route = State(initialValue: CutoutAppRoute.initialRoute())
+        _navigationPath = State(initialValue: CutoutAppRoute.navigationPath(for: .initialRoute()))
+    }
+
+    private var route: CutoutAppRoute {
+        navigationPath.last ?? .devicePicker
     }
 
     var body: some View {
-        ZStack {
-            PevColors.pageBackground
-                .ignoresSafeArea()
+        NavigationStack(path: $navigationPath) {
+            ZStack {
+                PevColors.pageBackground
+                    .ignoresSafeArea()
 
-            if route == .devicePicker {
                 DevicePickerView(
                     scanState: model.devicePickerScanState,
                     connectionPhase: model.phase,
@@ -29,28 +33,35 @@ struct ContentView: View {
                     pair: pair,
                     recordOnly: { row, deviceKind in
                         if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
-                            route = model.isRecordOnlyCapture ? .capture : .eucRide
+                            navigate(to: model.isRecordOnlyCapture ? .capture : .eucRide)
                         }
                     }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .accessibilityLabel("Choose device")
                 .accessibilityFocused($focusedRoute, equals: .devicePicker)
-            } else {
-                PevAppShell(
-                    sectionTitle: appSectionTitle,
-                    tabs: appTabs,
-                    connectionPhase: model.phase,
-                    selectedColor: appSelectedColor,
-                    unselectedColor: PevColors.muted,
-                    disconnect: disconnectAndReturnToPicker,
-                    selectTarget: selectTarget
-                ) {
-                    routedContent
+            }
+            .navigationDestination(for: CutoutAppRoute.self) { destination in
+                ZStack {
+                    PevColors.pageBackground
+                        .ignoresSafeArea()
+
+                    PevAppShell(
+                        sectionTitle: appSectionTitle,
+                        tabs: appTabs,
+                        connectionPhase: model.phase,
+                        selectedColor: appSelectedColor,
+                        unselectedColor: PevColors.muted,
+                        disconnect: disconnectAndReturnToPicker,
+                        selectTarget: selectTarget
+                    ) {
+                        routedContent
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(appSectionTitle)
+                    .accessibilityFocused($focusedRoute, equals: destination)
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(appSectionTitle)
-                .accessibilityFocused($focusedRoute, equals: route)
+                .navigationBarBackButtonHidden(true)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -91,11 +102,11 @@ struct ContentView: View {
         guard model.selectedRideTitle != nil else { return }
         guard phase.opensRideScreen else { return }
         guard route == .devicePicker else { return }
-        route = CutoutAppRoute.route(for: model.selectedConnectionRoute)
+        navigate(to: CutoutAppRoute.route(for: model.selectedConnectionRoute))
     }
 
     private func selectScreen(_ screenID: PevScreenID) {
-        route = CutoutAppRoute.route(for: screenID)
+        navigate(to: CutoutAppRoute.route(for: screenID))
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {
@@ -103,13 +114,17 @@ struct ContentView: View {
         case .screen(let screenID):
             selectScreen(screenID)
         case .vescRide:
-            route = .vescRide
+            navigate(to: .vescRide)
         }
+    }
+
+    private func navigate(to route: CutoutAppRoute) {
+        navigationPath = CutoutAppRoute.navigationPath(for: route)
     }
 
     private func disconnectAndReturnToPicker() {
         model.disconnectAndSearch()
-        route = .devicePicker
+        navigate(to: .devicePicker)
     }
 
     @ViewBuilder

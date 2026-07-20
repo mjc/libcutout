@@ -43,6 +43,14 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: nil), .devicePicker)
     }
 
+    func testNavigationPathKeepsPickerAtRootAndReplacesConnectedDestinations() {
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .devicePicker), [])
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucRide), [.eucRide])
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucPack(.bmsOverview)), [.eucPack(.bmsOverview)])
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .vescDebug), [.vescDebug])
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .capture), [.capture])
+    }
+
     func testPairingProgressOpensTheRideSurface() {
         XCTAssertTrue(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
         XCTAssertTrue(SessionConnectionPhase.discoveringServices.opensRideScreen)

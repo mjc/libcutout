@@ -36,4 +36,8 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
+    static func navigationPath(for route: CutoutAppRoute) -> [CutoutAppRoute] {
+        route == .devicePicker ? [] : [route]
+    }
+
 }
