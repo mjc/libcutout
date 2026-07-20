@@ -202,7 +202,6 @@ public struct PevDashboardStatusPill: View {
     let foreground: Color
     let stroke: Color?
     let width: CGFloat?
-    let fontSize: CGFloat
     let horizontalPadding: CGFloat
     let height: CGFloat
     let fixedHorizontal: Bool
@@ -214,7 +213,6 @@ public struct PevDashboardStatusPill: View {
         foreground: Color = .black,
         stroke: Color? = nil,
         width: CGFloat? = nil,
-        fontSize: CGFloat = 14,
         horizontalPadding: CGFloat = 12,
         height: CGFloat = 30,
         fixedHorizontal: Bool = false
@@ -225,7 +223,6 @@ public struct PevDashboardStatusPill: View {
         self.foreground = foreground
         self.stroke = stroke
         self.width = width
-        self.fontSize = fontSize
         self.horizontalPadding = horizontalPadding
         self.height = height
         self.fixedHorizontal = fixedHorizontal
@@ -233,14 +230,12 @@ public struct PevDashboardStatusPill: View {
 
     public var body: some View {
         Text(title)
-            .font(.system(size: fontSize * scale, weight: .black))
+            .font(.callout.weight(.black))
             .foregroundStyle(foreground)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .fixedSize(horizontal: fixedHorizontal, vertical: false)
+            .fixedSize(horizontal: fixedHorizontal, vertical: true)
             .padding(.horizontal, horizontalPadding * scale)
-            .frame(width: width.map { $0 * scale })
-            .frame(height: height * scale)
+            .frame(minWidth: width.map { $0 * scale })
+            .frame(minHeight: height * scale)
             .background(
                 Capsule()
                     .fill(fill)

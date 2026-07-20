@@ -150,16 +150,17 @@ public struct PevActionButtonLabel: View {
         HStack(spacing: systemImageName == nil ? 0 : iconSpacing) {
             if let systemImageName {
                 Image(systemName: systemImageName)
-                    .font(.system(size: 14 * scale, weight: .bold))
+                    .font(.callout.weight(.bold))
                     .accessibilityHidden(true)
             }
             Text(title)
-                .font(.system(size: 13 * scale, weight: .bold))
+                .font(.callout.weight(.bold))
         }
         .foregroundStyle(isEnabled ? foregroundEnabled : foregroundDisabled)
         .padding(.horizontal, horizontalPadding)
         .frame(maxWidth: fillsAvailableWidth ? .infinity : nil)
-        .frame(width: hitWidth, height: hitHeight)
+        .frame(minWidth: hitWidth)
+        .frame(minHeight: hitHeight)
         .background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(isEnabled ? fillEnabled : fillDisabled)

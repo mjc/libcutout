@@ -255,7 +255,6 @@ struct PevDashboardIdentityCard: View {
                     scale: scale,
                     fill: trailingStatusFill,
                     foreground: trailingStatusForeground,
-                    fontSize: 14,
                     horizontalPadding: trailingStatusWidth,
                     height: trailingStatusHeight,
                     fixedHorizontal: true
