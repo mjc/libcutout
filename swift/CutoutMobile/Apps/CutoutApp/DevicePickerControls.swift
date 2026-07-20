@@ -5,38 +5,37 @@ struct PickerDeviceRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let row: DevicePickerRow
-    let scale: CGFloat
     var action: (() -> Void)? = nil
 
     var body: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 12 * scale) {
+                VStack(alignment: .leading, spacing: 12) {
                     deviceSummary
                     actionView
                 }
             } else {
-                HStack(spacing: 14 * scale) {
+                HStack(spacing: 14) {
                     deviceSummary
-                    Spacer(minLength: 6 * scale)
+                    Spacer(minLength: 6)
                     actionView
                 }
             }
         }
-        .padding(.horizontal, 18 * scale)
-        .padding(.vertical, 14 * scale)
-        .frame(minHeight: 92 * scale)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(minHeight: 92)
         .frame(maxWidth: .infinity)
-        .background(PevDashboardCardBackground(cornerRadius: 26 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 26))
     }
 
     private var deviceSummary: some View {
-        HStack(spacing: 14 * scale) {
+        HStack(spacing: 14) {
             DeviceGlyph(row: row)
-                .frame(width: 56 * scale, height: 56 * scale)
+                .frame(width: 56, height: 56)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 4 * scale) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(row.title)
                     .font(.title3.weight(.bold))
                     .foregroundStyle(row.titleColor)
@@ -70,7 +69,7 @@ struct PickerDeviceRow: View {
     private var statusPill: some View {
         PevDashboardStatusPill(
             title: row.state.actionTitle,
-            scale: scale,
+            scale: 1,
             fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
             foreground: row.state.isSupported ? .black : PevColors.muted,
             stroke: row.state.isSupported ? nil : PevColors.cardStroke,
@@ -86,12 +85,11 @@ struct ManualPickerRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let row: DevicePickerRow
-    let scale: CGFloat
 
     var body: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 10 * scale) {
+                VStack(alignment: .leading, spacing: 10) {
                     title
                     statusPill
                 }
@@ -103,12 +101,12 @@ struct ManualPickerRow: View {
                 }
             }
         }
-        .padding(.horizontal, 22 * scale)
-        .padding(.vertical, 10 * scale)
-        .frame(minHeight: 64 * scale)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .frame(minHeight: 64)
         .frame(maxWidth: .infinity)
-        .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
-        .padding(.top, 2 * scale)
+        .background(PevDashboardCardBackground(cornerRadius: 24))
+        .padding(.top, 2)
     }
 
     private var title: some View {
@@ -120,7 +118,7 @@ struct ManualPickerRow: View {
     private var statusPill: some View {
         PevDashboardStatusPill(
             title: row.state.actionTitle,
-            scale: scale,
+            scale: 1,
             fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
             foreground: row.state.isSupported ? .black : PevColors.muted,
             stroke: row.state.isSupported ? nil : PevColors.cardStroke,
