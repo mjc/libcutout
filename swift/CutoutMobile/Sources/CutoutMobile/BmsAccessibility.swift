@@ -22,6 +22,10 @@ public extension BmsGroupSnapshot {
         }
         return parts.joined(separator: ", ")
     }
+
+    var detailSelectionAccessibilityHint: String {
+        "Show available details for this cell group"
+    }
 }
 
 public extension BmsAlertLevel {

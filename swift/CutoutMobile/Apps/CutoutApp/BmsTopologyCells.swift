@@ -158,6 +158,7 @@ struct BmsGroupIndexCell: View {
         .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
         .accessibilityValue(group.accessibilityValue)
+        .accessibilityHint(group.detailSelectionAccessibilityHint)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

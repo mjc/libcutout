@@ -38,6 +38,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             group.accessibilityValue,
             "4.071 volts, warning, balancing, sagging under load"
         )
+        XCTAssertEqual(group.detailSelectionAccessibilityHint, "Show available details for this cell group")
 
         let unavailable = BmsGroupSnapshot(index: 8, alertLevel: .unknown)
         XCTAssertEqual(unavailable.accessibilityLabel, "Cell group 8")
