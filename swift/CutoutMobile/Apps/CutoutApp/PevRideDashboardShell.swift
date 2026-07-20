@@ -8,8 +8,7 @@ struct PevRideDashboardShell<Content: View>: View {
     let subtitle: String
     let statusFill: Color
     let captureStatusText: String?
-    let speedValue: String
-    let speedUnit: String
+    let speedReadout: PevRideHeroReadout
     let speedCaption: String
     let allowsVerticalScroll: Bool
     let content: (CGFloat, [GridItem]) -> Content
@@ -21,8 +20,7 @@ struct PevRideDashboardShell<Content: View>: View {
         subtitle: String,
         statusFill: Color,
         captureStatusText: String?,
-        speedValue: String,
-        speedUnit: String,
+        speedReadout: PevRideHeroReadout,
         speedCaption: String,
         allowsVerticalScroll: Bool = true,
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
@@ -33,8 +31,7 @@ struct PevRideDashboardShell<Content: View>: View {
         self.subtitle = subtitle
         self.statusFill = statusFill
         self.captureStatusText = captureStatusText
-        self.speedValue = speedValue
-        self.speedUnit = speedUnit
+        self.speedReadout = speedReadout
         self.speedCaption = speedCaption
         self.allowsVerticalScroll = allowsVerticalScroll
         self.content = content
@@ -54,8 +51,7 @@ struct PevRideDashboardShell<Content: View>: View {
                 subtitle: subtitle,
                 statusFill: statusFill,
                 captureStatusText: captureStatusText,
-                speedValue: speedValue,
-                speedUnit: speedUnit,
+                speedReadout: speedReadout,
                 speedCaption: speedCaption
             )
 

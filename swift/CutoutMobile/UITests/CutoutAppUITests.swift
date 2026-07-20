@@ -129,6 +129,11 @@ final class CutoutAppUITests: XCTestCase {
         defer { disconnectIfConnected() }
         XCTAssertEqual(screen.identifier, family.screenIdentifier)
 
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.exists)
+        XCTAssertNotEqual(speed.value as? String, "--")
+        XCTAssertFalse((speed.value as? String ?? "").isEmpty)
+
         let bottomBars = app.descendants(matching: .any).matching(identifier: "dashboard.bottom.navigation")
         XCTAssertEqual(bottomBars.count, 1)
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.top.navigation"].exists)

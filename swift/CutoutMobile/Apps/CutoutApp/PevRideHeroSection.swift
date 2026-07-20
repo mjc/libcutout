@@ -17,6 +17,38 @@ enum PevRideHeroStyle {
     }
 }
 
+enum PevRideHeroReadout: Equatable {
+    case available(value: String, unit: String)
+    case unavailable
+
+    var displayValue: String {
+        switch self {
+        case .available(let value, _): value
+        case .unavailable: "Unavailable"
+        }
+    }
+
+    var displayUnit: String {
+        switch self {
+        case .available(_, let unit): unit
+        case .unavailable: ""
+        }
+    }
+
+    var accessibilityValue: String {
+        switch self {
+        case .available(let value, let unit):
+            [value, unit].filter { !$0.isEmpty }.joined(separator: ", ")
+        case .unavailable:
+            "unavailable"
+        }
+    }
+
+    var isAvailable: Bool {
+        if case .available = self { true } else { false }
+    }
+}
+
 struct PevRideHeroSection: View {
     @ScaledMetric(relativeTo: .largeTitle) private var eucSpeedFontSize = PevRideHeroStyle.electricUnicycleSpeedPointSize
     @ScaledMetric(relativeTo: .largeTitle) private var vescSpeedFontSize = PevRideHeroStyle.vescOnewheelSpeedPointSize
@@ -27,8 +59,7 @@ struct PevRideHeroSection: View {
     let subtitle: String
     let statusFill: Color
     let captureStatusText: String?
-    let speedValue: String
-    let speedUnit: String
+    let speedReadout: PevRideHeroReadout
     let speedCaption: String
 
     var body: some View {
@@ -75,7 +106,7 @@ struct PevRideHeroSection: View {
         .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(speedCaption)
-        .accessibilityValue([speedValue, speedUnit].filter { !$0.isEmpty }.joined(separator: " "))
+        .accessibilityValue(speedReadout.accessibilityValue)
         .accessibilityIdentifier("ride.hero.speed")
     }
 
@@ -94,10 +125,16 @@ struct PevRideHeroSection: View {
         )
     }
 
+    @ViewBuilder
     private var speed: some View {
-        Text(speedValue)
-            .font(.system(size: speedFontSize, weight: .black))
-            .monospacedDigit()
+        if speedReadout.isAvailable {
+            Text(speedReadout.displayValue)
+                .font(.system(size: speedFontSize, weight: .black))
+                .monospacedDigit()
+        } else {
+            Text(speedReadout.displayValue)
+                .font(.title2.weight(.semibold))
+        }
     }
 
     private var speedFontSize: CGFloat {
@@ -109,8 +146,8 @@ struct PevRideHeroSection: View {
 
     @ViewBuilder
     private var unit: some View {
-        if !speedUnit.isEmpty {
-            Text(speedUnit)
+        if !speedReadout.displayUnit.isEmpty {
+            Text(speedReadout.displayUnit)
                 .font(.system(size: speedUnitFontSize, weight: .bold))
                 .foregroundStyle(PevColors.muted)
         }

@@ -11,11 +11,11 @@ struct EucRideScreenView: View {
     let phoneLocationReadback: PhoneLocationReadback
     let disconnect: () -> Void
 
-    private var speedParts: (value: String, unit: String) {
+    private var speedReadout: PevRideHeroReadout {
         if let rideState {
-            return (rideState.speedText, rideState.speedUnit)
+            return .available(value: rideState.speedText, unit: rideState.speedUnit)
         }
-        return ("--", "")
+        return .unavailable
     }
 
     private var phaseText: String {
@@ -84,8 +84,7 @@ struct EucRideScreenView: View {
             subtitle: phaseText,
             statusFill: PevColors.green,
             captureStatusText: captureStatusText,
-            speedValue: speedParts.value,
-            speedUnit: speedParts.unit,
+            speedReadout: speedReadout,
             speedCaption: "speed",
         ) { scale, columns in
             VStack(spacing: 10 * scale) {

@@ -34,12 +34,12 @@ struct VescRideScreenView: View {
         return phase == .live ? "Telemetry pending" : phase.displayText
     }
 
-    private var speedParts: (value: String, unit: String) {
+    private var speedReadout: PevRideHeroReadout {
         guard let boardSpeed = liveSnapshot?.boardSpeed else {
-            return ("--", "")
+            return .unavailable
         }
         let readout = SpeedReadout(millimetersPerSecond: boardSpeed.value)
-        return (readout.displayValue, readout.displayUnit)
+        return .available(value: readout.displayValue, unit: readout.displayUnit)
     }
 
     private var warningCard: PevWarningCard? {
@@ -151,8 +151,7 @@ struct VescRideScreenView: View {
             subtitle: subtitle,
             statusFill: PevColors.purple,
             captureStatusText: captureStatusText,
-            speedValue: speedParts.value,
-            speedUnit: speedParts.unit,
+            speedReadout: speedReadout,
             speedCaption: "board speed",
             allowsVerticalScroll: true,
         ) { scale, columns in

@@ -9,6 +9,20 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(PevRideHeroStyle.unitPointSize, 24)
     }
 
+    func testRideHeroReadoutSharesExplicitAvailabilitySemantics() {
+        let unavailable = PevRideHeroReadout.unavailable
+        XCTAssertEqual(unavailable.displayValue, "Unavailable")
+        XCTAssertEqual(unavailable.displayUnit, "")
+        XCTAssertEqual(unavailable.accessibilityValue, "unavailable")
+        XCTAssertFalse(unavailable.isAvailable)
+
+        let available = PevRideHeroReadout.available(value: "19", unit: "mph")
+        XCTAssertEqual(available.displayValue, "19")
+        XCTAssertEqual(available.displayUnit, "mph")
+        XCTAssertEqual(available.accessibilityValue, "19, mph")
+        XCTAssertTrue(available.isAvailable)
+    }
+
     func testPowerFlowDetailUsesPlainStateWords() {
         XCTAssertEqual(powerFlowDetail(.discharge, fallback: "fallback"), "discharging")
         XCTAssertEqual(powerFlowDetail(.zero, fallback: "fallback"), "idle")
