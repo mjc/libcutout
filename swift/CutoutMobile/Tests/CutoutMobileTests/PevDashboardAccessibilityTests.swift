@@ -1,8 +1,15 @@
+import SwiftUI
 import XCTest
 @testable import CutoutMobile
 
 @MainActor
 final class PevDashboardAccessibilityTests: XCTestCase {
+    func testProgressSemanticsClampOutOfRangeValues() {
+        XCTAssertEqual(makeProgressBar(progress: -0.4).clampedProgress, 0)
+        XCTAssertEqual(makeProgressBar(progress: 0.42).clampedProgress, 0.42)
+        XCTAssertEqual(makeProgressBar(progress: 1.8).clampedProgress, 1)
+    }
+
     func testScanningAnimationRunsOnlyWhileScanningAndMotionIsAllowed() {
         XCTAssertTrue(
             PevDashboardScanningPill.shouldAnimate(
@@ -21,6 +28,19 @@ final class PevDashboardAccessibilityTests: XCTestCase {
                 isScanning: true,
                 reduceMotion: true
             )
+        )
+    }
+
+    private func makeProgressBar(progress: Double) -> PevDashboardProgressBar {
+        PevDashboardProgressBar(
+            label: "Headroom",
+            value: "42 percent",
+            progress: progress,
+            accent: .yellow,
+            track: .gray,
+            labelColor: .primary,
+            valueColor: .primary,
+            scale: 1
         )
     }
 }

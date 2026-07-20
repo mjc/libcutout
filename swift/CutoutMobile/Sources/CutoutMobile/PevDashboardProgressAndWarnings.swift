@@ -13,6 +13,10 @@ public struct PevDashboardProgressBar: View {
     let valueFontSize: CGFloat
     let height: CGFloat
 
+    var clampedProgress: Double {
+        max(0, min(1, progress))
+    }
+
     public init(
         label: String,
         value: String,
@@ -58,10 +62,15 @@ public struct PevDashboardProgressBar: View {
                         .fill(track)
                     Capsule()
                         .fill(accent)
-                        .frame(width: max(0, min(1, progress)) * proxy.size.width)
+                        .frame(width: clampedProgress * proxy.size.width)
                 }
             }
             .frame(height: height * scale)
+        }
+        .accessibilityRepresentation {
+            ProgressView(value: clampedProgress)
+                .accessibilityLabel(label)
+                .accessibilityValue(value)
         }
     }
 }
@@ -140,6 +149,11 @@ public struct PevDashboardProgressCard: View {
                 stroke: stroke
             )
         )
+        .accessibilityRepresentation {
+            ProgressView(value: max(0, min(1, progress)))
+                .accessibilityLabel(label)
+                .accessibilityValue(detail.isEmpty ? value : "\(value), \(detail)")
+        }
     }
 }
 
@@ -204,5 +218,8 @@ public struct PevDashboardWarningCard: View {
                 stroke: stroke
             )
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(detail)
     }
 }
