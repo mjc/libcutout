@@ -20,12 +20,12 @@ struct CaptureRecordingScreen: View {
         ) { scale, _ in
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top) {
-                    titleBlock(scale: scale)
+                    titleBlock
                     Spacer(minLength: 12 * scale)
                     stopCaptureButton
                 }
                 VStack(alignment: .leading, spacing: 12 * scale) {
-                    titleBlock(scale: scale)
+                    titleBlock
                     stopCaptureButton
                 }
             }
@@ -54,11 +54,10 @@ struct CaptureRecordingScreen: View {
         .accessibilityIdentifier("capture.screen")
     }
 
-    private func titleBlock(scale: CGFloat) -> some View {
+    private var titleBlock: some View {
         PevScreenTitleBlock(
             title: deviceKind ?? "Capture session",
-            subtitle: "Capture session",
-            scale: scale
+            subtitle: "Capture session"
         )
     }
 

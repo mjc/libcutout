@@ -50,8 +50,7 @@ struct EucGarageScreenView: View {
         PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24, showsHeader: false) { scale, columns in
             PevScreenTitleBlock(
                 title: screen.title,
-                subtitle: screen.subtitle,
-                scale: scale
+                subtitle: screen.subtitle
             )
 
             PevDashboardGrid(columns: columns, spacing: 16 * scale) {

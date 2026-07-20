@@ -4,10 +4,9 @@ import SwiftUI
 struct PevScreenTitleBlock: View {
     let title: String
     let subtitle: String
-    let scale: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7 * scale) {
+        VStack(alignment: .leading, spacing: 7) {
             Text(title)
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(PevColors.primaryText)

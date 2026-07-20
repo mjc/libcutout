@@ -20,7 +20,7 @@ struct BmsNoDataHeader: View {
     }
 
     private var titleBlock: some View {
-        PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle, scale: scale)
+        PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle)
     }
 
     private var statusPill: some View {

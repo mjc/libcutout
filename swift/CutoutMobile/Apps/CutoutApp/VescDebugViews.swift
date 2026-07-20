@@ -65,8 +65,7 @@ struct VescDebugScreenView: View {
         PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20, showsHeader: false) { scale, columns in
             PevScreenTitleBlock(
                 title: snapshot?.title ?? "VESC Debug",
-                subtitle: captureStatusText ?? phase.displayText,
-                scale: scale
+                subtitle: captureStatusText ?? phase.displayText
             )
 
             PevDashboardGrid(columns: columns, spacing: 20 * scale) {

@@ -39,7 +39,7 @@ struct BmsScreenView: View {
                 VStack(spacing: 0) {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 14 * scale) {
-                            header(scale: scale)
+                            header
                             chipRow(scale: scale)
                             contentSection(scale: scale)
                             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
@@ -76,8 +76,8 @@ struct BmsScreenView: View {
         }
     }
 
-    private func header(scale: CGFloat) -> some View {
-        PevScreenTitleBlock(title: screen.title, subtitle: "CutOut · BMS", scale: scale)
+    private var header: some View {
+        PevScreenTitleBlock(title: screen.title, subtitle: "CutOut · BMS")
     }
 
     private func chipRow(scale: CGFloat) -> some View {
